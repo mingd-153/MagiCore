@@ -1,8 +1,8 @@
-# Hyper‑Pkg Core Documentation
+# MegaGate Core Documentation
 
 ## 1. Project Overview
 
-**Hyper‑Pkg** is a lightweight, extensible command‑line tool for managing dependencies across many language ecosystems (npm, Cargo, Gradle, …). It provides:
+**MegaGate** is a lightweight, extensible command‑line tool for managing dependencies across many language ecosystems (npm, Cargo, Gradle, …). It provides:
 
 | Feature | Description |
 |--------|-------------|
@@ -196,12 +196,12 @@ MegaGate/
 cargo build
 
 # Run UI
-cargo run -- ui
+mg ui
 
 # Example command usage
-cargo run -- install          # install dependencies in the current dir
-cargo run -- update <pkg>     # update a specific package
-cargo run -- list --graph    # print dependency graph as JSON
+mg install          # install dependencies in the current dir
+mg update <pkg>     # update a specific package
+mg list --graph    # print dependency graph as JSON
 ```
 The UI can be launched at any time; it will automatically detect the working directory and use the **shared lock** if present.
 
@@ -222,7 +222,7 @@ The UI can be launched at any time; it will automatically detect the working dir
 MegaGate = { path = "../MegaGate" }
 MegaGate-ui = { path = "../MegaGate-ui-custom" } # new crate
 ```
-4. In `src/main.rs` change the import to `use hyper_pkg_ui::run_ui;`.
+4. In `src/main.rs` change the import to `use megagate_ui::run_ui;`.
 The rest of the system (commands, adapters, lock handling) remains untouched.
 
 ### 7.3 Adding a New Adapter
@@ -236,9 +236,9 @@ The rest of the system (commands, adapters, lock handling) remains untouched.
 
 ## 11. Supported Tasks & Application Domains
 
-Hyper‑Pkg is deliberately generic, but it shines in several common development scenarios:
+MegaGate is deliberately generic, but it shines in several common development scenarios:
 
-| Domain | Typical workflow | How Hyper‑Pkg helps |
+| Domain | Typical workflow | How MegaGate helps |
 |--------|----------------|----------------------|
 | **Web Applications** | Front‑end (npm) + back‑end (Cargo) dependencies | Manage both `package.json` and `Cargo.toml` in a single lock, run a unified `install` to bootstrap the whole stack. |
 | **Game Development** | Unity (npm for tooling) + Rust game engine crates | Keep game assets and engine crates synchronized; UI can display progress for large asset pulls. |
@@ -253,9 +253,9 @@ The UI can be extended with custom panels (e.g., a graph visualiser for the depe
 
 ## 12. Supported Build & Package Manager Operations
 
-Hyper‑Pkg is designed to cover the full lifecycle of a project that uses any of the supported package managers. The core commands map directly to the usual build‑tool / package‑manager actions:
+MegaGate is designed to cover the full lifecycle of a project that uses any of the supported package managers. The core commands map directly to the usual build‑tool / package‑manager actions:
 
-| Operation | What Hyper‑Pkg does | Typical underlying command |
+| Operation | What MegaGate does | Typical underlying command |
 |-----------|--------------------|---------------------------|
 | **Install** | Reads the manifest(s), resolves dependencies, updates the shared `MegaGate.lock`, then runs the native install command (e.g., `npm install`, `cargo fetch`, `pip install -r`). | `npm install`, `cargo fetch`, `pip install -r requirements.txt` |
 | **Update** | Fetches the latest compatible version of a specific package (or all packages if none specified) and updates the lock. | `npm update <pkg>`, `cargo update -p <pkg>`, `pip install -U <pkg>` |
@@ -314,7 +314,7 @@ To extend for a new platform or OS‑specific behaviour, place the code in a mod
 ---
 
 ### TL;DR for agents
-* **Core entry point** – `hyper_pkg::run_ui(project_dir: PathBuf)` for UI, or any `hyper_pkg::commands::*` function for CLI actions.
+* **Core entry point** – `megagate::run_ui(project_dir: PathBuf)` for UI, or any `megagate::commands::*` function for CLI actions.
 * **Dependency graph** – always stored in `LockFile`; adapters contribute to it, commands read/write it.
 * **Extensibility** – add adapters, swap UI, or replace `LockFile` serialization without touching other modules.
 

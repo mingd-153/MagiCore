@@ -7,7 +7,7 @@ Thư viện **agent_memory** cung cấp một kho nhớ toàn cục (in‑memory
 [dependencies]
 agent_memory = { path = "./agent_memory" }
 ```
-(đã được thêm trong `hyper-pkg/Cargo.toml`)
+(đã được thêm trong `MegaGate/Cargo.toml`)
 
 ## 🔧 API chính
 ```rust
