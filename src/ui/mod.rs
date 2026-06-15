@@ -15,7 +15,7 @@ use crossterm::event::{self, Event, KeyCode};
 
 
 
-const LOGO_PATH: &str = "src/ui/logo.txt";
+const LOGO_PATH: &str = "/Users/doanmihh/Documents/Workspace/MegaGate/megagate_logo.txt";
 
 fn load_logo_lines() -> Vec<String> {
     std::fs::read_to_string(LOGO_PATH)
