@@ -1,4 +1,4 @@
-# Hyper‑Pkg – Interactive UI
+# MegaGate – Interactive UI
 
 `Megagate ui` launches a tiny terminal‐based menu that lets you perform the most common actions without remembering flags.
 
@@ -29,7 +29,7 @@ cargo build --release
 
 ## Screenshots (textual)
 ```
-🤖 Hyper‑Pkg Interactive UI
+🤖 MegaGate Interactive UI
 
 Project directory (default: .): /path/to/your/project
 Detected package manager: npm/pnpm/bun
