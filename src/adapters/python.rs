@@ -1,7 +1,7 @@
 use super::Adapter;
 use async_trait::async_trait;
 use anyhow::Result;
-use crate::core::lock::LockFile;
+use crate::core::lock::{LockFile, PackageRef};
 use std::process::Command;
 
 #[derive(Default)]
@@ -29,8 +29,12 @@ impl Adapter for PythonAdapter {
             .collect();
         // Populate lock (very simple – just store as version "*")
         for dep in &deps {
-            lock.graph.entry(dep.clone()).or_default();
-            lock.versions.insert(dep.clone(), "*".to_string());
+            lock.packages.push(PackageRef {
+                name: dep.clone(),
+                version: "*".to_string(),
+                source: "python".to_string(),
+                integrity: String::new(),
+            });
         }
         Ok(deps)
     }
