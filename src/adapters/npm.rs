@@ -1,7 +1,7 @@
 use super::Adapter;
 use anyhow::{Result, Context};
 use async_trait::async_trait;
-use crate::core::lock::{LockFile, PackageRef, DependencyEdge};
+use crate::core::lock::{LockFile, PackageRef};
 use std::process::Command;
 use std::path::Path;
 
