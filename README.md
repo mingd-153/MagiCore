@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 592.82 244.06" width="200" height="82">
+<p align="center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 592.82 244.06" width="auto" height="300" justify-content="center" align-items="center" aria-label="MegaGate logo" alt="MegaGate logo">
   <defs>
     <style>
       .cls-1, .cls-2 { fill: #a91f23; }
@@ -14,13 +14,14 @@
     <path class="cls-3" d="M195.47,4.33l4.27,11.53,11.53,4.27c5.77,2.14,5.77,10.3,0,12.43l-11.53,4.27-4.27,11.53c-2.14,5.77-10.3,5.77-12.43,0l-4.27-11.53-11.53-4.27c-5.77-2.14-5.77-10.3,0-12.43l11.53-4.27,4.27-11.53c2.14-5.77,10.3-5.77,12.43,0Z"/>
   </g>
 </svg>
+</p>
 
-# hyper-pkg
+# MegaGate
 
-**hyper-pkg** – a lightweight, extensible command‑line tool that unifies dependency management across multiple language ecosystems (npm, Cargo, Gradle, Python, etc.).
+**MegaGate** – a lightweight, extensible command‑line tool that unifies dependency management across multiple language ecosystems (npm, Cargo, Gradle, Python, etc.).
 
 ## Core features
-- **Unified CLI** with sub‑commands: `install`, `update <pkg>`, `remove <pkg>`, `list`, `audit`, `export <format>` and a terminal UI (`hyper-pkg ui`).
+- **Unified CLI** with sub‑commands: `install`, `update <pkg>`, `remove <pkg>`, `list`, `audit`, `export <format>` and a terminal UI (`MegaGate ui`).
 - **Pluggable adapters** – each package manager implements the `Adapter` trait (`parse`, `install`, `update`, `remove`). Adding a new manager is just a new module implementing the trait.
 - **Global lock file** – `mega-lock.json` stores a consolidated dependency graph (`LockFile`) that aggregates data from all adapters.
 - **In‑memory agent memory** – the `agent_memory` crate provides a global key/value store (`Trellis`) that agents can read/write at runtime (exposed via the `recall` CLI command).
