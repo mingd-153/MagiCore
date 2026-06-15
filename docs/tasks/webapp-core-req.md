@@ -1,4 +1,4 @@
-# Task: Xây dựng WebApp Core (Bun / PNPM) cho Hyper-Pkg
+# Task: Xây dựng WebApp Core (Bun / PNPM) cho MegaGate
 
 ## 1. Mục tiêu
 Xây dựng một **core (adapter) duy nhất** cho các dự án JavaScript/TypeScript, dựa trên **Bun** và **PNPM**, cung cấp:
