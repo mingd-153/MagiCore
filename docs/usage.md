@@ -1,6 +1,6 @@
 # Hyper‑Pkg – Interactive UI
 
-`hyper-pkg ui` launches a tiny terminal‐based menu that lets you perform the most common actions without remembering flags.
+`Megagate ui` launches a tiny terminal‐based menu that lets you perform the most common actions without remembering flags.
 
 ## Quick start
 ```bash
@@ -8,7 +8,7 @@
 cargo build --release
 
 # Run UI (in the root of your multi‑language project)
-./target/release/hyper-pkg ui
+./target/release/Megagate ui
 ```
 
 ### What the UI does
