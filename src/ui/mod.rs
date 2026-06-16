@@ -335,11 +335,11 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     // Append project name and author lines
     // Updated header: English dev statement and author with distinct style
     header_content.push(Line::from(Span::styled(
-        "Built by developers from Vietnam ♥️",
-        Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        "Open Source • Built in Vietnam 🇻🇳",
+            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
     )));
     header_content.push(Line::from(Span::styled(
-        "mingdoan - author",
+        "Created by mingdoan",
             Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
     )));
 
