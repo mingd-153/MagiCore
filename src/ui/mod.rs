@@ -419,34 +419,25 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         return;
     }
 
-    // Determine layout percentages based on compact flag and terminal height.
-    // Compute layout percentages: header, info, menu, footer.
-    // Allocate a larger portion for the info panel so all system lines are visible.
-    let (header_pct, info_pct, menu_pct, footer_pct): (u16, u16, u16, u16) = if compact {
-        // Compact layout: header 15%, info 30%, footer 15%, remaining for menu.
-        let info = 30;
-        let header = 15;
-        let footer = 15;
-        let menu = 100 - header - info - footer;
-        (header, info, menu, footer)
+    // Determine layout percentages based on compact flag.
+    // Header height increased to ensure author line is visible.
+    // Body (info+menu+console) takes the remaining space.
+    let (header_pct, footer_pct): (u16, u16) = if compact {
+        // Compact layout: allocate more space to header and footer.
+        (25, 15) // header 25%, footer 15%
     } else {
-        // Normal layout: header 20%, info 15%, footer 10%, remaining for menu.
-        let info = 15;
-        let header = 20;
-        let footer = 10;
-        let menu = 100 - header - info - footer;
-        (header, info, menu, footer)
+        // Normal layout: larger header for author line.
+        (30, 10) // header 30%, footer 10%
     };
+    let body_pct = 100 - header_pct - footer_pct;
 
-    // Full screen layout: header, info, menu, footer.
+    // Full screen layout: header, body, footer.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Percentage(header_pct),
-            // Info area – allocate more vertical space for system info
-            Constraint::Percentage(info_pct), // info area
-            Constraint::Percentage(menu_pct),
+            Constraint::Percentage(body_pct),
             Constraint::Percentage(footer_pct),
         ])
         .split(f.size());
@@ -469,7 +460,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     )));
     // Created by line
         header_content.push(Line::from(Span::styled(
-            "Created by mingdoan",
+            format!("Created by {}", _AUTHOR),
             Style::default(),
         )));
     // Optional version line
@@ -484,14 +475,14 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
 
     f.render_widget(header_widget, chunks[0]);
 
-    // ── MAIN ROW: System Info, Menu, Console ────────────────────────
+    // ── MAIN ROW: System Info | Menu | Console (full height) ────────
     // Split the middle area (chunks[1]) into three columns
-    let main_cols = Layout::default()
+    let body_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(30), // System Info column
-            Constraint::Percentage(30), // Menu column
-            Constraint::Percentage(40), // Console column
+            Constraint::Percentage(35), // Menu column
+            Constraint::Percentage(35), // Console column
         ])
         .split(chunks[1]);
 
@@ -500,7 +491,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let info_paragraph = Paragraph::new(info_lines.clone())
         .block(Block::default().borders(Borders::ALL).title("System Info"))
         .wrap(Wrap { trim: true });
-    f.render_widget(info_paragraph, main_cols[0]);
+    f.render_widget(info_paragraph, body_cols[0]);
 
     // ── MENU COLUMN ────────────────────────────────────────
     let all_items: Vec<ListItem> = MENU_ITEMS.iter().enumerate().map(|(i, (key, desc, _color))| {
@@ -516,7 +507,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         ]))
     }).collect();
     // Show only the top portion of the menu (no scrolling)
-    let visible_height = main_cols[1].height as usize;
+    let visible_height = body_cols[1].height as usize;
     let end = std::cmp::min(visible_height, all_items.len());
     let items = &all_items[..end];
     let menu_lines: Vec<Line> = items.iter().enumerate().map(|(i, _item)| {
@@ -535,10 +526,10 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     }).collect();
     let menu_paragraph = Paragraph::new(menu_lines)
         .block(Block::default().borders(Borders::ALL).title("Menu"));
-    f.render_widget(menu_paragraph, main_cols[1]);
+    f.render_widget(menu_paragraph, body_cols[1]);
 
     // ── CONSOLE COLUMN ────────────────────────────────────────
-    let console_visible = main_cols[2].height as usize;
+    let console_visible = body_cols[2].height as usize;
     let log_start = app.console_offset;
     let log_end = std::cmp::min(log_start + console_visible, app.log.len());
     let log_slice = &app.log[log_start..log_end];
@@ -556,15 +547,14 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let log_paragraph = Paragraph::new(styled_log_lines)
         .block(Block::default().borders(Borders::ALL).title("Console"))
         .wrap(Wrap { trim: true });
-    f.render_widget(log_paragraph, main_cols[2]);
+    f.render_widget(log_paragraph, body_cols[2]);
 
-    // ── FOOTER: Input Prompt ──────────────────────────────────────────────
+    // ── INPUT SECTION (footer) ────────────────────────────────────────
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(100)])
-        .split(chunks[3]);
+        .split(chunks[2]);
 
-    // Input line (prompt)
     let input_span = Span::styled(
         format!("> {}", app.input),
         Style::default(),
