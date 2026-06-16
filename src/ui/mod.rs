@@ -294,7 +294,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     if size.width < 80 || size.height < 24 {
         let warning = Paragraph::new("Warning: Terminal size too small (min 80x24).")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            .alignment(ratatui::layout::Alignment::Center);
+    .alignment(ratatui::layout::Alignment::Left);
         f.render_widget(Clear, size);
         f.render_widget(warning, size);
         return;
@@ -327,22 +327,16 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     // ── HEADER: Logo + Title + Author ────────────────────────────────────────
     let header_block = Block::default();
     // Load ASCII logo lines and prepend to header content
-    // Minimal header: no 3D logo, only textual info
+    // Friendly large centered header
     let mut header_content: Vec<Line> = Vec::new();
-    // Append project name and author lines
-    // Updated header: English dev statement and author with distinct style
     header_content.push(Line::from(Span::styled(
-        "Open Source • Built in Vietnam 🇻🇳",
-            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-    )));
-    header_content.push(Line::from(Span::styled(
-        "Created by mingdoan",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+        "███████████████████ MegaGate ████████████████████",
+        Style::default().add_modifier(Modifier::BOLD),
     )));
 
     let header_widget = Paragraph::new(header_content)
         .block(header_block)
-        .alignment(ratatui::layout::Alignment::Center);
+    .alignment(ratatui::layout::Alignment::Center);
 
     f.render_widget(header_widget, chunks[0]);
 
