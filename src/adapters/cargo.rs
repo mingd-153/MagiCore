@@ -33,7 +33,7 @@ impl Adapter for CargoAdapter {
 
     async fn update(&self, dir: &str, pkg: &str) -> Result<()> {
         let status = Command::new("cargo")
-            .args(&["update", pkg])
+            .args(["update", pkg])
             .current_dir(dir)
             .status()
             .with_context(|| "Failed to run cargo update")?;

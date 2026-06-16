@@ -57,7 +57,7 @@ impl Adapter for WebAppAdapter {
                 if pkg.is_empty() {
                     cmd.arg("upgrade");
                 } else {
-                    cmd.args(&["add", &format!("{}@latest", pkg)]);
+                    cmd.args(["add", &format!("{}@latest", pkg)]);
                 }
                 cmd.current_dir(dir).status()
             }
@@ -66,7 +66,7 @@ impl Adapter for WebAppAdapter {
                 if pkg.is_empty() {
                     cmd.arg("update");
                 } else {
-                    cmd.args(&["update", pkg]);
+                    cmd.args(["update", pkg]);
                 }
                 cmd.current_dir(dir).status()
             }
@@ -75,7 +75,7 @@ impl Adapter for WebAppAdapter {
                 if pkg.is_empty() {
                     cmd.arg("update");
                 } else {
-                    cmd.args(&["update", pkg]);
+                    cmd.args(["update", pkg]);
                 }
                 cmd.current_dir(dir).status()
             }
@@ -90,7 +90,7 @@ impl Adapter for WebAppAdapter {
     async fn remove(&self, dir: &str, pkg: &str) -> Result<()> {
         let manager = Self::choose_manager()?;
         let status = Command::new(manager)
-            .args(&["remove", pkg])
+            .args(["remove", pkg])
             .current_dir(dir)
             .status()
             .with_context(|| format!("Failed to run {} remove", manager))?;
