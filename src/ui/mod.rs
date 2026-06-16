@@ -484,16 +484,25 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
 
     f.render_widget(header_widget, chunks[0]);
 
-    // Split the middle (menu + log) area horizontally
-    let middle_chunks = Layout::default()
+    // ── MAIN ROW: System Info, Menu, Console ────────────────────────
+    // Split the middle area (chunks[1]) into three columns
+    let main_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(40), // menu pane
-            Constraint::Percentage(60), // log pane
+            Constraint::Percentage(30), // System Info column
+            Constraint::Percentage(30), // Menu column
+            Constraint::Percentage(40), // Console column
         ])
-        .split(chunks[2]);
+        .split(chunks[1]);
 
-    // ── MENU PANEL ────────────────────────────────────────
+    // ── INFO COLUMN ────────────────────────────────────────
+    let info_lines = get_system_info_lines(); // 8 lines expected
+    let info_paragraph = Paragraph::new(info_lines.clone())
+        .block(Block::default().borders(Borders::ALL).title("System Info"))
+        .wrap(Wrap { trim: true });
+    f.render_widget(info_paragraph, main_cols[0]);
+
+    // ── MENU COLUMN ────────────────────────────────────────
     let all_items: Vec<ListItem> = MENU_ITEMS.iter().enumerate().map(|(i, (key, desc, _color))| {
         let style = if i == app.selected {
             Style::default().add_modifier(Modifier::REVERSED)
@@ -507,16 +516,13 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         ]))
     }).collect();
     // Show only the top portion of the menu (no scrolling)
-    let visible_height = middle_chunks[0].height as usize;
+    let visible_height = main_cols[1].height as usize;
     let end = std::cmp::min(visible_height, all_items.len());
     let items = &all_items[..end];
-    // Render menu as a simple Paragraph (no auto‑scroll)
     let menu_lines: Vec<Line> = items.iter().enumerate().map(|(i, _item)| {
-        // Retrieve the menu definition (key, description, color)
         let (key, desc, color) = MENU_ITEMS[i];
         let base_style = Style::default().fg(color);
         let style = if i == app.selected {
-            // Highlight selected item: bold, reversed background, keep its color
             base_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
         } else {
             base_style
@@ -529,14 +535,13 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     }).collect();
     let menu_paragraph = Paragraph::new(menu_lines)
         .block(Block::default().borders(Borders::ALL).title("Menu"));
-    f.render_widget(menu_paragraph, middle_chunks[0]);
+    f.render_widget(menu_paragraph, main_cols[1]);
 
-    // ── LOG PANEL (right side) ────────────────────────────────────────
-    let console_visible = middle_chunks[1].height as usize;
+    // ── CONSOLE COLUMN ────────────────────────────────────────
+    let console_visible = main_cols[2].height as usize;
     let log_start = app.console_offset;
     let log_end = std::cmp::min(log_start + console_visible, app.log.len());
     let log_slice = &app.log[log_start..log_end];
-    // Apply simple coloring based on log level prefixes
     let styled_log_lines: Vec<Line> = log_slice.iter().map(|line| {
         let mut style = Style::default();
         if line.contains("[INFO]") {
@@ -551,32 +556,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let log_paragraph = Paragraph::new(styled_log_lines)
         .block(Block::default().borders(Borders::ALL).title("Console"))
         .wrap(Wrap { trim: true });
-    f.render_widget(log_paragraph, middle_chunks[1]);
-
-    // ── INFO: System information display – single row of 8 blocks ────────
-    let info_lines = get_system_info_lines(); // 8 lines expected
-    // Split the info area horizontally into 8 equal columns
-    let info_cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-        ])
-        .split(chunks[1]);
-    for (col_idx, col_chunk) in info_cols.iter().enumerate() {
-        if let Some(line) = info_lines.get(col_idx) {
-            let block = Paragraph::new(Line::from(line.clone()))
-                .block(Block::default().borders(Borders::ALL).title(""))
-                .wrap(Wrap { trim: true });
-            f.render_widget(block, *col_chunk);
-        }
-    }
+    f.render_widget(log_paragraph, main_cols[2]);
 
     // ── FOOTER: Input Prompt ──────────────────────────────────────────────
     let footer_chunks = Layout::default()
