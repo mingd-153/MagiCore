@@ -430,8 +430,8 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         let menu = 100 - header - info - footer;
         (header, info, menu, footer)
     } else {
-        // Normal layout: header 15%, info 20%, footer 10%, remaining for menu.
-        let info = 20;
+        // Normal layout: header 15%, info 15%, footer 10%, remaining for menu.
+        let info = 15;
         let header = 15;
         let footer = 10;
         let menu = 100 - header - info - footer;
