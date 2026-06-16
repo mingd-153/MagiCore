@@ -3,14 +3,16 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use anyhow::Result;
 use colored::*;
 use crossterm::event::{self, Event, KeyCode};
-    use ratatui::{
-        backend::CrosstermBackend,
-        layout::{Constraint, Direction, Layout},
-        style::{Color, Modifier, Style},
-        text::{Line, Span},
-        widgets::{Block, Borders, ListItem, Paragraph, Wrap, Clear, Gauge, canvas::{Canvas, Line as CanvasLine}},
-        Frame, Terminal,
-    };
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout, Alignment},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, ListItem, Paragraph, Wrap, Clear, Gauge, canvas::{Canvas, Line as CanvasLine}},
+    Frame, Terminal,
+};
+use sysinfo::{System, SystemExt, DiskExt};
+
 
 
 
@@ -27,6 +29,54 @@ const LOGO: &[&str] = &[
 
 fn load_logo_lines() -> Vec<String> {
     LOGO.iter().map(|s| s.to_string()).collect()
+}
+
+// Retrieve local IP address using a UDP socket trick
+fn get_ip_address() -> Option<String> {
+    use std::net::UdpSocket;
+    // Bind to an arbitrary local address
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    // Connect to an external address; no packets are sent
+    socket.connect("8.8.8.8:80").ok()?;
+    // Local address now contains the outbound IP
+    socket.local_addr().ok().map(|addr| addr.ip().to_string())
+}
+
+fn get_system_info_lines() -> Vec<Line<'static>> {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    // CPU usage (use global_cpu_info)
+    let cpu_usage = sys.global_cpu_info().cpu_usage();
+    // RAM usage
+    let total_mem = sys.total_memory();
+    let used_mem = sys.used_memory();
+    // SSD info (first disk total space)
+    let ssd_info = if let Some(disk) = sys.disks().first() {
+        let gb = disk.total_space() as f64 / 1_073_741_824.0;
+        format!("SSD: {:.2} GB", gb)
+    } else {
+        "SSD: N/A".to_string()
+    };
+    // GPU placeholder (no cross‑platform detection)
+    let gpu_info = "GPU: N/A".to_string();
+    // Bandwidth placeholder (keep existing name for compatibility)
+    let bandwidth_str = "Bandwidth: N/A".to_string();
+    // Cache placeholder
+    let cache_str = "Cache: N/A".to_string();
+    // IP address (first network interface IP)
+    let ip_line = match get_ip_address() {
+        Some(ip) => format!("IP: {}", ip),
+        None => "IP: N/A".to_string(),
+    };
+    vec![
+        Line::from(Span::styled(format!("CPU: {:.2}%", cpu_usage), Style::default())),
+        Line::from(Span::styled(format!("RAM: {} MB / {} MB", used_mem / 1024, total_mem / 1024), Style::default())),
+        Line::from(Span::styled(ssd_info, Style::default())),
+        Line::from(Span::styled(gpu_info, Style::default())),
+        Line::from(Span::styled(bandwidth_str, Style::default())),
+        Line::from(Span::styled(cache_str, Style::default())),
+        Line::from(Span::styled(ip_line, Style::default())),
+    ]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,23 +194,56 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
                         should_quit = true;
                     }
                     // Navigate or scroll depending on focus
+                    // Navigation: Arrow keys and j/k for sidebar, scrolling for console
                     KeyCode::Up => {
+                        if app.focus == Focus::Sidebar {
+                            // Move selection up in sidebar
+                            if app.selected == 0 {
+                                app.selected = MENU_ITEMS.len() - 1;
+                            } else {
+                                app.selected -= 1;
+                            }
+                            if app.sidebar_offset > app.selected {
+                                app.sidebar_offset = app.selected;
+                            }
+                        } else if app.focus == Focus::Console {
+                            // Scroll console up
+                            if app.console_offset > 0 {
+                                app.console_offset -= 1;
+                            }
+                        }
+                    }
+                    KeyCode::Down => {
+                        if app.focus == Focus::Sidebar {
+                            // Move selection down in sidebar
+                            app.selected = (app.selected + 1) % MENU_ITEMS.len();
+                            if app.sidebar_offset + 1 < app.selected {
+                                app.sidebar_offset = app.selected;
+                            }
+                        } else if app.focus == Focus::Console {
+                            // Scroll console down
+                            let max_offset = if app.log.len() > 0 { app.log.len() - 1 } else { 0 };
+                            if app.console_offset < max_offset {
+                                app.console_offset += 1;
+                            }
+                        }
+                    }
+                    // j/k shortcuts for navigation when sidebar has focus
+                    KeyCode::Char('k') => {
                         if app.focus == Focus::Sidebar {
                             if app.selected == 0 {
                                 app.selected = MENU_ITEMS.len() - 1;
                             } else {
                                 app.selected -= 1;
                             }
-                            // keep offset so selected is visible (simple)
                             if app.sidebar_offset > app.selected {
                                 app.sidebar_offset = app.selected;
                             }
                         }
                     }
-                    KeyCode::Down => {
+                    KeyCode::Char('j') => {
                         if app.focus == Focus::Sidebar {
                             app.selected = (app.selected + 1) % MENU_ITEMS.len();
-                            // simple visibility clamp (offset moves down as needed)
                             if app.sidebar_offset + 1 < app.selected {
                                 app.sidebar_offset = app.selected;
                             }
@@ -289,37 +372,42 @@ fn prompt_input(prompt: &str) -> String {
 fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let app = state.lock().unwrap();
 
-    // Small terminal size warning
     let size = f.size();
-    if size.width < 80 || size.height < 24 {
-        let warning = Paragraph::new("Warning: Terminal size too small (min 80x24).")
-            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-    .alignment(ratatui::layout::Alignment::Left);
-        f.render_widget(Clear, size);
-        f.render_widget(warning, size);
-        return;
-    }
+    let compact = size.width < 80 || size.height < 24;
 
-    // Full screen layout: header, menu, footer (status + progress)
-    // Determine layout proportions based on terminal height for responsiveness
-    let total_height = f.size().height;
-    let (header_pct, menu_pct, footer_pct) = if total_height < 20 {
-        // Very small terminal – give more space to menu
-        (20, 70, 10)
-    } else if total_height < 30 {
-        // Small terminal – balanced layout
-        (25, 65, 10)
+    // Determine layout percentages based on compact flag and terminal height.
+    let (header_pct, menu_pct, footer_pct) = if compact {
+        // Compact layout for very small terminals.
+        (15, 70, 15)
     } else {
-        // Normal or large terminal – keep expanded header for version line
-        (35, 55, 10)
+        let total_height = size.height;
+        if total_height < 20 {
+            (20, 70, 10)
+        } else if total_height < 30 {
+            (25, 65, 10)
+        } else {
+            (35, 55, 10)
+        }
     };
-    // Layout: header, main (menu+log), footer
+
+    // Full screen layout: header, menu, info, footer.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Percentage(header_pct),
             Constraint::Percentage(menu_pct),
+            Constraint::Percentage(10), // info area
+            Constraint::Percentage(footer_pct),
+        ])
+        .split(f.size());
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Percentage(header_pct),
+            Constraint::Percentage(menu_pct),
+            Constraint::Percentage(10), // info area
             Constraint::Percentage(footer_pct),
         ])
         .split(f.size());
@@ -327,16 +415,33 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     // ── HEADER: Logo + Title + Author ────────────────────────────────────────
     let header_block = Block::default();
     // Load ASCII logo lines and prepend to header content
-    // Friendly large centered header
-    let mut header_content: Vec<Line> = Vec::new();
+    let logo_lines = load_logo_lines();
+    let mut header_content: Vec<Line> = logo_lines.iter().map(|s| Line::from(Span::styled(s.clone(), Style::default()))).collect();
+    // Project title with bold and underline
     header_content.push(Line::from(Span::styled(
-        "███████████████████ MegaGate ████████████████████",
-        Style::default().add_modifier(Modifier::BOLD),
+        PROJECT_NAME,
+        Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+
+    // Open source line
+    header_content.push(Line::from(Span::styled(
+        "Open Source • Built in Vietnam",
+        Style::default(),
+    )));
+    // Created by line
+    header_content.push(Line::from(Span::styled(
+        "Created by mingdoan",
+        Style::default(),
+    )));
+    // Optional version line
+    header_content.push(Line::from(Span::styled(
+        format!("Version: {}", VERSION),
+        Style::default(),
     )));
 
     let header_widget = Paragraph::new(header_content)
-        .block(header_block)
-    .alignment(ratatui::layout::Alignment::Center);
+    .block(header_block)
+    .alignment(Alignment::Center);
 
     f.render_widget(header_widget, chunks[0]);
 
@@ -367,21 +472,22 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let end = std::cmp::min(visible_height, all_items.len());
     let items = &all_items[..end];
     // Render menu as a simple Paragraph (no auto‑scroll)
-    let menu_lines: Vec<Line> = items.iter().enumerate().map(|(i, _item)| {
-        // Extract the key and description from the ListItem's line (we stored them in order)
-        // Since we built items from MENU_ITEMS, we can reuse that source directly.
-        let (key, desc, _) = MENU_ITEMS[i];
-        let style = if i == app.selected {
-            Style::default().add_modifier(Modifier::REVERSED)
-        } else {
-            Style::default()
-        };
-        Line::from(vec![
-            Span::styled(key, style),
-            Span::raw(" "),
-            Span::styled(desc, style),
-        ])
-    }).collect();
+        let menu_lines: Vec<Line> = items.iter().enumerate().map(|(i, _item)| {
+            // Retrieve the menu definition (key, description, color)
+            let (key, desc, color) = MENU_ITEMS[i];
+            let base_style = Style::default().fg(color);
+            let style = if i == app.selected {
+                // Highlight selected item: bold, reversed background, keep its color
+                base_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                base_style
+            };
+            Line::from(vec![
+                Span::styled(key, style),
+                Span::raw(" "),
+                Span::styled(desc, style),
+            ])
+        }).collect();
     let menu_paragraph = Paragraph::new(menu_lines)
         .block(Block::default().borders(Borders::ALL).title("Menu"));
     f.render_widget(menu_paragraph, middle_chunks[0]);
@@ -409,11 +515,33 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
             .wrap(Wrap { trim: true });
     f.render_widget(log_paragraph, middle_chunks[1]);
 
+    // ── INFO: System information display
+    let info_lines = get_system_info_lines();
+    // Split info into two columns for grid layout
+    let left_info: Vec<Line> = info_lines.iter().cloned().take( (info_lines.len()+1)/2 ).collect();
+    let right_info: Vec<Line> = info_lines.iter().cloned().skip( (info_lines.len()+1)/2 ).collect();
+    let info_grid = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(0)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(chunks[2]);
+    let left_paragraph = Paragraph::new(left_info)
+        .block(Block::default().borders(Borders::ALL).title("System Info"))
+        .wrap(Wrap { trim: true });
+    let right_paragraph = Paragraph::new(right_info)
+        .block(Block::default().borders(Borders::ALL).title(""))
+        .wrap(Wrap { trim: true });
+    f.render_widget(left_paragraph, info_grid[0]);
+    f.render_widget(right_paragraph, info_grid[1]);
+
     // ── FOOTER: Input Prompt ──────────────────────────────────────────────
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(100)])
-        .split(chunks[2]);
+        .split(chunks[3]);
 
     // Input line (prompt)
     let input_span = Span::styled(
