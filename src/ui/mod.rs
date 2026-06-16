@@ -2,7 +2,7 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 
 use anyhow::Result;
 use colored::*;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, MouseEventKind, MouseButton};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Alignment},
@@ -202,6 +202,8 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
     let mut stdout = io::stdout();
     // Enable raw mode and clear the screen for a clean CLI‑style start
     let _ = crossterm::terminal::enable_raw_mode();
+    // Enable mouse capture for interaction
+    let _ = crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture);
     // Clear any existing terminal content
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
     // Enter alternate screen to lock whole UI (prevents terminal scroll)
@@ -222,92 +224,130 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
 
 
         if event::poll(Duration::from_millis(150))? {
-            if let Event::Key(key) = event::read()? {
-                let mut app = state.lock().unwrap();
-                match key.code {
-                    // Quit the REPL
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        should_quit = true;
-                    }
-                    // Navigate or scroll depending on focus
-                    // Navigation: Arrow keys and j/k for sidebar, scrolling for console
-                    KeyCode::Up => {
-                        if app.focus == Focus::Sidebar {
-                            // Move selection up in sidebar
-                            if app.selected == 0 {
-                                app.selected = MENU_ITEMS.len() - 1;
+            let ev = event::read()?;
+            let mut app = state.lock().unwrap();
+            match ev {
+                Event::Key(key) => {
+                    match key.code {
+                        // Quit the REPL
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            should_quit = true;
+                        }
+                        // Navigation keys
+                        KeyCode::Up => {
+                            if app.focus == Focus::Sidebar {
+                                if app.selected == 0 {
+                                    app.selected = MENU_ITEMS.len() - 1;
+                                } else {
+                                    app.selected -= 1;
+                                }
+                                if app.sidebar_offset > app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            } else if app.focus == Focus::Console {
+                                if app.console_offset > 0 {
+                                    app.console_offset -= 1;
+                                }
+                            }
+                        }
+                        KeyCode::Down => {
+                            if app.focus == Focus::Sidebar {
+                                app.selected = (app.selected + 1) % MENU_ITEMS.len();
+                                if app.sidebar_offset + 1 < app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            } else if app.focus == Focus::Console {
+                                let max_offset = if !app.log.is_empty() { app.log.len() - 1 } else { 0 };
+                                if app.console_offset < max_offset {
+                                    app.console_offset += 1;
+                                }
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            if app.focus == Focus::Sidebar {
+                                if app.selected == 0 {
+                                    app.selected = MENU_ITEMS.len() - 1;
+                                } else {
+                                    app.selected -= 1;
+                                }
+                                if app.sidebar_offset > app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            }
+                        }
+                        KeyCode::Char('j') => {
+                            if app.focus == Focus::Sidebar {
+                                app.selected = (app.selected + 1) % MENU_ITEMS.len();
+                                if app.sidebar_offset + 1 < app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            }
+                        }
+                        KeyCode::Tab => {
+                            app.focus = if app.focus == Focus::Sidebar { Focus::Console } else { Focus::Sidebar };
+                        }
+                        KeyCode::Backspace => {
+                            app.input.pop();
+                        }
+                        KeyCode::Enter => {
+                            if app.focus == Focus::Sidebar {
+                                // Simulate activating the selected menu item
+                                let (key, _desc, _color) = MENU_ITEMS[app.selected];
+                                app.log.push(format!("Menu selected: {}", key));
                             } else {
-                                app.selected -= 1;
-                            }
-                            if app.sidebar_offset > app.selected {
-                                app.sidebar_offset = app.selected;
-                            }
-                        } else if app.focus == Focus::Console {
-                            // Scroll console up
-                            if app.console_offset > 0 {
-                                app.console_offset -= 1;
+                                let cmd = app.input.trim().to_string();
+                                app.log.push(cmd.clone());
+                                app.input.clear();
+                                process_command(&mut app);
                             }
                         }
-                    }
-                    KeyCode::Down => {
-                        if app.focus == Focus::Sidebar {
-                            // Move selection down in sidebar
-                            app.selected = (app.selected + 1) % MENU_ITEMS.len();
-                            if app.sidebar_offset + 1 < app.selected {
-                                app.sidebar_offset = app.selected;
-                            }
-                        } else if app.focus == Focus::Console {
-                            // Scroll console down
-                            let max_offset = if !app.log.is_empty() { app.log.len() - 1 } else { 0 };
-                            if app.console_offset < max_offset {
-                                app.console_offset += 1;
-                            }
+                        KeyCode::Char(c) => {
+                            app.input.push(c);
                         }
+                        _ => {}
                     }
-                    // j/k shortcuts for navigation when sidebar has focus
-                    KeyCode::Char('k') => {
-                        if app.focus == Focus::Sidebar {
-                            if app.selected == 0 {
-                                app.selected = MENU_ITEMS.len() - 1;
-                            } else {
-                                app.selected -= 1;
-                            }
-                            if app.sidebar_offset > app.selected {
-                                app.sidebar_offset = app.selected;
-                            }
-                        }
-                    }
-                    KeyCode::Char('j') => {
-                        if app.focus == Focus::Sidebar {
-                            app.selected = (app.selected + 1) % MENU_ITEMS.len();
-                            if app.sidebar_offset + 1 < app.selected {
-                                app.sidebar_offset = app.selected;
-                            }
-                        }
-                    }
-                    // Switch focus between menu and console
-                    KeyCode::Tab => {
-                        app.focus = if app.focus == Focus::Sidebar { Focus::Console } else { Focus::Sidebar };
-                    },
-                    // Delete character
-                    KeyCode::Backspace => {
-                        app.input.pop();
-                    }
-                    // Execute when Enter is pressed
-                    KeyCode::Enter => {
-                        let cmd = app.input.trim().to_string();
-                        // Store the command (even if empty) to keep a blank line
-                        app.log.push(cmd.clone());
-                        app.input.clear();
-                        // Process the command
-                        process_command(&mut app);
-                    }
-                    // Regular character input
-                    KeyCode::Char(c) => {
-                        app.input.push(c);
-                    }
-                    _ => {}
                 }
+                Event::Mouse(mouse_event) => {
+                    // Handle mouse events via the new MouseEvent struct (crossterm 0.28)
+                    use crossterm::event::{MouseEventKind, MouseButton};
+                    match mouse_event.kind {
+                        MouseEventKind::ScrollUp => {
+                            if app.focus == Focus::Sidebar {
+                                if app.selected == 0 {
+                                    app.selected = MENU_ITEMS.len() - 1;
+                                } else {
+                                    app.selected -= 1;
+                                }
+                                if app.sidebar_offset > app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if app.focus == Focus::Sidebar {
+                                app.selected = (app.selected + 1) % MENU_ITEMS.len();
+                                if app.sidebar_offset + 1 < app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            // Click selects menu based on row coordinate
+                            if app.focus == Focus::Sidebar {
+                                let idx = (mouse_event.row as usize) % MENU_ITEMS.len();
+                                app.selected = idx;
+                                if app.sidebar_offset > app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            } else if app.focus == Focus::Console {
+                                // Could focus input on click in input area (simplified)
+                                app.focus = Focus::Console; // keep same or switch as needed
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -320,6 +360,8 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
     // Leave alternate screen and restore terminal
     let _ = crossterm::terminal::disable_raw_mode();
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+    // Disable mouse capture before exiting
+    let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
     terminal.show_cursor()?;
     Ok(())
 }
