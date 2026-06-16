@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Alignment},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, ListItem, Paragraph, Wrap, Clear, Gauge, canvas::{Canvas, Line as CanvasLine}},
+    widgets::{Block, Borders, ListItem, Paragraph, Wrap, Clear},
     Frame, Terminal,
 };
 use sysinfo::{System, SystemExt, DiskExt};
@@ -390,24 +390,14 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         }
     };
 
-    // Full screen layout: header, menu, info, footer.
+    // Full screen layout: header, info, menu, footer.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Percentage(header_pct),
-            Constraint::Percentage(menu_pct),
             Constraint::Percentage(10), // info area
-            Constraint::Percentage(footer_pct),
-        ])
-        .split(f.size());
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(1)
-        .constraints([
-            Constraint::Percentage(header_pct),
             Constraint::Percentage(menu_pct),
-            Constraint::Percentage(10), // info area
             Constraint::Percentage(footer_pct),
         ])
         .split(f.size());
@@ -452,7 +442,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
             Constraint::Percentage(40), // menu pane
             Constraint::Percentage(60), // log pane
         ])
-        .split(chunks[1]);
+        .split(chunks[2]);
 
     // ── MAIN AREA – split horizontally into MENU and LOG panels �n    // Build full list of menu items with styling
     let all_items: Vec<ListItem> = MENU_ITEMS.iter().enumerate().map(|(i, (key, desc, _color))| {
@@ -527,7 +517,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
             Constraint::Percentage(50),
             Constraint::Percentage(50),
         ])
-        .split(chunks[2]);
+        .split(chunks[1]);
     let left_paragraph = Paragraph::new(left_info)
         .block(Block::default().borders(Borders::ALL).title("System Info"))
         .wrap(Wrap { trim: true });
