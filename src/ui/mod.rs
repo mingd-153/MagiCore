@@ -469,7 +469,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     )));
     // Created by line
         header_content.push(Line::from(Span::styled(
-            format!("Created by {}", _AUTHOR.trim_start_matches("_")),
+            "Created by mingdoan",
             Style::default(),
         )));
     // Optional version line
