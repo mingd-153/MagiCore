@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
-use sysinfo::System;
+use sysinfo::{System, DiskExt, NetworkExt};
 
 
 
@@ -49,12 +49,18 @@ fn get_system_info_lines() -> Vec<Line<'static>> {
     // RAM usage
     let total_mem = sys.total_memory();
     let used_mem = sys.used_memory();
-    // SSD info (placeholder)
-    let ssd_info = "SSD: N/A".to_string();
+    // SSD info (first disk total space)
+    let ssd_info = if let Some(disk) = sys.disks().first() {
+        let gb = disk.total_space() as f64 / 1_073_741_824.0;
+        format!("SSD: {:.2} GB", gb)
+    } else {
+        "SSD: N/A".to_string()
+    };
     // GPU placeholder (no cross‑platform detection)
     let gpu_info = "GPU: N/A".to_string();
-    // Bandwidth placeholder
-    let bandwidth_str = "Bandwidth: N/A".to_string();
+    // Bandwidth (sum of received + transmitted bytes across interfaces)
+    let bandwidth_bytes: u64 = sys.networks().values().map(|data| data.total_received() + data.total_transmitted()).sum();
+    let bandwidth_str = format!("Bandwidth: {:.2} MB", bandwidth_bytes as f64 / 1_048_576.0);
     // Cache (available memory)
     let cache_str = format!("Cache: {} MB", sys.available_memory() / 1024);
 
