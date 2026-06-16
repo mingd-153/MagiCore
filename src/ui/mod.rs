@@ -8,21 +8,24 @@ use crossterm::event::{self, Event, KeyCode};
         layout::{Constraint, Direction, Layout},
         style::{Color, Modifier, Style},
         text::{Line, Span},
-        widgets::{Block, Borders, ListItem, Paragraph, Wrap, canvas::{Canvas, Line as CanvasLine}},
+        widgets::{Block, Borders, ListItem, Paragraph, Wrap, Clear, Gauge, canvas::{Canvas, Line as CanvasLine}},
         Frame, Terminal,
     };
 
 
 
 
-const LOGO_PATH: &str = "logo.txt";
+const LOGO: &[&str] = &[
+    "███╗   ███╗███████╗ ██████╗  █████╗  ██████╗  █████╗ ████████╗███████╗",
+    "████╗ ████║██╔════╝██╔════╝ ██╔══██╗██╔════╝ ██╔══██╗╚══██╔══╝██╔════╝",
+    "██╔████╔██║█████╗  ██║  ███╗███████║██║  ███╗███████║   ██║   █████╗",
+    "██║╚██╔╝██║██╔══╝  ██║   ██║██╔══██║██║   ██║██╔══██║   ██║   ██╔══╝",
+    "██║ ╚═╝ ██║███████╗╚██████╔╝██║  ██║╚██████╔╝██║  ██║   ██║   ███████╗",
+    "╚═╝     ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝",
+];
 
 fn load_logo_lines() -> Vec<String> {
-    std::fs::read_to_string(LOGO_PATH)
-        .unwrap_or_default()
-        .lines()
-        .map(|s| s.to_string())
-        .collect()
+    LOGO.iter().map(|s| s.to_string()).collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,17 +37,16 @@ fn load_logo_lines() -> Vec<String> {
 //    r" ║╚═╝║    ╔╝╔╝     ║║   ║ ║║   ║ ║║   ║ ║╚═══╝║",
 
 
-const AUTHOR: &str = "✦ Crafted by doanmihh15.3 ✦";
+const AUTHOR: &str = "doanmihh153";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const PROJECT_NAME: &str = "MegaGate";
 
 const MENU_ITEMS: &[(&str, &str, Color)] = &[
-    ("➤ Install",   "Install dependencies",      Color::Green),
-    ("➤ Update",   "Update a package",          Color::Cyan),
-    ("➤ Remove",   "Remove a package",          Color::Red),
-    ("➤ List",     "View dependency graph",     Color::Blue),
-    ("➤ Audit",    "Run security audit",        Color::Yellow),
-    ("➤ Export",   "Export lock file",           Color::Magenta),
-    ("➤ Exit",     "Quit application",           Color::White),
+    ("Home",      "Home screen",      Color::Green),
+    ("Settings",  "Configuration",    Color::Cyan),
+    ("Logs",      "View logs",        Color::Red),
+    ("Help",      "Help documentation",Color::Blue),
+    ("Exit",      "Quit application", Color::Yellow),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,12 +71,19 @@ struct AppState {
     running: bool,
     project_dir: PathBuf,
     logo_frame: usize,
+    overlay: Overlay,
 }
 
 #[derive(Clone, PartialEq)]
 enum Focus {
     Sidebar,
     Console,
+}
+
+#[derive(Clone, PartialEq)]
+enum Overlay {
+    None,
+    Help,
 }
 
 impl AppState {
@@ -92,6 +101,7 @@ impl AppState {
             input: String::new(),
             log: Vec::new(),
             logo_frame: 0,
+            overlay: Overlay::None,
 
         }
     }
@@ -278,6 +288,17 @@ fn prompt_input(prompt: &str) -> String {
 fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let app = state.lock().unwrap();
 
+    // Small terminal size warning
+    let size = f.size();
+    if size.width < 80 || size.height < 24 {
+        let warning = Paragraph::new("Warning: Terminal size too small (min 80x24).")
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(Clear, size);
+        f.render_widget(warning, size);
+        return;
+    }
+
     // Full screen layout: header (logo + title + author), menu, footer (status + progress)
     // Determine layout proportions based on terminal height for responsiveness
     let total_height = f.size().height;
@@ -304,8 +325,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         .split(f.size());
 
     // ── HEADER: Logo + Title + Author ──────────────────────────────────────────
-    let header_block = Block::default()
-        .borders(Borders::ALL);
+    let header_block = Block::default();
 
     // ── WAVEFORM (scope) ─────────────────────────────────────
     let wf_width = f.size().width as usize;
@@ -318,7 +338,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         .collect();
     // Draw a moving sine‑wave using many tiny line segments
     let waveform = Canvas::default()
-        .block(Block::default().borders(Borders::ALL).title("Scope"))
+        .block(Block::default().borders(Borders::ALL).title("Phạm vi"))
         .x_bounds([0.0, wf_width as f64])
         .y_bounds([-1.5, 1.5])
         .paint(|ctx| {
@@ -337,51 +357,22 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         });
     f.render_widget(waveform, chunks[0]);
 
-    // Logo lines with color gradient (3D effect) – responsive truncation
-    let logo_strings = load_logo_lines();
-    let width = f.size().width as usize;
-    // Animated logo (beige) – shift each line horizontally based on frame
-    let logo_spans: Vec<Line> = logo_strings
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            // If line longer than width, apply horizontal scrolling offset
-            let display = if line.chars().count() > width {
-                let offset = ((app.logo_frame + i) % width) as usize;
-                let chars: Vec<char> = line.chars().collect();
-                let mut shifted = String::new();
-                for idx in 0..width {
-                    let ch = chars[(offset + idx) % chars.len()];
-                    shifted.push(ch);
-                }
-                shifted
-            } else {
-                line.clone()
-            };
-            let color = Color::Rgb(245, 222, 179); // beige
-            Line::from(Span::styled(display, Style::default().fg(color).add_modifier(Modifier::BOLD)))
-        })
-        .collect();
-    // Title
-    let title_spans = vec![
-        Line::from(""),
+    // Header: Project name and author
+    let header_lines = vec![
         Line::from(Span::styled(
-            "Developer from VietNam build with ♥️",
-        Style::default(),
+            PROJECT_NAME,
+            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )),
-        Line::from(Span::styled(AUTHOR, Style::default())),
-        Line::from(Span::styled(format!("megagate v{}", VERSION), Style::default())),
-        ];
-
-
-    let header_content: Vec<Line> = logo_spans
-        .into_iter()
-        .chain(title_spans.into_iter())
-        .collect();
+        Line::from(Span::styled(
+            AUTHOR,
+            Style::default(),
+        )),
+    ];
+    let header_content: Vec<Line> = header_lines;
 
     let header_widget = Paragraph::new(header_content)
         .block(header_block)
-        .alignment(ratatui::layout::Alignment::Center);
+        .alignment(ratatui::layout::Alignment::Left);
 
     f.render_widget(header_widget, chunks[1]);
 
@@ -437,8 +428,19 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         let log_start = app.console_offset;
         let log_end = std::cmp::min(log_start + console_visible, app.log.len());
         let log_slice = &app.log[log_start..log_end];
-        let log_text = log_slice.join("\n");
-        let log_paragraph = Paragraph::new(log_text)
+        // Apply simple coloring based on log level prefixes
+        let styled_log_lines: Vec<Line> = log_slice.iter().map(|line| {
+            let mut style = Style::default();
+            if line.contains("[INFO]") {
+                style = style.fg(Color::Green);
+            } else if line.contains("[WARN]") {
+                style = style.fg(Color::Yellow);
+            } else if line.contains("[ERROR]") {
+                style = style.fg(Color::Red);
+            }
+            Line::from(Span::styled(line.clone(), style))
+        }).collect();
+        let log_paragraph = Paragraph::new(styled_log_lines)
             .block(Block::default().borders(Borders::ALL).title("Console"))
             .wrap(Wrap { trim: true });
     f.render_widget(log_paragraph, middle_chunks[1]);
