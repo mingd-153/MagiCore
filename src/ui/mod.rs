@@ -553,11 +553,11 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         .wrap(Wrap { trim: true });
     f.render_widget(log_paragraph, middle_chunks[1]);
 
-    // ── INFO: System information display – vertical stack of 8 blocks ────────
+    // ── INFO: System information display – single row of 8 blocks ────────
     let info_lines = get_system_info_lines(); // 8 lines expected
-    // Split the info area vertically into 8 equal rows
-    let info_rows = Layout::default()
-        .direction(Direction::Vertical)
+    // Split the info area horizontally into 8 equal columns
+    let info_cols = Layout::default()
+        .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(12),
             Constraint::Percentage(12),
@@ -569,12 +569,12 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
             Constraint::Percentage(12),
         ])
         .split(chunks[1]);
-    for (row_idx, row_chunk) in info_rows.iter().enumerate() {
-        if let Some(line) = info_lines.get(row_idx) {
+    for (col_idx, col_chunk) in info_cols.iter().enumerate() {
+        if let Some(line) = info_lines.get(col_idx) {
             let block = Paragraph::new(Line::from(line.clone()))
                 .block(Block::default().borders(Borders::ALL).title(""))
                 .wrap(Wrap { trim: true });
-            f.render_widget(block, *row_chunk);
+            f.render_widget(block, *col_chunk);
         }
     }
 
