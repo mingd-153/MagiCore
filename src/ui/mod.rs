@@ -11,8 +11,8 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
+
 use sysinfo::System;
-use sysinfo::SystemExt;
 
 
 
@@ -32,43 +32,76 @@ fn load_logo_lines() -> Vec<String> {
     LOGO.iter().map(|s| s.to_string()).collect()
 }
 
-// Retrieve local IP address using a UDP socket trick
+// Retrieve public IP address using a UDP socket trick (outbound IP)
 fn get_ip_address() -> Option<String> {
     use std::net::UdpSocket;
     // Bind to an arbitrary local address
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    // Connect to an external address; no packets are sent
+    // Connect to external address; no packets are sent
     socket.connect("8.8.8.8:80").ok()?;
     // Local address now contains the outbound IP
     socket.local_addr().ok().map(|addr| addr.ip().to_string())
 }
 
+// Retrieve local network interface IP (first non‑loopback IPv4)
+#[allow(clippy::collapsible_match)]
+fn get_local_ip_address() -> Option<String> {
+    // Requires the `if-addrs` crate
+    if_addrs::get_if_addrs().ok().and_then(|ifaces| {
+        for iface in ifaces {
+            if let std::net::IpAddr::V4(v4) = iface.ip() {
+                if !v4.is_loopback() {
+                    return Some(v4.to_string());
+                }
+            }
+        }
+        None
+    })
+}
+
+
 fn get_system_info_lines() -> Vec<Line<'static>> {
+    // Gather system-wide info
     let sys = System::new_all();
-    // CPU usage (use global_cpu_info)
+    // CPU usage (global CPU info)
     let cpu_usage = sys.global_cpu_info().cpu_usage();
     // RAM usage
     let total_mem = sys.total_memory();
     let used_mem = sys.used_memory();
-    // SSD info (first disk total space)
-    let ssd_info = if let Some(disk) = sys.disks().first() {
+    // SSD info – use Disks helper (first disk)
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let ssd_info = if let Some(disk) = disks.list().first() {
         let gb = disk.total_space() as f64 / 1_073_741_824.0;
         format!("SSD: {:.2} GB", gb)
     } else {
         "SSD: N/A".to_string()
     };
-    // GPU placeholder (no cross‑platform detection)
-    let gpu_info = "GPU: N/A".to_string();
-    // Bandwidth (sum of received + transmitted bytes across interfaces)
-    let bandwidth_bytes: u64 = sys.networks().values().map(|data| data.total_received() + data.total_transmitted()).sum();
+    // GPU info – attempt to detect via components list (may be empty on some platforms)
+    let gpu_info = {
+        // Use Components helper to list hardware components (may include GPU)
+        let components = sysinfo::Components::new_with_refreshed_list();
+        if let Some(comp) = components.list().iter().find(|c| c.label().to_ascii_lowercase().contains("gpu")) {
+            format!("GPU: {}", comp.label())
+        } else {
+            "GPU: N/A".to_string()
+        }
+    };
+    // Bandwidth – sum of received + transmitted bytes across interfaces
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    let bandwidth_bytes: u64 = networks.values().map(|data| data.total_received() + data.total_transmitted()).sum();
     let bandwidth_str = format!("Bandwidth: {:.2} MB", bandwidth_bytes as f64 / 1_048_576.0);
     // Cache (available memory)
     let cache_str = format!("Cache: {} MB", sys.available_memory() / 1024);
 
-    // IP address (first network interface IP)
+    // Public IP address (outbound)
     let ip_line = match get_ip_address() {
         Some(ip) => format!("IP: {}", ip),
         None => "IP: N/A".to_string(),
+    };
+    // Local IP address (first non‑loopback interface)
+    let local_ip_line = match get_local_ip_address() {
+        Some(ip) => format!("Local IP: {}", ip),
+        None => "Local IP: N/A".to_string(),
     };
     vec![
         Line::from(Span::styled(format!("CPU: {:.2}%", cpu_usage), Style::default())),
@@ -78,6 +111,7 @@ fn get_system_info_lines() -> Vec<Line<'static>> {
         Line::from(Span::styled(bandwidth_str, Style::default())),
         Line::from(Span::styled(cache_str, Style::default())),
         Line::from(Span::styled(ip_line, Style::default())),
+        Line::from(Span::styled(local_ip_line, Style::default())),
     ]
 }
 
@@ -90,7 +124,7 @@ fn get_system_info_lines() -> Vec<Line<'static>> {
 //    r" ║╚═╝║    ╔╝╔╝     ║║   ║ ║║   ║ ║║   ║ ║╚═══╝║",
 
 
-const AUTHOR: &str = "doanmihh153";
+const _AUTHOR: &str = "doanmihh153";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROJECT_NAME: &str = "MegaGate";
 
@@ -118,13 +152,13 @@ struct AppState {
     // Scroll offset for the console (kept static for now)
     console_offset: usize,
     // Unused placeholders retained for compatibility
-    message: String,
-    progress: u16,
-    showing_progress: bool,
+    _message: String,
+    _progress: u16,
+    _showing_progress: bool,
     running: bool,
-    project_dir: PathBuf,
+    _project_dir: PathBuf,
     logo_frame: usize,
-    overlay: Overlay,
+    _overlay: Overlay,
 }
 
 #[derive(Clone, PartialEq)]
@@ -134,6 +168,7 @@ enum Focus {
 }
 
 #[derive(Clone, PartialEq)]
+#[allow(dead_code)]
 enum Overlay {
     None,
     Help,
@@ -146,15 +181,15 @@ impl AppState {
             focus: Focus::Sidebar,
             sidebar_offset: 0,
             console_offset: 0,
-            message: String::new(),
-            progress: 0,
-            showing_progress: false,
+            _message: String::new(),
+            _progress: 0,
+            _showing_progress: false,
             running: true,
-            project_dir,
+            _project_dir: project_dir,
             input: String::new(),
             log: Vec::new(),
             logo_frame: 0,
-            overlay: Overlay::None,
+            _overlay: Overlay::None,
 
         }
     }
@@ -187,11 +222,10 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
 
 
         if event::poll(Duration::from_millis(150))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    let mut app = state.lock().unwrap();
-                    match key.code {
-                        // Quit the REPL
+            if let Event::Key(key) = event::read()? {
+                let mut app = state.lock().unwrap();
+                match key.code {
+                    // Quit the REPL
                     KeyCode::Char('q') | KeyCode::Esc => {
                         should_quit = true;
                     }
@@ -224,7 +258,7 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
                             }
                         } else if app.focus == Focus::Console {
                             // Scroll console down
-                            let max_offset = if app.log.len() > 0 { app.log.len() - 1 } else { 0 };
+                            let max_offset = if !app.log.is_empty() { app.log.len() - 1 } else { 0 };
                             if app.console_offset < max_offset {
                                 app.console_offset += 1;
                             }
@@ -256,32 +290,29 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
                         app.focus = if app.focus == Focus::Sidebar { Focus::Console } else { Focus::Sidebar };
                     },
                     // Delete character
-                        KeyCode::Backspace => {
-                            app.input.pop();
-                        }
-                        // Execute when Enter is pressed
-                        KeyCode::Enter => {
-                            let cmd = app.input.trim().to_string();
-                            // Store the command (even if empty) to keep a blank line
-                            app.log.push(format!("{}", cmd));
-                            app.input.clear();
-                            // Process the command
-                            process_command(&mut *app);
-                        }
-                        // Regular character input
-                        KeyCode::Char(c) => {
-                            app.input.push(c);
-                        }
-                        _ => {}
+                    KeyCode::Backspace => {
+                        app.input.pop();
                     }
+                    // Execute when Enter is pressed
+                    KeyCode::Enter => {
+                        let cmd = app.input.trim().to_string();
+                        // Store the command (even if empty) to keep a blank line
+                        app.log.push(cmd.clone());
+                        app.input.clear();
+                        // Process the command
+                        process_command(&mut app);
+                    }
+                    // Regular character input
+                    KeyCode::Char(c) => {
+                        app.input.push(c);
+                    }
+                    _ => {}
                 }
-                // Mouse clicks are ignored in REPL mode – keep UI simple
-                _ => {}
             }
         }
 
         // Check quit flag
-        if state.lock().unwrap().running == false {
+        if !state.lock().unwrap().running {
             should_quit = true;
         }
     }
@@ -358,6 +389,7 @@ fn process_command(app: &mut AppState) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompt for input
 // ─────────────────────────────────────────────────────────────────────────────
+#[allow(dead_code)]
 fn prompt_input(prompt: &str) -> String {
     crossterm::terminal::disable_raw_mode().ok();
     print!("\n  {} ", prompt.yellow().bold());
@@ -371,6 +403,7 @@ fn prompt_input(prompt: &str) -> String {
 // ─────────────────────────────────────────────────────────────────────────────
 // Main UI drawing function
 // ─────────────────────────────────────────────────────────────────────────────
+#[allow(clippy::iter_overeager_cloned, clippy::manual_div_ceil)]
 fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let app = state.lock().unwrap();
 
@@ -378,18 +411,22 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let compact = size.width < 80 || size.height < 24;
 
     // Determine layout percentages based on compact flag and terminal height.
-    let (header_pct, menu_pct, footer_pct) = if compact {
-        // Compact layout for very small terminals.
-        (15, 70, 15)
+    // Compute layout percentages: header, info, menu, footer.
+    // Allocate a larger portion for the info panel so all system lines are visible.
+    let (header_pct, info_pct, menu_pct, footer_pct): (u16, u16, u16, u16) = if compact {
+        // Compact layout: header 15%, info 30%, footer 15%, remaining for menu.
+        let info = 30;
+        let header = 15;
+        let footer = 15;
+        let menu = 100 - header - info - footer;
+        (header, info, menu, footer)
     } else {
-        let total_height = size.height;
-        if total_height < 20 {
-            (20, 70, 10)
-        } else if total_height < 30 {
-            (25, 65, 10)
-        } else {
-            (35, 55, 10)
-        }
+        // Normal layout: header 20%, info 40%, footer 10%, remaining for menu.
+        let info = 40;
+        let header = 20;
+        let footer = 10;
+        let menu = 100 - header - info - footer;
+        (header, info, menu, footer)
     };
 
     // Full screen layout: header, info, menu, footer.
@@ -398,7 +435,8 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         .margin(1)
         .constraints([
             Constraint::Percentage(header_pct),
-            Constraint::Percentage(10), // info area
+            // Info area – allocate more vertical space for system info
+            Constraint::Percentage(info_pct), // info area
             Constraint::Percentage(menu_pct),
             Constraint::Percentage(footer_pct),
         ])
