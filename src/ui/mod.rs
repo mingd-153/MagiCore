@@ -339,8 +339,8 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
     )));
     header_content.push(Line::from(Span::styled(
-        "Ming Doan – Lead Developer",
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+        "mingdoan - author",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
     )));
 
     let header_widget = Paragraph::new(header_content)
