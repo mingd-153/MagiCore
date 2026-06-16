@@ -410,6 +410,15 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let size = f.size();
     let compact = size.width < 80 || size.height < 24;
 
+    // If terminal is too small, show warning and skip drawing UI
+    if compact {
+        let warning = Paragraph::new("Terminal size too small. Minimum 80x24 required.")
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            .alignment(Alignment::Center);
+        f.render_widget(warning, size);
+        return;
+    }
+
     // Determine layout percentages based on compact flag and terminal height.
     // Compute layout percentages: header, info, menu, footer.
     // Allocate a larger portion for the info panel so all system lines are visible.
@@ -421,9 +430,9 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         let menu = 100 - header - info - footer;
         (header, info, menu, footer)
     } else {
-        // Normal layout: header 20%, info 40%, footer 10%, remaining for menu.
-        let info = 40;
-        let header = 20;
+        // Normal layout: header 15%, info 35%, footer 10%, remaining for menu.
+        let info = 35;
+        let header = 15;
         let footer = 10;
         let menu = 100 - header - info - footer;
         (header, info, menu, footer)
@@ -460,7 +469,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     )));
     // Created by line
     header_content.push(Line::from(Span::styled(
-        "Created by mingdoan",
+        "Created by doanmihh153",
         Style::default(),
     )));
     // Optional version line
@@ -484,7 +493,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         ])
         .split(chunks[2]);
 
-    // ── MAIN AREA – split horizontally into MENU and LOG panels �n    // Build full list of menu items with styling
+    // ── MENU PANEL ────────────────────────────────────────
     let all_items: Vec<ListItem> = MENU_ITEMS.iter().enumerate().map(|(i, (key, desc, _color))| {
         let style = if i == app.selected {
             Style::default().add_modifier(Modifier::REVERSED)
@@ -502,70 +511,79 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let end = std::cmp::min(visible_height, all_items.len());
     let items = &all_items[..end];
     // Render menu as a simple Paragraph (no auto‑scroll)
-        let menu_lines: Vec<Line> = items.iter().enumerate().map(|(i, _item)| {
-            // Retrieve the menu definition (key, description, color)
-            let (key, desc, color) = MENU_ITEMS[i];
-            let base_style = Style::default().fg(color);
-            let style = if i == app.selected {
-                // Highlight selected item: bold, reversed background, keep its color
-                base_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
-            } else {
-                base_style
-            };
-            Line::from(vec![
-                Span::styled(key, style),
-                Span::raw(" "),
-                Span::styled(desc, style),
-            ])
-        }).collect();
+    let menu_lines: Vec<Line> = items.iter().enumerate().map(|(i, _item)| {
+        // Retrieve the menu definition (key, description, color)
+        let (key, desc, color) = MENU_ITEMS[i];
+        let base_style = Style::default().fg(color);
+        let style = if i == app.selected {
+            // Highlight selected item: bold, reversed background, keep its color
+            base_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            base_style
+        };
+        Line::from(vec![
+            Span::styled(key, style),
+            Span::raw(" "),
+            Span::styled(desc, style),
+        ])
+    }).collect();
     let menu_paragraph = Paragraph::new(menu_lines)
         .block(Block::default().borders(Borders::ALL).title("Menu"));
     f.render_widget(menu_paragraph, middle_chunks[0]);
 
     // ── LOG PANEL (right side) ────────────────────────────────────────
-        // Show a slice of the log based on scroll offset and pane height
-        let console_visible = middle_chunks[1].height as usize;
-        let log_start = app.console_offset;
-        let log_end = std::cmp::min(log_start + console_visible, app.log.len());
-        let log_slice = &app.log[log_start..log_end];
-        // Apply simple coloring based on log level prefixes
-        let styled_log_lines: Vec<Line> = log_slice.iter().map(|line| {
-            let mut style = Style::default();
-            if line.contains("[INFO]") {
-                style = style.fg(Color::Green);
-            } else if line.contains("[WARN]") {
-                style = style.fg(Color::Yellow);
-            } else if line.contains("[ERROR]") {
-                style = style.fg(Color::Red);
-            }
-            Line::from(Span::styled(line.clone(), style))
-        }).collect();
-        let log_paragraph = Paragraph::new(styled_log_lines)
-            .block(Block::default().borders(Borders::ALL).title("Console"))
-            .wrap(Wrap { trim: true });
+    let console_visible = middle_chunks[1].height as usize;
+    let log_start = app.console_offset;
+    let log_end = std::cmp::min(log_start + console_visible, app.log.len());
+    let log_slice = &app.log[log_start..log_end];
+    // Apply simple coloring based on log level prefixes
+    let styled_log_lines: Vec<Line> = log_slice.iter().map(|line| {
+        let mut style = Style::default();
+        if line.contains("[INFO]") {
+            style = style.fg(Color::Green);
+        } else if line.contains("[WARN]") {
+            style = style.fg(Color::Yellow);
+        } else if line.contains("[ERROR]") {
+            style = style.fg(Color::Red);
+        }
+        Line::from(Span::styled(line.clone(), style))
+    }).collect();
+    let log_paragraph = Paragraph::new(styled_log_lines)
+        .block(Block::default().borders(Borders::ALL).title("Console"))
+        .wrap(Wrap { trim: true });
     f.render_widget(log_paragraph, middle_chunks[1]);
 
-    // ── INFO: System information display
-    let info_lines = get_system_info_lines();
-    // Split info into two columns for grid layout
-    let left_info: Vec<Line> = info_lines.iter().cloned().take( (info_lines.len()+1)/2 ).collect();
-    let right_info: Vec<Line> = info_lines.iter().cloned().skip( (info_lines.len()+1)/2 ).collect();
-    let info_grid = Layout::default()
-        .direction(Direction::Horizontal)
-        .margin(0)
+    // ── INFO: System information display – 4×2 grid of blocks ────────
+    let info_lines = get_system_info_lines(); // 8 lines expected
+    // Split info area vertically into 2 rows
+    let info_rows = Layout::default()
+        .direction(Direction::Vertical)
         .constraints([
             Constraint::Percentage(50),
             Constraint::Percentage(50),
         ])
         .split(chunks[1]);
-    let left_paragraph = Paragraph::new(left_info)
-        .block(Block::default().borders(Borders::ALL).title("System Info"))
-        .wrap(Wrap { trim: true });
-    let right_paragraph = Paragraph::new(right_info)
-        .block(Block::default().borders(Borders::ALL).title(""))
-        .wrap(Wrap { trim: true });
-    f.render_widget(left_paragraph, info_grid[0]);
-    f.render_widget(right_paragraph, info_grid[1]);
+    // For each row, split into 4 columns
+    for (row_idx, row_chunk) in info_rows.iter().enumerate() {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ])
+            .split(*row_chunk);
+        for col_idx in 0..4 {
+            let line_idx = row_idx * 4 + col_idx;
+            if let Some(line) = info_lines.get(line_idx) {
+                let block = Paragraph::new(Line::from(line.clone()))
+                    .block(Block::default().borders(Borders::ALL).title("") )
+                    .wrap(Wrap { trim: true });
+                f.render_widget(block, cols[col_idx]);
+            }
+        }
+    }
 
     // ── FOOTER: Input Prompt ──────────────────────────────────────────────
     let footer_chunks = Layout::default()
