@@ -324,20 +324,23 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         ])
         .split(f.size());
 
-    // ── HEADER: Title + Author ──────────────────────────────────────────
+    // ── HEADER: Logo + Title + Author ────────────────────────────────────────
     let header_block = Block::default();
-    // Header: Project name and author
-    let header_lines = vec![
-        Line::from(Span::styled(
-            PROJECT_NAME,
-            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )),
-        Line::from(Span::styled(
-            AUTHOR,
-            Style::default(),
-        )),
-    ];
-    let header_content: Vec<Line> = header_lines;
+    // Load ASCII logo lines and prepend to header content
+    let logo_strings = load_logo_lines();
+    let mut header_content: Vec<Line> = logo_strings
+        .into_iter()
+        .map(|s| Line::from(Span::styled(s, Style::default())))
+        .collect();
+    // Append project name and author lines
+    header_content.push(Line::from(Span::styled(
+        PROJECT_NAME,
+        Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    header_content.push(Line::from(Span::styled(
+        AUTHOR,
+        Style::default(),
+    )));
 
     let header_widget = Paragraph::new(header_content)
         .block(header_block)
