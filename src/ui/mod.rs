@@ -430,8 +430,8 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         let menu = 100 - header - info - footer;
         (header, info, menu, footer)
     } else {
-        // Normal layout: header 15%, info 35%, footer 10%, remaining for menu.
-        let info = 35;
+        // Normal layout: header 15%, info 20%, footer 10%, remaining for menu.
+        let info = 20;
         let header = 15;
         let footer = 10;
         let menu = 100 - header - info - footer;
@@ -468,10 +468,10 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         Style::default(),
     )));
     // Created by line
-    header_content.push(Line::from(Span::styled(
-        "Created by doanmihh153",
-        Style::default(),
-    )));
+        header_content.push(Line::from(Span::styled(
+            format!("Created by {}", _AUTHOR.trim_start_matches("_")),
+            Style::default(),
+        )));
     // Optional version line
     header_content.push(Line::from(Span::styled(
         format!("Version: {}", VERSION),
@@ -553,35 +553,28 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         .wrap(Wrap { trim: true });
     f.render_widget(log_paragraph, middle_chunks[1]);
 
-    // ── INFO: System information display – 4×2 grid of blocks ────────
+    // ── INFO: System information display – single row of 8 blocks ────────
     let info_lines = get_system_info_lines(); // 8 lines expected
-    // Split info area vertically into 2 rows
-    let info_rows = Layout::default()
-        .direction(Direction::Vertical)
+    // Split the info area horizontally into 8 equal columns
+    let info_cols = Layout::default()
+        .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
         ])
         .split(chunks[1]);
-    // For each row, split into 4 columns
-    for (row_idx, row_chunk) in info_rows.iter().enumerate() {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-            ])
-            .split(*row_chunk);
-        for col_idx in 0..4 {
-            let line_idx = row_idx * 4 + col_idx;
-            if let Some(line) = info_lines.get(line_idx) {
-                let block = Paragraph::new(Line::from(line.clone()))
-                    .block(Block::default().borders(Borders::ALL).title("") )
-                    .wrap(Wrap { trim: true });
-                f.render_widget(block, cols[col_idx]);
-            }
+    for (col_idx, col_chunk) in info_cols.iter().enumerate() {
+        if let Some(line) = info_lines.get(col_idx) {
+            let block = Paragraph::new(Line::from(line.clone()))
+                .block(Block::default().borders(Borders::ALL).title(""))
+                .wrap(Wrap { trim: true });
+            f.render_widget(block, *col_chunk);
         }
     }
 
