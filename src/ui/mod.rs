@@ -300,7 +300,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         return;
     }
 
-    // Full screen layout: header (logo + title + author), menu, footer (status + progress)
+    // Full screen layout: header, menu, footer (status + progress)
     // Determine layout proportions based on terminal height for responsiveness
     let total_height = f.size().height;
     let (header_pct, menu_pct, footer_pct) = if total_height < 20 {
@@ -313,30 +313,19 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         // Normal or large terminal – keep expanded header for version line
         (35, 55, 10)
     };
-    // Layout: waveform (top), header, main (menu+log), footer
+    // Layout: header, main (menu+log), footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Percentage(10),                // waveform
             Constraint::Percentage(header_pct),
             Constraint::Percentage(menu_pct),
             Constraint::Percentage(footer_pct),
         ])
         .split(f.size());
 
-    // ── HEADER: Logo + Title + Author ──────────────────────────────────────────
+    // ── HEADER: Title + Author ──────────────────────────────────────────
     let header_block = Block::default();
-
-// ── LOGO DISPLAY ─────────────────────────────────────
-    let logo_lines = load_logo_lines();
-    // Join the logo lines into a single string for Paragraph::new (which expects Into<Text>)
-    let logo_text = logo_lines.join("\n");
-    let logo_paragraph = Paragraph::new(logo_text)
-        .block(Block::default().borders(Borders::ALL).title("Logo"))
-        .alignment(ratatui::layout::Alignment::Center);
-    f.render_widget(logo_paragraph, chunks[0]);
-
     // Header: Project name and author
     let header_lines = vec![
         Line::from(Span::styled(
@@ -354,7 +343,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         .block(header_block)
         .alignment(ratatui::layout::Alignment::Left);
 
-    f.render_widget(header_widget, chunks[1]);
+    f.render_widget(header_widget, chunks[0]);
 
     // Split the middle (menu + log) area horizontally
     let middle_chunks = Layout::default()
@@ -363,7 +352,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
             Constraint::Percentage(40), // menu pane
             Constraint::Percentage(60), // log pane
         ])
-        .split(chunks[2]);
+        .split(chunks[1]);
 
     // ── MAIN AREA – split horizontally into MENU and LOG panels �n    // Build full list of menu items with styling
     let all_items: Vec<ListItem> = MENU_ITEMS.iter().enumerate().map(|(i, (key, desc, _color))| {
@@ -429,7 +418,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(100)])
-        .split(chunks[3]);
+        .split(chunks[2]);
 
     // Input line (prompt)
     let input_span = Span::styled(
