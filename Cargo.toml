@@ -27,6 +27,7 @@ indicatif = "0.17"
 ratatui = "0.27"
 
 crossterm = "0.28"
+sysinfo = "0.30.13"
 
 [[bin]]
 name = "mg"
@@ -36,4 +37,4 @@ path = "src/bin/mg.rs"
 name = "megagate"
 path = "src/main.rs"
 
-crossterm = "0.28"
+
