@@ -8,10 +8,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Alignment},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, ListItem, Paragraph, Wrap, Clear},
+    widgets::{Block, Borders, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
-use sysinfo::{System, SystemExt};
+use sysinfo::System;
 
 
 
@@ -43,26 +43,21 @@ fn get_ip_address() -> Option<String> {
 }
 
 fn get_system_info_lines() -> Vec<Line<'static>> {
-    let mut sys = System::new_all();
-    sys.refresh_all();
+    let sys = System::new_all();
     // CPU usage (use global_cpu_info)
     let cpu_usage = sys.global_cpu_info().cpu_usage();
     // RAM usage
     let total_mem = sys.total_memory();
     let used_mem = sys.used_memory();
-    // SSD info (first disk total space)
-    let ssd_info = if let Some(disk) = sys.disks().first() {
-        let gb = disk.total_space() as f64 / 1_073_741_824.0;
-        format!("SSD: {:.2} GB", gb)
-    } else {
-        "SSD: N/A".to_string()
-    };
+    // SSD info (placeholder)
+    let ssd_info = "SSD: N/A".to_string();
     // GPU placeholder (no cross‑platform detection)
     let gpu_info = "GPU: N/A".to_string();
-    // Bandwidth placeholder (keep existing name for compatibility)
+    // Bandwidth placeholder
     let bandwidth_str = "Bandwidth: N/A".to_string();
-    // Cache placeholder
-    let cache_str = "Cache: N/A".to_string();
+    // Cache (available memory)
+    let cache_str = format!("Cache: {} MB", sys.available_memory() / 1024);
+
     // IP address (first network interface IP)
     let ip_line = match get_ip_address() {
         Some(ip) => format!("IP: {}", ip),
@@ -540,8 +535,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     );
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .title("Input")
-;
+        .title("Input");
     let input_paragraph = Paragraph::new(input_span)
         .block(input_block);
     f.render_widget(input_paragraph, footer_chunks[0]);
