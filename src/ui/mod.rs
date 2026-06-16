@@ -11,7 +11,8 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
-use sysinfo::{System, DiskExt, NetworkExt};
+use sysinfo::System;
+use sysinfo::SystemExt;
 
 
 

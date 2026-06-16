@@ -27,7 +27,7 @@ indicatif = "0.17"
 ratatui = "0.27"
 
 crossterm = "0.28"
-sysinfo = "0.30.13"
+sysinfo = "0.30"
 
 [[bin]]
 name = "mg"
