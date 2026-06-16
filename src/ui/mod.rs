@@ -327,11 +327,8 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     // ── HEADER: Logo + Title + Author ────────────────────────────────────────
     let header_block = Block::default();
     // Load ASCII logo lines and prepend to header content
-    let logo_strings = load_logo_lines();
-    let mut header_content: Vec<Line> = logo_strings
-        .into_iter()
-        .map(|s| Line::from(Span::styled(s, Style::default())))
-        .collect();
+    // Minimal header: no 3D logo, only textual info
+    let mut header_content: Vec<Line> = Vec::new();
     // Append project name and author lines
     // Updated header: English dev statement and author with distinct style
     header_content.push(Line::from(Span::styled(
@@ -345,7 +342,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
 
     let header_widget = Paragraph::new(header_content)
         .block(header_block)
-        .alignment(ratatui::layout::Alignment::Left);
+        .alignment(ratatui::layout::Alignment::Center);
 
     f.render_widget(header_widget, chunks[0]);
 
