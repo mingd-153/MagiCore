@@ -56,7 +56,7 @@ impl Adapter for NpmAdapter {
     async fn update(&self, dir: &str, pkg: &str) -> Result<()> {
         let manager = if Command::new("pnpm").arg("--version").output().is_ok() { "pnpm" } else { "npm" };
         let status = Command::new(manager)
-            .args(&["update", pkg])
+            .args(["update", pkg])
             .current_dir(dir)
             .status()
             .with_context(|| format!("Failed to run {} update", manager))?;
@@ -69,7 +69,7 @@ impl Adapter for NpmAdapter {
     async fn remove(&self, dir: &str, pkg: &str) -> Result<()> {
         let manager = if Command::new("pnpm").arg("--version").output().is_ok() { "pnpm" } else { "npm" };
         let status = Command::new(manager)
-            .args(&["remove", pkg])
+            .args(["remove", pkg])
             .current_dir(dir)
             .status()
             .with_context(|| format!("Failed to run {} remove", manager))?;

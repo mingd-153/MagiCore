@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use crate::core::lock::LockFile;
 use std::any::Any;
+#[allow(clippy::default_constructed_unit_structs)]
 
 #[async_trait]
 pub trait Adapter: Any {
@@ -16,6 +17,7 @@ pub trait Adapter: Any {
 }
 
 /// Detect which adapter matches the directory by looking for known manifest files.
+#[allow(clippy::default_constructed_unit_structs)]
 pub fn detect(dir: &str) -> Result<Box<dyn Adapter>> {
     let path = std::path::Path::new(dir);
     if path.join("package.json").exists() {

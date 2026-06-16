@@ -10,8 +10,8 @@ pub struct PythonAdapter;
 #[async_trait]
 impl Adapter for PythonAdapter {
     /// Parse `requirements.txt` (if present) and add each line as a dependency.
-    async fn parse(&self, dir: &str, lock: &mut LockFile) -> Result<Vec<String>> {
-        let path = std::path::Path::new(dir).join("requirements.txt");
+    async fn parse(&self, _dir: &str, lock: &mut LockFile) -> Result<Vec<String>> {
+        let path = std::path::Path::new(_dir).join("requirements.txt");
         if !path.exists() {
             return Ok(vec![]);
         }
@@ -39,9 +39,9 @@ impl Adapter for PythonAdapter {
         Ok(deps)
     }
 
-    async fn install(&self, dir: &str) -> Result<()> {
+    async fn install(&self, _dir: &str) -> Result<()> {
         // Run `pip install -r requirements.txt` if the file exists.
-        let path = std::path::Path::new(dir).join("requirements.txt");
+        let path = std::path::Path::new(_dir).join("requirements.txt");
         if path.exists() {
             let status = Command::new("pip")
                 .arg("install")
@@ -55,7 +55,7 @@ impl Adapter for PythonAdapter {
         Ok(())
     }
 
-    async fn update(&self, dir: &str, pkg: &str) -> Result<()> {
+    async fn update(&self, _dir: &str, pkg: &str) -> Result<()> {
         // `pip install -U <pkg>`
         let status = Command::new("pip")
             .arg("install")
@@ -68,7 +68,7 @@ impl Adapter for PythonAdapter {
         Ok(())
     }
 
-    async fn remove(&self, dir: &str, pkg: &str) -> Result<()> {
+    async fn remove(&self, _dir: &str, pkg: &str) -> Result<()> {
         // `pip uninstall -y <pkg>`
         let status = Command::new("pip")
             .arg("uninstall")
