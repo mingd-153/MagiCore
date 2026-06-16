@@ -333,12 +333,13 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
         .map(|s| Line::from(Span::styled(s, Style::default())))
         .collect();
     // Append project name and author lines
+    // Custom header: Vietnamese dev statement and English author name
     header_content.push(Line::from(Span::styled(
-        PROJECT_NAME,
+        "được xây dựng bởi dev từ Việt Nam ♥️",
         Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
     )));
     header_content.push(Line::from(Span::styled(
-        AUTHOR,
+        "mingdoan",
         Style::default(),
     )));
 
