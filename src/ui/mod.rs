@@ -15,7 +15,14 @@ use crossterm::event::{self, Event, KeyCode};
 
 
 
-const LOGO: &[&str] = &["logo :))"];
+const LOGO: &[&str] = &[
+    "███╗   ███╗███████╗ ██████╗  █████╗  ██████╗  █████╗ ████████╗███████╗",
+    "████╗ ████║██╔════╝██╔════╝ ██╔══██╗██╔════╝ ██╔══██╗╚══██╔══╝██╔════╝",
+    "██╔████╔██║█████╗  ██║  ███╗███████║██║  ███╗███████║   ██║   █████╗",
+    "██║╚██╔╝██║██╔══╝  ██║   ██║██╔══██║██║   ██║██╔══██║   ██║   ██╔══╝",
+    "██║ ╚═╝ ██║███████╗╚██████╔╝██║  ██║╚██████╔╝██║  ██║   ██║   ███████╗",
+    "╚═╝     ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝",
+];
 
 
 fn load_logo_lines() -> Vec<String> {
@@ -321,35 +328,14 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     // ── HEADER: Logo + Title + Author ──────────────────────────────────────────
     let header_block = Block::default();
 
-    // ── WAVEFORM (scope) ─────────────────────────────────────
-    let wf_width = f.size().width as usize;
-    let wave_points: Vec<(f64, f64)> = (0..wf_width)
-        .map(|x| {
-            let xf = x as f64;
-            let y = ((xf + app.logo_frame as f64) * 0.2).sin();
-            (xf, y)
-        })
-        .collect();
-    // Draw a moving sine‑wave using many tiny line segments
-    let waveform = Canvas::default()
-        .block(Block::default().borders(Borders::ALL).title("Phạm vi"))
-        .x_bounds([0.0, wf_width as f64])
-        .y_bounds([-1.5, 1.5])
-        .paint(|ctx| {
-            // Iterate over consecutive points and draw a short line for each segment
-            for pair in wave_points.windows(2) {
-                let (x1, y1) = pair[0];
-                let (x2, y2) = pair[1];
-                ctx.draw(&CanvasLine {
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    color: Color::Cyan,
-                });
-            }
-        });
-    f.render_widget(waveform, chunks[0]);
+// ── LOGO DISPLAY ─────────────────────────────────────
+    let logo_lines = load_logo_lines();
+    // Join the logo lines into a single string for Paragraph::new (which expects Into<Text>)
+    let logo_text = logo_lines.join("\n");
+    let logo_paragraph = Paragraph::new(logo_text)
+        .block(Block::default().borders(Borders::ALL).title("Logo"))
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(logo_paragraph, chunks[0]);
 
     // Header: Project name and author
     let header_lines = vec![
