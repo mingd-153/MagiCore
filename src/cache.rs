@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use sha2::{Digest, Sha256};
 use tokio::fs;
 
-/// Simple content‑addressable cache stored under $HOME/.core-pkg/cache
+/// Simple content‑addressable cache stored under $HOME/.megagate/cache
 pub struct Cache {
     root: PathBuf,
 }

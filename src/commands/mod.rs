@@ -1,10 +1,24 @@
 use anyhow::{Result, Context};
-use crate::adapters::{self, Adapter};
-use crate::core::lock::{LockFile, load_lock, save_lock};
+use crate::adapters::{self};
+use crate::core::lock::{load_lock, save_lock};
 use crate::core::cache::Cache;
-use agent_memory::trellis::Trellis;
+
+fn print_logo() {
+    // Load the ASCII logo from the UI resources and print it to stdout.
+    // This provides a visual cue when the user runs `megagate install`.
+    const LOGO_PATH: &str = "src/ui/logo.txt";
+    if let Ok(content) = std::fs::read_to_string(LOGO_PATH) {
+        // Print each line; we keep it simple without color to avoid extra deps.
+        // Users can pipe through `cat` if they want colors.
+        println!("{}", content);
+    } else {
+        // Fallback: do nothing if logo file missing.
+    }
+}
 
 pub async fn install(target: Option<String>) -> Result<()> {
+    // Print logo when user runs install
+    print_logo();
     let dir = target.unwrap_or_else(|| ".".to_string());
     let adapter = adapters::detect(&dir)?;
     let mut lock = load_lock(&dir)?;
@@ -13,6 +27,8 @@ pub async fn install(target: Option<String>) -> Result<()> {
     cache.resolve(&changes).await?;
     adapter.install(&dir).await?;
     save_lock(&dir, &lock)?;
+    // Also copy the logo file so that users get it alongside the lock
+    let _ = std::fs::copy("src/ui/logo.txt", format!("{}/logo.txt", dir));
     Ok(())
 }
 
@@ -47,13 +63,5 @@ pub async fn audit() -> Result<()> {
 
 pub async fn export(format: String) -> Result<()> {
     println!("Exporting lock in {} format (placeholder)…", format);
-    Ok(())
-}
-
-pub async fn recall(key: String) -> Result<()> {
-    match Trellis::fetch(&key)? {
-        Some(value) => println!("[Recall] {} = {}", key, value),
-        None => println!("[Recall] key '{}' not found", key),
-    }
     Ok(())
 }

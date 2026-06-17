@@ -1,27 +1,118 @@
-use std::{io, path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
+use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 
 use anyhow::Result;
 use colored::*;
-use crossterm::event::{self, Event, KeyCode, MouseButton, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Alignment},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Sparkline},
+    widgets::{Block, Borders, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
 
-use crate::commands;
+use sysinfo::System;
 
-const LOGO_PATH: &str = "src/ui/logo.txt";
+
+
+
+
+const LOGO: &[&str] = &[
+    "███╗   ███╗███████╗ ██████╗  █████╗  ██████╗  █████╗ ████████╗███████╗",
+    "████╗ ████║██╔════╝██╔════╝ ██╔══██╗██╔════╝ ██╔══██╗╚══██╔══╝██╔════╝",
+    "██╔████╔██║█████╗  ██║  ███╗███████║██║  ███╗███████║   ██║   █████╗",
+    "██║╚██╔╝██║██╔══╝  ██║   ██║██╔══██║██║   ██║██╔══██║   ██║   ██╔══╝",
+    "██║ ╚═╝ ██║███████╗╚██████╔╝██║  ██║╚██████╔╝██║  ██║   ██║   ███████╗",
+    "╚═╝     ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝",
+];
+
 
 fn load_logo_lines() -> Vec<String> {
-    std::fs::read_to_string(LOGO_PATH)
-        .unwrap_or_default()
-        .lines()
-        .map(|s| s.to_string())
-        .collect()
+    LOGO.iter().map(|s| s.to_string()).collect()
+}
+
+// Retrieve public IP address using a UDP socket trick (outbound IP)
+fn get_ip_address() -> Option<String> {
+    use std::net::UdpSocket;
+    // Bind to an arbitrary local address
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    // Connect to external address; no packets are sent
+    socket.connect("8.8.8.8:80").ok()?;
+    // Local address now contains the outbound IP
+    socket.local_addr().ok().map(|addr| addr.ip().to_string())
+}
+
+// Retrieve local network interface IP (first non‑loopback IPv4)
+#[allow(clippy::collapsible_match)]
+fn get_local_ip_address() -> Option<String> {
+    // Requires the `if-addrs` crate
+    if_addrs::get_if_addrs().ok().and_then(|ifaces| {
+        for iface in ifaces {
+            if let std::net::IpAddr::V4(v4) = iface.ip() {
+                if !v4.is_loopback() {
+                    return Some(v4.to_string());
+                }
+            }
+        }
+        None
+    })
+}
+
+
+fn get_system_info_lines() -> Vec<Line<'static>> {
+    // Gather system-wide info
+    let sys = System::new_all();
+    // CPU usage (global CPU info)
+    let cpu_usage = sys.global_cpu_info().cpu_usage();
+    // RAM usage
+    let total_mem = sys.total_memory();
+    let used_mem = sys.used_memory();
+    // SSD info – use Disks helper (first disk)
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let ssd_info = if let Some(disk) = disks.list().first() {
+        let gb = disk.total_space() as f64 / 1_073_741_824.0;
+        format!("SSD: {:.2} GB", gb)
+    } else {
+        "SSD: N/A".to_string()
+    };
+    // GPU info – attempt to detect via components list (may be empty on some platforms)
+    let gpu_info = {
+        // Use Components helper to list hardware components (may include GPU)
+        let components = sysinfo::Components::new_with_refreshed_list();
+        if let Some(comp) = components.list().iter().find(|c| c.label().to_ascii_lowercase().contains("gpu")) {
+            format!("GPU: {}", comp.label())
+        } else {
+            "GPU: N/A".to_string()
+        }
+    };
+    // Bandwidth – sum of received + transmitted bytes across interfaces
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    let bandwidth_bytes: u64 = networks.values().map(|data| data.total_received() + data.total_transmitted()).sum();
+    let bandwidth_str = format!("Bandwidth: {:.2} MB", bandwidth_bytes as f64 / 1_048_576.0);
+    // Cache (available memory)
+    let cache_str = format!("Cache: {} MB", sys.available_memory() / 1024);
+
+    // Public IP address (outbound)
+    let ip_line = match get_ip_address() {
+        Some(ip) => format!("IP: {}", ip),
+        None => "IP: N/A".to_string(),
+    };
+    // Local IP address (first non‑loopback interface)
+    let local_ip_line = match get_local_ip_address() {
+        Some(ip) => format!("Local IP: {}", ip),
+        None => "Local IP: N/A".to_string(),
+    };
+    vec![
+        Line::from(Span::styled(format!("CPU: {:.2}%", cpu_usage), Style::default())),
+        Line::from(Span::styled(format!("RAM: {} MB / {} MB", used_mem / 1024, total_mem / 1024), Style::default())),
+        Line::from(Span::styled(ssd_info, Style::default())),
+        Line::from(Span::styled(gpu_info, Style::default())),
+        Line::from(Span::styled(bandwidth_str, Style::default())),
+        Line::from(Span::styled(cache_str, Style::default())),
+        Line::from(Span::styled(ip_line, Style::default())),
+        Line::from(Span::styled(local_ip_line, Style::default())),
+    ]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,16 +124,16 @@ fn load_logo_lines() -> Vec<String> {
 //    r" ║╚═╝║    ╔╝╔╝     ║║   ║ ║║   ║ ║║   ║ ║╚═══╝║",
 
 
-const AUTHOR: &str = "✦ Crafted by doanmihh15.3 ✦";
+const _AUTHOR: &str = "doanmihh153";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const PROJECT_NAME: &str = "MegaGate";
 
 const MENU_ITEMS: &[(&str, &str, Color)] = &[
-    ("➤ Install",   "Install dependencies",      Color::Green),
-    ("➤ Update",   "Update a package",          Color::Cyan),
-    ("➤ Remove",   "Remove a package",          Color::Red),
-    ("➤ List",     "View dependency graph",     Color::Blue),
-    ("➤ Audit",    "Run security audit",        Color::Yellow),
-    ("➤ Export",   "Export lock file",           Color::Magenta),
-    ("➤ Exit",     "Quit application",           Color::White),
+    ("Home",      "Home screen",      Color::Green),
+    ("Settings",  "Configuration",    Color::Cyan),
+    ("Logs",      "View logs",        Color::Red),
+    ("Help",      "Help documentation",Color::Blue),
+    ("Exit",      "Quit application", Color::Yellow),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,23 +141,56 @@ const MENU_ITEMS: &[(&str, &str, Color)] = &[
 // ─────────────────────────────────────────────────────────────────────────────
 #[derive(Clone)]
 struct AppState {
+    input: String,
+    log: Vec<String>,
+    // Index of highlighted item when sidebar has focus
     selected: usize,
-    message: String,
-    progress: u16,
-    showing_progress: bool,
+    // Which pane currently receives keyboard input
+    focus: Focus,
+    // Scroll offset for the sidebar list (if it exceeds visible height)
+    sidebar_offset: usize,
+    // Scroll offset for the console (kept static for now)
+    console_offset: usize,
+    // Unused placeholders retained for compatibility
+    _message: String,
+    _progress: u16,
+    _showing_progress: bool,
     running: bool,
-    project_dir: PathBuf,
+    _project_dir: PathBuf,
+    logo_frame: usize,
+    _overlay: Overlay,
+}
+
+#[derive(Clone, PartialEq)]
+enum Focus {
+    Sidebar,
+    Console,
+}
+
+#[derive(Clone, PartialEq)]
+#[allow(dead_code)]
+enum Overlay {
+    None,
+    Help,
 }
 
 impl AppState {
     fn new(project_dir: PathBuf) -> Self {
         Self {
             selected: 0,
-            message: String::new(),
-            progress: 0,
-            showing_progress: false,
+            focus: Focus::Sidebar,
+            sidebar_offset: 0,
+            console_offset: 0,
+            _message: String::new(),
+            _progress: 0,
+            _showing_progress: false,
             running: true,
-            project_dir,
+            _project_dir: project_dir,
+            input: String::new(),
+            log: Vec::new(),
+            logo_frame: 0,
+            _overlay: Overlay::None,
+
         }
     }
 }
@@ -76,61 +200,131 @@ impl AppState {
 // ─────────────────────────────────────────────────────────────────────────────
 pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
     let mut stdout = io::stdout();
-    crossterm::terminal::enable_raw_mode()?;
+    // Enable raw mode and clear the screen for a clean CLI‑style start
+    let _ = crossterm::terminal::enable_raw_mode();
+    // Clear any existing terminal content
+    let _ = crossterm::execute!(io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
+    // Enter alternate screen to lock whole UI (prevents terminal scroll)
+    let _ = crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen);
     let backend = CrosstermBackend::new(&mut stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let state = Arc::new(Mutex::new(AppState::new(project_dir)));
     let mut should_quit = false;
 
-    while !should_quit {
-        terminal.draw(|f| draw_ui(f, &state))?;
+        while !should_quit {
+            terminal.draw(|f| draw_ui(f, &state))?;
+            // advance logo animation frame
+            {
+                let mut app = state.lock().unwrap();
+                app.logo_frame = (app.logo_frame + 1) % 4;
+            }
+
 
         if event::poll(Duration::from_millis(150))? {
-            match event::read()? {
+            let ev = event::read()?;
+            let mut app = state.lock().unwrap();
+            match ev {
                 Event::Key(key) => {
-                    let mut app = state.lock().unwrap();
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
+                        // Quit the REPL (Ctrl+Q) or Esc
+                        KeyCode::Esc => {
                             should_quit = true;
                         }
-                        KeyCode::Down => {
-                            app.selected = (app.selected + 1) % MENU_ITEMS.len();
+                        KeyCode::Char('q') => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                should_quit = true;
+                            }
                         }
+                        // Navigation keys
                         KeyCode::Up => {
-                            app.selected = if app.selected == 0 {
-                                MENU_ITEMS.len() - 1
-                            } else {
-                                app.selected - 1
-                            };
+                            if app.focus == Focus::Sidebar {
+                                if app.selected == 0 {
+                                    app.selected = MENU_ITEMS.len() - 1;
+                                } else {
+                                    app.selected -= 1;
+                                }
+                                if app.sidebar_offset > app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            } else if app.focus == Focus::Console {
+                                if app.console_offset > 0 {
+                                    app.console_offset -= 1;
+                                }
+                            }
+                        }
+                        KeyCode::Down => {
+                            if app.focus == Focus::Sidebar {
+                                app.selected = (app.selected + 1) % MENU_ITEMS.len();
+                                if app.sidebar_offset + 1 < app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            } else if app.focus == Focus::Console {
+                                let max_offset = if !app.log.is_empty() { app.log.len() - 1 } else { 0 };
+                                if app.console_offset < max_offset {
+                                    app.console_offset += 1;
+                                }
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            if app.focus == Focus::Sidebar {
+                                if app.selected == 0 {
+                                    app.selected = MENU_ITEMS.len() - 1;
+                                } else {
+                                    app.selected -= 1;
+                                }
+                                if app.sidebar_offset > app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            }
+                        }
+                        KeyCode::Char('j') => {
+                            if app.focus == Focus::Sidebar {
+                                app.selected = (app.selected + 1) % MENU_ITEMS.len();
+                                if app.sidebar_offset + 1 < app.selected {
+                                    app.sidebar_offset = app.selected;
+                                }
+                            }
+                        }
+                        KeyCode::Tab => {
+                            app.focus = if app.focus == Focus::Sidebar { Focus::Console } else { Focus::Sidebar };
+                        }
+                        KeyCode::Backspace => {
+                            app.input.pop();
                         }
                         KeyCode::Enter => {
-                            execute_action(&mut app).await;
+                            if app.focus == Focus::Sidebar {
+                                // Simulate activating the selected menu item
+                                let (key, _desc, _color) = MENU_ITEMS[app.selected];
+                                app.log.push(format!("Menu selected: {}", key));
+                            } else {
+                                let cmd = app.input.trim().to_string();
+                                app.log.push(cmd.clone());
+                                app.input.clear();
+                                process_command(&mut app);
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            app.input.push(c);
                         }
                         _ => {}
                     }
                 }
-                Event::Mouse(me) => {
-                    if let MouseEventKind::Down(MouseButton::Left) = me.kind {
-                        let clicked_idx = (me.row as usize).saturating_sub(3); // offset header
-                        if clicked_idx < MENU_ITEMS.len() {
-                            let mut app = state.lock().unwrap();
-                            app.selected = clicked_idx;
-                            execute_action(&mut app).await;
-                        }
-                    }
-                }
+
                 _ => {}
             }
         }
 
         // Check quit flag
-        if state.lock().unwrap().running == false {
+        if !state.lock().unwrap().running {
             should_quit = true;
         }
     }
 
-    crossterm::terminal::disable_raw_mode()?;
+    // Leave alternate screen and restore terminal
+    let _ = crossterm::terminal::disable_raw_mode();
+    let _ = crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+
     terminal.show_cursor()?;
     Ok(())
 }
@@ -138,62 +332,69 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Execute selected action
 // ─────────────────────────────────────────────────────────────────────────────
-async fn execute_action(app: &mut AppState) {
-use crate::commands;
-
-const LOGO_PATH: &str = "src/ui/logo.txt";
-
-fn load_logo_lines() -> Vec<String> {
-    std::fs::read_to_string(LOGO_PATH)
-        .unwrap_or_default()
-        .lines()
-        .map(|s| s.to_string())
-        .collect()
-}
-
-    app.message = "⚡ Working...".cyan().to_string();
-    app.showing_progress = true;
-    app.progress = 0;
-
-    // Simulate progress while running
-    let app_clone = Arc::new(Mutex::new(app.clone()));
-    let handle = thread::spawn({
-        let app = Arc::clone(&app_clone);
-        move || {
-            for i in 0..=100 {
-                if let Ok(mut a) = app.lock() {
-                    a.progress = i;
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
+fn process_command(app: &mut AppState) {
+    // Trimmed command is already stored in log by the caller
+    // If the last line (the command) is empty, we treat it as a blank line separator
+    if let Some(last) = app.log.last() {
+        if last.is_empty() {
+            // just a blank line – nothing else to do
+            return;
         }
-    });
-
-    let proj_dir = app.project_dir.clone();
-    let action_idx = app.selected;
-
-    // Run actual command based on selection
-    match action_idx {
-        0 => { let _ = commands::install(Some(proj_dir.to_string_lossy().into())).await; }
-        1 => { let _ = commands::update(Some(prompt_input("Package: "))).await; }
-        2 => { let _ = commands::remove(prompt_input("Package: ")).await; }
-        3 => { let _ = commands::list(true).await; }
-        4 => { let _ = commands::audit().await; }
-        5 => { let _ = commands::export(prompt_input("Format: ")).await; }
-        6 => { app.running = false; }
-        _ => {}
     }
 
-    handle.join().ok();
+    // Get the most recent command string (the one we just pushed to log)
+    let cmd = app.log.last().cloned().unwrap_or_default();
+    let cmd = cmd.trim();
 
-    app.showing_progress = false;
-    app.progress = 100;
-    app.message = "✓ Done! Press any key...".green().to_string();
+    // Handle built‑in REPL commands
+    match cmd {
+        "exit" | "quit" => {
+            // Signal the main loop to quit
+            // We set a field that will be read after the event loop
+            app.running = false;
+        }
+        "clear" => {
+            app.log.clear();
+        }
+        c if c.starts_with("run ") => {
+            // Execute a shell command – everything after "run " is passed to the shell
+            let shell_cmd = c.strip_prefix("run ").unwrap_or("");
+            match std::process::Command::new("sh")
+                .arg("-c")
+                .arg(shell_cmd)
+                .output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    if !out.is_empty() {
+                        for line in out.lines() {
+                            app.log.push(line.to_string());
+                        }
+                    }
+                    if !err.is_empty() {
+                        for line in err.lines() {
+                            app.log.push(format!("ERR: {}", line));
+                        }
+                    }
+                }
+                Err(e) => {
+                    app.log.push(format!("Failed to run command: {}", e));
+                }
+            }
+        }
+        _ => {
+            // Unknown command – just echo back for now
+            if !cmd.is_empty() {
+                app.log.push(format!("unknown: {}", cmd));
+            }
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompt for input
 // ─────────────────────────────────────────────────────────────────────────────
+#[allow(dead_code)]
 fn prompt_input(prompt: &str) -> String {
     crossterm::terminal::disable_raw_mode().ok();
     print!("\n  {} ", prompt.yellow().bold());
@@ -207,148 +408,166 @@ fn prompt_input(prompt: &str) -> String {
 // ─────────────────────────────────────────────────────────────────────────────
 // Main UI drawing function
 // ─────────────────────────────────────────────────────────────────────────────
+#[allow(clippy::iter_overeager_cloned, clippy::manual_div_ceil)]
 fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
     let app = state.lock().unwrap();
 
-    // Full screen layout: header (logo + title + author), menu, footer (status + progress)
+    let size = f.size();
+    let compact = size.width < 80 || size.height < 24;
+
+    // If terminal is too small, show warning and skip drawing UI
+    if compact {
+        let warning = Paragraph::new("Terminal size too small. Minimum 80x24 required.")
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            .alignment(Alignment::Center);
+        f.render_widget(warning, size);
+        return;
+    }
+
+    // Determine layout percentages based on compact flag.
+    // Header height increased to ensure author line is visible.
+    // Body (info+menu+console) takes the remaining space.
+    let (header_pct, footer_pct): (u16, u16) = if compact {
+        // Compact layout: allocate more space to header and footer.
+        (25, 15) // header 25%, footer 15%
+    } else {
+        // Normal layout: larger header for author line.
+        (30, 10) // header 30%, footer 10%
+    };
+    let body_pct = 100 - header_pct - footer_pct;
+
+    // Full screen layout: header, body, footer.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Percentage(30), // header proportion
-            Constraint::Percentage(60), // menu proportion
-            Constraint::Percentage(10), // footer proportion
+            Constraint::Percentage(header_pct),
+            Constraint::Percentage(body_pct),
+            Constraint::Percentage(footer_pct),
         ])
         .split(f.size());
 
-    // ── HEADER: Logo + Title + Author ──────────────────────────────────────────
-    let header_block = Block::default()
-        .style(Style::default().bg(Color::Rgb(30, 30, 50)).fg(Color::White))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+    // ── HEADER: Logo + Title + Author ────────────────────────────────────────
+    let header_block = Block::default();
+    // Load ASCII logo lines and prepend to header content
+    let logo_lines = load_logo_lines();
+    let mut header_content: Vec<Line> = logo_lines.iter().map(|s| Line::from(Span::styled(s.clone(), Style::default()))).collect();
+    // Project title with bold and underline
+    header_content.push(Line::from(Span::styled(
+        PROJECT_NAME,
+        Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
 
-    // Logo lines with color gradient (3D effect) – responsive truncation
-    let logo_strings = load_logo_lines();
-    let width = f.size().width as usize;
-    let logo_spans: Vec<Line> = logo_strings
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            // Truncate line if it exceeds terminal width
-            let display = if line.chars().count() > width {
-                line.chars().take(width).collect::<String>()
-            } else {
-                line.clone()
-            };
-            let color = match i % 4 {
-                0 => Color::LightCyan,
-                1 => Color::LightMagenta,
-                2 => Color::LightBlue,
-                _ => Color::LightGreen,
-            };
-            Line::from(Span::styled(display, Style::default().fg(color).add_modifier(Modifier::BOLD)))
-        })
-        .collect();
-    // Title
-    let title_spans = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Developer from VietNam build with ♥️",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(AUTHOR, Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC))),
-        ];
-
-
-    let header_content: Vec<Line> = logo_spans
-        .into_iter()
-        .chain(title_spans.into_iter())
-        .collect();
+    // Open source line
+    header_content.push(Line::from(Span::styled(
+        "Open Source • Built in Vietnam 🇻🇳",
+        Style::default(),
+    )));
+    // Created by line
+        header_content.push(Line::from(Span::styled(
+            format!("Created by {}", _AUTHOR),
+            Style::default(),
+        )));
+    // Optional version line
+    header_content.push(Line::from(Span::styled(
+        format!("Version: {}", VERSION),
+        Style::default(),
+    )));
 
     let header_widget = Paragraph::new(header_content)
-        .block(header_block)
-        .alignment(ratatui::layout::Alignment::Center);
+    .block(header_block)
+    .alignment(Alignment::Center);
 
     f.render_widget(header_widget, chunks[0]);
 
-    // ── MENU: List of actions with colors ─────────────────────────────────────
-    let menu_items: Vec<ListItem> = MENU_ITEMS
-        .iter()
-        .enumerate()
-        .map(|(i, (icon, desc, color))| {
-            let is_selected = i == app.selected;
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(*color)
-            };
+    // ── MAIN ROW: System Info | Menu | Console (full height) ────────
+    // Split the middle area (chunks[1]) into three columns
+    let body_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(30), // System Info column
+            Constraint::Percentage(35), // Menu column
+            Constraint::Percentage(35), // Console column
+        ])
+        .split(chunks[1]);
 
-            let icon_text = if is_selected { " ◉ " } else { " ○ " };
-            let text = format!("{} {}  {}", icon_text, icon, desc);
+    // ── INFO COLUMN ────────────────────────────────────────
+    let info_lines = get_system_info_lines(); // 8 lines expected
+    let info_paragraph = Paragraph::new(info_lines.clone())
+        .block(Block::default().borders(Borders::ALL).title("System Info"))
+        .wrap(Wrap { trim: true });
+    f.render_widget(info_paragraph, body_cols[0]);
 
-            ListItem::new(Span::styled(text, style))
-        })
-        .collect();
+    // ── MENU COLUMN ────────────────────────────────────────
+    let all_items: Vec<ListItem> = MENU_ITEMS.iter().enumerate().map(|(i, (key, desc, _color))| {
+        let style = if i == app.selected {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        ListItem::new(Line::from(vec![
+            Span::styled(*key, style),
+            Span::raw(" "),
+            Span::styled(*desc, style),
+        ]))
+    }).collect();
+    // Show only the top portion of the menu (no scrolling)
+    let visible_height = body_cols[1].height as usize;
+    let end = std::cmp::min(visible_height, all_items.len());
+    let items = &all_items[..end];
+    let menu_lines: Vec<Line> = items.iter().enumerate().map(|(i, _item)| {
+        let (key, desc, color) = MENU_ITEMS[i];
+        let base_style = Style::default().fg(color);
+        let style = if i == app.selected {
+            base_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            base_style
+        };
+        Line::from(vec![
+            Span::styled(key, style),
+            Span::raw(" "),
+            Span::styled(desc, style),
+        ])
+    }).collect();
+    let menu_paragraph = Paragraph::new(menu_lines)
+        .block(Block::default().borders(Borders::ALL).title("Menu"));
+    f.render_widget(menu_paragraph, body_cols[1]);
 
-    let menu_list = List::new(menu_items)
-        .block(
-            Block::default()
-                .style(Style::default().bg(Color::Rgb(20, 20, 40)).fg(Color::White))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Magenta))
-                .title("  ⚡ Actions  "),
-        )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+    // ── CONSOLE COLUMN ────────────────────────────────────────
+    let console_visible = body_cols[2].height as usize;
+    let log_start = app.console_offset;
+    let log_end = std::cmp::min(log_start + console_visible, app.log.len());
+    let log_slice = &app.log[log_start..log_end];
+    let styled_log_lines: Vec<Line> = log_slice.iter().map(|line| {
+        let mut style = Style::default();
+        if line.contains("[INFO]") {
+            style = style.fg(Color::Green);
+        } else if line.contains("[WARN]") {
+            style = style.fg(Color::Yellow);
+        } else if line.contains("[ERROR]") {
+            style = style.fg(Color::Red);
+        }
+        Line::from(Span::styled(line.clone(), style))
+    }).collect();
+    let log_paragraph = Paragraph::new(styled_log_lines)
+        .block(Block::default().borders(Borders::ALL).title("Console"))
+        .wrap(Wrap { trim: true });
+    f.render_widget(log_paragraph, body_cols[2]);
 
-    f.render_widget(menu_list, chunks[1]);
-
-    // ── FOOTER: Status + Progress ──────────────────────────────────────────────
+    // ── INPUT SECTION (footer) ────────────────────────────────────────
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .constraints([Constraint::Percentage(100)])
         .split(chunks[2]);
 
-    // Status message
-    let status = Paragraph::new(Span::styled(
-        if app.message.is_empty() {
-            "  Ready".to_string()
-        } else {
-            app.message.clone()
-        },
-        Style::default().fg(Color::White),
-    ))
-    .block(
-        Block::default()
-            .style(Style::default().bg(Color::Rgb(20, 20, 40)).fg(Color::White))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green))
-            .title("  Status  "),
+    let input_span = Span::styled(
+        format!("> {}", app.input),
+        Style::default(),
     );
-    f.render_widget(status, footer_chunks[0]);
-
-    // Progress bar (only visible when running)
-    if app.showing_progress {
-let progress_bar = Gauge::default()
-            .ratio(app.progress as f64 / 100.0)
-            .label(Span::styled(format!("{:>3}%", app.progress), Style::default().fg(Color::Yellow)))
-            .block(
-                Block::default()
-                    .style(Style::default().bg(Color::Rgb(20, 20, 40)))
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
-                    .title("  Progress  "),
-            )
-            .style(Style::default().fg(Color::Green).bg(Color::Rgb(0, 80, 0)))
-            .gauge_style(Style::default().fg(Color::Cyan));
-        f.render_widget(progress_bar, footer_chunks[1]);
-    } else {
-        let empty = Block::default()
-            .style(Style::default().bg(Color::Rgb(20, 20, 40)).fg(Color::White))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green));
-        f.render_widget(empty, footer_chunks[1]);
-    }
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Input");
+    let input_paragraph = Paragraph::new(input_span)
+        .block(input_block);
+    f.render_widget(input_paragraph, footer_chunks[0]);
 }
