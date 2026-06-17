@@ -1,20 +1,21 @@
 use anyhow::Result;
-use std::collections::HashMap;
+
 use std::path::PathBuf;
 use sha2::{Digest, Sha256};
-use tokio::fs;
 
-/// Simple content‑addressable cache stored under $HOME/.core-pkg/cache
+
+/// Simple content‑addressable cache stored under $HOME/.megagate/cache
 pub struct Cache {
-    root: PathBuf,
+    _root: PathBuf,
 }
 
+#[allow(dead_code)]
 impl Cache {
     pub fn new() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         let root = PathBuf::from(home).join(".core-pkg/cache");
         std::fs::create_dir_all(&root).ok();
-        Cache { root }
+        Cache { _root: root }
     }
 
     /// Resolve a set of URLs (or tarball paths) and store them if not present.

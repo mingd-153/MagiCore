@@ -1,14 +1,14 @@
-# Hyper‑Pkg Core Documentation
+# MegaGate Core Documentation
 
 ## 1. Project Overview
 
-**Hyper‑Pkg** is a lightweight, extensible command‑line tool for managing dependencies across many language ecosystems (npm, Cargo, Gradle, …). It provides:
+**MegaGate** is a lightweight, extensible command‑line tool for managing dependencies across many language ecosystems (npm, Cargo, Gradle, …). It provides:
 
 | Feature | Description |
 |--------|-------------|
-| Unified CLI | One binary (`hyper-pkg`) exposing `install`, `update`, `remove`, `list`, `audit`, `export`, and a terminal UI (`hyper-pkg ui`). |
+| Unified CLI | One binary (`MegaGate`) exposing `install`, `update`, `remove`, `list`, `audit`, `export`, and a terminal UI (`MegaGate ui`). |
 | Pluggable adapters | Each package manager is implemented as an async `Adapter` trait with `parse` and `update` methods. |
-| Shared lock model | A single on‑disk `hyper-pkg.lock` tracks the whole dependency graph, regardless of source manager. |
+| Shared lock model | A single on‑disk `MegaGate.lock` tracks the whole dependency graph, regardless of source manager. |
 | Responsive terminal UI | Built with **Ratatui**/Crossterm, loads a logo from a text file, adapts to terminal size, and shows progress bars, menus, and status messages. |
 | Future‑proof | Clean separation of **core**, **commands**, **adapters**, and **ui**, making it trivial for downstream agents to extend or replace parts. |
 
@@ -18,7 +18,7 @@
 
 ```
 ┌─────────────────────────────────────┐
-│            hyper-pkg (binary)       │
+│            MegaGate (binary)       │
 │  ───►  clap::Parser (CLI entry)─────►│
 │  └─────┬─────────────────────────────┘
 │        │
@@ -138,7 +138,7 @@ All UI logic lives in a **single file** (`src/ui/mod.rs`) to keep the UI self‑
 **Recommended folder organization for maintainability**
 
 ```
-hyper-pkg/
+MegaGate/
 ├─ Cargo.toml                # package metadata, dependencies (ratatui, clap, colored, async‑trait, anyhow)
 ├─ src/
 │  ├─ main.rs               # CLI entry point, launches UI or commands
@@ -166,7 +166,7 @@ hyper-pkg/
 
 ## 6. Building & Running
 ```
-hyper-pkg/
+MegaGate/
 ├─ Cargo.toml                # package metadata, dependencies (ratatui, clap, colored, async‑trait, anyhow)
 ├─ src/
 │  ├─ main.rs               # CLI entry point, launches UI or commands
@@ -196,12 +196,12 @@ hyper-pkg/
 cargo build
 
 # Run UI
-cargo run -- ui
+mg ui
 
 # Example command usage
-cargo run -- install          # install dependencies in the current dir
-cargo run -- update <pkg>     # update a specific package
-cargo run -- list --graph    # print dependency graph as JSON
+mg install          # install dependencies in the current dir
+mg update <pkg>     # update a specific package
+mg list --graph    # print dependency graph as JSON
 ```
 The UI can be launched at any time; it will automatically detect the working directory and use the **shared lock** if present.
 
@@ -214,15 +214,15 @@ The UI can be launched at any time; it will automatically detect the working dir
 * **How to replace** – simply **override** the target module by providing a new crate with the same public symbols and update `Cargo.toml` to point to the local path.
 
 ### 7.2 Example: Swapping the UI
-1. Create a crate `hyper-pkg-ui-custom`.
+1. Create a crate `MegaGate-ui-custom`.
 2. Implement a `run_ui` function compatible with the signature `pub async fn run_ui(project_dir: PathBuf) -> anyhow::Result<()>`.
-3. In the root `Cargo.toml`, replace the path for `hyper-pkg`:
+3. In the root `Cargo.toml`, replace the path for `MegaGate`:
 ```toml
 [dependencies]
-hyper-pkg = { path = "../hyper-pkg" }
-hyper-pkg-ui = { path = "../hyper-pkg-ui-custom" } # new crate
+MegaGate = { path = "../MegaGate" }
+MegaGate-ui = { path = "../MegaGate-ui-custom" } # new crate
 ```
-4. In `src/main.rs` change the import to `use hyper_pkg_ui::run_ui;`.
+4. In `src/main.rs` change the import to `use megagate_ui::run_ui;`.
 The rest of the system (commands, adapters, lock handling) remains untouched.
 
 ### 7.3 Adding a New Adapter
@@ -236,15 +236,15 @@ The rest of the system (commands, adapters, lock handling) remains untouched.
 
 ## 11. Supported Tasks & Application Domains
 
-Hyper‑Pkg is deliberately generic, but it shines in several common development scenarios:
+MegaGate is deliberately generic, but it shines in several common development scenarios:
 
-| Domain | Typical workflow | How Hyper‑Pkg helps |
+| Domain | Typical workflow | How MegaGate helps |
 |--------|----------------|----------------------|
 | **Web Applications** | Front‑end (npm) + back‑end (Cargo) dependencies | Manage both `package.json` and `Cargo.toml` in a single lock, run a unified `install` to bootstrap the whole stack. |
 | **Game Development** | Unity (npm for tooling) + Rust game engine crates | Keep game assets and engine crates synchronized; UI can display progress for large asset pulls. |
 | **Micro‑services / Server‑side** | Multiple Rust services, each with its own `Cargo.toml` | Use the lock file to snapshot the entire service mesh dependency graph, audit for vulnerable crates. |
-| **CI/CD Pipelines** | Automated builds that need reproducible environments | Export the lock (`hyper-pkg export json`) and feed it into container images for deterministic builds. |
-| **Monorepos** | Mixed language repo (JS, Rust, Python) | One command (`hyper-pkg install`) resolves all adapters present, simplifying onboarding for new developers. |
+| **CI/CD Pipelines** | Automated builds that need reproducible environments | Export the lock (`MegaGate export json`) and feed it into container images for deterministic builds. |
+| **Monorepos** | Mixed language repo (JS, Rust, Python) | One command (`MegaGate install`) resolves all adapters present, simplifying onboarding for new developers. |
 | **Education / Workshops** | Teaching multiple languages in a single repo | Single UI to demonstrate installing, updating, and auditing across languages. |
 
 The UI can be extended with custom panels (e.g., a graph visualiser for the dependency tree) to fit any of these domains.
@@ -253,16 +253,16 @@ The UI can be extended with custom panels (e.g., a graph visualiser for the depe
 
 ## 12. Supported Build & Package Manager Operations
 
-Hyper‑Pkg is designed to cover the full lifecycle of a project that uses any of the supported package managers. The core commands map directly to the usual build‑tool / package‑manager actions:
+MegaGate is designed to cover the full lifecycle of a project that uses any of the supported package managers. The core commands map directly to the usual build‑tool / package‑manager actions:
 
-| Operation | What Hyper‑Pkg does | Typical underlying command |
+| Operation | What MegaGate does | Typical underlying command |
 |-----------|--------------------|---------------------------|
-| **Install** | Reads the manifest(s), resolves dependencies, updates the shared `hyper-pkg.lock`, then runs the native install command (e.g., `npm install`, `cargo fetch`, `pip install -r`). | `npm install`, `cargo fetch`, `pip install -r requirements.txt` |
+| **Install** | Reads the manifest(s), resolves dependencies, updates the shared `MegaGate.lock`, then runs the native install command (e.g., `npm install`, `cargo fetch`, `pip install -r`). | `npm install`, `cargo fetch`, `pip install -r requirements.txt` |
 | **Update** | Fetches the latest compatible version of a specific package (or all packages if none specified) and updates the lock. | `npm update <pkg>`, `cargo update -p <pkg>`, `pip install -U <pkg>` |
 | **Remove** | Removes a package from the manifest and lock, then runs the native uninstall command. | `npm uninstall <pkg>`, `cargo remove <pkg>`, `pip uninstall -y <pkg>` |
 | **List / Graph** | Prints a consolidated view of all dependencies across adapters, optionally as a JSON graph for tooling. | `npm ls`, `cargo tree`, custom graph output |
 | **Audit** | Scans the lock for known vulnerabilities (using advisory databases for each ecosystem). | `npm audit`, `cargo audit`, `safety check` (via external tools) |
-| **Export** | Serialises the lock file in different formats (JSON, YAML) for CI pipelines, reproducible builds, or sharing with other tools. | `hyper-pkg export json` |
+| **Export** | Serialises the lock file in different formats (JSON, YAML) for CI pipelines, reproducible builds, or sharing with other tools. | `MegaGate export json` |
 | **Lock management** | Load, merge, and save the lock file; provides APIs for agents to query versions, graph, or compare snapshots. | Direct file read/write (JSON) |
 | **Run custom script** | Delegates to the underlying manager’s script runner (e.g., `npm run <script>`, `cargo run --bin <name>`). | `npm run build`, `cargo run` |
 | **Publish / Release** | Calls the native publish command after verifying the lock and version bump. | `npm publish`, `cargo publish` |
@@ -280,7 +280,7 @@ All core logic is pure Rust (no external processes). Unit tests can be placed un
 
 - **Multi‑Language** – adapters are language‑specific but all conform to the same `Adapter` trait. Adding support for another language only requires a new adapter module and detection logic; the rest of the core (lock handling, UI, commands) is unchanged.
 
-- **Multi‑Core** – the repository is split into logical cores (`core`, `commands`, `adapters`, `ui`). Each core can be compiled as a separate crate if needed (e.g., `hyper-pkg-core`, `hyper-pkg-adapters`). Conditional compilation (`#[cfg(...)]`) can be used to include OS‑specific code.
+- **Multi‑Core** – the repository is split into logical cores (`core`, `commands`, `adapters`, `ui`). Each core can be compiled as a separate crate if needed (e.g., `MegaGate-core`, `MegaGate-adapters`). Conditional compilation (`#[cfg(...)]`) can be used to include OS‑specific code.
 
 - **Multi‑Platform** – the codebase already runs on macOS, Linux, and Windows because:
   * All I/O uses the standard library (`std::fs`, `std::process::Command`).
@@ -314,7 +314,7 @@ To extend for a new platform or OS‑specific behaviour, place the code in a mod
 ---
 
 ### TL;DR for agents
-* **Core entry point** – `hyper_pkg::run_ui(project_dir: PathBuf)` for UI, or any `hyper_pkg::commands::*` function for CLI actions.
+* **Core entry point** – `megagate::run_ui(project_dir: PathBuf)` for UI, or any `megagate::commands::*` function for CLI actions.
 * **Dependency graph** – always stored in `LockFile`; adapters contribute to it, commands read/write it.
 * **Extensibility** – add adapters, swap UI, or replace `LockFile` serialization without touching other modules.
 
