@@ -1,8 +1,8 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
-mod commands;
 mod adapters;
+mod commands;
 mod core;
 mod ui; // UI lives in src/ui/mod.rs
 
@@ -21,13 +21,23 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Ui, // launch interactive UI
-    Install { target: Option<String> },
-    Update { package: Option<String> },
-    Remove { package: String },
-    List { #[arg(short, long)] graph: bool },
+    Install {
+        target: Option<String>,
+    },
+    Update {
+        package: Option<String>,
+    },
+    Remove {
+        package: String,
+    },
+    List {
+        #[arg(short, long)]
+        graph: bool,
+    },
     Audit,
-    Export { format: String },
-
+    Export {
+        format: String,
+    },
 }
 
 #[tokio::main]

@@ -1,9 +1,8 @@
+use crate::core::lock::LockFile;
 use anyhow::Result;
 use async_trait::async_trait;
-use crate::core::lock::LockFile;
 use std::any::Any;
 #[allow(clippy::default_constructed_unit_structs)]
-
 #[async_trait]
 pub trait Adapter: Any {
     /// Parse the manifest(s) found in `dir` and populate `lock`.
@@ -26,17 +25,17 @@ pub fn detect(dir: &str) -> Result<Box<dyn Adapter>> {
         Ok(Box::new(cargo::CargoAdapter::default()))
     } else if path.join("build.gradle.kts").exists() || path.join("build.gradle").exists() {
         Ok(Box::new(gradle::GradleAdapter::default()))
-            } else if path.join("requirements.txt").exists() {
-                Ok(Box::new(python::PythonAdapter::default()))
-            } else if path.join("bun.lockb").exists() || path.join("pnpm-lock.yaml").exists() {
-                Ok(Box::new(webapp::WebAppAdapter::default()))
-            } else {
-                anyhow::bail!("No supported package manifest found in {}", dir);
-            }
+    } else if path.join("requirements.txt").exists() {
+        Ok(Box::new(python::PythonAdapter::default()))
+    } else if path.join("bun.lockb").exists() || path.join("pnpm-lock.yaml").exists() {
+        Ok(Box::new(webapp::WebAppAdapter::default()))
+    } else {
+        anyhow::bail!("No supported package manifest found in {}", dir);
+    }
 }
 
-pub mod npm;
 pub mod cargo;
 pub mod gradle;
+pub mod npm;
 pub mod python;
 pub mod webapp;

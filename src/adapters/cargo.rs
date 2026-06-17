@@ -1,9 +1,9 @@
 use super::Adapter;
-use anyhow::{Result, Context};
-use async_trait::async_trait;
 use crate::core::lock::LockFile;
-use std::process::Command;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::path::Path;
+use std::process::Command;
 
 #[derive(Default)]
 pub struct CargoAdapter;
