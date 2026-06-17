@@ -1,7 +1,7 @@
-use anyhow::{Result, Context};
 use crate::adapters::{self};
-use crate::core::lock::{load_lock, save_lock};
 use crate::core::cache::Cache;
+use crate::core::lock::{load_lock, save_lock};
+use anyhow::{Context, Result};
 
 fn print_logo() {
     // Load the ASCII logo from the UI resources and print it to stdout.

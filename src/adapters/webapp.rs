@@ -1,9 +1,9 @@
 use super::Adapter;
-use anyhow::{Result, Context};
-use async_trait::async_trait;
 use crate::core::lock::{LockFile, PackageRef};
-use std::process::Command;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::path::Path;
+use std::process::Command;
 
 #[derive(Default)]
 pub struct WebAppAdapter;
@@ -33,7 +33,6 @@ impl Adapter for WebAppAdapter {
         }
         Ok(vec![])
     }
-
 
     async fn install(&self, dir: &str) -> Result<()> {
         let manager = Self::choose_manager()?;
@@ -79,8 +78,9 @@ impl Adapter for WebAppAdapter {
                 }
                 cmd.current_dir(dir).status()
             }
-        _ => unreachable!(),
-    }.with_context(|| format!("Failed to run {} update", manager))?;
+            _ => unreachable!(),
+        }
+        .with_context(|| format!("Failed to run {} update", manager))?;
         if !status.success() {
             anyhow::bail!("{} update failed with code {}", manager, status);
         }

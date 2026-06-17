@@ -1,7 +1,7 @@
 use super::Adapter;
-use async_trait::async_trait;
-use anyhow::Result;
 use crate::core::lock::{LockFile, PackageRef};
+use anyhow::Result;
+use async_trait::async_trait;
 use std::process::Command;
 
 #[derive(Default)]
