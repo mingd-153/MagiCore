@@ -224,8 +224,8 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
         if event::poll(Duration::from_millis(150))? {
             let ev = event::read()?;
             let mut app = state.lock().unwrap();
-            match ev {
-                Event::Key(key) => {
+            if let Event::Key(key) = ev {
+
                     match key.code {
                         // Quit the REPL (Ctrl+Q) or Esc
                         KeyCode::Esc => {
@@ -247,11 +247,9 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
                                 if app.sidebar_offset > app.selected {
                                     app.sidebar_offset = app.selected;
                                 }
-                            } else if app.focus == Focus::Console {
-                                if app.console_offset > 0 {
-                                    app.console_offset -= 1;
-                                }
-                            }
+} else if app.focus == Focus::Console && app.console_offset > 0 {
+                                 app.console_offset -= 1;
+                             }
                         }
                         KeyCode::Down => {
                             if app.focus == Focus::Sidebar {
@@ -311,8 +309,7 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
                     }
                 }
 
-                _ => {}
-            }
+
         }
 
         // Check quit flag
