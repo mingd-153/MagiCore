@@ -1,0 +1,12 @@
+{
+  "name": "webapp-core",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun run dev",
+    "build": "bun run build"
+  },
+  "devDependencies": {
+    "bun": "*"
+  }
+}
