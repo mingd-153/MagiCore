@@ -2,7 +2,7 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 
 use anyhow::Result;
 use colored::*;
-use crossterm::event::{self, Event, KeyCode, MouseEvent, MouseEventKind, MouseButton};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Alignment},
@@ -202,8 +202,6 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
     let mut stdout = io::stdout();
     // Enable raw mode and clear the screen for a clean CLI‑style start
     let _ = crossterm::terminal::enable_raw_mode();
-    // Enable mouse capture for interaction
-    let _ = crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture);
     // Clear any existing terminal content
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
     // Enter alternate screen to lock whole UI (prevents terminal scroll)
@@ -229,9 +227,14 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
             match ev {
                 Event::Key(key) => {
                     match key.code {
-                        // Quit the REPL
-                        KeyCode::Char('q') | KeyCode::Esc => {
+                        // Quit the REPL (Ctrl+Q) or Esc
+                        KeyCode::Esc => {
                             should_quit = true;
+                        }
+                        KeyCode::Char('q') => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                should_quit = true;
+                            }
                         }
                         // Navigation keys
                         KeyCode::Up => {
@@ -307,64 +310,7 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
                         _ => {}
                     }
                 }
-                Event::Mouse(mouse_event) => {
-                    // Handle mouse events via the new MouseEvent struct (crossterm 0.28)
-                    use crossterm::event::{MouseEventKind, MouseButton};
-                    // Determine terminal size for layout calculations
-                    let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((0,0));
-                    let compact = term_cols < 80 || term_rows < 24;
-                    let header_pct = if compact { 25 } else { 30 };
-                    let footer_pct = if compact { 15 } else { 10 };
-                    let body_start = (term_rows * header_pct) / 100;
-                    let footer_start = term_rows - (term_rows * footer_pct) / 100;
-                    let info_width = (term_cols * 30) / 100;
-                    let menu_width = (term_cols * 35) / 100;
-                    // Note: menu starts after the info column
-                    let menu_start = info_width;
-                    let menu_end = info_width + menu_width;
-                    
-                    match mouse_event.kind {
-                        MouseEventKind::ScrollUp => {
-                            // Scroll up navigates menu when focus is sidebar
-                            if app.focus == Focus::Sidebar {
-                                if app.selected == 0 {
-                                    app.selected = MENU_ITEMS.len() - 1;
-                                } else {
-                                    app.selected -= 1;
-                                }
-                                if app.sidebar_offset > app.selected {
-                                    app.sidebar_offset = app.selected;
-                                }
-                            }
-                        }
-                        MouseEventKind::ScrollDown => {
-                            if app.focus == Focus::Sidebar {
-                                app.selected = (app.selected + 1) % MENU_ITEMS.len();
-                                if app.sidebar_offset + 1 < app.selected {
-                                    app.sidebar_offset = app.selected;
-                                }
-                            }
-                        }
-                        MouseEventKind::Down(MouseButton::Left) => {
-                            // Click handling: determine if click is inside menu column or footer (input)
-                            let col = mouse_event.column as u16;
-                            let row = mouse_event.row as u16;
-                            if col >= menu_start && col < menu_end && row >= body_start && row < footer_start {
-                                // Click inside menu area – select item based on vertical offset
-                                let idx = ((row - body_start) as usize) % MENU_ITEMS.len();
-                                app.selected = idx;
-                                if app.sidebar_offset > app.selected {
-                                    app.sidebar_offset = app.selected;
-                                }
-                                app.focus = Focus::Sidebar;
-                            } else if row >= footer_start {
-                                // Click in footer (input area) – focus input
-                                app.focus = Focus::Console;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+
                 _ => {}
             }
         }
@@ -378,8 +324,7 @@ pub async fn run_ui(project_dir: PathBuf) -> Result<()> {
     // Leave alternate screen and restore terminal
     let _ = crossterm::terminal::disable_raw_mode();
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen);
-    // Disable mouse capture before exiting
-    let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
+
     terminal.show_cursor()?;
     Ok(())
 }
@@ -515,7 +460,7 @@ fn draw_ui(f: &mut Frame, state: &Arc<Mutex<AppState>>) {
 
     // Open source line
     header_content.push(Line::from(Span::styled(
-        "Open Source • Built in Vietnam",
+        "Open Source • Built in Vietnam 🇻🇳",
         Style::default(),
     )));
     // Created by line
