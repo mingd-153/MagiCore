@@ -33,7 +33,7 @@ This document captures the design and implementation contracts for the terminal�
    - Layout percentages adjust based on total height (header, info, footer, menu).
 7. **Graceful Degradation**
    - If the terminal does not support colors, the UI will fall back to default terminal colors (no explicit fallback code needed because `crossterm`/`tui` automatically ignore unsupported colors).
-    - Mouse interaction is supported: left‑click selects a menu item, scroll up/down changes selection, and clicking the input area focuses the command line.
+
 
 1. **Header**
    - Displays `PROJECT_NAME` (`"MegaGate"`) in **bold** and **underlined** style.
@@ -55,7 +55,7 @@ This document captures the design and implementation contracts for the terminal�
    - Layout percentages adjust based on total height (header, menu, footer).
 6. **Graceful Degradation**
    - If the terminal does not support colors, the UI will fall back to default terminal colors (no explicit fallback code needed because `crossterm`/`tui` automatically ignore unsupported colors).
-    - Mouse interaction is supported: left‑click selects a menu item, scroll up/down changes selection, and clicking the input area focuses the command line.
+
 
 ## Non‑Functional Requirements
 - Uses only the `crossterm` and `tui` (ratatui) crates, both compatible with `no‑std` environments.
