@@ -1,9 +1,9 @@
 use super::Adapter;
-use anyhow::{Result, Context};
-use async_trait::async_trait;
 use crate::core::lock::{LockFile, PackageRef};
-use std::process::Command;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::path::Path;
+use std::process::Command;
 
 #[derive(Default)]
 pub struct NpmAdapter;
@@ -15,7 +15,8 @@ impl Adapter for NpmAdapter {
         let content = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
         let json: serde_json::Value = serde_json::from_str(&content)?;
-        let deps = json.get("dependencies")
+        let deps = json
+            .get("dependencies")
             .and_then(|d| d.as_object())
             .cloned()
             .unwrap_or_default();
@@ -54,7 +55,11 @@ impl Adapter for NpmAdapter {
     }
 
     async fn update(&self, dir: &str, pkg: &str) -> Result<()> {
-        let manager = if Command::new("pnpm").arg("--version").output().is_ok() { "pnpm" } else { "npm" };
+        let manager = if Command::new("pnpm").arg("--version").output().is_ok() {
+            "pnpm"
+        } else {
+            "npm"
+        };
         let status = Command::new(manager)
             .args(["update", pkg])
             .current_dir(dir)
@@ -67,7 +72,11 @@ impl Adapter for NpmAdapter {
     }
 
     async fn remove(&self, dir: &str, pkg: &str) -> Result<()> {
-        let manager = if Command::new("pnpm").arg("--version").output().is_ok() { "pnpm" } else { "npm" };
+        let manager = if Command::new("pnpm").arg("--version").output().is_ok() {
+            "pnpm"
+        } else {
+            "npm"
+        };
         let status = Command::new(manager)
             .args(["remove", pkg])
             .current_dir(dir)

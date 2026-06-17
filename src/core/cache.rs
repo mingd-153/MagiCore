@@ -1,8 +1,7 @@
 use anyhow::Result;
 
-use std::path::PathBuf;
 use sha2::{Digest, Sha256};
-
+use std::path::PathBuf;
 
 /// Simple content‑addressable cache stored under $HOME/.megagate/cache
 pub struct Cache {

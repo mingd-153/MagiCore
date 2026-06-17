@@ -1,9 +1,9 @@
 use super::Adapter;
-use anyhow::{Result, Context};
-use async_trait::async_trait;
 use crate::core::lock::LockFile;
-use std::process::Command;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::path::Path;
+use std::process::Command;
 
 #[derive(Default)]
 pub struct GradleAdapter;
@@ -19,7 +19,11 @@ impl Adapter for GradleAdapter {
     async fn install(&self, dir: &str) -> Result<()> {
         // Try to run Gradle wrapper if present, otherwise fallback to system gradle
         let wrapper = Path::new(dir).join("gradlew");
-        let cmd = if wrapper.exists() { wrapper } else { Path::new("gradle").to_path_buf() };
+        let cmd = if wrapper.exists() {
+            wrapper
+        } else {
+            Path::new("gradle").to_path_buf()
+        };
         let status = Command::new(cmd)
             .arg("build")
             .current_dir(dir)
