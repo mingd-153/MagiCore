@@ -34,18 +34,6 @@ impl Adapter for WebAppAdapter {
         Ok(vec![])
     }
 
-    // Choose the available manager (bun preferred, then pnpm, fallback to npm)
-    fn choose_manager() -> Result<&'static str> {
-        if Command::new("bun").arg("--version").output().is_ok() {
-            Ok("bun")
-        } else if Command::new("pnpm").arg("--version").output().is_ok() {
-            Ok("pnpm")
-        } else if Command::new("npm").arg("--version").output().is_ok() {
-            Ok("npm")
-        } else {
-            anyhow::bail!("Neither bun, pnpm nor npm found in PATH")
-        }
-    }
 
     async fn install(&self, dir: &str) -> Result<()> {
         let manager = Self::choose_manager()?;
@@ -69,7 +57,7 @@ impl Adapter for WebAppAdapter {
                 if pkg.is_empty() {
                     cmd.arg("upgrade");
                 } else {
-                    cmd.args(&["add", &format!("{}@latest", pkg)]);
+                    cmd.args(["add", &format!("{}@latest", pkg)]);
                 }
                 cmd.current_dir(dir).status()
             }
@@ -78,7 +66,7 @@ impl Adapter for WebAppAdapter {
                 if pkg.is_empty() {
                     cmd.arg("update");
                 } else {
-                    cmd.args(&["update", pkg]);
+                    cmd.args(["update", pkg]);
                 }
                 cmd.current_dir(dir).status()
             }
@@ -87,13 +75,12 @@ impl Adapter for WebAppAdapter {
                 if pkg.is_empty() {
                     cmd.arg("update");
                 } else {
-                    cmd.args(&["update", pkg]);
+                    cmd.args(["update", pkg]);
                 }
                 cmd.current_dir(dir).status()
             }
-            _ => unreachable!(),
-        }?
-        .with_context(|| format!("Failed to run {} update", manager))?;
+        _ => unreachable!(),
+    }.with_context(|| format!("Failed to run {} update", manager))?;
         if !status.success() {
             anyhow::bail!("{} update failed with code {}", manager, status);
         }
@@ -103,7 +90,7 @@ impl Adapter for WebAppAdapter {
     async fn remove(&self, dir: &str, pkg: &str) -> Result<()> {
         let manager = Self::choose_manager()?;
         let status = Command::new(manager)
-            .args(&["remove", pkg])
+            .args(["remove", pkg])
             .current_dir(dir)
             .status()
             .with_context(|| format!("Failed to run {} remove", manager))?;
@@ -111,5 +98,19 @@ impl Adapter for WebAppAdapter {
             anyhow::bail!("{} remove failed with code {}", manager, status);
         }
         Ok(())
+    }
+}
+
+impl WebAppAdapter {
+    fn choose_manager() -> Result<&'static str> {
+        if Command::new("bun").arg("--version").output().is_ok() {
+            Ok("bun")
+        } else if Command::new("pnpm").arg("--version").output().is_ok() {
+            Ok("pnpm")
+        } else if Command::new("npm").arg("--version").output().is_ok() {
+            Ok("npm")
+        } else {
+            anyhow::bail!("Neither bun, pnpm nor npm found in PATH")
+        }
     }
 }

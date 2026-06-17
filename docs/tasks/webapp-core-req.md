@@ -1,10 +1,10 @@
-# Task: Xây dựng WebApp Core (Bun / PNPM) cho Hyper-Pkg
+# Task: Xây dựng WebApp Core (Bun / PNPM) cho MegaGate
 
 ## 1. Mục tiêu
 Xây dựng một **core (adapter) duy nhất** cho các dự án JavaScript/TypeScript, dựa trên **Bun** và **PNPM**, cung cấp:
 - Quản lý phụ thuộc (`install`, `update`, `remove`) tự động chọn công cụ (Bun → PNPM → npm).
 - Các chức năng bổ sung: Bundle/Build, Dev-server (HMR), Lint, Test, Type-checking.
-- Ghi lại mọi dependency vào `hyper-pkg.lock` với `source = "webapp"`.
+- Ghi lại mọi dependency vào `MegaGate.lock` với `source = "webapp"`.
 - Kiến trúc module hóa, dễ mở rộng (thêm Webpack, Rollup, Yarn...).
 
 ## 2. Phạm vi công việc (Scope)
@@ -46,7 +46,7 @@ Xây dựng một **core (adapter) duy nhất** cho các dự án JavaScript/Typ
 - **Nhiệm vụ**:
   - Thêm sub-command `run-ts <mode>` (build, dev, lint, test).
   - Kết nối command tới `WebAppCoreAdapter::run_ts_tool`.
-- **Đầu ra**: Người dùng chạy được `hyper-pkg run-ts build`.
+- **Đầu ra**: Người dùng chạy được `MegaGate run-ts build`.
 
 ### 2.6. Tài liệu
 - **File**: `docs/tasks/webapp-core-req.md` (file này) + cập nhật `CORE.md`.
@@ -68,7 +68,7 @@ Xây dựng một **core (adapter) duy nhất** cho các dự án JavaScript/Typ
 - **File**: `.github/workflows/webapp-core-ci.yml`
 - **Nhiệm vụ**:
   - Chạy `cargo test`.
-  - Chạy `hyper-pkg install` và `run-ts build` trên Ubuntu, macOS, Windows.
+  - Chạy `MegaGate install` và `run-ts build` trên Ubuntu, macOS, Windows.
 - **Đầu ra**: Workflow CI hoạt động.
 
 ## 3. Yêu cầu phi chức năng
@@ -78,7 +78,7 @@ Xây dựng một **core (adapter) duy nhất** cho các dự án JavaScript/Typ
 | **Hiệu năng** | Ưu tiên Bun (nhanh nhất), sau đó PNPM, cuối cùng npm. |
 | **Ổn định** | Mọi lỗi phải được bọc trong `anyhow::Result`, thông báo rõ ràng. |
 | **Mở rộng** | Thêm công cụ mới chỉ cần sửa enum `TsTool`/`WebAppEngine`. |
-| **Đồng nhất** | Mọi dependency đều ghi vào `hyper-pkg.lock` (JSON). |
+| **Đồng nhất** | Mọi dependency đều ghi vào `MegaGate.lock` (JSON). |
 | **Testable** | Sử dụng mock cho `std::process::Command`. |
 | **Bảo mật** | Chỉ chạy các lệnh xác định rõ, không thực thi script lạ. |
 | **Đa nền tảng** | Chạy trên macOS, Linux, Windows. |
@@ -102,7 +102,7 @@ Xây dựng một **core (adapter) duy nhất** cho các dự án JavaScript/Typ
 ## 5. Cấu trúc thư mục dự kiến
 
 ```
-hyper-pkg/
+MegaGate/
 ├─ src/
 │  ├─ adapters/
 │  │   ├─ webapp/
@@ -127,11 +127,11 @@ hyper-pkg/
 
 ## 6. Tiêu chí chấp nhận (Acceptance Criteria)
 
-- [ ] `hyper-pkg install` tự động dùng Bun/PNPM/npm trong dự án JS/TS.
-- [ ] `hyper-pkg run-ts build` bundle thành công dự án TS.
-- [ ] `hyper-pkg run-ts dev` khởi chạy dev-server với HMR.
-- [ ] `hyper-pkg run-ts lint` chạy ESLint.
-- [ ] `hyper-pkg run-ts test` chạy test (Jest/Vitest/Bun test).
+- [ ] `MegaGate install` tự động dùng Bun/PNPM/npm trong dự án JS/TS.
+- [ ] `MegaGate run-ts build` bundle thành công dự án TS.
+- [ ] `MegaGate run-ts dev` khởi chạy dev-server với HMR.
+- [ ] `MegaGate run-ts lint` chạy ESLint.
+- [ ] `MegaGate run-ts test` chạy test (Jest/Vitest/Bun test).
 - [ ] Unit test cover ≥ 80% logic core.
 - [ ] CI workflow chạy pass trên 3 nền tảng.
 - [ ] Tài liệu `CORE.md` mô tả đầy đủ cách dùng và mở rộng.
