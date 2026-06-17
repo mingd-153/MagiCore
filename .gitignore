@@ -12,3 +12,15 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# Trellis workspace (private data, logs, journals)
+.trellis/
+.opencode
+.kiro
+.gemini
+.cursor
+.kilocode
+.codex
+.claude
+.agents
+.agent
