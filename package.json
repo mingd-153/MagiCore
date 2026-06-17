@@ -1,0 +1,12 @@
+{
+  "name": "megagate",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "bun run build && cp -R src/webapp-core/web/static/* dist/",
+    "dev": "bun run dev"
+  },
+  "devDependencies": {
+    "bun": "*"
+  }
+}
