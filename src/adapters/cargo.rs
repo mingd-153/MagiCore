@@ -1,7 +1,7 @@
 use super::Adapter;
 use anyhow::{Result, Context};
 use async_trait::async_trait;
-use crate::core::lock::{LockFile, PackageRef, DependencyEdge};
+use crate::core::lock::LockFile;
 use std::process::Command;
 use std::path::Path;
 
@@ -10,9 +10,9 @@ pub struct CargoAdapter;
 
 #[async_trait]
 impl Adapter for CargoAdapter {
-    async fn parse(&self, dir: &str, lock: &mut LockFile) -> Result<Vec<String>> {
-        let manifest = Path::new(dir).join("Cargo.toml");
-        let content = std::fs::read_to_string(&manifest)
+    async fn parse(&self, _dir: &str, _lock: &mut LockFile) -> Result<Vec<String>> {
+        let manifest = Path::new(_dir).join("Cargo.toml");
+        let _content = std::fs::read_to_string(&manifest)
             .with_context(|| format!("Failed to read {}", manifest.display()))?;
         // Use toml crate to parse (omitted for brevity). Here we just stub.
         // In real code we would iterate over `[dependencies]` table.
@@ -33,7 +33,7 @@ impl Adapter for CargoAdapter {
 
     async fn update(&self, dir: &str, pkg: &str) -> Result<()> {
         let status = Command::new("cargo")
-            .args(&["update", pkg])
+            .args(["update", pkg])
             .current_dir(dir)
             .status()
             .with_context(|| "Failed to run cargo update")?;

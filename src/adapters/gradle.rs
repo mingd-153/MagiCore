@@ -1,7 +1,7 @@
 use super::Adapter;
 use anyhow::{Result, Context};
 use async_trait::async_trait;
-use crate::core::lock::{LockFile, PackageRef, DependencyEdge};
+use crate::core::lock::LockFile;
 use std::process::Command;
 use std::path::Path;
 
@@ -10,7 +10,7 @@ pub struct GradleAdapter;
 
 #[async_trait]
 impl Adapter for GradleAdapter {
-    async fn parse(&self, dir: &str, lock: &mut LockFile) -> Result<Vec<String>> {
+    async fn parse(&self, _dir: &str, _lock: &mut LockFile) -> Result<Vec<String>> {
         // Stub: In a real implementation we would invoke `./gradlew dependencies`
         // and parse the output. For now we just return an empty vec.
         Ok(vec![])
@@ -31,7 +31,7 @@ impl Adapter for GradleAdapter {
         Ok(())
     }
 
-    async fn update(&self, dir: &str, pkg: &str) -> Result<()> {
+    async fn update(&self, _dir: &str, _pkg: &str) -> Result<()> {
         // Gradle does not have a simple "update <package>" command.
         anyhow::bail!("Gradle update not supported – edit build.gradle manually")
     }

@@ -27,6 +27,8 @@ pub fn remove(key: &str) -> Option<String> {
 /// A tiny wrapper that mimics a hierarchical "trellis".
 pub struct Trellis;
 
+pub mod conversation;
+
 impl Trellis {
     /// Store a value at the given hierarchical key.
     pub fn put(key: impl Into<String>, value: impl Into<String>) -> anyhow::Result<()> {
