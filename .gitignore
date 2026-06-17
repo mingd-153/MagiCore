@@ -24,3 +24,6 @@ Thumbs.db
 .claude
 .agents
 .agent
+
+# Node
+node_modules/
