@@ -1,5 +1,5 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 // Import the UI module directly from its source path.
 #[path = "../ui/mod.rs"]

@@ -1,6 +1,6 @@
+use agent_memory::conversation::append_message;
 use anyhow::Result;
 use std::io::{self, Write};
-use agent_memory::conversation::append_message;
 
 fn main() -> Result<()> {
     println!("=== Trellis Chat Session (auto‑logged) ===");
