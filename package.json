@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "bun run build && cp -R src/webapp-core/web/static/* dist/",
-    "dev": "bun run dev"
+    "build": "tsc",
+    "dev": "ts-node src/webapp-core/src/dev.ts"
   },
   "devDependencies": {
-    "bun": "*"
+
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.2",
+    "ts-node": "^10.9.2"
   }
 }
