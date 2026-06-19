@@ -1,12 +1,26 @@
 {
-  "name": "webapp-core",
+  "name": "megagate-core",
   "version": "0.1.0",
   "private": true,
+  "type": "commonjs",
   "scripts": {
-    "dev": "bun run dev",
-    "build": "bun run build"
+    "dev": "ts-node -r tsconfig-paths/register src/dev.ts",
+    "build": "ts-node -r tsconfig-paths/register src/build.ts",
+    "test": "ts-node -r tsconfig-paths/register src/test.ts",
+    "mg dev": "ts-node -r tsconfig-paths/register src/dev.ts",
+    "mg build": "ts-node -r tsconfig-paths/register src/build.ts",
+    "mg test": "ts-node -r tsconfig-paths/register src/test.ts",
+    "lint": "eslint . --ext .ts,.tsx",
+    "serve": "ts-node -r tsconfig-paths/register src/server.ts",
+    "mg ci": "npm ci && npm run lint && npm run test && npm run build"
   },
   "devDependencies": {
-    "bun": "*"
+    "@types/node": "^25.9.3",
+    "typescript": "^6.0.3",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0"
   }
 }
