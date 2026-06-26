@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package megagate.v1;
+
+option go_package = "github.com/megagate/megagate/gen/go/megagate/v1;v1";
+option java_package = "dev.megagate.v1";
+option java_multiple_files = true;
+option csharp_namespace = "Megagate.V1";
+
+import "common.proto";
+import "package.proto";
+
+message Lockfile {
+    uint32 version = 1;
+    uint32 lockfile_version = 2;
+    map<string, LockedPackage> packages = 3;
+    map<string, ImporterDeps> importers = 4;
+    StoreInfo store = 5;
+    Metadata metadata = 6;
+}
+
+message ImporterDeps {
+    map<string, string> dependencies = 1;
+    map<string, string> dev_dependencies = 2;
+    map<string, string> optional_dependencies = 3;
+}
+
+message StoreInfo {
+    string dir = 1;
+    uint32 layout_version = 2;
+}
+
+message LockfileLoadRequest {
+    string cwd = 1;
+}
+
+message LockfileLoadResponse {
+    Lockfile lockfile = 1;
+    bool found = 2;
+    string error = 3;
+}
+
+message LockfileSaveRequest {
+    Lockfile lockfile = 1;
+    string cwd = 2;
+}
+
+message LockfileSaveResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message LockfileVerifyRequest {
+    Lockfile lockfile = 1;
+}
+
+message LockfileVerifyResponse {
+    bool valid = 1;
+    repeated string errors = 2;
+}
+
+message LockfileExportRequest {
+    Lockfile lockfile = 1;
+    ExportFormat format = 2;
+}
+
+message LockfileExportResponse {
+    string data = 1;
+    bool success = 2;
+    string error = 3;
+}
+
+enum ExportFormat {
+    EXPORT_FORMAT_UNSPECIFIED = 0;
+    EXPORT_FORMAT_JSON = 1;
+    EXPORT_FORMAT_YAML = 2;
+}
+
+message LockfileMigrateRequest {
+    string source_format = 1;
+    string source_data = 2;
+}
+
+message LockfileMigrateResponse {
+    Lockfile lockfile = 1;
+    bool success = 2;
+    string error = 3;
+}
+
+message ContentHashRequest {
+    Lockfile lockfile = 1;
+}
+
+message ContentHashResponse {
+    string content_hash = 1;
+}
