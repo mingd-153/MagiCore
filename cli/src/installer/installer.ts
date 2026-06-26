@@ -8,7 +8,7 @@ import {
     UpdateOptions,
     ResolvedDependency,
     type FetchResult,
-} from './types.js';
+} from '../types.js';
 import {
     loadLock,
     saveLock,
@@ -18,11 +18,11 @@ import {
     getImporterDeps,
     updateImporter,
     verifyLockIntegrity,
-} from './lock.js';
-import { resolveDependencies, Resolver } from './resolver.js';
-import { createFetcher } from './fetcher.js';
-import { createLinker, Linker } from './linker.js';
-import { getStoreDir } from './store.js';
+} from '../lockfile/lock.js';
+import { resolveDependencies, Resolver } from '../resolver.js';
+import { createFetcher } from '../fetcher.js';
+import { createLinker, Linker } from '../linker/linker.js';
+import { getStoreDir } from '../store.js';
 
 export interface InstallResult {
     lock: LockFile;

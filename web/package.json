@@ -1,0 +1,19 @@
+{
+    "name": "megagate-web",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/server.ts",
+        "build": "tsc -p tsconfig.build.json",
+        "start": "node dist/server.js",
+        "test": "vitest run",
+        "lint": "eslint . --ext .ts"
+    },
+    "devDependencies": {
+        "@types/node": "^20.10.0",
+        "tsx": "^4.7.0",
+        "typescript": "^5.3.0",
+        "vitest": "^1.0.0"
+    }
+}
