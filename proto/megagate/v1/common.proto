@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package megagate.v1;
+
+option go_package = "github.com/megagate/megagate/gen/go/megagate/v1;v1";
+option java_package = "dev.megagate.v1";
+option java_multiple_files = true;
+option csharp_namespace = "Megagate.V1";
+
+message Error {
+    int32 code = 1;
+    string message = 2;
+    map<string, string> details = 3;
+}
+
+message Metadata {
+    string created_at = 1;
+    string megagate_version = 2;
+    string content_hash = 3;
+}
+
+message Timestamp {
+    int64 seconds = 1;
+    int32 nanos = 2;
+}
+
+message Duration {
+    int64 seconds = 1;
+    int32 nanos = 2;
+}
