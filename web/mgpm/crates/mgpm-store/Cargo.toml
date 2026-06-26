@@ -21,6 +21,8 @@ flume.workspace = true
 walkdir.workspace = true
 ignore.workspace = true
 fs2.workspace = true
+tar.workspace = true
+flate2.workspace = true
 sha2.workspace = true
 blake3.workspace = true
 digest.workspace = true
@@ -31,6 +33,7 @@ mimalloc.workspace = true
 hex.workspace = true
 once_cell.workspace = true
 tracing.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
