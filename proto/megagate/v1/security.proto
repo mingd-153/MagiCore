@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package megagate.v1;
+
+option go_package = "github.com/megagate/megagate/gen/go/megagate/v1;v1";
+option java_package = "dev.megagate.v1";
+option java_multiple_files = true;
+option csharp_namespace = "Megagate.V1";
+
+import "common.proto";
+import "package.proto";
+
+message SecurityContext {
+    MegagateConfig config = 1;
+    string registry = 2;
+}
+
+message TyposquatCheckRequest {
+    string package_name = 1;
+}
+
+message TyposquatCheckResponse {
+    repeated TyposquatMatch matches = 1;
+    bool suspicious = 2;
+}
+
+message TyposquatMatch {
+    string input = 1;
+    string matched = 2;
+    int32 distance = 3;
+    double confidence = 4;
+}
+
+message SlopsquatCheckRequest {
+    string package_name = 1;
+    string registry = 2;
+}
+
+message SlopsquatCheckResponse {
+    repeated SlopsquatMatch matches = 1;
+    bool suspicious = 2;
+}
+
+message SlopsquatMatch {
+    string name = 1;
+    SlopsquatReason reason = 2;
+    Severity severity = 3;
+    string details = 4;
+}
+
+enum SlopsquatReason {
+    SLOPSQUAT_REASON_UNSPECIFIED = 0;
+    SLOPSQUAT_REASON_UNOFFICIAL_SCOPE = 1;
+    SLOPSQUAT_REASON_UNOFFICIAL_REGISTRY = 2;
+    SLOPSQUAT_REASON_SUSPICIOUS_NAME = 3;
+}
+
+enum Severity {
+    SEVERITY_UNSPECIFIED = 0;
+    SEVERITY_LOW = 1;
+    SEVERITY_MEDIUM = 2;
+    SEVERITY_HIGH = 3;
+    SEVERITY_CRITICAL = 4;
+}
+
+message MinimumAgeCheckRequest {
+    LockedPackage package = 1;
+    int32 min_hours = 2;
+}
+
+message MinimumAgeCheckResponse {
+    bool passed = 1;
+    string error = 2;
+}
+
+message ApproveBuildsRequest {
+    LockedPackage package = 1;
+    string script = 2;
+}
+
+message ApproveBuildsResponse {
+    bool approved = 1;
+}
+
+message LockdownCheckRequest {
+    LockedPackage package = 1;
+    string extract_path = 2;
+}
+
+message LockdownCheckResponse {
+    bool passed = 1;
+    string error = 2;
+}
+
+message ProvenanceVerifyRequest {
+    ProvenanceInfo provenance = 1;
+}
+
+message ProvenanceVerifyResponse {
+    bool verified = 1;
+}
+
+message SBOMGenerateRequest {
+    Lockfile lockfile = 1;
+}
+
+message SBOMGenerateResponse {
+    string sbom_json = 1;
+}
+
+message SBOMCheckLicensesRequest {
+    Lockfile lockfile = 1;
+    repeated string allowed_licenses = 2;
+}
+
+message SBOMCheckLicensesResponse {
+    int32 total_packages = 1;
+    int32 allowed_packages = 2;
+    repeated LicenseViolation violations = 3;
+}
+
+message LicenseViolation {
+    string package = 1;
+    string license = 2;
+    bool allowed = 3;
+}

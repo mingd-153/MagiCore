@@ -1,0 +1,25 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "megagate_ffi",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    crate_type = ["cdylib", "rlib"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":megagate_core",
+        ":megagate_types",
+        "@crates_io//napi",
+        "@crates_io//napi_derive",
+        "@crates_io//serde",
+        "@crates_io//serde_json",
+        "@crates_io//thiserror",
+        "@crates_io//uniffi",
+        "@crates_io//wasm_bindgen",
+    ],
+)
+
+rust_test(
+    name = "megagate_ffi_test",
+    crate = ":megagate_ffi",
+)
