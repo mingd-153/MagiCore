@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 /// A semantic version number (MAJOR.MINOR.PATCH[-prerelease][+build])
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct Version {
-    major: u64,
-    minor: u64,
-    patch: u64,
-    prerelease: Option<String>,
-    build: Option<String>,
+    pub major: u64,
+    pub minor: u64,
+    pub patch: u64,
+    pub prerelease: Option<String>,
+    pub build: Option<String>,
 }
 
 impl Version {
