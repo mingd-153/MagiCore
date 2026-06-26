@@ -1,0 +1,112 @@
+# MGPM Development Tasks
+# Usage: just <command>
+
+# Default target
+default: build
+
+# Build
+build:
+	cargo build --workspace
+
+build-release:
+	cargo build --workspace --release
+
+# Check
+check:
+	cargo check --workspace
+
+# Format
+fmt:
+	cargo fmt --all
+
+fmt-check:
+	cargo fmt --all -- --check
+
+# Lint
+lint:
+	cargo clippy --workspace -- -D warnings
+
+# Test
+test:
+	cargo test --workspace
+
+test-lib:
+	cargo test --workspace --lib
+
+test-integration:
+	cargo test --workspace --test integration
+
+test-doc:
+	cargo test --workspace --doc
+
+# Benchmarks
+bench:
+	cargo bench --workspace
+
+# Documentation
+doc:
+	cargo doc --workspace --no-deps --open
+
+# Clean
+clean:
+	cargo clean
+
+# All checks (CI)
+ci: fmt-check lint test
+
+# Generate lockfile
+lock:
+	cargo generate-lockfile
+
+# Update dependencies
+update:
+	cargo update --workspace
+
+# Audit security
+audit:
+	cargo audit
+
+# Deny check
+deny:
+	cargo deny check
+
+# Install tools
+install-tools:
+	cargo install cargo-audit cargo-deny cargo-nextest cargo-llvm-cov cargo-tarpaulin
+
+# Run mgpm binary
+run:
+	cargo run --bin mgpm --
+
+# Run with args
+run-%:
+	cargo run --bin mgpm -- $*
+
+# Watch and rebuild
+watch:
+	cargo watch -x "build --workspace" -x "test --workspace --lib"
+
+# Cross-compile targets
+cross-build-linux:
+	cross build --workspace --release --target x86_64-unknown-linux-gnu
+	cross build --workspace --release --target aarch64-unknown-linux-gnu
+
+cross-build-macos:
+	cross build --workspace --release --target x86_64-apple-darwin
+	cross build --workspace --release --target aarch64-apple-darwin
+
+cross-build-windows:
+	cross build --workspace --release --target x86_64-pc-windows-msvc
+
+# Docker build for Linux
+docker-build:
+	docker build -t mgpm:latest -f Dockerfile .
+
+# Create new crate
+new-crate:
+	@echo "Usage: just new-crate name=mgpm-new-crate"
+	cargo new --lib crates/{{name}}
+
+# Publish dry-run
+publish-dry-run:
+	cargo publish --workspace --dry-run

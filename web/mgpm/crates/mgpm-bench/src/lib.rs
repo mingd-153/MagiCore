@@ -1,0 +1,2 @@
+//! MGPM Benchmarks
+#![allow(unused)]

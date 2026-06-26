@@ -1,0 +1,36 @@
+[package]
+name = "mgpm-installer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mgpm-core = { path = "../mgpm-core" }
+mgpm-store = { path = "../mgpm-store" }
+mgpm-registry = { path = "../mgpm-registry" }
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+async-tar.workspace = true
+async-compression.workspace = true
+reqwest.workspace = true
+flume.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+crossbeam.workspace = true
+governor.workspace = true
+hex.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
+tempfile = "3.8"
