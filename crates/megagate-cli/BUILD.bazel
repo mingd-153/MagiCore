@@ -1,0 +1,23 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+rust_binary(
+    name = "megagate",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":megagate_core",
+        ":megagate_types",
+        "@crates_io//clap",
+        "@crates_io//colored",
+        "@crates_io//indicatif",
+        "@crates_io//tokio",
+        "@crates_io//tracing",
+        "@crates_io//tracing_subscriber",
+    ],
+)
+
+rust_test(
+    name = "megagate_cli_test",
+    crate = ":megagate",
+)
