@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 const program = new Command();
-import { createInstaller } from './installer.rust.js';
+import { createInstaller } from './installer/rust.js';
 import { getStoreDir } from './store.js';
 import { InstallOptions } from './types.js';
 

@@ -1,7 +1,7 @@
 import semver from 'semver';
 import { RegistryClient, createRegistryClient } from './registry.js';
 import { LockFile, LockPackage, ResolvedDependency, PackageJson, InstallOptions } from './types.js';
-import { lockKey, addPackageToLock, createEmptyLock, updateImporter, getPackageFromLock } from './lock.js';
+import { lockKey, addPackageToLock, createEmptyLock, updateImporter, getPackageFromLock } from './lockfile/lock.js';
 import { getStoreDir, packageExistsInStore } from './store.js';
 
 export interface ResolutionResult {
