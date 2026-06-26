@@ -1,0 +1,20 @@
+load("@bazel_gazelle//:def.bzl", "gazelle")
+
+# gazelle:prefix github.com/megagate/megagate
+# gazelle:go_prefix github.com/megagate/megagate
+
+# Rust build rules
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+# Proto rules
+load("@rules_proto//proto:defs.bzl", "proto_library")
+
+# Gazelle generation
+gazelle(name = "gazelle-update-repos")
+
+# Workspace level targets
+alias(
+    name = "all",
+    actual = "//crates/megagate-cli:megagate",
+    visibility = ["//visibility:public"],
+)
