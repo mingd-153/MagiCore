@@ -1,0 +1,19 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "megagate_linker",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":megagate_types",
+        ":megagate_extractor",
+        "@crates_io//dirs",
+        "@crates_io//tokio",
+    ],
+)
+
+rust_test(
+    name = "megagate_linker_test",
+    crate = ":megagate_linker",
+)

@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package megagate.v1;
+
+option go_package = "github.com/megagate/megagate/gen/go/megagate/v1;v1";
+option java_package = "dev.megagate.v1";
+option java_multiple_files = true;
+option csharp_namespace = "Megagate.V1";
+
+import "common.proto";
+import "package.proto";
+
+message ResolveRequest {
+    map<string, PackageManifest> manifests = 1;
+    Lockfile lockfile = 2;
+    InstallOptions options = 3;
+}
+
+message ResolveResponse {
+    map<string, ResolvedDependency> resolved = 1;
+    repeated Conflict conflicts = 2;
+    repeated ResolutionDecision decisions = 3;
+    map<string, ResolvedDependency> workspace_packages = 4;
+}
+
+message Conflict {
+    string name = 1;
+    repeated VersionConflict versions = 2;
+}
+
+message VersionConflict {
+    string version = 1;
+    repeated string required_by = 2;
+}
+
+message ResolutionDecision {
+    string name = 1;
+    string chosen_version = 2;
+    ResolutionStrategy strategy = 3;
+}
+
+enum ResolutionStrategy {
+    RESOLUTION_STRATEGY_UNSPECIFIED = 0;
+    RESOLUTION_STRATEGY_HOISTED = 1;
+    RESOLUTION_STRATEGY_DUPLICATED = 2;
+    RESOLUTION_STRATEGY_LOCKED = 3;
+    RESOLUTION_STRATEGY_WORKSPACE = 4;
+}
+
+message InstallOptions {
+    bool frozen_lockfile = 1;
+    bool production = 2;
+    string registry = 3;
+    string store_dir = 4;
+}

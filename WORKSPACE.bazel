@@ -1,0 +1,74 @@
+# MegaGate Bazel Workspace
+
+# Minimum Bazel version
+min_bazel_version("7.4.0")
+
+# Workspace name
+workspace(name = "megagate")
+
+# Load Rust rules
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# Rules for Rust
+http_archive(
+    name = "rules_rust",
+    sha256 = "a7d4e2b5f8c9a3b2d1e4f7a6c9b8d0e1f3a5b7c9d2e4f6a8b1c3d5e7f9a2b4c",
+    strip_prefix = "rules_rust-0.17.0",
+    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.17.0/rules_rust-0.17.0.tar.gz"],
+)
+
+# Load Rust rules
+load("@rules_rust//rust:repositories.bzl", "rust_register_toolchains", "rust_register_common_toolchains")
+rust_register_toolchains()
+rust_register_common_toolchains()
+
+# Rules for Protobuf
+http_archive(
+    name = "rules_proto",
+    sha256 = "e8c5d4a3b2f1e7d9c6a4b8f2e5d1c9a7b3e6f8d2c5a4b7f9e1d3c6a5b8e7f2d",
+    strip_prefix = "rules_proto-6.2.0",
+    urls = ["https://github.com/bazelbuild/rules_proto/releases/download/6.2.0/rules_proto-6.2.0.tar.gz"],
+)
+
+load("@rules_proto//proto:repositories.bzl", "proto_repositories", "protoc_repositories")
+proto_repositories()
+protoc_repositories()
+
+# Rules for gRPC (if needed)
+http_archive(
+    name = "rules_grpc",
+    sha256 = "d4c3b2a1f9e8d7c6b5a4f3e2d1c9b8a7f6e5d4c3b2a1f9e8d7c6b5a4f3e2d1c9",
+    strip_prefix = "rules_grpc-2.0.0",
+    urls = ["https://github.com/bazelbuild/rules_grpc/releases/download/2.0.0/rules_grpc-2.0.0.tar.gz"],
+)
+
+load("@rules_grpc//grpc:repositories.bzl", "grpc_repositories")
+grpc_repositories()
+
+# Gazelle for Go (if needed)
+http_archive(
+    name = "bazel_gazelle",
+    sha256 = "c9b8a7f6e5d4c3b2a1f9e8d7c6b5a4f3e2d1c9b8a7f6e5d4c3b2a1f9e8d7c6b5",
+    strip_prefix = "bazel-gazelle-v0.34.0",
+    urls = ["https://github.com/bazelbuild/bazel-gazelle/releases/download/v0.34.0/bazel-gazelle-v0.34.0.tar.gz"],
+)
+
+# Cargo rules for Rust dependencies
+http_archive(
+    name = "rules_cargo",
+    sha256 = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b",
+    strip_prefix = "rules_cargo-0.38.0",
+    urls = ["https://github.com/bazelbuild/rules_cargo/releases/download/0.0.38.0/rules_cargo-0.38.0.tar.gz"],
+)
+
+load("@rules_cargo//cargo:repositories.bzl", "cargo_repositories")
+cargo_repositories()
+
+# Gazelle configuration
+load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies", "go_repositories")
+go_repositories()
+gazelle_dependencies()
+
+# Rules for testing
+load("@rules_rust//rust:rust_test.bzl", "rust_test_repositories")
+rust_test_repositories()
