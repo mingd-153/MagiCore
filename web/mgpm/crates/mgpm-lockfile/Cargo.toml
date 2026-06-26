@@ -1,0 +1,28 @@
+[package]
+name = "mgpm-lockfile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mgpm-core = { path = "../mgpm-core" }
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bincode.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+blake3.workspace = true
+hex.workspace = true
+semver.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
+tempfile = "3.8"
