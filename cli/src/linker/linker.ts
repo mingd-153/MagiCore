@@ -1,7 +1,7 @@
 import { mkdir, writeFile, readFile, symlink, unlink, rm, access, constants, readdir, lstat } from 'fs/promises';
 import { join, dirname, relative, resolve } from 'path';
-import { LockFile, LockPackage } from './types.js';
-import { getStoreDir, getPackageStorePath, createVirtualStoreLink, createPackageLink, createNodeModulesLink, ensureStoreDirs } from './store.js';
+import { LockFile, LockPackage } from '../types.js';
+import { getStoreDir, getPackageStorePath, createVirtualStoreLink, createPackageLink, createNodeModulesLink, ensureStoreDirs } from '../store.js';
 
 export interface LinkOptions {
   cwd?: string;

@@ -3,7 +3,7 @@ import { mkdir, writeFile, readFile, access, constants, rm, symlink } from 'fs/p
 import { join, dirname } from 'path';
 import { ResolvedDependency, type FetchResult, LockFile } from './types.js';
 import { getTarballPath, getIntegrityPath, getPackageStorePath, writeStoreMeta, computeIntegrity, verifyIntegrity, packageExistsInStore, ensureStoreDirs } from './store.js';
-import { getPackageFromLock } from './lock.js';
+import { getPackageFromLock } from './lockfile/lock.js';
 import { RegistryClient, createRegistryClient } from './registry.js';
 import { createReadStream } from 'fs';
 import tar from 'tar';
