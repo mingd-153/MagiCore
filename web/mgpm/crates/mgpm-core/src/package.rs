@@ -285,8 +285,6 @@ impl VersionRange {
         if s.is_empty() {
             return Err(VersionRangeError::Empty);
         }
-        // Basic validation - just store the string for now
-        // More detailed parsing can be added later
         Ok(Self(s.to_string()))
     }
 
@@ -298,6 +296,114 @@ impl VersionRange {
     /// Returns true if this range matches any version.
     pub fn is_star(&self) -> bool {
         self.0 == "*"
+    }
+
+    /// Returns true if this range contains the given version.
+    pub fn contains(&self, version: &Version) -> bool {
+        let version_str = version.to_string();
+        
+        if self.is_star() {
+            return true;
+        }
+
+        let range_str = self.0.trim();
+        
+        if range_str == version_str {
+            return true;
+        }
+
+        if range_str.starts_with('^') {
+            let min = &range_str[1..];
+            if let Ok(min_v) = Version::parse(min) {
+                let max_v = increment_major(&min_v);
+                return *version >= min_v && *version < max_v;
+            }
+        }
+        
+        if range_str.starts_with('~') {
+            let min = &range_str[1..];
+            if let Ok(min_v) = Version::parse(min) {
+                let max_v = increment_minor(&min_v);
+                return *version >= min_v && *version < max_v;
+            }
+        }
+
+        if range_str.starts_with(">=") {
+            let ver = &range_str[2..];
+            if let Ok(v) = Version::parse(ver) {
+                return *version >= v;
+            }
+        }
+
+        if range_str.starts_with('>') {
+            let ver = &range_str[1..];
+            if let Ok(v) = Version::parse(ver) {
+                return *version > v;
+            }
+        }
+
+        if range_str.starts_with("<=") {
+            let ver = &range_str[2..];
+            if let Ok(v) = Version::parse(ver) {
+                return *version <= v;
+            }
+        }
+
+        if range_str.starts_with('<') {
+            let ver = &range_str[1..];
+            if let Ok(v) = Version::parse(ver) {
+                return *version < v;
+            }
+        }
+
+        if range_str.contains(">=") && range_str.contains("<") {
+            let parts: Vec<&str> = range_str.split("&&").collect();
+            if parts.len() == 2 {
+                let min_str = parts[0].trim().trim_start_matches(">=");
+                let max_str = parts[1].trim().trim_start_matches('<');
+                if let (Ok(min_v), Ok(max_v)) = (Version::parse(min_str), Version::parse(max_str)) {
+                    return *version >= min_v && *version < max_v;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Returns the intersection of this range with another.
+    pub fn intersection(&self, other: &VersionRange) -> VersionRange {
+        if self.is_star() {
+            return other.clone();
+        }
+        if other.is_star() {
+            return self.clone();
+        }
+        
+        if *self == *other {
+            return self.clone();
+        }
+        
+        VersionRange(format!("{} && {}", self.0, other.0))
+    }
+}
+
+fn increment_major(v: &Version) -> Version {
+    Version {
+        major: v.major + 1,
+        minor: 0,
+        patch: 0,
+        prerelease: None,
+        build: None,
+    }
+}
+
+fn increment_minor(v: &Version) -> Version {
+    Version {
+        major: v.major,
+        minor: v.minor + 1,
+        patch: 0,
+        prerelease: None,
+        build: None,
     }
 }
 
