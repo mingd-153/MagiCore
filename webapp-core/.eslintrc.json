@@ -1,0 +1,43 @@
+{
+    "parser": "@typescript-eslint/parser",
+    "parserOptions": {
+        "project": "./tsconfig.json",
+        "extraFileExtensions": [
+            ".json"
+        ]
+    },
+    "plugins": [
+        "@typescript-eslint"
+    ],
+    "extends": [
+        "eslint:recommended",
+        "plugin:@typescript-eslint/recommended"
+    ],
+    "ignorePatterns": [
+        "dist/",
+        "node_modules/",
+        "tests/**/*.d.ts",
+        "tsconfig.build.json",
+        "*.tsbuildinfo",
+        "package.json",
+        "src/cli.ts",
+        "src/fetcher.ts",
+        "src/installer.ts",
+        "src/linker.ts",
+        "src/lock.ts",
+        "src/registry.ts",
+        "src/resolver.ts",
+        "src/store.ts",
+        "src/tar.d.ts",
+        "src/test.ts",
+        "src/types.ts",
+        "src/build.ts",
+        "src/dev.ts",
+        "src/server.ts",
+        "src/packageManager.ts"
+    ],
+    "rules": {
+        "@typescript-eslint/no-explicit-any": "warn",
+        "@typescript-eslint/no-unused-vars": "warn"
+    }
+}

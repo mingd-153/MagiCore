@@ -2,320 +2,771 @@
 
 ## 1. Project Overview
 
-**MegaGate** is a lightweight, extensible command‑line tool for managing dependencies across many language ecosystems (npm, Cargo, Gradle, …). It provides:
+**MegaGate** is a multi-platform package manager core + project scaffolding tool. Rust SSOT (Single Source of Truth), exposed via FFI/bindings to all major languages and platforms.
 
-| Feature | Description |
-|--------|-------------|
-| Unified CLI | One binary (`MegaGate`) exposing `install`, `update`, `remove`, `list`, `audit`, `export`, and a terminal UI (`MegaGate ui`). |
-| Pluggable adapters | Each package manager is implemented as an async `Adapter` trait with `parse` and `update` methods. |
-| Shared lock model | A single on‑disk `MegaGate.lock` tracks the whole dependency graph, regardless of source manager. |
-| Responsive terminal UI | Built with **Ratatui**/Crossterm, loads a logo from a text file, adapts to terminal size, and shows progress bars, menus, and status messages. |
-| Future‑proof | Clean separation of **core**, **commands**, **adapters**, and **ui**, making it trivial for downstream agents to extend or replace parts. |
-
----
-
-## 2. High‑Level Architecture
-
-```
-┌─────────────────────────────────────┐
-│            MegaGate (binary)       │
-│  ───►  clap::Parser (CLI entry)─────►│
-│  └─────┬─────────────────────────────┘
-│        │
-│        │  Subcommand selected?
-│        ▼
-│  ┌─────────────┐          ┌───────────────┐
-│  │  Commands   │          │   UI (run_ui) │
-│  └───────┬─────┘          └───────┬───────┘
-│          │                        │
-│          ▼                        ▼
-│  ┌─────────────────┐   ┌─────────────────┐
-│  │  core::lock.rs │   │  src/ui/mod.rs │
-│  └───────┬─────────┘   └───────┬─────────┘
-│          │                     │
-│          ▼                     ▼
-│  ┌─────────────────┐   ┌─────────────────┐
-│  │   adapters/    │   │   UI helpers   │
-│  │  npm.rs, cargo.rs,…│  │ (logo loader, color gradient, …)│
-│  └─────────────────┘   └─────────────────┘
-```
-
-* **`src/main.rs`** – parses CLI args with **clap**, dispatches to either a command implementation or the UI (via `run_ui`).
-* **`src/commands/`** – async functions (`install`, `update`, `remove`, `list`, `audit`, `export`) that orchestrate the **core** and the chosen **adapter(s)**.
-* **`src/core/`** – lock handling (`lock.rs`), generic utilities (`utils.rs`), and optional caching (`cache.rs`).
-* **`src/adapters/`** – one module per package manager. Every adapter implements:
-```rust
-#[async_trait]
-pub trait Adapter {
-    async fn parse(&self, dir: &str, lock: &mut LockFile) -> Result<Vec<String>>;
-    async fn update(&self, dir: &str, pkg: &str) -> Result<()>;
-}
-```
-* **`src/ui/`** – UI entry point (`run_ui`), drawing routine (`draw_ui`), responsive logo loader, and input handling (keyboard & mouse).
+| Layer | Công nghệ | Vai trò |
+|-------|-----------|---------|
+| **Core engine** | Rust (`crates/`) | Resolver, fetcher, linker, security, lockfile |
+| **CLI** | TypeScript (`cli/`) | User-facing CLI, gọi Rust core qua NAPI-RS |
+| **Web app** | TypeScript/React (`web/`) | Web frontend SPA |
+| **Mobile apps** | Kotlin/Swift/Dart (`apps/`) | Android, iOS, Flutter |
+| **SDKs** | Multi-lang (`sdk/`) | Domain SDKs: AI, Game, Cloud, IoT |
+| **Templates** | Static files (`templates/`) | Scaffolding cho `mg create-*` |
 
 ---
 
-## 3. Core Components
-
-### 3.1 `LockFile` (`src/core/lock.rs`)
-| Field | Type | Meaning |
-|------|------|---------|
-| `graph` | `HashMap<String, Vec<String>>` | Dependency graph (package → its direct deps). |
-| `versions` | `HashMap<String, String>` | Resolved version strings per package. |
-| `meta` | `serde_json::Value` | Optional metadata (e.g., timestamps). |
-
-**Key functions**
-* `load_lock(path: &Path) -> Result<LockFile>` – deserialises JSON lock file.
-* `save_lock(lock: &LockFile, path: &Path) -> Result<()>` – writes lock as pretty‑printed JSON.
-
-The lock file is **the single source of truth** for all adapters; each adapter appends its parsed dependencies into the same `LockFile`.
-
-### 3.2 Command Orchestration (`src/commands/`)
-All command functions follow the same pattern:
-```rust
-pub async fn install(target: Option<String>) -> Result<()> {
-    // 1️⃣ Resolve project directory (or use supplied `target`).
-    // 2️⃣ Load current lock (or start fresh).
-    // 3️⃣ Detect which adapters apply (e.g., Cargo.toml → CargoAdapter).
-    // 4️⃣ Call each adapter’s `parse` to fill the lock.
-    // 5️⃣ Run the actual package manager (npm install, cargo fetch, …) – out of scope for this core repo.
-    // 6️⃣ Persist updated lock.
-}
-```
-* **`update`**, **`remove`**, **`list`**, **`audit`**, **`export`** follow the same skeleton, differing only in the final action (e.g., `audit` runs security checks against the lock).
-* All functions return `anyhow::Result<()>`, making error handling uniform across agents.
-
-### 3.3 Adapters (`src/adapters/`)
-Each adapter is a **thin wrapper** around the native package manager:
-* **CargoAdapter** (`src/adapters/cargo.rs`) – parses `Cargo.toml`, fills lock, optionally runs `cargo update`.
-* **NpmAdapter** (`src/adapters/npm.rs`) – parses `package.json`/`package-lock.json`.
-* **GradleAdapter** (`src/adapters/gradle.rs`) – parses `build.gradle`/`settings.gradle`.
-
-Adapters are **asynchronous** (via `tokio`) allowing future parallel parsing for large mono‑repos.
-
-**Adding a new package manager**
-1. Create `src/adapters/<name>.rs`.
-2. Implement the `Adapter` trait.
-3. Register the adapter in `src/commands/mod.rs` (or expose via a registry if you move to a plug‑in system).
-
----
-
-## 4. UI Layer (`src/ui/mod.rs`)
-
-### 4.1 Responsiveness
-* **Layout** – uses `ratatui::layout::Layout` with **percentage‑based constraints**:
-  * Header = **30 %**
-  * Menu = **60 %**
-  * Footer = **10 %**
-* **Logo handling** – the logo is stored in `src/ui/logo.txt`. The UI:
-  1. Reads the file at runtime (`load_logo_lines`).
-  2. Truncates each line to the current terminal width (`f.size().width`).
-  3. Applies a 4‑step color gradient (`LightCyan → LightMagenta → LightBlue → LightGreen`).
-* **Menu** – a list of actions (`MENU_ITEMS`) where each entry has its own color and a visual “selected” indicator (filled circle).
-* **Progress bar** – rendered only while a command runs; uses `Gauge` with a custom style and a percentage label (`Span::styled`).
-* **Status line** – always displays either “Ready” (white) or the latest message (colored).
-
-### 4.2 Interaction
-| Input | Effect |
-|------|--------|
-| `↑` / `↓` | Move selection in the menu. |
-| `Enter` | Execute the highlighted action (calls the async `execute_action`). |
-| `q` / `Esc` | Quit UI. |
-| Mouse **left‑click** on a menu line | Same as pressing `Enter` on that item. |
-| Prompt (`prompt_input`) | Temporarily disables raw mode, prints a colored prompt, reads user input, restores raw mode. |
-
-All UI logic lives in a **single file** (`src/ui/mod.rs`) to keep the UI self‑contained and easy to inherit.
-
-### 4.3 Extending the UI
-* Add a new menu entry → update `MENU_ITEMS`.
-* Provide a new async handler in `execute_action` that calls the appropriate command (e.g., add a “Clean” option).
-* If you need extra UI panels (e.g., a detailed lock‑view), create a new widget and invoke it from `draw_ui`.
-
----
-
-## 5. Project Structure
-
-**Recommended folder organization for maintainability**
+## 2. Thư mục gốc (Root)
 
 ```
 MegaGate/
-├─ Cargo.toml                # package metadata, dependencies (ratatui, clap, colored, async‑trait, anyhow)
-├─ src/
-│  ├─ main.rs               # CLI entry point, launches UI or commands
-│  ├─ commands/             # command implementations (install, update, …)
-│  ├─ adapters/             # each package manager lives in its own sub‑directory
-│  │  ├─ cargo/             # CargoAdapter + helper code
-│  │  │   └─ mod.rs
-│  │  ├─ npm/               # NpmAdapter + helper code
-│  │  │   └─ mod.rs
-│  │  ├─ nuget/             # NuGetAdapter for C# / Unity packages
-│  │  │   └─ mod.rs
-│  │  ├─ conan/             # optional C++ package manager adapter
-│  │  │   └─ mod.rs
-│  │  └─ python/            # PythonAdapter (pip) 
-│  │      └─ mod.rs
-│  ├─ core/                 # lock handling, utils, optional caching
-│  ├─ ui/                   # terminal UI implementation (run_ui, draw_ui, logo loader)
-│  └─ lib.rs (optional)    # re‑exports for external agents
-└─ README.md                # high‑level project description
+│
+├── crates/                    # 🦀 Rust workspace — SSOT, package manager engine
+│   ├── megagate-types/        #   Kiểu dữ liệu: config, package, lockfile, error, store, registry
+│   ├── megagate-resolver/     #   Dependency resolution: PubGrub/semver, conflict detection
+│   ├── megagate-linker/       #   Linking strategies: hardlink, symlink, copy
+│   ├── megagate-extractor/    #   Content-addressable store (pnpm-style), tarball extraction
+│   ├── megagate-fetcher/      #   HTTP fetching: registry client, rate-limited pool, retry
+│   ├── megagate-security/     #   Security: typosquat, slopsquat, SBOM, provenance, lockdown
+│   ├── megagate-core/         #   Orchestrator: resolve → fetch → link → lockfile pipeline
+│   ├── megagate-cli/          #   Rust CLI binary: install/add/remove/list/audit/lock
+│   ├── megagate-ffi/          #   FFI surface: UniFFI + NAPI-RS + WASM bindings
+│   ├── megagate-proto/        #   Protobuf generated types (prost)
+│   └── Cargo.toml             #   Workspace manifest
+│
+├── cli/                       # 🎯 TypeScript PM CLI — consumer của Rust core qua NAPI-RS
+│   ├── src/                   #   PM engine (resolver, fetcher, linker, store, security...)
+│   │   ├── commands/          #     CLI commands
+│   │   │   ├── install.ts
+│   │   │   ├── add.ts
+│   │   │   ├── remove.ts
+│   │   │   ├── list.ts
+│   │   │   ├── audit.ts
+│   │   │   ├── lock.ts
+│   │   │   ├── create-web.ts     # mg create-web <name>
+│   │   │   ├── create-app.ts     # mg create-app <name>
+│   │   │   ├── create-game.ts    # mg create-game <name>
+│   │   │   ├── create-ai.ts      # mg create-ai <name>
+│   │   │   ├── create-cloud.ts   # mg create-cloud <name>
+│   │   │   ├── create-iot.ts     # mg create-iot <name>
+│   │   │   └── create-lib.ts     # mg create-lib <name>
+│   │   ├── resolver/          #     Dependency resolution
+│   │   ├── fetcher/           #     HTTP fetch + registry client
+│   │   ├── linker/            #     Linking strategies
+│   │   ├── store/             #     Content-addressable store
+│   │   ├── security/          #     Security checks
+│   │   ├── lockfile/          #     Lockfile operations
+│   │   ├── installer/         #     Install orchestration
+│   │   ├── config/            #     Config loading
+│   │   ├── types/             #     Type definitions
+│   │   ├── native/            #     NAPI-RS bridge
+│   │   └── utils/             #     Helpers
+│   ├── napi/                  #     NAPI-RS compiled binary
+│   │   ├── index.js
+│   │   ├── index.d.ts
+│   │   └── megagate_core.node
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── tests/
+│
+├── web/                       # 🌐 Full-stack web application (backend + frontend)
+│   ├── src/
+│   │   ├── server.ts          #     HTTP server entry
+│   │   ├── dev.ts             #     Dev server (HMR)
+│   │   ├── build.ts           #     Production build
+│   │   │
+│   │   ├── api/               #     🔙 Backend: API route definitions
+│   │   ├── service/           #     🔙 Backend: Business logic orchestration
+│   │   ├── repository/        #     🔙 Backend: Data access layer
+│   │   ├── domain/            #     🔗 Shared: Domain entities (Clean Architecture)
+│   │   ├── config/            #     🔗 Shared: Application config
+│   │   ├── util/              #     🔗 Shared: Utility functions
+│   │   │
+│   │   ├── app/               #     🖥 Frontend: SPA (React)
+│   │   │   ├── main.tsx
+│   │   │   ├── router.tsx
+│   │   │   ├── components/    #       UI components
+│   │   │   ├── hooks/         #       React hooks
+│   │   │   ├── store/         #       State (Zustand)
+│   │   │   ├── pages/         #       Route pages
+│   │   │   └── styles/        #       CSS/theme
+│   │   ├── shared/            #     🖥 Frontend: Shared UI code
+│   │   └── types/             #     🖥 Frontend: UI-only types
+│   │
+│   ├── public/                #   Static assets (HTML, images, icons)
+│   │   ├── index.html
+│   │   ├── favicon.ico
+│   │   └── static/
+│   │
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   └── tests/
+│       ├── unit/
+│       └── integration/
+│
+├── apps/                      # 📱 Mobile & Desktop apps
+│   ├── android/               #   Android app (Kotlin)
+│   │   ├── app/
+│   │   ├── build.gradle.kts
+│   │   └── README.md
+│   ├── ios/                   #   iOS app (Swift)
+│   │   ├── Sources/
+│   │   ├── Package.swift
+│   │   └── README.md
+│   └── flutter/               #   Flutter app (Dart)
+│       ├── lib/
+│       ├── pubspec.yaml
+│       └── README.md
+│
+├── sdk/                       # 📦 Domain SDKs
+│   ├── ai-agent/              #   AI Agent toolkit, MCP server
+│   │   ├── src/
+│   │   │   ├── tools.ts       #     MCP tool definitions
+│   │   │   └── agent.ts       #     Agent integration
+│   │   └── package.json
+│   ├── game/                  #   Game engine plugins
+│   │   ├── bevy/              #     Bevy plugin (Rust)
+│   │   ├── godot/             #     Godot extension (GDScript/Rust)
+│   │   └── unity/             #     Unity package (C#)
+│   ├── cloud/                 #   Cloud serverless integration
+│   │   ├── cloudflare/        #     Cloudflare Workers
+│   │   ├── lambda/            #     AWS Lambda layer
+│   │   └── k8s/               #     K8s sidecar gRPC
+│   └── iot/                   #   IoT/Embedded targets
+│       ├── arm/               #     ARM cross-compile config
+│       └── riscv/             #     RISC-V cross-compile config
+│
+├── templates/                 # 📁 Project scaffolding templates
+│   ├── web/                   #   mg create-web <name> [--template]
+│   │   ├── vanilla/           #     HTML + TS + CSS
+│   │   ├── react/             #     React + Vite
+│   │   ├── next/              #     Next.js
+│   │   └── vue/               #     Vue + Vite
+│   ├── app/                   #   mg create-app <name> [--platform]
+│   │   ├── kotlin/            #     Android app scaffold
+│   │   ├── swift/             #     iOS app scaffold
+│   │   └── flutter/           #     Flutter app scaffold
+│   ├── game/                  #   mg create-game <name> [--engine]
+│   │   ├── bevy/              #     Bevy game scaffold
+│   │   ├── godot/             #     Godot project scaffold
+│   │   └── unity/             #     Unity package scaffold
+│   ├── ai/                    #   mg create-ai <name>
+│   │   ├── agent/             #     AI agent project
+│   │   └── mcp-server/        #     MCP server scaffold
+│   ├── cloud/                 #   mg create-cloud <name> [--platform]
+│   │   ├── cloudflare/        #     Cloudflare Worker
+│   │   └── lambda/            #     AWS Lambda function
+│   ├── iot/                   #   mg create-iot <name>
+│   │   ├── embedded/          #     Embedded Rust project
+│   │   └── firmware/          #     Firmware scaffold
+│   └── lib/                   #   mg create-lib <name> [--lang]
+│       ├── rust/              #     Rust library
+│       ├── ts/                #     TypeScript library
+│       └── python/            #     Python library
+│
+├── proto/                     # Protobuf schema definitions
+│   └── megagate/v1/
+│       ├── common.proto
+│       ├── package.proto
+│       ├── resolver.proto
+│       ├── linker.proto
+│       ├── extractor.proto
+│       ├── fetcher.proto
+│       ├── security.proto
+│       ├── store.proto
+│       └── lockfile.proto
+│
+├── bindings/                  # 🔗 Auto-generated language bindings
+│   ├── ts/                    #   TypeScript (NAPI-RS)
+│   ├── kotlin/                #   Kotlin (UniFFI JNI)
+│   ├── swift/                 #   Swift (UniFFI)
+│   ├── dart/                  #   Dart (FFI)
+│   ├── python/                #   Python (PyO3)
+│   ├── go/                    #   Go (CGO)
+│   ├── cpp/                   #   C++ (C FFI)
+│   ├── csharp/                #   C# (P/Invoke)
+│   ├── zig/                   #   Zig (C FFI)
+│   └── wasm/                  #   WASM (wasm-bindgen)
+│
+├── agent_memory/              # 🧠 AI agent memory store
+│   ├── src/
+│   │   ├── lib.rs             #   Global KV store (Trellis pattern)
+│   │   ├── log.rs             #   Agent activity log
+│   │   └── conversation.rs    #   Conversation manager
+│   └── Cargo.toml
+│
+├── docs/                      # 📖 Documentation
+│   ├── usage.md
+│   └── tasks/
+│
+├── tools/                     # 🛠 Build & CI scripts
+│   ├── build.sh
+│   ├── release.sh
+│   └── gen-bindings.sh
+│
+├── assets/                    # Logo, images
+├── examples/                  # Usage examples
+├── task/                      # Planning docs (gitignored)
+│
+├── Cargo.toml                 # Rust workspace root
+├── CORE.md                    # File này
+├── README.md
+├── buf.gen.yaml               # Buf codegen config
+├── buf.yaml                   # Buf schema registry
+├── BUILD.bazel                # Bazel build
+├── WORKSPACE.bazel
+├── tsconfig.json              # TypeScript config (root)
+└── .github/workflows/         # CI/CD pipelines
+    └── ci.yml
 ```
-
-*Each adapter sub‑folder contains its own `mod.rs` (or additional helper files) and implements the `Adapter` trait. This layout keeps language‑specific logic isolated, makes it easy to add or remove adapters, and prevents a single monolithic file from becoming unwieldy.*
 
 ---
 
-## 6. Building & Running
+## 3. CLI Command Tree
+
 ```
-MegaGate/
-├─ Cargo.toml                # package metadata, dependencies (ratatui, clap, colored, async‑trait, anyhow)
-├─ src/
-│  ├─ main.rs               # CLI entry point, launches UI or commands
-│  ├─ commands/
-│  │   ├─ mod.rs            # public command API (install, update, …)
-│  │   └─ <individual command files> (optional)
-│  ├─ adapters/
-│  │   ├─ cargo.rs
-│  │   ├─ npm.rs
-│  │   └─ gradle.rs
-│  ├─ core/
-│  │   ├─ lock.rs           # lock structure + (de)serialization
-│  │   ├─ cache.rs          # optional in‑memory/file cache utilities
-│  │   └─ utils.rs          # helper functions (e.g., timestamp)
-│  ├─ ui/
-│  │   ├─ mod.rs            # full UI implementation (+ logo loader, color gradient, …)
-│  │   └─ logo.txt          # editable ASCII logo
-│  └─ lib.rs (optional)    # re‑exports for external agents
-└─ README.md                # high‑level project description
+mg
+├── install [dir]              # Cài dependencies (Rust core)
+├── add <pkg> [--dev]          # Thêm dependency
+├── update [pkg]               # Cập nhật
+├── remove <pkg>               # Gỡ dependency
+├── list [--graph] [--depth]   # Danh sách dependencies
+├── audit                      # Audit security
+├── lock
+│   ├── verify                 # Xác thực lockfile integrity
+│   └── export <format>        # Xuất lockfile (json/yaml)
+│
+├── create-web <name>          # Scaffold full-stack web project
+├── create-app <name>          # Scaffold mobile/desktop app
+├── create-game <name>         # Scaffold game project
+├── create-ai <name>           # Scaffold AI agent project
+├── create-cloud <name>        # Scaffold cloud serverless project
+├── create-iot <name>          # Scaffold IoT/embedded project
+└── create-lib <name>          # Scaffold library (Rust/TS/Python)
+
+# Web app specific (chạy từ web/ directory)
+mg dev                         # Dev server (full-stack: backend + frontend HMR)
+mg build                       # Production build
+mg start                       # Production server
+```
+
+### Command → Code mapping
+
+| Command | Xử lý tại | Gọi |
+|---------|-----------|-----|
+| `mg install` | `cli/src/commands/install.ts` | Rust `megagate-core::install()` qua NAPI-RS |
+| `mg add` | `cli/src/commands/add.ts` | Rust `megagate-core::add()` qua NAPI-RS |
+| `mg create-web` | `cli/src/commands/create-web.ts` | Copy từ `templates/web/` + tạo full-stack scaffold |
+| `mg create-game` | `cli/src/commands/create-game.ts` | Copy từ `templates/game/` |
+| `mg dev` | `web/src/dev.ts` | Start dev server + HMR |
+| `mg build` | `web/src/build.ts` | Build frontend + backend |
+| `mg start` | `web/src/server.ts` | Production server (full-stack) |
+
+---
+
+## 4. Architecture Flow
+
+```
+Terminal                         TypeScript CLI                     Rust Core
+───────────────────────────────────────────────────────────────────────────
+$ mg install <dir>
+        │
+        ▼
+  cli/src/commands/install.ts
+        │
+        ├── gọi native/napi.ts ───────────► napi/megagate_core.node
+        │                                        │
+        │                                        ▼
+        │                                  crates/megagate-ffi
+        │                                        │
+        │                                        ▼
+        │                                  crates/megagate-core
+        │                                        │
+        │                                 ┌──────┼──────┐
+        │                                 ▼      ▼      ▼
+        │                          resolver  fetcher  linker
+        │                                 │      │      │
+        │                                 ▼      ▼      ▼
+        │                              megagate-lock.json
+        │                                        │
+        ◄─────────────────────────────────────────┘
+        │
+        ▼
+  "Install completed: 42 added"
+
+───────────────────────────────────────────────────────────────────────────
+$ mg create-web my-app
+        │
+        ▼
+  cli/src/commands/create-web.ts
+        │
+        ▼
+  cp -r templates/web/react/ ./my-app/
+        │
+        ▼
+  "Created my-app (full-stack: react + vite + api server)"
+
+───────────────────────────────────────────────────────────────────────────
+$ cd my-app && mg dev
+        │
+        ▼
+  web/src/dev.ts
+        │
+        ├── backend server (api, service, repository)
+        │       │
+        │       ▼
+        │   HTTP API (REST/GraphQL)
+        │
+        └── frontend dev server (HMR)
+                │
+                ▼
+            Browser SPA (React)
+```
+
+## 5. `web/` — Full-stack Web Application
+
+`web/` là một project hoàn chỉnh gồm **backend + frontend** trong cùng 1 codebase:
+
+```
+web/
+├── src/
+│   ├── server.ts          # 🔙 HTTP server entry (Express/Fastify)
+│   ├── dev.ts             # 🔙 Dev server với HMR
+│   ├── build.ts           # 🔙 Production build script
+│   │
+│   ├── api/               # 🔙 REST/GraphQL route handlers
+│   │   ├── index.ts
+│   │   ├── projects.ts
+│   │   └── dependencies.ts
+│   ├── service/           # 🔙 Business logic
+│   │   ├── project-service.ts
+│   │   └── dependency-service.ts
+│   ├── repository/        # 🔙 Data access (DB, filesystem, cache)
+│   │   ├── project-repo.ts
+│   │   └── dependency-repo.ts
+│   │
+│   ├── domain/            # 🔗 Domain entities (dùng cho cả BE + FE)
+│   │   ├── Project.ts
+│   │   └── Dependency.ts
+│   ├── config/            # 🔗 Config (dùng cho cả BE + FE)
+│   ├── util/              # 🔗 Utilities (dùng cho cả BE + FE)
+│   │
+│   ├── app/               # 🖥 Frontend SPA (React)
+│   │   ├── main.tsx
+│   │   ├── router.tsx
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── store/
+│   │   ├── pages/
+│   │   └── styles/
+│   ├── shared/            # 🖥 Frontend shared code
+│   └── types/             # 🖥 Frontend UI types
+│
+├── public/                # Static assets
+├── package.json           # 1 package.json cho cả BE + FE
+├── tsconfig.json
+└── vite.config.ts         # Vite cho frontend, tsx cho backend
 ```
 
 ---
 
-## 6. Building & Running
+### Luồng request trong full-stack web
+
+```
+Browser (React SPA)
+    │  GET /api/projects
+    ▼
+web/src/server.ts
+    │
+    ▼
+web/src/api/projects.ts         # Route handler
+    │
+    ▼
+web/src/service/project-service.ts  # Business logic
+    │
+    ▼
+web/src/repository/project-repo.ts  # Data access
+    │
+    ├── Database (SQLite/Postgres)
+    ├── Rust core (qua NAPI-RS) cho PM operations
+    └── File system
+```
+
+---
+
+## 8. Domain Branches (Git Worktree)
+
+| # | Branch | Worktree | AI Agent | Thư mục focus |
+|---|--------|----------|----------|---------------|
+| 1 | `sdk/web` | `MegaGate-web/` | Web-app AI | `cli/`, `web/`, `templates/web/` |
+| 2 | `sdk/game` | `MegaGate-game/` | Game AI | `sdk/game/`, `templates/game/` |
+| 3 | `ops/cicd` | `MegaGate-cicd/` | CICD AI | `.github/`, `tools/`, Bazel/Nix |
+| 4 | `sdk/cloud` | `MegaGate-cloud/` | Cloud AI | `sdk/cloud/`, `templates/cloud/` |
+| 5 | `sdk/ai` | `MegaGate-ai/` | AI Agent AI | `sdk/ai-agent/`, `agent_memory/` |
+| 6 | `feature/iot` | `MegaGate-iot/` | IoT AI | `sdk/iot/`, `templates/iot/` |
+| 7 | `feature/security` | `MegaGate-security/` | Security AI | `crates/megagate-security/`, `templates/` |
+| 8 | `development` | `MegaGate-dev/` | Integration | Toàn bộ (merge test) |
+| 9 | `main` | `MegaGate/` (gốc) | Stable | Chỉ rebase, không code trực tiếp |
+
+---
+
+## 9. Kiến trúc kết nối (Rust Core → Language Bindings)
+
+```
+                        ┌─────────────────────────┐
+                        │   crates/megagate-core   │
+                        │  (resolver, linker,      │
+                        │   extractor, fetcher,    │
+                        │   security)              │
+                        └────────┬────────┬────────┘
+                                 │        │
+                    ┌────────────┘        └────────────┐
+                    ▼                                   ▼
+          ┌─────────────────┐                  ┌─────────────────┐
+          │  megagate-ffi   │                  │  megagate-ffi   │
+          │  (NAPI-RS)      │                  │  (UniFFI)       │
+          └────────┬────────┘                  └────────┬────────┘
+                   │                                     │
+                   ▼                                     ├──────────────┐
+          ┌─────────────────┐                            ▼              ▼
+          │  cli/napi/      │                  ┌────────────┐  ┌────────────┐
+          │  .node binary   │                  │ Kotlin/JNI │  │ Swift/FFI  │
+          └────────┬────────┘                  │ (Android)  │  │ (iOS)      │
+                   │                           └────────────┘  └────────────┘
+                   ▼                                       ┌────────────┐
+          ┌─────────────────┐                              │ Dart/FFI    │
+          │  cli/src/       │                              │ (Flutter)   │
+          │  TypeScript CLI │                              └────────────┘
+          └─────────────────┘                              ┌────────────┐
+                                                            │ Python/PyO3│
+                   ▼                                        └────────────┘
+          ┌─────────────────┐                              ┌────────────┐
+          │  web/src/       │                              │ Go/CGO     │
+          │  Web SPA        │                              └────────────┘
+          └─────────────────┘                              ┌────────────┐
+                                                            │ C++/C FFI  │
+                                                            └────────────┘
+```
+
+---
+
+## 12. Thư mục chi tiết mỗi crate (Rust workspace)
+
+### 7.1 `crates/megagate-types`
+
+```
+megagate-types/
+├── src/
+│   ├── lib.rs
+│   ├── config.rs             # MegagateConfig, LinkStrategy, WorkspaceConfig
+│   ├── error.rs              # MegagateError enum
+│   ├── package.rs            # PackageManifest, LockedPackage, ResolvedDependency
+│   ├── lockfile.rs           # LockfileV1, ImporterDeps, StoreInfo
+│   ├── registry.rs           # NpmPackageInfo, RegistryVersion, DistInfo
+│   └── store.rs              # StoreBackend trait
+```
+
+### 7.2 `crates/megagate-resolver`
+
+```
+megagate-resolver/
+├── src/
+│   ├── lib.rs
+│   ├── resolver.rs           # Resolver struct, resolve(), batch_resolve()
+│   ├── graph.rs              # DependencyGraph, topological sort, cycle detection
+│   └── conflict.rs           # Conflict detection, hoist/duplicate decisions
+```
+
+### 7.3 `crates/megagate-fetcher`
+
+```
+megagate-fetcher/
+├── src/
+│   ├── lib.rs
+│   ├── fetcher.rs            # Fetcher struct, fetch(), fetch_multiple()
+│   ├── pool.rs               # FetchPool (rate-limited concurrent downloads)
+│   └── registry_client.rs   # NpmRegistryClient (metadata, tarball download)
+```
+
+### 7.4 `crates/megagate-linker`
+
+```
+megagate-linker/
+├── src/
+│   ├── lib.rs
+│   ├── linker.rs             # Linker struct, link(), unlink(), clean()
+│   └── strategy.rs           # HardlinkStrategy, SymlinkStrategy, CopyStrategy
+```
+
+### 7.5 `crates/megagate-extractor`
+
+```
+megagate-extractor/
+├── src/
+│   ├── lib.rs
+│   ├── extractor.rs          # Extractor (tarball → store nodes)
+│   └── store_backend.rs      # FsStoreBackend (v1/files, v1/nodes)
+```
+
+### 7.6 `crates/megagate-security`
+
+```
+megagate-security/
+├── src/
+│   ├── lib.rs
+│   ├── typosquat.rs          # Levenshtein-based package name detection
+│   ├── slopsquat.rs          # Scope/registry squat detection
+│   ├── minimum_age.rs        # Minimum release age check
+│   ├── approve_builds.rs     # Build script approval
+│   ├── lockdown.rs           # Eval/addon detection
+│   ├── provenance.rs         # Sigstore/SLSA verification
+│   ├── sbom.rs               # CycloneDX 1.5 SBOM generation
+│   └── manager.rs            # SecurityManager orchestrator
+```
+
+### 7.7 `crates/megagate-core`
+
+```
+megagate-core/
+├── src/
+│   └── lib.rs                # MegagateCore: install(), add(), update(), remove(),
+│                                list(), audit(), verify_lockfile()
+│                              # Orchestrates: resolver → fetcher → linker → lockfile
+```
+
+### 7.8 `crates/megagate-cli`
+
+```
+megagate-cli/
+├── src/
+│   └── main.rs               # CLI entry (clap): Install, Add, Update, Remove,
+│                                List, Audit, Lock {Verify, Export}
+```
+
+### 7.9 `crates/megagate-ffi`
+
+```
+megagate-ffi/
+├── src/
+│   └── lib.rs                # #[uniffi::export] + #[napi] functions
+│                              # Wraps all megagate-core operations
+│                              # Triple-export: UniFFI + NAPI-RS + WASM
+```
+
+---
+
+## 10. CLI Source (TypeScript) — Chi tiết
+
+```
+cli/
+├── src/
+│   ├── index.ts              # Entry: CLI parser (commander)
+│   ├── commands/
+│   │   ├── install.ts        # mg install [dir]
+│   │   ├── add.ts            # mg add <pkg>
+│   │   ├── remove.ts         # mg remove <pkg>
+│   │   ├── list.ts           # mg list [--graph]
+│   │   ├── audit.ts          # mg audit
+│   │   ├── lock.ts           # mg lock verify/export
+│   │   ├── create-web.ts     # mg create-web <name>
+│   │   ├── create-app.ts     # mg create-app <name>
+│   │   ├── create-game.ts    # mg create-game <name>
+│   │   ├── create-ai.ts      # mg create-ai <name>
+│   │   ├── create-cloud.ts   # mg create-cloud <name>
+│   │   ├── create-iot.ts     # mg create-iot <name>
+│   │   └── create-lib.ts     # mg create-lib <name>
+│   │
+│   ├── resolver/             # TS PM engine (sẽ migrate dần sang Rust)
+│   ├── fetcher/              # HTTP fetch + registry client
+│   ├── linker/               # Linking strategies
+│   ├── store/                # Content-addressable store
+│   ├── security/             # Security checks
+│   ├── lockfile/             # Lockfile operations
+│   ├── installer/            # Install orchestration
+│   ├── config/               # Config loading
+│   ├── types/                # Type definitions
+│   │
+│   ├── native/               # NAPI-RS bridge
+│   │   ├── index.ts
+│   │   └── types.ts
+│   └── utils/                # Formatters, validators, constants
+├── napi/
+│   ├── index.js              # JS wrapper → megagate_core.node
+│   ├── index.d.ts
+│   └── megagate_core.node    # NAPI-RS compiled binary
+├── package.json
+├── tsconfig.json
+└── tests/
+    ├── unit/
+    └── integration/
+```
+
+---
+
+## 11. Web Full-stack — Chi tiết
+
+```
+web/
+├── src/
+│   │
+│   │  ┌─────────────────────────────────────────────┐
+│   │  │ 🔙 BACKEND (server, api, service, repository)│
+│   │  └─────────────────────────────────────────────┘
+│   │
+│   ├── server.ts             # HTTP server entry (Express/Fastify/Hono)
+│   ├── dev.ts                # Dev server + HMR
+│   ├── build.ts              # Production build script
+│   │
+│   ├── api/                  # Route handlers
+│   │   ├── index.ts          #   Router mount
+│   │   ├── projects.ts       #   CRUD projects
+│   │   └── dependencies.ts   #   Dependency management
+│   ├── service/              # Business logic
+│   │   ├── project-service.ts
+│   │   └── dependency-service.ts
+│   ├── repository/           # Data access
+│   │   ├── project-repo.ts
+│   │   └── dependency-repo.ts
+│   │
+│   │  ┌─────────────────────────────────────────────┐
+│   │  │ 🔗 SHARED (domain, config, util)            │
+│   │  │   Dùng cho cả backend + frontend            │
+│   │  └─────────────────────────────────────────────┘
+│   │
+│   ├── domain/               # Domain entities
+│   │   ├── Project.ts
+│   │   ├── Dependency.ts
+│   │   └── User.ts
+│   ├── config/               # App config (env vars, constants)
+│   ├── util/                 # Utilities
+│   │
+│   │  ┌─────────────────────────────────────────────┐
+│   │  │ 🖥 FRONTEND (React SPA)                     │
+│   │  └─────────────────────────────────────────────┘
+│   │
+│   ├── app/                  # SPA entry
+│   │   ├── main.tsx
+│   │   ├── router.tsx
+│   │   ├── App.tsx
+│   │   ├── components/       #   UI components
+│   │   │   ├── common/       #     Button, Input, Modal...
+│   │   │   ├── project/      #     Project card, list...
+│   │   │   └── dependency/   #     Dep tree, version selector...
+│   │   ├── hooks/            #   React hooks
+│   │   │   ├── useDependencies.ts
+│   │   │   ├── useProject.ts
+│   │   │   └── useSDK.ts
+│   │   ├── store/            #   Zustand stores
+│   │   ├── pages/            #   Route pages
+│   │   └── styles/           #   CSS/themes
+│   ├── shared/               # Frontend shared code
+│   └── types/                # UI-only types
+│
+├── public/                   # Static assets
+│   ├── index.html
+│   ├── favicon.ico
+│   └── static/
+│
+├── package.json              # 1 package.json cho full-stack
+├── tsconfig.json
+├── vite.config.ts            # Vite (frontend) + tsx (backend)
+└── tests/
+    ├── unit/
+    └── integration/
+
+---
+
+## 13. Templates — Quy ước
+
+Mỗi template trong `templates/` là 1 thư mục chứa project mẫu hoàn chỉnh.
+
+```
+templates/
+├── web/react/                # mg create-web my-app --template react
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   ├── index.html
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx
+│       └── ...
+│
+├── app/kotlin/               # mg create-app my-app --platform android
+│   ├── build.gradle.kts
+│   └── app/src/main/...
+│
+└── game/bevy/                # mg create-game my-game --engine bevy
+    ├── Cargo.toml
+    └── src/main.rs
+```
+
+Khi chạy `mg create-web my-app --template react`, CLI sẽ:
+1. Copy `templates/web/react/` → `./my-app/`
+2. Replace template variables (`{{name}}` → `my-app`)
+3. Init git repo
+4. Chạy `npm install` (hoặc `cargo build`)
+
+---
+
+## 14. Supply Chain & Security
+
+```
+crates/megagate-security/
+├── typosquat         # Levenshtein distance, common squat patterns
+├── slopsquat         # Unofficial scope/registry detection
+├── minimum_age       # Chặn package quá mới (default 24h)
+├── approve_builds    # Whitelist build scripts
+├── lockdown          # Ngăn eval/new Function/child_process
+├── provenance        # Sigstore keyless signing + SLSA
+└── sbom              # CycloneDX 1.5 export
+```
+
+---
+
+## 15. Multi-Agent Worktree Strategy
+
+Mỗi AI agent phụ trách 1 domain, làm việc trên 1 git worktree riêng:
+
 ```bash
-# Build (debug)
-cargo build
+# Setup worktrees
+git worktree add ../MegaGate-web       sdk/web
+git worktree add ../MegaGate-game      sdk/game
+git worktree add ../MegaGate-cicd      ops/cicd
+git worktree add ../MegaGate-cloud     sdk/cloud
+git worktree add ../MegaGate-ai        sdk/ai
+git worktree add ../MegaGate-iot       feature/iot
+git worktree add ../MegaGate-security  feature/security
+git worktree add ../MegaGate-dev       development
 
-# Run UI
-mg ui
-
-# Example command usage
-mg install          # install dependencies in the current dir
-mg update <pkg>     # update a specific package
-mg list --graph    # print dependency graph as JSON
+# Mỗi AI agent chỉ focus vào thư mục của domain mình
+# AI-web       → cli/, web/, templates/web/
+# AI-game      → sdk/game/, templates/game/
+# AI-security  → crates/megagate-security/
 ```
-The UI can be launched at any time; it will automatically detect the working directory and use the **shared lock** if present.
 
 ---
 
-## 7. Extending / Forking for Agent‑Based Projects
+## 16. Build & Run
 
-### 7.1 Adding New Agents
-* **Agent goal** – a downstream agent may want to *replace* a part (e.g., a custom UI, a new adapter, or a different lock format).
-* **How to replace** – simply **override** the target module by providing a new crate with the same public symbols and update `Cargo.toml` to point to the local path.
+```bash
+# Rust core
+cargo build                     # Build all crates
+cargo test                      # Run all Rust tests
+cargo run -- install            # Run mg install directly
 
-### 7.2 Example: Swapping the UI
-1. Create a crate `MegaGate-ui-custom`.
-2. Implement a `run_ui` function compatible with the signature `pub async fn run_ui(project_dir: PathBuf) -> anyhow::Result<()>`.
-3. In the root `Cargo.toml`, replace the path for `MegaGate`:
-```toml
-[dependencies]
-MegaGate = { path = "../MegaGate" }
-MegaGate-ui = { path = "../MegaGate-ui-custom" } # new crate
+# TypeScript CLI
+cd cli && pnpm install && pnpm run build
+
+# Web frontend
+cd web && pnpm install && pnpm run dev
+
+# NAPI-RS bridge rebuild
+cd cli/napi && cargo build --release
 ```
-4. In `src/main.rs` change the import to `use megagate_ui::run_ui;`.
-The rest of the system (commands, adapters, lock handling) remains untouched.
-
-### 7.3 Adding a New Adapter
-1. Add file `src/adapters/<new>.rs`.
-2. Implement the `Adapter` trait.
-3. Register it in `src/commands/mod.rs` (or a dedicated registry) so `install`/`list` can invoke it.
-
-### 7.4 Testing
 
 ---
 
-## 11. Supported Tasks & Application Domains
+## 17. License
 
-MegaGate is deliberately generic, but it shines in several common development scenarios:
-
-| Domain | Typical workflow | How MegaGate helps |
-|--------|----------------|----------------------|
-| **Web Applications** | Front‑end (npm) + back‑end (Cargo) dependencies | Manage both `package.json` and `Cargo.toml` in a single lock, run a unified `install` to bootstrap the whole stack. |
-| **Game Development** | Unity (npm for tooling) + Rust game engine crates | Keep game assets and engine crates synchronized; UI can display progress for large asset pulls. |
-| **Micro‑services / Server‑side** | Multiple Rust services, each with its own `Cargo.toml` | Use the lock file to snapshot the entire service mesh dependency graph, audit for vulnerable crates. |
-| **CI/CD Pipelines** | Automated builds that need reproducible environments | Export the lock (`MegaGate export json`) and feed it into container images for deterministic builds. |
-| **Monorepos** | Mixed language repo (JS, Rust, Python) | One command (`MegaGate install`) resolves all adapters present, simplifying onboarding for new developers. |
-| **Education / Workshops** | Teaching multiple languages in a single repo | Single UI to demonstrate installing, updating, and auditing across languages. |
-
-The UI can be extended with custom panels (e.g., a graph visualiser for the dependency tree) to fit any of these domains.
-
----
-
-## 12. Supported Build & Package Manager Operations
-
-MegaGate is designed to cover the full lifecycle of a project that uses any of the supported package managers. The core commands map directly to the usual build‑tool / package‑manager actions:
-
-| Operation | What MegaGate does | Typical underlying command |
-|-----------|--------------------|---------------------------|
-| **Install** | Reads the manifest(s), resolves dependencies, updates the shared `MegaGate.lock`, then runs the native install command (e.g., `npm install`, `cargo fetch`, `pip install -r`). | `npm install`, `cargo fetch`, `pip install -r requirements.txt` |
-| **Update** | Fetches the latest compatible version of a specific package (or all packages if none specified) and updates the lock. | `npm update <pkg>`, `cargo update -p <pkg>`, `pip install -U <pkg>` |
-| **Remove** | Removes a package from the manifest and lock, then runs the native uninstall command. | `npm uninstall <pkg>`, `cargo remove <pkg>`, `pip uninstall -y <pkg>` |
-| **List / Graph** | Prints a consolidated view of all dependencies across adapters, optionally as a JSON graph for tooling. | `npm ls`, `cargo tree`, custom graph output |
-| **Audit** | Scans the lock for known vulnerabilities (using advisory databases for each ecosystem). | `npm audit`, `cargo audit`, `safety check` (via external tools) |
-| **Export** | Serialises the lock file in different formats (JSON, YAML) for CI pipelines, reproducible builds, or sharing with other tools. | `MegaGate export json` |
-| **Lock management** | Load, merge, and save the lock file; provides APIs for agents to query versions, graph, or compare snapshots. | Direct file read/write (JSON) |
-| **Run custom script** | Delegates to the underlying manager’s script runner (e.g., `npm run <script>`, `cargo run --bin <name>`). | `npm run build`, `cargo run` |
-| **Publish / Release** | Calls the native publish command after verifying the lock and version bump. | `npm publish`, `cargo publish` |
-
-These operations are intentionally kept **generic** – any new adapter added later automatically gains the same set of commands as long as it implements the `Adapter` trait.
-
----
-
-## 8. License & Contributing
-All core logic is pure Rust (no external processes). Unit tests can be placed under `src/tests/` or in each module's `#[cfg(test)]` block. Use `cargo test` to verify.
-
----
-
-## 10. Multi‑Language, Multi‑Core, Multi‑Platform Strategy
-
-- **Multi‑Language** – adapters are language‑specific but all conform to the same `Adapter` trait. Adding support for another language only requires a new adapter module and detection logic; the rest of the core (lock handling, UI, commands) is unchanged.
-
-- **Multi‑Core** – the repository is split into logical cores (`core`, `commands`, `adapters`, `ui`). Each core can be compiled as a separate crate if needed (e.g., `MegaGate-core`, `MegaGate-adapters`). Conditional compilation (`#[cfg(...)]`) can be used to include OS‑specific code.
-
-- **Multi‑Platform** – the codebase already runs on macOS, Linux, and Windows because:
-  * All I/O uses the standard library (`std::fs`, `std::process::Command`).
-  * Async runtime (`tokio`) is cross‑platform.
-  * UI uses `crossterm`, which abstracts away terminal differences.
-  * Platform‑specific adapters can be gated behind `#[cfg(target_os = "windows")]` etc.
-  * The lock file format (`JSON`) is portable across OSes.
-
-To extend for a new platform or OS‑specific behaviour, place the code in a module with an appropriate `#[cfg(...)]` attribute and expose it through the public API. The rest of the system will automatically pick the implementation that matches the current target.
-
----
-
-## 8. License & Contributing
-* **License** – MIT (see `LICENSE`).
-* **Contributing** – follow the standard GitHub workflow:
-  1. Fork the repository.
-  2. Create a feature branch (`git checkout -b feat/awesome‑thing`).
-  3. Write tests for any new functionality.
-  4. Open a Pull Request with a clear description and unit‑test results.
-
----
-
-## 9. Glossary
-| Term | Meaning |
-|------|--------|
-| **Adapter** | A concrete implementation that knows how to parse & update a specific package manager’s lock files. |
-| **LockFile** | Central JSON representation of the dependency graph for the entire project. |
-| **UI** | Terminal user interface powered by **Ratatui** and **Crossterm**, fully responsive. |
-| **Agent** | A higher‑level automation (e.g., a Claude‑Code or OpenCode Agent) that consumes this core library and possibly extends it. |
-
----
-
-### TL;DR for agents
-* **Core entry point** – `megagate::run_ui(project_dir: PathBuf)` for UI, or any `megagate::commands::*` function for CLI actions.
-* **Dependency graph** – always stored in `LockFile`; adapters contribute to it, commands read/write it.
-* **Extensibility** – add adapters, swap UI, or replace `LockFile` serialization without touching other modules.
-
-Feel free to explore the code; each module is deliberately lightweight to make it straightforward for downstream agents to inherit, modify, or replace components.
+MIT
