@@ -1,0 +1,28 @@
+version: v1
+managed:
+  enabled: true
+  go_package_prefix:
+    default: github.com/megagate/megagate/gen/go
+plugins:
+  - plugin: buf.build/protocolbuffers/go
+    out: gen/go
+  - plugin: buf.build/grpc/go
+    out: gen/go
+  - plugin: buf.build/connectrpc/go
+    out: gen/go
+  - plugin: buf.build/protocolbuffers/typescript
+    out: gen/typescript
+  - plugin: buf.build/connectrpc/typescript
+    out: gen/typescript
+  - plugin: buf.build/protocolbuffers/kotlin
+    out: gen/kotlin
+  - plugin: buf.build/protocolbuffers/swift
+    out: gen/swift
+  - plugin: buf.build/protocolbuffers/dart
+    out: gen/dart
+  - plugin: buf.build/protocolbuffers/python
+    out: gen/python
+  - plugin: buf.build/protocolbuffers/cpp
+    out: gen/cpp
+  - plugin: buf.build/protocolbuffers/csharp
+    out: gen/csharp

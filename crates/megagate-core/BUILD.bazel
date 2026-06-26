@@ -1,0 +1,26 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "megagate_core",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":megagate_types",
+        ":megagate_resolver",
+        ":megagate_linker",
+        ":megagate_extractor",
+        ":megagate_fetcher",
+        ":megagate_security",
+        "@crates_io//anyhow",
+        "@crates_io//serde",
+        "@crates_io//serde_json",
+        "@crates_io//tokio",
+        "@crates_io//tracing",
+    ],
+)
+
+rust_test(
+    name = "megagate_core_test",
+    crate = ":megagate_core",
+)
