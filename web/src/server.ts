@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises';
 import { resolve } from 'path';
 
 const PORT = process.env.PORT || 3000;
-const staticRoot = resolve(process.cwd(), 'src', 'webapp-core', 'web', 'static');
+const staticRoot = resolve(process.cwd(), 'web', 'public');
 
 const server = createServer(async (req, res) => {
     const url = req.url ?? '/';
