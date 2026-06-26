@@ -1,0 +1,169 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mgpm-core",
+    "crates/mgpm-store",
+    "crates/mgpm-resolver",
+    "crates/mgpm-lockfile",
+    "crates/mgpm-installer",
+    "crates/mgpm-linker",
+    "crates/mgpm-registry",
+    "crates/mgpm-workspace",
+    "crates/mgpm-cli",
+    "crates/mgpm-plugins",
+    "crates/mgpm-bench",
+]
+exclude = ["crates/mgpm-bench"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/megagate/mgpm"
+authors = ["MegaGate Team <team@megagate.dev>"]
+description = "MegaGate Package Manager - Fast, disk-efficient, smart package manager for JavaScript/TypeScript"
+
+[workspace.dependencies]
+# Core
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_with = "3.0"
+tokio = { version = "1.38", features = ["full", "rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+once_cell = "1.19"
+parking_lot = "0.12"
+dashmap = "5.5"
+flume = "0.11"
+crossbeam = "0.8"
+rayon = "1.10"
+
+# Async I/O
+async-tar = "0.3"
+async-compression = { version = "0.4", features = ["tokio", "zstd", "gzip", "brotli"] }
+tokio-util = { version = "0.7", features = ["full"] }
+
+# HTTP
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "gzip", "brotli", "multipart", "stream"] }
+url = "2.5"
+governor = { version = "0.6", features = ["std"] }
+
+# File system
+walkdir = "2.5"
+ignore = { version = "0.4", features = ["simd-accel"] }
+glob = "0.3"
+tempfile = "3.8"
+
+# Hashing & Crypto
+blake3 = "1.5"
+sha2 = "0.10"
+digest = "0.10"
+hex = "0.4"
+base64 = "0.21"
+
+# Serialization
+bincode = "1.3"
+toml = "0.8"
+toml_edit = "0.22"
+yaml-rust2 = "0.8"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env", "unicode", "help", "usage", "suggestions", "color", "wrap_help"] }
+colored = "2.1"
+indicatif = { version = "0.17", features = ["rayon"] }
+console = "0.15"
+
+# NAPI (Node.js bindings for TypeScript CLI)
+napi = { version = "3.9", features = ["napi7", "tokio_rt"] }
+napi-derive = { version = "3.5", features = ["compat-mode", "tracing"] }
+
+# SSH/Git
+ssh2 = "0.9"
+git2 = { version = "0.18", features = ["ssh", "https"] }
+
+# Config & Schema
+schemars = { version = "0.8", features = ["derive"] }
+validator = { version = "0.17", features = ["derive"] }
+
+# Testing
+proptest = "1.4"
+pretty_assertions = "1.4"
+rstest = "0.18"
+mockall = "0.12"
+
+# Bench
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled", "column_decltype", "modern_sqlite", "extra_check", "functions", "blob"] }
+
+# Utilities
+dirs = "5.0"
+semver = { version = "1.0", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+fs2 = "0.4"
+mimalloc = { version = "0.1", features = ["default"] }
+tracing-appender = "0.2"
+config = "0.13"
+async-fs = "1.6"
+blocking = "1.5"
+signal-hook = "0.3"
+
+# Deny/CI
+cargo-deny = "0.14"
+cargo-audit = "0.20"
+
+[workspace.lints.rust]
+unused_crate_dependencies = "warn"
+unused_imports = "warn"
+unused_variables = "warn"
+dead_code = "warn"
+unreachable_code = "warn"
+unreachable_patterns = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+cargo = "warn"
+complexity = "warn"
+perf = "warn"
+style = "warn"
+correctness = "warn"
+suspicious = "warn"
+
+# Allow specific lints
+unwrap_used = "allow"
+expect_used = "allow"
+panic = "allow"
+missing_docs_in_private_items = "allow"
+missing_errors_doc = "allow"
+module_name_repetitions = "allow"
+type_complex = "allow"
+too_many_lines = "allow"
+too_many_arguments = "allow"
+enum_glob_use = "allow"
+wildcard_enum_match_arm = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+
+[profile.release.build-override]
+opt-level = 3
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+debug = 1
+
+[profile.test]
+opt-level = 2
+debug = 2
+
