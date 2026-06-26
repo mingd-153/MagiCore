@@ -1,24 +1,23 @@
-//! MGPM Crate
+//! MGPM Store Crate
 //!
-//! TODO: Add documentation
+//! Content-addressable storage, package caching, and tarball extraction.
 
-#![allow(unused)]
+pub mod cache;
+pub mod store;
+pub mod tarball;
 
-/// Error type for this crate
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("generic error: {0}")]
-    Generic(String),
-}
+pub use cache::{CachedPackage, PackageCache};
+pub use store::{ContentStore, FileEntry, HashAlgorithm, ImportMethod, PackageEntry, StoreError};
+pub use tarball::{EntryType, ExtractedEntry, TarballError, TarballExtractor};
 
-impl From<String> for Error {
-    fn from(s: String) -> Self {
-        Self::Generic(s)
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl From<&str> for Error {
-    fn from(s: &str) -> Self {
-        Self::Generic(s.to_string())
+    #[test]
+    fn test_store_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ContentStore::new(temp.path().to_path_buf()).unwrap();
+        assert_eq!(store.file_count(), 0);
     }
 }
