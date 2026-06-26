@@ -1,6 +1,6 @@
 import { readFile, writeFile, access, constants } from 'fs/promises';
 import { resolve, dirname } from 'path';
-import { LockFile, LockPackage, LockImporter, PackageJson } from './types.js';
+import { LockFile, LockPackage, LockImporter, PackageJson } from '../types.js';
 
 const LOCK_VERSION = 1;
 const LOCK_FILENAME = 'megagate-lock.json';
