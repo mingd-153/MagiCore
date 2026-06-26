@@ -8,7 +8,7 @@
 - **Unified CLI** with sub‑commands: `install`, `update <pkg>`, `remove <pkg>`, `list`, `audit`, `export <format>` and a terminal UI (`MegaGate ui`).
 - **Pluggable adapters** – each package manager implements the `Adapter` trait (`parse`, `install`, `update`, `remove`). Adding a new manager is just a new module implementing the trait.
 - **Global lock file** – `mega-lock.json` stores a consolidated dependency graph (`LockFile`) that aggregates data from all adapters.
-- **In‑memory agent memory** – the `agent_memory` crate provides a global key/value store (`Trellis`) that agents can read/write at runtime (exposed via the `recall` CLI command).
+- **In-memory agent memory** - the `agent_memory` crate provides a global key/value store for agents (exposed via the `recall` CLI command).
 - **Responsive terminal UI** built with **Ratatui**/Crossterm, showing a logo, menu, progress bar and status messages.
 
 ## Quick start

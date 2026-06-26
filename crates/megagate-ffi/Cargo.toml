@@ -1,0 +1,24 @@
+[package]
+name = "megagate-ffi"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+megagate-core = { path = "../megagate-core" }
+megagate-types = { path = "../megagate-types", features = ["uniffi"] }
+uniffi = { workspace = true }
+napi = { workspace = true }
+napi-derive = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+once_cell = { workspace = true }
