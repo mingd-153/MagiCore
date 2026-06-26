@@ -4,10 +4,10 @@
     "private": true,
     "type": "module",
     "bin": {
-        "megagate-pm": "./dist/cli.js"
+        "megagate-pm": "./dist/index.js"
     },
     "scripts": {
-        "dev": "tsx watch src/cli.ts",
+        "dev": "tsx watch src/index.ts",
         "build": "tsc -p tsconfig.build.json",
         "test": "vitest run",
         "lint": "eslint . --ext .ts"
