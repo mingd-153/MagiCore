@@ -81,7 +81,7 @@ indicatif = { version = "0.17", features = ["rayon"] }
 console = "0.15"
 
 # NAPI (Node.js bindings for TypeScript CLI)
-napi = { version = "3.9", features = ["napi7", "tokio_rt"] }
+napi = { version = "3.9", features = ["napi7", "tokio_rt", "tracing"] }
 napi-derive = { version = "3.5", features = ["compat-mode", "tracing"] }
 
 # SSH/Git
