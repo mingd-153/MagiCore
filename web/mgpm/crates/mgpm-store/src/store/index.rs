@@ -4,6 +4,31 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditReport {
+    pub passed: bool,
+    pub integrity_ok: bool,
+    pub permissions_ok: bool,
+    pub stale_warning: bool,
+    pub stale_hours: f64,
+    pub last_audit: String,
+    pub warnings: Vec<String>,
+    pub db_size_mb: u64,
+    pub wal_size_kb: u64,
+    pub cache_entries: usize,
+    pub detected_ram_gb: u64,
+}
+
+impl AuditReport {
+    pub fn is_healthy(&self) -> bool {
+        self.passed && self.integrity_ok && self.permissions_ok
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.stale_warning
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageInfo {
     pub name: String,
     pub version: String,
@@ -12,9 +37,23 @@ pub struct PackageInfo {
     pub filename: String,
     pub is_executable: bool,
     pub manifest_json: Option<String>,
+    pub metadata: Option<String>,
     pub size_bytes: u64,
     pub compressed_size_bytes: u64,
     pub created_at: u64,
+}
+
+impl PackageInfo {
+    /// Set metadata from a serializable value (JSON)
+    pub fn set_metadata<T: Serialize>(&mut self, value: &T) -> Result<(), serde_json::Error> {
+        self.metadata = Some(serde_json::to_string(value)?);
+        Ok(())
+    }
+
+    /// Get metadata as a deserialized value
+    pub fn get_metadata<T: for<'de> Deserialize<'de>>(&self) -> Option<T> {
+        self.metadata.as_ref().and_then(|s| serde_json::from_str(s).ok())
+    }
 }
 
 pub trait StoreIndex: Send + Sync {
@@ -34,6 +73,32 @@ pub trait StoreIndex: Send + Sync {
     fn package_count(&self) -> Result<u64, StoreError>;
     fn project_count(&self) -> Result<u64, StoreError>;
     fn total_size(&self) -> Result<u64, StoreError>;
+
+    // Audit & Generation methods (default implementations return NotImplemented)
+    fn health_check(&self) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Database("health_check not implemented".into()))
+    }
+    fn vacuum(&self) -> Result<(), StoreError> {
+        Err(StoreError::Database("vacuum not implemented".into()))
+    }
+    fn audit(&self) -> Result<AuditReport, StoreError> {
+        Err(StoreError::Database("audit not implemented".into()))
+    }
+    fn check_permissions(&self) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Database("check_permissions not implemented".into()))
+    }
+    fn snapshot_permissions(&self) -> Result<(), StoreError> {
+        Err(StoreError::Database("snapshot_permissions not implemented".into()))
+    }
+    fn advance_generation(&self) -> Result<u64, StoreError> {
+        Err(StoreError::Database("advance_generation not implemented".into()))
+    }
+    fn current_generation(&self) -> u64 {
+        0
+    }
+    fn clean_old_generations(&self, _keep: u64) -> Result<u64, StoreError> {
+        Err(StoreError::Database("clean_old_generations not implemented".into()))
+    }
 }
 
 #[derive(Debug, Error)]
