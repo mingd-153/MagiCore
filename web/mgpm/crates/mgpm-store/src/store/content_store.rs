@@ -11,8 +11,9 @@ use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use tracing;
+
+use super::index::StoreError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashAlgorithm {
@@ -63,22 +64,6 @@ struct StoreIndex {
     files: HashMap<String, FileEntry>,
     #[allow(dead_code)]
     packages: HashMap<String, PackageEntry>,
-}
-
-#[derive(Debug, Error)]
-pub enum StoreError {
-    #[error("file not found: {0}")]
-    NotFound(String),
-    #[error("hash mismatch: expected {expected}, got {actual}")]
-    HashMismatch { expected: String, actual: String },
-    #[error("IO error: {path}: {msg}")]
-    Io { path: PathBuf, msg: String },
-    #[error("cross-device link: {path}")]
-    CrossDevice { path: PathBuf },
-    #[error("serialization error: {0}")]
-    Serialization(String),
-    #[error("integrity check failed for {0}")]
-    IntegrityCheck(String),
 }
 
 impl ContentStore {
