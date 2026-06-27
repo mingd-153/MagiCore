@@ -4,10 +4,11 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use mgpm_core::{Version, VersionRange, DependencySpec, PackageName, PackageId};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VersionSet {
     Any,
     Empty,
@@ -103,6 +104,31 @@ impl VersionSet {
 
     pub fn subtract(&self, other: &VersionSet) -> VersionSet {
         self.intersection(&other.complement())
+    }
+    
+    pub fn satisfying_version(&self) -> Option<Version> {
+        match self {
+            Self::Any => Some(Version::new(0, 0, 0)), // lowest
+            Self::Empty => None,
+            Self::Exact(v) => Some(v.clone()),
+            Self::Range(r) => r.satisfying_version(),
+            Self::Union(sets) => {
+                // Return highest version from any set
+                sets.iter().filter_map(|s| s.satisfying_version()).max()
+            }
+            Self::Intersection(sets) => {
+                // Return first version that satisfies all
+                sets.iter().filter_map(|s| s.satisfying_version()).find(|v| {
+                    sets.iter().all(|s| s.contains(v))
+                })
+            }
+            Self::Complement(s) => {
+                // Return first version not in complement
+                s.satisfying_version().and_then(|v| {
+                    if !self.contains(&v) { Some(v) } else { None }
+                })
+            }
+        }
     }
 
     pub fn to_string_with_prefix(&self, prefix: &str) -> String {
