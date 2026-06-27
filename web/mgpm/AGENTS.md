@@ -12,16 +12,17 @@ main (production — chỉ CI/CD + release)
   ↑ merge khi release tag
 development (nhánh dev chính — sạch sẽ, ít commits)
   ↑ merge cuối mỗi tuần
-development/week-N (branch chung tuần N — tổng hợp tasks)
+week-N (branch chung tuần N — tổng hợp tasks, N = 1,2,3...)
   ↑ merge từng task khi hoàn thành
 feat-T<ID>-<slug> (task branch — làm xong xoá)
 ```
 
 **Nguyên tắc:**
-- `feat-*` → `development/week-*` → `development` → `main`
+- `feat-*` → `week-*` → `development` → `main`
 - Không nhảy cóc. Không merge thẳng vào `development`
-- `development` chỉ nhận merge từ `development/week-*`
+- `development` chỉ nhận merge từ `week-*`
 - `main` chỉ nhận merge từ `development` khi release
+- Git không cho phép tên branch dạng `development/week-1` nếu đã có `development` → dùng `week-1`, `week-2`
 
 ## Development Loop (Vòng Lặp Bắt Buộc)
 
@@ -55,8 +56,9 @@ create → check → run → fix → update → fix → done → report → push
 ## Current Status
 
 **Phase**: 0 — Foundation (Tuần 1-4)
-**Current task**: Chưa bắt đầu
-**Branch**: `feat-mgpm-phase-1`
+**Current task**: T0.1 — SQLite store index
+**Branch hiện tại**: `week-1` (đã merge `development` vào đây)
+**Branch gốc**: `development`
 **Tests**: 217 passed, 0 failed, 0 warnings
 
 ## What's Been Done (Security Sprint)
@@ -97,32 +99,38 @@ create → check → run → fix → update → fix → done → report → push
 | `docs/SECURITY-REPORT.md` | Security audit + comparison | ~3000 |
 | `tasks/README.md` | Task list (44 tasks) | — |
 
-## Next Steps
+## Next Steps (Tuần 1)
 
-1. **T0.1**: SQLite store index (`feat-T0.1-sqlite-store`)
-2. **T0.2**: CAS import/export
-3. **T0.4**: Lockfile integrity fix (BLAKE3 + real SHA-256)
+Task cho `week-1`:
+1. **T0.1**: SQLite store index (`feat-T0.1-sqlite-store`) ← **bắt đầu ngay**
+2. **T0.2**: CAS content-addressed import/export (`feat-T0.2-cas-io`)
+3. **T0.4**: Lockfile integrity fix - BLAKE3 + real SHA-256 (`feat-T0.4-lockfile-integrity`)
 
 ## How to Continue
 
 ```bash
-# 1. Đọc task
+# 1. Đọc task chi tiết
 cat tasks/phase-0-foundation/T0.1-sqlite-store.md
 
-# 2. Tạo branch
+# 2. Tạo branch task từ week-1
+git checkout week-1
 git checkout -b feat-T0.1-sqlite-store
 
-# 3. Implement + test
+# 3. Implement theo vòng lặp: create → check → run → fix → update → fix → done → report → push
 cargo check --workspace
 cargo test --workspace
+cargo clippy --workspace
 
-# 4. Commit + merge
-git add .
+# 4. Commit + merge vào week-1
+git add -A
 git commit -m "feat(mgpm): T0.1 - SQLite store index"
-git checkout feat-mgpm-phase-1
+git checkout week-1
 git merge feat-T0.1-sqlite-store
 
-# 5. Update AGENTS.md với tiến độ
+# 5. Xoá task branch (giữ week-1 sạch)
+git branch -d feat-T0.1-sqlite-store
+
+# 6. Update AGENTS.md
 ```
 
 ## Folder Structure Hiện Tại (Chi Tiết)
