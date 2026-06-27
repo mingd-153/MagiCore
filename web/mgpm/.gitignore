@@ -20,3 +20,6 @@ yarn-error.log*
 
 # mgpm store
 ~/.mgpm/
+
+# Internal task docs (not public)
+/tasks/
