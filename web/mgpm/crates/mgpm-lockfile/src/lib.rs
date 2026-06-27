@@ -4,12 +4,14 @@
 
 pub mod binary;
 pub mod lockfile;
+pub mod pipeline;
 pub mod text;
 
 pub use lockfile::{
     Lockfile, LockfileMetadata, LockfilePackage, PackageResolution,
     LOCKFILE_BINARY_EXT, LOCKFILE_TEXT_EXT, LOCKFILE_MAGIC, LOCKFILE_VERSION,
 };
+pub use pipeline::{ResolutionPipeline, ResolutionConfig, WantedDependency, PipelineError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LockfileError {
