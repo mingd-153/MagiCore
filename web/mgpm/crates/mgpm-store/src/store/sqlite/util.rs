@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
+use sysinfo::System;
 
 use super::StoreError;
 
@@ -9,80 +10,14 @@ pub fn conn_with_flags(path: &Path, flags: rusqlite::OpenFlags) -> Result<Connec
 }
 
 pub fn detect_available_ram() -> u64 {
-    #[cfg(target_os = "macos")]
-    {
-        let mut mib = [libc::CTL_HW, libc::HW_MEMSIZE];
-        let mut size: u64 = 0;
-        let mut len = std::mem::size_of::<u64>();
-        let result = unsafe {
-            libc::sysctl(
-                mib.as_mut_ptr(),
-                2,
-                &mut size as *mut _ as *mut std::ffi::c_void,
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if result == 0 && size > 0 {
-            return size;
-        }
+    let mut sys = System::new_all();
+    sys.refresh_memory();
+    let total = sys.total_memory();
+    if total >= 512 * 1024 * 1024 {
+        total
+    } else {
+        2 * 1024 * 1024 * 1024
     }
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
-            for line in content.lines() {
-                if line.starts_with("MemTotal:") {
-                    if let Some(val) = line.split_whitespace().nth(1) {
-                        if let Ok(kb) = val.parse::<u64>() {
-                            let bytes = kb * 1024;
-                            if bytes >= 512 * 1024 * 1024 {
-                                return bytes;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        #[repr(C)]
-        struct MemoryStatusEx {
-            dw_length: u32,
-            dw_memory_load: u32,
-            ull_total_phys: u64,
-            ull_avail_phys: u64,
-            ull_total_page_file: u64,
-            ull_avail_page_file: u64,
-            ull_total_virtual: u64,
-            ull_avail_virtual: u64,
-            ull_avail_extended_virtual: u64,
-        }
-
-        extern "system" {
-            fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
-        }
-
-        let mut state = MemoryStatusEx {
-            dw_length: std::mem::size_of::<MemoryStatusEx>() as u32,
-            dw_memory_load: 0,
-            ull_total_phys: 0,
-            ull_avail_phys: 0,
-            ull_total_page_file: 0,
-            ull_avail_page_file: 0,
-            ull_total_virtual: 0,
-            ull_avail_virtual: 0,
-            ull_avail_extended_virtual: 0,
-        };
-
-        unsafe {
-            if GlobalMemoryStatusEx(&mut state) != 0 && state.ull_total_phys > 0 {
-                return state.ull_total_phys;
-            }
-        }
-    }
-    2 * 1024 * 1024 * 1024
 }
 
 pub fn adaptive_cache_size(ram: u64) -> i64 {
