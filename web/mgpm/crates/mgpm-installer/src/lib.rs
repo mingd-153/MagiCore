@@ -1,24 +1,28 @@
-//! MGPM Crate
-//!
-//! TODO: Add documentation
+pub mod installer;
 
-#![allow(unused)]
+pub use installer::{
+    Installer, InstallOptions, InstallProgress, InstallPhase,
+    InstallResult, InstallError, JsonlLogger,
+};
 
-/// Error type for this crate
-#[derive(Debug, thiserror::Error)]
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 pub enum Error {
-    #[error("generic error: {0}")]
-    Generic(String),
+    #[error("install error: {0}")]
+    Install(#[from] InstallError),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl From<String> for Error {
     fn from(s: String) -> Self {
-        Self::Generic(s)
+        Self::Install(InstallError::StoreError(s))
     }
 }
 
 impl From<&str> for Error {
     fn from(s: &str) -> Self {
-        Self::Generic(s.to_string())
+        Self::Install(InstallError::StoreError(s.to_string()))
     }
 }

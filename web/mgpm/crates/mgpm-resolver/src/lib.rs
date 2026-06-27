@@ -5,8 +5,8 @@
 pub mod solver;
 pub mod version;
 
-pub use solver::{Resolution, Resolver, SolveError, SolveResult, DependencyProvider};
-pub use solver::pubgrub::{Term, Incompatibility, Cause, PubGrubSolver, SolveError as PubGrubSolveError};
+pub use solver::{resolve_workspace_dep, Resolution, Resolver, SolveError, SolveResult, DependencyProvider};
+pub use solver::pubgrub::{Term, Incompatibility, Cause, DerivationTree, PubGrubSolver, SolveError as PubGrubSolveError};
 pub use version::VersionSet;
 
 pub type ResolvedDependency = solver::ResolvedDep;

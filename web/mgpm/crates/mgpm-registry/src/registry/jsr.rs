@@ -1,6 +1,6 @@
 //! JSR Registry Client
 
-use mgpm_core::{PackageName, Version};
+use mgpm_core::PackageName;
 use crate::registry::RegistryError;
 
 pub struct JsrRegistry {

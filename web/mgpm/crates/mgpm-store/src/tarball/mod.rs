@@ -1,7 +1,7 @@
 //! Tarball extraction with streaming and integrity verification
 
 use std::fs::{self, File};
-use std::io::{self, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;

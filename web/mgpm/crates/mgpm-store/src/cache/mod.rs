@@ -1,13 +1,12 @@
 //! Package cache with content-addressable tarball storage
 
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::store::{ContentStore, FileEntry, ImportMethod};
+use crate::store::ContentStore;
 use crate::tarball::TarballExtractor;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
