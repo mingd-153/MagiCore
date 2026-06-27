@@ -1,24 +1,3 @@
-//! MGPM Crate
-//!
-//! TODO: Add documentation
+pub mod plugins;
 
-#![allow(unused)]
-
-/// Error type for this crate
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("generic error: {0}")]
-    Generic(String),
-}
-
-impl From<String> for Error {
-    fn from(s: String) -> Self {
-        Self::Generic(s)
-    }
-}
-
-impl From<&str> for Error {
-    fn from(s: &str) -> Self {
-        Self::Generic(s.to_string())
-    }
-}
+pub use plugins::{Plugin, PluginHost, PluginHooks, Resolution, PackageData, PackageInfo, DepGraph, create_plugin_host};
