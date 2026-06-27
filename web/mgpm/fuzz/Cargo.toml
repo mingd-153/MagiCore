@@ -1,0 +1,28 @@
+[package]
+name = "mgpm-fuzz"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mgpm-lockfile = { path = "../crates/mgpm-lockfile" }
+mgpm-core = { path = "../crates/mgpm-core" }
+serde_json = "1"
+
+[[bin]]
+name = "lockfile_parse"
+path = "targets/lockfile_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "registry_response"
+path = "targets/registry_response.rs"
+test = false
+doc = false
+
+[workspace]

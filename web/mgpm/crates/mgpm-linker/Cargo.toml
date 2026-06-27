@@ -10,6 +10,7 @@ authors.workspace = true
 mgpm-core = { path = "../mgpm-core" }
 mgpm-store = { path = "../mgpm-store" }
 mgpm-lockfile = { path = "../mgpm-lockfile" }
+mgpm-workspace = { path = "../mgpm-workspace" }
 thiserror.workspace = true
 anyhow.workspace = true
 serde.workspace = true
@@ -21,9 +22,13 @@ walkdir.workspace = true
 ignore.workspace = true
 once_cell.workspace = true
 tracing.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tempfile.workspace = true
+glob.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 pretty_assertions.workspace = true
 rstest.workspace = true
-tempfile = "3.8"

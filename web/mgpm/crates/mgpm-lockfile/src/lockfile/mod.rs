@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use mgpm_core::{PackageId, Protocol, Resolution as CoreResolution, Version};
+use mgpm_core::{PackageId, Protocol, Resolution as CoreResolution};
 use mgpm_resolver::Resolution as ResolverResolution;
 
 pub const LOCKFILE_VERSION: u32 = 1;
@@ -145,11 +145,6 @@ impl LockfilePackage {
                 String::new(),
                 None,
             ),
-            _ => (
-                "unknown".to_string(),
-                String::new(),
-                None,
-            ),
         };
 
         Self {
@@ -188,6 +183,7 @@ impl LockfilePackage {
 mod tests {
     use super::*;
     use mgpm_core::PackageName;
+    use proptest::prelude::*;
 
     #[test]
     fn test_lockfile_new() {
@@ -228,5 +224,54 @@ mod tests {
         
         assert_eq!(lock.packages[0].version, "17.0.0");
         assert_eq!(lock.packages[1].version, "18.0.0");
+    }
+
+    fn arb_package_name() -> impl Strategy<Value = String> {
+        "[a-z]{3,10}"
+    }
+
+    fn arb_version() -> impl Strategy<Value = String> {
+        (0u64..100, 0u64..100, 0u64..100)
+            .prop_map(|(maj, min, pat)| format!("{}.{}.{}", maj, min, pat))
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_lockfile_roundtrip(
+            config_version in 0u32..10,
+            packages in proptest::collection::vec(
+                (arb_package_name(), arb_version()),
+                0..10
+            )
+        ) {
+            let mut lock = Lockfile::new(config_version, "npm");
+            for (name, version) in &packages {
+                lock.add_package(LockfilePackage {
+                    id: format!("{}@{}", name, version),
+                    name: name.clone(),
+                    version: version.clone(),
+                    resolution: PackageResolution {
+                        r#type: "registry".to_string(),
+                        url: format!("https://registry.npmjs.org/{}/-/{}-{}.tgz", name, name, version),
+                        registry: Some("npm".to_string()),
+                    },
+                    integrity: Some(format!("sha512-{}", hex::encode(name))),
+                });
+            }
+            lock.sort_packages();
+            lock.compute_content_hash();
+
+            // Serialize to JSON and back (simulates text roundtrip)
+            let json = serde_json::to_string(&lock).unwrap();
+            let deserialized: Lockfile = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(deserialized.version, lock.version);
+            assert_eq!(deserialized.packages.len(), lock.packages.len());
+            for (a, b) in deserialized.packages.iter().zip(lock.packages.iter()) {
+                assert_eq!(a.name, b.name);
+                assert_eq!(a.version, b.version);
+                assert_eq!(a.integrity, b.integrity);
+            }
+        }
     }
 }

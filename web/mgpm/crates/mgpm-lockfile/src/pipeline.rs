@@ -1,11 +1,11 @@
 //! Resolution Pipeline: wanted deps -> PubGrub -> Lockfile
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use mgpm_core::{PackageId, PackageName, Version, protocol::Protocol};
-use mgpm_resolver::{Resolver, VersionSet, SolveError, SolveResult, Resolution as ResolverResolution};
+use mgpm_core::PackageName;
+use mgpm_resolver::Resolver;
 
-use crate::lockfile::{Lockfile, LockfilePackage, PackageResolution};
+use crate::lockfile::Lockfile;
 use crate::LockfileError;
 
 /// Input for resolution: packages we want to install

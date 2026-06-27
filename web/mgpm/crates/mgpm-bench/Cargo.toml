@@ -25,3 +25,18 @@ walkdir.workspace = true
 indicatif.workspace = true
 console.workspace = true
 tracing.workspace = true
+
+[[bench]]
+name = "store"
+path = "benches/store.rs"
+harness = false
+
+[[bench]]
+name = "resolver"
+path = "benches/resolver.rs"
+harness = false
+
+[[bench]]
+name = "lockfile"
+path = "benches/lockfile.rs"
+harness = false

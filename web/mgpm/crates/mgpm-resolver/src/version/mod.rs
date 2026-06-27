@@ -2,11 +2,10 @@
 //!
 //! Implements VersionSet with union, intersection, complement, and containment.
 
-use std::collections::BTreeSet;
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
-use mgpm_core::{Version, VersionRange, DependencySpec, PackageName, PackageId};
+use mgpm_core::{Version, VersionRange};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VersionSet {
@@ -131,7 +130,7 @@ impl VersionSet {
         }
     }
 
-    pub fn to_string_with_prefix(&self, prefix: &str) -> String {
+    pub fn to_string_with_prefix(&self, _prefix: &str) -> String {
         match self {
             Self::Any => "*".to_string(),
             Self::Empty => "".to_string(),
