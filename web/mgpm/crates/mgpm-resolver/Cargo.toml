@@ -10,6 +10,7 @@ authors.workspace = true
 mgpm-core = { path = "../mgpm-core" }
 mgpm-store = { path = "../mgpm-store" }
 mgpm-registry = { path = "../mgpm-registry" }
+mgpm-workspace = { path = "../mgpm-workspace" }
 thiserror.workspace = true
 anyhow.workspace = true
 serde.workspace = true

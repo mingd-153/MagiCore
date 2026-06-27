@@ -181,6 +181,31 @@ pub struct IntegrityHash {
 }
 
 impl IntegrityHash {
+    /// Parses an SRI format string (e.g., "sha256-<base64>", "sha512-<base64>").
+    pub fn from_sri(s: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = s.splitn(2, '-').collect();
+        if parts.len() != 2 {
+            return Err("invalid SRI format: missing algorithm-base64 separator".to_string());
+        }
+        let algorithm = parts[0];
+        let b64 = parts[1];
+
+        match algorithm {
+            "sha256" | "sha384" | "sha512" => {}
+            _ => return Err(format!("unknown algorithm: {}", algorithm)),
+        }
+
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+            .map_err(|e| format!("base64 decode error: {}", e))?;
+        let hash = hex::encode(&bytes);
+
+        Ok(Self {
+            algorithm: algorithm.to_string(),
+            hash,
+            bytes,
+        })
+    }
+
     /// Creates a new SHA-512 integrity hash.
     pub fn sha512(hash: &str) -> Self {
         let bytes = hex::decode(hash).unwrap_or_default();
@@ -246,6 +271,7 @@ impl fmt::Display for IntegrityHash {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_version_parse() {
@@ -276,5 +302,39 @@ mod tests {
     fn test_integrity_hash() {
         let hash = IntegrityHash::sha512("abc123");
         assert_eq!(hash.algorithm(), "sha512");
+    }
+
+    fn valid_version_string() -> impl Strategy<Value = String> {
+        "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}"
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_version_parse_roundtrip(ref s in valid_version_string()) {
+            if let Ok(v) = Version::parse(s) {
+                let displayed = v.to_string();
+                // Re-parse the displayed version and verify it matches
+                if let Ok(v2) = Version::parse(&displayed) {
+                    assert_eq!(v, v2);
+                }
+            }
+        }
+
+        #[test]
+        fn proptest_version_comparison_antisymmetry(a_major in 0u64..10, a_minor in 0u64..10, a_patch in 0u64..10,
+                                                      b_major in 0u64..10, b_minor in 0u64..10, b_patch in 0u64..10) {
+            let a = Version::new(a_major, a_minor, a_patch);
+            let b = Version::new(b_major, b_minor, b_patch);
+            let cmp_ab = a.cmp(&b);
+            let cmp_ba = b.cmp(&a);
+
+            if a == b {
+                assert_eq!(cmp_ab, std::cmp::Ordering::Equal);
+                assert_eq!(cmp_ba, std::cmp::Ordering::Equal);
+            } else {
+                assert_eq!(cmp_ab, cmp_ba.reverse());
+                assert_ne!(cmp_ab, std::cmp::Ordering::Equal);
+            }
+        }
     }
 }

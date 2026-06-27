@@ -8,8 +8,6 @@ authors.workspace = true
 
 [dependencies]
 mgpm-core = { path = "../mgpm-core" }
-mgpm-resolver = { path = "../mgpm-resolver" }
-mgpm-lockfile = { path = "../mgpm-lockfile" }
 thiserror.workspace = true
 anyhow.workspace = true
 serde.workspace = true
@@ -19,6 +17,7 @@ dashmap.workspace = true
 parking_lot.workspace = true
 walkdir.workspace = true
 ignore.workspace = true
+glob.workspace = true
 once_cell.workspace = true
 tracing.workspace = true
 toml.workspace = true

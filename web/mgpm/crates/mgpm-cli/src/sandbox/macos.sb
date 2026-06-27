@@ -1,0 +1,14 @@
+;; mgpm sandbox profile for macOS
+;; Install operations with reduced privileges
+
+(version 1)
+
+(deny default)
+(allow file-read* (subpath "/Users"))
+(allow file-write* (subpath (param "HOME") ".mgpm"))
+(allow file-write* (subpath (param "PROJECT_DIR") "node_modules"))
+(allow file-write* (subpath (param "PROJECT_DIR") "package-lock.json"))
+(allow file-write* (subpath (param "PROJECT_DIR") "mgpm.lock"))
+(allow network-outbound)
+(allow process-exec (literal "/usr/bin/env") (literal "/bin/sh"))
+(deny process-fork)
