@@ -10,9 +10,12 @@ authors.workspace = true
 mgpm-core = { path = "../mgpm-core" }
 mgpm-store = { path = "../mgpm-store" }
 mgpm-registry = { path = "../mgpm-registry" }
+mgpm-linker = { path = "../mgpm-linker" }
+mgpm-lockfile = { path = "../mgpm-lockfile" }
 thiserror.workspace = true
 anyhow.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 async-tar.workspace = true
@@ -28,9 +31,12 @@ hex.workspace = true
 blake3.workspace = true
 sha2.workspace = true
 tracing.workspace = true
+rusqlite.workspace = true
+tempfile.workspace = true
+dirs.workspace = true
+futures-util = "0.3"
 
 [dev-dependencies]
 proptest.workspace = true
 pretty_assertions.workspace = true
 rstest.workspace = true
-tempfile = "3.8"

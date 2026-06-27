@@ -40,6 +40,18 @@ pub struct MgpmConfig {
     /// CLI options
     #[serde(default)]
     pub cli: CliConfig,
+
+    /// Trusted packages (skip signature verify)
+    #[serde(default)]
+    pub trusted: Vec<String>,
+
+    /// Scoped registry mapping (@scope -> registry_url)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub scoped_registries: HashMap<String, String>,
+
+    /// Allowed registries for resolution (dependency confusion prevention)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_registries: Vec<String>,
 }
 
 impl Default for MgpmConfig {
@@ -52,6 +64,9 @@ impl Default for MgpmConfig {
             install: InstallConfig::default(),
             store: StoreConfig::default(),
             cli: CliConfig::default(),
+            trusted: Vec::new(),
+            scoped_registries: HashMap::new(),
+            trusted_registries: Vec::new(),
         }
     }
 }

@@ -1,6 +1,5 @@
 //! Git Registry Client
 
-use mgpm_core::{PackageName, Version};
 use crate::registry::RegistryError;
 use std::path::PathBuf;
 use tokio::process::Command;

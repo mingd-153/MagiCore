@@ -1,9 +1,9 @@
 //! Full PubGrub implementation with backtracking and conflict explanation
 
-use std::collections::{HashMap, HashSet, BTreeSet};
+use std::collections::HashMap;
 use std::fmt;
 
-use mgpm_core::{PackageId, PackageName, Version, protocol::Protocol};
+use mgpm_core::{PackageName, Version};
 
 use crate::version::VersionSet;
 
@@ -56,7 +56,9 @@ pub enum Cause {
 pub struct PubGrubSolver {
     incompatibilities: Vec<Incompatibility>,
     assignment: Vec<(PackageName, Version, VersionSet)>, // (package, version, constraint)
+    #[allow(dead_code)]
     decision_level: usize,
+    #[allow(dead_code)]
     trail: Vec<Decision>,
     decisions: HashMap<PackageName, Version>,
 }
@@ -78,7 +80,7 @@ impl PubGrubSolver {
     }
     
     /// Get versions that satisfy a version set (mock - would call provider in real impl)
-    pub fn satisfying_versions(&self, package: &PackageName, version_set: &VersionSet) -> Vec<Version> {
+    pub fn satisfying_versions(&self, _package: &PackageName, _version_set: &VersionSet) -> Vec<Version> {
         // In real implementation, this would query the registry/provider
         // For now, return empty
         vec![]
@@ -154,7 +156,7 @@ impl PubGrubSolver {
             match term {
                 Term::Positive(name, vs) => Some(Decision::Assigned(name.clone(), 
                     vs.satisfying_version().unwrap(), vs.clone())),
-                Term::Negative(name, vs) => Some(Decision::Backtracked(name.clone())),
+                Term::Negative(name, _vs) => Some(Decision::Backtracked(name.clone())),
             }
         } else {
             None
@@ -239,7 +241,7 @@ impl PubGrubSolver {
         Err(SolveError::NoPackageFound)
     }
     
-    fn backtrack(&mut self, conflict: &Incompatibility) -> Result<bool, SolveError> {
+    fn backtrack(&mut self, _conflict: &Incompatibility) -> Result<bool, SolveError> {
         // Simple backtrack: undo last decision
         if let Some(last) = self.assignment.pop() {
             self.decisions.remove(&last.0);
@@ -262,6 +264,51 @@ pub enum SolveError {
 impl From<Incompatibility> for SolveError {
     fn from(inc: Incompatibility) -> Self {
         SolveError::Unsatisfiable(inc)
+    }
+}
+
+/// Derivation tree for conflict explanations.
+#[derive(Debug, Clone)]
+pub enum DerivationTree {
+    /// Root incompatibilities.
+    Root(Vec<DerivationTree>),
+    /// A dependency constraint.
+    Dependency {
+        package: PackageName,
+        version: Version,
+        dep: Box<DerivationTree>,
+    },
+    /// A conflict between two derivations.
+    Conflict {
+        left: Box<DerivationTree>,
+        right: Box<DerivationTree>,
+    },
+    /// No version satisfies the constraint.
+    NoVersion {
+        package: PackageName,
+        constraint: crate::version::VersionSet,
+    },
+}
+
+impl fmt::Display for DerivationTree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DerivationTree::Root(children) => {
+                for child in children {
+                    writeln!(f, "  {child}")?;
+                }
+                Ok(())
+            }
+            DerivationTree::Dependency { package, version, dep } => {
+                write!(f, "{package}@{version} depends on {dep}")
+            }
+            DerivationTree::Conflict { left, right } => {
+                write!(f, "conflict: {left} vs {right}")
+            }
+            DerivationTree::NoVersion { package, constraint } => {
+                write!(f, "no version of {package} satisfies {constraint}")
+            }
+        }
     }
 }
 

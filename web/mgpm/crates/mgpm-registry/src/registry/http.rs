@@ -1,6 +1,5 @@
 //! HTTP Registry Client (direct tarball URLs)
 
-use mgpm_core::{PackageName, Version};
 use crate::registry::RegistryError;
 
 pub struct HttpRegistry {

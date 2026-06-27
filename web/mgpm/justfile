@@ -1,112 +1,94 @@
 # MGPM Development Tasks
-# Usage: just <command>
+# Usage: just <task>
 
-# Default target
-default: build
+default: check
 
-# Build
+# ===== Build =====
 build:
-	cargo build --workspace
+	cargo build --workspace --all-targets
 
 build-release:
-	cargo build --workspace --release
+	cargo build --workspace --release --all-targets
 
-# Check
-check:
-	cargo check --workspace
-
-# Format
+# ===== Check =====
 fmt:
-	cargo fmt --all
-
-fmt-check:
 	cargo fmt --all -- --check
 
-# Lint
-lint:
-	cargo clippy --workspace -- -D warnings
+clippy:
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# Test
+check: fmt clippy
+
+# ===== Test =====
 test:
-	cargo test --workspace
+	cargo test --workspace --all-targets
 
-test-lib:
+test-unit:
 	cargo test --workspace --lib
 
 test-integration:
 	cargo test --workspace --test integration
 
-test-doc:
-	cargo test --workspace --doc
-
-# Benchmarks
 bench:
 	cargo bench --workspace
 
-# Documentation
+# ===== Docs =====
 doc:
+	cargo doc --workspace --no-deps
+
+doc-open:
 	cargo doc --workspace --no-deps --open
 
-# Clean
+# ===== Clean =====
 clean:
 	cargo clean
 
-# All checks (CI)
-ci: fmt-check lint test
+# ===== CI =====
+ci: check test
 
-# Generate lockfile
-lock:
-	cargo generate-lockfile
+# ===== Cross-compile =====
+cross:
+	cargo build --workspace --target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu --target x86_64-apple-darwin --target aarch64-apple-darwin --target x86_64-pc-windows-msvc
 
-# Update dependencies
-update:
-	cargo update --workspace
+# ===== Individual crates =====
+%:
+	cargo build -p mgpm-$*
 
-# Audit security
+test-%:
+	cargo test -p mgpm-$*
+
+bench-%:
+	cargo bench -p mgpm-$*
+
+doc-%:
+	cargo doc -p mgpm-$* --no-deps
+
+# ===== Generator =====
+gen-lockfile:
+	@cargo run -p mgpm-cli --bin mgpm -- lockfile generate
+
+# ===== Development =====
+dev-setup:
+	rustup component add rustfmt clippy
+	cargo install cargo-audit cargo-deny cargo-nextest cargo-llvm-cov
+	rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc
+
+# ===== Security =====
 audit:
-	cargo audit
+	cargo audit --deny warnings
 
-# Deny check
 deny:
-	cargo deny check
+	cargo deny check licenses advisories bans sources
 
-# Install tools
-install-tools:
-	cargo install cargo-audit cargo-deny cargo-nextest cargo-llvm-cov cargo-tarpaulin
+# ===== Coverage =====
+coverage:
+	cargo llvm-cov --workspace --html --output-dir coverage
 
-# Run mgpm binary
-run:
-	cargo run --bin mgpm --
+# ===== Release =====
+release-dry:
+	cargo release --dry-run --no-publish
 
-# Run with args
-run-%:
-	cargo run --bin mgpm -- $*
+release:
+	cargo release --no-publish
 
-# Watch and rebuild
-watch:
-	cargo watch -x "build --workspace" -x "test --workspace --lib"
-
-# Cross-compile targets
-cross-build-linux:
-	cross build --workspace --release --target x86_64-unknown-linux-gnu
-	cross build --workspace --release --target aarch64-unknown-linux-gnu
-
-cross-build-macos:
-	cross build --workspace --release --target x86_64-apple-darwin
-	cross build --workspace --release --target aarch64-apple-darwin
-
-cross-build-windows:
-	cross build --workspace --release --target x86_64-pc-windows-msvc
-
-# Docker build for Linux
-docker-build:
-	docker build -t mgpm:latest -f Dockerfile .
-
-# Create new crate
-new-crate:
-	@echo "Usage: just new-crate name=mgpm-new-crate"
-	cargo new --lib crates/{{name}}
-
-# Publish dry-run
-publish-dry-run:
-	cargo publish --workspace --dry-run
+.PHONY: build build-release fmt clippy check test test-unit test-integration bench doc doc-open clean ci cross dev-setup audit deny coverage release-dry release

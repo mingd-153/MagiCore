@@ -2,8 +2,8 @@
 //!
 //! Fast load/dump with bincode + custom header
 
-use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
 use bincode;
@@ -11,6 +11,7 @@ use bincode;
 use super::{Lockfile, LOCKFILE_MAGIC, LOCKFILE_VERSION};
 use crate::LockfileError;
 
+#[allow(dead_code)]
 const BINARY_HEADER_SIZE: usize = 16;
 
 pub fn write_binary(lockfile: &Lockfile, path: &Path) -> Result<(), LockfileError> {

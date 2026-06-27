@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    ".",
     "crates/mgpm-core",
     "crates/mgpm-store",
     "crates/mgpm-resolver",
@@ -13,7 +14,40 @@ members = [
     "crates/mgpm-plugins",
     "crates/mgpm-bench",
 ]
-exclude = ["crates/mgpm-bench"]
+exclude = ["fuzz"]
+
+[package]
+name = "mgpm-test"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dev-dependencies]
+mgpm-core = { path = "crates/mgpm-core" }
+mgpm-store = { path = "crates/mgpm-store" }
+mgpm-resolver = { path = "crates/mgpm-resolver" }
+mgpm-lockfile = { path = "crates/mgpm-lockfile" }
+mgpm-installer = { path = "crates/mgpm-installer" }
+mgpm-registry = { path = "crates/mgpm-registry" }
+mgpm-workspace = { path = "crates/mgpm-workspace" }
+mgpm-plugins = { path = "crates/mgpm-plugins" }
+tempfile.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+flate2.workspace = true
+tar.workspace = true
+tokio.workspace = true
+hex.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+harness = true
+
+[[test]]
+name = "e2e"
+path = "tests/e2e/mod.rs"
+harness = true
 
 [workspace.package]
 version = "0.1.0"
@@ -76,6 +110,7 @@ yaml-rust2 = "0.8"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env", "unicode", "help", "usage", "suggestions", "color", "wrap_help"] }
+clap_complete = "4.5"
 colored = "2.1"
 indicatif = { version = "0.17", features = ["rayon"] }
 console = "0.15"
@@ -91,6 +126,7 @@ git2 = { version = "0.18", features = ["ssh", "https"] }
 # Config & Schema
 schemars = { version = "0.8", features = ["derive"] }
 validator = { version = "0.17", features = ["derive"] }
+serde_yaml = "0.9"
 
 # Testing
 proptest = "1.4"
@@ -171,4 +207,17 @@ debug = 1
 [profile.test]
 opt-level = 2
 debug = 2
+
+[workspace.metadata.dist]
+cargo-dist-version = "0.25.0"
+ci = "github"
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+installer = ["shell", "powershell", "npm"]
+tap = "megagate/homebrew-mgpm"
 
