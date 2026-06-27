@@ -5,10 +5,10 @@
 pub mod solver;
 pub mod version;
 
-pub use solver::{Resolution, Resolver, SolveError, SolveResult};
+pub use solver::{Resolution, Resolver, SolveError, SolveResult, DependencyProvider};
+pub use solver::pubgrub::{Term, Incompatibility, Cause, PubGrubSolver, SolveError as PubGrubSolveError};
 pub use version::VersionSet;
 
-pub use solver::DependencyProvider;
 pub type ResolvedDependency = solver::ResolvedDep;
 
 #[derive(Debug, Clone)]

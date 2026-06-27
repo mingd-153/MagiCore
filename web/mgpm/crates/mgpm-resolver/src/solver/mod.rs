@@ -1,6 +1,6 @@
 //! PubGrub-based dependency resolver
-//!
-//! Simplified resolver implementation
+
+pub mod pubgrub;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;

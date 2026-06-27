@@ -369,6 +369,50 @@ impl VersionRange {
 
         false
     }
+    
+    /// Returns a version that satisfies this range (prefers highest for open ranges)
+    pub fn satisfying_version(&self) -> Option<Version> {
+        let range_str = self.0.trim();
+        
+        if self.is_star() {
+            return Some(Version::new(0, 0, 0));
+        }
+        
+        if range_str == ">=0.0.0" || range_str == ">0.0.0" {
+            return Some(Version::new(0, 0, 0));
+        }
+        
+        // For ^x.y.z, return highest patch
+        if range_str.starts_with('^') {
+            let min = &range_str[1..];
+            if let Ok(min_v) = Version::parse(min) {
+                return Some(Version::new(min_v.major + 1, 0, 0)); // just above max
+            }
+        }
+        
+        // For ~x.y.z, return highest patch
+        if range_str.starts_with('~') {
+            let min = &range_str[1..];
+            if let Ok(min_v) = Version::parse(min) {
+                return Some(Version::new(min_v.major, min_v.minor + 1, 0));
+            }
+        }
+        
+        // For >=x.y.z, return that version
+        if range_str.starts_with(">=") {
+            let ver = &range_str[2..];
+            if let Ok(v) = Version::parse(ver) {
+                return Some(v);
+            }
+        }
+        
+        // For exact version
+        if let Ok(v) = Version::parse(range_str) {
+            return Some(v);
+        }
+        
+        Some(Version::new(0, 0, 0))
+    }
 
     /// Returns the intersection of this range with another.
     pub fn intersection(&self, other: &VersionRange) -> VersionRange {
