@@ -56,13 +56,23 @@ create → check → run → fix → update → fix → done → report → push
 ## Current Status
 
 **Phase**: 0 — Foundation (Tuần 1-4)
-**Current task**: Chưa bắt đầu
-**Branch hiện tại**: `development`
+**Current task**: T0.1 — ✅ Hoàn thành
+**Branch hiện tại**: `feat-T0.1-sqlite-store`
 **Branch gốc**: `development`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 217 passed, 0 failed, 0 warnings
+**Tests**: 236 passed, 0 failed, 0 warnings
 
-## What's Been Done (Security Sprint)
+## What's Been Done
+
+### Phase 0 — Foundation (Tuần 1)
+
+| # | Task | Files | Status |
+|---|------|-------|--------|
+| T0.1 | SQLite store index | `index.rs`, `sqlite.rs` | ✅ |
+| T0.2 | CAS import/export | — | ⏳ |
+| T0.4 | Lockfile integrity fix | — | ⏳ |
+
+### Security Sprint (Phase trước)
 
 | # | Feature | Files | Status |
 |---|---------|-------|--------|
@@ -102,39 +112,35 @@ create → check → run → fix → update → fix → done → report → push
 
 ## Next Steps (Tuần 1)
 
-Task cho tuần 1:
-1. **T0.1**: SQLite store index (`feat-T0.1-sqlite-store`) ← **bắt đầu ngay**
-2. **T0.2**: CAS content-addressed import/export (`feat-T0.2-cas-io`)
+Task còn lại:
+1. **T0.1**: ✅ Hoàn thành
+2. **T0.2**: CAS content-addressed import/export (`feat-T0.2-cas-io`) ← tiếp theo
 3. **T0.4**: Lockfile integrity fix - BLAKE3 + real SHA-256 (`feat-T0.4-lockfile-integrity`)
 
 ## How to Continue
 
 ```bash
 # 1. Đọc task chi tiết
-cat tasks/phase-0-foundation/T0.1-sqlite-store.md
+cat tasks/phase-0-foundation/T0.2-cas-io.md
 
 # 2. Tạo branch task từ development
 git checkout development
-git checkout -b feat-T0.1-sqlite-store
+git checkout -b feat-T0.2-cas-io
 
-# 3. Implement theo vòng lặp: create → check → run → fix → update → fix → done → report → push
+# 3. Implement theo vòng lặp
 cargo check --workspace
 cargo test --workspace
-cargo clippy --workspace
+cargo clippy -p mgpm-store
 
 # 4. Commit + merge vào development
 git add -A
-git commit -m "feat(mgpm): T0.1 - SQLite store index"
+git commit -m "feat(mgpm): T0.2 - CAS import/export"
 git checkout development
-git merge feat-T0.1-sqlite-store
-
-# 5. Xoá task branch
-git branch -d feat-T0.1-sqlite-store
-
-# 6. Push lên remote
+git merge feat-T0.2-cas-io
+git branch -d feat-T0.2-cas-io
 git push origin development
 
-# 7. Update AGENTS.md
+# 5. Update AGENTS.md
 ```
 
 ## Folder Structure Hiện Tại (Chi Tiết)
