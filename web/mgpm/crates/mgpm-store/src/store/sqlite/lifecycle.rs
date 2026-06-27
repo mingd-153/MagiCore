@@ -2,6 +2,9 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Mutex;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use lru::LruCache;
 use rusqlite::Connection;
 
@@ -14,6 +17,17 @@ impl SqliteStore {
         } else {
             Connection::open(path)?
         };
+
+        // Set secure file permissions (owner read/write only) for non-readonly DBs
+        if !readonly {
+            #[cfg(unix)]
+            {
+                use std::fs;
+                let mut perms = fs::metadata(path)?.permissions();
+                perms.set_mode(0o600);
+                fs::set_permissions(path, perms)?;
+            }
+        }
 
         let ram = detect_available_ram();
 

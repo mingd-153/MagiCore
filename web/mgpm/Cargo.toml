@@ -152,6 +152,7 @@ config = "0.13"
 async-fs = "1.6"
 blocking = "1.5"
 signal-hook = "0.3"
+sysinfo = "0.31"
 
 # Deny/CI
 cargo-deny = "0.14"

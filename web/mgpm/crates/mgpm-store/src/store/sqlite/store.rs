@@ -8,24 +8,48 @@ use super::*;
 impl StoreIndex for SqliteStore {
     fn add_package(&self, info: &PackageInfo) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR REPLACE INTO packages
-             (name, version, integrity, shard, filename, is_executable,
-              manifest_json, metadata, size_bytes, compressed_size_bytes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            rusqlite::params![
-                info.name,
-                info.version,
-                info.integrity,
-                info.shard,
-                info.filename,
-                info.is_executable as i32,
-                info.manifest_json,
-                info.metadata,
-                info.size_bytes as i64,
-                info.compressed_size_bytes as i64,
-            ],
-        )?;
+        
+        // Check if package with this integrity already exists
+        let existing = conn.query_row(
+            "SELECT name, version FROM packages WHERE integrity = ?1",
+            rusqlite::params![info.integrity],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        );
+        
+        match existing {
+            Ok((existing_name, existing_version)) => {
+                // Package with this integrity exists — verify it's the same package
+                if existing_name != info.name || existing_version != info.version {
+                    return Err(StoreError::Database(format!(
+                        "integrity collision: hash {} already used by {}@{}",
+                        info.integrity, existing_name, existing_version
+                    )));
+                }
+                // Same package — idempotent, update cache only
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // New integrity — insert
+                conn.execute(
+                    "INSERT INTO packages
+                     (name, version, integrity, shard, filename, is_executable,
+                      manifest_json, metadata, size_bytes, compressed_size_bytes)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    rusqlite::params![
+                        info.name,
+                        info.version,
+                        info.integrity,
+                        info.shard,
+                        info.filename,
+                        info.is_executable as i32,
+                        info.manifest_json,
+                        info.metadata,
+                        info.size_bytes as i64,
+                        info.compressed_size_bytes as i64,
+                    ],
+                )?;
+            }
+            Err(e) => return Err(StoreError::from(e)),
+        }
 
         SqliteStore::checkpoint_if_needed(&conn);
 

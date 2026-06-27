@@ -107,10 +107,15 @@ fn test_duplicate_integrity_replaces() {
     let pkg1 = test_package("original", "1.0.0", "dup123");
     let pkg2 = test_package("replacement", "2.0.0", "dup123");
     store.add_package(&pkg1).unwrap();
-    store.add_package(&pkg2).unwrap();
-    assert_eq!(store.package_count().unwrap(), 1);
+    // Adding package with same integrity but different name/version should fail
+    let result = store.add_package(&pkg2);
+    assert!(result.is_err(), "should reject integrity collision");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("integrity collision"), "error should mention integrity collision: {}", err);
+    // Original package should still exist
     let retrieved = store.get_by_integrity("dup123").unwrap().unwrap();
-    assert_eq!(retrieved.name, "replacement");
+    assert_eq!(retrieved.name, "original");
+    assert_eq!(store.package_count().unwrap(), 1);
 }
 
 #[test]
