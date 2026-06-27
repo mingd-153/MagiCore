@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use mgpm_core::{PackageId, Protocol, Resolution as CoreResolution, Version};
+use mgpm_resolver::Resolution as ResolverResolution;
 
 pub const LOCKFILE_VERSION: u32 = 1;
 pub const LOCKFILE_MAGIC: &[u8] = b"MGPMLOCK";
@@ -151,7 +152,7 @@ impl LockfilePackage {
             ),
         };
 
-Self {
+        Self {
             id: id.as_spec(),
             name: id.name().as_str().to_string(),
             version: id.version().to_string(),
@@ -161,6 +162,24 @@ Self {
                 registry,
             },
             integrity: resolution.integrity.clone(),
+        }
+    }
+
+    /// Create from resolver's Resolution type
+    pub fn from_resolver_resolution(res: &ResolverResolution) -> Self {
+        Self {
+            id: res.package_id.as_spec(),
+            name: res.package_id.name().as_str().to_string(),
+            version: res.version.to_string(),
+            resolution: PackageResolution {
+                r#type: "registry".to_string(),
+                url: format!("https://registry.npmjs.org/{}/-/{}-{}.tgz", 
+                    res.package_id.name().as_str(), 
+                    res.package_id.name().as_str(), 
+                    res.version),
+                registry: Some("npm".to_string()),
+            },
+            integrity: Some(res.integrity.clone()),
         }
     }
 }

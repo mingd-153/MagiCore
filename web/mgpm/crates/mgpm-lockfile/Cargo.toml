@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 mgpm-core = { path = "../mgpm-core" }
+mgpm-resolver = { path = "../mgpm-resolver" }
 thiserror.workspace = true
 anyhow.workspace = true
 serde.workspace = true
