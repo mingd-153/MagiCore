@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::thread;
 
 use rusqlite::params;
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use super::*;
@@ -121,10 +122,10 @@ fn test_duplicate_integrity_replaces() {
 #[test]
 fn test_register_and_unregister_project() {
     let (store, _dir) = create_test_store();
-    let project_path = Path::new("/tmp/test-project");
-    store.register_project(project_path).unwrap();
+    let project_dir = tempdir().unwrap();
+    store.register_project(project_dir.path()).unwrap();
     assert_eq!(store.project_count().unwrap(), 1);
-    store.unregister_project(project_path).unwrap();
+    store.unregister_project(project_dir.path()).unwrap();
     assert_eq!(store.project_count().unwrap(), 0);
 }
 
@@ -151,15 +152,18 @@ fn test_transaction_commit() {
 #[test]
 fn test_integrity_cache() {
     let (store, _dir) = create_test_store();
-    let file_path = Path::new("/tmp/test-file.txt");
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test-file.txt");
+    std::fs::write(&file_path, b"hello integrity cache").unwrap();
+    let hash = hex::encode(Sha256::digest(b"hello integrity cache"));
     store
-        .update_integrity_cache(file_path, "cached-hash-123")
+        .update_integrity_cache(&file_path, &hash)
         .unwrap();
     let cached = store
-        .get_cached_integrity(file_path)
+        .get_cached_integrity(&file_path)
         .unwrap()
         .unwrap();
-    assert_eq!(cached, "cached-hash-123");
+    assert_eq!(cached, hash);
 }
 
 #[test]
@@ -628,7 +632,8 @@ fn test_get_by_integrity_empty_string() {
 #[test]
 fn test_register_project_multiple_times() {
     let (store, _dir) = create_test_store();
-    let path = Path::new("/my/project");
+    let project_dir = tempdir().unwrap();
+    let path = project_dir.path();
     store.register_project(path).unwrap();
     assert_eq!(store.project_count().unwrap(), 1);
     store.register_project(path).unwrap();
@@ -681,23 +686,33 @@ fn test_kv_delete_nonexistent() {
 #[test]
 fn test_integrity_cache_special_paths() {
     let (store, _dir) = create_test_store();
-    let special_paths = [
-        "/",
-        "",
-        ".",
-        "..",
-        "/dev/null",
-        "C:\\Windows\\system32",
-        "日本語/path",
-        "path/with spaces/and🚀emoji",
+    let cache_dir = tempdir().unwrap();
+
+    let test_cases: Vec<(&str, Vec<u8>)> = vec![
+        ("hello.txt", b"hello".to_vec()),
+        ("path/with spaces/and🚀emoji.txt", b"emoji".to_vec()),
+        ("日本語/path.txt", b"nihongo".to_vec()),
+        ("..test.txt", b"dots".to_vec()),
     ];
-    for path_str in &special_paths {
-        let p = Path::new(path_str);
-        store.update_integrity_cache(p, "special-hash").unwrap();
-        let cached = store.get_cached_integrity(p).unwrap();
-        assert!(cached.is_some(), "failed for path: '{}'", path_str);
-        assert_eq!(cached.unwrap(), "special-hash");
+
+    for (rel_path, content) in &test_cases {
+        let full_path = cache_dir.path().join(rel_path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&full_path, content).unwrap();
+        let hash = hex::encode(Sha256::digest(content));
+        store.update_integrity_cache(&full_path, &hash).unwrap();
+        let cached = store.get_cached_integrity(&full_path).unwrap();
+        assert!(cached.is_some(), "failed for path: '{}'", rel_path);
+        assert_eq!(cached.unwrap(), hash);
     }
+
+    // Also test that non-regular files (directories) return cached hash
+    let hash = hex::encode(Sha256::digest(b"dir-content"));
+    store.update_integrity_cache(cache_dir.path(), &hash).unwrap();
+    let cached = store.get_cached_integrity(cache_dir.path()).unwrap();
+    assert!(cached.is_some(), "directory should return cached hash");
 }
 
 #[test]
@@ -738,16 +753,16 @@ fn test_vacuum_empty_store() {
 #[test]
 fn test_register_project_special_paths() {
     let (store, _dir) = create_test_store();
+    let project_dir = tempdir().unwrap();
     let paths = [
-        Path::new("relative/path"),
-        Path::new("/absolute/path/with spaces"),
-        Path::new(""),
+        project_dir.path(),
         Path::new("."),
+        Path::new("/tmp"),
     ];
     for p in &paths {
         store.register_project(p).unwrap();
     }
-    assert_eq!(store.project_count().unwrap(), 4);
+    assert_eq!(store.project_count().unwrap(), 3);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

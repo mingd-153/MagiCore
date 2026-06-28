@@ -81,6 +81,9 @@ pub trait StoreIndex: Send + Sync {
     fn vacuum(&self) -> Result<(), StoreError> {
         Err(StoreError::Database("vacuum not implemented".into()))
     }
+    fn deep_integrity_check(&self) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Database("deep_integrity_check not implemented".into()))
+    }
     fn audit(&self) -> Result<AuditReport, StoreError> {
         Err(StoreError::Database("audit not implemented".into()))
     }
