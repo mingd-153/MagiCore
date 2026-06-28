@@ -89,9 +89,21 @@ pub fn apply_pragmas_readonly(conn: &Connection, ram: u64) -> Result<(), StoreEr
 }
 
 pub fn health_check(conn: &Connection) -> Result<(), StoreError> {
+    // quick_check: fast, checks b-tree structure
     let result: String = conn
         .query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|e| StoreError::Database(format!("health check failed: {}", e)))?;
+    if result != "ok" {
+        return Err(StoreError::IntegrityCheck(result));
+    }
+    Ok(())
+}
+
+pub fn deep_integrity_check(conn: &Connection) -> Result<(), StoreError> {
+    // integrity_check: full verification including page checksums, freelist, etc.
+    let result: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|e| StoreError::Database(format!("deep integrity check failed: {}", e)))?;
     if result != "ok" {
         return Err(StoreError::IntegrityCheck(result));
     }

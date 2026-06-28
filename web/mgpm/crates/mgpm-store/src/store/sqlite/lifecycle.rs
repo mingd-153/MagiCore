@@ -67,6 +67,8 @@ impl SqliteStore {
         let ram = detect_available_ram();
 
         apply_pragmas(&conn, ram)?;
+        // Hard limit: 512MB max for in-memory database (131072 pages × 4096 bytes)
+        conn.query_row("PRAGMA max_page_count = 131072", [], |_| Ok(()))?;
         create_tables(&conn)?;
         migrate_schema(&conn)?;
         health_check(&conn)?;
@@ -85,6 +87,24 @@ impl SqliteStore {
     pub fn health_check(&self) -> Result<Vec<String>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("PRAGMA quick_check")?;
+        let result: String = stmt.query_row([], |row| row.get(0))?;
+        if result != "ok" {
+            return Err(StoreError::IntegrityCheck(result));
+        }
+
+        let (db_size_mb, wal_size_kb, cache_entries) = self.get_store_stats_with_conn(&conn)?;
+
+        Ok(vec![
+            format!("db_size: {} MB", db_size_mb),
+            format!("wal_size: {} KB", wal_size_kb),
+            format!("cache_entries: {}", cache_entries),
+            format!("readonly: {}", self.readonly),
+        ])
+    }
+
+    pub fn deep_integrity_check(&self) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("PRAGMA integrity_check")?;
         let result: String = stmt.query_row([], |row| row.get(0))?;
         if result != "ok" {
             return Err(StoreError::IntegrityCheck(result));

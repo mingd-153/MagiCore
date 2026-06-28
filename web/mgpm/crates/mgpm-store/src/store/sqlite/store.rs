@@ -143,25 +143,78 @@ impl StoreIndex for SqliteStore {
     }
 
     fn register_project(&self, path: &Path) -> Result<(), StoreError> {
-        let path_str = path.to_string_lossy();
+        if path.as_os_str().is_empty() {
+            return Err(StoreError::Io {
+                path: path.to_path_buf(),
+                msg: "empty path is not allowed".to_string(),
+            });
+        }
+
+        let normalized = if path.exists() {
+            // Canonicalize resolves .., ., and symlinks
+            std::fs::canonicalize(path).map_err(|e| StoreError::Io {
+                path: path.to_path_buf(),
+                msg: format!("failed to resolve project path: {}", e),
+            })?
+        } else {
+            let path_str = path.to_string_lossy();
+            if path_str.contains("..") {
+                return Err(StoreError::Io {
+                    path: path.to_path_buf(),
+                    msg: "path traversal detected".to_string(),
+                });
+            }
+            std::path::absolute(path).map_err(|e| StoreError::Io {
+                path: path.to_path_buf(),
+                msg: format!("failed to resolve path: {}", e),
+            })?
+        };
+
+        let path_str = normalized.to_string_lossy().to_string();
         let hash = hex::encode(Sha256::digest(path_str.as_bytes()));
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO projects (project_hash, path, last_used)
              VALUES (?1, ?2, unixepoch())",
-            rusqlite::params![hash, path_str.to_string()],
+            rusqlite::params![hash, path_str],
         )?;
         Ok(())
     }
 
     fn unregister_project(&self, path: &Path) -> Result<(), StoreError> {
-        let path_str = path.to_string_lossy();
+        if path.as_os_str().is_empty() {
+            return Err(StoreError::Io {
+                path: path.to_path_buf(),
+                msg: "empty path is not allowed".to_string(),
+            });
+        }
+
+        let normalized = if path.exists() {
+            std::fs::canonicalize(path).map_err(|e| StoreError::Io {
+                path: path.to_path_buf(),
+                msg: format!("failed to resolve project path: {}", e),
+            })?
+        } else {
+            let path_str = path.to_string_lossy();
+            if path_str.contains("..") {
+                return Err(StoreError::Io {
+                    path: path.to_path_buf(),
+                    msg: "path traversal detected".to_string(),
+                });
+            }
+            std::path::absolute(path).map_err(|e| StoreError::Io {
+                path: path.to_path_buf(),
+                msg: format!("failed to resolve path: {}", e),
+            })?
+        };
+
+        let path_str = normalized.to_string_lossy().to_string();
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM projects WHERE path = ?1",
-            rusqlite::params![path_str.to_string()],
+            rusqlite::params![path_str],
         )?;
         Ok(())
     }
@@ -186,7 +239,39 @@ impl StoreIndex for SqliteStore {
     }
 
     fn update_integrity_cache(&self, file_path: &Path, hash: &str) -> Result<(), StoreError> {
+        // Validate algorithm (only sha256 supported for now)
+        let algorithm = "sha256";
+        SqliteStore::validate_algorithm(algorithm)?;
+
         let path_str = file_path.to_string_lossy();
+
+        // Re-verify file content to prevent TOCTOU (time-of-check-to-time-of-use)
+        // Only for regular files; skip for directories and special paths
+        if let Ok(meta) = std::fs::metadata(file_path) {
+            if meta.is_file() {
+                let computed_hash = {
+                    let mut file = std::fs::File::open(file_path)?;
+                    let mut hasher = Sha256::new();
+                    let mut buf = [0u8; 8192];
+                    loop {
+                        let n = file.read(&mut buf)?;
+                        if n == 0 {
+                            break;
+                        }
+                        hasher.update(&buf[..n]);
+                    }
+                    hex::encode(hasher.finalize())
+                };
+
+                if computed_hash != hash {
+                    return Err(StoreError::HashMismatch {
+                        expected: hash.to_string(),
+                        actual: computed_hash,
+                    });
+                }
+            }
+        }
+
         let mtime = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -196,7 +281,7 @@ impl StoreIndex for SqliteStore {
         conn.execute(
             "INSERT OR REPLACE INTO integrity_cache (file_path, integrity, algorithm, mtime)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![path_str.to_string(), hash, "sha256", mtime],
+            rusqlite::params![path_str.to_string(), hash, algorithm, mtime],
         )?;
 
         // Invalidate LRU cache if this hash was cached
@@ -305,5 +390,17 @@ impl StoreIndex for SqliteStore {
             |row| row.get(0),
         )?;
         Ok(size as u64)
+    }
+}
+
+impl SqliteStore {
+    fn validate_algorithm(algorithm: &str) -> Result<(), StoreError> {
+        match algorithm {
+            "sha256" | "blake3" => Ok(()),
+            other => Err(StoreError::Database(format!(
+                "unsupported integrity algorithm: {}. Supported: sha256, blake3",
+                other
+            ))),
+        }
     }
 }
