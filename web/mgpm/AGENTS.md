@@ -60,39 +60,27 @@ create → check → run → fix → update → fix → done → report → push
 **Branch hiện tại**: `development`
 **Branch gốc**: `development`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 247 passed (40 sqlite + others), 0 failed, 0 warnings
+**Tests**: 288 passed (81 sqlite + others), 0 failed, 0 warnings
 
 ## What's Been Done
 
-### T0.1 — SQLite Store Expansion (Uncommitted)
+### T0.1 — SQLite Store Security Hardening (Uncommitted)
 
-Dựa theo research "SQL linh hoạt hơn", mở rộng `sqlite.rs` với:
+Đã fix toàn bộ 5 HIGH issues còn lại từ security audit:
 
-| Feature | Chi tiết |
-|---------|----------|
-| Adaptive RAM detection | `sysctl` (macOS) / `/proc/meminfo` (Linux) |
-| Adaptive cache_size | Từ 2000 → 512000 pages theo RAM |
-| Adaptive mmap_size | Từ 0 → 256MB theo RAM |
-| Adaptive LRU | 1.000 → 100.000 entries theo RAM |
-| `metadata TEXT` | JSON column trên `packages` + `projects` |
-| `kv_store` table | Key-value escape hatch (`set_kv`, `get_kv`, `delete_kv`) |
-| `dependencies` table | project → package tracking với `kind` (prod/dev) |
-| `generation` counter | GC safety với `advance_generation`, `clean_old_generations` |
-| `gc_state` table | Track generation history |
-| `schema_version` | Migration system cho schema updates |
-| Health check | `PRAGMA quick_check` + db_size + WAL size report |
-| WAL checkpoint | Auto-trigger khi WAL > 4000 pages |
-| BEGIN IMMEDIATE | Tránh deadlock trên concurrent access |
-| `trusted_schema=OFF` | Security hardening chống schema-based attack |
-| **Store Audit** | `audit()`, `check_permissions()`, `snapshot_permissions()` |
-| Permission snapshot | Lưu file permissions (mode, size, mtime) trong DB |
-| 24h stale warning | Cảnh báo nếu >24h không audit |
-| Permission diff detect | So sánh permission snapshot hiện tại vs lưu trữ |
-| File change detection | Phát hiện file mới, file bị xoá, mtime thay đổi |
-| `AuditReport` struct | `integrity_ok`, `permissions_ok`, `stale_hours`, warnings |
-| Crash-safe WAL | `synchronous=NORMAL` + `busy_timeout=5000` + checkpoint |
+| Issue | Mức | Fix | File |
+|-------|:---:|-----|------|
+| H2: Deep integrity check | HIGH | `deep_integrity_check()` dùng `PRAGMA integrity_check`, audit gọi cả quick+deep | `lifecycle.rs`, `audit.rs` |
+| H3: Path traversal (register_project) | HIGH | Canonicalize path nếu tồn tại, reject `..`, cấm empty path | `store.rs` |
+| H4: In-memory 512MB limit | HIGH | `PRAGMA max_page_count = 131072` (~512MB) | `lifecycle.rs` |
+| H6: TOCTOU integrity cache | HIGH | `update_integrity_cache` rehash file content trước khi store | `store.rs` |
+| H7: Algorithm validation | HIGH | `validate_algorithm()` chỉ cho phép sha256/blake3 | `store.rs` |
 
-**Files modified:** `sqlite.rs` → 1050 dòng, 40 tests (sqlite)
+### Summary
+- **81 SQLite tests, 288 total** — all pass
+- **0 compile errors** (`cargo check --workspace`)
+- **5/5 HIGH issues fixed**
+- **3 Critical + 7 High** = 10 security fixes total (all resolved)
 
 ### Phase 0 — Foundation (Tuần 1)
 
@@ -144,7 +132,7 @@ Dựa theo research "SQL linh hoạt hơn", mở rộng `sqlite.rs` với:
 
 **Verdict:** SQLite nhanh hơn file-based ContentStore khoảng 10-50× cho query operations. Bulk insert đạt ~8.6 µs/pkg.
 
-### 2. 🔒 Bảo Mật (Security Audit)
+### 2. 🔒 Bảo Mật (Security Audit) — ALL FIXED
 
 | Check | Status | Notes |
 |-------|:------:|-------|
@@ -152,14 +140,23 @@ Dựa theo research "SQL linh hoạt hơn", mở rộng `sqlite.rs` với:
 | `trusted_schema=OFF` | ✅ | Chống schema-based SQL injection |
 | `busy_timeout` | ✅ | 5000ms — không treo vô hạn |
 | File permissions | ✅ | Store được snapshot + monitor qua `audit()` |
+| File permissions 0o600 | ✅ | DB file chỉ owner read/write |
 | Permission override detect | ✅ | `check_permissions()` so sánh mode/size/mtime |
 | BEGIN IMMEDIATE | ✅ | Tránh deadlock concurrent write |
 | READONLY mode | ✅ | Open với flag readonly khi không cần ghi |
 | WAL crash safety | ✅ | survive SIGKILL, `synchronous=NORMAL` |
+| **Supply chain (C1)** | ✅ | `add_package` rejects integrity collision |
+| **File permissions (C2)** | ✅ | DB file `0o600` sau open |
+| **Unsafe FFI (C3)** | ✅ | Replaced libc::sysctl + kernel32 with sysinfo crate |
+| **Cache poisoning (H1)** | ✅ | `get_cached_integrity` re-verify file content |
+| **Deep integrity (H2)** | ✅ | `PRAGMA integrity_check` + quick_check trong audit |
+| **Path traversal (H3)** | ✅ | `register_project` canonicalize + reject `..` |
+| **Memory limit (H4)** | ✅ | In-memory DB max 512MB |
+| **TOCTOU (H6)** | ✅ | `update_integrity_cache` rehash file content |
+| **Algorithm validation (H7)** | ✅ | Only sha256/blake3 allowed |
 
 **Nguy cơ còn lại (thấp):**
 - Mutex poisoning: `unwrap()` khi lock — nếu thread panic sẽ poison, nhưng pattern chuẩn của Rust
-- Windows: RAM detection fallback về 2GB — chưa có `cfg(windows)` handler
 
 ### 3. 🛡 An Toàn (Safety Review)
 
@@ -255,7 +252,7 @@ Memory:  SQLite LRU cache  → adaptive 1k-100k entries
 ## Next Steps
 
 Task còn lại trong Phase 0:
-1. **T0.1**: ✅ Hoàn thành (expanded — adaptive, KV, health, WAL, generation GC)
+1. **T0.1**: ✅ Hoàn thành (expanded + security hardened — 10 vulnerabilities fixed)
 2. **T0.2**: CAS content-addressed import/export ← tiếp theo
 3. **T0.3**: Store verify + status
 4. **T0.4**: Lockfile integrity fix - BLAKE3 + real SHA-256
