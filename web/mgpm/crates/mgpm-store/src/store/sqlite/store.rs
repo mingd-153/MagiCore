@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -207,15 +208,51 @@ impl StoreIndex for SqliteStore {
     fn get_cached_integrity(&self, file_path: &Path) -> Result<Option<String>, StoreError> {
         let path_str = file_path.to_string_lossy();
 
-        let conn = self.conn.lock().unwrap();
-        let result: Result<String, _> = conn.query_row(
-            "SELECT integrity FROM integrity_cache WHERE file_path = ?1",
-            rusqlite::params![path_str.to_string()],
-            |row| row.get(0),
-        );
+        // Get cached data (release lock before file I/O)
+        let cached = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT integrity, mtime FROM integrity_cache WHERE file_path = ?1",
+                rusqlite::params![path_str.to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+        };
 
-        match result {
-            Ok(hash) => Ok(Some(hash)),
+        match cached {
+            Ok((cached_hash, _cached_mtime)) => {
+                // Try to re-verify file content to prevent cache poisoning
+                // If we can't read the file (directory, special file, etc.), return cached hash
+                if let Ok(meta) = std::fs::metadata(file_path) {
+                    // Only verify if it's a regular file
+                    if meta.is_file() {
+                        if let Ok(mut file) = std::fs::File::open(file_path) {
+                            let mut hasher = Sha256::new();
+                            let mut buf = [0u8; 8192];
+                            loop {
+                                let n = file.read(&mut buf).map_err(|e| {
+                                    StoreError::Io { path: file_path.to_path_buf(), msg: e.to_string() }
+                                })?;
+                                if n == 0 { break; }
+                                hasher.update(&buf[..n]);
+                            }
+                            let computed = hex::encode(hasher.finalize());
+                            if computed == cached_hash {
+                                return Ok(Some(cached_hash));
+                            }
+                            // Hash mismatch - stale cache, remove it
+                            let conn = self.conn.lock().unwrap();
+                            conn.execute(
+                                "DELETE FROM integrity_cache WHERE file_path = ?1",
+                                rusqlite::params![path_str.to_string()],
+                            ).ok();
+                            return Ok(None);
+                        }
+                    }
+                    // Could not open file for verification - return cached hash
+                }
+                // Not a regular file or could not get metadata - return cached hash
+                Ok(Some(cached_hash))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StoreError::from(e)),
         }
