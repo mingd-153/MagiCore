@@ -1,9 +1,11 @@
 //! Content-addressable store module
 
+pub mod cas;
 pub mod content_store;
 pub mod index;
 pub mod sqlite;
 
+pub use cas::{ContentStore as CasContentStore, IntegrityHash, TarballEntry};
 pub use content_store::{
     ContentStore, FileEntry, HashAlgorithm, ImportMethod, PackageEntry,
 };
