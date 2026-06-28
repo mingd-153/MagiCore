@@ -9,10 +9,10 @@ impl SqliteStore {
         let now = SystemTime::now();
         let now_secs = now.duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-        let integrity_ok = match self.health_check() {
+        let quick_check_ok = match self.health_check() {
             Ok(_) => true,
             Err(StoreError::IntegrityCheck(msg)) => {
-                warnings.push(format!("integrity check failed: {}", msg));
+                warnings.push(format!("quick check failed: {}", msg));
                 false
             }
             Err(e) => {
@@ -20,6 +20,25 @@ impl SqliteStore {
                 false
             }
         };
+
+        let deep_check_ok = if quick_check_ok {
+            match self.deep_integrity_check() {
+                Ok(_) => true,
+                Err(StoreError::IntegrityCheck(msg)) => {
+                    warnings.push(format!("deep integrity check failed: {}", msg));
+                    false
+                }
+                Err(e) => {
+                    warnings.push(format!("deep integrity check error: {}", e));
+                    false
+                }
+            }
+        } else {
+            warnings.push("skipping deep integrity check (quick check failed)".to_string());
+            false
+        };
+
+        let integrity_ok = quick_check_ok && deep_check_ok;
 
         let (permissions_ok, perm_warnings, last_audit_str, stale_hours) =
             self.check_permissions_inner(now_secs);
