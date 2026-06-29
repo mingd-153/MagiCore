@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write, Seek};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -53,8 +53,26 @@ pub struct TarballEntry {
 
 impl ContentStore {
     pub fn new(index: Box<dyn StoreIndex>, cas_path: PathBuf) -> io::Result<Self> {
+        // Validate CAS root is not a symlink
+        if cas_path.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CAS root path is a symlink",
+            ));
+        }
+
         let store = Self { index, cas_path };
         store.ensure_dirs()?;
+
+        // Set restrictive permissions on CAS root (owner-only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&store.cas_path)?.permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(&store.cas_path, perms)?;
+        }
+
         Ok(store)
     }
 
@@ -96,7 +114,33 @@ impl ContentStore {
         Ok(())
     }
 
+    fn check_symlink_ancestors(path: &Path) -> Result<(), StoreError> {
+        // Check if path itself is a symlink
+        if path.is_symlink() {
+            return Err(StoreError::Io {
+                path: path.to_path_buf(),
+                msg: "destination path is a symlink".to_string(),
+            });
+        }
+
+        // Check parent directory only (not all ancestors up to root)
+        // This avoids false positives on system symlinks like /var -> /private/var on macOS
+        if let Some(parent) = path.parent() {
+            if parent.is_symlink() {
+                return Err(StoreError::Io {
+                    path: parent.to_path_buf(),
+                    msg: "destination parent is a symlink".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn import_file(&self, path: &Path) -> Result<IntegrityHash, StoreError> {
+        // Check source path for symlinks (prevents importing unintended files via symlinks)
+        Self::check_symlink_ancestors(path)?;
+
         let metadata = fs::metadata(path).map_err(|e| StoreError::Io {
             path: path.to_path_buf(),
             msg: e.to_string(),
@@ -130,7 +174,7 @@ impl ContentStore {
                     compressed_size_bytes: 0,
                     created_at: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs(),
                 };
                 self.index.add_package(&info)?;
@@ -153,13 +197,13 @@ impl ContentStore {
         self.check_symlink_in_cas(dest)?;
 
         match fs::OpenOptions::new()
+            .read(true)
             .write(true)
             .create_new(true)
             .open(dest)
         {
             Ok(file) => {
-                write_all_and_set_perms(file, dest, data, executable)?;
-                verify_written_content(dest, data)?;
+                write_all_verify_and_set_perms(file, dest, data, executable)?;
                 Ok(true)
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
@@ -181,6 +225,9 @@ impl ContentStore {
         }
 
         self.check_symlink_in_cas(&src)?;
+
+        // Check destination path for symlinks (prevents symlink attacks on export)
+        Self::check_symlink_ancestors(dest)?;
 
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| StoreError::Io {
@@ -262,60 +309,78 @@ impl ContentStore {
     }
 }
 
-fn write_all_and_set_perms(file: fs::File, dest: &Path, data: &[u8], executable: bool) -> Result<(), StoreError> {
-    let mut writer = file;
+fn write_all_verify_and_set_perms(mut writer: fs::File, dest: &Path, data: &[u8], executable: bool) -> Result<(), StoreError> {
+    // Write data
     writer.write_all(data).map_err(|e| StoreError::Io {
         path: dest.to_path_buf(),
         msg: e.to_string(),
     })?;
 
-    drop(writer);
+    // Verify content using SAME file handle (no TOCTOU)
+    writer.flush().map_err(|e| StoreError::Io {
+        path: dest.to_path_buf(),
+        msg: e.to_string(),
+    })?;
+    writer.seek(std::io::SeekFrom::Start(0)).map_err(|e| StoreError::Io {
+        path: dest.to_path_buf(),
+        msg: e.to_string(),
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    let mut read_bytes = 0usize;
+    loop {
+        let n = writer.read(&mut buf).map_err(|e| StoreError::Io {
+            path: dest.to_path_buf(),
+            msg: e.to_string(),
+        })?;
+        if n == 0 {
+            break;
+        }
+        read_bytes += n;
+        hasher.update(&buf[..n]);
+    }
+    if read_bytes != data.len() {
+        return Err(StoreError::IntegrityCheck("size mismatch after write".into()));
+    }
+    let computed = hex::encode(hasher.finalize());
+    let expected = hex::encode(Sha256::digest(data));
+    if computed != expected {
+        return Err(StoreError::IntegrityCheck("hash mismatch after write".into()));
+    }
 
-    apply_executable_bit(dest, executable)?;
+    // Set executable bit if needed
+    apply_executable_bit(&writer, dest, executable)?;
 
     Ok(())
 }
 
-fn apply_executable_bit(path: &Path, executable: bool) -> Result<(), StoreError> {
+fn apply_executable_bit(writer: &fs::File, dest: &Path, executable: bool) -> Result<(), StoreError> {
     if !executable {
         return Ok(());
     }
-    set_executable_bit(path)
+    set_executable_bit(writer, dest)
 }
 
 #[cfg(unix)]
-fn set_executable_bit(path: &Path) -> Result<(), StoreError> {
-    let meta = fs::metadata(path).map_err(|e| StoreError::Io {
-        path: path.to_path_buf(),
+fn set_executable_bit(writer: &fs::File, _dest: &Path) -> Result<(), StoreError> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = writer.metadata().map_err(|e| StoreError::Io {
+        path: _dest.to_path_buf(),
         msg: e.to_string(),
     })?;
     let mode = meta.permissions().mode();
     let mut perms = meta.permissions();
     perms.set_mode(mode | 0o111);
-    fs::set_permissions(path, perms).map_err(|e| StoreError::Io {
-        path: path.to_path_buf(),
+    // Use the file handle to set permissions (no TOCTOU)
+    writer.set_permissions(perms).map_err(|e| StoreError::Io {
+        path: _dest.to_path_buf(),
         msg: e.to_string(),
     })?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn set_executable_bit(_path: &Path) -> Result<(), StoreError> {
-    Ok(())
-}
-
-fn verify_written_content(path: &Path, expected: &[u8]) -> Result<(), StoreError> {
-    let actual = fs::read(path).map_err(|e| StoreError::Io {
-        path: path.to_path_buf(),
-        msg: e.to_string(),
-    })?;
-    if actual != expected {
-        let _ = fs::remove_file(path);
-        return Err(StoreError::IntegrityCheck(format!(
-            "content verification failed after write: {}",
-            path.display()
-        )));
-    }
+fn set_executable_bit(_writer: &fs::File, _dest: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
