@@ -8,7 +8,9 @@ use tokio::sync::mpsc;
 
 use mgpm_core::config::MgpmConfig;
 use mgpm_installer::installer::{InstallOptions as RealInstallOptions, Installer};
-use mgpm_store::ContentStore;
+use mgpm_store::{ContentStore, SqliteStore, StoreReport, StoreVerifier};
+use mgpm_store::store::index::StoreIndex;
+use mgpm_store::store::CasContentStore;
 
 mod profiler;
 mod advisory_db;
@@ -131,8 +133,20 @@ enum CliCommand {
 
 #[derive(clap::Subcommand)]
 enum StoreCommand {
-    Prune,
+    /// Verify store integrity (re-hash all CAS files)
+    Verify {
+        /// Auto-fix corrupted files by removing them
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Show store status (packages, projects, size)
     Status,
+    /// Prune unreferenced packages
+    Prune {
+        /// Show what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Manage completion cache
     CompletionsCache {
         #[command(subcommand)]
@@ -150,13 +164,18 @@ enum CompletionsCacheAction {
 
 #[derive(clap::Subcommand)]
 enum LockfileSubcommand {
-    /// Upgrade lockfile format
+    /// Upgrade lockfile format (text/binary)
     Upgrade {
         #[arg(short, long, default_value = "both")]
         to: String,
     },
     /// Validate lockfile integrity
     Validate,
+    /// Migrate lockfile from v1 to v2 format
+    ///
+    /// v2 uses BLAKE3 content hashing instead of DefaultHasher for stronger integrity guarantees.
+    /// This command verifies the v1 content hash before upgrading.
+    Migrate,
 }
 
 #[derive(clap::Subcommand)]
@@ -343,36 +362,6 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{:.2} {}", size, UNITS[unit])
     }
-}
-
-fn scan_store_size(store_path: &Path) -> io::Result<(usize, u64)> {
-    let files_dir = store_path.join("files");
-    if !files_dir.exists() {
-        return Ok((0, 0));
-    }
-    let mut file_count = 0usize;
-    let mut total_size = 0u64;
-    scan_dir_recursive(&files_dir, &mut file_count, &mut total_size)?;
-    Ok((file_count, total_size))
-}
-
-fn scan_dir_recursive(dir: &Path, file_count: &mut usize, total_size: &mut u64) -> io::Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            scan_dir_recursive(&path, file_count, total_size)?;
-        } else if path.is_file() {
-            *file_count += 1;
-            if let Ok(meta) = entry.metadata() {
-                *total_size += meta.len();
-            }
-        }
-    }
-    Ok(())
 }
 
 fn cpath(path: &Path) -> colored::ColoredString {
@@ -1341,78 +1330,126 @@ async fn cmd_update(latest: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_store_prune(config: &MgpmConfig) -> Result<(), String> {
-    eprintln!("{} {}", "[INFO]".cyan().bold(), "Pruning store...".cyan());
-
+fn cmd_store_verify(config: &MgpmConfig, fix: bool) -> Result<(), String> {
     let store_path = config.store.store_path();
     if !store_path.exists() {
-        eprintln!(
-            "  {} Store directory not found at {}",
-            "[WARN]".yellow().bold(),
-            cpath(&store_path).yellow()
-        );
-        return Ok(());
+        return Err(format!("store not found at {}", cpath(&store_path)));
     }
 
-    let store =
-        ContentStore::new(store_path).map_err(|e| format!("failed to open store: {}", e))?;
-    let removed = store.gc().map_err(|e| format!("gc failed: {}", e))?;
+    let index_path = store_path.join("v2").join("index.db");
+    let cas_path = store_path.join("v2").join("CAS");
 
-    eprintln!(
-        "{} {} {} {}",
-        "[OK]".green().bold(),
-        "Removed".green(),
-        format!("{}", removed).green().bold(),
-        "unreferenced files".green()
-    );
+    if !index_path.exists() {
+        return Err(format!("store not initialized at {}", cpath(&store_path)));
+    }
+
+    let index = SqliteStore::open(&index_path, false)
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    let store = CasContentStore::new(cas_path, Box::new(index))
+        .map_err(|e| format!("failed to open content store: {}", e))?;
+
+    let verifier = StoreVerifier::new(&store, store.index());
+    let report = verifier.verify(fix).map_err(|e| format!("verify failed: {}", e))?;
+
+    println!("{} Store verification complete", "[DONE]".green().bold());
+    println!("  Packages: {}", report.total_packages);
+    println!("  Verified: {}", report.verified);
+    println!("  Corrupted: {}", report.corrupted_files.len());
+    println!("  Missing: {}", report.missing_files.len());
+    println!("  Duration: {}ms", report.duration_ms);
+
+    if !report.is_healthy() {
+        for f in &report.corrupted_files {
+            println!("  {} Corrupted: {}", "[ERR]".red(), f);
+        }
+        for f in &report.missing_files {
+            println!("  {} Missing: {}", "[WARN]".yellow(), f);
+        }
+        if fix {
+            println!(
+                "  Attempted auto-fix for {} file(s)",
+                report.corrupted_files.len()
+            );
+        }
+        return Err("store has integrity issues".to_string());
+    }
+
     Ok(())
 }
 
 fn cmd_store_status(config: &MgpmConfig) -> Result<(), String> {
     let store_path = config.store.store_path();
-    eprintln!("{} {}", "[INFO]".cyan().bold(), "Store status:".cyan());
-    eprintln!("  Path: {}", cpath(&store_path));
+    println!("{} Store status", "[INFO]".cyan().bold());
+    println!("  Path: {}", cpath(&store_path));
 
     if !store_path.exists() {
-        eprintln!(
-            "  {} Store directory does not exist",
-            "[WARN]".yellow().bold()
-        );
-        eprintln!("  {} packages: 0", "[INFO]".cyan());
-        eprintln!("  {} used: {}", "[INFO]".cyan(), format_size(0).cyan());
+        println!("  {} Store directory does not exist", "[WARN]".yellow().bold());
+        println!("  Packages: 0");
+        println!("  Used: 0 B");
         return Ok(());
     }
 
-    match scan_store_size(&store_path) {
-        Ok((count, size)) => {
-            eprintln!(
-                "  {} packages: {}",
-                "[INFO]".cyan(),
-                format!("{}", count).green().bold()
-            );
-            eprintln!(
-                "  {} used: {}",
-                "[INFO]".cyan(),
-                format_size(size).green().bold()
-            );
+    let index_path = store_path.join("v2").join("index.db");
+    let cas_path = store_path.join("v2").join("CAS");
 
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sqlite_path = home.join(".mgpm").join("mgpm.db");
-            if sqlite_path.exists() {
-                if let Ok(conn) = rusqlite::Connection::open(&sqlite_path) {
-                    if let Ok(count) = conn.query_row("SELECT COUNT(*) FROM refcounts", [], |row| {
-                        row.get::<_, i64>(0)
-                    }) {
-                        eprintln!(
-                            "  {} referenced packages: {}",
-                            "[INFO]".cyan(),
-                            format!("{}", count).green().bold()
-                        );
-                    }
-                }
-            }
-        }
-        Err(e) => return Err(format!("failed to scan store: {}", e)),
+    if !index_path.exists() {
+        println!("  Store not initialized");
+        println!("  Packages: 0");
+        println!("  Used: 0 B");
+        return Ok(());
+    }
+
+    let index = SqliteStore::open(&index_path, true)
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    let store = CasContentStore::new(cas_path, Box::new(index))
+        .map_err(|e| format!("failed to open content store: {}", e))?;
+
+    let verifier = StoreVerifier::new(&store, store.index());
+    let report = verifier.status().map_err(|e| format!("failed to get store status: {}", e))?;
+
+    println!("  Packages: {}", report.total_packages);
+    println!("  Projects: {}", report.total_projects);
+    println!("  Used: {}", format_size(report.total_size_bytes));
+    println!("  Unreferenced: {}", report.unreferenced_packages.len());
+    println!("  Reclaimable: {}", format_size(report.reclaimable_bytes));
+
+    Ok(())
+}
+
+fn cmd_store_prune(config: &MgpmConfig, dry_run: bool) -> Result<(), String> {
+    let store_path = config.store.store_path();
+    if !store_path.exists() {
+        return Err(format!("store not found at {}", cpath(&store_path)));
+    }
+
+    let index_path = store_path.join("v2").join("index.db");
+    let cas_path = store_path.join("v2").join("CAS");
+
+    if !index_path.exists() {
+        return Err(format!("store not initialized at {}", cpath(&store_path)));
+    }
+
+    let index = SqliteStore::open(&index_path, false)
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    let store = CasContentStore::new(cas_path, Box::new(index))
+        .map_err(|e| format!("failed to open content store: {}", e))?;
+
+    let verifier = StoreVerifier::new(&store, store.index());
+
+    if dry_run {
+        let report = verifier
+            .status()
+            .map_err(|e| format!("failed to get store status: {}", e))?;
+        println!("{} Dry run — nothing deleted", "[INFO]".cyan().bold());
+        println!("  Would remove: {} packages", report.unreferenced_packages.len());
+        println!("  Would reclaim: {}", format_size(report.reclaimable_bytes));
+    } else {
+        let report = verifier
+            .prune(false)
+            .map_err(|e| format!("prune failed: {}", e))?;
+        println!("{} Prune complete", "[OK]".green().bold());
+        println!("  Removed: {} packages", report.unreferenced_packages.len());
+        println!("  Reclaimed: {}", format_size(report.reclaimable_bytes));
     }
 
     Ok(())
@@ -2048,8 +2085,9 @@ async fn main() -> Result<(), String> {
             }
         }
         CliCommand::Store { command: store_cmd } => match store_cmd {
-            StoreCommand::Prune => cmd_store_prune(&config),
+            StoreCommand::Verify { fix } => cmd_store_verify(&config, fix),
             StoreCommand::Status => cmd_store_status(&config),
+            StoreCommand::Prune { dry_run } => cmd_store_prune(&config, dry_run),
             StoreCommand::CompletionsCache { command: cache_cmd } => {
                 cmd_completions_cache(cache_cmd)
             }
@@ -2096,6 +2134,7 @@ fn cmd_lockfile(command: LockfileSubcommand) -> Result<(), String> {
     match command {
         LockfileSubcommand::Upgrade { to } => cmd_lockfile_upgrade(to),
         LockfileSubcommand::Validate => cmd_lockfile_validate(),
+        LockfileSubcommand::Migrate => cmd_lockfile_migrate(),
     }
 }
 
@@ -2223,6 +2262,68 @@ fn cmd_lockfile_validate() -> Result<(), String> {
             issues.len()
         ));
     }
+
+    Ok(())
+}
+
+fn cmd_lockfile_migrate() -> Result<(), String> {
+    let text_path = Path::new("mgpm.lock");
+    let binary_path = Path::new("mgpm.lockb");
+
+    if !text_path.exists() && !binary_path.exists() {
+        return Err("no lockfile found (mgpm.lock or mgpm.lockb)".to_string());
+    }
+
+    let lockfile = if text_path.exists() {
+        eprintln!(
+            "{} Reading lockfile from mgpm.lock...",
+            "[INFO]".cyan().bold()
+        );
+        mgpm_lockfile::text::read_text(text_path)
+            .map_err(|e| format!("failed to read text lockfile: {e}"))?
+    } else {
+        eprintln!(
+            "{} Reading lockfile from mgpm.lockb...",
+            "[INFO]".cyan().bold()
+        );
+        mgpm_lockfile::binary::read_binary(binary_path)
+            .map_err(|e| format!("failed to read binary lockfile: {e}"))?
+    };
+
+    if lockfile.version == mgpm_lockfile::LOCKFILE_VERSION {
+        println!(
+            "{} Lockfile is already at v{} (latest). No migration needed.",
+            "[OK]".green().bold(),
+            mgpm_lockfile::LOCKFILE_VERSION
+        );
+        return Ok(());
+    }
+
+    if lockfile.version != mgpm_lockfile::lockfile::LOCKFILE_VERSION_V1 {
+        return Err(format!(
+            "unsupported lockfile version {} (expected v1 or v{})",
+            lockfile.version,
+            mgpm_lockfile::LOCKFILE_VERSION
+        ));
+    }
+
+    eprintln!("{} Found v1 lockfile. Migrating to v2...", "[INFO]".cyan().bold());
+
+    let mut lockfile = lockfile;
+    lockfile.migrate_v1_to_v2()
+        .map_err(|e| format!("migration failed: {e}"))?;
+
+    // Write both formats
+    mgpm_lockfile::text::write_text(&lockfile, text_path)
+        .map_err(|e| format!("failed to write text lockfile: {e}"))?;
+    mgpm_lockfile::binary::write_binary(&lockfile, binary_path)
+        .map_err(|e| format!("failed to write binary lockfile: {e}"))?;
+
+    println!(
+        "{} Lockfile migrated from v1 to v{} (BLAKE3 content hashing enabled)",
+        "[OK]".green().bold(),
+        mgpm_lockfile::LOCKFILE_VERSION
+    );
 
     Ok(())
 }

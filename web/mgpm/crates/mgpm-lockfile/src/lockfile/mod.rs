@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use mgpm_core::{PackageId, Protocol, Resolution as CoreResolution};
 use mgpm_resolver::Resolution as ResolverResolution;
 
-pub const LOCKFILE_VERSION: u32 = 1;
+pub const LOCKFILE_VERSION: u32 = 2;
+pub const LOCKFILE_VERSION_V1: u32 = 1;
 pub const LOCKFILE_MAGIC: &[u8] = b"MGPMLOCK";
 pub const LOCKFILE_BINARY_EXT: &str = "lockb";
 pub const LOCKFILE_TEXT_EXT: &str = "lock";
@@ -81,12 +82,70 @@ impl Lockfile {
     }
 
     pub fn compute_content_hash(&mut self) {
+        let mut hasher = blake3::Hasher::new();
+        
+        // Deterministic serialization: sort packages by name, then version
+        let mut sorted = self.packages.clone();
+        sorted.sort_by(|a, b| {
+            a.name.cmp(&b.name)
+                .then_with(|| a.version.cmp(&b.version))
+        });
+        
+        for pkg in &sorted {
+            hasher.update(pkg.name.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(pkg.version.as_bytes());
+            hasher.update(b"\0");
+            if let Some(ref integrity) = pkg.integrity {
+                hasher.update(integrity.as_bytes());
+            }
+            hasher.update(b"\0");
+            hasher.update(pkg.resolution.r#type.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(pkg.resolution.url.as_bytes());
+            hasher.update(b"\0");
+            if let Some(ref registry) = pkg.resolution.registry {
+                hasher.update(registry.as_bytes());
+            }
+            hasher.update(b"\0");
+        }
+        
+        // Include metadata for completeness
+        hasher.update(self.metadata.registry.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.metadata.config_version.to_string().as_bytes());
+        
+        self.metadata.content_hash = hasher.finalize().to_hex().to_string();
+    }
+
+    /// Compute content hash using v1 algorithm (DefaultHasher) for backward compat
+    pub fn compute_content_hash_v1(&self) -> String {
         let data = serde_json::to_string(&self.packages).unwrap_or_default();
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
         data.hash(&mut hasher);
-        self.metadata.content_hash = format!("{:x}", hasher.finish());
+        format!("{:x}", hasher.finish())
+    }
+
+    /// Migrate lockfile from v1 to v2 format
+    pub fn migrate_v1_to_v2(&mut self) -> Result<(), crate::LockfileError> {
+        if self.version == LOCKFILE_VERSION_V1 {
+            // Verify v1 content hash matches (validates v1 lockfile wasn't tampered)
+            let expected_v1_hash = self.compute_content_hash_v1();
+            if self.metadata.content_hash != expected_v1_hash {
+                return Err(crate::LockfileError::ContentHashMismatch {
+                    expected: expected_v1_hash,
+                    actual: self.metadata.content_hash.clone(),
+                });
+            }
+            
+            // Recompute with BLAKE3
+            self.compute_content_hash();
+            self.version = LOCKFILE_VERSION;
+            self.update_timestamp();
+        }
+        Ok(())
     }
 
     pub fn update_timestamp(&mut self) {
