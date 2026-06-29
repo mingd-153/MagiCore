@@ -8,7 +8,9 @@ use tokio::sync::mpsc;
 
 use mgpm_core::config::MgpmConfig;
 use mgpm_installer::installer::{InstallOptions as RealInstallOptions, Installer};
-use mgpm_store::ContentStore;
+use mgpm_store::{ContentStore, SqliteStore, StoreReport, StoreVerifier};
+use mgpm_store::store::index::StoreIndex;
+use mgpm_store::store::CasContentStore;
 
 mod profiler;
 mod advisory_db;
@@ -131,8 +133,20 @@ enum CliCommand {
 
 #[derive(clap::Subcommand)]
 enum StoreCommand {
-    Prune,
+    /// Verify store integrity (re-hash all CAS files)
+    Verify {
+        /// Auto-fix corrupted files by removing them
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Show store status (packages, projects, size)
     Status,
+    /// Prune unreferenced packages
+    Prune {
+        /// Show what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Manage completion cache
     CompletionsCache {
         #[command(subcommand)]
@@ -1341,78 +1355,126 @@ async fn cmd_update(latest: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_store_prune(config: &MgpmConfig) -> Result<(), String> {
-    eprintln!("{} {}", "[INFO]".cyan().bold(), "Pruning store...".cyan());
-
+fn cmd_store_verify(config: &MgpmConfig, fix: bool) -> Result<(), String> {
     let store_path = config.store.store_path();
     if !store_path.exists() {
-        eprintln!(
-            "  {} Store directory not found at {}",
-            "[WARN]".yellow().bold(),
-            cpath(&store_path).yellow()
-        );
-        return Ok(());
+        return Err(format!("store not found at {}", cpath(&store_path)));
     }
 
-    let store =
-        ContentStore::new(store_path).map_err(|e| format!("failed to open store: {}", e))?;
-    let removed = store.gc().map_err(|e| format!("gc failed: {}", e))?;
+    let index_path = store_path.join("v2").join("index.db");
+    let cas_path = store_path.join("v2").join("CAS");
 
-    eprintln!(
-        "{} {} {} {}",
-        "[OK]".green().bold(),
-        "Removed".green(),
-        format!("{}", removed).green().bold(),
-        "unreferenced files".green()
-    );
+    if !index_path.exists() {
+        return Err(format!("store not initialized at {}", cpath(&store_path)));
+    }
+
+    let index = SqliteStore::open(&index_path, false)
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    let store = CasContentStore::new(cas_path, Box::new(index))
+        .map_err(|e| format!("failed to open content store: {}", e))?;
+
+    let verifier = StoreVerifier::new(&store, store.index());
+    let report = verifier.verify(fix).map_err(|e| format!("verify failed: {}", e))?;
+
+    println!("{} Store verification complete", "[DONE]".green().bold());
+    println!("  Packages: {}", report.total_packages);
+    println!("  Verified: {}", report.verified);
+    println!("  Corrupted: {}", report.corrupted_files.len());
+    println!("  Missing: {}", report.missing_files.len());
+    println!("  Duration: {}ms", report.duration_ms);
+
+    if !report.is_healthy() {
+        for f in &report.corrupted_files {
+            println!("  {} Corrupted: {}", "[ERR]".red(), f);
+        }
+        for f in &report.missing_files {
+            println!("  {} Missing: {}", "[WARN]".yellow(), f);
+        }
+        if fix {
+            println!(
+                "  Attempted auto-fix for {} file(s)",
+                report.corrupted_files.len()
+            );
+        }
+        return Err("store has integrity issues".to_string());
+    }
+
     Ok(())
 }
 
 fn cmd_store_status(config: &MgpmConfig) -> Result<(), String> {
     let store_path = config.store.store_path();
-    eprintln!("{} {}", "[INFO]".cyan().bold(), "Store status:".cyan());
-    eprintln!("  Path: {}", cpath(&store_path));
+    println!("{} Store status", "[INFO]".cyan().bold());
+    println!("  Path: {}", cpath(&store_path));
 
     if !store_path.exists() {
-        eprintln!(
-            "  {} Store directory does not exist",
-            "[WARN]".yellow().bold()
-        );
-        eprintln!("  {} packages: 0", "[INFO]".cyan());
-        eprintln!("  {} used: {}", "[INFO]".cyan(), format_size(0).cyan());
+        println!("  {} Store directory does not exist", "[WARN]".yellow().bold());
+        println!("  Packages: 0");
+        println!("  Used: 0 B");
         return Ok(());
     }
 
-    match scan_store_size(&store_path) {
-        Ok((count, size)) => {
-            eprintln!(
-                "  {} packages: {}",
-                "[INFO]".cyan(),
-                format!("{}", count).green().bold()
-            );
-            eprintln!(
-                "  {} used: {}",
-                "[INFO]".cyan(),
-                format_size(size).green().bold()
-            );
+    let index_path = store_path.join("v2").join("index.db");
+    let cas_path = store_path.join("v2").join("CAS");
 
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sqlite_path = home.join(".mgpm").join("mgpm.db");
-            if sqlite_path.exists() {
-                if let Ok(conn) = rusqlite::Connection::open(&sqlite_path) {
-                    if let Ok(count) = conn.query_row("SELECT COUNT(*) FROM refcounts", [], |row| {
-                        row.get::<_, i64>(0)
-                    }) {
-                        eprintln!(
-                            "  {} referenced packages: {}",
-                            "[INFO]".cyan(),
-                            format!("{}", count).green().bold()
-                        );
-                    }
-                }
-            }
-        }
-        Err(e) => return Err(format!("failed to scan store: {}", e)),
+    if !index_path.exists() {
+        println!("  Store not initialized");
+        println!("  Packages: 0");
+        println!("  Used: 0 B");
+        return Ok(());
+    }
+
+    let index = SqliteStore::open(&index_path, true)
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    let store = CasContentStore::new(cas_path, Box::new(index))
+        .map_err(|e| format!("failed to open content store: {}", e))?;
+
+    let verifier = StoreVerifier::new(&store, store.index());
+    let report = verifier.status().map_err(|e| format!("failed to get store status: {}", e))?;
+
+    println!("  Packages: {}", report.total_packages);
+    println!("  Projects: {}", report.total_projects);
+    println!("  Used: {}", format_size(report.total_size_bytes));
+    println!("  Unreferenced: {}", report.unreferenced_packages.len());
+    println!("  Reclaimable: {}", format_size(report.reclaimable_bytes));
+
+    Ok(())
+}
+
+fn cmd_store_prune(config: &MgpmConfig, dry_run: bool) -> Result<(), String> {
+    let store_path = config.store.store_path();
+    if !store_path.exists() {
+        return Err(format!("store not found at {}", cpath(&store_path)));
+    }
+
+    let index_path = store_path.join("v2").join("index.db");
+    let cas_path = store_path.join("v2").join("CAS");
+
+    if !index_path.exists() {
+        return Err(format!("store not initialized at {}", cpath(&store_path)));
+    }
+
+    let index = SqliteStore::open(&index_path, false)
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    let store = CasContentStore::new(cas_path, Box::new(index))
+        .map_err(|e| format!("failed to open content store: {}", e))?;
+
+    let verifier = StoreVerifier::new(&store, store.index());
+
+    if dry_run {
+        let report = verifier
+            .status()
+            .map_err(|e| format!("failed to get store status: {}", e))?;
+        println!("{} Dry run — nothing deleted", "[INFO]".cyan().bold());
+        println!("  Would remove: {} packages", report.unreferenced_packages.len());
+        println!("  Would reclaim: {}", format_size(report.reclaimable_bytes));
+    } else {
+        let report = verifier
+            .prune(false)
+            .map_err(|e| format!("prune failed: {}", e))?;
+        println!("{} Prune complete", "[OK]".green().bold());
+        println!("  Removed: {} packages", report.unreferenced_packages.len());
+        println!("  Reclaimed: {}", format_size(report.reclaimable_bytes));
     }
 
     Ok(())
@@ -2048,8 +2110,9 @@ async fn main() -> Result<(), String> {
             }
         }
         CliCommand::Store { command: store_cmd } => match store_cmd {
-            StoreCommand::Prune => cmd_store_prune(&config),
+            StoreCommand::Verify { fix } => cmd_store_verify(&config, fix),
             StoreCommand::Status => cmd_store_status(&config),
+            StoreCommand::Prune { dry_run } => cmd_store_prune(&config, dry_run),
             StoreCommand::CompletionsCache { command: cache_cmd } => {
                 cmd_completions_cache(cache_cmd)
             }
