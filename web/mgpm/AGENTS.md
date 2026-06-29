@@ -56,11 +56,11 @@ create → check → run → fix → update → fix → done → report → push
 ## Current Status
 
 **Phase**: 0 — Foundation (Tuần 1-4)
-**Current task**: T0.1 — ✅ Hoàn thành (expanded)
+**Current task**: T0.2 — ✅ CAS I/O complete
 **Branch hiện tại**: `development`
 **Branch gốc**: `development`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 288 passed (81 sqlite + others), 0 failed, 0 warnings
+**Tests**: 304 passed (16 cas + 81 sqlite + others), 0 failed, 0 warnings
 
 ## What's Been Done
 
@@ -82,22 +82,48 @@ create → check → run → fix → update → fix → done → report → push
 - **5/5 HIGH issues fixed**
 - **3 Critical + 7 High** = 10 security fixes total (all resolved)
 
+### T0.2 — CAS I/O Complete ✅
+
+| Feature | Implementation | Security |
+|---------|----------------|----------|
+| `import_file` / `import_bytes` | Atomic `create_new` + verify same fd | TOCTOU eliminated |
+| `export_to` | Hardlink preferred → verify hash | Symlink check dest |
+| `verify` | Re-hash file | Content integrity |
+| `contains` / `remove` | Index + disk check | Path traversal safe |
+| `import_tarball_entries` | Batch import | SHA-256 dedup |
+| Executable files | `-exec` suffix + `0o111` | Preserved on export |
+
+**Security fixes applied:**
+- Export destination symlink check (`check_symlink_ancestors` - path + parent only)
+- Import source symlink check
+- CAS root validation (not symlink) + `0o700` permissions
+- TOCTOU fix: verify content using **same file handle** (read+seek+hash)
+- `SystemTime` panic fix: `unwrap_or_default()`
+- Path traversal impossible (SHA-256 hex only)
+
+**Tests**: 16 CAS tests + 81 SQLite = 97 store tests, **304 total workspace tests pass**
+
+**Benchmarks (Apple Silicon, release):**
+| Operation | Time | Throughput |
+|-----------|------|------------|
+| import 1KB | 26.5 ms | 37.8 KiB/s |
+| import 100KB | 27.1 ms | 3.6 MiB/s |
+| import 1MB | 34.1 ms | 29.3 MiB/s |
+| import 10MB | 132 ms | 75.9 MiB/s |
+| export 1KB | 17.4 ms | 56 KiB/s |
+| export 1MB | 35 ms | 28.6 MiB/s |
+| verify 1KB | 1.8 ms | 560 KiB/s |
+| verify 10MB | 23 ms | 435 MiB/s |
+| concurrent 8 threads | 28 ms / 1K ops | ~285 op/s/thread |
+| tarball batch 1000 | 66 ms | 15K elem/s |
+
 ### Phase 0 — Foundation (Tuần 1)
 
 | # | Task | Files | Status |
 |---|------|-------|--------|
-| T0.1 | SQLite store: adaptive + KV + audit + permission monitor | `sqlite.rs` (→1050 dòng) | ✅ Expanded |
-| T0.2 | CAS import/export | — | ⏳ |
+| T0.1 | SQLite store: adaptive + KV + audit + permission monitor | `sqlite.rs` (→1050 dòng) | ✅ Expanded + Hardened |
+| T0.2 | CAS import/export | `cas.rs` (new) + bench | ✅ Complete + Benchmarked |
 | T0.4 | Lockfile integrity fix | — | ⏳ |
-
-### Security Sprint (Phase trước)
-
-| # | Feature | Files | Status |
-|---|---------|-------|--------|
-| 1 | Command injection fix | `main.rs` (run_script, exec_command) | ✅ |
-| 2 | Advisory DB + GitHub fetch | `advisory_db.rs` | ✅ |
-| 3 | Deep integrity verify | `main.rs` (cmd_verify_deep) | ✅ |
-| 4 | Auth hardening | `auth.rs` | ✅ |
 | 5 | Fuzz CI | `.github/workflows/fuzz.yml` | ✅ |
 | 6 | Signed releases | `.github/workflows/release.yml` | ✅ |
 | 7 | SECURITY.md | `SECURITY.md` (root) | ✅ |
