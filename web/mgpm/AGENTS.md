@@ -56,11 +56,11 @@ create → check → run → fix → update → fix → done → report → push
 ## Current Status
 
 **Phase**: 0 — Foundation (Tuần 1-4)
-**Current task**: T0.1 — ✅ Hoàn thành (expanded)
+**Current task**: T0.2 — ✅ CAS I/O complete + refactored into modular structure
 **Branch hiện tại**: `development`
 **Branch gốc**: `development`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 288 passed (81 sqlite + others), 0 failed, 0 warnings
+**Tests**: 306 passed (18 cas + 81 sqlite + others), 0 failed, 0 warnings
 
 ## What's Been Done
 
@@ -82,22 +82,60 @@ create → check → run → fix → update → fix → done → report → push
 - **5/5 HIGH issues fixed**
 - **3 Critical + 7 High** = 10 security fixes total (all resolved)
 
+### T0.2 — CAS I/O Complete + Refactored ✅
+
+| Feature | Implementation | Security |
+|---------|----------------|----------|
+| `import_file` / `import_bytes` | Atomic `create_new` + verify same fd | TOCTOU eliminated |
+| `export_to` | Hardlink preferred → verify hash | Symlink check dest |
+| `verify` | Re-hash file | Content integrity |
+| `contains` / `remove` | Index + disk check | Path traversal safe |
+| `import_tarball_entries` | Batch import | SHA-256 dedup |
+| Executable files | `-exec` suffix + `0o111` | Preserved on export |
+
+**Security fixes applied:**
+- Export destination symlink check (`check_symlink_ancestors` - path + parent only)
+- Import source symlink check
+- CAS root validation (not symlink) + `0o700` permissions
+- TOCTOU fix: verify content using **same file handle** (read+seek+hash)
+- `SystemTime` panic fix: `unwrap_or_default()`
+- Path traversal impossible (SHA-256 hex only)
+
+**Module structure** (refactored from flat `cas.rs` → modular `cas/`):
+```
+cas/
+├── mod.rs         # Re-exports + module declarations
+├── store.rs       # ContentStore struct + 7 methods + is_executable helper
+├── integrity.rs   # IntegrityHash, TarballEntry
+├── security.rs    # check_symlink_in_cas, check_symlink_ancestors
+├── write.rs       # write_all_verify_and_set_perms (TOCTOU-safe)
+├── lifecycle.rs   # validate_cas_root, ensure_cas_dirs, set_cas_root_permissions
+└── tests.rs       # 18 integration tests
+```
+
+**Tests**: 18 CAS tests + 81 SQLite = 99 store tests, **306 total workspace tests pass**
+
+**Benchmarks (Apple Silicon, release):**
+| Operation | Time | Throughput |
+|-----------|------|------------|
+| import 1KB | 26.5 ms | 37.8 KiB/s |
+| import 100KB | 27.1 ms | 3.6 MiB/s |
+| import 1MB | 34.1 ms | 29.3 MiB/s |
+| import 10MB | 132 ms | 75.9 MiB/s |
+| export 1KB | 17.4 ms | 56 KiB/s |
+| export 1MB | 35 ms | 28.6 MiB/s |
+| verify 1KB | 1.8 ms | 560 KiB/s |
+| verify 10MB | 23 ms | 435 MiB/s |
+| concurrent 8 threads | 28 ms / 1K ops | ~285 op/s/thread |
+| tarball batch 1000 | 66 ms | 15K elem/s |
+
 ### Phase 0 — Foundation (Tuần 1)
 
 | # | Task | Files | Status |
 |---|------|-------|--------|
-| T0.1 | SQLite store: adaptive + KV + audit + permission monitor | `sqlite.rs` (→1050 dòng) | ✅ Expanded |
-| T0.2 | CAS import/export | — | ⏳ |
+| T0.1 | SQLite store: adaptive + KV + audit + permission monitor | `sqlite.rs` (→1050 dòng) | ✅ Expanded + Hardened |
+| T0.2 | CAS import/export | `cas/mod.rs` + `cas/store.rs` + `cas/tests.rs` | ✅ Complete + Refactored |
 | T0.4 | Lockfile integrity fix | — | ⏳ |
-
-### Security Sprint (Phase trước)
-
-| # | Feature | Files | Status |
-|---|---------|-------|--------|
-| 1 | Command injection fix | `main.rs` (run_script, exec_command) | ✅ |
-| 2 | Advisory DB + GitHub fetch | `advisory_db.rs` | ✅ |
-| 3 | Deep integrity verify | `main.rs` (cmd_verify_deep) | ✅ |
-| 4 | Auth hardening | `auth.rs` | ✅ |
 | 5 | Fuzz CI | `.github/workflows/fuzz.yml` | ✅ |
 | 6 | Signed releases | `.github/workflows/release.yml` | ✅ |
 | 7 | SECURITY.md | `SECURITY.md` (root) | ✅ |
@@ -240,7 +278,9 @@ Memory:  SQLite LRU cache  → adaptive 1k-100k entries
 | File | Purpose | Lines |
 |------|---------|:-----:|
 | `crates/mgpm-cli/src/main.rs` | Main CLI (16 commands) | 2568 |
-| `crates/mgpm-store/src/store/content_store.rs` | Current flat store | ~160 |
+| `crates/mgpm-store/src/store/content_store.rs` | Current flat store | ~570 |
+| `crates/mgpm-store/src/store/cas/store.rs` | Refactored CAS store (modular) | ~180 |
+| `crates/mgpm-store/src/store/cas/tests.rs` | 18 CAS integration tests | ~180 |
 | `crates/mgpm-lockfile/src/lockfile/mod.rs` | Lockfile struct + integrity | 277 |
 | `crates/mgpm-lockfile/src/pipeline.rs` | Resolution→lockfile pipeline | 115 |
 | `crates/mgpm-resolver/src/solver/mod.rs` | Resolver + dep confusion check | 367 |
@@ -253,34 +293,34 @@ Memory:  SQLite LRU cache  → adaptive 1k-100k entries
 
 Task còn lại trong Phase 0:
 1. **T0.1**: ✅ Hoàn thành (expanded + security hardened — 10 vulnerabilities fixed)
-2. **T0.2**: CAS content-addressed import/export ← tiếp theo
-3. **T0.3**: Store verify + status
+2. **T0.2**: ✅ Hoàn thành (CAS I/O + security + refactor modular)
+3. **T0.3**: Store verify + status ← tiếp theo
 4. **T0.4**: Lockfile integrity fix - BLAKE3 + real SHA-256
 5. **T0.5**: Global Virtual Store
 6. **T0.6**: Isolated linker
 7. **T0.7**: Integration test
 
-## How to Continue
+## How to Continue (T0.3 onward)
 
 ```bash
 # 1. Đọc task chi tiết
-cat tasks/phase-0-foundation/T0.2-cas-io.md
+cat tasks/phase-0-foundation/T0.3-store-verify.md
 
 # 2. Tạo branch task từ development
 git checkout development
-git checkout -b feat-T0.2-cas-io
+git checkout -b feat-T0.3-store-verify
 
 # 3. Implement theo vòng lặp
 cargo check --workspace
 cargo test --workspace
-cargo clippy -p mgpm-store
+cargo clippy --workspace
 
 # 4. Commit local + merge vào week-1
 git add -A
-git commit -m "feat(mgpm): T0.2 - CAS import/export"
+git commit -m "feat(mgpm): T0.3 - Store verify + status"
 git checkout week-1 || git checkout -b week-1
-git merge feat-T0.2-cas-io
-git branch -d feat-T0.2-cas-io
+git merge feat-T0.3-store-verify
+git branch -d feat-T0.3-store-verify
 
 # 5. Update AGENTS.md
 ```
@@ -311,8 +351,16 @@ web/mgpm/
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       └── store/
+│   │   └── store/
 │   │           ├── mod.rs
+│   │           ├── cas/               # Modular CAS (refactored)
+│   │           │   ├── mod.rs
+│   │           │   ├── store.rs
+│   │           │   ├── integrity.rs
+│   │           │   ├── security.rs
+│   │           │   ├── write.rs
+│   │           │   ├── lifecycle.rs
+│   │           │   └── tests.rs
 │   │           ├── content_store.rs   # Current flat store
 │   │           ├── tarball.rs         # Tarball extraction
 │   │           └── cache.rs           # Package cache
