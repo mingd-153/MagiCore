@@ -216,3 +216,47 @@ fn test_verify_fix_removes_corrupted() {
     assert_eq!(report.corrupted_files.len(), 1);
     assert!(!cas_path.exists());
 }
+
+#[test]
+fn test_verify_readonly_rejects_fix() {
+    let dir = tempdir().unwrap();
+    
+    // Create a file-based store (not in-memory)
+    let index = SqliteStore::open(&dir.path().join("index.db"), false).unwrap();
+    index.advance_generation().unwrap();
+    index.advance_generation().unwrap();
+    
+    let store = ContentStore::new(dir.path().join("cas"), Box::new(index)).unwrap();
+    add_test_package(&store, "pkg-a", "1.0.0", b"content a");
+    
+    // Reopen as readonly
+    let ro_index = SqliteStore::open(&dir.path().join("index.db"), true).unwrap();
+    let ro_store = ContentStore::new(dir.path().join("cas"), Box::new(ro_index)).unwrap();
+    
+    let verifier = StoreVerifier::new(&ro_store, ro_store.index());
+    let result = verifier.verify(true);
+    
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("readonly"));
+}
+
+#[test]
+fn test_prune_readonly_rejects() {
+    let dir = tempdir().unwrap();
+    
+    let index = SqliteStore::open(&dir.path().join("index.db"), false).unwrap();
+    index.advance_generation().unwrap();
+    index.advance_generation().unwrap();
+    
+    let store = ContentStore::new(dir.path().join("cas"), Box::new(index)).unwrap();
+    add_test_package(&store, "pkg-a", "1.0.0", b"content a");
+    
+    let ro_index = SqliteStore::open(&dir.path().join("index.db"), true).unwrap();
+    let ro_store = ContentStore::new(dir.path().join("cas"), Box::new(ro_index)).unwrap();
+    
+    let verifier = StoreVerifier::new(&ro_store, ro_store.index());
+    let result = verifier.prune(false);
+    
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("readonly"));
+}
