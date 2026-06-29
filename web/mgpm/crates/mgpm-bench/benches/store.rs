@@ -1,10 +1,11 @@
 //! Comprehensive store benchmarks: SQLite vs ContentStore, bulk, query, concurrent
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, black_box};
-use mgpm_store::{SqliteStore, ContentStore, StoreIndex, PackageInfo};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, black_box, Throughput};
+use mgpm_store::{SqliteStore, ContentStore, CasContentStore, IntegrityHash, TarballEntry, StoreIndex, PackageInfo};
 use std::time::Duration;
 use std::sync::Arc;
 use std::thread;
+use tempfile::tempdir;
 
 fn make_pkg(i: usize) -> PackageInfo {
     PackageInfo {
@@ -242,6 +243,147 @@ fn bench_sqlite_concurrent(c: &mut Criterion) {
 
 // ── ContentStore vs SQLite import comparison ──
 
+// ── CAS (Content Addressable Storage) benchmarks ──
+
+fn make_cas_store() -> CasContentStore {
+    let dir = tempfile::tempdir().unwrap();
+    let sqlite = SqliteStore::open_in_memory().unwrap();
+    CasContentStore::new(Box::new(sqlite), dir.path().to_path_buf()).unwrap()
+}
+
+fn bench_cas_import(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cas_import");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(5));
+
+    for size in [1024, 1024 * 100, 1024 * 1024, 1024 * 1024 * 10].iter() {
+        let data = vec![0x42u8; *size];
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(format!("{}KB", size / 1024)), size, |b, &size| {
+            let data = vec![0x42u8; size];
+            b.iter(|| {
+                let store = make_cas_store();
+                let _ = store.import_bytes(black_box(&data), false).unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_cas_deduplication(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cas_deduplication");
+    group.sample_size(20);
+
+    let data = vec![0x42u8; 1024];
+    group.bench_function("import_same_1000x", |b| {
+        b.iter(|| {
+            let store = make_cas_store();
+            for _ in 0..1000 {
+                store.import_bytes(black_box(&data), false).unwrap();
+            }
+        });
+    });
+    group.finish();
+}
+
+fn bench_cas_export(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cas_export");
+    group.sample_size(20);
+
+    for size in [1024, 1024 * 100, 1024 * 1024].iter() {
+        let data = vec![0x42u8; *size];
+        let store = make_cas_store();
+        let hash = store.import_bytes(&data, false).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let dest = temp.path().join("out");
+
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(format!("{}KB", size / 1024)), size, |b, &size| {
+            let data = vec![0x42u8; size];
+            let store = make_cas_store();
+            let hash = store.import_bytes(&data, false).unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let dest = temp.path().join("out");
+
+            b.iter(|| {
+                store.export_to(black_box(&hash), black_box(&dest)).unwrap();
+                std::fs::remove_file(&dest).unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_cas_verify(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cas_verify");
+    group.sample_size(20);
+
+    for size in [1024, 1024 * 100, 1024 * 1024, 1024 * 1024 * 10].iter() {
+        let data = vec![0x42u8; *size];
+        let store = make_cas_store();
+        let hash = store.import_bytes(&data, false).unwrap();
+
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(format!("{}KB", size / 1024)), size, |b, _| {
+            b.iter(|| {
+                store.verify(black_box(&hash)).unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_cas_concurrent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cas_concurrent");
+    group.sample_size(20);
+
+    for threads in [1, 2, 4, 8].iter() {
+        group.bench_with_input(BenchmarkId::from_parameter(*threads), threads, |b, &threads| {
+            b.iter(|| {
+                let store = Arc::new(make_cas_store());
+                let data = Arc::new(vec![0x42u8; 1024]);
+
+                let handles: Vec<_> = (0..threads).map(|_| {
+                    let store = Arc::clone(&store);
+                    let data = Arc::clone(&data);
+                    thread::spawn(move || {
+                        store.import_bytes(&data, false).unwrap()
+                    })
+                }).collect();
+
+                for h in handles {
+                    h.join().unwrap();
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_cas_tarball_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cas_tarball_batch");
+    group.sample_size(20);
+
+    for count in [10, 100, 1000].iter() {
+        let entries: Vec<_> = (0..*count).map(|i| {
+            TarballEntry {
+                path: format!("file{}.txt", i),
+                data: vec![i as u8; 1024],
+                executable: false,
+            }
+        }).collect();
+
+        group.throughput(Throughput::Elements(*count as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(*count), count, |b, _| {
+            b.iter(|| {
+                let store = make_cas_store();
+                store.import_tarball_entries(black_box(&entries)).unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_store_import_content(c: &mut Criterion) {
     let mut group = c.benchmark_group("store_import_content_vs_sqlite");
     group.sample_size(10);
@@ -319,4 +461,11 @@ criterion_group!(
     targets = bench_store_import_content
 );
 
-criterion_main!(store_sqlite, store_content);
+criterion_group!(
+    name = store_cas;
+    config = Criterion::default().warm_up_time(Duration::from_secs(1)).sample_size(20);
+    targets = bench_cas_import, bench_cas_deduplication, bench_cas_export,
+              bench_cas_verify, bench_cas_concurrent, bench_cas_tarball_batch
+);
+
+criterion_main!(store_sqlite, store_content, store_cas);
