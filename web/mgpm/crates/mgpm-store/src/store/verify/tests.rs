@@ -158,6 +158,37 @@ fn test_prune_removes_unreferenced() {
 }
 
 #[test]
+fn test_prune_keeps_referenced() {
+    let (store, _dir) = make_store();
+
+    let data = b"referenced content";
+    let hash = store.import_bytes(data).unwrap();
+    let info = PackageInfo {
+        name: "pkg-r".to_string(),
+        version: "1.0.0".to_string(),
+        integrity: hash.hash.clone(),
+        shard: hash.shard.clone(),
+        filename: hash.filename.clone(),
+        is_executable: false,
+        manifest_json: None,
+        metadata: None,
+        size_bytes: data.len() as u64,
+        compressed_size_bytes: data.len() as u64,
+        created_at: 0,
+    };
+    store.index().add_package(&info).unwrap();
+
+    let verifier = StoreVerifier::new(&store, store.index());
+    let report = verifier.prune(false).unwrap();
+
+    // Package is NOT unreferenced (no gc_state yet, generation=0)
+    assert_eq!(report.unreferenced_packages.len(), 0);
+
+    let status = verifier.status().unwrap();
+    assert_eq!(status.total_packages, 1);
+}
+
+#[test]
 fn test_prune_empty_shards() {
     let (store, _dir) = make_store_ready();
     let info = add_test_package(&store, "pkg-a", "1.0.0", b"content a");
