@@ -9,7 +9,8 @@ pub mod tarball;
 pub use cache::{CachedPackage, PackageCache};
 pub use store::{
     CasContentStore, ContentStore, FileEntry, HashAlgorithm, ImportMethod, IntegrityHash,
-    PackageEntry, PackageInfo, SqliteStore, StoreError, StoreIndex, TarballEntry,
+    PackageEntry, PackageInfo, SqliteStore, StoreError, StoreIndex, StoreReport, StoreVerifier,
+    TarballEntry,
 };
 pub use tarball::{EntryType, ExtractedEntry, TarballError, TarballExtractor};
 

@@ -8,7 +8,7 @@ use std::path::Path;
 
 use bincode;
 
-use super::{Lockfile, LOCKFILE_MAGIC, LOCKFILE_VERSION};
+use crate::{lockfile::LOCKFILE_VERSION_V1, lockfile::Lockfile, lockfile::LOCKFILE_MAGIC, lockfile::LOCKFILE_VERSION};
 use crate::LockfileError;
 
 #[allow(dead_code)]
@@ -64,7 +64,8 @@ pub fn read_binary(path: &Path) -> Result<Lockfile, LockfileError> {
         .map_err(|e| LockfileError::Io(e.to_string()))?;
     
     let version = u32::from_le_bytes(version_bytes);
-    if version != LOCKFILE_VERSION {
+    // Accept both v1 and v2
+    if version != LOCKFILE_VERSION && version != LOCKFILE_VERSION_V1 {
         return Err(LockfileError::VersionMismatch { 
             found: version, 
             expected: LOCKFILE_VERSION 

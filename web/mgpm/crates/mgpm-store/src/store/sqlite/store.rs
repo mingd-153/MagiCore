@@ -382,6 +382,34 @@ impl StoreIndex for SqliteStore {
         Ok(count as u64)
     }
 
+    fn check_integrity(&self) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        if self.path.to_string_lossy() == ":memory:" {
+            return Ok(true);
+        }
+        let result: String = conn.query_row("PRAGMA quick_check", [], |row| {
+            row.get(0)
+        })?;
+        Ok(result == "ok")
+    }
+
+    fn is_readonly(&self) -> bool {
+        self.readonly
+    }
+
+    fn get_all_packages(&self) -> Result<Vec<PackageInfo>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT name, version, integrity, shard, filename, is_executable,
+                    manifest_json, size_bytes, compressed_size_bytes, created_at, metadata
+             FROM packages",
+        )?;
+        let packages = stmt
+            .query_map([], row_to_package)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(packages)
+    }
+
     fn total_size(&self) -> Result<u64, StoreError> {
         let conn = self.conn.lock().unwrap();
         let size: i64 = conn.query_row(
