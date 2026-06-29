@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::{Lockfile, LockfilePackage};
-use crate::LockfileError;
+use crate::{LockfileError, lockfile::LOCKFILE_VERSION_V1};
 
 #[derive(Serialize)]
 struct TomlLockfile {
@@ -97,10 +97,13 @@ pub fn read_text(path: &Path) -> Result<Lockfile, LockfileError> {
     let table = value.as_table()
         .ok_or_else(|| LockfileError::Corrupted("root is not a table".to_string()))?;
     
-    let version = table.get("version")
+let version = table.get("version")
         .and_then(|v| v.as_integer())
         .unwrap_or(1) as u32;
     
+    // Check if this is a v1 lockfile that needs migration
+    let is_v1 = version == LOCKFILE_VERSION_V1;
+
     let metadata_table = table.get("metadata")
         .and_then(|m| m.as_table())
         .ok_or_else(|| LockfileError::Corrupted("missing metadata".to_string()))?;
@@ -168,11 +171,22 @@ pub fn read_text(path: &Path) -> Result<Lockfile, LockfileError> {
         });
     }
     
-    Ok(Lockfile {
+    let mut lockfile = Lockfile {
         version,
         metadata,
         packages,
-    })
+    };
+    
+    // Auto-migrate v1 lockfiles to v2
+    if is_v1 {
+        if let Err(e) = lockfile.migrate_v1_to_v2() {
+            // If migration fails (e.g., content hash mismatch), we still return the lockfile
+            // but with the v1 version intact so user can decide
+            eprintln!("Warning: failed to auto-migrate v1 lockfile: {}", e);
+        }
+    }
+    
+    Ok(lockfile)
 }
 
 pub fn exists(path: &Path) -> bool {

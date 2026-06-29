@@ -36,6 +36,9 @@ pub enum LockfileError {
     #[error("lockfile corrupted: {0}")]
     Corrupted(String),
     
+    #[error("content hash mismatch: expected {expected}, got {actual}")]
+    ContentHashMismatch { expected: String, actual: String },
+    
     #[error("lockfile outdated")]
     Outdated,
 }
