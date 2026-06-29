@@ -7,7 +7,7 @@ pub mod store;
 pub mod tarball;
 
 pub use cache::{CachedPackage, PackageCache};
-pub use store::{ContentStore, FileEntry, HashAlgorithm, ImportMethod, PackageEntry, PackageInfo, SqliteStore, StoreError, StoreIndex};
+pub use store::{ContentStore, FileEntry, HashAlgorithm, ImportMethod, PackageEntry, PackageInfo, SqliteStore, StoreError, StoreIndex, StoreReport, StoreVerifier};
 pub use tarball::{EntryType, ExtractedEntry, TarballError, TarballExtractor};
 
 #[cfg(test)]
