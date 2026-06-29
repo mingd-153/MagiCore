@@ -220,7 +220,7 @@ impl Resolver {
                 resolutions.push(Resolution {
                     package_id: package_id.clone(),
                     version: version.clone(),
-                    integrity: format!("sha256-{}", hex::encode(name.as_str())),
+                    integrity: String::new(), // Will be filled by pipeline with real hash from tarball
                     deps: Vec::new(),
                 });
                 
