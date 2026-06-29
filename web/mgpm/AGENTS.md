@@ -56,11 +56,11 @@ create → check → run → fix → update → fix → done → report → push
 ## Current Status
 
 **Phase**: 0 — Foundation (Tuần 1-4)
-**Current task**: T0.2 — ✅ CAS I/O complete
+**Current task**: T0.2 — ✅ CAS I/O complete + refactored into modular structure
 **Branch hiện tại**: `development`
 **Branch gốc**: `development`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 304 passed (16 cas + 81 sqlite + others), 0 failed, 0 warnings
+**Tests**: 306 passed (18 cas + 81 sqlite + others), 0 failed, 0 warnings
 
 ## What's Been Done
 
@@ -82,7 +82,7 @@ create → check → run → fix → update → fix → done → report → push
 - **5/5 HIGH issues fixed**
 - **3 Critical + 7 High** = 10 security fixes total (all resolved)
 
-### T0.2 — CAS I/O Complete ✅
+### T0.2 — CAS I/O Complete + Refactored ✅
 
 | Feature | Implementation | Security |
 |---------|----------------|----------|
@@ -101,7 +101,19 @@ create → check → run → fix → update → fix → done → report → push
 - `SystemTime` panic fix: `unwrap_or_default()`
 - Path traversal impossible (SHA-256 hex only)
 
-**Tests**: 16 CAS tests + 81 SQLite = 97 store tests, **304 total workspace tests pass**
+**Module structure** (refactored from flat `cas.rs` → modular `cas/`):
+```
+cas/
+├── mod.rs         # Re-exports + module declarations
+├── store.rs       # ContentStore struct + 7 methods + is_executable helper
+├── integrity.rs   # IntegrityHash, TarballEntry
+├── security.rs    # check_symlink_in_cas, check_symlink_ancestors
+├── write.rs       # write_all_verify_and_set_perms (TOCTOU-safe)
+├── lifecycle.rs   # validate_cas_root, ensure_cas_dirs, set_cas_root_permissions
+└── tests.rs       # 18 integration tests
+```
+
+**Tests**: 18 CAS tests + 81 SQLite = 99 store tests, **306 total workspace tests pass**
 
 **Benchmarks (Apple Silicon, release):**
 | Operation | Time | Throughput |
@@ -122,7 +134,7 @@ create → check → run → fix → update → fix → done → report → push
 | # | Task | Files | Status |
 |---|------|-------|--------|
 | T0.1 | SQLite store: adaptive + KV + audit + permission monitor | `sqlite.rs` (→1050 dòng) | ✅ Expanded + Hardened |
-| T0.2 | CAS import/export | `cas.rs` (new) + bench | ✅ Complete + Benchmarked |
+| T0.2 | CAS import/export | `cas/mod.rs` + `cas/store.rs` + `cas/tests.rs` | ✅ Complete + Refactored |
 | T0.4 | Lockfile integrity fix | — | ⏳ |
 | 5 | Fuzz CI | `.github/workflows/fuzz.yml` | ✅ |
 | 6 | Signed releases | `.github/workflows/release.yml` | ✅ |
@@ -266,7 +278,9 @@ Memory:  SQLite LRU cache  → adaptive 1k-100k entries
 | File | Purpose | Lines |
 |------|---------|:-----:|
 | `crates/mgpm-cli/src/main.rs` | Main CLI (16 commands) | 2568 |
-| `crates/mgpm-store/src/store/content_store.rs` | Current flat store | ~160 |
+| `crates/mgpm-store/src/store/content_store.rs` | Current flat store | ~570 |
+| `crates/mgpm-store/src/store/cas/store.rs` | Refactored CAS store (modular) | ~180 |
+| `crates/mgpm-store/src/store/cas/tests.rs` | 18 CAS integration tests | ~180 |
 | `crates/mgpm-lockfile/src/lockfile/mod.rs` | Lockfile struct + integrity | 277 |
 | `crates/mgpm-lockfile/src/pipeline.rs` | Resolution→lockfile pipeline | 115 |
 | `crates/mgpm-resolver/src/solver/mod.rs` | Resolver + dep confusion check | 367 |
@@ -279,34 +293,34 @@ Memory:  SQLite LRU cache  → adaptive 1k-100k entries
 
 Task còn lại trong Phase 0:
 1. **T0.1**: ✅ Hoàn thành (expanded + security hardened — 10 vulnerabilities fixed)
-2. **T0.2**: CAS content-addressed import/export ← tiếp theo
-3. **T0.3**: Store verify + status
+2. **T0.2**: ✅ Hoàn thành (CAS I/O + security + refactor modular)
+3. **T0.3**: Store verify + status ← tiếp theo
 4. **T0.4**: Lockfile integrity fix - BLAKE3 + real SHA-256
 5. **T0.5**: Global Virtual Store
 6. **T0.6**: Isolated linker
 7. **T0.7**: Integration test
 
-## How to Continue
+## How to Continue (T0.3 onward)
 
 ```bash
 # 1. Đọc task chi tiết
-cat tasks/phase-0-foundation/T0.2-cas-io.md
+cat tasks/phase-0-foundation/T0.3-store-verify.md
 
 # 2. Tạo branch task từ development
 git checkout development
-git checkout -b feat-T0.2-cas-io
+git checkout -b feat-T0.3-store-verify
 
 # 3. Implement theo vòng lặp
 cargo check --workspace
 cargo test --workspace
-cargo clippy -p mgpm-store
+cargo clippy --workspace
 
 # 4. Commit local + merge vào week-1
 git add -A
-git commit -m "feat(mgpm): T0.2 - CAS import/export"
+git commit -m "feat(mgpm): T0.3 - Store verify + status"
 git checkout week-1 || git checkout -b week-1
-git merge feat-T0.2-cas-io
-git branch -d feat-T0.2-cas-io
+git merge feat-T0.3-store-verify
+git branch -d feat-T0.3-store-verify
 
 # 5. Update AGENTS.md
 ```
@@ -337,8 +351,16 @@ web/mgpm/
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       └── store/
+│   │   └── store/
 │   │           ├── mod.rs
+│   │           ├── cas/               # Modular CAS (refactored)
+│   │           │   ├── mod.rs
+│   │           │   ├── store.rs
+│   │           │   ├── integrity.rs
+│   │           │   ├── security.rs
+│   │           │   ├── write.rs
+│   │           │   ├── lifecycle.rs
+│   │           │   └── tests.rs
 │   │           ├── content_store.rs   # Current flat store
 │   │           ├── tarball.rs         # Tarball extraction
 │   │           └── cache.rs           # Package cache
