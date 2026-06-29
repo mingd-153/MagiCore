@@ -9,7 +9,7 @@ use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use parking_lot::RwLock;
 use tokio::sync::OnceCell;
 
-use mgpm_core::RegistryConfig;
+use mgpm_core::{PackageId, RegistryConfig};
 
 pub mod npm;
 pub mod jsr;
@@ -206,6 +206,29 @@ impl RegistryClient {
 
     pub fn get_registry(&self, name: &str) -> Option<RegistryConfig> {
         self.registries.read().get(name).cloned()
+    }
+
+    /// Download a package tarball by PackageId (name@version)
+    pub async fn download_tarball(
+        &self,
+        package_id: &PackageId,
+    ) -> Result<Vec<u8>, RegistryError> {
+        // Use npm registry to get package metadata and extract tarball URL
+        let name = package_id.name().as_str();
+        let version = package_id.version().to_string();
+        let url = format!("https://registry.npmjs.org/{}/{}", name, version);
+        
+        // Get package metadata to find tarball URL
+        let json = self.get_json(&url, None).await?;
+        
+        let tarball_url = json
+            .get("dist")
+            .and_then(|d| d.get("tarball"))
+            .and_then(|t| t.as_str())
+            .ok_or(RegistryError::TarballNotFound)?;
+        
+        // Download the tarball bytes
+        self.get_bytes(tarball_url, None).await
     }
 }
 
