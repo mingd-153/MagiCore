@@ -72,6 +72,13 @@ pub trait StoreIndex: Send + Sync {
     fn rollback(&self) -> Result<(), StoreError>;
     fn package_count(&self) -> Result<u64, StoreError>;
     fn project_count(&self) -> Result<u64, StoreError>;
+    fn get_all_packages(&self) -> Result<Vec<PackageInfo>, StoreError>;
+    fn check_integrity(&self) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+    fn is_readonly(&self) -> bool {
+        false
+    }
     fn total_size(&self) -> Result<u64, StoreError>;
 
     // Audit & Generation methods (default implementations return NotImplemented)

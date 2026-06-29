@@ -64,8 +64,8 @@ fn make_provider() -> E2eProvider {
     provider
 }
 
-#[test]
-fn e2e_smoke_resolve_and_lockfile() {
+#[tokio::test]
+async fn e2e_smoke_resolve_and_lockfile() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
 
@@ -95,7 +95,8 @@ fn e2e_smoke_resolve_and_lockfile() {
     }];
 
     let lockfile = pipeline
-        .resolve_and_lock(&wanted, root)
+        .resolve_and_lock(&wanted, root, None)
+        .await
         .expect("resolve_and_lock should succeed");
 
     // Current resolver solves 1 level (picks latest version, but doesn't
@@ -155,8 +156,8 @@ fn e2e_smoke_install_from_lockfile() {
     assert_eq!(loaded.packages[0].version, "3.0.1");
 }
 
-#[test]
-fn e2e_smoke_empty_project_resolve() {
+#[tokio::test]
+async fn e2e_smoke_empty_project_resolve() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
 
@@ -166,14 +167,15 @@ fn e2e_smoke_empty_project_resolve() {
     let pipeline = ResolutionPipeline::new(resolver, config);
 
     let lockfile = pipeline
-        .resolve_and_lock(&[], root)
+        .resolve_and_lock(&[], root, None)
+        .await
         .expect("resolving empty deps should succeed");
 
     assert_eq!(lockfile.packages.len(), 0);
 }
 
-#[test]
-fn e2e_smoke_resolve_nonexistent() {
+#[tokio::test]
+async fn e2e_smoke_resolve_nonexistent() {
     let provider = E2eProvider {
         packages: HashMap::new(),
     };
@@ -189,7 +191,7 @@ fn e2e_smoke_resolve_nonexistent() {
         optional: false,
     }];
 
-    let result = pipeline.resolve_and_lock(&wanted, tmp.path());
+    let result = pipeline.resolve_and_lock(&wanted, tmp.path(), None).await;
     // Current resolver returns Ok with 0 resolutions for unknown packages
     assert!(result.is_ok(), "resolver returns Ok with 0 resolutions for unknown packages");
     let lockfile = result.unwrap();
