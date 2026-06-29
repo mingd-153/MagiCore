@@ -7,6 +7,14 @@ use sha2::{Digest, Sha256};
 use crate::store::index::StoreError;
 
 pub fn verify_file_integrity(path: &Path, expected_hash: &str) -> Result<bool, StoreError> {
+    let meta = fs::metadata(path).map_err(|e| StoreError::Io {
+        path: path.to_path_buf(),
+        msg: e.to_string(),
+    })?;
+    if !meta.is_file() {
+        return Ok(false);
+    }
+
     let mut file = fs::File::open(path).map_err(|e| StoreError::Io {
         path: path.to_path_buf(),
         msg: e.to_string(),

@@ -18,6 +18,19 @@ impl<'a> StoreVerifier<'a> {
     }
 
     pub fn verify(&self, fix: bool) -> Result<StoreReport, StoreError> {
+        if fix {
+            if self.index.is_readonly() {
+                return Err(StoreError::Database(
+                    "cannot fix: store index is readonly".into(),
+                ));
+            }
+            if !self.index.check_integrity()? {
+                return Err(StoreError::Database(
+                    "index integrity check failed: refusing --fix on corrupt database".into(),
+                ));
+            }
+        }
+
         let start = std::time::Instant::now();
         let mut report = StoreReport::default();
 
@@ -78,6 +91,12 @@ impl<'a> StoreVerifier<'a> {
     }
 
     pub fn prune(&self, dry_run: bool) -> Result<StoreReport, StoreError> {
+        if !dry_run && self.index.is_readonly() {
+            return Err(StoreError::Database(
+                "cannot prune: store index is readonly".into(),
+            ));
+        }
+
         let mut report = StoreReport::default();
 
         let unreferenced = self.index.get_unreferenced_packages()?;
