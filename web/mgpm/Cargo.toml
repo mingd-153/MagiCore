@@ -158,6 +158,9 @@ sysinfo = "0.31"
 cargo-deny = "0.14"
 cargo-audit = "0.20"
 
+# Path (symlink relative paths)
+pathdiff = "0.2"
+
 [workspace.lints.rust]
 unused_crate_dependencies = "warn"
 unused_imports = "warn"
@@ -167,15 +170,15 @@ unreachable_code = "warn"
 unreachable_patterns = "warn"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
-nursery = "warn"
-cargo = "warn"
-complexity = "warn"
-perf = "warn"
-style = "warn"
-correctness = "warn"
-suspicious = "warn"
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
 
 # Allow specific lints
 unwrap_used = "allow"

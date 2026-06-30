@@ -56,6 +56,23 @@ impl PackageInfo {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectInfo {
+    pub project_hash: String,
+    pub path: String,
+    pub metadata: Option<String>,
+    pub last_used: u64,
+}
+
+impl ProjectInfo {
+    pub fn dep_graph_hash(&self) -> Option<String> {
+        self.metadata.as_ref().and_then(|m| {
+            serde_json::from_str::<serde_json::Value>(m).ok()
+                .and_then(|v| v.get("dep_graph_hash").and_then(|v| v.as_str().map(|s| s.to_string())))
+        })
+    }
+}
+
 pub trait StoreIndex: Send + Sync {
     fn add_package(&self, info: &PackageInfo) -> Result<(), StoreError>;
     fn get_package(&self, name: &str, version: &str) -> Result<Option<PackageInfo>, StoreError>;
@@ -80,6 +97,12 @@ pub trait StoreIndex: Send + Sync {
         false
     }
     fn total_size(&self) -> Result<u64, StoreError>;
+    fn list_projects(&self) -> Result<Vec<ProjectInfo>, StoreError> {
+        Err(StoreError::Database("list_projects not implemented".into()))
+    }
+    fn set_project_metadata(&self, _path: &Path, _metadata: &str) -> Result<(), StoreError> {
+        Err(StoreError::Database("set_project_metadata not implemented".into()))
+    }
 
     // Audit & Generation methods (default implementations return NotImplemented)
     fn health_check(&self) -> Result<Vec<String>, StoreError> {
