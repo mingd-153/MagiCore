@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,6 +11,8 @@ use super::index::{ProjectInfo, StoreError, StoreIndex};
 
 const GVS_VERSION: &str = "v1";
 const DEP_GRAPH_HASH_LEN: usize = 64;
+const LOCK_TIMEOUT_MS: u64 = 5000;
+const GVS_DIR_PERMS: u32 = 0o700;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GvsStats {
@@ -53,7 +56,20 @@ impl GlobalVirtualStore {
         fs::create_dir_all(&self.gvs_root).map_err(|e| StoreError::Io {
             path: self.gvs_root.clone(),
             msg: e.to_string(),
-        })
+        })?;
+        self.set_secure_perms(&self.gvs_root)?;
+        Ok(())
+    }
+
+    fn set_secure_perms(&self, path: &Path) -> Result<(), StoreError> {
+        #[cfg(unix)]
+        {
+            use std::fs;
+            let mut perms = fs::metadata(path)?.permissions();
+            perms.set_mode(GVS_DIR_PERMS);
+            fs::set_permissions(path, perms)?;
+        }
+        Ok(())
     }
 
     fn validate_dep_graph_hash(hash: &str) -> Result<(), StoreError> {
@@ -73,23 +89,43 @@ impl GlobalVirtualStore {
         Ok(())
     }
 
+    fn validate_not_symlink(path: &Path, context: &str) -> Result<(), StoreError> {
+        let meta = fs::symlink_metadata(path).map_err(|e| StoreError::Io {
+            path: path.to_path_buf(),
+            msg: e.to_string(),
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(StoreError::Database(format!(
+                "{} path is a symlink: {}",
+                context,
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
     fn acquire_lock(&self) -> Result<fs::File, StoreError> {
         let lock_path = self.gvs_root.join(".gvs.lock");
         fs::create_dir_all(&self.gvs_root).map_err(|e| StoreError::Io {
             path: self.gvs_root.clone(),
             msg: e.to_string(),
         })?;
+        self.set_secure_perms(&self.gvs_root)?;
+
         let lock_file = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&lock_path)
             .map_err(|e| StoreError::Io {
-                path: lock_path,
+                path: lock_path.clone(),
                 msg: e.to_string(),
             })?;
+        self.set_secure_perms(&lock_path)?;
+
         lock_file
             .try_lock_exclusive()
             .map_err(|e| StoreError::Database(format!("failed to acquire GVS lock: {}", e)))?;
+
         Ok(lock_file)
     }
 
@@ -103,10 +139,14 @@ impl GlobalVirtualStore {
 
         let _lock = self.acquire_lock()?;
 
+        Self::validate_not_symlink(project_path, "project")?;
+
         let canonical_path = fs::canonicalize(project_path).map_err(|e| StoreError::Io {
             path: project_path.to_path_buf(),
             msg: format!("failed to canonicalize project path: {}", e),
         })?;
+
+        Self::validate_not_symlink(&canonical_path, "canonicalized project")?;
 
         index.register_project(&canonical_path)?;
 
@@ -120,38 +160,59 @@ impl GlobalVirtualStore {
         index.set_project_metadata(&canonical_path, &meta_json)?;
 
         let gvs_dir = self.gvs_dir_for(dep_graph_hash);
-        if gvs_dir.exists() {
-            self.verify_metadata(&gvs_dir, dep_graph_hash)?;
-            return Ok(());
-        }
+        let parent = gvs_dir.parent().unwrap_or(&self.gvs_root);
+        Self::validate_not_symlink(parent, "GVS parent directory")?;
 
         let node_modules = gvs_dir.join("node_modules");
-        fs::create_dir_all(&node_modules).map_err(|e| StoreError::Io {
-            path: node_modules.clone(),
-            msg: e.to_string(),
-        })?;
+        let created_new = if gvs_dir.exists() {
+            self.verify_metadata(&gvs_dir, dep_graph_hash)?;
+            false
+        } else {
+            fs::create_dir_all(&node_modules).map_err(|e| StoreError::Io {
+                path: node_modules.clone(),
+                msg: e.to_string(),
+            })?;
+            self.set_secure_perms(&gvs_dir)?;
+            self.set_secure_perms(&node_modules)?;
 
-        let meta = GvsMetadata {
-            version: GVS_VERSION.to_string(),
-            dep_graph_hash: dep_graph_hash.to_string(),
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            let meta = GvsMetadata {
+                version: GVS_VERSION.to_string(),
+                dep_graph_hash: dep_graph_hash.to_string(),
+                created_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
+            let meta_path = gvs_dir.join(".mgpm-gvs.json");
+            let meta_json =
+                serde_json::to_string_pretty(&meta).map_err(|e| StoreError::Serialization(e.to_string()))?;
+            fs::write(&meta_path, &meta_json).map_err(|e| StoreError::Io {
+                path: meta_path.clone(),
+                msg: e.to_string(),
+            })?;
+            self.set_secure_perms(&meta_path)?;
+
+            let mut verify_meta = fs::read_to_string(&meta_path).map_err(|e| StoreError::Io {
+                path: meta_path.clone(),
+                msg: e.to_string(),
+            })?;
+            let parsed: GvsMetadata = serde_json::from_str(&verify_meta)
+                .map_err(|e| StoreError::Serialization(e.to_string()))?;
+            if parsed.dep_graph_hash != dep_graph_hash || parsed.version != GVS_VERSION {
+                return Err(StoreError::Database("metadata write verification failed".into()));
+            }
+
+            true
         };
-        let meta_path = gvs_dir.join(".mgpm-gvs.json");
-        let meta_json =
-            serde_json::to_string_pretty(&meta).map_err(|e| StoreError::Serialization(e.to_string()))?;
-        fs::write(&meta_path, &meta_json).map_err(|e| StoreError::Io {
-            path: meta_path,
-            msg: e.to_string(),
-        })?;
 
-        self.verify_metadata(&gvs_dir, dep_graph_hash)?;
+        if created_new {
+            self.verify_metadata(&gvs_dir, dep_graph_hash)?;
+        }
         Ok(())
     }
 
     fn verify_metadata(&self, gvs_dir: &Path, expected_hash: &str) -> Result<(), StoreError> {
+        Self::validate_not_symlink(gvs_dir, "GVS directory")?;
         let meta_path = gvs_dir.join(".mgpm-gvs.json");
         if !meta_path.exists() {
             return Err(StoreError::Database("GVS metadata file missing".into()));
@@ -184,22 +245,29 @@ impl GlobalVirtualStore {
     ) -> Result<(), StoreError> {
         let _lock = self.acquire_lock()?;
 
+        Self::validate_not_symlink(project_path, "project")?;
+
         let canonical_path = fs::canonicalize(project_path).map_err(|e| StoreError::Io {
             path: project_path.to_path_buf(),
             msg: format!("failed to canonicalize project path: {}", e),
         })?;
-        let path_str = canonical_path.to_string_lossy().to_string();
 
-        let projects = index.list_projects()?;
-        let dep_graph_hash = projects
-            .iter()
-            .find(|p| p.path == path_str)
-            .and_then(|p| p.dep_graph_hash());
+        Self::validate_not_symlink(&canonical_path, "canonicalized project")?;
+
+        let dep_graph_hash = {
+            let projects = index.list_projects()?;
+            let path_str = canonical_path.to_string_lossy().to_string();
+            projects
+                .iter()
+                .find(|p| p.path == path_str)
+                .and_then(|p| p.dep_graph_hash())
+        };
 
         index.unregister_project(&canonical_path)?;
 
         if let Some(ref hash) = dep_graph_hash {
             let fresh_projects = index.list_projects()?;
+            let path_str = canonical_path.to_string_lossy().to_string();
             let remaining = fresh_projects
                 .iter()
                 .filter(|p| p.path != path_str && p.dep_graph_hash() == Some(hash.clone()))
@@ -287,48 +355,51 @@ impl GlobalVirtualStore {
         let mut reclaimed_bytes = 0;
 
         if self.gvs_root.exists() {
-            if let Ok(entries) = fs::read_dir(&self.gvs_root) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_dir() {
+            let gvs_entries: Vec<_> = fs::read_dir(&self.gvs_root)
+                .map(|e| e.flatten().collect())
+                .unwrap_or_default();
+
+            for entry in gvs_entries {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let dir_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !active_hashes.contains(&dir_name) {
+                    let project_still_exists = projects.iter().any(|p| {
+                        p.dep_graph_hash() == Some(dir_name.clone())
+                            && Path::new(&p.path).exists()
+                    });
+                    if project_still_exists {
                         continue;
                     }
-                    let dir_name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string();
 
-                    if !active_hashes.contains(&dir_name) {
-                        let project_still_exists = projects.iter().any(|p| {
-                            p.dep_graph_hash() == Some(dir_name.clone())
-                                && Path::new(&p.path).exists()
-                        });
-                        if project_still_exists {
-                            continue;
-                        }
-
-                        let nm = path.join("node_modules");
-                        if nm.exists() {
-                            if let Ok(nm_entries) = fs::read_dir(&nm) {
-                                for nm_entry in nm_entries.flatten() {
-                                    if let Ok(meta) = nm_entry.path().symlink_metadata() {
-                                        reclaimed_bytes += meta.len();
-                                    }
-                                    removed_symlinks += 1;
+                    let nm = path.join("node_modules");
+                    if nm.exists() {
+                        if let Ok(nm_entries) = fs::read_dir(&nm) {
+                            for nm_entry in nm_entries.flatten() {
+                                let entry_path = nm_entry.path();
+                                if let Ok(meta) = entry_path.symlink_metadata() {
+                                    reclaimed_bytes += meta.len();
                                 }
+                                removed_symlinks += 1;
                             }
-                            fs::remove_dir_all(&nm).ok();
                         }
-
-                        let meta_path = path.join(".mgpm-gvs.json");
-                        if meta_path.exists() {
-                            fs::remove_file(&meta_path).ok();
-                        }
-
-                        fs::remove_dir(&path).ok();
-                        removed_dirs.push(path);
+                        fs::remove_dir_all(&nm).ok();
                     }
+
+                    let meta_path = path.join(".mgpm-gvs.json");
+                    if meta_path.exists() {
+                        fs::remove_file(&meta_path).ok();
+                    }
+
+                    fs::remove_dir(&path).ok();
+                    removed_dirs.push(path);
                 }
             }
         }
