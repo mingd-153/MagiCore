@@ -418,6 +418,33 @@ impl StoreIndex for SqliteStore {
         )?;
         Ok(size as u64)
     }
+
+    fn list_projects(&self) -> Result<Vec<super::index::ProjectInfo>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT project_hash, path, metadata, last_used FROM projects",
+        )?;
+        let projects = stmt.query_map([], |row| {
+            Ok(super::index::ProjectInfo {
+                project_hash: row.get(0)?,
+                path: row.get(1)?,
+                metadata: row.get(2)?,
+                last_used: row.get::<_, i64>(3)? as u64,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(projects)
+    }
+
+    fn set_project_metadata(&self, path: &Path, metadata: &str) -> Result<(), StoreError> {
+        let path_str = path.to_string_lossy();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE projects SET metadata = ?1, last_used = unixepoch() WHERE path = ?2",
+            rusqlite::params![metadata, path_str.to_string()],
+        )?;
+        Ok(())
+    }
 }
 
 impl SqliteStore {
