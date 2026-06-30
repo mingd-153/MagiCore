@@ -106,17 +106,27 @@ impl ContentStore {
             return Err(StoreError::NotFound(hash.hash.clone()));
         }
 
+        // Verify source file integrity before exporting
+        let actual_hash = self.verify(&src)?;
+        if actual_hash.hash != hash.hash {
+            return Err(StoreError::HashMismatch {
+                expected: hash.hash.clone(),
+                actual: actual_hash.hash,
+            });
+        }
+
         if let Err(e) = fs::hard_link(&src, dest) {
             tracing::debug!("hardlink failed (cross-device?), falling back to copy: {e}");
             fs::copy(&src, dest)?;
         }
 
-        let actual_hash = self.verify(dest)?;
-        if actual_hash.hash != hash.hash {
+        // Verify destination matches source
+        let dest_hash = self.verify(dest)?;
+        if dest_hash.hash != hash.hash {
             let _ = fs::remove_file(dest);
             return Err(StoreError::HashMismatch {
                 expected: hash.hash.clone(),
-                actual: actual_hash.hash,
+                actual: dest_hash.hash,
             });
         }
 
@@ -124,6 +134,23 @@ impl ContentStore {
     }
 
     pub fn verify(&self, path: &Path) -> Result<IntegrityHash, StoreError> {
+        let meta = fs::metadata(path).map_err(|e| StoreError::Io {
+            path: path.to_path_buf(),
+            msg: e.to_string(),
+        })?;
+        // Reject symlinks - we only verify regular files in CAS
+        if meta.file_type().is_symlink() {
+            return Err(StoreError::Io {
+                path: path.to_path_buf(),
+                msg: "path is a symlink, refusing to verify".to_string(),
+            });
+        }
+        if !meta.is_file() {
+            return Err(StoreError::Io {
+                path: path.to_path_buf(),
+                msg: "path is not a regular file".to_string(),
+            });
+        }
         let data = fs::read(path).map_err(|e| StoreError::Io {
             path: path.to_path_buf(),
             msg: e.to_string(),

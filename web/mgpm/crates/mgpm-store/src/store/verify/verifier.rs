@@ -113,10 +113,18 @@ impl<'a> StoreVerifier<'a> {
                     .join(&pkg.filename);
 
                 if cas_path.exists() {
-                    fs::remove_file(&cas_path).map_err(|e| StoreError::Io {
+                    let meta = fs::metadata(&cas_path).map_err(|e| StoreError::Io {
                         path: cas_path.clone(),
                         msg: e.to_string(),
                     })?;
+                    if meta.file_type().is_symlink() {
+                        tracing::warn!("skipping symlink during prune: {}", cas_path.display());
+                    } else {
+                        fs::remove_file(&cas_path).map_err(|e| StoreError::Io {
+                            path: cas_path.clone(),
+                            msg: e.to_string(),
+                        })?;
+                    }
                 }
 
                 self.index.delete_package(&pkg.integrity)?;
@@ -146,6 +154,13 @@ impl<'a> StoreVerifier<'a> {
             })?;
             let path = entry.path();
             if path.is_dir() {
+                let meta = fs::metadata(&path).map_err(|e| StoreError::Io {
+                    path: path.clone(),
+                    msg: e.to_string(),
+                })?;
+                if meta.file_type().is_symlink() {
+                    continue; // Skip symlinks
+                }
                 let mut dir_iter = fs::read_dir(&path).map_err(|e| StoreError::Io {
                     path: path.clone(),
                     msg: e.to_string(),

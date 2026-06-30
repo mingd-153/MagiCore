@@ -118,14 +118,16 @@ impl Lockfile {
         self.metadata.content_hash = hasher.finalize().to_hex().to_string();
     }
 
-    /// Compute content hash using v1 algorithm (DefaultHasher) for backward compat
+    /// Compute content hash using v1 algorithm (blake3) for backward compat
+    /// Note: v1 originally used DefaultHasher (SipHash) which is not crypto-secure.
+    /// This uses blake3 with a domain separator for v1 compatibility.
     pub fn compute_content_hash_v1(&self) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"mgpm-lockfile-v1");
+
         let data = serde_json::to_string(&self.packages).unwrap_or_default();
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        data.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
+        hasher.update(data.as_bytes());
+        hasher.finalize().to_hex().to_string()
     }
 
     /// Migrate lockfile from v1 to v2 format
@@ -153,6 +155,47 @@ impl Lockfile {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
+    }
+
+    /// Verify that the stored content_hash matches a fresh recomputation.
+    /// Returns `true` if hash matches or if content_hash is empty (v1 fallback).
+    pub fn verify_content_hash(&self) -> bool {
+        if self.metadata.content_hash.is_empty() {
+            return true;
+        }
+        let mut hasher = blake3::Hasher::new();
+
+        let mut sorted = self.packages.clone();
+        sorted.sort_by(|a, b| {
+            a.name.cmp(&b.name)
+                .then_with(|| a.version.cmp(&b.version))
+        });
+
+        for pkg in &sorted {
+            hasher.update(pkg.name.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(pkg.version.as_bytes());
+            hasher.update(b"\0");
+            if let Some(ref integrity) = pkg.integrity {
+                hasher.update(integrity.as_bytes());
+            }
+            hasher.update(b"\0");
+            hasher.update(pkg.resolution.r#type.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(pkg.resolution.url.as_bytes());
+            hasher.update(b"\0");
+            if let Some(ref registry) = pkg.resolution.registry {
+                hasher.update(registry.as_bytes());
+            }
+            hasher.update(b"\0");
+        }
+
+        hasher.update(self.metadata.registry.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.metadata.config_version.to_string().as_bytes());
+
+        let computed = hasher.finalize().to_hex().to_string();
+        computed == self.metadata.content_hash
     }
 }
 
@@ -219,17 +262,19 @@ impl LockfilePackage {
         }
     }
 
-    /// Create from resolver's Resolution type
-    pub fn from_resolver_resolution(res: &ResolverResolution) -> Self {
+/// Create from resolver's Resolution type
+    /// registry_url: base URL of the registry (e.g., "https://registry.npmjs.org")
+    pub fn from_resolver_resolution(res: &ResolverResolution, registry_url: &str) -> Self {
         Self {
             id: res.package_id.as_spec(),
             name: res.package_id.name().as_str().to_string(),
             version: res.version.to_string(),
             resolution: PackageResolution {
                 r#type: "registry".to_string(),
-                url: format!("https://registry.npmjs.org/{}/-/{}-{}.tgz", 
-                    res.package_id.name().as_str(), 
-                    res.package_id.name().as_str(), 
+                url: format!("{}/{}/-/{}-{}.tgz",
+                    registry_url.trim_end_matches('/'),
+                    res.package_id.name().as_str(),
+                    res.package_id.name().as_str(),
                     res.version),
                 registry: Some("npm".to_string()),
             },

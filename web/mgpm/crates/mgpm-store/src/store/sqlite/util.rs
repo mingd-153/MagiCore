@@ -119,7 +119,10 @@ pub fn get_wal_size(path: &Path) -> i64 {
 }
 
 pub fn append_filename_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let name = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let name = path.file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("db");
     let mut result = path.to_path_buf();
     result.set_file_name(format!("{}{}", name, suffix));
     result

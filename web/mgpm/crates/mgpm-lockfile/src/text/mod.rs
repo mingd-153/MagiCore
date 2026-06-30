@@ -179,11 +179,8 @@ let version = table.get("version")
     
     // Auto-migrate v1 lockfiles to v2
     if is_v1 {
-        if let Err(e) = lockfile.migrate_v1_to_v2() {
-            // If migration fails (e.g., content hash mismatch), we still return the lockfile
-            // but with the v1 version intact so user can decide
-            eprintln!("Warning: failed to auto-migrate v1 lockfile: {}", e);
-        }
+        lockfile.migrate_v1_to_v2()
+            .map_err(|e| LockfileError::Corrupted(format!("v1 lockfile migration failed: {}", e)))?;
     }
     
     Ok(lockfile)

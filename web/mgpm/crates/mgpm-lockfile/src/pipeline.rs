@@ -82,7 +82,7 @@ impl ResolutionPipeline {
         let mut lockfile = Lockfile::new(self.config.config_version, &self.config.registry);
         
         for res in result.resolutions {
-            let mut pkg = crate::lockfile::LockfilePackage::from_resolver_resolution(&res);
+            let mut pkg = crate::lockfile::LockfilePackage::from_resolver_resolution(&res, &self.config.registry);
             
             if let Some(client) = registry_client {
                 // Download tarball to compute real SRI hash
