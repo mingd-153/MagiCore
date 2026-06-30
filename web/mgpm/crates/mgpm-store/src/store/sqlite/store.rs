@@ -150,25 +150,12 @@ impl StoreIndex for SqliteStore {
             });
         }
 
-        let normalized = if path.exists() {
-            // Canonicalize resolves .., ., and symlinks
-            std::fs::canonicalize(path).map_err(|e| StoreError::Io {
-                path: path.to_path_buf(),
-                msg: format!("failed to resolve project path: {}", e),
-            })?
-        } else {
-            let path_str = path.to_string_lossy();
-            if path_str.contains("..") {
-                return Err(StoreError::Io {
-                    path: path.to_path_buf(),
-                    msg: "path traversal detected".to_string(),
-                });
-            }
-            std::path::absolute(path).map_err(|e| StoreError::Io {
-                path: path.to_path_buf(),
-                msg: format!("failed to resolve path: {}", e),
-            })?
-        };
+        // Canonicalize resolves .., ., and symlinks atomically
+        // This avoids TOCTOU between exists() check and canonicalize()
+        let normalized = std::fs::canonicalize(path).map_err(|e| StoreError::Io {
+            path: path.to_path_buf(),
+            msg: format!("failed to resolve project path: {}", e),
+        })?;
 
         let path_str = normalized.to_string_lossy().to_string();
         let hash = hex::encode(Sha256::digest(path_str.as_bytes()));
@@ -190,24 +177,10 @@ impl StoreIndex for SqliteStore {
             });
         }
 
-        let normalized = if path.exists() {
-            std::fs::canonicalize(path).map_err(|e| StoreError::Io {
-                path: path.to_path_buf(),
-                msg: format!("failed to resolve project path: {}", e),
-            })?
-        } else {
-            let path_str = path.to_string_lossy();
-            if path_str.contains("..") {
-                return Err(StoreError::Io {
-                    path: path.to_path_buf(),
-                    msg: "path traversal detected".to_string(),
-                });
-            }
-            std::path::absolute(path).map_err(|e| StoreError::Io {
-                path: path.to_path_buf(),
-                msg: format!("failed to resolve path: {}", e),
-            })?
-        };
+        let normalized = std::fs::canonicalize(path).map_err(|e| StoreError::Io {
+            path: path.to_path_buf(),
+            msg: format!("failed to resolve project path: {}", e),
+        })?;
 
         let path_str = normalized.to_string_lossy().to_string();
 
@@ -243,33 +216,46 @@ impl StoreIndex for SqliteStore {
         let algorithm = "sha256";
         SqliteStore::validate_algorithm(algorithm)?;
 
-        let path_str = file_path.to_string_lossy();
+        // Open file first to avoid TOCTOU between metadata check and read
+        let mut file = std::fs::File::open(file_path).map_err(|e| StoreError::Io {
+            path: file_path.to_path_buf(),
+            msg: e.to_string(),
+        })?;
 
-        // Re-verify file content to prevent TOCTOU (time-of-check-to-time-of-use)
-        // Only for regular files; skip for directories and special paths
-        if let Ok(meta) = std::fs::metadata(file_path) {
-            if meta.is_file() {
-                let computed_hash = {
-                    let mut file = std::fs::File::open(file_path)?;
-                    let mut hasher = Sha256::new();
-                    let mut buf = [0u8; 8192];
-                    loop {
-                        let n = file.read(&mut buf)?;
-                        if n == 0 {
-                            break;
-                        }
-                        hasher.update(&buf[..n]);
-                    }
-                    hex::encode(hasher.finalize())
-                };
+        // Verify it's a regular file using the open file handle
+        let meta = file.metadata().map_err(|e| StoreError::Io {
+            path: file_path.to_path_buf(),
+            msg: e.to_string(),
+        })?;
+        if !meta.is_file() {
+            return Err(StoreError::Io {
+                path: file_path.to_path_buf(),
+                msg: "not a regular file".to_string(),
+            });
+        }
 
-                if computed_hash != hash {
-                    return Err(StoreError::HashMismatch {
-                        expected: hash.to_string(),
-                        actual: computed_hash,
-                    });
+        // Re-verify file content using SAME file handle (no TOCTOU)
+        let computed_hash = {
+            let mut hasher = Sha256::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = file.read(&mut buf).map_err(|e| StoreError::Io {
+                    path: file_path.to_path_buf(),
+                    msg: e.to_string(),
+                })?;
+                if n == 0 {
+                    break;
                 }
+                hasher.update(&buf[..n]);
             }
+            hex::encode(hasher.finalize())
+        };
+
+        if computed_hash != hash {
+            return Err(StoreError::HashMismatch {
+                expected: hash.to_string(),
+                actual: computed_hash,
+            });
         }
 
         let mtime = SystemTime::now()
@@ -277,6 +263,7 @@ impl StoreIndex for SqliteStore {
             .unwrap()
             .as_secs() as i64;
 
+        let path_str = file_path.to_string_lossy();
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO integrity_cache (file_path, integrity, algorithm, mtime)
@@ -305,38 +292,50 @@ impl StoreIndex for SqliteStore {
 
         match cached {
             Ok((cached_hash, _cached_mtime)) => {
-                // Try to re-verify file content to prevent cache poisoning
-                // If we can't read the file (directory, special file, etc.), return cached hash
-                if let Ok(meta) = std::fs::metadata(file_path) {
-                    // Only verify if it's a regular file
-                    if meta.is_file() {
-                        if let Ok(mut file) = std::fs::File::open(file_path) {
-                            let mut hasher = Sha256::new();
-                            let mut buf = [0u8; 8192];
-                            loop {
-                                let n = file.read(&mut buf).map_err(|e| {
-                                    StoreError::Io { path: file_path.to_path_buf(), msg: e.to_string() }
-                                })?;
-                                if n == 0 { break; }
-                                hasher.update(&buf[..n]);
-                            }
-                            let computed = hex::encode(hasher.finalize());
-                            if computed == cached_hash {
-                                return Ok(Some(cached_hash));
-                            }
-                            // Hash mismatch - stale cache, remove it
-                            let conn = self.conn.lock().unwrap();
-                            conn.execute(
-                                "DELETE FROM integrity_cache WHERE file_path = ?1",
-                                rusqlite::params![path_str.to_string()],
-                            ).ok();
-                            return Ok(None);
-                        }
+                // Open file first to avoid TOCTOU between metadata check and open
+                let mut file = match std::fs::File::open(file_path) {
+                    Ok(f) => f,
+                    Err(_) => {
+                        // Cannot open file - stale cache, remove it
+                        let conn = self.conn.lock().unwrap();
+                        conn.execute(
+                            "DELETE FROM integrity_cache WHERE file_path = ?1",
+                            rusqlite::params![path_str.to_string()],
+                        ).ok();
+                        return Ok(None);
                     }
-                    // Could not open file for verification - return cached hash
+                };
+
+                // Verify it's a regular file using the open file handle
+                let meta = file.metadata().map_err(|e| StoreError::Io {
+                    path: file_path.to_path_buf(),
+                    msg: e.to_string(),
+                })?;
+                if !meta.is_file() {
+                    return Ok(None);
                 }
-                // Not a regular file or could not get metadata - return cached hash
-                Ok(Some(cached_hash))
+
+                // Re-verify file content to prevent cache poisoning
+                let mut hasher = Sha256::new();
+                let mut buf = [0u8; 8192];
+                loop {
+                    let n = file.read(&mut buf).map_err(|e| {
+                        StoreError::Io { path: file_path.to_path_buf(), msg: e.to_string() }
+                    })?;
+                    if n == 0 { break; }
+                    hasher.update(&buf[..n]);
+                }
+                let computed = hex::encode(hasher.finalize());
+                if computed == cached_hash {
+                    return Ok(Some(cached_hash));
+                }
+                // Hash mismatch - stale cache, remove it
+                let conn = self.conn.lock().unwrap();
+                conn.execute(
+                    "DELETE FROM integrity_cache WHERE file_path = ?1",
+                    rusqlite::params![path_str.to_string()],
+                ).ok();
+                Ok(None)
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StoreError::from(e)),
