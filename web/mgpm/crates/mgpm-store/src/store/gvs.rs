@@ -434,3 +434,4 @@ impl GlobalVirtualStore {
         fs::remove_dir(&gvs_dir).ok();
     }
 }
+
