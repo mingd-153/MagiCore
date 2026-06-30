@@ -1,12 +1,15 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use super::index::{ProjectInfo, StoreError, StoreIndex};
 
 const GVS_VERSION: &str = "v1";
+const DEP_GRAPH_HASH_LEN: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GvsStats {
@@ -53,13 +56,59 @@ impl GlobalVirtualStore {
         })
     }
 
+    fn validate_dep_graph_hash(hash: &str) -> Result<(), StoreError> {
+        if hash.len() != DEP_GRAPH_HASH_LEN {
+            return Err(StoreError::Database(format!(
+                "invalid dep_graph_hash length: expected {}, got {}",
+                DEP_GRAPH_HASH_LEN,
+                hash.len()
+            )));
+        }
+        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(StoreError::Database(format!(
+                "dep_graph_hash must be lowercase hex, got: {}",
+                hash
+            )));
+        }
+        Ok(())
+    }
+
+    fn acquire_lock(&self) -> Result<fs::File, StoreError> {
+        let lock_path = self.gvs_root.join(".gvs.lock");
+        fs::create_dir_all(&self.gvs_root).map_err(|e| StoreError::Io {
+            path: self.gvs_root.clone(),
+            msg: e.to_string(),
+        })?;
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| StoreError::Io {
+                path: lock_path,
+                msg: e.to_string(),
+            })?;
+        lock_file
+            .try_lock_exclusive()
+            .map_err(|e| StoreError::Database(format!("failed to acquire GVS lock: {}", e)))?;
+        Ok(lock_file)
+    }
+
     pub fn register(
         &self,
         project_path: &Path,
         dep_graph_hash: &str,
         index: &dyn StoreIndex,
     ) -> Result<(), StoreError> {
-        index.register_project(project_path)?;
+        Self::validate_dep_graph_hash(dep_graph_hash)?;
+
+        let _lock = self.acquire_lock()?;
+
+        let canonical_path = fs::canonicalize(project_path).map_err(|e| StoreError::Io {
+            path: project_path.to_path_buf(),
+            msg: format!("failed to canonicalize project path: {}", e),
+        })?;
+
+        index.register_project(&canonical_path)?;
 
         let mut meta = serde_json::Map::new();
         meta.insert(
@@ -68,10 +117,11 @@ impl GlobalVirtualStore {
         );
         let meta_json =
             serde_json::to_string(&meta).map_err(|e| StoreError::Serialization(e.to_string()))?;
-        index.set_project_metadata(project_path, &meta_json)?;
+        index.set_project_metadata(&canonical_path, &meta_json)?;
 
         let gvs_dir = self.gvs_dir_for(dep_graph_hash);
         if gvs_dir.exists() {
+            self.verify_metadata(&gvs_dir, dep_graph_hash)?;
             return Ok(());
         }
 
@@ -84,8 +134,8 @@ impl GlobalVirtualStore {
         let meta = GvsMetadata {
             version: GVS_VERSION.to_string(),
             dep_graph_hash: dep_graph_hash.to_string(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
         };
@@ -97,6 +147,33 @@ impl GlobalVirtualStore {
             msg: e.to_string(),
         })?;
 
+        self.verify_metadata(&gvs_dir, dep_graph_hash)?;
+        Ok(())
+    }
+
+    fn verify_metadata(&self, gvs_dir: &Path, expected_hash: &str) -> Result<(), StoreError> {
+        let meta_path = gvs_dir.join(".mgpm-gvs.json");
+        if !meta_path.exists() {
+            return Err(StoreError::Database("GVS metadata file missing".into()));
+        }
+        let content = fs::read_to_string(&meta_path).map_err(|e| StoreError::Io {
+            path: meta_path,
+            msg: e.to_string(),
+        })?;
+        let meta: GvsMetadata = serde_json::from_str(&content)
+            .map_err(|e| StoreError::Serialization(e.to_string()))?;
+        if meta.dep_graph_hash != expected_hash {
+            return Err(StoreError::Database(format!(
+                "metadata hash mismatch: expected {}, got {}",
+                expected_hash, meta.dep_graph_hash
+            )));
+        }
+        if meta.version != GVS_VERSION {
+            return Err(StoreError::Database(format!(
+                "unsupported GVS version: {} (expected {})",
+                meta.version, GVS_VERSION
+            )));
+        }
         Ok(())
     }
 
@@ -105,17 +182,25 @@ impl GlobalVirtualStore {
         project_path: &Path,
         index: &dyn StoreIndex,
     ) -> Result<(), StoreError> {
+        let _lock = self.acquire_lock()?;
+
+        let canonical_path = fs::canonicalize(project_path).map_err(|e| StoreError::Io {
+            path: project_path.to_path_buf(),
+            msg: format!("failed to canonicalize project path: {}", e),
+        })?;
+        let path_str = canonical_path.to_string_lossy().to_string();
+
         let projects = index.list_projects()?;
-        let path_str = project_path.to_string_lossy().to_string();
         let dep_graph_hash = projects
             .iter()
             .find(|p| p.path == path_str)
             .and_then(|p| p.dep_graph_hash());
 
-        index.unregister_project(project_path)?;
+        index.unregister_project(&canonical_path)?;
 
         if let Some(ref hash) = dep_graph_hash {
-            let remaining = projects
+            let fresh_projects = index.list_projects()?;
+            let remaining = fresh_projects
                 .iter()
                 .filter(|p| p.path != path_str && p.dep_graph_hash() == Some(hash.clone()))
                 .count();
@@ -189,6 +274,8 @@ impl GlobalVirtualStore {
     }
 
     pub fn gc(&self, index: &dyn StoreIndex) -> Result<GvsGcReport, StoreError> {
+        let _lock = self.acquire_lock()?;
+
         let projects = index.list_projects()?;
         let active_hashes: HashSet<String> = projects
             .iter()
@@ -213,6 +300,14 @@ impl GlobalVirtualStore {
                         .to_string();
 
                     if !active_hashes.contains(&dir_name) {
+                        let project_still_exists = projects.iter().any(|p| {
+                            p.dep_graph_hash() == Some(dir_name.clone())
+                                && Path::new(&p.path).exists()
+                        });
+                        if project_still_exists {
+                            continue;
+                        }
+
                         let nm = path.join("node_modules");
                         if nm.exists() {
                             if let Ok(nm_entries) = fs::read_dir(&nm) {
