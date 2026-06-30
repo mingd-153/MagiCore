@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,6 +11,7 @@ use super::index::{ProjectInfo, StoreError, StoreIndex};
 
 const GVS_VERSION: &str = "v1";
 const DEP_GRAPH_HASH_LEN: usize = 64;
+#[allow(dead_code)]
 const LOCK_TIMEOUT_MS: u64 = 5000;
 const GVS_DIR_PERMS: u32 = 0o700;
 
@@ -192,7 +193,7 @@ impl GlobalVirtualStore {
             })?;
             self.set_secure_perms(&meta_path)?;
 
-            let mut verify_meta = fs::read_to_string(&meta_path).map_err(|e| StoreError::Io {
+            let verify_meta = fs::read_to_string(&meta_path).map_err(|e| StoreError::Io {
                 path: meta_path.clone(),
                 msg: e.to_string(),
             })?;

@@ -1,6 +1,8 @@
 use std::fs;
+use std::path::PathBuf;
 
 use mgpm_installer::installer::{InstallOptions, Installer};
+use mgpm_linker::linker::LinkerStrategy;
 use mgpm_lockfile::{Lockfile, LockfilePackage, PackageResolution};
 
 use tokio::sync::mpsc;
@@ -102,6 +104,8 @@ install:
         project_root: root.clone(),
         sqlite_path: store_path.join("mgpm.db"),
         jsonl_log: false,
+        linker_strategy: LinkerStrategy::Hoisted,
+        gvs_root: PathBuf::from("/tmp/.mgpm").join("gvs").join("v1"),
     };
 
     let (tx, _rx) = mpsc::channel(256);
@@ -165,6 +169,8 @@ fn e2e_full_install_with_store_verify() {
         project_root: root.clone(),
         sqlite_path: store_path.join("mgpm.db"),
         jsonl_log: false,
+        linker_strategy: LinkerStrategy::Hoisted,
+        gvs_root: PathBuf::from("/tmp/.mgpm").join("gvs").join("v1"),
     };
 
     let (tx, _rx) = mpsc::channel(256);

@@ -3,9 +3,88 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
+
+use mgpm_store::store::cas::ContentStore;
+use mgpm_store::store::gvs::GlobalVirtualStore;
 
 pub type RefcountCallback = Arc<dyn Fn(&str) -> io::Result<()> + Send + Sync>;
+
+/// Strategy for linking node_modules
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LinkerStrategy {
+    /// npm-style flat node_modules (default)
+    Hoisted,
+    /// pnpm-style strict, symlinked node_modules
+    Isolated,
+    /// Yarn PnP-style (future — skeleton only)
+    Pnp,
+}
+
+impl LinkerStrategy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Hoisted => "hoisted",
+            Self::Isolated => "isolated",
+            Self::Pnp => "pnp",
+        }
+    }
+}
+
+impl std::str::FromStr for LinkerStrategy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "hoisted" => Ok(Self::Hoisted),
+            "isolated" => Ok(Self::Isolated),
+            "pnp" => Ok(Self::Pnp),
+            _ => Err(format!(
+                "unknown linker strategy: '{}'. Use 'hoisted', 'isolated', or 'pnp'",
+                s
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for LinkerStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Linker trait — defines the interface for all linker strategies
+pub trait Linker: Send + Sync {
+    /// Link all packages into node_modules
+    fn link_all(
+        &self,
+        packages: &[PackageLinkInfo],
+        store: &ContentStore,
+        project_root: &Path,
+    ) -> Result<LinkResult, LinkError>;
+
+    /// Link a single package
+    fn link_package(
+        &self,
+        pkg: &PackageLinkInfo,
+        store: &ContentStore,
+        dest: &Path,
+    ) -> Result<(), LinkError>;
+
+    /// Create binary symlinks
+    fn link_bins(
+        &self,
+        packages: &[PackageLinkInfo],
+        store: &ContentStore,
+        bin_dir: &Path,
+    ) -> Result<(), LinkError>;
+
+    /// Unlink a package from node_modules
+    fn unlink_package(&self, name: &str, project_root: &Path) -> Result<(), LinkError>;
+
+    /// Get the linker strategy
+    fn strategy(&self) -> LinkerStrategy;
+}
 
 #[derive(Clone)]
 pub struct LinkerOptions {
@@ -18,6 +97,8 @@ pub struct LinkerOptions {
     pub store_path: PathBuf,
     pub refcount_callback: Option<RefcountCallback>,
     pub workspace: Option<mgpm_workspace::Workspace>,
+    pub strategy: LinkerStrategy,
+    pub gvs_root: PathBuf,
 }
 
 impl std::fmt::Debug for LinkerOptions {
@@ -32,6 +113,8 @@ impl std::fmt::Debug for LinkerOptions {
             .field("store_path", &self.store_path)
             .field("refcount_callback", &self.refcount_callback.as_ref().map(|_| "Box<dyn Fn>"))
             .field("workspace", &self.workspace)
+            .field("strategy", &self.strategy)
+            .field("gvs_root", &self.gvs_root)
             .finish()
     }
 }
@@ -51,6 +134,12 @@ impl Default for LinkerOptions {
                 .join("store"),
             refcount_callback: None,
             workspace: None,
+            strategy: LinkerStrategy::Hoisted,
+            gvs_root: dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".mgpm")
+                .join("gvs")
+                .join("v1"),
         }
     }
 }
@@ -62,291 +151,105 @@ pub struct PackageLinkInfo {
     pub dependencies: Vec<String>,
     pub peer_dependencies: Vec<(String, String)>,
     pub files: Vec<(String, String)>,
+    pub is_root_dep: bool,
+    pub bin_entries: Vec<(String, String)>,
+    pub total_size: u64,
+    pub dep_graph_hash: String,
 }
 
-pub struct Linker {
-    options: LinkerOptions,
+impl PackageLinkInfo {
+    pub fn new(
+        name: String,
+        version: String,
+        dependencies: Vec<String>,
+        peer_dependencies: Vec<(String, String)>,
+        files: Vec<(String, String)>,
+        is_root_dep: bool,
+        bin_entries: Vec<(String, String)>,
+        total_size: u64,
+        dep_graph_hash: String,
+    ) -> Self {
+        Self {
+            name,
+            version,
+            dependencies,
+            peer_dependencies,
+            files,
+            is_root_dep,
+            bin_entries,
+            total_size,
+            dep_graph_hash,
+        }
+    }
 }
 
-impl Linker {
-    pub fn new(options: LinkerOptions) -> Self {
-        Self { options }
+pub struct LinkerFactory;
+
+impl LinkerFactory {
+    pub fn create(
+        options: LinkerOptions,
+        _store: &mgpm_store::store::cas::ContentStore,
+    ) -> Result<Box<dyn Linker>, LinkError> {
+        match options.strategy {
+            LinkerStrategy::Hoisted => Ok(Box::new(HoistedLinker::new(options))),
+            LinkerStrategy::Isolated => {
+                let gvs = GlobalVirtualStore::new(options.gvs_root.clone());
+                Ok(Box::new(IsolatedLinker::new(gvs, options)))
+            }
+            LinkerStrategy::Pnp => Err(LinkError::Io(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "PnP linker not yet implemented",
+            ))),
+        }
     }
+}
 
-    pub fn link_packages(&self, packages: &[PackageLinkInfo]) -> Result<LinkResult, LinkError> {
-        let temp_dir = self.options.project_root.join(".mgpm_temp");
-        if temp_dir.exists() {
-            fs::remove_dir_all(&temp_dir).ok();
-        }
-        fs::create_dir_all(&temp_dir)?;
+mod hoisted;
+mod isolated;
 
-        let result = self.link_packages_internal(packages, &temp_dir);
+pub use hoisted::HoistedLinker;
+pub use isolated::IsolatedLinker;
 
-        match &result {
-            Ok(_) => {
-                let mgpm_dir =
-                    self.options.project_root.join(&self.options.virtual_store_dir);
-                if mgpm_dir.exists() && !self.options.global_virtual_store {
-                    fs::remove_dir_all(&mgpm_dir).ok();
-                }
-                let mgpm_parent = mgpm_dir.parent().unwrap_or(&self.options.project_root);
-                fs::create_dir_all(mgpm_parent)?;
-                if mgpm_dir.exists() {
-                    fs::remove_dir_all(&mgpm_dir).ok();
-                }
-                fs::rename(&temp_dir, &mgpm_dir)?;
+#[derive(Debug, Clone)]
+pub struct LinkResult {
+    pub linked: Vec<PackageLinkResult>,
+    pub node_modules_path: PathBuf,
+    pub dep_graph_hash: String,
+}
 
-                if let Some(ref callback) = self.options.refcount_callback {
-                    for pkg in packages {
-                        let package_id = format!("{}@{}", pkg.name, pkg.version);
-                        callback(&package_id)?;
-                    }
-                }
-            }
-            Err(_) => {
-                fs::remove_dir_all(&temp_dir).ok();
-            }
-        }
+#[derive(Debug, Clone)]
+pub struct PackageLinkResult {
+    pub name: String,
+    pub version: String,
+    pub path: PathBuf,
+    pub peer_hash: String,
+    pub linked_deps: Vec<String>,
+}
 
-        result
-    }
-
-    fn link_packages_internal(
-        &self,
-        packages: &[PackageLinkInfo],
-        temp_dir: &Path,
-    ) -> Result<LinkResult, LinkError> {
-        let virtual_store = temp_dir.join("virtual_store");
-        let mut linked = Vec::new();
-
-        for pkg in packages {
-            let peer_hash = self.compute_peer_hash(pkg);
-            let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
-                .replace('/', "_")
-                .replace('@', "_");
-            let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
-
-            let store_pkg_dir = virtual_store
-                .join(&pkg_dir_name)
-                .join("node_modules")
-                .join(&pkg.name);
-            fs::create_dir_all(&store_pkg_dir)?;
-
-            for (rel_path, hash) in &pkg.files {
-                let src = self
-                    .options
-                    .store_path
-                    .join("files")
-                    .join("sha256")
-                    .join(&hash[..2])
-                    .join(hash);
-
-                let dst = store_pkg_dir.join(rel_path);
-                if let Some(parent) = dst.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-
-                if self.options.symlinks {
-                    create_relative_symlink(&src, &dst)?;
-                } else {
-                    fs::copy(&src, &dst)?;
-                }
-            }
-
-            if self.options.hoist && self.should_hoist(pkg) {
-                let hoist_node_modules = temp_dir.join("node_modules");
-                fs::create_dir_all(&hoist_node_modules)?;
-
-                let hoist_dst = hoist_node_modules.join(&pkg.name);
-                if !hoist_dst.exists() {
-                    create_relative_symlink(&store_pkg_dir, &hoist_dst)?;
-                }
-            }
-
-            let mgpm_root = temp_dir.join(".mgpm");
-            fs::create_dir_all(&mgpm_root)?;
-
-            let pkg_link = mgpm_root.join(&pkg.name);
-            create_relative_symlink(&store_pkg_dir, &pkg_link)?;
-
-            for dep_name in &pkg.dependencies {
-                // Check if the dependency is a workspace member first.
-                // If so, symlink directly to the workspace member's directory
-                // for real-time editing during development.
-                if let Some(ref ws) = self.options.workspace {
-                    if let Some(ws_member) = ws.find_member(dep_name) {
-                        let dep_dst_dir = store_pkg_dir.join("node_modules");
-                        fs::create_dir_all(&dep_dst_dir)?;
-                        let dep_dst = dep_dst_dir.join(dep_name);
-                        if !dep_dst.exists() && ws_member.path.exists() {
-                            create_relative_symlink(&ws_member.path, &dep_dst)?;
-                        }
-                        continue;
-                    }
-                }
-
-                if let Some(dep_pkg) = packages.iter().find(|p| p.name == *dep_name) {
-                    let dep_peer_hash = self.compute_peer_hash(dep_pkg);
-                    let dep_suffix = format!("{}@{}", dep_pkg.name, dep_pkg.version)
-                        .replace('/', "_")
-                        .replace('@', "_");
-                    let dep_dir_name = format!("{}_{}", dep_suffix, dep_peer_hash);
-                    let dep_src = virtual_store
-                        .join(&dep_dir_name)
-                        .join("node_modules")
-                        .join(&dep_pkg.name);
-
-                    let dep_dst_dir = store_pkg_dir.join("node_modules");
-                    fs::create_dir_all(&dep_dst_dir)?;
-                    let dep_dst = dep_dst_dir.join(&dep_pkg.name);
-
-                    if !dep_dst.exists() && dep_src.exists() {
-                        create_relative_symlink(&dep_src, &dep_dst)?;
-                    }
-                }
-            }
-
-            linked.push(PackageLinkResult {
-                name: pkg.name.clone(),
-                version: pkg.version.clone(),
-                path: store_pkg_dir,
-                peer_hash: peer_hash.clone(),
-                linked_deps: pkg.dependencies.clone(),
-            });
-        }
-
-        let root_node_modules = if self.options.hoist {
-            temp_dir.join("node_modules")
-        } else {
-            let nm = temp_dir.join("node_modules");
-            fs::create_dir_all(&nm)?;
-
-            let mgpm_root = temp_dir.join(".mgpm");
-            let virtual_store_link = nm.join(".mgpm");
-            if !virtual_store_link.exists() {
-                create_relative_symlink(&mgpm_root, &virtual_store_link)?;
-            }
-
-            nm
-        };
-
-        self.create_bin_symlinks(packages, &virtual_store, &root_node_modules)?;
-
-        Ok(LinkResult {
-            linked,
-            node_modules_path: root_node_modules,
-        })
-    }
-
-    fn should_hoist(&self, pkg: &PackageLinkInfo) -> bool {
-        if !self.options.hoist {
-            return false;
-        }
-        if self.options.hoist_pattern.is_empty() {
-            return true;
-        }
-        if self.options.hoist_pattern.contains(&"*".to_string()) {
-            return true;
-        }
-        self.options.hoist_pattern.iter().any(|pat| {
-            glob::Pattern::new(pat)
-                .ok()
-                .map_or(false, |g| g.matches(&pkg.name))
-        })
-    }
-
-    fn create_bin_symlinks(
-        &self,
-        packages: &[PackageLinkInfo],
-        virtual_store: &Path,
-        node_modules: &Path,
-    ) -> Result<(), LinkError> {
-        let bin_dir = node_modules.join(".bin");
-        fs::create_dir_all(&bin_dir)?;
-
-        for pkg in packages {
-            let peer_hash = self.compute_peer_hash(pkg);
-            let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
-                .replace('/', "_")
-                .replace('@', "_");
-            let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
-            let pkg_node_modules = virtual_store
-                .join(&pkg_dir_name)
-                .join("node_modules")
-                .join(&pkg.name);
-
-            let package_json_path = pkg_node_modules.join("package.json");
-            if !package_json_path.exists() {
-                continue;
-            }
-
-            let content = match fs::read_to_string(&package_json_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            let json: serde_json::Value = match serde_json::from_str(&content) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let bin = match json.get("bin") {
-                Some(b) => b,
-                None => continue,
-            };
-
-            let bin_entries: Vec<(String, String)> = if let Some(obj) = bin.as_object() {
-                obj.iter()
-                    .map(|(k, v)| {
-                        let path = v.as_str().unwrap_or(k);
-                        (k.clone(), path.to_string())
-                    })
-                    .collect()
-            } else if let Some(s) = bin.as_str() {
-                let name = pkg
-                    .name
-                    .split('/')
-                    .last()
-                    .unwrap_or(&pkg.name)
-                    .to_string();
-                vec![(name, s.to_string())]
-            } else {
-                continue;
-            };
-
-            for (bin_name, bin_path) in &bin_entries {
-                let src = pkg_node_modules.join(bin_path);
-                let dst = bin_dir.join(bin_name);
-
-                if src.exists() && !dst.exists() {
-                    create_relative_symlink(&src, &dst)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn compute_peer_hash(&self, pkg: &PackageLinkInfo) -> String {
-        if pkg.peer_dependencies.is_empty() {
-            return String::new();
-        }
-        let mut sorted: Vec<_> = pkg.peer_dependencies.iter().collect();
-        sorted.sort();
-        let mut hasher = Sha256::new();
-        for (n, v) in sorted {
-            hasher.update(n.as_bytes());
-            hasher.update(b"\0");
-            hasher.update(v.as_bytes());
-            hasher.update(b"\0");
-        }
-        hex::encode(hasher.finalize())[..8].to_string()
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum LinkError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("linker error: {0}")]
+    Other(String),
 }
 
 fn create_relative_symlink(src: &Path, dst: &Path) -> io::Result<()> {
     if dst.exists() {
         return Ok(());
+    }
+
+    // Validate destination doesn't escape intended directory
+    if dst.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("destination path contains '..': {}", dst.display()),
+        ));
+    }
+
+    // Create parent directory atomically before symlink
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)?;
     }
 
     let relative = make_relative(dst, src)?;
@@ -362,6 +265,17 @@ fn create_relative_symlink(src: &Path, dst: &Path) -> io::Result<()> {
         } else {
             std::os::windows::fs::symlink_file(&relative, dst)?;
         }
+    }
+    Ok(())
+}
+
+/// Validate that a relative path does not contain parent directory components
+fn validate_rel_path(path: &str) -> Result<(), LinkError> {
+    if path.contains("..") {
+        return Err(LinkError::Other(format!(
+            "path contains parent directory traversal: '{}'",
+            path
+        )));
     }
     Ok(())
 }
@@ -405,25 +319,4 @@ fn make_relative(base: &Path, target: &Path) -> io::Result<PathBuf> {
     }
 
     Ok(result)
-}
-
-#[derive(Debug, Clone)]
-pub struct LinkResult {
-    pub linked: Vec<PackageLinkResult>,
-    pub node_modules_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub struct PackageLinkResult {
-    pub name: String,
-    pub version: String,
-    pub path: PathBuf,
-    pub peer_hash: String,
-    pub linked_deps: Vec<String>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum LinkError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
 }

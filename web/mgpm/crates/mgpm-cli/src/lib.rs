@@ -4,6 +4,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use mgpm_installer::installer::{InstallOptions as RealInstallOptions, Installer};
+use mgpm_linker::linker::LinkerStrategy;
 
 #[napi(object)]
 #[derive(Debug, Clone)]
@@ -67,6 +68,8 @@ impl MgpmCli {
             project_root: PathBuf::from("."),
             sqlite_path: home.join(".mgpm").join("mgpm.db"),
             jsonl_log: false,
+            linker_strategy: LinkerStrategy::Hoisted,
+            gvs_root: home.join(".mgpm").join("gvs").join("v1"),
         };
 
         let (tx, _rx) = tokio::sync::mpsc::channel(256);
