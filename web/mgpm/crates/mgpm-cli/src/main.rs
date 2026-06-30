@@ -10,8 +10,7 @@ use mgpm_core::config::MgpmConfig;
 use mgpm_installer::installer::{InstallOptions as RealInstallOptions, Installer};
 use mgpm_resolver::{DependencyProvider, Resolver, solver::ResolvedDep};
 use mgpm_registry::{NpmRegistry, RegistryClient};
-use mgpm_store::{ContentStore, SqliteStore, StoreReport, StoreVerifier};
-use mgpm_store::store::index::StoreIndex;
+use mgpm_store::{ContentStore, GlobalVirtualStore, SqliteStore, StoreVerifier};
 use mgpm_store::store::CasContentStore;
 
 mod profiler;
@@ -200,6 +199,29 @@ enum StoreCommand {
         #[command(subcommand)]
         command: CompletionsCacheAction,
     },
+    /// Global Virtual Store operations
+    Gvs {
+        #[command(subcommand)]
+        command: GvsCommand,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum GvsCommand {
+    /// Register current project in the global virtual store
+    Register {
+        /// Dependency graph hash to register with
+        #[arg(long)]
+        dep_graph_hash: String,
+    },
+    /// Unregister current project from the global virtual store
+    Unregister,
+    /// List all registered projects
+    List,
+    /// Show GVS status
+    Status,
+    /// Garbage collect orphaned GVS directories
+    Gc,
 }
 
 #[derive(clap::Subcommand)]
@@ -1499,6 +1521,128 @@ fn cmd_store_prune(config: &MgpmConfig, dry_run: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn cmd_store_gvs(config: &MgpmConfig, cmd: GvsCommand) -> Result<(), String> {
+    let gvs_path = config.store.gvs_path();
+    let gvs = GlobalVirtualStore::new(gvs_path);
+
+    let store_path = config.store.store_path();
+    let index_path = store_path.join("v2").join("index.db");
+
+    match cmd {
+        GvsCommand::Register { dep_graph_hash } => {
+            let index = SqliteStore::open(&index_path, false)
+                .map_err(|e| format!("failed to open store: {}", e))?;
+            let project_path = std::env::current_dir()
+                .map_err(|e| format!("failed to get current dir: {}", e))?;
+
+            gvs.ensure_dirs()
+                .map_err(|e| format!("failed to create GVS dirs: {}", e))?;
+            gvs.register(&project_path, &dep_graph_hash, &index)
+                .map_err(|e| format!("failed to register project: {}", e))?;
+
+            println!("{} Project registered in GVS", "[OK]".green().bold());
+            println!("  Path: {}", cpath(&project_path));
+            println!("  Dep graph hash: {}", dep_graph_hash);
+            println!("  GVS root: {}", cpath(gvs.root()));
+        }
+        GvsCommand::Unregister => {
+            let index = SqliteStore::open(&index_path, false)
+                .map_err(|e| format!("failed to open store: {}", e))?;
+            let project_path = std::env::current_dir()
+                .map_err(|e| format!("failed to get current dir: {}", e))?;
+
+            gvs.unregister(&project_path, &index)
+                .map_err(|e| format!("failed to unregister project: {}", e))?;
+
+            println!("{} Project unregistered from GVS", "[OK]".green().bold());
+            println!("  Path: {}", cpath(&project_path));
+        }
+        GvsCommand::List => {
+            if !index_path.exists() {
+                println!("{} No projects registered in GVS", "[INFO]".cyan().bold());
+                return Ok(());
+            }
+
+            let index = SqliteStore::open(&index_path, true)
+                .map_err(|e| format!("failed to open store: {}", e))?;
+
+            let projects = gvs
+                .list_projects(&index)
+                .map_err(|e| format!("failed to list projects: {}", e))?;
+
+            if projects.is_empty() {
+                println!("{} No projects registered in GVS", "[INFO]".cyan().bold());
+                return Ok(());
+            }
+
+            println!("{} Registered projects:", "[LIST]".cyan().bold());
+            for p in &projects {
+                let hash = p.dep_graph_hash().unwrap_or_else(|| "N/A".to_string());
+                println!(
+                    "  {} (hash: {})",
+                    cpath(&PathBuf::from(&p.path)),
+                    hash
+                );
+            }
+            println!("  Total: {} project(s)", projects.len());
+        }
+        GvsCommand::Status => {
+            if !index_path.exists() {
+                println!("{} GVS not initialized", "[INFO]".cyan().bold());
+                return Ok(());
+            }
+
+            let index = SqliteStore::open(&index_path, true)
+                .map_err(|e| format!("failed to open store: {}", e))?;
+
+            let stats = gvs
+                .status(&index)
+                .map_err(|e| format!("failed to get GVS status: {}", e))?;
+
+            println!("{} GVS status", "[INFO]".cyan().bold());
+            println!("  Root: {}", cpath(&stats.gvs_root));
+            println!("  Projects: {}", stats.total_projects);
+            println!("  Packages: {}", stats.total_packages);
+            println!("  Symlinks: {}", stats.total_symlinks);
+            println!("  Total size: {}", format_size(stats.total_size_bytes));
+            if stats.reclaimable_dirs > 0 {
+                println!(
+                    "  {} Reclaimable: {} dir(s), {} symlink(s)",
+                    "[WARN]".yellow().bold(),
+                    stats.reclaimable_dirs,
+                    stats.reclaimable_symlinks,
+                );
+            }
+        }
+        GvsCommand::Gc => {
+            if !index_path.exists() {
+                println!("{} No orphaned GVS directories found", "[OK]".green().bold());
+                return Ok(());
+            }
+
+            let index = SqliteStore::open(&index_path, false)
+                .map_err(|e| format!("failed to open store: {}", e))?;
+
+            let report = gvs
+                .gc(&index)
+                .map_err(|e| format!("GVS GC failed: {}", e))?;
+
+            if report.removed_dirs.is_empty() {
+                println!("{} No orphaned GVS directories found", "[OK]".green().bold());
+            } else {
+                println!("{} GVS GC complete", "[OK]".green().bold());
+                for dir in &report.removed_dirs {
+                    println!("  Removed: {}", cpath(dir));
+                }
+                println!("  Symlinks removed: {}", report.removed_symlinks);
+                println!("  Reclaimed: {}", format_size(report.reclaimed_bytes));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_init() -> Result<(), String> {
     eprintln!(
         "{} {}",
@@ -2132,6 +2276,7 @@ async fn main() -> Result<(), String> {
             StoreCommand::Verify { fix } => cmd_store_verify(&config, fix),
             StoreCommand::Status => cmd_store_status(&config),
             StoreCommand::Prune { dry_run } => cmd_store_prune(&config, dry_run),
+            StoreCommand::Gvs { command: gvs_cmd } => cmd_store_gvs(&config, gvs_cmd),
             StoreCommand::CompletionsCache { command: cache_cmd } => {
                 cmd_completions_cache(cache_cmd)
             }

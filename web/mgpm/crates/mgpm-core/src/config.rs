@@ -264,6 +264,15 @@ impl StoreConfig {
                 .join("cache")
         })
     }
+
+    /// Returns the global virtual store path (~/.mgpm/gvs/v1).
+    pub fn gvs_path(&self) -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".mgpm")
+            .join("gvs")
+            .join("v1")
+    }
 }
 
 /// CLI configuration
