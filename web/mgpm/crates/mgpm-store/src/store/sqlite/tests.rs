@@ -708,11 +708,12 @@ fn test_integrity_cache_special_paths() {
         assert_eq!(cached.unwrap(), hash);
     }
 
-    // Also test that non-regular files (directories) return cached hash
+    // Non-regular files (directories) should NOT return cached hash (security fix)
+    // update_integrity_cache should fail for directories
     let hash = hex::encode(Sha256::digest(b"dir-content"));
-    store.update_integrity_cache(cache_dir.path(), &hash).unwrap();
+    assert!(store.update_integrity_cache(cache_dir.path(), &hash).is_err(), "directory should fail to update");
     let cached = store.get_cached_integrity(cache_dir.path()).unwrap();
-    assert!(cached.is_some(), "directory should return cached hash");
+    assert!(cached.is_none(), "directory should return None, not cached hash");
 }
 
 #[test]

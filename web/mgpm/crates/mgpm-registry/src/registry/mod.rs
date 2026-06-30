@@ -1,3 +1,6 @@
+use base64::Engine;
+use sha2::{Digest, Sha256};
+
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -217,18 +220,45 @@ impl RegistryClient {
         let name = package_id.name().as_str();
         let version = package_id.version().to_string();
         let url = format!("https://registry.npmjs.org/{}/{}", name, version);
-        
-        // Get package metadata to find tarball URL
+
+        // Get package metadata to find tarball URL and expected integrity
         let json = self.get_json(&url, None).await?;
-        
+
         let tarball_url = json
             .get("dist")
             .and_then(|d| d.get("tarball"))
             .and_then(|t| t.as_str())
             .ok_or(RegistryError::TarballNotFound)?;
-        
+
+        // Get expected integrity from registry metadata (SRI format: sha256-<base64>)
+        let expected_integrity = json
+            .get("dist")
+            .and_then(|d| d.get("integrity"))
+            .and_then(|i| i.as_str())
+            .map(|s| s.to_string());
+
         // Download the tarball bytes
-        self.get_bytes(tarball_url, None).await
+        let bytes = self.get_bytes(tarball_url, None).await?;
+
+        // Verify integrity if provided by registry
+        if let Some(ref expected) = expected_integrity {
+            let actual = Self::compute_sha256_sri(&bytes);
+            if &actual != expected {
+                return Err(RegistryError::NetworkError(format!(
+                    "integrity mismatch: expected {}, got {}",
+                    expected, actual
+                )));
+            }
+        }
+
+        Ok(bytes)
+    }
+
+    /// Compute SHA-256 SRI format hash (sha256-<base64>)
+    fn compute_sha256_sri(bytes: &[u8]) -> String {
+        let hash = Sha256::digest(bytes);
+        let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(hash);
+        format!("sha256-{}", b64)
     }
 }
 

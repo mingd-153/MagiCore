@@ -8,6 +8,8 @@ use tokio::sync::mpsc;
 
 use mgpm_core::config::MgpmConfig;
 use mgpm_installer::installer::{InstallOptions as RealInstallOptions, Installer};
+use mgpm_resolver::{DependencyProvider, Resolver, solver::ResolvedDep};
+use mgpm_registry::{NpmRegistry, RegistryClient};
 use mgpm_store::{ContentStore, SqliteStore, StoreReport, StoreVerifier};
 use mgpm_store::store::index::StoreIndex;
 use mgpm_store::store::CasContentStore;
@@ -22,6 +24,52 @@ mod auth;
 use profiler::PhaseProfiler;
 use advisory_db::AdvisoryDb;
 use importer::{detect_format, import_lockfile, LockfileFormat};
+
+/// Registry-backed DependencyProvider for resolver
+struct RegistryDependencyProvider {
+    registry: NpmRegistry,
+}
+
+impl DependencyProvider for RegistryDependencyProvider {
+    fn get_versions(&self, package: &mgpm_core::PackageName) -> Vec<mgpm_core::Version> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(self.registry.get_package_versions(package))
+            .unwrap_or_default()
+    }
+
+    fn get_dependencies(&self, package_id: &mgpm_core::PackageId) -> Vec<ResolvedDep> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let json = match self.registry.get_package(package_id.name()).await {
+                Ok(j) => j,
+                Err(_) => return Vec::new(),
+            };
+            let version_str = package_id.version().to_string();
+            let versions = match json.get("versions").and_then(|v| v.as_object()) {
+                Some(v) => v,
+                None => return Vec::new(),
+            };
+            let version_info = match versions.get(&version_str) {
+                Some(v) => v,
+                None => return Vec::new(),
+            };
+            let deps = match version_info.get("dependencies").and_then(|v| v.as_object()) {
+                Some(d) => d,
+                None => return Vec::new(),
+            };
+            deps.iter()
+                .filter_map(|(name, version)| {
+                    Some(ResolvedDep {
+                        package: mgpm_core::PackageName::new(name).ok()?,
+                        spec: version.as_str().unwrap_or("*").to_string(),
+                        optional: false,
+                        peer: false,
+                    })
+                })
+                .collect()
+        })
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "mgpm", version, about = "MegaGate Package Manager")]
@@ -1141,31 +1189,27 @@ async fn cmd_install(
         mgpm_lockfile::text::read_text(Path::new("mgpm.lock"))
             .map_err(|e| format!("failed to read lockfile: {}", e))?
     } else {
-        let mut lf = mgpm_lockfile::Lockfile::new(1, "https://registry.npmjs.org");
-        for dep in &wanted_deps {
-            let pkg = mgpm_lockfile::LockfilePackage {
-                id: format!("{}@{}", dep.name.as_str(), dep.version_req),
-                name: dep.name.as_str().to_string(),
-                version: dep.version_req.clone(),
-                resolution: mgpm_lockfile::PackageResolution {
-                    r#type: "registry".to_string(),
-                    url: format!(
-                        "https://registry.npmjs.org/{}/-/{}-{}.tgz",
-                        dep.name.as_str(),
-                        dep.name.as_str(),
-                        dep.version_req
-                    ),
-                    registry: Some("npm".to_string()),
-                },
-                integrity: None,
-            };
-            lf.add_package(pkg);
-        }
-        lf.sort_packages();
-        lf.compute_content_hash();
-        lf.update_timestamp();
-        lf
+        eprintln!("  {} No lockfile found, generating from registry...", "[INFO]".cyan().bold());
+        
+        let npm_registry = NpmRegistry::new("https://registry.npmjs.org");
+        let provider = RegistryDependencyProvider { registry: npm_registry };
+        let resolver = Resolver::new(Box::new(provider));
+        let config = mgpm_lockfile::ResolutionConfig::default();
+        let pipeline = mgpm_lockfile::ResolutionPipeline::new(resolver, config);
+        let registry_client = RegistryClient::new();
+        
+        let lockfile = pipeline
+            .resolve_and_lock(&wanted_deps, &std::env::current_dir().unwrap(), Some(&registry_client))
+            .await
+            .map_err(|e| format!("failed to generate lockfile: {}", e))?;
+        
+        lockfile
     };
+
+    // Verify lockfile integrity if reading from an existing lockfile
+    if Path::new("mgpm.lock").exists() && !lockfile.verify_content_hash() {
+        return Err("lockfile content hash mismatch — aborting install for security. Run `mgpm lockfile validate` for details.".to_string());
+    }
 
     profiler.end("resolve");
 
@@ -2224,6 +2268,8 @@ fn cmd_lockfile_validate() -> Result<(), String> {
 
     if lockfile.metadata.content_hash.is_empty() {
         issues.push("content hash is empty".to_string());
+    } else if !lockfile.verify_content_hash() {
+        issues.push("content hash mismatch — lockfile has been tampered with".to_string());
     }
 
     for (i, pkg) in lockfile.packages.iter().enumerate() {
