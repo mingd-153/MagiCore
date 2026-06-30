@@ -28,6 +28,7 @@ mgpm-store = { path = "crates/mgpm-store" }
 mgpm-resolver = { path = "crates/mgpm-resolver" }
 mgpm-lockfile = { path = "crates/mgpm-lockfile" }
 mgpm-installer = { path = "crates/mgpm-installer" }
+mgpm-linker = { path = "crates/mgpm-linker" }
 mgpm-registry = { path = "crates/mgpm-registry" }
 mgpm-workspace = { path = "crates/mgpm-workspace" }
 mgpm-plugins = { path = "crates/mgpm-plugins" }

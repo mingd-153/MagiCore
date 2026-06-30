@@ -13,7 +13,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinSet;
 
+use mgpm_linker::linker::{LinkerFactory, LinkerOptions, LinkerStrategy};
 use mgpm_lockfile::Lockfile;
+use mgpm_store::store::cas::ContentStore;
+use mgpm_store::SqliteStore;
 
 #[derive(Debug, Clone)]
 pub struct InstallOptions {
@@ -29,6 +32,8 @@ pub struct InstallOptions {
     pub project_root: PathBuf,
     pub sqlite_path: PathBuf,
     pub jsonl_log: bool,
+    pub linker_strategy: LinkerStrategy,
+    pub gvs_root: PathBuf,
 }
 
 impl Default for InstallOptions {
@@ -47,6 +52,8 @@ impl Default for InstallOptions {
             project_root: PathBuf::from("."),
             sqlite_path: home.join(".mgpm").join("mgpm.db"),
             jsonl_log: false,
+            linker_strategy: LinkerStrategy::Hoisted,
+            gvs_root: home.join(".mgpm").join("gvs").join("v1"),
         }
     }
 }
@@ -210,14 +217,12 @@ impl Installer {
         &self,
         packages: &[mgpm_linker::PackageLinkInfo],
     ) -> Result<mgpm_linker::LinkResult, InstallError> {
-        use mgpm_linker::Linker;
-
         let conn = Arc::new(Mutex::new(
             Connection::open(self.options.sqlite_path.as_path())
                 .map_err(|e| InstallError::SqlError(e.to_string()))?,
         ));
 
-        let linker_options = mgpm_linker::LinkerOptions {
+        let linker_options = LinkerOptions {
             project_root: self.options.project_root.clone(),
             virtual_store_dir: self.options.virtual_store_path.clone(),
             global_virtual_store: false,
@@ -238,11 +243,24 @@ impl Installer {
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
                 Ok(())
             }) as mgpm_linker::RefcountCallback),
+            strategy: self.options.linker_strategy,
+            gvs_root: self.options.gvs_root.clone(),
         };
 
-        let linker = Linker::new(linker_options);
+        let index = SqliteStore::open(&self.options.sqlite_path, false)
+            .map_err(|e| InstallError::SqlError(e.to_string()))?;
+
+        let store = ContentStore::new(
+            self.options.store_path.join("v2").join("CAS"),
+            Box::new(index),
+        )
+        .map_err(|e| InstallError::LinkError(e.to_string()))?;
+
+        let linker = LinkerFactory::create(linker_options, &store)
+            .map_err(|e| InstallError::LinkError(e.to_string()))?;
+
         linker
-            .link_packages(packages)
+            .link_all(packages, &store, &self.options.project_root)
             .map_err(|e| InstallError::LinkError(e.to_string()))
     }
 
@@ -655,6 +673,10 @@ impl Installer {
                 dependencies: vec![],
                 peer_dependencies: vec![],
                 files: files.clone(),
+                is_root_dep: false,
+                bin_entries: vec![],
+                total_size: 0,
+                dep_graph_hash: String::new(),
             });
         }
         infos
