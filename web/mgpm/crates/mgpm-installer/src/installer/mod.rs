@@ -7,6 +7,7 @@ use dashmap::DashMap;
 use rayon::ThreadPool;
 use reqwest::Client;
 use rusqlite::Connection;
+use base64::Engine;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
@@ -95,6 +96,12 @@ pub enum InstallError {
     SqlError(String),
     #[error("IO error: {0}")]
     Io(String),
+    #[error("integrity mismatch for {package}: expected {expected}, actual {actual}")]
+    IntegrityMismatch {
+        package: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl From<std::io::Error> for InstallError {
@@ -345,7 +352,7 @@ impl Installer {
 
                 let max_retries = options.retries as usize;
                 let retry_delay_ms = options.retry_delay_ms;
-                let _hash: String;
+                let actual_sri: String;
 
                 'retry: loop {
                     let mut retry_attempt = 0usize;
@@ -460,8 +467,26 @@ impl Installer {
                         failed_clone.fetch_add(1, Ordering::SeqCst);
                         return;
                     }
-                    _hash = hex::encode(hasher.finalize());
+                    let raw_hash = hasher.finalize();
+                    let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(raw_hash);
+                    actual_sri = format!("sha256-{}", b64);
                     break 'retry;
+                }
+
+                // Verify package integrity before extracting
+                if let Some(ref expected) = package.integrity {
+                    if &actual_sri != expected {
+                        errors_clone
+                            .lock()
+                            .unwrap()
+                            .push(InstallError::IntegrityMismatch {
+                                package: package_id.clone(),
+                                expected: expected.clone(),
+                                actual: actual_sri.clone(),
+                            });
+                        failed_clone.fetch_add(1, Ordering::SeqCst);
+                        return;
+                    }
                 }
 
                 let _ = tx
