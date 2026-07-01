@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     ".",
     "crates/mgpm-core",
+    "crates/mgpm-parser",
     "crates/mgpm-store",
     "crates/mgpm-resolver",
     "crates/mgpm-lockfile",

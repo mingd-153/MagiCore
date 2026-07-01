@@ -1,0 +1,16 @@
+[package]
+name = "mgpm-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mgpm-core = { path = "../mgpm-core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
