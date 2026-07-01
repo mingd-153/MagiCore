@@ -228,10 +228,17 @@ fn test_binary_accepts_v1_and_v2() {
 fn test_compute_package_integrity_sri_format() {
     let data = b"test tarball content";
     let integrity = mgpm_lockfile::pipeline::compute_package_integrity(data);
-    assert!(integrity.starts_with("sha256-"), "SRI must start with sha256-");
+    assert!(
+        integrity.starts_with("sha256-"),
+        "SRI must start with sha256-"
+    );
     let base64_part = integrity.strip_prefix("sha256-").unwrap();
     // SHA-256 = 32 bytes → 43 chars in base64 no-pad
-    assert_eq!(base64_part.len(), 43, "base64 encoded SHA-256 must be 43 chars");
+    assert_eq!(
+        base64_part.len(),
+        43,
+        "base64 encoded SHA-256 must be 43 chars"
+    );
     // STANDARD_NO_PAD — no '=' padding
     assert!(!base64_part.contains('='), "no padding chars allowed");
 }

@@ -13,10 +13,7 @@ fn test_basic_resolution() {
     provider.add_package("react", "17.0.0", vec![]);
 
     let resolver = Resolver::new(Box::new(provider));
-    let wanted = vec![(
-        PackageName::new("react").unwrap(),
-        "^18.0.0".to_string(),
-    )];
+    let wanted = vec![(PackageName::new("react").unwrap(), "^18.0.0".to_string())];
     let result = resolver.solve(&wanted).unwrap();
     assert_eq!(result.resolutions.len(), 1);
     assert_eq!(result.resolutions[0].version.to_string(), "18.2.0");
@@ -47,21 +44,27 @@ fn test_workspace_resolution() {
     let provider = MockDependencyProvider::new();
     let resolver = Resolver::new(Box::new(provider));
 
-    let workspace = WorkspaceInfo::new(vec![
-        WorkspaceMemberInfo {
-            name: "my-pkg".to_string(),
-            path: PathBuf::from("/workspace/packages/my-pkg"),
-            version: "1.0.0".to_string(),
-        },
-    ]);
+    let workspace = WorkspaceInfo::new(vec![WorkspaceMemberInfo {
+        name: "my-pkg".to_string(),
+        path: PathBuf::from("/workspace/packages/my-pkg"),
+        version: "1.0.0".to_string(),
+    }]);
 
     let wanted = vec![
-        (PackageName::new("my-pkg").unwrap(), "workspace:*".to_string()),
+        (
+            PackageName::new("my-pkg").unwrap(),
+            "workspace:*".to_string(),
+        ),
         (PackageName::new("lodash").unwrap(), "^4.0.0".to_string()),
     ];
 
-    let result = resolver.resolve_with_workspace(&wanted, &workspace).unwrap();
-    assert!(result.resolutions.iter().any(|r| r.package_id.name().as_str() == "my-pkg"));
+    let result = resolver
+        .resolve_with_workspace(&wanted, &workspace)
+        .unwrap();
+    assert!(result
+        .resolutions
+        .iter()
+        .any(|r| r.package_id.name().as_str() == "my-pkg"));
 }
 
 #[test]
@@ -76,10 +79,7 @@ fn test_override_injection() {
     resolver.set_overrides(overrides);
     resolver.set_catalogs(std::collections::HashMap::new());
 
-    let wanted = vec![(
-        PackageName::new("react").unwrap(),
-        "^18.0.0".to_string(),
-    )];
+    let wanted = vec![(PackageName::new("react").unwrap(), "^18.0.0".to_string())];
     let result = resolver.solve(&wanted).unwrap();
     assert_eq!(result.resolutions.len(), 1);
 }

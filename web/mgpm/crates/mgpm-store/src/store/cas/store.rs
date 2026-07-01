@@ -69,7 +69,11 @@ impl ContentStore {
         self.import_bytes_with_exec(data, false)
     }
 
-    pub fn import_bytes_with_exec(&self, data: &[u8], executable: bool) -> Result<IntegrityHash, StoreError> {
+    pub fn import_bytes_with_exec(
+        &self,
+        data: &[u8],
+        executable: bool,
+    ) -> Result<IntegrityHash, StoreError> {
         let hash = IntegrityHash::from_bytes(data, executable);
         let dest = hash.cas_path(&self.root);
 

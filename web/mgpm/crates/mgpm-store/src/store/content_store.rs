@@ -131,7 +131,7 @@ impl ContentStore {
         let src = src.as_ref();
         let hash = self.hash_file(src)?;
         let dst = self.hash_path(&hash);
-        
+
         if dst.exists() {
             self.inc_ref(&hash)?;
             let method = self.detect_import_method(&dst);
@@ -139,7 +139,7 @@ impl ContentStore {
         }
 
         let method = self.import_with_method(src, &dst)?;
-        
+
         let meta = fs::metadata(src)?;
         let entry = FileEntry {
             hash: hash.clone(),
@@ -181,7 +181,10 @@ impl ContentStore {
 
     /// Imports a file with fallback through reflink → hardlink → copy,
     /// logging cross-device link errors and falling through to copy.
-    pub fn import_file_fallback<P: AsRef<Path>>(&self, src: P) -> io::Result<(String, ImportMethod)> {
+    pub fn import_file_fallback<P: AsRef<Path>>(
+        &self,
+        src: P,
+    ) -> io::Result<(String, ImportMethod)> {
         let src = src.as_ref();
         let hash = self.hash_file(src)?;
         let dst = self.hash_path(&hash);
@@ -205,7 +208,10 @@ impl ContentStore {
                 return Ok((hash, method));
             }
             Err(StoreError::CrossDevice { path }) => {
-                tracing::warn!("cross-device link for '{}', falling back to copy", path.display());
+                tracing::warn!(
+                    "cross-device link for '{}', falling back to copy",
+                    path.display()
+                );
             }
             _ => {}
         }
@@ -222,7 +228,9 @@ impl ContentStore {
 
         let zero_ref_hashes: Vec<String> = {
             let index = self.index.read().unwrap();
-            index.files.iter()
+            index
+                .files
+                .iter()
                 .filter(|(_, entry)| entry.ref_count == 0)
                 .map(|(hash, _)| hash.clone())
                 .collect()
@@ -278,7 +286,10 @@ impl ContentStore {
         match self.try_hardlink(src, dst) {
             Ok(Some(method)) => return Ok(method),
             Err(StoreError::CrossDevice { path }) => {
-                tracing::warn!("cross-device link for '{}', falling back to copy", path.display());
+                tracing::warn!(
+                    "cross-device link for '{}', falling back to copy",
+                    path.display()
+                );
             }
             _ => {}
         }
@@ -295,9 +306,7 @@ impl ContentStore {
         let src_c = CString::new(src.as_os_str().as_bytes()).ok()?;
         let dst_c = CString::new(dst.as_os_str().as_bytes()).ok()?;
 
-        let ret = unsafe {
-            libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0)
-        };
+        let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
 
         if ret == 0 {
             Some(ImportMethod::Reflink)
@@ -309,10 +318,10 @@ impl ContentStore {
     #[cfg(target_os = "linux")]
     fn try_reflink(&self, src: &Path, dst: &Path) -> Option<ImportMethod> {
         use std::os::unix::fs::copy_file_range;
-        
+
         let src_file = File::open(src).ok()?;
         let dst_file = File::create(dst).ok()?;
-        
+
         match copy_file_range(src_file, None, dst_file, None, u64::MAX) {
             Ok(_) => Some(ImportMethod::Reflink),
             Err(_) => None,
@@ -329,7 +338,10 @@ impl ContentStore {
             Ok(_) => {
                 let src_meta = fs::metadata(src).ok();
                 let entry = FileEntry {
-                    hash: self.hash_file(dst).map_err(|e| StoreError::Io { path: dst.to_path_buf(), msg: e.to_string() })?,
+                    hash: self.hash_file(dst).map_err(|e| StoreError::Io {
+                        path: dst.to_path_buf(),
+                        msg: e.to_string(),
+                    })?,
                     size: src_meta.as_ref().map(|m| m.len()).unwrap_or(0),
                     ref_count: 1,
                     executable: src_meta.map(|m| is_executable(&m)).unwrap_or(false),
@@ -343,9 +355,9 @@ impl ContentStore {
                 index.files.insert(entry.hash.clone(), entry);
                 Ok(Some(ImportMethod::Hardlink))
             }
-            Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                Err(StoreError::CrossDevice { path: dst.to_path_buf() })
-            }
+            Err(e) if e.raw_os_error() == Some(libc::EXDEV) => Err(StoreError::CrossDevice {
+                path: dst.to_path_buf(),
+            }),
             Err(_) => Ok(None),
         }
     }
@@ -478,29 +490,32 @@ mod tests {
     fn test_import_file_new() {
         let temp = tempdir().unwrap();
         let store = ContentStore::new(temp.path().to_path_buf()).unwrap();
-        
+
         let src = temp.path().join("source.txt");
         fs::write(&src, "hello world").unwrap();
-        
+
         let (hash, method) = store.import_file(&src).unwrap();
         assert!(store.has_file(&hash));
         assert_eq!(store.get_ref_count(&hash), 1);
-        assert!(matches!(method, ImportMethod::Copy | ImportMethod::Hardlink | ImportMethod::Reflink));
+        assert!(matches!(
+            method,
+            ImportMethod::Copy | ImportMethod::Hardlink | ImportMethod::Reflink
+        ));
     }
 
     #[test]
     fn test_import_file_deduplication() {
         let temp = tempdir().unwrap();
         let store = ContentStore::new(temp.path().to_path_buf()).unwrap();
-        
+
         let src1 = temp.path().join("source1.txt");
         let src2 = temp.path().join("source2.txt");
         fs::write(&src1, "same content").unwrap();
         fs::write(&src2, "same content").unwrap();
-        
+
         let (hash1, _) = store.import_file(&src1).unwrap();
         let (hash2, _) = store.import_file(&src2).unwrap();
-        
+
         assert_eq!(hash1, hash2);
         assert_eq!(store.get_ref_count(&hash1), 2);
     }
@@ -509,13 +524,13 @@ mod tests {
     fn test_delete_file() {
         let temp = tempdir().unwrap();
         let store = ContentStore::new(temp.path().to_path_buf()).unwrap();
-        
+
         let src = temp.path().join("source.txt");
         fs::write(&src, "hello").unwrap();
-        
+
         let (hash, _) = store.import_file(&src).unwrap();
         assert!(store.has_file(&hash));
-        
+
         store.delete_file(&hash).unwrap();
         assert!(!store.has_file(&hash));
     }
@@ -558,13 +573,13 @@ mod tests {
     fn test_verify_integrity() {
         let temp = tempdir().unwrap();
         let store = ContentStore::new(temp.path().to_path_buf()).unwrap();
-        
+
         let src = temp.path().join("source.txt");
         fs::write(&src, "hello world").unwrap();
-        
+
         let (hash, _) = store.import_file(&src).unwrap();
         let path = store.get_file(&hash).unwrap();
-        
+
         assert!(store.verify_integrity(&hash, &path).is_ok());
     }
 }

@@ -55,7 +55,8 @@ impl MgpmCli {
     #[napi]
     pub async fn install(&self, opts: InstallOptions) -> Result<String> {
         let lockfile_path = PathBuf::from("mgpm.lock");
-        let lockfile_content = tokio::fs::read_to_string(&lockfile_path).await
+        let lockfile_content = tokio::fs::read_to_string(&lockfile_path)
+            .await
             .map_err(|e| Error::from_reason(format!("failed to read lockfile: {}", e)))?;
         let lockfile: mgpm_lockfile::Lockfile = serde_json::from_str(&lockfile_content)
             .map_err(|e| Error::from_reason(format!("failed to parse lockfile: {}", e)))?;

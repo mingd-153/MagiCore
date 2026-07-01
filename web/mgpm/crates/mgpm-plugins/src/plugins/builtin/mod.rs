@@ -27,7 +27,9 @@ pub struct BuiltinPluginRegistry {
 
 impl BuiltinPluginRegistry {
     pub fn new() -> Self {
-        Self { plugins: Vec::new() }
+        Self {
+            plugins: Vec::new(),
+        }
     }
 }
 
@@ -50,7 +52,10 @@ impl BuiltinPluginRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn BuiltinPlugin> {
-        self.plugins.iter().find(|p| p.name() == name).map(|p| p.as_ref())
+        self.plugins
+            .iter()
+            .find(|p| p.name() == name)
+            .map(|p| p.as_ref())
     }
 
     pub fn remove(&mut self, name: &str) -> bool {

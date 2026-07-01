@@ -111,7 +111,10 @@ impl std::fmt::Debug for LinkerOptions {
             .field("hoist_pattern", &self.hoist_pattern)
             .field("symlinks", &self.symlinks)
             .field("store_path", &self.store_path)
-            .field("refcount_callback", &self.refcount_callback.as_ref().map(|_| "Box<dyn Fn>"))
+            .field(
+                "refcount_callback",
+                &self.refcount_callback.as_ref().map(|_| "Box<dyn Fn>"),
+            )
             .field("workspace", &self.workspace)
             .field("strategy", &self.strategy)
             .field("gvs_root", &self.gvs_root)
@@ -241,7 +244,10 @@ fn create_relative_symlink(src: &Path, dst: &Path) -> io::Result<()> {
     }
 
     // Validate destination doesn't escape intended directory
-    if dst.components().any(|c| c == std::path::Component::ParentDir) {
+    if dst
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("destination path contains '..': {}", dst.display()),

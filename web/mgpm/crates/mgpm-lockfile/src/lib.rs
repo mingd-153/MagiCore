@@ -8,37 +8,37 @@ pub mod pipeline;
 pub mod text;
 
 pub use lockfile::{
-    Lockfile, LockfileMetadata, LockfilePackage, PackageResolution,
-    LOCKFILE_BINARY_EXT, LOCKFILE_TEXT_EXT, LOCKFILE_MAGIC, LOCKFILE_VERSION,
+    Lockfile, LockfileMetadata, LockfilePackage, PackageResolution, LOCKFILE_BINARY_EXT,
+    LOCKFILE_MAGIC, LOCKFILE_TEXT_EXT, LOCKFILE_VERSION,
 };
-pub use pipeline::{ResolutionPipeline, ResolutionConfig, WantedDependency, PipelineError};
+pub use pipeline::{PipelineError, ResolutionConfig, ResolutionPipeline, WantedDependency};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LockfileError {
     #[error("IO error: {0}")]
     Io(String),
-    
+
     #[error("serialization error: {0}")]
     Serialization(String),
-    
+
     #[error("deserialization error: {0}")]
     Deserialization(String),
-    
+
     #[error("invalid magic number")]
     InvalidMagic,
-    
+
     #[error("version mismatch: found {found}, expected {expected}")]
     VersionMismatch { found: u32, expected: u32 },
-    
+
     #[error("lockfile not found: {0}")]
     NotFound(String),
-    
+
     #[error("lockfile corrupted: {0}")]
     Corrupted(String),
-    
+
     #[error("content hash mismatch: expected {expected}, got {actual}")]
     ContentHashMismatch { expected: String, actual: String },
-    
+
     #[error("lockfile outdated")]
     Outdated,
 }

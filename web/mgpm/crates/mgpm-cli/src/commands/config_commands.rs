@@ -2,18 +2,25 @@ use std::path::Path;
 
 use colored::Colorize;
 
-use super::super::{cpath, config_get_value, config_set_value, config_delete_value, config_list_values, read_user_toml, write_user_toml};
+use super::super::{
+    config_delete_value, config_get_value, config_list_values, config_set_value, cpath,
+    read_user_toml, write_user_toml,
+};
 
 #[derive(clap::Subcommand)]
 pub enum ConfigCommand {
-    Get { key: String },
+    Get {
+        key: String,
+    },
     Set {
         key: String,
         value: String,
         #[arg(long)]
         scope: Option<String>,
     },
-    Delete { key: String },
+    Delete {
+        key: String,
+    },
     List,
     /// Manage trusted dependencies
     Trusted {
@@ -81,7 +88,11 @@ pub async fn cmd_audit(
     let mut db = crate::advisory_db::AdvisoryDb::new();
     if remote {
         match db.fetch_remote().await {
-            Err(e) => eprintln!("  {} Failed to fetch remote advisories: {}", "[WARN]".yellow().bold(), e),
+            Err(e) => eprintln!(
+                "  {} Failed to fetch remote advisories: {}",
+                "[WARN]".yellow().bold(),
+                e
+            ),
             Ok(()) => eprintln!("  {} Fetched remote advisories", "[OK]".green().bold()),
         }
     }
@@ -248,8 +259,8 @@ fn set_npmrc_value(key: &str, value: &str, scope: Option<&str>) -> Result<(), St
 
     let mut content = String::new();
     if npmrc_path.exists() {
-        content =
-            std::fs::read_to_string(&npmrc_path).map_err(|e| format!("failed to read .npmrc: {}", e))?;
+        content = std::fs::read_to_string(&npmrc_path)
+            .map_err(|e| format!("failed to read .npmrc: {}", e))?;
     }
 
     let entry = if scope.is_some() {
@@ -263,8 +274,7 @@ fn set_npmrc_value(key: &str, value: &str, scope: Option<&str>) -> Result<(), St
     };
 
     content.push_str(&entry);
-    std::fs::write(&npmrc_path, &content)
-        .map_err(|e| format!("failed to write .npmrc: {}", e))?;
+    std::fs::write(&npmrc_path, &content).map_err(|e| format!("failed to write .npmrc: {}", e))?;
 
     #[cfg(unix)]
     {
@@ -272,7 +282,11 @@ fn set_npmrc_value(key: &str, value: &str, scope: Option<&str>) -> Result<(), St
         if let Err(e) =
             std::fs::set_permissions(&npmrc_path, std::fs::Permissions::from_mode(0o600))
         {
-            eprintln!("  {} Failed to set permissions on .npmrc: {}", "[WARN]".yellow().bold(), e);
+            eprintln!(
+                "  {} Failed to set permissions on .npmrc: {}",
+                "[WARN]".yellow().bold(),
+                e
+            );
         }
     }
 
@@ -286,7 +300,11 @@ fn set_npmrc_value(key: &str, value: &str, scope: Option<&str>) -> Result<(), St
 }
 
 fn redact_if_auth(key: &str, value: &str) -> String {
-    if key.contains("auth") || key.contains("token") || key.contains("password") || key.contains("_auth") {
+    if key.contains("auth")
+        || key.contains("token")
+        || key.contains("password")
+        || key.contains("_auth")
+    {
         crate::auth::redact_auth(value)
     } else {
         value.to_string()

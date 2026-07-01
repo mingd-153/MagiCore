@@ -61,7 +61,12 @@ fn test_orphan_cleanup() {
     let store = ContentStore::new(dir.path().to_path_buf()).unwrap();
 
     let orphan_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    let orphan_path = dir.path().join("files").join("sha256").join(&orphan_hash[..2]).join(orphan_hash);
+    let orphan_path = dir
+        .path()
+        .join("files")
+        .join("sha256")
+        .join(&orphan_hash[..2])
+        .join(orphan_hash);
     fs::create_dir_all(orphan_path.parent().unwrap()).unwrap();
     fs::write(&orphan_path, "orphan").unwrap();
 

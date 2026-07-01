@@ -7,23 +7,22 @@ use clap::{CommandFactory, Parser};
 use colored::Colorize;
 use tokio::sync::mpsc;
 
-use mgpm_core::config::{ConfigLoader, MgpmConfig, DefaultConfigLoader};
+use mgpm_core::config::{ConfigLoader, DefaultConfigLoader, MgpmConfig};
 use mgpm_installer::installer::{InstallOptions as RealInstallOptions, Installer};
 use mgpm_linker::linker::LinkerStrategy;
-use mgpm_resolver::{DependencyProvider, Resolver, solver::ResolvedDep};
 use mgpm_registry::{NpmRegistry, RegistryClient};
+use mgpm_resolver::{solver::ResolvedDep, DependencyProvider, Resolver};
 
-
-mod profiler;
 mod advisory_db;
-mod tuf;
-mod importer;
-mod sandbox;
 mod auth;
 mod commands;
+mod importer;
+mod profiler;
+mod sandbox;
+mod tuf;
 
-use profiler::PhaseProfiler;
 use commands::*;
+use profiler::PhaseProfiler;
 
 /// Registry-backed DependencyProvider for resolver
 struct RegistryDependencyProvider {
@@ -86,7 +85,11 @@ struct Cli {
     profile: bool,
     #[arg(long, global = true)]
     timings: bool,
-    #[arg(long, global = true, help = "Path to config file (mgpm.yaml/mgpm.toml)")]
+    #[arg(
+        long,
+        global = true,
+        help = "Path to config file (mgpm.yaml/mgpm.toml)"
+    )]
     config: Option<PathBuf>,
     #[command(subcommand)]
     command: CliCommand,
@@ -211,7 +214,11 @@ fn load_config(config_path: Option<&PathBuf>) -> (MgpmConfig, Option<PathBuf>) {
             }
         }
 
-        for path in &[PathBuf::from("mgpm.yaml"), PathBuf::from("mgpm.yml"), PathBuf::from("mgpm.toml")] {
+        for path in &[
+            PathBuf::from("mgpm.yaml"),
+            PathBuf::from("mgpm.yml"),
+            PathBuf::from("mgpm.toml"),
+        ] {
             if path.exists() {
                 if let Ok(pc) = MgpmConfig::load(path) {
                     merge_into(&mut config, pc);
@@ -437,8 +444,6 @@ fn config_list_values() -> Result<String, String> {
     }
 }
 
-
-
 // ---------------------------------------------------------------------------
 // Workspace helpers (recursive commands, change detection)
 // ---------------------------------------------------------------------------
@@ -526,7 +531,6 @@ fn run_on_members(
     }
 }
 
-
 #[allow(clippy::too_many_arguments)]
 async fn cmd_install_recursive(
     config: &MgpmConfig,
@@ -562,7 +566,16 @@ async fn cmd_install_recursive(
         std::env::set_current_dir(&member.path)
             .map_err(|e| format!("cannot enter {}: {e}", member.path.display()))?;
 
-        let result = cmd_install(config, offline, production, hoist, profile, timings, linker.clone()).await;
+        let result = cmd_install(
+            config,
+            offline,
+            production,
+            hoist,
+            profile,
+            timings,
+            linker.clone(),
+        )
+        .await;
 
         if let Some(p) = prev {
             std::env::set_current_dir(p).ok();
@@ -864,20 +877,29 @@ async fn cmd_install(
         mgpm_lockfile::text::read_text(Path::new("mgpm.lock"))
             .map_err(|e| format!("failed to read lockfile: {}", e))?
     } else {
-        eprintln!("  {} No lockfile found, generating from registry...", "[INFO]".cyan().bold());
-        
+        eprintln!(
+            "  {} No lockfile found, generating from registry...",
+            "[INFO]".cyan().bold()
+        );
+
         let npm_registry = NpmRegistry::new("https://registry.npmjs.org");
-        let provider = RegistryDependencyProvider { registry: npm_registry };
+        let provider = RegistryDependencyProvider {
+            registry: npm_registry,
+        };
         let resolver = Resolver::new(Box::new(provider));
         let config = mgpm_lockfile::ResolutionConfig::default();
         let pipeline = mgpm_lockfile::ResolutionPipeline::new(resolver, config);
         let registry_client = RegistryClient::new();
-        
+
         let lockfile = pipeline
-            .resolve_and_lock(&wanted_deps, &std::env::current_dir().unwrap(), Some(&registry_client))
+            .resolve_and_lock(
+                &wanted_deps,
+                &std::env::current_dir().unwrap(),
+                Some(&registry_client),
+            )
             .await
             .map_err(|e| format!("failed to generate lockfile: {}", e))?;
-        
+
         lockfile
     };
 
@@ -998,8 +1020,7 @@ async fn cmd_install(
             .map_err(|e| format!("failed to create timings dir: {e}"))?;
 
         let latest_path = timings_dir.join("latest.json");
-        std::fs::write(&latest_path, &json)
-            .map_err(|e| format!("failed to write timings: {e}"))?;
+        std::fs::write(&latest_path, &json).map_err(|e| format!("failed to write timings: {e}"))?;
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1168,7 +1189,16 @@ async fn main() -> Result<(), String> {
                 )
                 .await
             } else {
-                cmd_install(&config, offline, production, hoist, profiling, timings, linker.clone()).await
+                cmd_install(
+                    &config,
+                    offline,
+                    production,
+                    hoist,
+                    profiling,
+                    timings,
+                    linker.clone(),
+                )
+                .await
             }
         }
         CliCommand::Add {
@@ -1267,10 +1297,18 @@ async fn main() -> Result<(), String> {
             clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
             Ok(())
         }
-        CliCommand::Lockfile { command: lockfile_cmd } => cmd_lockfile(lockfile_cmd),
-        CliCommand::Daemon { command: daemon_cmd } => cmd_daemon(daemon_cmd),
+        CliCommand::Lockfile {
+            command: lockfile_cmd,
+        } => cmd_lockfile(lockfile_cmd),
+        CliCommand::Daemon {
+            command: daemon_cmd,
+        } => cmd_daemon(daemon_cmd),
         CliCommand::Audit { command } => match command {
-            AuditCommand::Run { json, severity, remote } => cmd_audit(&config, json, severity, remote).await,
+            AuditCommand::Run {
+                json,
+                severity,
+                remote,
+            } => cmd_audit(&config, json, severity, remote).await,
             AuditCommand::Update { force } => tuf::update_advisories(force).await,
         },
         CliCommand::Verify { deep } => {
@@ -1280,7 +1318,10 @@ async fn main() -> Result<(), String> {
                 cmd_verify(&config)
             }
         }
-        CliCommand::Import { ref source, ref format } => cmd_import(source, format),
+        CliCommand::Import {
+            ref source,
+            ref format,
+        } => cmd_import(source, format),
         CliCommand::Export { ref output } => cmd_export(output),
     };
 
@@ -1290,5 +1331,3 @@ async fn main() -> Result<(), String> {
     }
     Ok(())
 }
-
-

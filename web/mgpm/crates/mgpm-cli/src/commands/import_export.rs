@@ -10,12 +10,7 @@ pub fn cmd_import(source: &str, format: &str) -> Result<(), String> {
 
     let lf_format = if format == "auto" {
         crate::importer::detect_format(path)
-            .ok_or_else(|| {
-                format!(
-                    "unable to detect lockfile format from '{}'",
-                    path.display()
-                )
-            })?
+            .ok_or_else(|| format!("unable to detect lockfile format from '{}'", path.display()))?
     } else {
         match format {
             "npm" => crate::importer::LockfileFormat::Npm,
@@ -68,10 +63,7 @@ pub fn cmd_export(output: &str) -> Result<(), String> {
                 serde_json::Value::String(integrity.clone()),
             );
         }
-        entry.insert(
-            "dev".to_string(),
-            serde_json::Value::Bool(false),
-        );
+        entry.insert("dev".to_string(), serde_json::Value::Bool(false));
         packages_map.insert(node_key, serde_json::Value::Object(entry));
     }
 
@@ -82,10 +74,9 @@ pub fn cmd_export(output: &str) -> Result<(), String> {
         "packages": packages_map,
     });
 
-    let content = serde_json::to_string_pretty(&export)
-        .map_err(|e| format!("failed to serialize: {e}"))?;
-    std::fs::write(output, &content)
-        .map_err(|e| format!("failed to write {}: {}", output, e))?;
+    let content =
+        serde_json::to_string_pretty(&export).map_err(|e| format!("failed to serialize: {e}"))?;
+    std::fs::write(output, &content).map_err(|e| format!("failed to write {}: {}", output, e))?;
 
     println!(
         "{} Exported {} packages to {}",

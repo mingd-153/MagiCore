@@ -47,24 +47,27 @@ impl TarballExtractor {
         tarball: &Path,
         dest: &Path,
     ) -> Result<Vec<ExtractedEntry>, TarballError> {
-        let file = File::open(tarball)
-            .map_err(|e| TarballError::ReadError(e.to_string()))?;
+        let file = File::open(tarball).map_err(|e| TarballError::ReadError(e.to_string()))?;
         let reader = BufReader::new(file);
         let decoder = GzDecoder::new(reader);
         let mut archive = Archive::new(decoder);
-        
+
         let mut entries = Vec::new();
         let package_root = dest.to_path_buf();
 
-        for entry in archive.entries().map_err(|e| TarballError::ExtractError(e.to_string()))? {
+        for entry in archive
+            .entries()
+            .map_err(|e| TarballError::ExtractError(e.to_string()))?
+        {
             let mut entry = entry.map_err(|e| TarballError::ExtractError(e.to_string()))?;
-            
-            let path = entry.path()
+
+            let path = entry
+                .path()
                 .map_err(|e| TarballError::ExtractError(e.to_string()))?
                 .into_owned();
-            
+
             let relative_path = path.to_string_lossy().to_string();
-            
+
             if relative_path.contains("..") {
                 return Err(TarballError::PathEscape {
                     path: relative_path.clone(),
@@ -72,7 +75,7 @@ impl TarballExtractor {
             }
 
             let dest_path = package_root.join(&path);
-            
+
             if !dest_path.starts_with(&package_root) {
                 return Err(TarballError::PathEscape {
                     path: dest_path.to_string_lossy().to_string(),
@@ -86,20 +89,22 @@ impl TarballExtractor {
 
             let mut hasher = Sha256::new();
             let mut data = Vec::new();
-            entry.read_to_end(&mut data)
+            entry
+                .read_to_end(&mut data)
                 .map_err(|e| TarballError::ExtractError(e.to_string()))?;
-            
+
             hasher.update(&data);
             let hash = hex::encode(hasher.finalize());
 
             let entry_type = entry.header().entry_type();
-            
+
             if entry_type.is_symlink() {
-                let target = entry.link_name()
+                let target = entry
+                    .link_name()
                     .map_err(|e| TarballError::ExtractError(e.to_string()))?
                     .map(|l| l.into_owned())
                     .unwrap_or_else(|| PathBuf::from(""));
-                
+
                 let target_str = target.to_string_lossy().to_string();
                 let target_path = PathBuf::from(&target_str);
                 if target_path.is_absolute() || target_str.starts_with("..") {
@@ -112,7 +117,7 @@ impl TarballExtractor {
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(&target, &dest_path)
                     .map_err(|e| TarballError::ExtractError(e.to_string()))?;
-                
+
                 entries.push(ExtractedEntry {
                     path: relative_path,
                     hash,
@@ -124,10 +129,13 @@ impl TarballExtractor {
                     .map_err(|e| TarballError::ExtractError(e.to_string()))?;
                 file.write_all(&data)
                     .map_err(|e| TarballError::ExtractError(e.to_string()))?;
-                
-                if entry.header().mode()
+
+                if entry
+                    .header()
+                    .mode()
                     .map(|m| m & 0o111 != 0)
-                    .unwrap_or(false) {
+                    .unwrap_or(false)
+                {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
@@ -157,43 +165,53 @@ impl TarballExtractor {
         tarball: &Path,
         file_path: &str,
     ) -> Result<Vec<u8>, TarballError> {
-        let file = File::open(tarball)
-            .map_err(|e| TarballError::ReadError(e.to_string()))?;
+        let file = File::open(tarball).map_err(|e| TarballError::ReadError(e.to_string()))?;
         let reader = BufReader::new(file);
         let decoder = GzDecoder::new(reader);
         let mut archive = Archive::new(decoder);
 
-        for entry in archive.entries().map_err(|e| TarballError::ExtractError(e.to_string()))? {
+        for entry in archive
+            .entries()
+            .map_err(|e| TarballError::ExtractError(e.to_string()))?
+        {
             let mut entry = entry.map_err(|e| TarballError::ExtractError(e.to_string()))?;
-            
-            let path = entry.path()
+
+            let path = entry
+                .path()
                 .map_err(|e| TarballError::ExtractError(e.to_string()))?
                 .into_owned()
                 .to_string_lossy()
                 .to_string();
-            
+
             if path == file_path {
                 let mut data = Vec::new();
-                entry.read_to_end(&mut data)
+                entry
+                    .read_to_end(&mut data)
                     .map_err(|e| TarballError::ExtractError(e.to_string()))?;
                 return Ok(data);
             }
         }
 
-        Err(TarballError::ReadError(format!("file not found: {}", file_path)))
+        Err(TarballError::ReadError(format!(
+            "file not found: {}",
+            file_path
+        )))
     }
 
     pub fn list_files(&self, tarball: &Path) -> Result<Vec<String>, TarballError> {
-        let file = File::open(tarball)
-            .map_err(|e| TarballError::ReadError(e.to_string()))?;
+        let file = File::open(tarball).map_err(|e| TarballError::ReadError(e.to_string()))?;
         let reader = BufReader::new(file);
         let decoder = GzDecoder::new(reader);
         let mut archive = Archive::new(decoder);
 
         let mut files = Vec::new();
-        for entry in archive.entries().map_err(|e| TarballError::ExtractError(e.to_string()))? {
+        for entry in archive
+            .entries()
+            .map_err(|e| TarballError::ExtractError(e.to_string()))?
+        {
             let entry = entry.map_err(|e| TarballError::ExtractError(e.to_string()))?;
-            let path = entry.path()
+            let path = entry
+                .path()
                 .map_err(|e| TarballError::ExtractError(e.to_string()))?
                 .into_owned()
                 .to_string_lossy()
@@ -257,14 +275,14 @@ mod tests {
             ("package.json", r#"{"name": "test"}"#),
             ("index.js", "console.log('hello')"),
         ]);
-        
+
         let temp = tempfile::tempdir().unwrap();
         let tarball = temp.path().join("test.tar.gz");
         fs::write(&tarball, &tar_data).unwrap();
-        
+
         let extractor = TarballExtractor::new();
         let files = extractor.list_files(&tarball).unwrap();
-        
+
         assert!(files.contains(&"package.json".to_string()));
         assert!(files.contains(&"index.js".to_string()));
     }
