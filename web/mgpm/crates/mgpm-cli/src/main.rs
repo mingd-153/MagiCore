@@ -7,7 +7,7 @@ use clap::{CommandFactory, Parser};
 use colored::Colorize;
 use tokio::sync::mpsc;
 
-use mgpm_core::config::MgpmConfig;
+use mgpm_core::config::{ConfigLoader, MgpmConfig, DefaultConfigLoader};
 use mgpm_installer::installer::{InstallOptions as RealInstallOptions, Installer};
 use mgpm_linker::linker::LinkerStrategy;
 use mgpm_resolver::{DependencyProvider, Resolver, solver::ResolvedDep};
@@ -86,6 +86,8 @@ struct Cli {
     profile: bool,
     #[arg(long, global = true)]
     timings: bool,
+    #[arg(long, global = true, help = "Path to config file (mgpm.yaml/mgpm.toml)")]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: CliCommand,
 }
@@ -186,40 +188,41 @@ enum CliCommand {
 // Config loading with precedence: project config > user config > env > defaults
 // ---------------------------------------------------------------------------
 
-fn load_config() -> (MgpmConfig, Option<PathBuf>) {
+fn load_config(config_path: Option<&PathBuf>) -> (MgpmConfig, Option<PathBuf>) {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let uc_path = home.join(".config").join("mgpm").join("config.toml");
     let mut user_config_path: Option<PathBuf> = None;
 
     let mut config = MgpmConfig::default();
 
-    if uc_path.exists() {
-        user_config_path = Some(uc_path.clone());
-        if let Ok(uc) = MgpmConfig::load(&uc_path) {
-            merge_into(&mut config, uc);
-        }
-    }
-
-    for path in &[PathBuf::from("mgpm.yaml"), PathBuf::from("mgpm.toml")] {
-        if path.exists() {
-            let content = match std::fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let pc: Option<MgpmConfig> =
-                if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-                    serde_yaml::from_str(&content).ok()
-                } else {
-                    toml::from_str(&content).ok()
-                };
-            if let Some(pc) = pc {
+    if let Some(cfg_path) = config_path {
+        // Use explicit config path
+        if cfg_path.exists() {
+            if let Ok(pc) = MgpmConfig::load(cfg_path) {
                 merge_into(&mut config, pc);
             }
-            break;
+        }
+    } else {
+        // Fallback: check default locations
+        if uc_path.exists() {
+            user_config_path = Some(uc_path.clone());
+            if let Ok(uc) = MgpmConfig::load(&uc_path) {
+                merge_into(&mut config, uc);
+            }
+        }
+
+        for path in &[PathBuf::from("mgpm.yaml"), PathBuf::from("mgpm.yml"), PathBuf::from("mgpm.toml")] {
+            if path.exists() {
+                if let Ok(pc) = MgpmConfig::load(path) {
+                    merge_into(&mut config, pc);
+                }
+                break;
+            }
         }
     }
 
     apply_npmrc_config(&mut config);
+    DefaultConfigLoader::apply_env(&mut config);
     apply_env_overrides(&mut config);
     (config, user_config_path)
 }
@@ -256,11 +259,6 @@ fn apply_env_overrides(config: &mut MgpmConfig) {
 
     if let Ok(v) = var("MGPM_HOIST") {
         config.install.hoist = v == "true" || v == "1";
-    }
-    if let Ok(v) = var("MGPM_CONCURRENCY") {
-        if let Ok(n) = v.parse::<usize>() {
-            config.install.concurrency = n;
-        }
     }
     if let Ok(v) = var("MGPM_RETRIES") {
         if let Ok(n) = v.parse::<u32>() {
@@ -1137,7 +1135,7 @@ async fn main() -> Result<(), String> {
     let ff = cli.fail_fast;
     let profiling = cli.profile;
     let timings = cli.timings;
-    let (config, _user_config_path) = load_config();
+    let (config, _user_config_path) = load_config(cli.config.as_ref());
 
     let result: Result<(), String> = match cli.command {
         CliCommand::Install {

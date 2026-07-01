@@ -67,14 +67,20 @@ pub struct Workspace {
 
 impl Workspace {
     /// Discovers a workspace at the given path.
-    /// Checks for `mgpm.yaml` or `package.json` with a workspaces field.
+    /// Checks for `mgpm.yaml`, `mgpm.yml`, `mgpm.toml`, or `package.json` with a workspaces field.
     pub fn discover(path: &Path) -> Result<Self, WorkspaceError> {
-        let mgpm_yaml = path.join("mgpm.yaml");
-        if mgpm_yaml.exists() {
-            let config: MgpmConfig = MgpmConfig::load(&mgpm_yaml)
-                .map_err(|e| WorkspaceError::Parse(format!("config parse error: {e}")))?;
-            if let Some(ws_config) = config.workspace {
-                return Self::from_workspace_config(path, ws_config);
+        let candidates = [
+            path.join("mgpm.yaml"),
+            path.join("mgpm.yml"),
+            path.join("mgpm.toml"),
+        ];
+        for candidate in &candidates {
+            if candidate.exists() {
+                let config: MgpmConfig = MgpmConfig::load(candidate)
+                    .map_err(|e| WorkspaceError::Parse(format!("config parse error: {e}")))?;
+                if let Some(ws_config) = config.workspace {
+                    return Self::from_workspace_config(path, ws_config);
+                }
             }
         }
 
@@ -91,6 +97,9 @@ impl Workspace {
                     packages: patterns,
                     catalog: None,
                     link_ws_packages: true,
+                    catalogs: HashMap::new(),
+                    shared_lockfile: true,
+                    hoist: false,
                     scripts: HashMap::new(),
                     security: SecurityConfig::default(),
                     linker: LinkerMode::default(),
@@ -489,6 +498,9 @@ mod tests {
                 packages: vec!["packages/*".to_string()],
                 catalog: None,
                 link_ws_packages: true,
+                catalogs: HashMap::new(),
+                shared_lockfile: true,
+                hoist: false,
                 scripts: HashMap::new(),
                 security: SecurityConfig::default(),
                 linker: LinkerMode::default(),
@@ -566,6 +578,9 @@ mod tests {
                 packages: vec!["pkgs/*".to_string()],
                 catalog: None,
                 link_ws_packages: true,
+                catalogs: HashMap::new(),
+                shared_lockfile: true,
+                hoist: false,
                 scripts: HashMap::new(),
                 security: SecurityConfig::default(),
                 linker: LinkerMode::default(),
