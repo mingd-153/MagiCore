@@ -4,12 +4,14 @@
 
 pub mod filter;
 pub mod graph;
+pub mod protocol;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub use filter::{FilterEngine, FilterError, FilterSelector};
 pub use graph::{DepKind, DependencyEdge, PackageGraph, PackageGraphError};
+pub use protocol::{ProtocolError, WorkspaceProtocol, WorkspaceSpecifier};
 
 use mgpm_core::{LinkerMode, MgpmConfig, SecurityConfig, WorkspaceConfig};
 

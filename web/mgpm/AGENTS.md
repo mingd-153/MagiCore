@@ -55,12 +55,12 @@ create → check → run → fix → update → fix → done → report → push
 
 ## Current Status
 
-**Phase**: 0 — Foundation (Tuần 1-4)
-**Current task**: T0.2 — ✅ CAS I/O complete + refactored into modular structure
-**Branch hiện tại**: `development`
-**Branch gốc**: `development`
+**Phase**: 3 — Monorepo
+**Current task**: T3.4 — ✅ Workspace Protocol
+**Branch hiện tại**: `feat-T3.4-workspace-protocol`
+**Branch gốc**: `feat-T3.3-filter-engine`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 306 passed (18 cas + 81 sqlite + others), 0 failed, 0 warnings
+**Tests**: 372 passed (42 protocol + 96 workspace + others), 0 failed, 0 warnings
 
 ## What's Been Done
 
@@ -291,16 +291,17 @@ Memory:  SQLite LRU cache  → adaptive 1k-100k entries
 
 ## Next Steps
 
-Task còn lại trong Phase 0:
-1. **T0.1**: ✅ Hoàn thành (expanded + security hardened — 10 vulnerabilities fixed)
-2. **T0.2**: ✅ Hoàn thành (CAS I/O + security + refactor modular)
-3. **T0.3**: Store verify + status ← tiếp theo
-4. **T0.4**: Lockfile integrity fix - BLAKE3 + real SHA-256
-5. **T0.5**: Global Virtual Store
-6. **T0.6**: Isolated linker
-7. **T0.7**: Integration test
+Task còn lại trong Phase 3:
+1. **T3.1**: ✅ YAML/TOML config + missing fields + CLI flags
+2. **T3.2**: ✅ PackageGraph + security audit
+3. **T3.3**: ✅ Filter Engine + syntax parser
+4. **T3.4**: ✅ Workspace Protocol (hiện tại)
+5. **T3.5**: Task Graph ⏳
+6. **T3.6**: Catalogs ⏳
+7. **T3.7**: Cache Engine ⏳
+8. **T3.8**: Affected Commands ⏳
 
-## How to Continue (T0.3 onward)
+## How to Continue
 
 ```bash
 # 1. Đọc task chi tiết
