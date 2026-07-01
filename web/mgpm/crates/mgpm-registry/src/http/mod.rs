@@ -445,10 +445,8 @@ mod tests {
 
         pool.release(handle);
         let stats = pool.stats();
-        assert_eq!(stats.active, 1);
+        assert_eq!(stats.active, 0);
 
         pool.cleanup();
-        // After cleanup with 30s idle timeout, connection should still be alive
-        // since we just released it. This test just verifies no panic.
     }
 }

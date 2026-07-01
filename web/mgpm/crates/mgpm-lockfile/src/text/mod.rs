@@ -33,8 +33,14 @@ struct TomlPackage {
     version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     integrity: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    resolved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_at: Option<u64>,
     resolution: TomlResolution,
 }
+
+fn is_false(b: &bool) -> bool { !b }
 
 #[derive(Serialize)]
 struct TomlResolution {
@@ -68,6 +74,8 @@ impl From<&LockfilePackage> for TomlPackage {
             name: pkg.name.clone(),
             version: pkg.version.clone(),
             integrity: pkg.integrity.clone(),
+            resolved: pkg.resolved,
+            resolved_at: pkg.resolved_at,
             resolution: TomlResolution {
                 res_type: pkg.resolution.r#type.clone(),
                 url: pkg.resolution.url.clone(),
@@ -253,5 +261,32 @@ mod tests {
         assert_eq!(loaded.packages.len(), 1);
         assert_eq!(loaded.packages[0].name, "react");
         assert_eq!(loaded.packages[0].version, "18.0.0");
+    }
+
+    #[test]
+    fn test_text_roundtrip_resolved() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("mgpm.lock");
+
+        let mut lock = Lockfile::new(1, "npm");
+        lock.add_package(LockfilePackage {
+            id: "lodash@4.17.21".to_string(),
+            name: "lodash".to_string(),
+            version: "4.17.21".to_string(),
+            resolution: super::super::PackageResolution {
+                r#type: "registry".to_string(),
+                url: "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz".to_string(),
+                registry: Some("npm".to_string()),
+            },
+            integrity: Some("sha512-...".to_string()),
+            resolved: true,
+            resolved_at: Some(1000),
+        });
+
+        write_text(&lock, &path).unwrap();
+        let loaded = read_text(&path).unwrap();
+
+        assert!(loaded.packages[0].resolved);
+        assert_eq!(loaded.packages[0].resolved_at, Some(1000));
     }
 }

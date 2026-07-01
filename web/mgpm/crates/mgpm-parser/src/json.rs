@@ -198,6 +198,31 @@ impl<'a> ZeroCopyParser<'a> {
         let code = u32::from_str_radix(hex_str, 16)
             .map_err(|_| ParseError::UnexpectedToken)?;
         self.pos = hex_end;
+
+        // Handle surrogate pairs per RFC 8259 section 9
+        if (0xD800..=0xDBFF).contains(&code) {
+            // High surrogate — expect a low surrogate \uXXXX immediately after
+            if self.input.get(self.pos) == Some(&b'\\')
+                && self.input.get(self.pos + 1) == Some(&b'u')
+            {
+                let low_hex_start = self.pos + 2;
+                let low_hex_end = low_hex_start + 4;
+                if low_hex_end > self.input.len() {
+                    return Err(ParseError::UnexpectedEof);
+                }
+                let low_hex = std::str::from_utf8(&self.input[low_hex_start..low_hex_end])
+                    .map_err(|_| ParseError::InvalidUtf8)?;
+                let low_code = u32::from_str_radix(low_hex, 16)
+                    .map_err(|_| ParseError::UnexpectedToken)?;
+                if (0xDC00..=0xDFFF).contains(&low_code) {
+                    self.pos = low_hex_end;
+                    let combined = 0x10000 + (code - 0xD800) * 0x400 + (low_code - 0xDC00);
+                    return char::from_u32(combined).ok_or(ParseError::UnexpectedToken);
+                }
+            }
+            return Err(ParseError::UnexpectedToken);
+        }
+
         char::from_u32(code).ok_or(ParseError::UnexpectedToken)
     }
 
@@ -515,6 +540,21 @@ mod tests {
         let mut parser = ZeroCopyParser::new(json);
         let manifest = parser.parse_manifest().unwrap();
         assert_eq!(manifest.name.as_deref(), Some("AB"));
+    }
+
+    #[test]
+    fn test_unicode_surrogate_pair() {
+        let json = br#"{"name": "\uD83D\uDE00", "version": "1.0.0", "dependencies": {"a": "^1.0.0"}}"#;
+        let mut parser = ZeroCopyParser::new(json);
+        let manifest = parser.parse_manifest().unwrap();
+        assert_eq!(manifest.name.as_deref(), Some("\u{1F600}"));
+    }
+
+    #[test]
+    fn test_lone_surrogate_returns_error() {
+        let json = br#"{"name": "\uD800", "version": "1.0.0", "dependencies": {"a": "^1.0.0"}}"#;
+        let mut parser = ZeroCopyParser::new(json);
+        assert!(parser.parse_manifest().is_err());
     }
 
     #[test]

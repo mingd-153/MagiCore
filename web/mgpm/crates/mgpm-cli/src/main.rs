@@ -638,7 +638,7 @@ async fn cmd_add_recursive(
         std::env::set_current_dir(&member.path)
             .map_err(|e| format!("cannot enter {}: {e}", member.path.display()))?;
 
-        let result = cmd_add(packages.to_vec(), dev, peer, optional, exact).await;
+        let result = cmd_add(packages.to_vec(), dev, peer, optional, exact, _config, false, false, false, false, false, String::from("hoisted")).await;
 
         if let Some(p) = prev {
             std::env::set_current_dir(p).ok();
@@ -698,7 +698,7 @@ async fn cmd_remove_recursive(
         std::env::set_current_dir(&member.path)
             .map_err(|e| format!("cannot enter {}: {e}", member.path.display()))?;
 
-        let result = cmd_remove(packages.to_vec()).await;
+        let result = cmd_remove(packages.to_vec(), _config, false, false, false, false, false, String::from("hoisted")).await;
 
         if let Some(p) = prev {
             std::env::set_current_dir(p).ok();
@@ -871,7 +871,7 @@ async fn cmd_install(
         return Ok(());
     }
 
-    let lockfile = if Path::new("mgpm.lock").exists() {
+    let mut lockfile = if Path::new("mgpm.lock").exists() {
         mgpm_lockfile::text::read_text(Path::new("mgpm.lock"))
             .map_err(|e| format!("failed to read lockfile: {}", e))?
     } else {
@@ -977,6 +977,25 @@ async fn cmd_install(
         .map_err(|e| format!("failed to create installer: {}", e))?;
     let result = installer.install_lockfile(&lockfile).await;
 
+    // Mark succeeded packages as resolved and re-write lockfile
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        for pkg in &mut lockfile.packages {
+            if result.succeeded_packages.contains(&pkg.id) {
+                pkg.resolved = true;
+                pkg.resolved_at = Some(now);
+            }
+        }
+        lockfile.sort_packages();
+        lockfile.compute_content_hash();
+        lockfile.update_timestamp();
+        let _ = mgpm_lockfile::text::write_text(&lockfile, Path::new("mgpm.lock"));
+        let _ = mgpm_lockfile::binary::write_binary(&lockfile, Path::new("mgpm.lockb"));
+    }
+
     profiler.end("fetch");
     profiler.start("extract");
     profiler.end("extract");
@@ -1026,36 +1045,105 @@ async fn cmd_install(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_add(
     packages: Vec<String>,
     dev: bool,
     peer: bool,
     optional: bool,
     exact: bool,
+    _config: &MgpmConfig,
+    _offline: bool,
+    _production: bool,
+    _hoist: bool,
+    _profiling: bool,
+    _timings: bool,
+    _linker: String,
 ) -> Result<(), String> {
-    for pkg in &packages {
+    for pkg_spec in &packages {
         eprintln!(
             "{} {} (dev={}, peer={}, optional={}, exact={})",
             "[INFO]".cyan().bold(),
-            format!("Adding '{}'...", pkg).cyan(),
+            format!("Adding '{}'...", pkg_spec).cyan(),
             dev,
             peer,
             optional,
             exact,
         );
+
+        let mut pkg = load_package_json(Path::new("package.json"))?;
+        let pkg_obj = pkg.as_object_mut()
+            .ok_or_else(|| "package.json root is not an object".to_string())?;
+
+        // Parse "name@version" or just "name"
+        let (name, version_req) = if let Some(at_pos) = pkg_spec.find('@') {
+            let n = &pkg_spec[..at_pos];
+            let v = &pkg_spec[at_pos + 1..];
+            (n.to_string(), if v.is_empty() { "^1.0.0" } else { v }.to_string())
+        } else {
+            (pkg_spec.clone(), if exact { "1.0.0" } else { "^1.0.0" }.to_string())
+        };
+
+        let dep_key = if dev { "devDependencies" }
+            else if peer { "peerDependencies" }
+            else if optional { "optionalDependencies" }
+            else { "dependencies" };
+
+        let deps = pkg_obj
+            .entry(dep_key)
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| format!("{} is not an object", dep_key))?;
+
+        deps.insert(name, serde_json::Value::String(version_req));
+        let content = serde_json::to_string_pretty(&pkg)
+            .map_err(|e| format!("failed to serialize package.json: {e}"))?;
+        std::fs::write("package.json", content)
+            .map_err(|e| format!("failed to write package.json: {e}"))?;
+
+        eprintln!("  {} Updated package.json", "[OK]".green().bold());
     }
-    Ok(())
+
+    cmd_install(_config, _offline, _production, _hoist, _profiling, _timings, _linker).await
 }
 
-async fn cmd_remove(packages: Vec<String>) -> Result<(), String> {
-    for pkg in &packages {
+#[allow(clippy::too_many_arguments)]
+async fn cmd_remove(
+    packages: Vec<String>,
+    _config: &MgpmConfig,
+    _offline: bool,
+    _production: bool,
+    _hoist: bool,
+    _profiling: bool,
+    _timings: bool,
+    _linker: String,
+) -> Result<(), String> {
+    for pkg_name in &packages {
         eprintln!(
             "{} {}",
             "[INFO]".cyan().bold(),
-            format!("Removing '{}'...", pkg).cyan()
+            format!("Removing '{}'...", pkg_name).cyan()
         );
+
+        let mut pkg = load_package_json(Path::new("package.json"))?;
+        let pkg_obj = pkg.as_object_mut()
+            .ok_or_else(|| "package.json root is not an object".to_string())?;
+
+        for key in &["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] {
+            if let Some(deps) = pkg_obj.get_mut(*key).and_then(|d| d.as_object_mut()) {
+                deps.remove(pkg_name.as_str());
+            }
+        }
+
+        let content = serde_json::to_string_pretty(&pkg)
+            .map_err(|e| format!("failed to serialize package.json: {e}"))?;
+        std::fs::write("package.json", content)
+            .map_err(|e| format!("failed to write package.json: {e}"))?;
+
+        eprintln!("  {} Updated package.json", "[OK]".green().bold());
     }
-    Ok(())
+
+    cmd_install(_config, _offline, _production, _hoist, _profiling, _timings, _linker).await
 }
 
 async fn cmd_update(latest: bool) -> Result<(), String> {
@@ -1204,14 +1292,14 @@ async fn main() -> Result<(), String> {
                 )
                 .await
             } else {
-                cmd_add(packages.clone(), dev, peer, optional, exact).await
+                cmd_add(packages.clone(), dev, peer, optional, exact, &config, false, false, false, false, false, String::from("hoisted")).await
             }
         }
         CliCommand::Remove { ref packages } => {
             if is_workspace_context(rec, &flt, sinc.as_deref()) {
                 cmd_remove_recursive(&config, rec, &flt, sinc.as_deref(), ff, packages).await
             } else {
-                cmd_remove(packages.clone()).await
+                cmd_remove(packages.clone(), &config, false, false, false, false, false, String::from("hoisted")).await
             }
         }
         CliCommand::Update { latest } => {

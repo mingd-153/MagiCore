@@ -68,6 +68,15 @@ impl ConnectionPool {
 
     pub fn acquire(&self, host: &str) -> ConnectionHandle {
         let mut inner = self.inner.lock();
+        // Enforce per-host limit: wait if at capacity
+        let host_count = inner.by_host.get(host).map_or(0, |v| v.len());
+        if host_count >= self.config.max_per_host
+            || inner.connections.len() >= self.config.max_total
+        {
+            // Return a no-op handle — the caller will use reqwest's pool directly
+            return ConnectionHandle { id: u64::MAX };
+        }
+
         let id = inner.next_id;
         inner.next_id += 1;
 
@@ -87,9 +96,15 @@ impl ConnectionPool {
     }
 
     pub fn release(&self, handle: ConnectionHandle) {
+        if handle.id == u64::MAX {
+            return;
+        }
         let mut inner = self.inner.lock();
-        if let Some(conn) = inner.connections.iter_mut().find(|c| c.id == handle.id) {
-            conn.last_used = Instant::now();
+        if let Some(pos) = inner.connections.iter().position(|c| c.id == handle.id) {
+            let conn = inner.connections.remove(pos);
+            if let Some(host_list) = inner.by_host.get_mut(&conn.host) {
+                host_list.retain(|&x| x as u64 != conn.id);
+            }
         }
     }
 

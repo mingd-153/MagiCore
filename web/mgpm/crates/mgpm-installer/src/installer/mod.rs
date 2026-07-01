@@ -84,6 +84,7 @@ pub struct InstallResult {
     pub failed: usize,
     pub skipped: usize,
     pub errors: Vec<InstallError>,
+    pub succeeded_packages: Vec<String>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -268,6 +269,7 @@ impl Installer {
         let succeeded = Arc::new(AtomicUsize::new(0));
         let failed = Arc::new(AtomicUsize::new(0));
         let skipped = Arc::new(AtomicUsize::new(0));
+        let succeeded_pkgs = Arc::new(Mutex::new(Vec::new()));
         let store_arc = self.store.clone();
         let cache_arc = self.cache.clone();
         let package_files_arc = self.package_files.clone();
@@ -293,6 +295,7 @@ impl Installer {
                 failed: 0,
                 skipped: total,
                 errors: vec![],
+                succeeded_packages: vec![],
             };
         }
 
@@ -309,6 +312,7 @@ impl Installer {
             let succeeded_clone = succeeded.clone();
             let failed_clone = failed.clone();
             let skipped_clone = skipped.clone();
+            let succeeded_pkgs_clone = succeeded_pkgs.clone();
             let thread_pool = thread_pool_arc.clone();
             let sqlite = sqlite_path.clone();
 
@@ -385,8 +389,13 @@ impl Installer {
                             }
                             Err(_) if retry_attempt < max_retries => {
                                 retry_attempt += 1;
-                                let delay = retry_delay_ms
+                                let base_delay = retry_delay_ms
                                     * 2u64.pow(retry_attempt.saturating_sub(1) as u32);
+                                // Deterministic jitter from package name to avoid thundering herd
+                                let jitter = package_id.as_bytes().iter()
+                                    .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+                                    % (base_delay / 4 + 1);
+                                let delay = base_delay + jitter;
                                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                                 let _ = tokio::fs::remove_file(&tarball_path).await;
                             }
@@ -556,6 +565,7 @@ impl Installer {
                     })
                     .await;
 
+                succeeded_pkgs_clone.lock().unwrap().push(package_id.clone());
                 succeeded_clone.fetch_add(1, Ordering::SeqCst);
             });
         }
@@ -568,6 +578,10 @@ impl Installer {
             failed: failed.load(Ordering::SeqCst),
             skipped: skipped.load(Ordering::SeqCst),
             errors: Arc::try_unwrap(errors)
+                .unwrap_or_else(|_| Mutex::new(vec![]))
+                .into_inner()
+                .unwrap_or_default(),
+            succeeded_packages: Arc::try_unwrap(succeeded_pkgs)
                 .unwrap_or_else(|_| Mutex::new(vec![]))
                 .into_inner()
                 .unwrap_or_default(),
