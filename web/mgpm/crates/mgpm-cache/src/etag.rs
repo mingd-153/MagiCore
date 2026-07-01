@@ -16,7 +16,8 @@ impl ETagStore {
     }
 
     pub fn get_etag(&self, url: &str) -> Option<String> {
-        self.cache.get(url).map(|e| String::from_utf8_lossy(e.data).to_string())
+        self.cache.get(url)
+            .and_then(|e| String::from_utf8(e.data.to_vec()).ok())
     }
 
     pub fn store(&mut self, url: &str, etag: &str) -> Result<(), CacheError> {

@@ -105,7 +105,13 @@ impl RegistryClient {
         let cache = MemMapCache::open(&cache_path).ok().map(Mutex::new);
 
         let etag_path = cache_dir.join("etags.mgpm_cache");
-        let etag_store = ETagStore::open(&etag_path).ok().map(Mutex::new);
+        let etag_store = match ETagStore::open(&etag_path) {
+            Ok(store) => Some(Mutex::new(store)),
+            Err(e) => {
+                tracing::warn!("failed to open ETag cache ({}), ETag disabled", e);
+                None
+            }
+        };
 
         Self {
             client,
@@ -175,10 +181,15 @@ impl RegistryClient {
         url: &str,
         token: Option<String>,
     ) -> Result<serde_json::Value, RegistryError> {
-        let etag = self.etag_store.as_ref()
-            .and_then(|s| s.lock().get_etag(url));
+        let mut send_etag = true;
 
         loop {
+            let etag = if send_etag {
+                self.etag_store.as_ref().and_then(|s| s.lock().get_etag(url))
+            } else {
+                None
+            };
+
             self.rate_limiter.until_ready().await;
 
             let mut req = self.client.get(url);
@@ -200,10 +211,14 @@ impl RegistryClient {
                             let guard = c.lock();
                             let entry = guard.get(url)?;
                             Some(entry.data.to_vec())
-                        })
-                        .ok_or_else(|| RegistryError::NetworkError("cache miss on 304".into()))?;
-                    return serde_json::from_slice(&body)
-                        .map_err(|e| RegistryError::NetworkError(e.to_string()));
+                        });
+                    if let Some(body) = body {
+                        return serde_json::from_slice(&body)
+                            .map_err(|e| RegistryError::NetworkError(e.to_string()));
+                    }
+                    tracing::warn!("304 but no cached body for {}, retrying without ETag", url);
+                    send_etag = false;
+                    continue;
                 }
                 200..=202 => {
                     let etag_val = resp.headers()
