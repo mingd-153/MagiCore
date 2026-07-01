@@ -29,7 +29,6 @@ digest.workspace = true
 rusqlite.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
-mimalloc.workspace = true
 hex.workspace = true
 once_cell.workspace = true
 tracing.workspace = true

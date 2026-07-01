@@ -6,9 +6,14 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = ["mimalloc"]
+system-alloc = []
+
 [dependencies]
 mgpm-core = { path = "../mgpm-core" }
 mgpm-store = { path = "../mgpm-store" }
+mimalloc = { workspace = true, optional = true }
 mgpm-resolver = { path = "../mgpm-resolver" }
 mgpm-lockfile = { path = "../mgpm-lockfile" }
 mgpm-installer = { path = "../mgpm-installer" }

@@ -2,6 +2,15 @@
 //!
 //! Criterion-based benchmarks for core mgpm operations.
 
+#[cfg(feature = "mimalloc")]
+#[cfg(all(
+    any(target_family = "unix", target_family = "windows"),
+    not(target_env = "musl"),
+    not(miri),
+))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 
 pub fn bench_store_import(c: &mut Criterion) {

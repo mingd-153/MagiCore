@@ -3,6 +3,15 @@ use std::path::{Path, PathBuf};
 
 use std::str::FromStr;
 
+#[cfg(feature = "mimalloc")]
+#[cfg(all(
+    any(target_family = "unix", target_family = "windows"),
+    not(target_env = "musl"),
+    not(miri),
+))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use clap::{CommandFactory, Parser};
 use colored::Colorize;
 use tokio::sync::mpsc;
