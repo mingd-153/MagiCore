@@ -63,6 +63,30 @@ pub enum PackageGraphError {
 }
 
 impl PackageGraph {
+    fn build_edges(
+        deps: &HashMap<String, String>,
+        members: &HashMap<String, WorkspaceMember>,
+        seen: &mut HashSet<String>,
+    ) -> Vec<DependencyEdge> {
+        let mut edges = Vec::new();
+        for (dep_name, specifier) in deps {
+            if !seen.insert(dep_name.clone()) {
+                continue;
+            }
+            let kind = if members.contains_key(dep_name.as_str()) {
+                DepKind::Internal
+            } else {
+                DepKind::External
+            };
+            edges.push(DependencyEdge {
+                target: dep_name.clone(),
+                kind,
+                specifier: specifier.clone(),
+            });
+        }
+        edges
+    }
+
     /// Build a package graph from a workspace.
     pub fn from_workspace(ws: &Workspace) -> Self {
         let members: HashMap<String, WorkspaceMember> = ws
@@ -75,47 +99,24 @@ impl PackageGraph {
         let mut reverse: HashMap<String, Vec<DependencyEdge>> = HashMap::new();
 
         for member in ws.members() {
+            let mut seen = HashSet::new();
             let mut edges = Vec::new();
 
-            for (dep_name, specifier) in &member.package_json.dependencies {
-                let kind = if members.contains_key(dep_name.as_str()) {
-                    DepKind::Internal
-                } else {
-                    DepKind::External
-                };
-                let edge = DependencyEdge {
-                    target: dep_name.clone(),
-                    kind,
-                    specifier: specifier.clone(),
-                };
-                edges.push(edge);
-            }
-            for (dep_name, specifier) in &member.package_json.dev_dependencies {
-                let kind = if members.contains_key(dep_name.as_str()) {
-                    DepKind::Internal
-                } else {
-                    DepKind::External
-                };
-                let edge = DependencyEdge {
-                    target: dep_name.clone(),
-                    kind,
-                    specifier: specifier.clone(),
-                };
-                edges.push(edge);
-            }
-            for (dep_name, specifier) in &member.package_json.peer_dependencies {
-                let kind = if members.contains_key(dep_name.as_str()) {
-                    DepKind::Internal
-                } else {
-                    DepKind::External
-                };
-                let edge = DependencyEdge {
-                    target: dep_name.clone(),
-                    kind,
-                    specifier: specifier.clone(),
-                };
-                edges.push(edge);
-            }
+            edges.extend(Self::build_edges(
+                &member.package_json.dependencies,
+                &members,
+                &mut seen,
+            ));
+            edges.extend(Self::build_edges(
+                &member.package_json.dev_dependencies,
+                &members,
+                &mut seen,
+            ));
+            edges.extend(Self::build_edges(
+                &member.package_json.peer_dependencies,
+                &members,
+                &mut seen,
+            ));
 
             adjacency.insert(member.name.clone(), edges.clone());
 
@@ -423,6 +424,15 @@ impl PackageGraph {
             return 0;
         }
 
+        let mut visited = HashSet::new();
+        self.depth_with_visited(package, &mut visited)
+    }
+
+    fn depth_with_visited(&self, package: &str, visited: &mut HashSet<String>) -> usize {
+        if !visited.insert(package.to_string()) {
+            return 0;
+        }
+
         let deps = match self.transitive_dependencies(package) {
             Ok(d) => d,
             Err(_) => return 0,
@@ -433,8 +443,8 @@ impl PackageGraph {
         }
 
         let mut max_depth = 0usize;
-        for dep in &deps {
-            let sub_depth = self.depth(dep);
+        for dep in deps {
+            let sub_depth = self.depth_with_visited(dep, visited);
             max_depth = max_depth.max(sub_depth + 1);
         }
 
@@ -729,6 +739,14 @@ pub mod test {
     }
 
     #[test]
+    fn test_depth_with_cycle() {
+        let graph = cyclic_graph();
+        let d = graph.depth("a");
+        // Should not stack overflow; value depends on traversal order
+        assert!(d >= 1);
+    }
+
+    #[test]
     fn test_package_not_found() {
         let graph = sample_graph();
         let err = graph.dependencies("nonexistent");
@@ -815,5 +833,19 @@ pub mod test {
 
         let sorted = graph.topological_sort().unwrap();
         assert_eq!(sorted, vec!["b", "a"]);
+    }
+
+    #[test]
+    fn test_dedup_same_dep_in_multiple_categories() {
+        let members = vec![make_member(
+            "a",
+            vec![("b", "workspace:*")],
+            vec![("b", "workspace:*")],
+            vec![],
+        )];
+        let ws = make_workspace(members);
+        let graph = PackageGraph::from_workspace(&ws);
+        let deps_a = graph.dependencies("a").unwrap();
+        assert_eq!(deps_a.len(), 1);
     }
 }
