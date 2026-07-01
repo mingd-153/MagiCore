@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use mgpm_core::{MgpmConfig, WorkspaceConfig};
+use mgpm_core::{MgpmConfig, WorkspaceConfig, SecurityConfig, LinkerMode};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
@@ -91,6 +91,9 @@ impl Workspace {
                     packages: patterns,
                     catalog: None,
                     link_ws_packages: true,
+                    scripts: HashMap::new(),
+                    security: SecurityConfig::default(),
+                    linker: LinkerMode::default(),
                 };
                 return Self::from_workspace_config(path, ws_config);
             }
@@ -486,6 +489,9 @@ mod tests {
                 packages: vec!["packages/*".to_string()],
                 catalog: None,
                 link_ws_packages: true,
+                scripts: HashMap::new(),
+                security: SecurityConfig::default(),
+                linker: LinkerMode::default(),
             }),
             ..Default::default()
         };
@@ -560,6 +566,9 @@ mod tests {
                 packages: vec!["pkgs/*".to_string()],
                 catalog: None,
                 link_ws_packages: true,
+                scripts: HashMap::new(),
+                security: SecurityConfig::default(),
+                linker: LinkerMode::default(),
             }),
             ..Default::default()
         };
