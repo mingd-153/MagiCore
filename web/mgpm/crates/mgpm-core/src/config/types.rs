@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 
@@ -55,18 +55,46 @@ impl Default for MgpmConfig {
 }
 
 impl MgpmConfig {
-    pub fn load(path: &PathBuf) -> Result<Self, ConfigError> {
+    pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| ConfigError::Io { path: path.clone(), msg: e.to_string() })?;
-        toml::from_str(&content)
-            .map_err(|e| ConfigError::Parse { path: path.clone(), msg: e.to_string() })
+            .map_err(|e| ConfigError::Io { path: path.to_path_buf(), msg: e.to_string() })?;
+        Self::load_from_str(&content, path)
     }
 
-    pub fn save(&self, path: &PathBuf) -> Result<(), ConfigError> {
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| ConfigError::Serialize(e.to_string()))?;
+    pub fn load_from_str(content: &str, path: &Path) -> Result<Self, ConfigError> {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        match ext {
+            "yaml" | "yml" => serde_yaml::from_str(content).map_err(|e| {
+                let line = e.location().map(|loc| loc.line());
+                let column = e.location().map(|loc| loc.column());
+                ConfigError::Parse {
+                    path: path.to_path_buf(),
+                    msg: e.to_string(),
+                    line,
+                    column,
+                }
+            }),
+            _ => toml::from_str(content).map_err(|e| {
+                ConfigError::Parse {
+                    path: path.to_path_buf(),
+                    msg: e.to_string(),
+                    line: None,
+                    column: None,
+                }
+            }),
+        }
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let content = match ext {
+            "yaml" | "yml" => serde_yaml::to_string(self)
+                .map_err(|e| ConfigError::Serialize(e.to_string()))?,
+            _ => toml::to_string_pretty(self)
+                .map_err(|e| ConfigError::Serialize(e.to_string()))?,
+        };
         std::fs::write(path, content)
-            .map_err(|e| ConfigError::Io { path: path.clone(), msg: e.to_string() })
+            .map_err(|e| ConfigError::Io { path: path.to_path_buf(), msg: e.to_string() })
     }
 
     pub fn get_catalog(&self, name: &str) -> Option<&Catalog> {
@@ -83,9 +111,10 @@ impl MgpmConfig {
 #[serde(rename_all = "lowercase")]
 pub enum LinkerMode {
     #[default]
-    Hoisted,
     Isolated,
-    PnpmLike,
+    Hoisted,
+    #[serde(rename = "pnp")]
+    Pnp,
 }
 
 /// Workspace configuration
@@ -93,8 +122,14 @@ pub enum LinkerMode {
 pub struct WorkspaceConfig {
     pub packages: Vec<String>,
     pub catalog: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub catalogs: HashMap<String, Catalog>,
     #[serde(default = "default_true")]
     pub link_ws_packages: bool,
+    #[serde(default)]
+    pub shared_lockfile: bool,
+    #[serde(default)]
+    pub hoist: bool,
     #[serde(default)]
     pub scripts: HashMap<String, ScriptConfig>,
     #[serde(default)]
@@ -108,7 +143,10 @@ impl Default for WorkspaceConfig {
         Self {
             packages: Vec::new(),
             catalog: None,
+            catalogs: HashMap::new(),
             link_ws_packages: true,
+            shared_lockfile: true,
+            hoist: false,
             scripts: HashMap::new(),
             security: SecurityConfig::default(),
             linker: LinkerMode::default(),
@@ -123,6 +161,14 @@ pub struct ScriptConfig {
     pub command: Option<String>,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default = "default_true")]
+    pub cache: bool,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    #[serde(default)]
+    pub persistent: bool,
 }
 
 /// Security configuration for workspace
@@ -132,10 +178,12 @@ pub struct SecurityConfig {
     pub trusted_registries: Vec<String>,
     #[serde(default = "default_min_release_age")]
     pub min_release_age: String,
+    #[serde(default)]
+    pub block_exotic_deps: bool,
 }
 
 fn default_min_release_age() -> String {
-    "0s".to_string()
+    "24h".to_string()
 }
 
 impl Default for SecurityConfig {
@@ -143,6 +191,7 @@ impl Default for SecurityConfig {
         Self {
             trusted_registries: Vec::new(),
             min_release_age: default_min_release_age(),
+            block_exotic_deps: false,
         }
     }
 }
@@ -326,7 +375,7 @@ pub struct ConfigErrorDetail {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
     Io { path: PathBuf, msg: String },
-    Parse { path: PathBuf, msg: String },
+    Parse { path: PathBuf, msg: String, line: Option<usize>, column: Option<usize> },
     Serialize(String),
     Validation(Vec<ConfigErrorDetail>),
 }
@@ -335,7 +384,13 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io { path, msg } => write!(f, "failed to read config from '{}': {}", path.display(), msg),
-            Self::Parse { path, msg } => write!(f, "failed to parse config from '{}': {}", path.display(), msg),
+            Self::Parse { path, msg, line, column } => {
+                write!(f, "failed to parse config from '{}'", path.display())?;
+                if let (Some(l), Some(c)) = (line, column) {
+                    write!(f, " at line {}, column {}", l, c)?;
+                }
+                write!(f, ": {}", msg)
+            }
             Self::Serialize(msg) => write!(f, "failed to serialize config: {}", msg),
             Self::Validation(errors) => {
                 write!(f, "config validation failed ({} errors):", errors.len())?;
@@ -372,6 +427,21 @@ mod tests {
 
     #[test]
     fn test_linker_mode_default() {
-        assert_eq!(LinkerMode::default(), LinkerMode::Hoisted);
+        assert_eq!(LinkerMode::default(), LinkerMode::Isolated);
+    }
+
+    #[test]
+    fn test_security_default() {
+        let sec = SecurityConfig::default();
+        assert_eq!(sec.min_release_age, "24h");
+        assert!(!sec.block_exotic_deps);
+    }
+
+    #[test]
+    fn test_script_config_default() {
+        let script = ScriptConfig::default();
+        assert!(!script.cache);
+        assert!(!script.persistent);
+        assert!(script.inputs.is_empty());
     }
 }
