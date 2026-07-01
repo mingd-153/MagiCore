@@ -33,7 +33,7 @@ impl CacheHeader {
         }
         let magic: [u8; 8] = bytes[..8].try_into().unwrap();
         if &magic != CACHE_MAGIC {
-            return Err(CacheError::InvalidMagic);
+            return Err(CacheError::InvalidMagic { expected: *CACHE_MAGIC, actual: magic });
         }
         let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
         if version != CACHE_VERSION {

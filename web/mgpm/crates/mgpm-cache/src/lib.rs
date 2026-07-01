@@ -13,10 +13,12 @@ pub const INITIAL_SIZE: u64 = 1_048_576;
 
 pub const HEADER_SIZE: u32 = 32;
 
+pub const PAIRS_PER_ENTRY: u32 = 4;
+pub const PAIR_BYTES: u32 = PAIRS_PER_ENTRY * 4;
+pub const HASH_BYTES: u32 = 8;
+
 #[derive(Debug, Clone, Copy)]
 pub struct CacheEntry<'a> {
     pub name: &'a str,
-    pub version: &'a str,
-    pub integrity: &'a str,
     pub data: &'a [u8],
 }
