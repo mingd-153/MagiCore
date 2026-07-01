@@ -458,30 +458,59 @@ fn resolve_workspace_members<'a>(
     filter: &[String],
     since: Option<&str>,
 ) -> Result<Vec<&'a mgpm_workspace::WorkspaceMember>, String> {
-    let mut members: Vec<&mgpm_workspace::WorkspaceMember> = if recursive {
-        workspace
-            .topological_sort()
-            .map_err(|e| format!("topological sort failed: {e}"))?
-    } else {
-        workspace.members().iter().collect()
-    };
+    use std::collections::HashSet;
 
-    if !filter.is_empty() {
-        members.retain(|m| {
-            let path_str = m.path.to_string_lossy();
-            filter
-                .iter()
-                .any(|f| m.name.contains(f.as_str()) || path_str.contains(f.as_str()))
+    // Build filter selectors from --filter strings
+    let mut selectors: Vec<mgpm_workspace::FilterSelector> = Vec::new();
+    for f in filter {
+        match mgpm_workspace::FilterEngine::parse_selector(f) {
+            Ok(s) => selectors.push(s),
+            Err(_) => {
+                selectors.push(mgpm_workspace::FilterSelector::NameGlob(format!("*{}*", f)));
+            }
+        }
+    }
+
+    // Add --since as ChangedSince selector
+    if let Some(ref_) = since {
+        selectors.push(mgpm_workspace::FilterSelector::ChangedSince {
+            path_filter: None,
+            git_ref: ref_.to_string(),
         });
     }
 
-    if let Some(ref_) = since {
-        let changed = workspace
-            .changed_since(ref_)
-            .map_err(|e| format!("change detection failed: {e}"))?;
-        let changed_set: std::collections::HashSet<&str> =
-            changed.iter().map(|m| m.name.as_str()).collect();
-        members.retain(|m| changed_set.contains(m.name.as_str()));
+    // Get matching members
+    let mut members: Vec<&mgpm_workspace::WorkspaceMember> = if selectors.is_empty() {
+        if recursive {
+            workspace
+                .topological_sort()
+                .map_err(|e| format!("topological sort failed: {e}"))?
+        } else {
+            workspace.members().iter().collect()
+        }
+    } else {
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut result: Vec<&mgpm_workspace::WorkspaceMember> = Vec::new();
+        for selector in &selectors {
+            for m in workspace.filter(selector) {
+                if seen.insert(m.name.as_str()) {
+                    result.push(m);
+                }
+            }
+        }
+        result
+    };
+
+    // If recursive, sort matched members in topological order
+    if recursive {
+        let sorted = workspace
+            .topological_sort()
+            .map_err(|e| format!("topological sort failed: {e}"))?;
+        let selected: HashSet<&str> = members.iter().map(|m| m.name.as_str()).collect();
+        members = sorted
+            .into_iter()
+            .filter(|m| selected.contains(m.name.as_str()))
+            .collect();
     }
 
     Ok(members)

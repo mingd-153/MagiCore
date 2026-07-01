@@ -3,9 +3,9 @@
 use std::fs;
 use std::path::Path;
 
-use mgpm_core::{MgpmConfig, WorkspaceConfig, SecurityConfig, LinkerMode};
+use mgpm_core::{LinkerMode, MgpmConfig, SecurityConfig, WorkspaceConfig};
+use mgpm_workspace::{filter::FilterSelector, Workspace};
 use std::collections::HashMap;
-use mgpm_workspace::{FilterSelector, Workspace};
 
 fn create_member(root: &Path, subdir: &str, name: &str, version: &str, deps: &[(&str, &str)]) {
     let dir = root.join(subdir);
@@ -301,7 +301,7 @@ fn test_filter_by_glob() {
             ("other", "other", "1.0.0", &[]),
         ],
     );
-    let result = ws.filter(&FilterSelector::Glob("pkg-*".to_string()));
+    let result = ws.filter(&FilterSelector::NameGlob("pkg-*".to_string()));
     assert_eq!(result.len(), 2);
     assert!(result.iter().any(|m| m.name == "pkg-a"));
     assert!(result.iter().any(|m| m.name == "pkg-b"));
@@ -309,11 +309,8 @@ fn test_filter_by_glob() {
 
 #[test]
 fn test_filter_by_glob_no_match() {
-    let ws = create_workspace_with_members(
-        "packages/*",
-        &[("pkg-a", "pkg-a", "1.0.0", &[])],
-    );
-    let result = ws.filter(&FilterSelector::Glob("nomatch-*".to_string()));
+    let ws = create_workspace_with_members("packages/*", &[("pkg-a", "pkg-a", "1.0.0", &[])]);
+    let result = ws.filter(&FilterSelector::NameGlob("nomatch-*".to_string()));
     assert!(result.is_empty());
 }
 
