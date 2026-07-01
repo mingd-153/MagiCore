@@ -125,20 +125,20 @@ impl Lockfile {
     /// Compute content hash using v1 algorithm (blake3) for backward compat
     /// Note: v1 originally used DefaultHasher (SipHash) which is not crypto-secure.
     /// This uses blake3 with a domain separator for v1 compatibility.
-    pub fn compute_content_hash_v1(&self) -> String {
+    pub fn compute_content_hash_v1(&self) -> Result<String, crate::LockfileError> {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"mgpm-lockfile-v1");
 
-        let data = serde_json::to_string(&self.packages).unwrap_or_default();
+        let data: String = serde_json::to_string(&self.packages)?;
         hasher.update(data.as_bytes());
-        hasher.finalize().to_hex().to_string()
+        Ok(hasher.finalize().to_hex().to_string())
     }
 
     /// Migrate lockfile from v1 to v2 format
     pub fn migrate_v1_to_v2(&mut self) -> Result<(), crate::LockfileError> {
         if self.version == LOCKFILE_VERSION_V1 {
             // Verify v1 content hash matches (validates v1 lockfile wasn't tampered)
-            let expected_v1_hash = self.compute_content_hash_v1();
+            let expected_v1_hash = self.compute_content_hash_v1()?;
             if self.metadata.content_hash != expected_v1_hash {
                 return Err(crate::LockfileError::ContentHashMismatch {
                     expected: expected_v1_hash,
@@ -167,9 +167,10 @@ impl Lockfile {
         self.verify_content_hash()
     }
 
-    /// Full verification against package.json dependencies.
-    /// Returns true if lockfile is valid and all packages are resolved.
-    pub fn verify_integrity(&self, package_json_deps: &[(&str, &str)]) -> Result<(), crate::LockfileError> {
+    /// Full verification against expected package names.
+    /// Returns true if lockfile is valid and all expected packages are resolved.
+    /// NOTE: version spec validation is done at the caller level, not here.
+    pub fn verify_integrity(&self, expected_packages: &[&str]) -> Result<(), crate::LockfileError> {
         if !self.is_fresh() {
             return Err(crate::LockfileError::Corrupted(
                 "content hash mismatch".to_string()
@@ -183,7 +184,7 @@ impl Lockfile {
             ));
         }
 
-        for (name, _spec) in package_json_deps {
+        for name in expected_packages {
             if !self.packages.iter().any(|p| p.name == *name) {
                 return Err(crate::LockfileError::MissingPackage(name.to_string()));
             }

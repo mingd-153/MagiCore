@@ -42,7 +42,7 @@ fn compute_dep_graph_hash(packages: &[PackageLinkInfo]) -> String {
 }
 
 fn prepopulate_isolated_virtual_store(pkg: &PackageLinkInfo, project_root: &Path) -> String {
-    let hash = compute_dep_graph_hash(&[pkg.clone()]);
+    let hash = compute_dep_graph_hash(std::slice::from_ref(pkg));
     let vs_dir = project_root
         .join("node_modules")
         .join(".mgpm")
@@ -302,7 +302,7 @@ fn test_hoisted_vs_isolated_different_structure() {
     };
 
     let hoisted_linker = LinkerFactory::create(hoisted_opts, &_cas_store).unwrap();
-    hoisted_linker.link_all(&[pkg.clone()], &_cas_store, &hoisted_root).unwrap();
+    hoisted_linker.link_all(std::slice::from_ref(&pkg), &_cas_store, &hoisted_root).unwrap();
 
     assert!(hoisted_root.join(".mgpm").exists());
 

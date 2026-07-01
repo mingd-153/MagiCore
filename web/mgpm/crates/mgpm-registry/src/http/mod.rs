@@ -66,6 +66,8 @@ pub enum DownloadError {
     Timeout(String),
     #[error("integrity mismatch: expected {expected}, got {actual}")]
     IntegrityMismatch { expected: String, actual: String },
+    #[error("partial download: expected {expected} bytes, got {actual}")]
+    Truncated { expected: u64, actual: u64 },
 }
 
 impl From<reqwest::Error> for DownloadError {
@@ -197,6 +199,7 @@ impl DownloadManager {
             return Err(DownloadError::HttpError(status.as_u16()));
         }
 
+        let expected_len = response.content_length();
         let mut file = tokio::fs::File::create(output_path).await
             .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
         let mut stream = response.bytes_stream();
@@ -214,6 +217,12 @@ impl DownloadManager {
         file.flush().await
             .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
         drop(_permit);
+
+        if let Some(expected) = expected_len {
+            if downloaded != expected {
+                return Err(DownloadError::Truncated { expected, actual: downloaded });
+            }
+        }
 
         let raw_hash: [u8; 32] = hasher.finalize().into();
 
@@ -324,8 +333,16 @@ impl DownloadManager {
             return Err(DownloadError::HttpError(status.as_u16()));
         }
 
+        let content_length = response.content_length();
         let body = response.bytes().await?.to_vec();
         let duration = start.elapsed();
+
+        if let Some(expected) = content_length {
+            let actual = body.len() as u64;
+            if actual != expected {
+                return Err(DownloadError::Truncated { expected, actual });
+            }
+        }
 
         if let Some(ref expected) = req.integrity {
             let actual_hash = Sha256::digest(&body);

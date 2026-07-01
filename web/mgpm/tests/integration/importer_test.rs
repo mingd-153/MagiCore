@@ -695,7 +695,7 @@ mod bun_import_tests {
     fn test_import_bun_too_short() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bun.lockb");
-        std::fs::write(&path, &[0u8; 4]).unwrap();
+        std::fs::write(&path, [0u8; 4]).unwrap();
         let result = parse_bun_lock(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("too short"));
@@ -705,7 +705,7 @@ mod bun_import_tests {
     fn test_import_bun_invalid_magic() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bun.lockb");
-        std::fs::write(&path, &[0u8; 12]).unwrap();
+        std::fs::write(&path, [0u8; 12]).unwrap();
         let result = parse_bun_lock(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("magic"));

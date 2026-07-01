@@ -46,6 +46,12 @@ pub enum LockfileError {
     MissingPackage(String),
 }
 
+impl From<serde_json::Error> for LockfileError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Serialization(e.to_string())
+    }
+}
+
 impl From<std::io::Error> for LockfileError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e.to_string())

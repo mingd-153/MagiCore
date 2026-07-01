@@ -94,7 +94,7 @@ fn test_lockfile_migrate_v1_to_v2() {
             resolved: false,
             resolved_at: None,
         });
-    lock.metadata.content_hash = lock.compute_content_hash_v1();
+    lock.metadata.content_hash = lock.compute_content_hash_v1().unwrap();
 
     lock.migrate_v1_to_v2().unwrap();
     assert_eq!(lock.version, LOCKFILE_VERSION);
@@ -128,7 +128,7 @@ fn test_lockfile_v1_backward_compat() {
             resolved: false,
             resolved_at: None,
         });
-    lock.metadata.content_hash = lock.compute_content_hash_v1();
+    lock.metadata.content_hash = lock.compute_content_hash_v1().unwrap();
 
     write_text(&lock, &path).unwrap();
     let loaded = read_text(&path).unwrap();

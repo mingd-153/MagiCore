@@ -294,7 +294,7 @@ mod tests {
 
         let mut corrupt = [0u8; 32];
         corrupt[..8].copy_from_slice(b"CORRUPT!");
-        std::fs::write(&path, &corrupt).unwrap();
+        std::fs::write(&path, corrupt).unwrap();
         let err = MemMapCache::open(&path).unwrap_err();
         match err {
             CacheError::InvalidMagic { expected, actual } => {

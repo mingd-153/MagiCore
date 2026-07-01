@@ -428,6 +428,12 @@ impl RegistryClient {
                         expected, actual
                     ))
                 }
+                DownloadError::Truncated { expected, actual } => {
+                    RegistryError::NetworkError(format!(
+                        "partial download: expected {} bytes, got {}",
+                        expected, actual
+                    ))
+                }
             }))
             .collect()
     }

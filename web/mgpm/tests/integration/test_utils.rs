@@ -116,6 +116,7 @@ pub fn create_mock_lockfile(packages: &[(&str, &str)]) -> Lockfile {
 }
 
 /// Mock registry server simulating an npm-compatible registry.
+#[allow(dead_code)]
 pub struct MockRegistryServer {
     pub url: String,
     packages: HashMap<String, Vec<(String, Vec<u8>)>>,

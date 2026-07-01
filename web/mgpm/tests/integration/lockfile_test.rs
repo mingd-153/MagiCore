@@ -140,7 +140,7 @@ fn test_migrate_v1_to_v2_roundtrip() {
             resolved_at: None,
         });
     lock.sort_packages();
-    lock.metadata.content_hash = lock.compute_content_hash_v1();
+    lock.metadata.content_hash = lock.compute_content_hash_v1().unwrap();
 
     lock.migrate_v1_to_v2().unwrap();
 
@@ -198,7 +198,7 @@ fn test_text_auto_migrates_v1_to_v2() {
             resolved_at: None,
         });
     lock.sort_packages();
-    lock.metadata.content_hash = lock.compute_content_hash_v1();
+    lock.metadata.content_hash = lock.compute_content_hash_v1().unwrap();
 
     let text_path = dir.path().join("mgpm.lock");
     mgpm_lockfile::text::write_text(&lock, &text_path).unwrap();
@@ -232,7 +232,7 @@ fn test_binary_accepts_v1_and_v2() {
             resolved_at: None,
         });
     lock.sort_packages();
-    lock.metadata.content_hash = lock.compute_content_hash_v1();
+    lock.metadata.content_hash = lock.compute_content_hash_v1().unwrap();
 
     let binary_path = dir.path().join("mgpm.lockb");
     mgpm_lockfile::binary::write_binary(&lock, &binary_path).unwrap();

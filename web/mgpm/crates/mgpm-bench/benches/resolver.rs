@@ -38,7 +38,7 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
                 let wanted: Vec<(PackageName, String)> = (0..n)
                     .map(|i| {
                         (
-                            PackageName::new(&format!("pkg_{}", i)).unwrap(),
+                            PackageName::new(format!("pkg_{}", i)).unwrap(),
                             "^1.0.0".to_string(),
                         )
                     })

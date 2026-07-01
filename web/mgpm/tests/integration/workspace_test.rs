@@ -24,7 +24,9 @@ fn create_member(root: &Path, subdir: &str, name: &str, version: &str, deps: &[(
     fs::write(dir.join("package.json"), serde_json::to_string_pretty(&pkg_json).unwrap()).unwrap();
 }
 
-fn create_workspace_with_members(packages_pattern: &str, members: &[(&str, &str, &str, &[(&str, &str)])]) -> Workspace {
+type WorkspaceMember<'a> = (&'a str, &'a str, &'a str, &'a [(&'a str, &'a str)]);
+
+fn create_workspace_with_members(packages_pattern: &str, members: &[WorkspaceMember]) -> Workspace {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
 
@@ -46,7 +48,7 @@ fn create_workspace_with_members(packages_pattern: &str, members: &[(&str, &str,
     Workspace::discover(&root).unwrap()
 }
 
-fn create_workspace_from_json(root: &Path, packages_pattern: &str, members: &[(&str, &str, &str, &[(&str, &str)])]) -> Workspace {
+fn create_workspace_from_json(root: &Path, packages_pattern: &str, members: &[WorkspaceMember]) -> Workspace {
     let pkg_json = serde_json::json!({
         "name": "root-ws",
         "version": "0.0.0",
