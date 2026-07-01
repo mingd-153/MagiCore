@@ -13,7 +13,7 @@ use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::OnceCell;
 
-use mgpm_cache::{CacheEntry, MemMapCache};
+use mgpm_cache::{CacheEntry, ETagStore, MemMapCache};
 use mgpm_core::{PackageId, RegistryConfig};
 
 pub mod npm;
@@ -63,6 +63,7 @@ pub struct RegistryClient {
     inflight: Arc<InflightMap>,
     registries: RwLock<HashMap<String, RegistryConfig>>,
     cache: Option<Mutex<MemMapCache>>,
+    etag_store: Option<Mutex<ETagStore>>,
 }
 
 impl RegistryClient {
@@ -95,12 +96,16 @@ impl RegistryClient {
             .allow_burst(NonZeroU32::new(200).unwrap());
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
-        let cache_path = dirs::cache_dir()
+        let cache_dir = dirs::cache_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("mgpm")
-            .join("cache")
-            .join("registry.mgpm_cache");
+            .join("cache");
+
+        let cache_path = cache_dir.join("registry.mgpm_cache");
         let cache = MemMapCache::open(&cache_path).ok().map(Mutex::new);
+
+        let etag_path = cache_dir.join("etags.mgpm_cache");
+        let etag_store = ETagStore::open(&etag_path).ok().map(Mutex::new);
 
         Self {
             client,
@@ -108,6 +113,7 @@ impl RegistryClient {
             inflight: Arc::new(DashMap::new()),
             registries: RwLock::new(HashMap::new()),
             cache,
+            etag_store,
         }
     }
 
@@ -136,25 +142,115 @@ impl RegistryClient {
 
         let url = url.to_string();
         let token = token.clone();
+        let has_etag = self.etag_store.is_some();
         let result = cell.get_or_init(|| async {
-            self.do_get_json(&url, token).await
+            if has_etag {
+                self.do_get_json_with_etag(&url, token).await
+            } else {
+                self.do_get_json(&url, token).await
+            }
         }).await.clone();
 
-        if let Ok(ref val) = result {
-            if let Some(ref cache) = self.cache {
-                if let Ok(data) = serde_json::to_vec(val) {
-                    let entry = CacheEntry {
-                        name: url.as_str(),
-                        data: &data,
-                    };
-                    let mut guard = cache.lock();
-                    let _ = guard.insert(entry);
-                    let _ = guard.flush();
+        if !has_etag {
+            if let Ok(ref val) = result {
+                if let Some(ref cache) = self.cache {
+                    if let Ok(data) = serde_json::to_vec(val) {
+                        let entry = CacheEntry {
+                            name: url.as_str(),
+                            data: &data,
+                        };
+                        let mut guard = cache.lock();
+                        let _ = guard.insert(entry);
+                        let _ = guard.flush();
+                    }
                 }
             }
         }
 
         result
+    }
+
+    async fn do_get_json_with_etag(
+        &self,
+        url: &str,
+        token: Option<String>,
+    ) -> Result<serde_json::Value, RegistryError> {
+        let etag = self.etag_store.as_ref()
+            .and_then(|s| s.lock().get_etag(url));
+
+        loop {
+            self.rate_limiter.until_ready().await;
+
+            let mut req = self.client.get(url);
+            if let Some(ref t) = token {
+                req = req.header("Authorization", format!("Bearer {}", t));
+            }
+            if let Some(ref e) = etag {
+                req = req.header("If-None-Match", e);
+            }
+
+            let resp = req.send().await.map_err(|e| RegistryError::NetworkError(e.to_string()))?;
+            let status = resp.status();
+
+            match status.as_u16() {
+                304 => {
+                    tracing::debug!("304 Not Modified: {}", url);
+                    let body = self.cache.as_ref()
+                        .and_then(|c| {
+                            let guard = c.lock();
+                            let entry = guard.get(url)?;
+                            Some(entry.data.to_vec())
+                        })
+                        .ok_or_else(|| RegistryError::NetworkError("cache miss on 304".into()))?;
+                    return serde_json::from_slice(&body)
+                        .map_err(|e| RegistryError::NetworkError(e.to_string()));
+                }
+                200..=202 => {
+                    let etag_val = resp.headers()
+                        .get("etag")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.to_string());
+
+                    let body = resp.bytes().await
+                        .map_err(|e| RegistryError::NetworkError(e.to_string()))?;
+
+                    if let Some(ref store) = self.etag_store {
+                        if let Some(ref etag) = etag_val {
+                            let mut guard = store.lock();
+                            let _ = guard.store(url, etag);
+                        }
+                    }
+
+                    if let Some(ref cache) = self.cache {
+                        let entry = CacheEntry { name: url, data: &body };
+                        let mut guard = cache.lock();
+                        let _ = guard.insert(entry);
+                        let _ = guard.flush();
+                    }
+
+                    return serde_json::from_slice(&body)
+                        .map_err(|e| RegistryError::NetworkError(e.to_string()));
+                }
+                429 => {
+                    let retry_after = resp
+                        .headers()
+                        .get("Retry-After")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(5);
+                    tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                    continue;
+                }
+                401 | 403 => {
+                    return Err(RegistryError::NetworkError(format!(
+                        "authentication required (status {})",
+                        status.as_u16()
+                    )));
+                }
+                404 => return Err(RegistryError::NotFound(url.to_string())),
+                _ => return Err(RegistryError::HttpError(status.as_u16())),
+            }
+        }
     }
 
     async fn do_get_json(

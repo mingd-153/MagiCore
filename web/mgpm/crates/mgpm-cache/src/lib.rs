@@ -1,9 +1,11 @@
 pub mod binary;
 pub mod error;
+pub mod etag;
 pub mod memmap;
 
 pub use binary::CacheHeader;
 pub use error::CacheError;
+pub use etag::ETagStore;
 pub use memmap::MemMapCache;
 
 pub const CACHE_MAGIC: &[u8; 8] = b"MGPMCACH";
