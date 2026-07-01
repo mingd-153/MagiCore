@@ -56,11 +56,11 @@ create → check → run → fix → update → fix → done → report → push
 ## Current Status
 
 **Phase**: 3 — Monorepo
-**Current task**: T3.4 — ✅ Workspace Protocol
-**Branch hiện tại**: `feat-T3.4-workspace-protocol`
-**Branch gốc**: `feat-T3.3-filter-engine`
+**Current task**: T3.5 — ✅ Task Graph
+**Branch hiện tại**: `feat-T3.5-task-graph`
+**Branch gốc**: `development`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 372 passed (42 protocol + 96 workspace + others), 0 failed, 0 warnings
+**Tests**: 395 passed (12 monorepo + 42 protocol + 96 workspace + others), 0 failed, 0 warnings
 
 ## What's Been Done
 
@@ -295,8 +295,8 @@ Task còn lại trong Phase 3:
 1. **T3.1**: ✅ YAML/TOML config + missing fields + CLI flags
 2. **T3.2**: ✅ PackageGraph + security audit
 3. **T3.3**: ✅ Filter Engine + syntax parser
-4. **T3.4**: ✅ Workspace Protocol (hiện tại)
-5. **T3.5**: Task Graph ⏳
+4. **T3.4**: ✅ Workspace Protocol
+5. **T3.5**: ✅ Task Graph (hiện tại)
 6. **T3.6**: Catalogs ⏳
 7. **T3.7**: Cache Engine ⏳
 8. **T3.8**: Affected Commands ⏳
