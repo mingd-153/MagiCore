@@ -37,7 +37,7 @@ impl HoistedLinker {
         self.options.hoist_pattern.iter().any(|pat| {
             glob::Pattern::new(pat)
                 .ok()
-                .map_or(false, |g| g.matches(&pkg.name))
+                .is_some_and(|g| g.matches(&pkg.name))
         })
     }
 
@@ -184,7 +184,7 @@ impl HoistedLinker {
                 let src = virtual_store
                     .join(format!(
                         "{}@{}_{}/node_modules/{}/{}",
-                        pkg.name.replace('/', "_").replace('@', "_"),
+                        pkg.name.replace(['/', '@'], "_"),
                         pkg.version,
                         self.compute_peer_hash(pkg),
                         pkg.name,

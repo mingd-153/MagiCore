@@ -39,6 +39,12 @@ pub struct UpdateOptions {
 #[napi]
 pub struct MgpmCli;
 
+impl Default for MgpmCli {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[napi]
 impl MgpmCli {
     #[napi(constructor)]

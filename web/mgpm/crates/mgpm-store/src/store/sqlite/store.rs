@@ -445,6 +445,10 @@ impl StoreIndex for SqliteStore {
         )?;
         Ok(())
     }
+
+    fn clone_box(&self) -> Box<dyn StoreIndex> {
+        Box::new(self.clone())
+    }
 }
 
 impl SqliteStore {

@@ -286,7 +286,6 @@ impl LockfilePackage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mgpm_core::PackageName;
     use proptest::prelude::*;
 
     #[test]

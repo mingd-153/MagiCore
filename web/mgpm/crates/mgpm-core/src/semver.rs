@@ -153,7 +153,7 @@ impl FromStr for Version {
 
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp_version(other))
+        Some(self.cmp(other))
     }
 }
 

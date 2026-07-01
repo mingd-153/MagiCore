@@ -75,35 +75,41 @@ impl<'a> StoreVerifier<'a> {
     }
 
     pub fn status(&self) -> Result<StoreReport, StoreError> {
-        let mut report = StoreReport::default();
-
-        report.total_packages = self.index.package_count()?;
-        report.total_projects = self.index.project_count()?;
-        report.total_size_bytes = self.index.total_size()?;
+        let total_packages = self.index.package_count()?;
+        let total_projects = self.index.project_count()?;
+        let total_size_bytes = self.index.total_size()?;
 
         let unreferenced = self.index.get_unreferenced_packages()?;
+        let mut unreferenced_packages = Vec::new();
+        let mut reclaimable_bytes = 0;
         for pkg in &unreferenced {
-            report.unreferenced_packages.push(pkg.integrity.clone());
-            report.reclaimable_bytes += pkg.size_bytes;
+            unreferenced_packages.push(pkg.integrity.clone());
+            reclaimable_bytes += pkg.size_bytes;
         }
 
-        Ok(report)
+        Ok(StoreReport {
+            total_packages,
+            total_projects,
+            total_size_bytes,
+            unreferenced_packages,
+            reclaimable_bytes,
+            ..Default::default()
+        })
     }
-
-    pub fn prune(&self, dry_run: bool) -> Result<StoreReport, StoreError> {
+pub fn prune(&self, dry_run: bool) -> Result<StoreReport, StoreError> {
         if !dry_run && self.index.is_readonly() {
             return Err(StoreError::Database(
                 "cannot prune: store index is readonly".into(),
             ));
         }
 
-        let mut report = StoreReport::default();
-
         let unreferenced = self.index.get_unreferenced_packages()?;
+        let mut unreferenced_packages = Vec::new();
+        let mut reclaimable_bytes = 0;
 
         for pkg in &unreferenced {
-            report.unreferenced_packages.push(pkg.integrity.clone());
-            report.reclaimable_bytes += pkg.size_bytes;
+            unreferenced_packages.push(pkg.integrity.clone());
+            reclaimable_bytes += pkg.size_bytes;
 
             if !dry_run {
                 let cas_path = self
@@ -135,7 +141,11 @@ impl<'a> StoreVerifier<'a> {
             self.cleanup_empty_shards()?;
         }
 
-        Ok(report)
+        Ok(StoreReport {
+            unreferenced_packages,
+            reclaimable_bytes,
+            ..Default::default()
+        })
     }
 
     fn cleanup_empty_shards(&self) -> Result<(), StoreError> {

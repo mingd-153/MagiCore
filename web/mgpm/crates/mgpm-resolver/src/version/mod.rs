@@ -148,11 +148,12 @@ impl VersionSet {
                     .collect::<Vec<_>>()
                     .join(" ")
             }
-            Self::Complement(s) => format!("!({})", s.to_string()),
+            Self::Complement(s) => format!("!({s})"),
         }
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for VersionSet {
     fn default() -> Self {
         Self::Any

@@ -158,7 +158,7 @@ impl super::Linker for IsolatedLinker {
                 validate_rel_path(bin_name)?;
                 validate_rel_path(bin_path)?;
                 let dep_graph_hash = Self::compute_dep_graph_hash(
-                    &std::slice::from_ref(pkg)
+                    std::slice::from_ref(pkg)
                 );
 
                 let src = PathBuf::from("..")

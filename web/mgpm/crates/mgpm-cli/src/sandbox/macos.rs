@@ -8,13 +8,12 @@ pub fn apply_seatbelt(project_dir: &Path) -> Result<SandboxGuard, String> {
         "(version 1)
         (deny default)
         (allow file-read* (subpath \"/Users\"))
-        (allow file-write* (subpath \"{}\"))
-        (allow file-write* (subpath \"{}\"))
+        (allow file-write* (subpath \"{home}/.mgpm\"))
+        (allow file-write* (subpath \"{}/node_modules\"))
         (allow network-outbound)
         (allow process-exec (literal \"/usr/bin/env\") (literal \"/bin/sh\"))
         (deny process-fork)",
-        format!("{}/.mgpm", home),
-        format!("{}/node_modules", project_dir.display())
+        project_dir.display()
     );
 
     // Write profile to temp file

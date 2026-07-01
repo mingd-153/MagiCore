@@ -1,4 +1,9 @@
 //! Full PubGrub implementation with backtracking and conflict explanation
+//!
+//! Note: Some clippy lints are allowed here due to the complexity of the PubGrub algorithm
+//! and the large error types required for detailed conflict reporting.
+
+#![allow(clippy::result_large_err, clippy::collapsible_match, clippy::collapsible_if)]
 
 use std::collections::HashMap;
 use std::fmt;
@@ -225,15 +230,12 @@ impl PubGrubSolver {
         // Check incompatibilities for other packages that need assignment
         for inc in &self.incompatibilities {
             for term in &inc.terms {
-                match term {
-                    Term::Positive(name, vs) => {
-                        if !self.decisions.contains_key(name) {
-                            if let Some(version) = vs.satisfying_version() {
-                                return Ok(Decision::Assigned(name.clone(), version, vs.clone()));
-                            }
+                if let Term::Positive(name, vs) = term {
+                    if !self.decisions.contains_key(name) {
+                        if let Some(version) = vs.satisfying_version() {
+                            return Ok(Decision::Assigned(name.clone(), version, vs.clone()));
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -315,7 +317,6 @@ impl fmt::Display for DerivationTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mgpm_core::Version;
     
     #[test]
     fn test_incompatibility() {
