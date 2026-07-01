@@ -76,12 +76,11 @@ impl SizeReportPlugin {
 
         packages_with_sizes.sort_by_key(|b| std::cmp::Reverse(b.size_bytes));
 
-        let top_10_largest: Vec<PackageSize> = packages_with_sizes.iter()
-            .take(10)
-            .cloned()
-            .collect();
+        let top_10_largest: Vec<PackageSize> =
+            packages_with_sizes.iter().take(10).cloned().collect();
 
-        let excessive_size_packages: Vec<PackageSize> = packages_with_sizes.iter()
+        let excessive_size_packages: Vec<PackageSize> = packages_with_sizes
+            .iter()
             .filter(|p| p.size_bytes > EXCESSIVE_THRESHOLD)
             .cloned()
             .collect();
@@ -111,7 +110,10 @@ impl SizeReportPlugin {
                 "Size report: {} packages, total {}, top package {}, {} packages > 1MB",
                 package_count,
                 format_size(total_size),
-                packages_with_sizes.first().map(|p| format!("{}@{} ({})", p.name, p.version, p.size_label)).unwrap_or_else(|| "N/A".into()),
+                packages_with_sizes
+                    .first()
+                    .map(|p| format!("{}@{} ({})", p.name, p.version, p.size_label))
+                    .unwrap_or_else(|| "N/A".into()),
                 over_1mb,
             ),
             data: Some(data),

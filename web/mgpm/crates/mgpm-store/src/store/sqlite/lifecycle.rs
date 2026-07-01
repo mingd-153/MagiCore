@@ -51,11 +51,16 @@ impl SqliteStore {
         };
 
         if !readonly {
-            let gen: i64 = store.conn.lock().unwrap().query_row(
-                "SELECT COALESCE(MAX(generation), 0) FROM gc_state",
-                [],
-                |row| row.get(0),
-            ).unwrap_or(0);
+            let gen: i64 = store
+                .conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT COALESCE(MAX(generation), 0) FROM gc_state",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
             *store.generation.lock().unwrap() = gen as u64;
         }
 
@@ -136,9 +141,16 @@ impl SqliteStore {
     }
 
     // Internal helper that takes an already-locked connection to avoid deadlock
-    fn get_store_stats_with_conn(&self, conn: &Connection) -> Result<(u64, u64, usize), StoreError> {
-        let page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0)).unwrap_or(0);
-        let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0)).unwrap_or(0);
+    fn get_store_stats_with_conn(
+        &self,
+        conn: &Connection,
+    ) -> Result<(u64, u64, usize), StoreError> {
+        let page_count: i64 = conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))
+            .unwrap_or(0);
+        let page_size: i64 = conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap_or(0);
         let wal_size = get_wal_size(&self.path);
         let db_size = ((page_count * page_size) / (1024 * 1024)) as u64;
         let wal_size_kb = (wal_size / 1024) as u64;

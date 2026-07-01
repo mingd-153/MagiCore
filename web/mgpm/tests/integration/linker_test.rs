@@ -17,7 +17,11 @@ fn create_store_file(store_path: &Path, content: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let hash = hex::encode(Sha256::digest(content));
     let shard = &hash[..2];
-    let file_path = store_path.join("files").join("sha256").join(shard).join(&hash);
+    let file_path = store_path
+        .join("files")
+        .join("sha256")
+        .join(shard)
+        .join(&hash);
     fs::create_dir_all(file_path.parent().unwrap()).unwrap();
     fs::write(&file_path, content).unwrap();
     hash
@@ -97,11 +101,23 @@ fn test_hoisted_linker_layout() {
     let linker = LinkerFactory::create(options, &_cas_store).unwrap();
     let result = linker.link_all(&[pkg], &_cas_store, &project_root).unwrap();
 
-    assert!(project_root.join(".mgpm").exists(), ".mgpm dir should exist");
+    assert!(
+        project_root.join(".mgpm").exists(),
+        ".mgpm dir should exist"
+    );
 
-    let nm = project_root.join(".mgpm").join("node_modules").join("test-pkg");
-    assert!(nm.exists(), "hoisted: node_modules/test-pkg should exist in .mgpm");
-    assert!(nm.join("index.js").exists(), "hoisted: file should be linked inside .mgpm/node_modules/test-pkg");
+    let nm = project_root
+        .join(".mgpm")
+        .join("node_modules")
+        .join("test-pkg");
+    assert!(
+        nm.exists(),
+        "hoisted: node_modules/test-pkg should exist in .mgpm"
+    );
+    assert!(
+        nm.join("index.js").exists(),
+        "hoisted: file should be linked inside .mgpm/node_modules/test-pkg"
+    );
 
     assert_eq!(result.linked.len(), 1);
     assert_eq!(result.linked[0].name, "test-pkg");
@@ -156,7 +172,10 @@ fn test_isolated_linker_layout() {
     assert_eq!(result.linked[0].name, "test-pkg");
     assert_eq!(result.dep_graph_hash, hash);
     let linked_path = &result.linked[0].path;
-    assert!(linked_path.exists(), "linked package path should exist in virtual store");
+    assert!(
+        linked_path.exists(),
+        "linked package path should exist in virtual store"
+    );
 }
 
 #[test]
@@ -196,10 +215,19 @@ fn test_linker_empty_package() {
     assert_eq!(result.linked.len(), 1);
     assert_eq!(result.linked[0].name, "empty-pkg");
 
-    let nm_dir = project_root.join(".mgpm").join("node_modules").join("empty-pkg");
-    assert!(nm_dir.exists(), "empty package dir should exist in .mgpm/node_modules");
+    let nm_dir = project_root
+        .join(".mgpm")
+        .join("node_modules")
+        .join("empty-pkg");
+    assert!(
+        nm_dir.exists(),
+        "empty package dir should exist in .mgpm/node_modules"
+    );
     let file_count = fs::read_dir(&nm_dir).unwrap().count();
-    assert_eq!(file_count, 0, "empty package directory should contain no files");
+    assert_eq!(
+        file_count, 0,
+        "empty package directory should contain no files"
+    );
 }
 
 #[test]
@@ -253,18 +281,35 @@ fn test_linker_multiple_packages() {
     };
 
     let linker = LinkerFactory::create(options, &_cas_store).unwrap();
-    let result = linker.link_all(&packages, &_cas_store, &project_root).unwrap();
+    let result = linker
+        .link_all(&packages, &_cas_store, &project_root)
+        .unwrap();
 
     assert_eq!(result.linked.len(), 2);
 
     let mgpm_nm = project_root.join(".mgpm").join("node_modules");
-    assert!(mgpm_nm.join("app").exists(), "app should be in .mgpm/node_modules");
-    assert!(mgpm_nm.join("lib").exists(), "lib should be in .mgpm/node_modules");
+    assert!(
+        mgpm_nm.join("app").exists(),
+        "app should be in .mgpm/node_modules"
+    );
+    assert!(
+        mgpm_nm.join("lib").exists(),
+        "lib should be in .mgpm/node_modules"
+    );
 
-    assert!(mgpm_nm.join("app").join("main.js").exists(), "app/main.js should exist");
-    assert!(mgpm_nm.join("lib").join("index.js").exists(), "lib/index.js should exist");
+    assert!(
+        mgpm_nm.join("app").join("main.js").exists(),
+        "app/main.js should exist"
+    );
+    assert!(
+        mgpm_nm.join("lib").join("index.js").exists(),
+        "lib/index.js should exist"
+    );
 
-    assert!(project_root.join(".mgpm").exists(), ".mgpm dir should exist");
+    assert!(
+        project_root.join(".mgpm").exists(),
+        ".mgpm dir should exist"
+    );
 }
 
 #[test]
@@ -302,14 +347,28 @@ fn test_hoisted_vs_isolated_different_structure() {
     };
 
     let hoisted_linker = LinkerFactory::create(hoisted_opts, &_cas_store).unwrap();
-    hoisted_linker.link_all(&[pkg.clone()], &_cas_store, &hoisted_root).unwrap();
+    hoisted_linker
+        .link_all(&[pkg.clone()], &_cas_store, &hoisted_root)
+        .unwrap();
 
     assert!(hoisted_root.join(".mgpm").exists());
 
-    let hoisted_nm = hoisted_root.join(".mgpm").join("node_modules").join("compare-pkg");
-    assert!(hoisted_nm.exists(), "hoisted: package should be in .mgpm/node_modules");
-    assert!(hoisted_nm.join("file.js").exists(), "hoisted: file should be linked");
-    assert!(hoisted_nm.is_symlink(), "hoisted should symlink into virtual store");
+    let hoisted_nm = hoisted_root
+        .join(".mgpm")
+        .join("node_modules")
+        .join("compare-pkg");
+    assert!(
+        hoisted_nm.exists(),
+        "hoisted: package should be in .mgpm/node_modules"
+    );
+    assert!(
+        hoisted_nm.join("file.js").exists(),
+        "hoisted: file should be linked"
+    );
+    assert!(
+        hoisted_nm.is_symlink(),
+        "hoisted should symlink into virtual store"
+    );
 
     let isolated_root = tmp.path().join("isolated");
     prepopulate_isolated_virtual_store(&pkg, &isolated_root);
@@ -325,7 +384,9 @@ fn test_hoisted_vs_isolated_different_structure() {
     };
 
     let isolated_linker = LinkerFactory::create(isolated_opts, &_cas_store).unwrap();
-    isolated_linker.link_all(&[pkg], &_cas_store, &isolated_root).unwrap();
+    isolated_linker
+        .link_all(&[pkg], &_cas_store, &isolated_root)
+        .unwrap();
 
     let isolated_nm = isolated_root.join("node_modules").join("compare-pkg");
     assert!(isolated_nm.exists());
@@ -341,6 +402,12 @@ fn test_hoisted_vs_isolated_different_structure() {
     let hoisted_mgpm = hoisted_root.join(".mgpm").join("node_modules");
     let isolated_mgpm = isolated_root.join("node_modules").join(".mgpm");
 
-    assert!(hoisted_mgpm.exists(), "hoisted: node_modules should live inside .mgpm");
-    assert!(isolated_mgpm.exists(), "isolated: .mgpm should live inside node_modules");
+    assert!(
+        hoisted_mgpm.exists(),
+        "hoisted: node_modules should live inside .mgpm"
+    );
+    assert!(
+        isolated_mgpm.exists(),
+        "isolated: .mgpm should live inside node_modules"
+    );
 }

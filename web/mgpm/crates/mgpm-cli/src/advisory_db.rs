@@ -264,9 +264,12 @@ impl AdvisoryDb {
             .filter(|a| is_version_vulnerable(&ver, &a.vulnerable_versions))
             .collect();
 
-        results.extend(self.remote.iter().filter(|a| a.package == name).filter(|a| {
-            is_version_vulnerable(&ver, &a.vulnerable_versions)
-        }));
+        results.extend(
+            self.remote
+                .iter()
+                .filter(|a| a.package == name)
+                .filter(|a| is_version_vulnerable(&ver, &a.vulnerable_versions)),
+        );
 
         results
     }

@@ -46,7 +46,10 @@ impl DepGraphPlugin {
             node_set.insert(from.clone());
             node_set.insert(to.clone());
             adj.entry(from.clone()).or_default().push(to.clone());
-            reverse_adj.entry(to.clone()).or_default().push(from.clone());
+            reverse_adj
+                .entry(to.clone())
+                .or_default()
+                .push(from.clone());
         }
 
         // Ensure all edges' nodes are in adj
@@ -58,12 +61,19 @@ impl DepGraphPlugin {
         }
 
         // Degree counts
-        let mut degree_counts: Vec<NodeDegrees> = node_set.iter().map(|name| NodeDegrees {
-            name: name.clone(),
-            in_degree: reverse_adj.get(name).map_or(0, |v| v.len()),
-            out_degree: adj.get(name).map_or(0, |v| v.len()),
-        }).collect();
-        degree_counts.sort_by(|a, b| b.out_degree.cmp(&a.out_degree).then(b.in_degree.cmp(&a.in_degree)));
+        let mut degree_counts: Vec<NodeDegrees> = node_set
+            .iter()
+            .map(|name| NodeDegrees {
+                name: name.clone(),
+                in_degree: reverse_adj.get(name).map_or(0, |v| v.len()),
+                out_degree: adj.get(name).map_or(0, |v| v.len()),
+            })
+            .collect();
+        degree_counts.sort_by(|a, b| {
+            b.out_degree
+                .cmp(&a.out_degree)
+                .then(b.in_degree.cmp(&a.in_degree))
+        });
 
         // Circular dependency detection (DFS with coloring)
         let mut circular = find_circular_dependencies(&adj, &node_set);
@@ -79,7 +89,8 @@ impl DepGraphPlugin {
         let dot_format = generate_dot(&node_set, edges);
 
         // Build adjacency list for JSON output
-        let adjacency_list: HashMap<String, Vec<String>> = node_set.iter()
+        let adjacency_list: HashMap<String, Vec<String>> = node_set
+            .iter()
             .map(|n| (n.clone(), adj.get(n).cloned().unwrap_or_default()))
             .collect();
 
@@ -170,12 +181,17 @@ fn find_circular_dependencies(
                         cycle.push(neighbor.clone());
                         if !cycle.is_empty() {
                             // Canonicalize: rotate so smallest element is first
-                            if let Some(min_pos) = cycle.iter().enumerate()
+                            if let Some(min_pos) = cycle
+                                .iter()
+                                .enumerate()
                                 .min_by(|(_, a), (_, b)| a.cmp(b))
                                 .map(|(i, _)| i)
                             {
-                                let mut canonical: Vec<String> = cycle.iter().skip(min_pos).cloned().collect();
-                                canonical.extend(cycle.iter().take(min_pos).cloned().collect::<Vec<_>>());
+                                let mut canonical: Vec<String> =
+                                    cycle.iter().skip(min_pos).cloned().collect();
+                                canonical.extend(
+                                    cycle.iter().take(min_pos).cloned().collect::<Vec<_>>(),
+                                );
                                 // Remove last if it's a duplicate of first
                                 if canonical.len() > 1 && canonical.first() == canonical.last() {
                                     canonical.pop();
@@ -213,7 +229,8 @@ fn calculate_max_depth(
     node_set: &HashSet<String>,
 ) -> usize {
     // Find root nodes (in-degree 0)
-    let roots: Vec<String> = node_set.iter()
+    let roots: Vec<String> = node_set
+        .iter()
         .filter(|n| reverse_adj.get(*n).map_or(0, |v| v.len()) == 0)
         .cloned()
         .collect();
@@ -287,17 +304,17 @@ mod tests {
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();
-        assert!(!report.circular_dependencies.is_empty(), "Expected circular dependency detected");
+        assert!(
+            !report.circular_dependencies.is_empty(),
+            "Expected circular dependency detected"
+        );
     }
 
     #[test]
     fn test_degree_counts() {
         let graph = DepGraph {
             nodes: vec!["a".into(), "b".into(), "c".into()],
-            edges: vec![
-                ("a".into(), "b".into()),
-                ("a".into(), "c".into()),
-            ],
+            edges: vec![("a".into(), "b".into()), ("a".into(), "c".into())],
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();

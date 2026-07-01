@@ -4,21 +4,21 @@ impl SqliteStore {
     pub fn advance_generation(&self) -> Result<u64, StoreError> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        
+
         // Atomic: insert new generation = max + 1 in single statement
         tx.execute(
             "INSERT INTO gc_state (generation) 
              VALUES ((SELECT COALESCE(MAX(generation), 0) + 1 FROM gc_state))",
             [],
         )?;
-        
+
         // Get the new generation value
         let new_gen: i64 = tx.query_row(
             "SELECT COALESCE(MAX(generation), 0) FROM gc_state",
             [],
             |row| row.get(0),
         )?;
-        
+
         tx.commit()?;
         *self.generation.lock().unwrap() = new_gen as u64;
         Ok(new_gen as u64)

@@ -3,27 +3,90 @@ use serde::Serialize;
 use super::super::{PackageInfo, PluginResult};
 
 const KNOWN_VULNERABLE: &[(&str, &str, &str, &str)] = &[
-    ("lodash", "< 4.17.21", "high", "Prototype Pollution in lodash (CVE-2024-23346)"),
-    ("axios", "< 1.6.0", "high", "Server-Side Request Forgery in axios (CVE-2024-39338)"),
-    ("express", "< 4.19.2", "moderate", "Path traversal in express static (CVE-2024-29041)"),
-    ("minimatch", "< 3.0.5", "high", "ReDoS in minimatch (CVE-2022-3517)"),
-    ("node-fetch", "< 2.6.7", "moderate", "URL parsing confusion in node-fetch (CVE-2022-2596)"),
-    ("undici", "< 5.19.1", "high", "HTTP request smuggling in undici (CVE-2023-45198)"),
-    ("follow-redirects", "< 1.15.4", "moderate", "Credentials leak via URL in follow-redirects (CVE-2024-28849)"),
-    ("tar", "< 6.2.1", "high", "Arbitrary file overwrite in tar (CVE-2024-28849)"),
+    (
+        "lodash",
+        "< 4.17.21",
+        "high",
+        "Prototype Pollution in lodash (CVE-2024-23346)",
+    ),
+    (
+        "axios",
+        "< 1.6.0",
+        "high",
+        "Server-Side Request Forgery in axios (CVE-2024-39338)",
+    ),
+    (
+        "express",
+        "< 4.19.2",
+        "moderate",
+        "Path traversal in express static (CVE-2024-29041)",
+    ),
+    (
+        "minimatch",
+        "< 3.0.5",
+        "high",
+        "ReDoS in minimatch (CVE-2022-3517)",
+    ),
+    (
+        "node-fetch",
+        "< 2.6.7",
+        "moderate",
+        "URL parsing confusion in node-fetch (CVE-2022-2596)",
+    ),
+    (
+        "undici",
+        "< 5.19.1",
+        "high",
+        "HTTP request smuggling in undici (CVE-2023-45198)",
+    ),
+    (
+        "follow-redirects",
+        "< 1.15.4",
+        "moderate",
+        "Credentials leak via URL in follow-redirects (CVE-2024-28849)",
+    ),
+    (
+        "tar",
+        "< 6.2.1",
+        "high",
+        "Arbitrary file overwrite in tar (CVE-2024-28849)",
+    ),
 ];
 
 const POPULAR_PACKAGES: &[&str] = &[
-    "react", "lodash", "express", "axios", "chalk", "commander",
-    "typescript", "webpack", "babel", "eslint", "moment", "uuid",
-    "body-parser", "cors", "dotenv", "nodemon", "yargs", "inquirer",
-    "socket.io", "passport", "mongoose", "redux", "vue", "angular",
-    "next", "nuxt", "gatsby", "jest", "mocha", "chai",
+    "react",
+    "lodash",
+    "express",
+    "axios",
+    "chalk",
+    "commander",
+    "typescript",
+    "webpack",
+    "babel",
+    "eslint",
+    "moment",
+    "uuid",
+    "body-parser",
+    "cors",
+    "dotenv",
+    "nodemon",
+    "yargs",
+    "inquirer",
+    "socket.io",
+    "passport",
+    "mongoose",
+    "redux",
+    "vue",
+    "angular",
+    "next",
+    "nuxt",
+    "gatsby",
+    "jest",
+    "mocha",
+    "chai",
 ];
 
-const SUSPICIOUS_NAME_KEYWORDS: &[&str] = &[
-    "rnpm", "npm-", "-npm", "node_", "node-", "js-", "-js",
-];
+const SUSPICIOUS_NAME_KEYWORDS: &[&str] = &["rnpm", "npm-", "-npm", "node_", "node-", "js-", "-js"];
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct AuditWarning {
@@ -171,7 +234,11 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
     for i in 1..=a_len {
         curr[0] = i;
         for j in 1..=b_len {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
             curr[j] = std::cmp::min(
                 std::cmp::min(curr[j - 1] + 1, prev[j] + 1),
                 prev[j - 1] + cost,

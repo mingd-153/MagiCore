@@ -14,30 +14,37 @@ impl GitRegistry {
     }
 
     pub async fn fetch(&self, url: &str, rev: Option<&str>) -> Result<PathBuf, RegistryError> {
-        let repo_name = url.split('/').next_back().unwrap_or("repo").replace(".git", "");
+        let repo_name = url
+            .split('/')
+            .next_back()
+            .unwrap_or("repo")
+            .replace(".git", "");
         let repo_path = self.cache_dir.join(&repo_name);
-        
+
         if repo_path.exists() {
             // Update existing
             Command::new("git")
                 .args(["fetch", "origin"])
                 .current_dir(&repo_path)
-                .output().await?;
+                .output()
+                .await?;
         } else {
             // Clone
             Command::new("git")
                 .args(["clone", "--depth", "1", url, &repo_name])
                 .current_dir(&self.cache_dir)
-                .output().await?;
+                .output()
+                .await?;
         }
-        
+
         if let Some(rev) = rev {
             Command::new("git")
                 .args(["checkout", rev])
                 .current_dir(&repo_path)
-                .output().await?;
+                .output()
+                .await?;
         }
-        
+
         Ok(repo_path)
     }
 }

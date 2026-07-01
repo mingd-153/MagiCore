@@ -112,7 +112,11 @@ fn test_duplicate_integrity_replaces() {
     let result = store.add_package(&pkg2);
     assert!(result.is_err(), "should reject integrity collision");
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("integrity collision"), "error should mention integrity collision: {}", err);
+    assert!(
+        err.contains("integrity collision"),
+        "error should mention integrity collision: {}",
+        err
+    );
     // Original package should still exist
     let retrieved = store.get_by_integrity("dup123").unwrap().unwrap();
     assert_eq!(retrieved.name, "original");
@@ -156,20 +160,17 @@ fn test_integrity_cache() {
     let file_path = dir.path().join("test-file.txt");
     std::fs::write(&file_path, b"hello integrity cache").unwrap();
     let hash = hex::encode(Sha256::digest(b"hello integrity cache"));
-    store
-        .update_integrity_cache(&file_path, &hash)
-        .unwrap();
-    let cached = store
-        .get_cached_integrity(&file_path)
-        .unwrap()
-        .unwrap();
+    store.update_integrity_cache(&file_path, &hash).unwrap();
+    let cached = store.get_cached_integrity(&file_path).unwrap().unwrap();
     assert_eq!(cached, hash);
 }
 
 #[test]
 fn test_missing_integrity_cache() {
     let (store, _dir) = create_test_store();
-    let result = store.get_cached_integrity(Path::new("/nonexistent")).unwrap();
+    let result = store
+        .get_cached_integrity(Path::new("/nonexistent"))
+        .unwrap();
     assert!(result.is_none());
 }
 
@@ -178,11 +179,7 @@ fn test_package_count() {
     let (store, _dir) = create_test_store();
     assert_eq!(store.package_count().unwrap(), 0);
     for i in 0..10 {
-        let pkg = test_package(
-            &format!("count-pkg-{}", i),
-            "1.0.0",
-            &format!("count{}", i),
-        );
+        let pkg = test_package(&format!("count-pkg-{}", i), "1.0.0", &format!("count{}", i));
         store.add_package(&pkg).unwrap();
     }
     assert_eq!(store.package_count().unwrap(), 10);
@@ -224,11 +221,7 @@ fn test_bulk_insert_performance() {
     let (store, _dir) = create_test_store();
     store.begin_transaction().unwrap();
     for i in 0..1000 {
-        let pkg = test_package(
-            &format!("bulk-{}", i),
-            "1.0.0",
-            &format!("{:040}", i),
-        );
+        let pkg = test_package(&format!("bulk-{}", i), "1.0.0", &format!("{:040}", i));
         store.add_package(&pkg).unwrap();
     }
     store.commit().unwrap();
@@ -274,8 +267,14 @@ fn test_adaptive_functions() {
     let medium_ram = 2 * 1024 * 1024 * 1024;
     let large_ram = 16 * 1024 * 1024 * 1024;
 
-    assert!(adaptive_cache_size(medium_ram).unsigned_abs() > adaptive_cache_size(small_ram).unsigned_abs());
-    assert!(adaptive_cache_size(large_ram).unsigned_abs() > adaptive_cache_size(medium_ram).unsigned_abs());
+    assert!(
+        adaptive_cache_size(medium_ram).unsigned_abs()
+            > adaptive_cache_size(small_ram).unsigned_abs()
+    );
+    assert!(
+        adaptive_cache_size(large_ram).unsigned_abs()
+            > adaptive_cache_size(medium_ram).unsigned_abs()
+    );
 
     assert_eq!(adaptive_mmap_size(small_ram), 0);
     assert!(adaptive_mmap_size(medium_ram) > 0);
@@ -295,12 +294,17 @@ fn test_detect_ram() {
 #[test]
 fn test_audit_report() {
     let (store, _dir) = create_test_store();
-    store.add_package(&test_package("audit-pkg", "1.0.0", "audit001")).unwrap();
+    store
+        .add_package(&test_package("audit-pkg", "1.0.0", "audit001"))
+        .unwrap();
     let report = store.audit().unwrap();
     assert!(report.integrity_ok);
     assert!(report.db_size_mb < 10);
     assert!(report.detected_ram_gb >= 1);
-    assert!(!report.warnings.iter().any(|w| w.contains("integrity check failed")));
+    assert!(!report
+        .warnings
+        .iter()
+        .any(|w| w.contains("integrity check failed")));
 }
 
 #[test]
@@ -308,7 +312,11 @@ fn test_permission_snapshot() {
     let (store, _dir) = create_test_store();
     store.snapshot_permissions().unwrap();
     let warnings = store.check_permissions().unwrap();
-    assert!(warnings.is_empty(), "initial snapshot should have no diffs: {:?}", warnings);
+    assert!(
+        warnings.is_empty(),
+        "initial snapshot should have no diffs: {:?}",
+        warnings
+    );
 }
 
 #[test]
@@ -342,11 +350,13 @@ fn test_audit_with_wal() {
     let (store, _dir) = create_test_store();
     store.begin_transaction().unwrap();
     for i in 0..100 {
-        store.add_package(&test_package(
-            &format!("wal-pkg-{}", i),
-            "1.0.0",
-            &format!("wal{:040}", i),
-        )).unwrap();
+        store
+            .add_package(&test_package(
+                &format!("wal-pkg-{}", i),
+                "1.0.0",
+                &format!("wal{:040}", i),
+            ))
+            .unwrap();
     }
     store.commit().unwrap();
     let report = store.audit().unwrap();
@@ -428,11 +438,13 @@ fn test_concurrent_reads_8_threads() {
     let store = Arc::new(SqliteStore::open(&dir.path().join("conc.db"), false).unwrap());
     store.begin_transaction().unwrap();
     for i in 0..500 {
-        store.add_package(&test_package(
-            &format!("conc-{}", i),
-            "1.0.0",
-            &format!("{:040}", i),
-        )).unwrap();
+        store
+            .add_package(&test_package(
+                &format!("conc-{}", i),
+                "1.0.0",
+                &format!("{:040}", i),
+            ))
+            .unwrap();
     }
     store.commit().unwrap();
     let store_ro = SqliteStore::open(&dir.path().join("conc.db"), true).unwrap();
@@ -499,7 +511,11 @@ fn test_sql_injection_via_package_name() {
         let pkg = test_package(injection, "1.0.0", &format!("inj{:03}", i));
         store.add_package(&pkg).unwrap();
         let retrieved = store.get_package(injection, "1.0.0").unwrap();
-        assert!(retrieved.is_some(), "injection '{}' failed roundtrip", injection);
+        assert!(
+            retrieved.is_some(),
+            "injection '{}' failed roundtrip",
+            injection
+        );
     }
     assert_eq!(store.package_count().unwrap(), injections.len() as u64);
 }
@@ -509,7 +525,9 @@ fn test_sql_injection_via_integrity() {
     let (store, _dir) = create_test_store();
     let pkg = test_package("safe-name", "1.0.0", "'; DROP TABLE packages; --");
     store.add_package(&pkg).unwrap();
-    let result = store.get_by_integrity("'; DROP TABLE packages; --").unwrap();
+    let result = store
+        .get_by_integrity("'; DROP TABLE packages; --")
+        .unwrap();
     assert!(result.is_some(), "should find by injection hash");
     assert!(store.package_exists("'; DROP TABLE packages; --").unwrap());
     assert_eq!(store.package_count().unwrap(), 1);
@@ -606,11 +624,15 @@ fn test_double_begin_transaction() {
 fn test_operations_after_rollback() {
     let (store, _dir) = create_test_store();
     store.begin_transaction().unwrap();
-    store.add_package(&test_package("rb-test", "1.0.0", "rb001")).unwrap();
+    store
+        .add_package(&test_package("rb-test", "1.0.0", "rb001"))
+        .unwrap();
     store.rollback().unwrap();
     assert_eq!(store.package_count().unwrap(), 0);
     store.begin_transaction().unwrap();
-    store.add_package(&test_package("rb-test2", "1.0.0", "rb002")).unwrap();
+    store
+        .add_package(&test_package("rb-test2", "1.0.0", "rb002"))
+        .unwrap();
     store.commit().unwrap();
     assert_eq!(store.package_count().unwrap(), 1);
 }
@@ -711,9 +733,17 @@ fn test_integrity_cache_special_paths() {
     // Non-regular files (directories) should NOT return cached hash (security fix)
     // update_integrity_cache should fail for directories
     let hash = hex::encode(Sha256::digest(b"dir-content"));
-    assert!(store.update_integrity_cache(cache_dir.path(), &hash).is_err(), "directory should fail to update");
+    assert!(
+        store
+            .update_integrity_cache(cache_dir.path(), &hash)
+            .is_err(),
+        "directory should fail to update"
+    );
     let cached = store.get_cached_integrity(cache_dir.path()).unwrap();
-    assert!(cached.is_none(), "directory should return None, not cached hash");
+    assert!(
+        cached.is_none(),
+        "directory should return None, not cached hash"
+    );
 }
 
 #[test]
@@ -726,14 +756,20 @@ fn test_unreferenced_packages_empty() {
 #[test]
 fn test_unreferenced_with_generations() {
     let (store, _dir) = create_test_store();
-    store.add_package(&test_package("old-pkg", "1.0.0", "old001")).unwrap();
+    store
+        .add_package(&test_package("old-pkg", "1.0.0", "old001"))
+        .unwrap();
     let g1 = store.advance_generation().unwrap();
     assert_eq!(g1, 1);
     assert!(store.get_unreferenced_packages().unwrap().is_empty());
     let g2 = store.advance_generation().unwrap();
     assert_eq!(g2, 2);
     let unreferenced = store.get_unreferenced_packages().unwrap();
-    assert_eq!(unreferenced.len(), 1, "package with gen 0 should be unreferenced after 2 advances");
+    assert_eq!(
+        unreferenced.len(),
+        1,
+        "package with gen 0 should be unreferenced after 2 advances"
+    );
     assert_eq!(unreferenced[0].integrity, "old001");
 }
 
@@ -755,11 +791,7 @@ fn test_vacuum_empty_store() {
 fn test_register_project_special_paths() {
     let (store, _dir) = create_test_store();
     let project_dir = tempdir().unwrap();
-    let paths = [
-        project_dir.path(),
-        Path::new("."),
-        Path::new("/tmp"),
-    ];
+    let paths = [project_dir.path(), Path::new("."), Path::new("/tmp")];
     for p in &paths {
         store.register_project(p).unwrap();
     }
@@ -774,7 +806,9 @@ fn test_register_project_special_paths() {
 fn test_transaction_isolation() {
     let (store, _dir) = create_test_store();
     store.begin_transaction().unwrap();
-    store.add_package(&test_package("iso-test", "1.0.0", "iso001")).unwrap();
+    store
+        .add_package(&test_package("iso-test", "1.0.0", "iso001"))
+        .unwrap();
     let store2 = SqliteStore::open(store.path(), true).unwrap();
     let result = store2.get_package("iso-test", "1.0.0").unwrap();
     assert!(result.is_none(), "uncommitted data should not be visible");
@@ -789,10 +823,19 @@ fn test_cache_consistency_after_delete() {
     let pkg = test_package("cache-cons", "1.0.0", "cons001");
     store.add_package(&pkg).unwrap();
     assert!(store.package_exists("cons001").unwrap());
-    store.conn.lock().unwrap()
-        .execute("DELETE FROM packages WHERE integrity = ?1", params!["cons001"])
+    store
+        .conn
+        .lock()
+        .unwrap()
+        .execute(
+            "DELETE FROM packages WHERE integrity = ?1",
+            params!["cons001"],
+        )
         .unwrap();
-    assert!(store.package_exists("cons001").unwrap(), "cache should be stale");
+    assert!(
+        store.package_exists("cons001").unwrap(),
+        "cache should be stale"
+    );
     store.get_by_integrity("cons001").unwrap();
     store.delete_package("cons001").unwrap();
     assert!(!store.package_exists("cons001").unwrap());
@@ -820,16 +863,24 @@ fn test_permission_snapshot_no_wal_file() {
     let store = SqliteStore::open(&path, false).unwrap();
     store.snapshot_permissions().unwrap();
     let warnings = store.check_permissions().unwrap();
-    assert!(warnings.is_empty(), "snapshot with missing WAL should not warn: {:?}", warnings);
+    assert!(
+        warnings.is_empty(),
+        "snapshot with missing WAL should not warn: {:?}",
+        warnings
+    );
 }
 
 #[test]
 fn test_audit_after_corrupt_snapshot() {
     let (store, _dir) = create_test_store();
-    store.set_kv("permission_snapshot", b"not-valid-json{{{").unwrap();
+    store
+        .set_kv("permission_snapshot", b"not-valid-json{{{")
+        .unwrap();
     let report = store.audit().unwrap();
-    assert!(!report.permissions_ok || !report.warnings.is_empty(),
-        "corrupt snapshot should be detected");
+    assert!(
+        !report.permissions_ok || !report.warnings.is_empty(),
+        "corrupt snapshot should be detected"
+    );
 }
 
 #[test]
@@ -839,7 +890,8 @@ fn test_audit_integrity_check_actually_runs() {
     assert!(report.integrity_ok);
     {
         let conn = store.conn.lock().unwrap();
-        conn.execute("UPDATE packages SET name = 'corrupted' WHERE 1=0", []).unwrap();
+        conn.execute("UPDATE packages SET name = 'corrupted' WHERE 1=0", [])
+            .unwrap();
     }
     let report2 = store.audit().unwrap();
     assert!(report2.integrity_ok, "empty store should pass integrity");
@@ -848,7 +900,9 @@ fn test_audit_integrity_check_actually_runs() {
 #[test]
 fn test_audit_after_vacuum() {
     let (store, _dir) = create_test_store();
-    store.add_package(&test_package("pre-vac", "1.0.0", "prevac1")).unwrap();
+    store
+        .add_package(&test_package("pre-vac", "1.0.0", "prevac1"))
+        .unwrap();
     store.delete_package("prevac1").unwrap();
     store.vacuum().unwrap();
     let report = store.audit().unwrap();
@@ -891,6 +945,10 @@ fn test_database_file_created_with_correct_permissions() {
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = metadata.permissions().mode();
-        assert!(mode & 0o777 <= 0o700, "permissions too permissive: {:o}", mode);
+        assert!(
+            mode & 0o777 <= 0o700,
+            "permissions too permissive: {:o}",
+            mode
+        );
     }
 }

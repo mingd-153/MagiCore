@@ -18,8 +18,7 @@ pub fn cmd_verify(config: &MgpmConfig) -> Result<(), String> {
         return Err(format!("store not found at {}", store_path.display()));
     }
 
-    let store = ContentStore::new(store_path)
-        .map_err(|e| format!("failed to open store: {e}"))?;
+    let store = ContentStore::new(store_path).map_err(|e| format!("failed to open store: {e}"))?;
 
     let mut verified = 0u32;
     let mut missing = 0u32;
@@ -95,11 +94,7 @@ pub fn cmd_verify(config: &MgpmConfig) -> Result<(), String> {
 
 fn sri_hash_to_hex(sri: &str) -> Option<String> {
     let (_algo, b64) = sri.split_once('-')?;
-    let bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        b64,
-    )
-    .ok()?;
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).ok()?;
     Some(hex::encode(bytes))
 }
 
@@ -116,12 +111,12 @@ pub fn cmd_verify_deep(config: &MgpmConfig) -> Result<(), String> {
         return Err(format!("store not found at {}", store_path.display()));
     }
 
-    let store = ContentStore::new(store_path)
-        .map_err(|e| format!("failed to open store: {e}"))?;
+    let store = ContentStore::new(store_path).map_err(|e| format!("failed to open store: {e}"))?;
 
     // Build map of installed packages from node_modules
     let nm_path = Path::new("node_modules");
-    let mut installed: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+    let mut installed: std::collections::HashMap<String, PathBuf> =
+        std::collections::HashMap::new();
     if nm_path.exists() {
         if let Ok(entries) = std::fs::read_dir(nm_path) {
             for entry in entries.flatten() {
@@ -135,7 +130,10 @@ pub fn cmd_verify_deep(config: &MgpmConfig) -> Result<(), String> {
                         for s in sub.flatten() {
                             let sp = s.path();
                             if sp.is_dir() && sp.join("package.json").exists() {
-                                installed.insert(format!("{}/{}", name, s.file_name().to_string_lossy()), sp);
+                                installed.insert(
+                                    format!("{}/{}", name, s.file_name().to_string_lossy()),
+                                    sp,
+                                );
                             }
                         }
                     }
@@ -161,12 +159,22 @@ pub fn cmd_verify_deep(config: &MgpmConfig) -> Result<(), String> {
                     println!("  {} {}@{}", "✓".green(), pkg.name.cyan(), pkg.version);
                     ok += 1;
                 } else {
-                    println!("  {} {}@{} (store integrity mismatch)", "✗".red(), pkg.name.red(), pkg.version.red());
+                    println!(
+                        "  {} {}@{} (store integrity mismatch)",
+                        "✗".red(),
+                        pkg.name.red(),
+                        pkg.version.red()
+                    );
                     fail += 1;
                 }
             }
             None => {
-                println!("  {} {}@{} (not in node_modules)", "✗".red(), pkg.name.red(), pkg.version.red());
+                println!(
+                    "  {} {}@{} (not in node_modules)",
+                    "✗".red(),
+                    pkg.name.red(),
+                    pkg.version.red()
+                );
                 miss += 1;
             }
         }
@@ -189,7 +197,10 @@ pub fn cmd_verify_deep(config: &MgpmConfig) -> Result<(), String> {
     );
 
     if fail > 0 || miss > 0 {
-        Err(format!("{} store mismatch(es), {} missing from node_modules", fail, miss))
+        Err(format!(
+            "{} store mismatch(es), {} missing from node_modules",
+            fail, miss
+        ))
     } else {
         Ok(())
     }

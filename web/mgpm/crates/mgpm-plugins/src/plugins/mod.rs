@@ -244,12 +244,11 @@ impl BuiltinPlugin for builtin::DepGraphPlugin {
     fn run(&self, hook: &str, data: &serde_json::Value) -> PluginResult {
         match hook {
             "post_link" => {
-                let graph: DepGraph = serde_json::from_value(data.clone()).unwrap_or_else(|_| {
-                    DepGraph {
+                let graph: DepGraph =
+                    serde_json::from_value(data.clone()).unwrap_or_else(|_| DepGraph {
                         nodes: vec![],
                         edges: vec![],
-                    }
-                });
+                    });
                 builtin::DepGraphPlugin::generate_graph(&graph)
             }
             _ => PluginResult::pass(),

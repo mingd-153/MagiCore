@@ -2,5 +2,5 @@
 //!
 //! These tests are separate from integration tests for fast CI isolation.
 
-mod smoke_test;
 mod full_install_test;
+mod smoke_test;

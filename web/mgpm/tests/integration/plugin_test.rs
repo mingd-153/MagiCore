@@ -5,7 +5,14 @@ use mgpm_plugins::{
     LicenseWarning, PackageInfo, SizeReport, SizeReportPlugin,
 };
 
-fn make_pkg(name: &str, version: &str, integrity: Option<&str>, size: Option<i64>, license: Option<&str>, deps: Vec<String>) -> PackageInfo {
+fn make_pkg(
+    name: &str,
+    version: &str,
+    integrity: Option<&str>,
+    size: Option<i64>,
+    license: Option<&str>,
+    deps: Vec<String>,
+) -> PackageInfo {
     PackageInfo {
         id: format!("{}@{}", name, version),
         name: name.to_string(),
@@ -22,42 +29,82 @@ mod audit_tests {
 
     #[test]
     fn test_audit_clean_package_succeeds() {
-        let pkgs = vec![make_pkg("react", "18.2.0", Some("sha512-abc"), Some(1024), None, vec![])];
+        let pkgs = vec![make_pkg(
+            "react",
+            "18.2.0",
+            Some("sha512-abc"),
+            Some(1024),
+            None,
+            vec![],
+        )];
         let result = AuditPlugin::run_audit(&pkgs);
         assert!(result.success, "Clean package should pass audit");
     }
 
     #[test]
     fn test_audit_known_vulnerability_lodash() {
-        let pkgs = vec![make_pkg("lodash", "4.17.20", Some("sha512-abc"), Some(1024), None, vec![])];
+        let pkgs = vec![make_pkg(
+            "lodash",
+            "4.17.20",
+            Some("sha512-abc"),
+            Some(1024),
+            None,
+            vec![],
+        )];
         let result = AuditPlugin::run_audit(&pkgs);
         assert!(!result.success, "Vulnerable lodash should fail audit");
-        let warnings: Vec<AuditWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
-        assert!(warnings.iter().any(|w| w.warning_type == "known-vulnerability"));
+        let warnings: Vec<AuditWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
+        assert!(warnings
+            .iter()
+            .any(|w| w.warning_type == "known-vulnerability"));
     }
 
     #[test]
     fn test_audit_known_vulnerability_safe_version_passes() {
-        let pkgs = vec![make_pkg("lodash", "4.17.21", Some("sha512-abc"), Some(1024), None, vec![])];
+        let pkgs = vec![make_pkg(
+            "lodash",
+            "4.17.21",
+            Some("sha512-abc"),
+            Some(1024),
+            None,
+            vec![],
+        )];
         let result = AuditPlugin::run_audit(&pkgs);
         let warnings: Vec<AuditWarning> =
             serde_json::from_str(&result.data.clone().unwrap_or_default()).unwrap();
-        assert!(!warnings.iter().any(|w| w.warning_type == "known-vulnerability"));
+        assert!(!warnings
+            .iter()
+            .any(|w| w.warning_type == "known-vulnerability"));
     }
 
     #[test]
     fn test_audit_multiple_vulnerabilities() {
         let pkgs = vec![
-            make_pkg("lodash", "4.17.20", Some("sha512-abc"), Some(1024), None, vec![]),
-            make_pkg("axios", "1.5.0", Some("sha512-def"), Some(2048), None, vec![]),
+            make_pkg(
+                "lodash",
+                "4.17.20",
+                Some("sha512-abc"),
+                Some(1024),
+                None,
+                vec![],
+            ),
+            make_pkg(
+                "axios",
+                "1.5.0",
+                Some("sha512-def"),
+                Some(2048),
+                None,
+                vec![],
+            ),
         ];
         let result = AuditPlugin::run_audit(&pkgs);
         assert!(!result.success);
-        let warnings: Vec<AuditWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<AuditWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert_eq!(
-            warnings.iter().filter(|w| w.warning_type == "known-vulnerability").count(),
+            warnings
+                .iter()
+                .filter(|w| w.warning_type == "known-vulnerability")
+                .count(),
             2
         );
     }
@@ -66,17 +113,24 @@ mod audit_tests {
     fn test_audit_missing_integrity() {
         let pkgs = vec![make_pkg("test-pkg", "1.0.0", None, Some(512), None, vec![])];
         let result = AuditPlugin::run_audit(&pkgs);
-        let warnings: Vec<AuditWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
-        assert!(warnings.iter().any(|w| w.warning_type == "missing-integrity"));
+        let warnings: Vec<AuditWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
+        assert!(warnings
+            .iter()
+            .any(|w| w.warning_type == "missing-integrity"));
     }
 
     #[test]
     fn test_audit_typosquatting_detected() {
-        let pkgs = vec![make_pkg("recat", "1.0.0", Some("sha512-abc"), Some(1024), None, vec![])];
+        let pkgs = vec![make_pkg(
+            "recat",
+            "1.0.0",
+            Some("sha512-abc"),
+            Some(1024),
+            None,
+            vec![],
+        )];
         let result = AuditPlugin::run_audit(&pkgs);
-        let warnings: Vec<AuditWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<AuditWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert!(
             warnings.iter().any(|w| w.warning_type == "typosquatting"),
             "recat should be flagged as typo of react"
@@ -85,10 +139,16 @@ mod audit_tests {
 
     #[test]
     fn test_audit_suspicious_name_detected() {
-        let pkgs = vec![make_pkg("rnpm-evil", "1.0.0", Some("sha512-abc"), Some(1024), None, vec![])];
+        let pkgs = vec![make_pkg(
+            "rnpm-evil",
+            "1.0.0",
+            Some("sha512-abc"),
+            Some(1024),
+            None,
+            vec![],
+        )];
         let result = AuditPlugin::run_audit(&pkgs);
-        let warnings: Vec<AuditWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<AuditWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert!(
             warnings.iter().any(|w| w.warning_type == "suspicious-name"),
             "rnpm-evil should be flagged as suspicious"
@@ -106,17 +166,14 @@ mod audit_tests {
     fn test_audit_warning_severity_classification() {
         let pkgs = vec![make_pkg("lodash", "4.17.20", None, Some(512), None, vec![])];
         let result = AuditPlugin::run_audit(&pkgs);
-        let warnings: Vec<AuditWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<AuditWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert!(warnings.iter().any(|w| w.severity == "high"));
         assert!(warnings.iter().any(|w| w.severity == "low"));
     }
 
     #[test]
     fn test_audit_result_json_payload() {
-        let pkgs = vec![
-            make_pkg("lodash", "4.17.20", None, Some(512), None, vec![]),
-        ];
+        let pkgs = vec![make_pkg("lodash", "4.17.20", None, Some(512), None, vec![])];
         let result = AuditPlugin::run_audit(&pkgs);
         let data = result.data.unwrap();
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&data).unwrap();
@@ -134,7 +191,14 @@ mod license_check_tests {
     #[test]
     fn test_license_mit_allowed() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("test-pkg", "1.0.0", Some("sha512"), Some(100), Some("MIT"), vec![])];
+        let pkgs = vec![make_pkg(
+            "test-pkg",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("MIT"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
         assert!(result.success);
     }
@@ -142,7 +206,14 @@ mod license_check_tests {
     #[test]
     fn test_license_apache_allowed() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("apache-pkg", "1.0.0", Some("sha512"), Some(100), Some("Apache-2.0"), vec![])];
+        let pkgs = vec![make_pkg(
+            "apache-pkg",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("Apache-2.0"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
         assert!(result.success);
     }
@@ -150,29 +221,48 @@ mod license_check_tests {
     #[test]
     fn test_license_gpl3_copyleft_detected() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("gpl-pkg", "1.0.0", Some("sha512"), Some(100), Some("GPL-3.0"), vec![])];
+        let pkgs = vec![make_pkg(
+            "gpl-pkg",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("GPL-3.0"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
         assert!(!result.success, "Copyleft license should fail");
-        let warnings: Vec<LicenseWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<LicenseWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert!(warnings.iter().any(|w| w.warning_type == "copyleft"));
     }
 
     #[test]
     fn test_license_agpl_copyleft_detected() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("agpl-pkg", "1.0.0", Some("sha512"), Some(100), Some("AGPL-3.0"), vec![])];
+        let pkgs = vec![make_pkg(
+            "agpl-pkg",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("AGPL-3.0"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
         assert!(!result.success);
-        let warnings: Vec<LicenseWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<LicenseWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert!(warnings.iter().any(|w| w.warning_type == "copyleft"));
     }
 
     #[test]
     fn test_license_mpl_copyleft_detected() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("mpl-pkg", "1.0.0", Some("sha512"), Some(100), Some("MPL-2.0"), vec![])];
+        let pkgs = vec![make_pkg(
+            "mpl-pkg",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("MPL-2.0"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
         assert!(!result.success);
     }
@@ -180,27 +270,46 @@ mod license_check_tests {
     #[test]
     fn test_license_missing_detected() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("no-license", "1.0.0", Some("sha512"), Some(100), None, vec![])];
+        let pkgs = vec![make_pkg(
+            "no-license",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            None,
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
-        let warnings: Vec<LicenseWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<LicenseWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert!(warnings.iter().any(|w| w.warning_type == "missing-license"));
     }
 
     #[test]
     fn test_license_unusual_detected() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("weird", "1.0.0", Some("sha512"), Some(100), Some("Beerware"), vec![])];
+        let pkgs = vec![make_pkg(
+            "weird",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("Beerware"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
-        let warnings: Vec<LicenseWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<LicenseWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert!(warnings.iter().any(|w| w.warning_type == "unusual-license"));
     }
 
     #[test]
     fn test_license_custom_allowed() {
         let plugin = LicenseCheckPlugin::new(vec!["Beerware".to_string()]);
-        let pkgs = vec![make_pkg("weird", "1.0.0", Some("sha512"), Some(100), Some("Beerware"), vec![])];
+        let pkgs = vec![make_pkg(
+            "weird",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("Beerware"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
         assert!(result.success, "Beerware should pass when in allowlist");
     }
@@ -215,7 +324,14 @@ mod license_check_tests {
     #[test]
     fn test_license_case_insensitive() {
         let plugin = LicenseCheckPlugin::new(vec![]);
-        let pkgs = vec![make_pkg("mit-pkg", "1.0.0", Some("sha512"), Some(100), Some("mit"), vec![])];
+        let pkgs = vec![make_pkg(
+            "mit-pkg",
+            "1.0.0",
+            Some("sha512"),
+            Some(100),
+            Some("mit"),
+            vec![],
+        )];
         let result = plugin.check_licenses(&pkgs);
         assert!(result.success, "Lowercase 'mit' should be allowed");
     }
@@ -224,14 +340,27 @@ mod license_check_tests {
     fn test_license_mixed_packages() {
         let plugin = LicenseCheckPlugin::new(vec![]);
         let pkgs = vec![
-            make_pkg("good", "1.0.0", Some("sha512"), Some(100), Some("MIT"), vec![]),
-            make_pkg("bad", "1.0.0", Some("sha512"), Some(100), Some("GPL-3.0"), vec![]),
+            make_pkg(
+                "good",
+                "1.0.0",
+                Some("sha512"),
+                Some(100),
+                Some("MIT"),
+                vec![],
+            ),
+            make_pkg(
+                "bad",
+                "1.0.0",
+                Some("sha512"),
+                Some(100),
+                Some("GPL-3.0"),
+                vec![],
+            ),
             make_pkg("unknown", "1.0.0", Some("sha512"), Some(100), None, vec![]),
         ];
         let result = plugin.check_licenses(&pkgs);
         assert!(!result.success);
-        let warnings: Vec<LicenseWarning> =
-            serde_json::from_str(&result.data.unwrap()).unwrap();
+        let warnings: Vec<LicenseWarning> = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert_eq!(warnings.len(), 2);
     }
 }
@@ -296,10 +425,26 @@ mod size_report_tests {
     #[test]
     fn test_top_10_largest_ordering() {
         let mut pkgs: Vec<PackageInfo> = (0..15)
-            .map(|i| make_pkg(&format!("pkg-{}", i), "1.0.0", None, Some((15 - i) * 100), None, vec![]))
+            .map(|i| {
+                make_pkg(
+                    &format!("pkg-{}", i),
+                    "1.0.0",
+                    None,
+                    Some((15 - i) * 100),
+                    None,
+                    vec![],
+                )
+            })
             .collect();
         // Insert a real large one
-        pkgs.push(make_pkg("biggest", "1.0.0", None, Some(999_999), None, vec![]));
+        pkgs.push(make_pkg(
+            "biggest",
+            "1.0.0",
+            None,
+            Some(999_999),
+            None,
+            vec![],
+        ));
         let result = SizeReportPlugin::analyze_sizes(&pkgs);
         let report: SizeReport = serde_json::from_str(&result.data.unwrap()).unwrap();
         assert_eq!(report.top_10_largest.len(), 10);
@@ -358,10 +503,7 @@ mod dep_graph_tests {
     fn test_dep_graph_simple_chain() {
         let graph = DepGraph {
             nodes: vec!["a".into(), "b".into(), "c".into()],
-            edges: vec![
-                ("a".into(), "b".into()),
-                ("b".into(), "c".into()),
-            ],
+            edges: vec![("a".into(), "b".into()), ("b".into(), "c".into())],
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();
@@ -382,7 +524,10 @@ mod dep_graph_tests {
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();
-        assert!(!report.circular_dependencies.is_empty(), "Expected circular dependency detected");
+        assert!(
+            !report.circular_dependencies.is_empty(),
+            "Expected circular dependency detected"
+        );
     }
 
     #[test]
@@ -393,17 +538,17 @@ mod dep_graph_tests {
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();
-        assert!(!report.circular_dependencies.is_empty(), "Self-loop should be detected");
+        assert!(
+            !report.circular_dependencies.is_empty(),
+            "Self-loop should be detected"
+        );
     }
 
     #[test]
     fn test_dep_graph_degree_counts() {
         let graph = DepGraph {
             nodes: vec!["a".into(), "b".into(), "c".into()],
-            edges: vec![
-                ("a".into(), "b".into()),
-                ("a".into(), "c".into()),
-            ],
+            edges: vec![("a".into(), "b".into()), ("a".into(), "c".into())],
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();
@@ -436,7 +581,10 @@ mod dep_graph_tests {
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();
-        assert_eq!(report.adjacency_list.get("a").unwrap(), &vec!["b".to_string()]);
+        assert_eq!(
+            report.adjacency_list.get("a").unwrap(),
+            &vec!["b".to_string()]
+        );
         assert!(report.adjacency_list.get("b").unwrap().is_empty());
     }
 
@@ -480,6 +628,9 @@ mod dep_graph_tests {
         };
         let result = DepGraphPlugin::generate_graph(&graph);
         let report: GraphReport = serde_json::from_str(&result.data.unwrap()).unwrap();
-        assert!(report.circular_dependencies.len() >= 2, "Expected multiple circular dependencies");
+        assert!(
+            report.circular_dependencies.len() >= 2,
+            "Expected multiple circular dependencies"
+        );
     }
 }

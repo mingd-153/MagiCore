@@ -5,8 +5,12 @@
 pub mod solver;
 pub mod version;
 
-pub use solver::{resolve_workspace_dep, Resolution, Resolver, SolveError, SolveResult, DependencyProvider};
-pub use solver::pubgrub::{Term, Incompatibility, Cause, DerivationTree, PubGrubSolver, SolveError as PubGrubSolveError};
+pub use solver::pubgrub::{
+    Cause, DerivationTree, Incompatibility, PubGrubSolver, SolveError as PubGrubSolveError, Term,
+};
+pub use solver::{
+    resolve_workspace_dep, DependencyProvider, Resolution, Resolver, SolveError, SolveResult,
+};
 pub use version::VersionSet;
 
 pub type ResolvedDependency = solver::ResolvedDep;
@@ -49,11 +53,11 @@ mod tests {
     #[test]
     fn test_version_set_union() {
         use mgpm_core::{Version, VersionRange};
-        
+
         let a = VersionSet::range(VersionRange::parse("^1.0.0").unwrap());
         let b = VersionSet::range(VersionRange::parse("^2.0.0").unwrap());
         let union = a.union(&b);
-        
+
         assert!(union.contains(&Version::parse("1.5.0").unwrap()));
         assert!(union.contains(&Version::parse("2.5.0").unwrap()));
         assert!(!union.contains(&Version::parse("0.9.0").unwrap()));
@@ -62,11 +66,11 @@ mod tests {
     #[test]
     fn test_version_set_intersection() {
         use mgpm_core::{Version, VersionRange};
-        
+
         let a = VersionSet::range(VersionRange::parse(">=1.0.0").unwrap());
         let b = VersionSet::range(VersionRange::parse("<2.0.0").unwrap());
         let inter = a.intersection(&b);
-        
+
         assert!(inter.contains(&Version::parse("1.5.0").unwrap()));
         assert!(!inter.contains(&Version::parse("0.9.0").unwrap()));
         assert!(!inter.contains(&Version::parse("2.0.0").unwrap()));

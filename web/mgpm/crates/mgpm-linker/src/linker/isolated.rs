@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use blake3;
 
-use super::{LinkError, LinkResult, LinkerOptions, PackageLinkInfo, PackageLinkResult, create_relative_symlink, validate_rel_path};
+use super::{
+    create_relative_symlink, validate_rel_path, LinkError, LinkResult, LinkerOptions,
+    PackageLinkInfo, PackageLinkResult,
+};
 
 pub struct IsolatedLinker {
     gvs: mgpm_store::store::gvs::GlobalVirtualStore,
@@ -63,12 +66,15 @@ impl super::Linker for IsolatedLinker {
     ) -> Result<LinkResult, LinkError> {
         let dep_graph_hash = Self::compute_dep_graph_hash(packages);
 
-        self.gvs.ensure_dirs().map_err(|e| LinkError::Other(e.to_string()))?;
+        self.gvs
+            .ensure_dirs()
+            .map_err(|e| LinkError::Other(e.to_string()))?;
 
         let node_modules = project_root.join("node_modules");
         fs::create_dir_all(&node_modules)?;
 
-        let direct_deps: Vec<String> = packages.iter()
+        let direct_deps: Vec<String> = packages
+            .iter()
             .filter(|p| p.is_root_dep)
             .map(|p| p.name.clone())
             .collect();
@@ -90,13 +96,16 @@ impl super::Linker for IsolatedLinker {
         let bin_dir = node_modules.join(".bin");
         self.create_bin_symlinks(packages, &vs_path, &bin_dir)?;
 
-        let linked_results: Vec<PackageLinkResult> = packages.iter().map(|p| PackageLinkResult {
-            name: p.name.clone(),
-            version: p.version.clone(),
-            path: vs_path.join(&p.name),
-            peer_hash: String::new(),
-            linked_deps: p.dependencies.clone(),
-        }).collect();
+        let linked_results: Vec<PackageLinkResult> = packages
+            .iter()
+            .map(|p| PackageLinkResult {
+                name: p.name.clone(),
+                version: p.version.clone(),
+                path: vs_path.join(&p.name),
+                peer_hash: String::new(),
+                linked_deps: p.dependencies.clone(),
+            })
+            .collect();
 
         Ok(LinkResult {
             linked: linked_results,
@@ -131,7 +140,11 @@ impl super::Linker for IsolatedLinker {
 
         for dep_name in &pkg.dependencies {
             validate_rel_path(dep_name)?;
-            let dep_src = dest.parent().and_then(|p| p.parent()).map(|p| p.join(dep_name)).unwrap_or_else(|| PathBuf::from("..").join(dep_name));
+            let dep_src = dest
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join(dep_name))
+                .unwrap_or_else(|| PathBuf::from("..").join(dep_name));
             let dep_dst = dest.join("node_modules").join(dep_name);
 
             if !dep_dst.exists() {
@@ -157,9 +170,7 @@ impl super::Linker for IsolatedLinker {
             for (bin_name, bin_path) in &pkg.bin_entries {
                 validate_rel_path(bin_name)?;
                 validate_rel_path(bin_path)?;
-                let dep_graph_hash = Self::compute_dep_graph_hash(
-                    std::slice::from_ref(pkg)
-                );
+                let dep_graph_hash = Self::compute_dep_graph_hash(std::slice::from_ref(pkg));
 
                 let src = PathBuf::from("..")
                     .join(".mgpm")

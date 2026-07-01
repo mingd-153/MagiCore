@@ -29,8 +29,7 @@ fn test_registry_config_with_scope() {
 
 #[test]
 fn test_npm_registry_token_methods() {
-    let _ = NpmRegistry::new("https://registry.npmjs.org")
-        .with_token("test-token".to_string());
+    let _ = NpmRegistry::new("https://registry.npmjs.org").with_token("test-token".to_string());
 
     let mut registry2 = NpmRegistry::new("https://custom.registry.com");
     registry2.set_token(Some("custom-token".to_string()));
@@ -127,18 +126,18 @@ fn test_npmrc_parsing_basic() {
     }
 
     assert_eq!(entries.len(), 3);
-    assert!(
-        entries.contains(&("registry".to_string(), "https://custom.registry.com/".to_string()))
-    );
-    assert!(
-        entries.contains(&(
-            "//registry.npmjs.org/:_authToken".to_string(),
-            "npm_abc123".to_string()
-        ))
-    );
-    assert!(
-        entries.contains(&("@scope:registry".to_string(), "https://scope.registry.com/".to_string()))
-    );
+    assert!(entries.contains(&(
+        "registry".to_string(),
+        "https://custom.registry.com/".to_string()
+    )));
+    assert!(entries.contains(&(
+        "//registry.npmjs.org/:_authToken".to_string(),
+        "npm_abc123".to_string()
+    )));
+    assert!(entries.contains(&(
+        "@scope:registry".to_string(),
+        "https://scope.registry.com/".to_string()
+    )));
 }
 
 #[test]
@@ -154,7 +153,10 @@ fn test_npmrc_parsing_empty_and_whitespace() {
             let t = l.trim();
             !t.is_empty() && !t.starts_with('#') && !t.starts_with(';')
         })
-        .filter_map(|l| l.find('=').map(|p| (l[..p].trim().into(), l[p + 1..].trim().into())))
+        .filter_map(|l| {
+            l.find('=')
+                .map(|p| (l[..p].trim().into(), l[p + 1..].trim().into()))
+        })
         .collect();
     assert!(entries.is_empty());
 }
@@ -179,7 +181,10 @@ trailing=value-with=multiple=equals
             let t = l.trim();
             !t.is_empty() && !t.starts_with('#') && !t.starts_with(';')
         })
-        .filter_map(|l| l.find('=').map(|p| (l[..p].trim().into(), l[p + 1..].trim().into())))
+        .filter_map(|l| {
+            l.find('=')
+                .map(|p| (l[..p].trim().into(), l[p + 1..].trim().into()))
+        })
         .collect();
 
     assert_eq!(entries.len(), 2);

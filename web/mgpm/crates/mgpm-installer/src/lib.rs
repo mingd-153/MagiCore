@@ -1,8 +1,8 @@
 pub mod installer;
 
 pub use installer::{
-    Installer, InstallOptions, InstallProgress, InstallPhase,
-    InstallResult, InstallError, JsonlLogger,
+    InstallError, InstallOptions, InstallPhase, InstallProgress, InstallResult, Installer,
+    JsonlLogger,
 };
 
 use thiserror::Error;
