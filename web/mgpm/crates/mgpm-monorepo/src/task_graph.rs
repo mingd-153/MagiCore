@@ -6,6 +6,9 @@ use mgpm_workspace::{PackageGraph, Workspace, WorkspaceMember};
 
 use crate::error::TaskGraphError;
 
+/// Unique identifier for a task node, composed of package + script name.
+///
+/// Display format: `package_name#script_name`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId {
     pub package_name: String,
@@ -27,6 +30,7 @@ impl TaskId {
     }
 }
 
+/// A single task node in the graph, representing one script for one package.
 #[derive(Debug, Clone)]
 pub struct TaskNode {
     pub id: TaskId,
@@ -35,6 +39,10 @@ pub struct TaskNode {
     pub config: ScriptConfig,
 }
 
+/// Directed acyclic graph of tasks with adjacency, reverse edges, and levels.
+///
+/// Built via [`TaskGraph::new`] or [`TaskGraph::new_multi`]. After construction,
+/// callers can inspect the topological order, level groups, and dependency edges.
 #[derive(Debug, Clone)]
 pub struct TaskGraph {
     nodes: HashMap<TaskId, TaskNode>,
@@ -45,6 +53,7 @@ pub struct TaskGraph {
 }
 
 impl TaskGraph {
+    /// Build a task graph for a single script across filtered packages.
     pub fn new(
         workspace: &Workspace,
         package_graph: &PackageGraph,
@@ -61,6 +70,7 @@ impl TaskGraph {
         )
     }
 
+    /// Build a task graph for multiple scripts across filtered packages.
     pub fn new_multi(
         workspace: &Workspace,
         package_graph: &PackageGraph,
@@ -188,14 +198,19 @@ impl TaskGraph {
         })
     }
 
+    /// Return all task IDs in topological order (flat list).
     pub fn topological_order(&self) -> Vec<&TaskId> {
         self.levels.iter().flat_map(|level| level.iter()).collect()
     }
 
+    /// Return task IDs grouped by topological level.
+    ///
+    /// Tasks in the same level have no dependency between them and can run in parallel.
     pub fn levels(&self) -> &[Vec<TaskId>] {
         &self.levels
     }
 
+    /// Return the dependencies of a given task (tasks that must complete first).
     pub fn dependencies(&self, task: &TaskId) -> Result<&[TaskId], TaskGraphError> {
         self.adjacency
             .get(task)
@@ -203,6 +218,7 @@ impl TaskGraph {
             .ok_or_else(|| TaskGraphError::Internal(format!("task '{}' not found in graph", task)))
     }
 
+    /// Return the dependents of a given task (tasks waiting on this task).
     pub fn dependents(&self, task: &TaskId) -> Result<&[TaskId], TaskGraphError> {
         self.reverse
             .get(task)
@@ -210,23 +226,30 @@ impl TaskGraph {
             .ok_or_else(|| TaskGraphError::Internal(format!("task '{}' not found in graph", task)))
     }
 
+    /// Look up a task node by its ID.
     pub fn get_node(&self, task: &TaskId) -> Option<&TaskNode> {
         self.nodes.get(task)
     }
 
+    /// Total number of tasks in the graph.
     pub fn task_count(&self) -> usize {
         self.nodes.len()
     }
 
+    /// Check whether a task exists in the graph.
     pub fn has_task(&self, task: &TaskId) -> bool {
         self.nodes.contains_key(task)
     }
 
+    /// Return the scripts configuration map used to build this graph.
     pub fn scripts_config(&self) -> &HashMap<String, ScriptConfig> {
         &self.scripts_config
     }
 }
 
+/// Kahn's algorithm for topological sort.
+///
+/// Returns an error if a cycle is detected.
 fn topological_sort(
     nodes: &HashMap<TaskId, TaskNode>,
     adjacency: &HashMap<TaskId, Vec<TaskId>>,
@@ -283,6 +306,9 @@ fn topological_sort(
     Ok(sorted)
 }
 
+/// Group a topologically-sorted task list into levels.
+///
+/// Level 0 = no dependencies. Level N = depends on tasks in level N-1.
 fn compute_levels(topo: &[TaskId], adjacency: &HashMap<TaskId, Vec<TaskId>>) -> Vec<Vec<TaskId>> {
     let mut depth: HashMap<&TaskId, usize> = HashMap::new();
     let mut max_depth: usize = 0;
@@ -378,7 +404,7 @@ pub(crate) mod test {
         (ws, pg, members)
     }
 
-    fn build_caret_graph() -> (Workspace, PackageGraph, Vec<WorkspaceMember>) {
+    pub fn build_caret_graph() -> (Workspace, PackageGraph, Vec<WorkspaceMember>) {
         build_chain_graph(&["apps/web", "packages/ui", "packages/shared"])
     }
 
