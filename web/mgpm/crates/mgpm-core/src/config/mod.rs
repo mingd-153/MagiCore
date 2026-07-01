@@ -1,10 +1,12 @@
 use std::path::Path;
 
 pub mod types;
+pub mod loader;
 pub mod validate;
 pub mod schema;
 
 pub use types::*;
+pub use loader::AutoConfigLoader;
 
 /// Trait for loading configuration from different sources
 pub trait ConfigLoader {
@@ -50,7 +52,7 @@ pub struct DefaultConfigLoader;
 
 impl ConfigLoader for DefaultConfigLoader {
     fn load(&self, path: &Path) -> Result<MgpmConfig, ConfigError> {
-        MgpmConfig::load(&path.to_path_buf())
+        AutoConfigLoader.load(path)
     }
 }
 
@@ -68,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn test_loader_yaml() {
+    fn test_loader_toml() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("mgpm.toml");
         let content = r#"
@@ -80,5 +82,54 @@ workspace = { packages = ["packages/*", "apps/*"], linker = "hoisted" }
         let ws = config.workspace.unwrap();
         assert_eq!(ws.packages.len(), 2);
         assert_eq!(ws.linker, LinkerMode::Hoisted);
+    }
+
+    #[test]
+    fn test_loader_yaml() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("mgpm.yaml");
+        let content = r#"
+workspace:
+  packages:
+    - "packages/*"
+    - "apps/*"
+  linker: hoisted
+"#;
+        std::fs::write(&path, content).unwrap();
+        let loader = DefaultConfigLoader;
+        let config = loader.load(&path).unwrap();
+        let ws = config.workspace.unwrap();
+        assert_eq!(ws.packages.len(), 2);
+        assert_eq!(ws.linker, LinkerMode::Hoisted);
+    }
+
+    #[test]
+    fn test_loader_yaml_invalid() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("mgpm.yaml");
+        let content = "workspace: [invalid yaml:";
+        std::fs::write(&path, content).unwrap();
+        let loader = DefaultConfigLoader;
+        let result = loader.load(&path);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::Parse { line: Some(_), column: Some(_), .. } => {}
+            _ => panic!("expected Parse error with line/column info"),
+        }
+    }
+
+    #[test]
+    fn test_loader_toml_parse_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("mgpm.toml");
+        let content = "workspace = { packages = ";
+        std::fs::write(&path, content).unwrap();
+        let loader = DefaultConfigLoader;
+        let result = loader.load(&path);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::Parse { .. } => {}
+            _ => panic!("expected Parse error"),
+        }
     }
 }
