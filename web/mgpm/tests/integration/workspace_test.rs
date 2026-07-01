@@ -3,7 +3,8 @@
 use std::fs;
 use std::path::Path;
 
-use mgpm_core::{MgpmConfig, WorkspaceConfig};
+use mgpm_core::{MgpmConfig, WorkspaceConfig, SecurityConfig, LinkerMode};
+use std::collections::HashMap;
 use mgpm_workspace::{FilterSelector, Workspace};
 
 fn create_member(root: &Path, subdir: &str, name: &str, version: &str, deps: &[(&str, &str)]) {
@@ -33,6 +34,9 @@ fn create_workspace_with_members(packages_pattern: &str, members: &[(&str, &str,
             packages: vec![packages_pattern.to_string()],
             catalog: None,
             link_ws_packages: true,
+            scripts: HashMap::new(),
+            security: SecurityConfig::default(),
+            linker: LinkerMode::default(),
         }),
         ..Default::default()
     };
