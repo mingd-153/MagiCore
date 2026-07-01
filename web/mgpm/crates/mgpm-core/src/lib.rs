@@ -22,3 +22,6 @@ pub use protocol::*;
 pub use config::*;
 pub use error::*;
 pub use logging::{init_tracing, TracingConfig};
+
+#[cfg(feature = "arena")]
+pub mod arena;

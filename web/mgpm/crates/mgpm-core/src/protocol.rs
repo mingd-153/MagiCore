@@ -4,6 +4,7 @@
 
 use std::fmt;
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 
 /// Protocol types for package sources
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -244,7 +245,7 @@ pub struct Person {
 }
 
 /// Registry configuration
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RegistryConfig {
     /// Registry URL (e.g., "https://registry.npmjs.org")
     pub url: String,
