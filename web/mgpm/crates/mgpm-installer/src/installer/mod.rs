@@ -13,6 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinSet;
 
+use mgpm_core::arena::ArenaContext;
 use mgpm_linker::linker::{LinkerFactory, LinkerOptions, LinkerStrategy};
 use mgpm_lockfile::Lockfile;
 use mgpm_store::store::cas::ContentStore;
@@ -132,6 +133,7 @@ pub struct Installer {
     thread_pool: Arc<ThreadPool>,
     conn: Mutex<Connection>,
     package_files: Arc<DashMap<String, Vec<(String, String)>>>,
+    arena: ArenaContext,
 }
 
 impl Clone for Installer {
@@ -149,6 +151,7 @@ impl Clone for Installer {
             thread_pool: self.thread_pool.clone(),
             conn: Mutex::new(conn_clone),
             package_files: self.package_files.clone(),
+            arena: ArenaContext::new(),
         }
     }
 }
@@ -193,6 +196,7 @@ impl Installer {
             thread_pool,
             conn,
             package_files: Arc::new(DashMap::new()),
+            arena: ArenaContext::new(),
         })
     }
 
@@ -265,6 +269,7 @@ impl Installer {
     }
 
     pub async fn install_lockfile(&self, lockfile: &Lockfile) -> InstallResult {
+        self.arena.reset();
         let total = lockfile.packages.len();
         let semaphore = Arc::new(Semaphore::new(self.options.concurrency));
         let mut join_set = JoinSet::new();
