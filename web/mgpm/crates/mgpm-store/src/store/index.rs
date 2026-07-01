@@ -132,6 +132,9 @@ pub trait StoreIndex: Send + Sync {
     fn clean_old_generations(&self, _keep: u64) -> Result<u64, StoreError> {
         Err(StoreError::Database("clean_old_generations not implemented".into()))
     }
+
+    /// Clone the store index as a boxed trait object
+    fn clone_box(&self) -> Box<dyn StoreIndex>;
 }
 
 #[derive(Debug, Error)]

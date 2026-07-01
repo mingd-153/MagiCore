@@ -74,7 +74,7 @@ impl SizeReportPlugin {
             }
         }
 
-        packages_with_sizes.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+        packages_with_sizes.sort_by_key(|b| std::cmp::Reverse(b.size_bytes));
 
         let top_10_largest: Vec<PackageSize> = packages_with_sizes.iter()
             .take(10)

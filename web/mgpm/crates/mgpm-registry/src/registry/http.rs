@@ -20,3 +20,9 @@ impl HttpRegistry {
         }
     }
 }
+
+impl Default for HttpRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}

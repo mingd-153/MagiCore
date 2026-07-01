@@ -54,3 +54,16 @@ impl SqliteStore {
         self.readonly
     }
 }
+
+impl Clone for SqliteStore {
+    fn clone(&self) -> Self {
+        let conn = Connection::open(&self.path).expect("failed to clone SQLite connection");
+        Self {
+            conn: Mutex::new(conn),
+            cache: Mutex::new(LruCache::new(std::num::NonZeroUsize::new(1000).unwrap())),
+            path: self.path.clone(),
+            readonly: self.readonly,
+            generation: Mutex::new(0),
+        }
+    }
+}

@@ -14,7 +14,7 @@ impl GitRegistry {
     }
 
     pub async fn fetch(&self, url: &str, rev: Option<&str>) -> Result<PathBuf, RegistryError> {
-        let repo_name = url.split('/').last().unwrap_or("repo").replace(".git", "");
+        let repo_name = url.split('/').next_back().unwrap_or("repo").replace(".git", "");
         let repo_path = self.cache_dir.join(&repo_name);
         
         if repo_path.exists() {

@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 use tempfile::tempdir;
 
@@ -28,7 +27,7 @@ fn test_import_bytes_dedup() {
     let h1 = store.import_bytes(b"same content").unwrap();
     let h2 = store.import_bytes(b"same content").unwrap();
     assert_eq!(h1.hash, h2.hash);
-    assert_eq!(h1.cas_path(&store.root()), h2.cas_path(&store.root()));
+    assert_eq!(h1.cas_path(store.root()), h2.cas_path(store.root()));
 }
 
 #[test]

@@ -339,7 +339,7 @@ impl Workspace {
                 let pat = glob::Pattern::new(pattern).ok();
                 self.members
                     .iter()
-                    .filter(|m| pat.as_ref().map_or(false, |p| p.matches(&m.name)))
+                    .filter(|m| pat.as_ref().is_some_and(|p| p.matches(&m.name)))
                     .collect()
             }
             FilterSelector::Dependents(name) => {

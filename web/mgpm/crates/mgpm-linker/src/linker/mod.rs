@@ -157,6 +157,7 @@ pub struct PackageLinkInfo {
     pub dep_graph_hash: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl PackageLinkInfo {
     pub fn new(
         name: String,
