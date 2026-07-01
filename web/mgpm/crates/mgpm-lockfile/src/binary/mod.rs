@@ -55,7 +55,7 @@ pub fn read_binary(path: &Path) -> Result<Lockfile, LockfileError> {
     reader.read_exact(&mut magic)
         .map_err(|e| LockfileError::Io(e.to_string()))?;
     
-    if &magic != LOCKFILE_MAGIC {
+    if magic != LOCKFILE_MAGIC {
         return Err(LockfileError::InvalidMagic);
     }
 

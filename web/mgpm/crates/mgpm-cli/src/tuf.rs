@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 const TUF_REPO_URL: &str = "https://mgpm.dev/security/metadata";
 const TUF_CACHE_DIR: &str = ".mgpm/security/tuf";
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TufConfig {
     pub repo_url: String,
@@ -78,6 +79,7 @@ fn save_advisories(cache_dir: &Path, advisories: &[serde_json::Value]) -> Result
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn load_cached_advisories() -> Result<Vec<serde_json::Value>, String> {
     let cache_dir = get_cache_dir();
     let path = cache_dir.join("advisories.json");

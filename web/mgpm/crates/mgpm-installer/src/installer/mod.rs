@@ -170,7 +170,7 @@ impl Installer {
             .http2_prior_knowledge()
             .build()
             .map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                std::io::Error::other(e.to_string())
             })?;
 
         let thread_pool = Arc::new(
@@ -178,7 +178,7 @@ impl Installer {
                 .num_threads(options.concurrency)
                 .build()
                 .map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                    std::io::Error::other(e.to_string())
                 })?,
         );
 
@@ -201,7 +201,7 @@ impl Installer {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(sqlite_path).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            std::io::Error::other(e.to_string())
         })?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS refcounts (
@@ -209,7 +209,7 @@ impl Installer {
                 refcount INTEGER NOT NULL DEFAULT 1
             );",
         )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(conn)
     }
 
@@ -233,14 +233,14 @@ impl Installer {
             workspace: None,
             refcount_callback: Some(Arc::new(move |package_id: &str| {
                 let conn = conn.lock().map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                    std::io::Error::other(e.to_string())
                 })?;
                 conn.execute(
                     "INSERT INTO refcounts (package_id, refcount) VALUES (?1, 1)
                      ON CONFLICT(package_id) DO UPDATE SET refcount = refcount + 1",
                     rusqlite::params![package_id],
                 )
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
                 Ok(())
             }) as mgpm_linker::RefcountCallback),
             strategy: self.options.linker_strategy,
@@ -642,7 +642,7 @@ impl Installer {
             });
         }
 
-        while let Some(_) = join_set.join_next().await {}
+        while join_set.join_next().await.is_some() {}
 
         InstallResult {
             total,

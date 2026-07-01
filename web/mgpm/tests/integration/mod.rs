@@ -13,3 +13,4 @@ mod workspace_test;
 mod plugin_test;
 mod importer_test;
 mod profiler_test;
+mod linker_test;

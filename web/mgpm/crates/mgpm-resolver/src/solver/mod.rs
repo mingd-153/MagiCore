@@ -289,7 +289,7 @@ mod tests {
     struct MockProvider;
 
     impl DependencyProvider for MockProvider {
-        fn get_versions(&self, package: &PackageName) -> Vec<Version> {
+        fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
             vec![
                 Version::parse("1.0.0").unwrap(),
                 Version::parse("2.0.0").unwrap(),
@@ -358,9 +358,8 @@ mod tests {
             ];
             let result = resolver.solve(&wanted);
             // Either resolves (if provider happens to have it) or produces an error
-            match result {
-                Ok(sol) => assert!(!sol.resolutions.is_empty()),
-                Err(_) => {}
+            if let Ok(sol) = result {
+                assert!(!sol.resolutions.is_empty());
             }
         }
     }

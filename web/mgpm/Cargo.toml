@@ -13,6 +13,7 @@ members = [
     "crates/mgpm-cli",
     "crates/mgpm-plugins",
     "crates/mgpm-bench",
+    "crates/mgpm-cache",
 ]
 exclude = ["fuzz"]
 
@@ -39,6 +40,8 @@ flate2.workspace = true
 tar.workspace = true
 tokio.workspace = true
 hex.workspace = true
+sha2.workspace = true
+blake3.workspace = true
 
 [[test]]
 name = "integration"
@@ -48,6 +51,21 @@ harness = true
 [[test]]
 name = "e2e"
 path = "tests/e2e/mod.rs"
+harness = true
+
+[[test]]
+name = "linker_test"
+path = "tests/linker_test.rs"
+harness = true
+
+[[test]]
+name = "lockfile_test"
+path = "tests/lockfile_test.rs"
+harness = true
+
+[[test]]
+name = "benchmark"
+path = "tests/benchmark.rs"
 harness = true
 
 [workspace.package]
@@ -147,7 +165,7 @@ semver = { version = "1.0", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 lru = "0.12"
 fs2 = "0.4"
-mimalloc = { version = "0.1", features = ["default"] }
+mimalloc = { version = "0.1", features = ["secure"] }
 tracing-appender = "0.2"
 config = "0.13"
 async-fs = "1.6"

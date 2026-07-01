@@ -3,15 +3,17 @@ use sha2::{Digest, Sha256};
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use tokio::sync::OnceCell;
 
+use mgpm_cache::{CacheEntry, MemMapCache};
 use mgpm_core::{PackageId, RegistryConfig};
 
 pub mod npm;
@@ -52,11 +54,15 @@ impl From<std::io::Error> for RegistryError {
     }
 }
 
+type InflightCell = Arc<OnceCell<Result<serde_json::Value, RegistryError>>>;
+type InflightMap = DashMap<String, InflightCell>;
+
 pub struct RegistryClient {
     client: reqwest::Client,
     rate_limiter: Arc<DefaultDirectRateLimiter>,
-    inflight: Arc<DashMap<String, Arc<OnceCell<Result<serde_json::Value, RegistryError>>>>>,
+    inflight: Arc<InflightMap>,
     registries: RwLock<HashMap<String, RegistryConfig>>,
+    cache: Option<Mutex<MemMapCache>>,
 }
 
 impl RegistryClient {
@@ -89,11 +95,19 @@ impl RegistryClient {
             .allow_burst(NonZeroU32::new(200).unwrap());
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
+        let cache_path = dirs::cache_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("mgpm")
+            .join("cache")
+            .join("registry.mgpm_cache");
+        let cache = MemMapCache::open(&cache_path).ok().map(Mutex::new);
+
         Self {
             client,
             rate_limiter,
             inflight: Arc::new(DashMap::new()),
             registries: RwLock::new(HashMap::new()),
+            cache,
         }
     }
 
@@ -102,6 +116,15 @@ impl RegistryClient {
         url: &str,
         token: Option<String>,
     ) -> Result<serde_json::Value, RegistryError> {
+        if let Some(ref cache) = self.cache {
+            let guard = cache.lock();
+            if let Some(entry) = guard.get(url) {
+                if let Ok(val) = serde_json::from_slice(entry.data) {
+                    return Ok(val);
+                }
+            }
+        }
+
         let cell = match self.inflight.entry(url.to_string()) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
@@ -113,9 +136,29 @@ impl RegistryClient {
 
         let url = url.to_string();
         let token = token.clone();
-        cell.get_or_init(|| async {
+        let result = cell.get_or_init(|| async {
             self.do_get_json(&url, token).await
-        }).await.clone()
+        }).await.clone();
+
+        if let Ok(ref val) = result {
+            if let Some(ref cache) = self.cache {
+                if let Ok(data) = serde_json::to_vec(val) {
+                    #[allow(clippy::disallowed_methods)]
+                    let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
+                    let entry = CacheEntry {
+                        name: url.as_str(),
+                        version: "",
+                        integrity: "",
+                        data: leaked,
+                    };
+                    let mut guard = cache.lock();
+                    let _ = guard.insert(entry);
+                    let _ = guard.flush();
+                }
+            }
+        }
+
+        result
     }
 
     async fn do_get_json(

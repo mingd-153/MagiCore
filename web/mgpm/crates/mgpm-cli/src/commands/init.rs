@@ -30,9 +30,8 @@ pub fn cmd_init() -> Result<(), String> {
     }
 
     eprintln!(
-        "{} {} {}",
+        "{} Project initialized. {}",
         "[OK]".green().bold(),
-        "Project initialized.",
         "Run `mgpm install` to install dependencies.".green()
     );
     Ok(())

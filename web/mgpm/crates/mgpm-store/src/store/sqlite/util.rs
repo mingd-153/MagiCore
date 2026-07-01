@@ -81,8 +81,8 @@ pub fn apply_pragmas_readonly(conn: &Connection, ram: u64) -> Result<(), StoreEr
     let cache_size = adaptive_cache_size(ram);
     let mmap_size = adaptive_mmap_size(ram);
 
-    conn.pragma_update(None, "cache_size", &cache_size.to_string()).ok();
-    conn.pragma_update(None, "mmap_size", &mmap_size.to_string()).ok();
+    conn.pragma_update(None, "cache_size", cache_size.to_string()).ok();
+    conn.pragma_update(None, "mmap_size", mmap_size.to_string()).ok();
     conn.pragma_update(None, "temp_store", "MEMORY").ok();
     conn.pragma_update(None, "busy_timeout", "5000").ok();
     Ok(())
@@ -99,6 +99,7 @@ pub fn health_check(conn: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn deep_integrity_check(conn: &Connection) -> Result<(), StoreError> {
     // integrity_check: full verification including page checksums, freelist, etc.
     let result: String = conn

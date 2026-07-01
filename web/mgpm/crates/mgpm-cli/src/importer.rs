@@ -60,7 +60,7 @@ fn import_npm(path: &Path) -> Result<Lockfile, String> {
         .ok_or_else(|| "no 'packages' field in package-lock.json".to_string())?;
 
     for (key, val) in packages {
-        if key == "" {
+        if key.is_empty() {
             continue;
         }
         let name = val
@@ -132,7 +132,7 @@ fn import_yarn(path: &Path) -> Result<Lockfile, String> {
                 let mut resolved = String::new();
                 let mut integrity: Option<String> = None;
 
-                while let Some(prop_line) = lines.next() {
+                for prop_line in lines.by_ref() {
                     let prop_trimmed = prop_line.trim();
                     if prop_trimmed.is_empty() || prop_trimmed.starts_with('#') {
                         continue;
@@ -147,9 +147,7 @@ fn import_yarn(path: &Path) -> Result<Lockfile, String> {
                         resolved = r.trim().trim_matches('"').to_string();
                     } else if let Some(i) = prop_trimmed.strip_prefix("integrity ") {
                         integrity = Some(i.trim().trim_matches('"').to_string());
-                    } else if prop_trimmed.starts_with("dependencies ") || prop_trimmed.starts_with("optionalDependencies ") || prop_trimmed.starts_with("peerDependencies ") {
-                        continue;
-                    } else if prop_trimmed.starts_with("  ") || prop_trimmed.ends_with(':') {
+                    } else if prop_trimmed.starts_with("dependencies ") || prop_trimmed.starts_with("optionalDependencies ") || prop_trimmed.starts_with("peerDependencies ") || prop_trimmed.starts_with("  ") || prop_trimmed.ends_with(':') {
                         continue;
                     }
                 }
