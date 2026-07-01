@@ -18,7 +18,7 @@
 
 use std::collections::HashSet;
 
-use crate::{PackageGraph, Workspace, WorkspaceMember, WorkspaceError};
+use crate::{PackageGraph, Workspace, WorkspaceError, WorkspaceMember};
 
 /// Filter selector for workspace package selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,7 +150,10 @@ impl FilterEngine {
         }
 
         // ...pkg... — both sides
-        if let Some(inner) = input.strip_prefix("...").and_then(|s| s.strip_suffix("...")) {
+        if let Some(inner) = input
+            .strip_prefix("...")
+            .and_then(|s| s.strip_suffix("..."))
+        {
             if inner.is_empty() {
                 return Err(FilterError::InvalidSyntax(input.to_string()));
             }
@@ -206,7 +209,10 @@ impl FilterEngine {
     /// Returns [`FilterError::PackageNotFound`] if a named package referenced
     /// by a selector does not exist (for `Dependencies`, `Dependents`, `All`).
     /// Returns [`FilterError::GitError`] if a git diff operation fails.
-    pub fn apply(&self, selectors: &[FilterSelector]) -> Result<Vec<&WorkspaceMember>, FilterError> {
+    pub fn apply(
+        &self,
+        selectors: &[FilterSelector],
+    ) -> Result<Vec<&WorkspaceMember>, FilterError> {
         if selectors.is_empty() {
             return Ok(self.workspace.members().iter().collect());
         }
@@ -239,11 +245,7 @@ impl FilterEngine {
         path_filter: Option<&str>,
         git_ref: &str,
     ) -> Result<Vec<&WorkspaceMember>, FilterError> {
-        let root_str = self
-            .workspace
-            .root()
-            .to_str()
-            .unwrap_or(".");
+        let root_str = self.workspace.root().to_str().unwrap_or(".");
 
         let mut cmd = std::process::Command::new("git");
         cmd.args(["-C", root_str, "diff", "--name-only", git_ref, "HEAD"]);
@@ -252,9 +254,9 @@ impl FilterEngine {
             cmd.arg("--").arg(pf);
         }
 
-        let output = cmd.output().map_err(|e| {
-            FilterError::GitError(format!("failed to execute git diff: {e}"))
-        })?;
+        let output = cmd
+            .output()
+            .map_err(|e| FilterError::GitError(format!("failed to execute git diff: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -386,11 +388,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    fn make_member(
-        name: &str,
-        path: &str,
-        deps: Vec<(&str, &str)>,
-    ) -> WorkspaceMember {
+    fn make_member(name: &str, path: &str, deps: Vec<(&str, &str)>) -> WorkspaceMember {
         let mut dependencies = HashMap::new();
         for (k, v) in deps {
             dependencies.insert(k.to_string(), v.to_string());
@@ -409,9 +407,7 @@ mod tests {
         }
     }
 
-    fn make_engine(
-        members: Vec<WorkspaceMember>,
-    ) -> FilterEngine {
+    fn make_engine(members: Vec<WorkspaceMember>) -> FilterEngine {
         let ws = Workspace::new(
             PathBuf::from("/test/root"),
             WorkspaceConfig {
@@ -525,14 +521,14 @@ mod tests {
 
     #[test]
     fn test_parse_multiple_selectors() {
-        let selectors = FilterEngine::parse_selectors(&[
-            "@scope/pkg".into(),
-            "pkg-a...".into(),
-        ])
-        .unwrap();
+        let selectors =
+            FilterEngine::parse_selectors(&["@scope/pkg".into(), "pkg-a...".into()]).unwrap();
         assert_eq!(selectors.len(), 2);
         assert_eq!(selectors[0], FilterSelector::Name("@scope/pkg".to_string()));
-        assert_eq!(selectors[1], FilterSelector::Dependencies("pkg-a".to_string()));
+        assert_eq!(
+            selectors[1],
+            FilterSelector::Dependencies("pkg-a".to_string())
+        );
     }
 
     // --- error cases ---
