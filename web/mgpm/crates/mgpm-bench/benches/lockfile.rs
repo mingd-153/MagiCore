@@ -19,6 +19,8 @@ fn create_lockfile(num_packages: usize) -> Lockfile {
                 registry: Some("npm".to_string()),
             },
             integrity: Some(format!("sha512-{}", i)),
+            resolved: false,
+            resolved_at: None,
         });
     }
     lock.sort_packages();

@@ -106,6 +106,8 @@ pub fn create_mock_lockfile(packages: &[(&str, &str)]) -> Lockfile {
                 registry: Some("npm".to_string()),
             },
             integrity: Some(format!("sha512-{}", name)),
+                        resolved: false,
+                        resolved_at: None,
         });
     }
     lock.sort_packages();

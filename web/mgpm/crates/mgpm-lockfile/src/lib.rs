@@ -41,6 +41,9 @@ pub enum LockfileError {
     
     #[error("lockfile outdated")]
     Outdated,
+
+    #[error("package '{0}' not found in lockfile")]
+    MissingPackage(String),
 }
 
 impl From<std::io::Error> for LockfileError {
@@ -95,6 +98,8 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-abc123".to_string()),
+            resolved: false,
+            resolved_at: None,
         };
 
         let pkg2 = LockfilePackage {
@@ -107,6 +112,8 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-def456".to_string()),
+            resolved: false,
+            resolved_at: None,
         };
 
         original.add_package(pkg1);

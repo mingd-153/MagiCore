@@ -83,7 +83,9 @@ install:
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc123".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lockfile.sort_packages();
     lockfile.compute_content_hash();
     lockfile.update_timestamp();
@@ -148,7 +150,9 @@ fn e2e_full_install_with_store_verify() {
             registry: Some("npm".to_string()),
         },
         integrity: None,
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lockfile.sort_packages();
     lockfile.compute_content_hash();
     lockfile.update_timestamp();

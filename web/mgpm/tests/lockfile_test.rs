@@ -20,7 +20,9 @@ fn test_lockfile_content_hash_blake3() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc123".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lock.compute_content_hash();
     assert_eq!(lock.metadata.content_hash.len(), 64);
     assert!(lock
@@ -42,6 +44,8 @@ fn test_lockfile_deterministic_hash() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc123".to_string()),
+        resolved: false,
+        resolved_at: None,
     };
     let pkg_b = LockfilePackage {
         id: "lodash@4.17.21".to_string(),
@@ -53,6 +57,8 @@ fn test_lockfile_deterministic_hash() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-def456".to_string()),
+        resolved: false,
+        resolved_at: None,
     };
 
     let mut lock1 = Lockfile::new(1, "npm");
@@ -85,7 +91,9 @@ fn test_lockfile_migrate_v1_to_v2() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc123".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lock.metadata.content_hash = lock.compute_content_hash_v1();
 
     lock.migrate_v1_to_v2().unwrap();
@@ -117,7 +125,9 @@ fn test_lockfile_v1_backward_compat() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc123".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lock.metadata.content_hash = lock.compute_content_hash_v1();
 
     write_text(&lock, &path).unwrap();

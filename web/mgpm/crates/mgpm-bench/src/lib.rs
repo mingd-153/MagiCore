@@ -95,6 +95,8 @@ pub fn bench_lockfile_roundtrip(c: &mut Criterion) {
                 registry: Some("npm".to_string()),
             },
             integrity: Some(format!("sha512-{}", i)),
+            resolved: false,
+            resolved_at: None,
         });
     }
     lock.sort_packages();

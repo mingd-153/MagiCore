@@ -38,6 +38,8 @@ pub struct LockfilePackage {
     pub version: String,
     pub resolution: PackageResolution,
     pub integrity: Option<String>,
+    pub resolved: bool,
+    pub resolved_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +110,8 @@ impl Lockfile {
                 hasher.update(registry.as_bytes());
             }
             hasher.update(b"\0");
+            hasher.update(&[pkg.resolved as u8]);
+            hasher.update(b"\0");
         }
         
         // Include metadata for completeness
@@ -159,6 +163,49 @@ impl Lockfile {
 
     /// Verify that the stored content_hash matches a fresh recomputation.
     /// Returns `true` if hash matches or if content_hash is empty (v1 fallback).
+    pub fn is_fresh(&self) -> bool {
+        self.verify_content_hash()
+    }
+
+    /// Full verification against package.json dependencies.
+    /// Returns true if lockfile is valid and all packages are resolved.
+    pub fn verify_integrity(&self, package_json_deps: &[(&str, &str)]) -> Result<(), crate::LockfileError> {
+        if !self.is_fresh() {
+            return Err(crate::LockfileError::Corrupted(
+                "content hash mismatch".to_string()
+            ));
+        }
+
+        let all_resolved = self.packages.iter().all(|p| p.resolved);
+        if !all_resolved {
+            return Err(crate::LockfileError::Corrupted(
+                "not all packages are resolved".to_string()
+            ));
+        }
+
+        for (name, _spec) in package_json_deps {
+            if !self.packages.iter().any(|p| p.name == *name) {
+                return Err(crate::LockfileError::MissingPackage(name.to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get resolved version for a package from lockfile.
+    /// Only returns versions if the lockfile content hash is valid (not tampered).
+    pub fn get_resolved_version(&self, name: &str) -> Option<&str> {
+        if !self.is_fresh() {
+            return None;
+        }
+        self.packages
+            .iter()
+            .find(|p| p.name == name && p.resolved)
+            .map(|p| p.version.as_str())
+    }
+
+    /// Verify that the stored content_hash matches a fresh recomputation.
+    /// Returns `true` if hash matches or if content_hash is empty (v1 fallback).
     pub fn verify_content_hash(&self) -> bool {
         if self.metadata.content_hash.is_empty() {
             return true;
@@ -187,6 +234,8 @@ impl Lockfile {
             if let Some(ref registry) = pkg.resolution.registry {
                 hasher.update(registry.as_bytes());
             }
+            hasher.update(b"\0");
+            hasher.update(&[pkg.resolved as u8]);
             hasher.update(b"\0");
         }
 
@@ -259,10 +308,25 @@ impl LockfilePackage {
                 registry,
             },
             integrity: resolution.integrity.clone(),
+            resolved: false,
+            resolved_at: None,
         }
     }
 
-/// Create from resolver's Resolution type
+    /// Create a pre-computed (resolved) package entry from resolution.
+    pub fn precomputed(id: &PackageId, resolution: &CoreResolution) -> Self {
+        let mut pkg = Self::from_resolution(id, resolution);
+        pkg.resolved = true;
+        pkg.resolved_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+        pkg
+    }
+
+    /// Create from resolver's Resolution type
     /// registry_url: base URL of the registry (e.g., "https://registry.npmjs.org")
     pub fn from_resolver_resolution(res: &ResolverResolution, registry_url: &str) -> Self {
         Self {
@@ -279,6 +343,8 @@ impl LockfilePackage {
                 registry: Some("npm".to_string()),
             },
             integrity: Some(res.integrity.clone()),
+            resolved: false,
+            resolved_at: None,
         }
     }
 }
@@ -299,6 +365,43 @@ mod tests {
     fn test_lockfile_package_sort() {
         let mut lock = Lockfile::new(1, "npm");
         
+            lock.add_package(LockfilePackage {
+                id: "react@18.0.0".to_string(),
+                name: "react".to_string(),
+                version: "18.0.0".to_string(),
+                resolution: PackageResolution {
+                    r#type: "registry".to_string(),
+                    url: "".to_string(),
+                    registry: None,
+                },
+                integrity: None,
+                resolved: false,
+                resolved_at: None,
+            });
+            
+            lock.add_package(LockfilePackage {
+                id: "react@17.0.0".to_string(),
+                name: "react".to_string(),
+                version: "17.0.0".to_string(),
+                resolution: PackageResolution {
+                    r#type: "registry".to_string(),
+                    url: "".to_string(),
+                    registry: None,
+                },
+                integrity: None,
+                resolved: false,
+                resolved_at: None,
+            });
+
+        lock.sort_packages();
+        
+        assert_eq!(lock.packages[0].version, "17.0.0");
+        assert_eq!(lock.packages[1].version, "18.0.0");
+    }
+
+    #[test]
+    fn test_is_fresh_valid() {
+        let mut lock = Lockfile::new(1, "npm");
         lock.add_package(LockfilePackage {
             id: "react@18.0.0".to_string(),
             name: "react".to_string(),
@@ -309,24 +412,81 @@ mod tests {
                 registry: None,
             },
             integrity: None,
+            resolved: false,
+            resolved_at: None,
         });
-        
+        lock.sort_packages();
+        lock.compute_content_hash();
+        assert!(lock.is_fresh());
+    }
+
+    #[test]
+    fn test_is_fresh_tampered() {
+        let mut lock = Lockfile::new(1, "npm");
         lock.add_package(LockfilePackage {
-            id: "react@17.0.0".to_string(),
+            id: "react@18.0.0".to_string(),
             name: "react".to_string(),
-            version: "17.0.0".to_string(),
+            version: "18.0.0".to_string(),
             resolution: PackageResolution {
                 r#type: "registry".to_string(),
                 url: "".to_string(),
                 registry: None,
             },
             integrity: None,
+            resolved: false,
+            resolved_at: None,
         });
-
         lock.sort_packages();
-        
-        assert_eq!(lock.packages[0].version, "17.0.0");
-        assert_eq!(lock.packages[1].version, "18.0.0");
+        lock.compute_content_hash();
+        // Tamper
+        lock.packages[0].version = "19.0.0".to_string();
+        assert!(!lock.is_fresh());
+    }
+
+    #[test]
+    fn test_get_resolved_version_freshness_guard() {
+        let mut lock = Lockfile::new(1, "npm");
+        lock.add_package(LockfilePackage {
+            id: "react@18.0.0".to_string(),
+            name: "react".to_string(),
+            version: "18.0.0".to_string(),
+            resolution: PackageResolution {
+                r#type: "registry".to_string(),
+                url: "".to_string(),
+                registry: None,
+            },
+            integrity: None,
+            resolved: true,
+            resolved_at: Some(1000),
+        });
+        lock.sort_packages();
+        lock.compute_content_hash();
+        // Fresh -> returns version
+        assert_eq!(lock.get_resolved_version("react"), Some("18.0.0"));
+        // Tamper -> freshness guard returns None
+        lock.packages[0].version = "19.0.0".to_string();
+        assert_eq!(lock.get_resolved_version("react"), None);
+    }
+
+    #[test]
+    fn test_precomputed_constructor() {
+        use mgpm_core::{PackageId, PackageName, Version, Protocol, Resolution as CoreResolution};
+        let name = PackageName::new("lodash").unwrap();
+        let version = Version::parse("4.17.21").unwrap();
+        let id = PackageId::new(name.clone(), version.clone());
+        let resolution = CoreResolution {
+            id: id.clone(),
+            protocol: Protocol::Registry,
+            tarball: Some("https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz".to_string()),
+            integrity: Some("sha512-abc123".to_string()),
+            registry: Some("npm".to_string()),
+            local_path: None,
+        };
+        let pkg = LockfilePackage::precomputed(&id, &resolution);
+        assert!(pkg.resolved);
+        assert!(pkg.resolved_at.is_some());
+        assert_eq!(pkg.name, "lodash");
+        assert_eq!(pkg.version, "4.17.21");
     }
 
     fn arb_package_name() -> impl Strategy<Value = String> {
@@ -359,6 +519,8 @@ mod tests {
                         registry: Some("npm".to_string()),
                     },
                     integrity: Some(format!("sha512-{}", hex::encode(name))),
+                    resolved: false,
+                    resolved_at: None,
                 });
             }
             lock.sort_packages();

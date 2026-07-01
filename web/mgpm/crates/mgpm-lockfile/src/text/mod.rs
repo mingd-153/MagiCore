@@ -168,6 +168,8 @@ let version = table.get("version")
                 .to_string(),
             resolution,
             integrity: pkg_table.get("integrity").and_then(|i| i.as_str()).map(String::from),
+            resolved: pkg_table.get("resolved").and_then(|r| r.as_bool()).unwrap_or(false),
+            resolved_at: pkg_table.get("resolved_at").and_then(|r| r.as_integer()).map(|n| n as u64),
         });
     }
     
@@ -241,6 +243,8 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-...".to_string()),
+            resolved: false,
+            resolved_at: None,
         });
         
         write_text(&lock, &path).unwrap();

@@ -143,7 +143,9 @@ fn e2e_smoke_install_from_lockfile() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc123".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lockfile.sort_packages();
     lockfile.compute_content_hash();
 
@@ -211,7 +213,9 @@ fn e2e_smoke_lockfile_integrity() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lockfile.add_package(LockfilePackage {
         id: "lodash@4.17.21".to_string(),
         name: "lodash".to_string(),
@@ -222,7 +226,9 @@ fn e2e_smoke_lockfile_integrity() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-def".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lockfile.sort_packages();
     lockfile.compute_content_hash();
     lockfile.update_timestamp();
@@ -255,7 +261,9 @@ fn e2e_smoke_binary_lockfile_roundtrip() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-xyz".to_string()),
-    });
+            resolved: false,
+            resolved_at: None,
+        });
     lockfile.sort_packages();
     lockfile.compute_content_hash();
 

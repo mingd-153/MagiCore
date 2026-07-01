@@ -140,6 +140,8 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-...".to_string()),
+            resolved: false,
+            resolved_at: None,
         });
         
         write_binary(&lock, &path).unwrap();

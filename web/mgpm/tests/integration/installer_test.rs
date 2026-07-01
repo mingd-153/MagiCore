@@ -39,7 +39,9 @@ async fn test_dry_run_mode() {
             registry: Some("npm".to_string()),
         },
         integrity: None,
-    });
+            resolved: false,
+            resolved_at: None,
+        });
 
     let result = installer.install_lockfile(&lockfile).await;
     assert_eq!(result.skipped, 1);
@@ -80,7 +82,9 @@ async fn test_offline_mode() {
             registry: Some("npm".to_string()),
         },
         integrity: None,
-    });
+            resolved: false,
+            resolved_at: None,
+        });
 
     let result = installer.install_lockfile(&lockfile).await;
     assert_eq!(result.failed, 1); // not in cache + offline = fail

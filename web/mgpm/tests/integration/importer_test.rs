@@ -64,6 +64,8 @@ fn parse_npm_lock(path: &Path) -> Result<Lockfile, String> {
                 registry: Some("npm".to_string()),
             },
             integrity: integrity.map(String::from),
+            resolved: false,
+            resolved_at: None,
         });
     }
     lockfile.sort_packages();
@@ -125,6 +127,8 @@ fn parse_yarn_lock(path: &Path) -> Result<Lockfile, String> {
                             registry: Some("npm".to_string()),
                         },
                         integrity,
+                            resolved: false,
+                            resolved_at: None,
                     });
                 }
             }
@@ -195,6 +199,8 @@ fn parse_pnpm_lock(path: &Path) -> Result<Lockfile, String> {
                     registry: Some("npm".to_string()),
                 },
                 integrity,
+                    resolved: false,
+                    resolved_at: None,
             });
         }
     }
@@ -258,7 +264,9 @@ fn parse_bun_lock(path: &Path) -> Result<Lockfile, String> {
                     registry: Some("npm".to_string()),
                 },
                 integrity: integrity.map(String::from),
-            });
+            resolved: false,
+            resolved_at: None,
+        });
         }
     }
 
