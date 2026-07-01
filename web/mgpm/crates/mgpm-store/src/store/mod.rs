@@ -8,10 +8,8 @@ pub mod sqlite;
 pub mod verify;
 
 pub use cas::{ContentStore as CasContentStore, IntegrityHash, TarballEntry};
-pub use content_store::{
-    ContentStore, FileEntry, HashAlgorithm, ImportMethod, PackageEntry,
-};
-pub use gvs::{GlobalVirtualStore, GvsGcReport, GvsPackageInfo, GvsFileInfo, GvsStats};
+pub use content_store::{ContentStore, FileEntry, HashAlgorithm, ImportMethod, PackageEntry};
+pub use gvs::{GlobalVirtualStore, GvsFileInfo, GvsGcReport, GvsPackageInfo, GvsStats};
 pub use index::{AuditReport, PackageInfo, ProjectInfo, StoreError, StoreIndex};
 pub use sqlite::SqliteStore;
 pub use verify::{StoreReport, StoreVerifier};

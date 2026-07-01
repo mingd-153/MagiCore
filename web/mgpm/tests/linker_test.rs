@@ -11,8 +11,7 @@ fn test_hoisted_linker_creates_node_modules() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("store.db");
     let index = SqliteStore::open(&db_path, false).unwrap();
-    let store =
-        CasContentStore::new(dir.path().join("cas"), Box::new(index.clone())).unwrap();
+    let store = CasContentStore::new(dir.path().join("cas"), Box::new(index.clone())).unwrap();
 
     let src = dir.path().join("test.txt");
     fs::write(&src, b"hello world").unwrap();
@@ -51,8 +50,7 @@ fn test_isolated_linker_creates_node_modules() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("store.db");
     let index = SqliteStore::open(&db_path, false).unwrap();
-    let store =
-        CasContentStore::new(dir.path().join("cas"), Box::new(index.clone())).unwrap();
+    let store = CasContentStore::new(dir.path().join("cas"), Box::new(index.clone())).unwrap();
 
     let src = dir.path().join("test.txt");
     fs::write(&src, b"hello world").unwrap();

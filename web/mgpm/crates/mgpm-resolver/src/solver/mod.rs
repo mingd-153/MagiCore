@@ -163,12 +163,15 @@ impl Resolver {
 
     /// Resolves a package version from a named catalog.
     pub fn resolve_catalog(&self, name: &str, catalog_name: &str) -> Result<Version, SolveError> {
-        let catalog = self.catalogs.get(catalog_name)
-            .ok_or_else(|| SolveError { message: format!("catalog '{}' not found", catalog_name) })?;
-        let version_str = catalog.get(name)
-            .ok_or_else(|| SolveError { message: format!("package '{}' not found in catalog '{}'", name, catalog_name) })?;
-        Version::parse(version_str)
-            .map_err(|e| SolveError { message: format!("invalid version '{}' in catalog: {}", version_str, e) })
+        let catalog = self.catalogs.get(catalog_name).ok_or_else(|| SolveError {
+            message: format!("catalog '{}' not found", catalog_name),
+        })?;
+        let version_str = catalog.get(name).ok_or_else(|| SolveError {
+            message: format!("package '{}' not found in catalog '{}'", name, catalog_name),
+        })?;
+        Version::parse(version_str).map_err(|e| SolveError {
+            message: format!("invalid version '{}' in catalog: {}", version_str, e),
+        })
     }
 
     /// Resolves dependencies while considering workspace packages.
@@ -183,8 +186,9 @@ impl Resolver {
 
         for (name, spec) in wanted {
             if let Some(member) = workspace.find(name.as_str()) {
-                let version = Version::parse(&member.version)
-                    .map_err(|e| SolveError { message: format!("invalid workspace version: {}", e) })?;
+                let version = Version::parse(&member.version).map_err(|e| SolveError {
+                    message: format!("invalid workspace version: {}", e),
+                })?;
                 resolutions.push(Resolution {
                     package_id: PackageId::new(name.clone(), version.clone()),
                     version,
@@ -207,13 +211,13 @@ impl Resolver {
     pub fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
         let mut resolutions = Vec::new();
         let mut seen = HashSet::new();
-        
+
         for (name, _spec) in wanted {
             if seen.contains(name) {
                 continue;
             }
             seen.insert(name.clone());
-            
+
             let versions = self.provider.get_versions(name);
             if let Some(version) = versions.last() {
                 let package_id = PackageId::new(name.clone(), version.clone());
@@ -223,7 +227,7 @@ impl Resolver {
                     integrity: String::new(), // Will be filled by pipeline with real hash from tarball
                     deps: Vec::new(),
                 });
-                
+
                 for dep in self.provider.get_dependencies(&package_id) {
                     if !seen.contains(&dep.package) {
                         seen.insert(dep.package.clone());
@@ -325,13 +329,11 @@ mod tests {
 
     #[test]
     fn test_workspace_info() {
-        let info = WorkspaceInfo::new(vec![
-            WorkspaceMemberInfo {
-                name: "my-pkg".to_string(),
-                path: PathBuf::from("/workspace/packages/my-pkg"),
-                version: "1.0.0".to_string(),
-            },
-        ]);
+        let info = WorkspaceInfo::new(vec![WorkspaceMemberInfo {
+            name: "my-pkg".to_string(),
+            path: PathBuf::from("/workspace/packages/my-pkg"),
+            version: "1.0.0".to_string(),
+        }]);
         assert!(info.is_workspace_package("my-pkg"));
         assert!(!info.is_workspace_package("other"));
     }
@@ -339,10 +341,8 @@ mod tests {
     #[test]
     fn test_solve_simple() {
         let resolver = Resolver::new(Box::new(MockProvider));
-        let wanted = vec![
-            (PackageName::new("react").unwrap(), "^1.0.0".to_string()),
-        ];
-        
+        let wanted = vec![(PackageName::new("react").unwrap(), "^1.0.0".to_string())];
+
         let result = resolver.solve(&wanted).unwrap();
         assert_eq!(result.resolutions.len(), 1);
     }

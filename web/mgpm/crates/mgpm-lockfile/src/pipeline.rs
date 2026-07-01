@@ -15,7 +15,7 @@ use crate::LockfileError;
 #[derive(Debug, Clone)]
 pub struct WantedDependency {
     pub name: PackageName,
-    pub version_req: String,  // e.g., "^1.0.0"
+    pub version_req: String, // e.g., "^1.0.0"
     pub dev: bool,
     pub optional: bool,
 }
@@ -57,7 +57,7 @@ impl ResolutionPipeline {
     pub fn new(resolver: Resolver, config: ResolutionConfig) -> Self {
         Self { resolver, config }
     }
-    
+
     /// Run full resolution: wanted -> resolved -> lockfile
     ///
     /// When `registry_client` is `Some`, it downloads tarballs to compute real SRI hashes.
@@ -73,17 +73,22 @@ impl ResolutionPipeline {
             .iter()
             .map(|w| (w.name.clone(), w.version_req.clone()))
             .collect();
-        
+
         // Run resolver
-        let result = self.resolver.solve(&wanted_strs)
+        let result = self
+            .resolver
+            .solve(&wanted_strs)
             .map_err(|e| PipelineError::ResolveError(e.to_string()))?;
-        
+
         // Build lockfile from resolutions with real integrity hashes
         let mut lockfile = Lockfile::new(self.config.config_version, &self.config.registry);
-        
+
         for res in result.resolutions {
-            let mut pkg = crate::lockfile::LockfilePackage::from_resolver_resolution(&res, &self.config.registry);
-            
+            let mut pkg = crate::lockfile::LockfilePackage::from_resolver_resolution(
+                &res,
+                &self.config.registry,
+            );
+
             if let Some(client) = registry_client {
                 // Download tarball to compute real SRI hash
                 let tarball_bytes = client
@@ -93,23 +98,23 @@ impl ResolutionPipeline {
                 pkg.integrity = Some(compute_package_integrity(&tarball_bytes));
             }
             // When no registry client, keep integrity from resolver (may be empty)
-            
+
             lockfile.add_package(pkg);
         }
-        
+
         lockfile.sort_packages();
         lockfile.compute_content_hash();
         lockfile.update_timestamp();
-        
+
         // Write lockfile
         let lockfile_path = project_root.join("mgpm.lock");
         crate::text::write_text(&lockfile, &lockfile_path)
             .map_err(|e| PipelineError::LockfileWrite(e.to_string()))?;
-        
+
         let binary_path = project_root.join("mgpm.lockb");
         crate::binary::write_binary(&lockfile, &binary_path)
             .map_err(|e| PipelineError::LockfileWrite(e.to_string()))?;
-        
+
         Ok(lockfile)
     }
 }
@@ -131,14 +136,14 @@ pub enum PipelineError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_pipeline_config_default() {
         let config = ResolutionConfig::default();
         assert_eq!(config.registry, "https://registry.npmjs.org");
         assert!(!config.offline);
     }
-    
+
     #[test]
     fn test_compute_package_integrity() {
         let data = b"test tarball content";

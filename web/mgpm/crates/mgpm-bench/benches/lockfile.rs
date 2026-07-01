@@ -1,6 +1,6 @@
 //! Lockfile benchmarks
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use mgpm_lockfile::{Lockfile, LockfilePackage, PackageResolution};
 
 fn create_lockfile(num_packages: usize) -> Lockfile {
@@ -12,10 +12,7 @@ fn create_lockfile(num_packages: usize) -> Lockfile {
             version: "1.0.0".to_string(),
             resolution: PackageResolution {
                 r#type: "registry".to_string(),
-                url: format!(
-                    "https://registry.npmjs.org/pkg_{}/-/pkg_{}-1.0.0.tgz",
-                    i, i
-                ),
+                url: format!("https://registry.npmjs.org/pkg_{}/-/pkg_{}-1.0.0.tgz", i, i),
                 registry: Some("npm".to_string()),
             },
             integrity: Some(format!("sha512-{}", i)),

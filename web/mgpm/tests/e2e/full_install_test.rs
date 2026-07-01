@@ -118,7 +118,10 @@ install:
 
     // In offline mode with empty store, the installer tries to download
     // and fails (no cache hit). Expect the package to fail.
-    assert_eq!(result.failed, 1, "offline install with empty store should fail for 1 package");
+    assert_eq!(
+        result.failed, 1,
+        "offline install with empty store should fail for 1 package"
+    );
     assert_eq!(result.succeeded, 0);
     assert_eq!(result.skipped, 0);
 }

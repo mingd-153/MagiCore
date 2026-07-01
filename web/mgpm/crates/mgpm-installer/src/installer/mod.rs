@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 
+use base64::Engine;
 use dashmap::DashMap;
 use rayon::ThreadPool;
 use reqwest::Client;
 use rusqlite::Connection;
-use base64::Engine;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
@@ -169,17 +169,13 @@ impl Installer {
             .pool_idle_timeout(std::time::Duration::from_secs(30))
             .http2_prior_knowledge()
             .build()
-            .map_err(|e| {
-                std::io::Error::other(e.to_string())
-            })?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         let thread_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
                 .num_threads(options.concurrency)
                 .build()
-                .map_err(|e| {
-                    std::io::Error::other(e.to_string())
-                })?,
+                .map_err(|e| std::io::Error::other(e.to_string()))?,
         );
 
         let conn = Mutex::new(Self::init_sqlite(&options.sqlite_path)?);
@@ -200,9 +196,8 @@ impl Installer {
         if let Some(parent) = sqlite_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(sqlite_path).map_err(|e| {
-            std::io::Error::other(e.to_string())
-        })?;
+        let conn =
+            Connection::open(sqlite_path).map_err(|e| std::io::Error::other(e.to_string()))?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS refcounts (
                 package_id TEXT PRIMARY KEY,
@@ -232,9 +227,9 @@ impl Installer {
             store_path: self.options.store_path.clone(),
             workspace: None,
             refcount_callback: Some(Arc::new(move |package_id: &str| {
-                let conn = conn.lock().map_err(|e| {
-                    std::io::Error::other(e.to_string())
-                })?;
+                let conn = conn
+                    .lock()
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
                 conn.execute(
                     "INSERT INTO refcounts (package_id, refcount) VALUES (?1, 1)
                      ON CONFLICT(package_id) DO UPDATE SET refcount = refcount + 1",
@@ -350,7 +345,9 @@ impl Installer {
                     errors_clone
                         .lock()
                         .unwrap()
-                        .push(InstallError::DownloadFailed("empty tarball URL".to_string()));
+                        .push(InstallError::DownloadFailed(
+                            "empty tarball URL".to_string(),
+                        ));
                     failed_clone.fetch_add(1, Ordering::SeqCst);
                     return;
                 }
@@ -440,9 +437,10 @@ impl Installer {
                             Some(Ok(chunk)) => {
                                 hasher.update(&chunk);
                                 if let Err(e) = file.write_all(&chunk).await {
-                                    errors_clone.lock().unwrap().push(
-                                        InstallError::StoreError(e.to_string()),
-                                    );
+                                    errors_clone
+                                        .lock()
+                                        .unwrap()
+                                        .push(InstallError::StoreError(e.to_string()));
                                     failed_clone.fetch_add(1, Ordering::SeqCst);
                                     return;
                                 }
@@ -559,9 +557,10 @@ impl Installer {
                         let src_path = extract_dir.join(rel_path);
                         if src_path.is_file() {
                             if let Err(e) = store.import_file(&src_path) {
-                                errors_clone.lock().unwrap().push(
-                                    InstallError::StoreError(e.to_string()),
-                                );
+                                errors_clone
+                                    .lock()
+                                    .unwrap()
+                                    .push(InstallError::StoreError(e.to_string()));
                             }
                         }
                     }
@@ -622,10 +621,8 @@ impl Installer {
                             "phase": "Done",
                             "bytes_downloaded": 0,
                         });
-                        let _ = std::io::Write::write_all(
-                            &mut f,
-                            format!("{}\n", entry).as_bytes(),
-                        );
+                        let _ =
+                            std::io::Write::write_all(&mut f, format!("{}\n", entry).as_bytes());
                     }
                 }
 
@@ -750,11 +747,7 @@ impl JsonlLogger {
         })
     }
 
-    pub fn log(
-        &mut self,
-        progress: &InstallProgress,
-        package_id: &str,
-    ) -> std::io::Result<()> {
+    pub fn log(&mut self, progress: &InstallProgress, package_id: &str) -> std::io::Result<()> {
         if let Some(ref mut file) = self.file {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

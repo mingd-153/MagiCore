@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 const TUF_REPO_URL: &str = "https://mgpm.dev/security/metadata";
 const TUF_CACHE_DIR: &str = ".mgpm/security/tuf";

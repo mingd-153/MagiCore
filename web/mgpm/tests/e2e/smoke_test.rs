@@ -2,9 +2,12 @@ use std::collections::HashMap;
 use std::fs;
 
 use mgpm_core::PackageName;
-use mgpm_lockfile::{Lockfile, LockfilePackage, PackageResolution, ResolutionPipeline, ResolutionConfig, WantedDependency};
-use mgpm_resolver::Resolver;
+use mgpm_lockfile::{
+    Lockfile, LockfilePackage, PackageResolution, ResolutionConfig, ResolutionPipeline,
+    WantedDependency,
+};
 use mgpm_resolver::solver::ResolvedDep;
+use mgpm_resolver::Resolver;
 use mgpm_store::ContentStore;
 
 struct E2eProvider {
@@ -55,10 +58,7 @@ fn make_provider() -> E2eProvider {
 
     provider.packages.insert(
         "is-number".to_string(),
-        HashMap::from_iter(vec![(
-            "7.0.0".to_string(),
-            vec![],
-        )]),
+        HashMap::from_iter(vec![("7.0.0".to_string(), vec![])]),
     );
 
     provider
@@ -101,7 +101,11 @@ async fn e2e_smoke_resolve_and_lockfile() {
 
     // Current resolver solves 1 level (picks latest version, but doesn't
     // recurse into transitive dependencies in the simple solve() path).
-    assert_eq!(lockfile.packages.len(), 1, "should resolve is-odd (1 level)");
+    assert_eq!(
+        lockfile.packages.len(),
+        1,
+        "should resolve is-odd (1 level)"
+    );
 
     let has_odd = lockfile.packages.iter().any(|p| p.name == "is-odd");
     assert!(has_odd, "should include is-odd");
@@ -193,7 +197,10 @@ async fn e2e_smoke_resolve_nonexistent() {
 
     let result = pipeline.resolve_and_lock(&wanted, tmp.path(), None).await;
     // Current resolver returns Ok with 0 resolutions for unknown packages
-    assert!(result.is_ok(), "resolver returns Ok with 0 resolutions for unknown packages");
+    assert!(
+        result.is_ok(),
+        "resolver returns Ok with 0 resolutions for unknown packages"
+    );
     let lockfile = result.unwrap();
     assert_eq!(lockfile.packages.len(), 0, "no packages should be resolved");
 }

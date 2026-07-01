@@ -47,8 +47,11 @@ pub fn create_mock_project() -> TestFixture {
             "lodash": "^4.17.0"
         }
     });
-    fs::write(root.join("package.json"), serde_json::to_string_pretty(&pkg_json).unwrap())
-        .expect("write package.json");
+    fs::write(
+        root.join("package.json"),
+        serde_json::to_string_pretty(&pkg_json).unwrap(),
+    )
+    .expect("write package.json");
 
     let mgpm_yaml = r#"
 catalogs:
@@ -58,10 +61,7 @@ catalogs:
 "#;
     fs::write(root.join("mgpm.yaml"), mgpm_yaml).expect("write mgpm.yaml");
 
-    TestFixture {
-        root,
-        _dir: dir,
-    }
+    TestFixture { root, _dir: dir }
 }
 
 /// Creates a mock content store in a temp directory.
@@ -85,7 +85,9 @@ pub fn create_mock_tarball(_name: &str, _version: &str, files: &[(&str, &str)]) 
             header.set_size(content.len() as u64);
             header.set_mode(0o644);
             header.set_cksum();
-            tar_builder.append(&header, content.as_bytes()).expect("append");
+            tar_builder
+                .append(&header, content.as_bytes())
+                .expect("append");
         }
         tar_builder.finish().expect("finish");
     }
@@ -102,7 +104,10 @@ pub fn create_mock_lockfile(packages: &[(&str, &str)]) -> Lockfile {
             version: version.to_string(),
             resolution: PackageResolution {
                 r#type: "registry".to_string(),
-                url: format!("https://registry.npmjs.org/{}/-/{}-{}.tgz", name, name, version),
+                url: format!(
+                    "https://registry.npmjs.org/{}/-/{}-{}.tgz",
+                    name, name, version
+                ),
                 registry: Some("npm".to_string()),
             },
             integrity: Some(format!("sha512-{}", name)),

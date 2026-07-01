@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::OnceCell;
@@ -16,17 +16,17 @@ use tokio::sync::OnceCell;
 use mgpm_cache::{CacheEntry, MemMapCache};
 use mgpm_core::{PackageId, RegistryConfig};
 
-pub mod npm;
-pub mod jsr;
+pub mod file;
 pub mod git;
 pub mod http;
-pub mod file;
+pub mod jsr;
+pub mod npm;
 
-pub use npm::NpmRegistry;
-pub use jsr::JsrRegistry;
+pub use file::{FileRegistry, PackageJsonReader, ParsedPackageJson, WorkspaceRegistry};
 pub use git::GitRegistry;
 pub use http::HttpRegistry;
-pub use file::{FileRegistry, WorkspaceRegistry, PackageJsonReader, ParsedPackageJson};
+pub use jsr::JsrRegistry;
+pub use npm::NpmRegistry;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum RegistryError {
@@ -74,16 +74,12 @@ impl RegistryClient {
             .brotli(true)
             .user_agent(concat!("mgpm/", env!("CARGO_PKG_VERSION")));
 
-        if let Ok(url) = std::env::var("HTTPS_PROXY")
-            .or_else(|_| std::env::var("https_proxy"))
-        {
+        if let Ok(url) = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")) {
             if let Ok(proxy) = reqwest::Proxy::https(&url) {
                 builder = builder.proxy(proxy);
             }
         }
-        if let Ok(url) = std::env::var("HTTP_PROXY")
-            .or_else(|_| std::env::var("http_proxy"))
-        {
+        if let Ok(url) = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")) {
             if let Ok(proxy) = reqwest::Proxy::http(&url) {
                 builder = builder.proxy(proxy);
             }
@@ -136,9 +132,10 @@ impl RegistryClient {
 
         let url = url.to_string();
         let token = token.clone();
-        let result = cell.get_or_init(|| async {
-            self.do_get_json(&url, token).await
-        }).await.clone();
+        let result = cell
+            .get_or_init(|| async { self.do_get_json(&url, token).await })
+            .await
+            .clone();
 
         if let Ok(ref val) = result {
             if let Some(ref cache) = self.cache {
@@ -174,11 +171,17 @@ impl RegistryClient {
                 req = req.header("Authorization", format!("Bearer {}", t));
             }
 
-            let resp = req.send().await.map_err(|e| RegistryError::NetworkError(e.to_string()))?;
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| RegistryError::NetworkError(e.to_string()))?;
 
             let status = resp.status();
             if status.is_success() {
-                return resp.json().await.map_err(|e| RegistryError::NetworkError(e.to_string()));
+                return resp
+                    .json()
+                    .await
+                    .map_err(|e| RegistryError::NetworkError(e.to_string()));
             }
 
             if status.as_u16() == 429 {
@@ -220,11 +223,18 @@ impl RegistryClient {
                 req = req.header("Authorization", format!("Bearer {}", t));
             }
 
-            let resp = req.send().await.map_err(|e| RegistryError::NetworkError(e.to_string()))?;
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| RegistryError::NetworkError(e.to_string()))?;
 
             let status = resp.status();
             if status.is_success() {
-                return resp.bytes().await.map_err(|e| RegistryError::NetworkError(e.to_string())).map(|b| b.to_vec());
+                return resp
+                    .bytes()
+                    .await
+                    .map_err(|e| RegistryError::NetworkError(e.to_string()))
+                    .map(|b| b.to_vec());
             }
 
             if status.as_u16() == 429 {
@@ -255,10 +265,7 @@ impl RegistryClient {
     }
 
     /// Download a package tarball by PackageId (name@version)
-    pub async fn download_tarball(
-        &self,
-        package_id: &PackageId,
-    ) -> Result<Vec<u8>, RegistryError> {
+    pub async fn download_tarball(&self, package_id: &PackageId) -> Result<Vec<u8>, RegistryError> {
         // Use npm registry to get package metadata and extract tarball URL
         let name = package_id.name().as_str();
         let version = package_id.version().to_string();

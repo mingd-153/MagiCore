@@ -53,7 +53,7 @@ impl Lockfile {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Self {
             version: LOCKFILE_VERSION,
             metadata: LockfileMetadata {
@@ -72,25 +72,23 @@ impl Lockfile {
     }
 
     pub fn find_package(&self, name: &str, version: &str) -> Option<&LockfilePackage> {
-        self.packages.iter().find(|p| p.name == name && p.version == version)
+        self.packages
+            .iter()
+            .find(|p| p.name == name && p.version == version)
     }
 
     pub fn sort_packages(&mut self) {
-        self.packages.sort_by(|a, b| {
-            a.name.cmp(&b.name).then_with(|| a.version.cmp(&b.version))
-        });
+        self.packages
+            .sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.version.cmp(&b.version)));
     }
 
     pub fn compute_content_hash(&mut self) {
         let mut hasher = blake3::Hasher::new();
-        
+
         // Deterministic serialization: sort packages by name, then version
         let mut sorted = self.packages.clone();
-        sorted.sort_by(|a, b| {
-            a.name.cmp(&b.name)
-                .then_with(|| a.version.cmp(&b.version))
-        });
-        
+        sorted.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.version.cmp(&b.version)));
+
         for pkg in &sorted {
             hasher.update(pkg.name.as_bytes());
             hasher.update(b"\0");
@@ -109,12 +107,12 @@ impl Lockfile {
             }
             hasher.update(b"\0");
         }
-        
+
         // Include metadata for completeness
         hasher.update(self.metadata.registry.as_bytes());
         hasher.update(b"\0");
         hasher.update(self.metadata.config_version.to_string().as_bytes());
-        
+
         self.metadata.content_hash = hasher.finalize().to_hex().to_string();
     }
 
@@ -141,7 +139,7 @@ impl Lockfile {
                     actual: self.metadata.content_hash.clone(),
                 });
             }
-            
+
             // Recompute with BLAKE3
             self.compute_content_hash();
             self.version = LOCKFILE_VERSION;
@@ -166,10 +164,7 @@ impl Lockfile {
         let mut hasher = blake3::Hasher::new();
 
         let mut sorted = self.packages.clone();
-        sorted.sort_by(|a, b| {
-            a.name.cmp(&b.name)
-                .then_with(|| a.version.cmp(&b.version))
-        });
+        sorted.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.version.cmp(&b.version)));
 
         for pkg in &sorted {
             hasher.update(pkg.name.as_bytes());
@@ -207,46 +202,18 @@ impl LockfilePackage {
                 resolution.tarball.clone().unwrap_or_default(),
                 resolution.registry.clone(),
             ),
-            Protocol::Workspace { path } => (
-                "workspace".to_string(),
-                path.clone(),
-                None,
-            ),
-            Protocol::Git { url, .. } => (
-                "git".to_string(),
-                url.clone(),
-                None,
-            ),
-            Protocol::Http { url, .. } => (
-                "http".to_string(),
-                url.clone(),
-                None,
-            ),
-            Protocol::File { path } => (
-                "file".to_string(),
-                path.clone(),
-                None,
-            ),
-            Protocol::Link { path } => (
-                "link".to_string(),
-                path.clone(),
-                None,
-            ),
-            Protocol::Catalog { name } => (
-                "catalog".to_string(),
-                name.clone(),
-                None,
-            ),
+            Protocol::Workspace { path } => ("workspace".to_string(), path.clone(), None),
+            Protocol::Git { url, .. } => ("git".to_string(), url.clone(), None),
+            Protocol::Http { url, .. } => ("http".to_string(), url.clone(), None),
+            Protocol::File { path } => ("file".to_string(), path.clone(), None),
+            Protocol::Link { path } => ("link".to_string(), path.clone(), None),
+            Protocol::Catalog { name } => ("catalog".to_string(), name.clone(), None),
             Protocol::Github { user, repo } => (
                 "github".to_string(),
                 format!("github:{}/{}", user, repo),
                 None,
             ),
-            Protocol::Jsr => (
-                "jsr".to_string(),
-                String::new(),
-                None,
-            ),
+            Protocol::Jsr => ("jsr".to_string(), String::new(), None),
         };
 
         Self {
@@ -262,7 +229,7 @@ impl LockfilePackage {
         }
     }
 
-/// Create from resolver's Resolution type
+    /// Create from resolver's Resolution type
     /// registry_url: base URL of the registry (e.g., "https://registry.npmjs.org")
     pub fn from_resolver_resolution(res: &ResolverResolution, registry_url: &str) -> Self {
         Self {
@@ -271,11 +238,13 @@ impl LockfilePackage {
             version: res.version.to_string(),
             resolution: PackageResolution {
                 r#type: "registry".to_string(),
-                url: format!("{}/{}/-/{}-{}.tgz",
+                url: format!(
+                    "{}/{}/-/{}-{}.tgz",
                     registry_url.trim_end_matches('/'),
                     res.package_id.name().as_str(),
                     res.package_id.name().as_str(),
-                    res.version),
+                    res.version
+                ),
                 registry: Some("npm".to_string()),
             },
             integrity: Some(res.integrity.clone()),
@@ -298,7 +267,7 @@ mod tests {
     #[test]
     fn test_lockfile_package_sort() {
         let mut lock = Lockfile::new(1, "npm");
-        
+
         lock.add_package(LockfilePackage {
             id: "react@18.0.0".to_string(),
             name: "react".to_string(),
@@ -310,7 +279,7 @@ mod tests {
             },
             integrity: None,
         });
-        
+
         lock.add_package(LockfilePackage {
             id: "react@17.0.0".to_string(),
             name: "react".to_string(),
@@ -324,7 +293,7 @@ mod tests {
         });
 
         lock.sort_packages();
-        
+
         assert_eq!(lock.packages[0].version, "17.0.0");
         assert_eq!(lock.packages[1].version, "18.0.0");
     }

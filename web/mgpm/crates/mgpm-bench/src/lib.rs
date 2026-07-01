@@ -2,7 +2,7 @@
 //!
 //! Criterion-based benchmarks for core mgpm operations.
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 pub fn bench_store_import(c: &mut Criterion) {
     let mut group = c.benchmark_group("store_import");
@@ -29,7 +29,7 @@ pub fn bench_store_import(c: &mut Criterion) {
 
 pub fn bench_resolve_basic(c: &mut Criterion) {
     use mgpm_core::PackageName;
-    use mgpm_resolver::{DependencyProvider, Resolver, ResolvedDependency};
+    use mgpm_resolver::{DependencyProvider, ResolvedDependency, Resolver};
 
     struct TestProvider;
 
@@ -40,10 +40,7 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
                 mgpm_core::Version::parse("2.0.0").unwrap(),
             ]
         }
-        fn get_dependencies(
-            &self,
-            _package_id: &mgpm_core::PackageId,
-        ) -> Vec<ResolvedDependency> {
+        fn get_dependencies(&self, _package_id: &mgpm_core::PackageId) -> Vec<ResolvedDependency> {
             vec![]
         }
     }
@@ -55,10 +52,7 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("packages", n), &n, |b, _n| {
             b.iter(|| {
                 let resolver = Resolver::new(Box::new(TestProvider));
-                let wanted = vec![(
-                    PackageName::new("pkg_0").unwrap(),
-                    "^1.0.0".to_string(),
-                )];
+                let wanted = vec![(PackageName::new("pkg_0").unwrap(), "^1.0.0".to_string())];
                 let _ = resolver.solve(&wanted);
             });
         });
@@ -79,10 +73,7 @@ pub fn bench_lockfile_roundtrip(c: &mut Criterion) {
             version: "1.0.0".to_string(),
             resolution: PackageResolution {
                 r#type: "registry".to_string(),
-                url: format!(
-                    "https://registry.npmjs.org/pkg_{}/-/pkg_{}-1.0.0.tgz",
-                    i, i
-                ),
+                url: format!("https://registry.npmjs.org/pkg_{}/-/pkg_{}-1.0.0.tgz", i, i),
                 registry: Some("npm".to_string()),
             },
             integrity: Some(format!("sha512-{}", i)),

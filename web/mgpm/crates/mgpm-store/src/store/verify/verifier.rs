@@ -38,11 +38,7 @@ impl<'a> StoreVerifier<'a> {
         report.total_packages = packages.len() as u64;
 
         for pkg in &packages {
-            let cas_path = self
-                .store
-                .root()
-                .join(&pkg.shard)
-                .join(&pkg.filename);
+            let cas_path = self.store.root().join(&pkg.shard).join(&pkg.filename);
 
             if !cas_path.exists() {
                 report.missing_files.push(pkg.integrity.clone());
@@ -96,7 +92,7 @@ impl<'a> StoreVerifier<'a> {
             ..Default::default()
         })
     }
-pub fn prune(&self, dry_run: bool) -> Result<StoreReport, StoreError> {
+    pub fn prune(&self, dry_run: bool) -> Result<StoreReport, StoreError> {
         if !dry_run && self.index.is_readonly() {
             return Err(StoreError::Database(
                 "cannot prune: store index is readonly".into(),
@@ -112,11 +108,7 @@ pub fn prune(&self, dry_run: bool) -> Result<StoreReport, StoreError> {
             reclaimable_bytes += pkg.size_bytes;
 
             if !dry_run {
-                let cas_path = self
-                    .store
-                    .root()
-                    .join(&pkg.shard)
-                    .join(&pkg.filename);
+                let cas_path = self.store.root().join(&pkg.shard).join(&pkg.filename);
 
                 if cas_path.exists() {
                     let meta = fs::metadata(&cas_path).map_err(|e| StoreError::Io {

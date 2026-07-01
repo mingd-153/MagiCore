@@ -85,8 +85,8 @@ fn cmd_daemon_stop() -> Result<(), String> {
         return Err("daemon is not running (no PID file)".to_string());
     }
 
-    let pid_str = std::fs::read_to_string(&pid_path)
-        .map_err(|e| format!("failed to read PID file: {e}"))?;
+    let pid_str =
+        std::fs::read_to_string(&pid_path).map_err(|e| format!("failed to read PID file: {e}"))?;
     let pid: u32 = pid_str
         .trim()
         .parse()
@@ -126,8 +126,8 @@ fn cmd_daemon_status() -> Result<(), String> {
         return Ok(());
     }
 
-    let pid_str = std::fs::read_to_string(&pid_path)
-        .map_err(|e| format!("failed to read PID file: {e}"))?;
+    let pid_str =
+        std::fs::read_to_string(&pid_path).map_err(|e| format!("failed to read PID file: {e}"))?;
     let pid: u32 = pid_str
         .trim()
         .parse()

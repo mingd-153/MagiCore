@@ -1,5 +1,5 @@
-use std::path::Path;
 use super::SandboxGuard;
+use std::path::Path;
 
 #[cfg(target_os = "macos")]
 pub fn apply_seatbelt(project_dir: &Path) -> Result<SandboxGuard, String> {

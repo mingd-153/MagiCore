@@ -86,9 +86,7 @@ fn benchmark_sqlite_query() {
     let mut total = std::time::Duration::ZERO;
     for i in 0..1000 {
         let start = Instant::now();
-        let pkg = store
-            .get_package(&format!("pkg-{}", i), "1.0.0")
-            .unwrap();
+        let pkg = store.get_package(&format!("pkg-{}", i), "1.0.0").unwrap();
         total += start.elapsed();
         assert!(pkg.is_some());
     }

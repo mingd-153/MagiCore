@@ -85,9 +85,7 @@ impl VersionSet {
                     Self::Empty
                 }
             }
-            (Self::Range(a), Self::Range(b)) => {
-                Self::Range(a.intersection(b))
-            }
+            (Self::Range(a), Self::Range(b)) => Self::Range(a.intersection(b)),
             _ => Self::Intersection(vec![self.clone(), other.clone()]),
         }
     }
@@ -104,7 +102,7 @@ impl VersionSet {
     pub fn subtract(&self, other: &VersionSet) -> VersionSet {
         self.intersection(&other.complement())
     }
-    
+
     pub fn satisfying_version(&self) -> Option<Version> {
         match self {
             Self::Any => Some(Version::new(0, 0, 0)), // lowest
@@ -117,15 +115,14 @@ impl VersionSet {
             }
             Self::Intersection(sets) => {
                 // Return first version that satisfies all
-                sets.iter().filter_map(|s| s.satisfying_version()).find(|v| {
-                    sets.iter().all(|s| s.contains(v))
-                })
+                sets.iter()
+                    .filter_map(|s| s.satisfying_version())
+                    .find(|v| sets.iter().all(|s| s.contains(v)))
             }
             Self::Complement(s) => {
                 // Return first version not in complement
-                s.satisfying_version().and_then(|v| {
-                    if !self.contains(&v) { Some(v) } else { None }
-                })
+                s.satisfying_version()
+                    .and_then(|v| if !self.contains(&v) { Some(v) } else { None })
             }
         }
     }
@@ -136,18 +133,16 @@ impl VersionSet {
             Self::Empty => "".to_string(),
             Self::Exact(v) => v.to_string(),
             Self::Range(r) => r.to_string(),
-            Self::Union(sets) => {
-                sets.iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" || ")
-            }
-            Self::Intersection(sets) => {
-                sets.iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            }
+            Self::Union(sets) => sets
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" || "),
+            Self::Intersection(sets) => sets
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
             Self::Complement(s) => format!("!({s})"),
         }
     }
@@ -205,7 +200,7 @@ mod tests {
         let a = VersionSet::range(r("^1.0.0"));
         let b = VersionSet::range(r("^2.0.0"));
         let union = a.union(&b);
-        
+
         assert!(union.contains(&v("1.5.0")));
         assert!(union.contains(&v("2.5.0")));
         assert!(!union.contains(&v("0.9.0")));
@@ -216,7 +211,7 @@ mod tests {
         let a = VersionSet::range(r(">=1.0.0"));
         let b = VersionSet::range(r("<2.0.0"));
         let inter = a.intersection(&b);
-        
+
         assert!(inter.contains(&v("1.5.0")));
         assert!(!inter.contains(&v("0.9.0")));
         assert!(!inter.contains(&v("2.0.0")));
@@ -226,7 +221,7 @@ mod tests {
     fn test_complement() {
         let set = VersionSet::range(r("^1.0.0"));
         let comp = set.complement();
-        
+
         assert!(!comp.contains(&v("1.0.0")));
         assert!(comp.contains(&v("0.9.0")));
         assert!(comp.contains(&v("2.0.0")));
