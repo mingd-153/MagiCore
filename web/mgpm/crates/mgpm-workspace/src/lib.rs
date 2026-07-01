@@ -2,11 +2,13 @@
 //!
 //! Discovers and manages monorepo workspace packages.
 
+pub mod filter;
 pub mod graph;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+pub use filter::{FilterEngine, FilterError, FilterSelector};
 pub use graph::{DepKind, DependencyEdge, PackageGraph, PackageGraphError};
 
 use mgpm_core::{LinkerMode, MgpmConfig, SecurityConfig, WorkspaceConfig};
@@ -44,21 +46,6 @@ pub struct WorkspaceMember {
     pub name: String,
     pub path: PathBuf,
     pub package_json: ParsedPackageJson,
-}
-
-/// Filter selector for workspace member filtering.
-#[derive(Debug, Clone)]
-pub enum FilterSelector {
-    /// Filter by exact package name.
-    Name(String),
-    /// Filter by glob pattern.
-    Glob(String),
-    /// Package and all its dependents (^name).
-    Dependents(String),
-    /// Package and all its dependencies (...name).
-    Dependencies(String),
-    /// Package + dependents + dependencies.
-    All(String),
 }
 
 /// A workspace with its configuration and member packages.
@@ -343,7 +330,7 @@ impl Workspace {
     }
 
     /// Filters workspace members by the given selector.
-    pub fn filter(&self, selector: &FilterSelector) -> Vec<&WorkspaceMember> {
+    pub fn filter(&self, selector: &filter::FilterSelector) -> Vec<&WorkspaceMember> {
         let graph = self.dependency_graph();
         let mut reverse_graph: HashMap<&str, Vec<&str>> = HashMap::new();
         for member in &self.members {
@@ -359,15 +346,31 @@ impl Workspace {
         }
 
         match selector {
-            FilterSelector::Name(name) => self.find_member(name).into_iter().collect(),
-            FilterSelector::Glob(pattern) => {
-                let pat = glob::Pattern::new(pattern).ok();
+            filter::FilterSelector::Name(name) => self.find_member(name).into_iter().collect(),
+            filter::FilterSelector::NameGlob(pattern) => {
+                let pat = match glob::Pattern::new(pattern) {
+                    Ok(p) => p,
+                    Err(_) => return Vec::new(),
+                };
                 self.members
                     .iter()
-                    .filter(|m| pat.as_ref().is_some_and(|p| p.matches(&m.name)))
+                    .filter(|m| pat.matches(&m.name))
                     .collect()
             }
-            FilterSelector::Dependents(name) => {
+            filter::FilterSelector::PathGlob(pattern) => {
+                let pat = match glob::Pattern::new(pattern) {
+                    Ok(p) => p,
+                    Err(_) => return Vec::new(),
+                };
+                self.members
+                    .iter()
+                    .filter(|m| {
+                        let rel = m.path.strip_prefix(&self.root).unwrap_or(&m.path);
+                        pat.matches(&rel.to_string_lossy())
+                    })
+                    .collect()
+            }
+            filter::FilterSelector::Dependents(name) => {
                 let target = match self.find_member(name) {
                     Some(m) => m,
                     None => return Vec::new(),
@@ -392,7 +395,7 @@ impl Workspace {
                 }
                 result
             }
-            FilterSelector::Dependencies(name) => {
+            filter::FilterSelector::Dependencies(name) => {
                 let target = match self.find_member(name) {
                     Some(m) => m,
                     None => return Vec::new(),
@@ -417,7 +420,7 @@ impl Workspace {
                 }
                 result
             }
-            FilterSelector::All(name) => {
+            filter::FilterSelector::All(name) => {
                 let target = match self.find_member(name) {
                     Some(m) => m,
                     None => return Vec::new(),
@@ -449,6 +452,10 @@ impl Workspace {
                 }
                 result
             }
+            filter::FilterSelector::ChangedSince {
+                path_filter: _,
+                git_ref,
+            } => self.changed_since(git_ref).unwrap_or_default(),
         }
     }
 }
