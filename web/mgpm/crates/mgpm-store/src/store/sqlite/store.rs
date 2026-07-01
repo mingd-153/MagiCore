@@ -9,14 +9,14 @@ use super::*;
 impl StoreIndex for SqliteStore {
     fn add_package(&self, info: &PackageInfo) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        
+
         // Check if package with this integrity already exists
         let existing = conn.query_row(
             "SELECT name, version FROM packages WHERE integrity = ?1",
             rusqlite::params![info.integrity],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         );
-        
+
         match existing {
             Ok((existing_name, existing_version)) => {
                 // Package with this integrity exists — verify it's the same package
@@ -301,7 +301,8 @@ impl StoreIndex for SqliteStore {
                         conn.execute(
                             "DELETE FROM integrity_cache WHERE file_path = ?1",
                             rusqlite::params![path_str.to_string()],
-                        ).ok();
+                        )
+                        .ok();
                         return Ok(None);
                     }
                 };
@@ -319,10 +320,13 @@ impl StoreIndex for SqliteStore {
                 let mut hasher = Sha256::new();
                 let mut buf = [0u8; 8192];
                 loop {
-                    let n = file.read(&mut buf).map_err(|e| {
-                        StoreError::Io { path: file_path.to_path_buf(), msg: e.to_string() }
+                    let n = file.read(&mut buf).map_err(|e| StoreError::Io {
+                        path: file_path.to_path_buf(),
+                        msg: e.to_string(),
                     })?;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     hasher.update(&buf[..n]);
                 }
                 let computed = hex::encode(hasher.finalize());
@@ -334,7 +338,8 @@ impl StoreIndex for SqliteStore {
                 conn.execute(
                     "DELETE FROM integrity_cache WHERE file_path = ?1",
                     rusqlite::params![path_str.to_string()],
-                ).ok();
+                )
+                .ok();
                 Ok(None)
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -363,21 +368,13 @@ impl StoreIndex for SqliteStore {
 
     fn package_count(&self) -> Result<u64, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM packages",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM packages", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
     fn project_count(&self) -> Result<u64, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM projects",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -386,9 +383,7 @@ impl StoreIndex for SqliteStore {
         if self.path.to_string_lossy() == ":memory:" {
             return Ok(true);
         }
-        let result: String = conn.query_row("PRAGMA quick_check", [], |row| {
-            row.get(0)
-        })?;
+        let result: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         Ok(result == "ok")
     }
 
@@ -421,18 +416,18 @@ impl StoreIndex for SqliteStore {
 
     fn list_projects(&self) -> Result<Vec<super::index::ProjectInfo>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT project_hash, path, metadata, last_used FROM projects",
-        )?;
-        let projects = stmt.query_map([], |row| {
-            Ok(super::index::ProjectInfo {
-                project_hash: row.get(0)?,
-                path: row.get(1)?,
-                metadata: row.get(2)?,
-                last_used: row.get::<_, i64>(3)? as u64,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let mut stmt =
+            conn.prepare("SELECT project_hash, path, metadata, last_used FROM projects")?;
+        let projects = stmt
+            .query_map([], |row| {
+                Ok(super::index::ProjectInfo {
+                    project_hash: row.get(0)?,
+                    path: row.get(1)?,
+                    metadata: row.get(2)?,
+                    last_used: row.get::<_, i64>(3)? as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(projects)
     }
 

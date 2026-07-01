@@ -1,7 +1,7 @@
 //! JSR Registry Client
 
-use mgpm_core::PackageName;
 use crate::registry::RegistryError;
+use mgpm_core::PackageName;
 
 pub struct JsrRegistry {
     client: reqwest::Client,
@@ -16,7 +16,10 @@ impl JsrRegistry {
         }
     }
 
-    pub async fn get_package(&self, name: &PackageName) -> Result<serde_json::Value, RegistryError> {
+    pub async fn get_package(
+        &self,
+        name: &PackageName,
+    ) -> Result<serde_json::Value, RegistryError> {
         let url = format!("{}/{}", self.base_url, name.as_str());
         let resp = self.client.get(&url).send().await?;
         if resp.status().is_success() {

@@ -52,7 +52,9 @@ impl PackageInfo {
 
     /// Get metadata as a deserialized value
     pub fn get_metadata<T: for<'de> Deserialize<'de>>(&self) -> Option<T> {
-        self.metadata.as_ref().and_then(|s| serde_json::from_str(s).ok())
+        self.metadata
+            .as_ref()
+            .and_then(|s| serde_json::from_str(s).ok())
     }
 }
 
@@ -67,8 +69,12 @@ pub struct ProjectInfo {
 impl ProjectInfo {
     pub fn dep_graph_hash(&self) -> Option<String> {
         self.metadata.as_ref().and_then(|m| {
-            serde_json::from_str::<serde_json::Value>(m).ok()
-                .and_then(|v| v.get("dep_graph_hash").and_then(|v| v.as_str().map(|s| s.to_string())))
+            serde_json::from_str::<serde_json::Value>(m)
+                .ok()
+                .and_then(|v| {
+                    v.get("dep_graph_hash")
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                })
         })
     }
 }
@@ -101,7 +107,9 @@ pub trait StoreIndex: Send + Sync {
         Err(StoreError::Database("list_projects not implemented".into()))
     }
     fn set_project_metadata(&self, _path: &Path, _metadata: &str) -> Result<(), StoreError> {
-        Err(StoreError::Database("set_project_metadata not implemented".into()))
+        Err(StoreError::Database(
+            "set_project_metadata not implemented".into(),
+        ))
     }
 
     // Audit & Generation methods (default implementations return NotImplemented)
@@ -112,25 +120,35 @@ pub trait StoreIndex: Send + Sync {
         Err(StoreError::Database("vacuum not implemented".into()))
     }
     fn deep_integrity_check(&self) -> Result<Vec<String>, StoreError> {
-        Err(StoreError::Database("deep_integrity_check not implemented".into()))
+        Err(StoreError::Database(
+            "deep_integrity_check not implemented".into(),
+        ))
     }
     fn audit(&self) -> Result<AuditReport, StoreError> {
         Err(StoreError::Database("audit not implemented".into()))
     }
     fn check_permissions(&self) -> Result<Vec<String>, StoreError> {
-        Err(StoreError::Database("check_permissions not implemented".into()))
+        Err(StoreError::Database(
+            "check_permissions not implemented".into(),
+        ))
     }
     fn snapshot_permissions(&self) -> Result<(), StoreError> {
-        Err(StoreError::Database("snapshot_permissions not implemented".into()))
+        Err(StoreError::Database(
+            "snapshot_permissions not implemented".into(),
+        ))
     }
     fn advance_generation(&self) -> Result<u64, StoreError> {
-        Err(StoreError::Database("advance_generation not implemented".into()))
+        Err(StoreError::Database(
+            "advance_generation not implemented".into(),
+        ))
     }
     fn current_generation(&self) -> u64 {
         0
     }
     fn clean_old_generations(&self, _keep: u64) -> Result<u64, StoreError> {
-        Err(StoreError::Database("clean_old_generations not implemented".into()))
+        Err(StoreError::Database(
+            "clean_old_generations not implemented".into(),
+        ))
     }
 
     /// Clone the store index as a boxed trait object
@@ -159,7 +177,10 @@ pub enum StoreError {
 
 impl From<std::io::Error> for StoreError {
     fn from(e: std::io::Error) -> Self {
-        Self::Io { path: PathBuf::new(), msg: e.to_string() }
+        Self::Io {
+            path: PathBuf::new(),
+            msg: e.to_string(),
+        }
     }
 }
 

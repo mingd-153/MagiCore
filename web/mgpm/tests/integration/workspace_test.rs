@@ -22,10 +22,17 @@ fn create_member(root: &Path, subdir: &str, name: &str, version: &str, deps: &[(
         "version": version,
         "dependencies": deps_val,
     });
-    fs::write(dir.join("package.json"), serde_json::to_string_pretty(&pkg_json).unwrap()).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        serde_json::to_string_pretty(&pkg_json).unwrap(),
+    )
+    .unwrap();
 }
 
-fn create_workspace_with_members(packages_pattern: &str, members: &[(&str, &str, &str, &[(&str, &str)])]) -> Workspace {
+fn create_workspace_with_members(
+    packages_pattern: &str,
+    members: &[(&str, &str, &str, &[(&str, &str)])],
+) -> Workspace {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
 
@@ -47,23 +54,43 @@ fn create_workspace_with_members(packages_pattern: &str, members: &[(&str, &str,
 
     let pkgs_dir = packages_pattern.trim_end_matches("/*");
     for (subdir, name, version, deps) in members {
-        create_member(&root, &format!("{}/{}", pkgs_dir, subdir), name, version, deps);
+        create_member(
+            &root,
+            &format!("{}/{}", pkgs_dir, subdir),
+            name,
+            version,
+            deps,
+        );
     }
 
     Workspace::discover(&root).unwrap()
 }
 
-fn create_workspace_from_json(root: &Path, packages_pattern: &str, members: &[(&str, &str, &str, &[(&str, &str)])]) -> Workspace {
+fn create_workspace_from_json(
+    root: &Path,
+    packages_pattern: &str,
+    members: &[(&str, &str, &str, &[(&str, &str)])],
+) -> Workspace {
     let pkg_json = serde_json::json!({
         "name": "root-ws",
         "version": "0.0.0",
         "workspaces": [packages_pattern]
     });
-    fs::write(root.join("package.json"), serde_json::to_string_pretty(&pkg_json).unwrap()).unwrap();
+    fs::write(
+        root.join("package.json"),
+        serde_json::to_string_pretty(&pkg_json).unwrap(),
+    )
+    .unwrap();
 
     let pkgs_dir = packages_pattern.trim_end_matches("/*");
     for (subdir, name, version, deps) in members {
-        create_member(root, &format!("{}/{}", pkgs_dir, subdir), name, version, deps);
+        create_member(
+            root,
+            &format!("{}/{}", pkgs_dir, subdir),
+            name,
+            version,
+            deps,
+        );
     }
 
     Workspace::discover(root).unwrap()
@@ -145,9 +172,7 @@ fn test_dependency_graph_no_internal_deps() {
 fn test_dependency_graph_external_deps_not_included() {
     let ws = create_workspace_with_members(
         "packages/*",
-        &[
-            ("pkg-a", "pkg-a", "1.0.0", &[("react", "^18.0.0")]),
-        ],
+        &[("pkg-a", "pkg-a", "1.0.0", &[("react", "^18.0.0")])],
     );
     let graph = ws.dependency_graph();
     assert!(graph.get("pkg-a").unwrap().is_empty());
@@ -205,12 +230,13 @@ fn test_topological_sort_cycle_detected() {
 fn test_topological_sort_self_cycle() {
     let ws = create_workspace_with_members(
         "packages/*",
-        &[
-            ("pkg-a", "pkg-a", "1.0.0", &[("pkg-a", "^1.0.0")]),
-        ],
+        &[("pkg-a", "pkg-a", "1.0.0", &[("pkg-a", "^1.0.0")])],
     );
     let result = ws.topological_sort();
-    assert!(result.is_err(), "Self-dependency should be detected as a cycle");
+    assert!(
+        result.is_err(),
+        "Self-dependency should be detected as a cycle"
+    );
 }
 
 #[test]
@@ -221,7 +247,12 @@ fn test_topological_sort_diamond_deps() {
             ("base", "base", "1.0.0", &[]),
             ("left", "left", "1.0.0", &[("base", "^1.0.0")]),
             ("right", "right", "1.0.0", &[("base", "^1.0.0")]),
-            ("top", "top", "1.0.0", &[("left", "^1.0.0"), ("right", "^1.0.0")]),
+            (
+                "top",
+                "top",
+                "1.0.0",
+                &[("left", "^1.0.0"), ("right", "^1.0.0")],
+            ),
         ],
     );
     let sorted = ws.topological_sort().unwrap();
@@ -255,10 +286,7 @@ fn test_filter_by_name() {
 
 #[test]
 fn test_filter_by_name_not_found() {
-    let ws = create_workspace_with_members(
-        "packages/*",
-        &[("pkg-a", "pkg-a", "1.0.0", &[])],
-    );
+    let ws = create_workspace_with_members("packages/*", &[("pkg-a", "pkg-a", "1.0.0", &[])]);
     let result = ws.filter(&FilterSelector::Name("nonexistent".to_string()));
     assert!(result.is_empty());
 }
@@ -355,10 +383,7 @@ fn test_filter_dependencies_root() {
 
 #[test]
 fn test_resolve_dependency() {
-    let ws = create_workspace_with_members(
-        "packages/*",
-        &[("my-pkg", "my-pkg", "1.0.0", &[])],
-    );
+    let ws = create_workspace_with_members("packages/*", &[("my-pkg", "my-pkg", "1.0.0", &[])]);
     let resolved = ws.resolve_dependency("my-pkg");
     assert!(resolved.is_some());
     assert!(resolved.unwrap().ends_with("my-pkg"));
@@ -382,10 +407,7 @@ fn test_member_count() {
 
 #[test]
 fn test_config() {
-    let ws = create_workspace_with_members(
-        "libs/*",
-        &[("lib-a", "lib-a", "1.0.0", &[])],
-    );
+    let ws = create_workspace_with_members("libs/*", &[("lib-a", "lib-a", "1.0.0", &[])]);
     assert!(ws.config().link_ws_packages);
     assert_eq!(ws.config().packages, vec!["libs/*"]);
 }

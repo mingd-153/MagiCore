@@ -1,7 +1,6 @@
 pub mod linker;
 
 pub use linker::{
-    Linker, LinkerOptions, PackageLinkInfo, LinkResult,
-    PackageLinkResult, LinkError, RefcountCallback,
-    LinkerStrategy, IsolatedLinker,
+    IsolatedLinker, LinkError, LinkResult, Linker, LinkerOptions, LinkerStrategy, PackageLinkInfo,
+    PackageLinkResult, RefcountCallback,
 };

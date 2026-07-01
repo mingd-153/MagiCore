@@ -8,7 +8,9 @@ pub struct HttpRegistry {
 
 impl HttpRegistry {
     pub fn new() -> Self {
-        Self { client: reqwest::Client::new() }
+        Self {
+            client: reqwest::Client::new(),
+        }
     }
 
     pub async fn get_tarball(&self, url: &str) -> Result<Vec<u8>, RegistryError> {

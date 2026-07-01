@@ -5,11 +5,9 @@ use super::super::index::StoreError;
 /// Checks for symlinks within CAS paths (relative to CAS root).
 /// Used for CAS internal paths to prevent symlink attacks.
 pub fn check_symlink_in_cas(cas_root: &Path, dest: &Path) -> Result<(), StoreError> {
-    let relative = dest.strip_prefix(cas_root).map_err(|_| {
-        StoreError::Io {
-            path: dest.to_path_buf(),
-            msg: "path outside CAS root".to_string(),
-        }
+    let relative = dest.strip_prefix(cas_root).map_err(|_| StoreError::Io {
+        path: dest.to_path_buf(),
+        msg: "path outside CAS root".to_string(),
     })?;
     for ancestor in relative.ancestors() {
         let full = cas_root.join(ancestor);

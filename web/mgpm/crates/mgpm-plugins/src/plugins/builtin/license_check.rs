@@ -12,20 +12,37 @@ pub struct LicenseWarning {
 }
 
 const COPLEFT_LICENSES: &[&str] = &[
-    "GPL-2.0", "GPL-2.0-only", "GPL-2.0-or-later",
-    "GPL-3.0", "GPL-3.0-only", "GPL-3.0-or-later",
-    "AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later",
-    "LGPL-2.0", "LGPL-2.0-only", "LGPL-2.0-or-later",
-    "LGPL-2.1", "LGPL-2.1-only", "LGPL-2.1-or-later",
-    "LGPL-3.0", "LGPL-3.0-only", "LGPL-3.0-or-later",
+    "GPL-2.0",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "AGPL-3.0",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "LGPL-2.0",
+    "LGPL-2.0-only",
+    "LGPL-2.0-or-later",
+    "LGPL-2.1",
+    "LGPL-2.1-only",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
     "MPL-2.0",
     "EUPL-1.2",
     "CC-BY-SA-4.0",
 ];
 
 const DEFAULT_ALLOWED: &[&str] = &[
-    "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause",
-    "ISC", "Unlicense", "CC0-1.0",
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "CC0-1.0",
 ];
 
 pub struct LicenseCheckPlugin {
@@ -43,7 +60,10 @@ impl LicenseCheckPlugin {
 
     pub fn check_licenses(&self, packages: &[PackageInfo]) -> PluginResult {
         let allowed = if self.allowed.is_empty() {
-            DEFAULT_ALLOWED.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()
+            DEFAULT_ALLOWED
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect::<Vec<_>>()
         } else {
             self.allowed.clone()
         };
@@ -70,7 +90,10 @@ impl LicenseCheckPlugin {
                     let lc = l.trim();
 
                     // Check copyleft
-                    if COPLEFT_LICENSES.iter().any(|cl| lc.eq_ignore_ascii_case(cl)) {
+                    if COPLEFT_LICENSES
+                        .iter()
+                        .any(|cl| lc.eq_ignore_ascii_case(cl))
+                    {
                         warnings.push(LicenseWarning {
                             package: format!("{}@{}", pkg.name, pkg.version),
                             license: Some(lc.to_string()),
@@ -109,9 +132,18 @@ impl LicenseCheckPlugin {
             message: format!(
                 "License check complete: {} warnings ({} copyleft, {} missing, {} unusual)",
                 warnings.len(),
-                warnings.iter().filter(|w| w.warning_type == "copyleft").count(),
-                warnings.iter().filter(|w| w.warning_type == "missing-license").count(),
-                warnings.iter().filter(|w| w.warning_type == "unusual-license").count(),
+                warnings
+                    .iter()
+                    .filter(|w| w.warning_type == "copyleft")
+                    .count(),
+                warnings
+                    .iter()
+                    .filter(|w| w.warning_type == "missing-license")
+                    .count(),
+                warnings
+                    .iter()
+                    .filter(|w| w.warning_type == "unusual-license")
+                    .count(),
             ),
             data: Some(data),
         }

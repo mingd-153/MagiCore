@@ -1,10 +1,13 @@
 //! Comprehensive store benchmarks: SQLite vs ContentStore, bulk, query, concurrent
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, black_box, Throughput};
-use mgpm_store::{SqliteStore, ContentStore, CasContentStore, IntegrityHash, TarballEntry, StoreIndex, PackageInfo};
-use std::time::Duration;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use mgpm_store::{
+    CasContentStore, ContentStore, IntegrityHash, PackageInfo, SqliteStore, StoreIndex,
+    TarballEntry,
+};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use tempfile::tempdir;
 
 fn make_pkg(i: usize) -> PackageInfo {
@@ -13,7 +16,13 @@ fn make_pkg(i: usize) -> PackageInfo {
         version: format!("{}.{}.{}", i / 1000, (i / 100) % 10, i % 100),
         integrity: format!("sha256-{:064x}", i),
         shard: format!("{:02x}/{:064x}", i % 256, i),
-        filename: format!("pkg-{}-{}.{}.{}.tgz", i % 1000, i / 1000, (i / 100) % 10, i % 100),
+        filename: format!(
+            "pkg-{}-{}.{}.{}.tgz",
+            i % 1000,
+            i / 1000,
+            (i / 100) % 10,
+            i % 100
+        ),
         is_executable: false,
         manifest_json: Some(format!(r#"{{"name":"pkg-{}","version":"1.0.0"}}"#, i)),
         metadata: None,
@@ -119,14 +128,22 @@ fn bench_sqlite_query(c: &mut Criterion) {
 
     group.bench_function("by_integrity", |b| {
         b.iter(|| {
-            let pkg = store.get_by_integrity("sha256-0000000000000000000000000000000000000000000000000000000000000042").unwrap();
+            let pkg = store
+                .get_by_integrity(
+                    "sha256-0000000000000000000000000000000000000000000000000000000000000042",
+                )
+                .unwrap();
             black_box(pkg);
         });
     });
 
     group.bench_function("exists_hit", |b| {
         b.iter(|| {
-            let exists = store.package_exists("sha256-0000000000000000000000000000000000000000000000000000000000000042").unwrap();
+            let exists = store
+                .package_exists(
+                    "sha256-0000000000000000000000000000000000000000000000000000000000000042",
+                )
+                .unwrap();
             black_box(exists);
         });
     });
@@ -160,7 +177,9 @@ fn bench_sqlite_kv(c: &mut Criterion) {
             let dir = tempfile::tempdir().unwrap();
             let store = SqliteStore::open(&dir.path().join("index.db"), false).unwrap();
             for i in 0..100 {
-                store.set_kv(&format!("key-{}", i), &vec![0u8; 1024]).unwrap();
+                store
+                    .set_kv(&format!("key-{}", i), &vec![0u8; 1024])
+                    .unwrap();
             }
         });
     });
@@ -169,7 +188,9 @@ fn bench_sqlite_kv(c: &mut Criterion) {
         let dir = tempfile::tempdir().unwrap();
         let store = SqliteStore::open(&dir.path().join("index.db"), false).unwrap();
         for i in 0..100 {
-            store.set_kv(&format!("key-{}", i), &vec![0u8; 1024]).unwrap();
+            store
+                .set_kv(&format!("key-{}", i), &vec![0u8; 1024])
+                .unwrap();
         }
         b.iter(|| {
             for i in 0..100 {
@@ -234,7 +255,9 @@ fn bench_sqlite_concurrent(c: &mut Criterion) {
                     }
                 }));
             }
-            for h in handles { h.join().unwrap(); }
+            for h in handles {
+                h.join().unwrap();
+            }
         });
     });
 
@@ -259,13 +282,17 @@ fn bench_cas_import(c: &mut Criterion) {
     for size in [1024, 1024 * 100, 1024 * 1024, 1024 * 1024 * 10].iter() {
         let data = vec![0x42u8; *size];
         group.throughput(Throughput::Bytes(*size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(format!("{}KB", size / 1024)), size, |b, &size| {
-            let data = vec![0x42u8; size];
-            b.iter(|| {
-                let store = make_cas_store();
-                let _ = store.import_bytes(black_box(&data), false).unwrap();
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}KB", size / 1024)),
+            size,
+            |b, &size| {
+                let data = vec![0x42u8; size];
+                b.iter(|| {
+                    let store = make_cas_store();
+                    let _ = store.import_bytes(black_box(&data), false).unwrap();
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -298,18 +325,22 @@ fn bench_cas_export(c: &mut Criterion) {
         let dest = temp.path().join("out");
 
         group.throughput(Throughput::Bytes(*size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(format!("{}KB", size / 1024)), size, |b, &size| {
-            let data = vec![0x42u8; size];
-            let store = make_cas_store();
-            let hash = store.import_bytes(&data, false).unwrap();
-            let temp = tempfile::tempdir().unwrap();
-            let dest = temp.path().join("out");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}KB", size / 1024)),
+            size,
+            |b, &size| {
+                let data = vec![0x42u8; size];
+                let store = make_cas_store();
+                let hash = store.import_bytes(&data, false).unwrap();
+                let temp = tempfile::tempdir().unwrap();
+                let dest = temp.path().join("out");
 
-            b.iter(|| {
-                store.export_to(black_box(&hash), black_box(&dest)).unwrap();
-                std::fs::remove_file(&dest).unwrap();
-            });
-        });
+                b.iter(|| {
+                    store.export_to(black_box(&hash), black_box(&dest)).unwrap();
+                    std::fs::remove_file(&dest).unwrap();
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -324,11 +355,15 @@ fn bench_cas_verify(c: &mut Criterion) {
         let hash = store.import_bytes(&data, false).unwrap();
 
         group.throughput(Throughput::Bytes(*size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(format!("{}KB", size / 1024)), size, |b, _| {
-            b.iter(|| {
-                store.verify(black_box(&hash)).unwrap();
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}KB", size / 1024)),
+            size,
+            |b, _| {
+                b.iter(|| {
+                    store.verify(black_box(&hash)).unwrap();
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -338,24 +373,28 @@ fn bench_cas_concurrent(c: &mut Criterion) {
     group.sample_size(20);
 
     for threads in [1, 2, 4, 8].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(*threads), threads, |b, &threads| {
-            b.iter(|| {
-                let store = Arc::new(make_cas_store());
-                let data = Arc::new(vec![0x42u8; 1024]);
+        group.bench_with_input(
+            BenchmarkId::from_parameter(*threads),
+            threads,
+            |b, &threads| {
+                b.iter(|| {
+                    let store = Arc::new(make_cas_store());
+                    let data = Arc::new(vec![0x42u8; 1024]);
 
-                let handles: Vec<_> = (0..threads).map(|_| {
-                    let store = Arc::clone(&store);
-                    let data = Arc::clone(&data);
-                    thread::spawn(move || {
-                        store.import_bytes(&data, false).unwrap()
-                    })
-                }).collect();
+                    let handles: Vec<_> = (0..threads)
+                        .map(|_| {
+                            let store = Arc::clone(&store);
+                            let data = Arc::clone(&data);
+                            thread::spawn(move || store.import_bytes(&data, false).unwrap())
+                        })
+                        .collect();
 
-                for h in handles {
-                    h.join().unwrap();
-                }
-            });
-        });
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -365,13 +404,13 @@ fn bench_cas_tarball_batch(c: &mut Criterion) {
     group.sample_size(20);
 
     for count in [10, 100, 1000].iter() {
-        let entries: Vec<_> = (0..*count).map(|i| {
-            TarballEntry {
+        let entries: Vec<_> = (0..*count)
+            .map(|i| TarballEntry {
                 path: format!("file{}.txt", i),
                 data: vec![i as u8; 1024],
                 executable: false,
-            }
-        }).collect();
+            })
+            .collect();
 
         group.throughput(Throughput::Elements(*count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(*count), count, |b, _| {

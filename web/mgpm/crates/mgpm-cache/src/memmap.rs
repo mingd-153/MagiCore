@@ -1,10 +1,13 @@
-use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
 use fxhash;
 use memmap2::MmapMut;
+use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::warn;
 
-use crate::{binary::CacheHeader, CacheEntry, CacheError, CACHE_MAGIC, CACHE_VERSION, HEADER_SIZE, INITIAL_SIZE};
+use crate::{
+    binary::CacheHeader, CacheEntry, CacheError, CACHE_MAGIC, CACHE_VERSION, HEADER_SIZE,
+    INITIAL_SIZE,
+};
 
 const PAIRS_PER_ENTRY: u32 = 4;
 const PAIR_BYTES: u32 = PAIRS_PER_ENTRY * 4;
@@ -52,7 +55,11 @@ impl MemMapCache {
         if is_new {
             let header_bytes = CacheHeader::new().to_bytes();
             unsafe {
-                std::ptr::copy_nonoverlapping(header_bytes.as_ptr(), map.as_ptr() as *mut u8, HEADER_SIZE as usize);
+                std::ptr::copy_nonoverlapping(
+                    header_bytes.as_ptr(),
+                    map.as_ptr() as *mut u8,
+                    HEADER_SIZE as usize,
+                );
             }
         }
 
@@ -115,7 +122,10 @@ impl MemMapCache {
             return &[];
         }
         unsafe {
-            std::slice::from_raw_parts(self.map.as_ptr().add(self.hashes_offset) as *const u64, count)
+            std::slice::from_raw_parts(
+                self.map.as_ptr().add(self.hashes_offset) as *const u64,
+                count,
+            )
         }
     }
 
@@ -126,7 +136,10 @@ impl MemMapCache {
         }
         unsafe {
             let count_u32 = count * PAIRS_PER_ENTRY as usize;
-            std::slice::from_raw_parts(self.map.as_ptr().add(self.pairs_offset) as *const u32, count_u32)
+            std::slice::from_raw_parts(
+                self.map.as_ptr().add(self.pairs_offset) as *const u32,
+                count_u32,
+            )
         }
     }
 
@@ -155,7 +168,12 @@ impl MemMapCache {
             } else {
                 ""
             };
-            CacheEntry { name, version, integrity: "", data: &[] }
+            CacheEntry {
+                name,
+                version,
+                integrity: "",
+                data: &[],
+            }
         }
     }
 
@@ -171,7 +189,11 @@ impl MemMapCache {
         let version_end = name_end + version_bytes.len();
 
         if self.strings_offset + version_end > map_len {
-            warn!("cache write out of bounds: {} > {}", self.strings_offset + version_end, map_len);
+            warn!(
+                "cache write out of bounds: {} > {}",
+                self.strings_offset + version_end,
+                map_len
+            );
             return Err(CacheError::CacheFull);
         }
 
@@ -184,11 +206,17 @@ impl MemMapCache {
             pair_base.add(pair_idx).write(str_data_offset as u32);
             pair_base.add(pair_idx + 1).write(name_bytes.len() as u32);
             pair_base.add(pair_idx + 2).write(name_end as u32);
-            pair_base.add(pair_idx + 3).write(version_bytes.len() as u32);
+            pair_base
+                .add(pair_idx + 3)
+                .write(version_bytes.len() as u32);
 
             let data_ptr = base.add(self.strings_offset + str_data_offset);
             std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), data_ptr, name_bytes.len());
-            std::ptr::copy_nonoverlapping(version_bytes.as_ptr(), data_ptr.add(name_bytes.len()), version_bytes.len());
+            std::ptr::copy_nonoverlapping(
+                version_bytes.as_ptr(),
+                data_ptr.add(name_bytes.len()),
+                version_bytes.len(),
+            );
 
             let hash_ptr = base.add(self.hashes_offset) as *mut u64;
             hash_ptr.add(idx).write(hash);

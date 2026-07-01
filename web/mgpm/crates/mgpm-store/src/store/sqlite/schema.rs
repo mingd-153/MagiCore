@@ -112,9 +112,7 @@ pub fn migrate_schema(conn: &Connection) -> Result<(), StoreError> {
         )
         .unwrap_or(0);
 
-    let migrations: &[(&str, &str)] = &[
-        ("1", "INSERT INTO schema_version (version) VALUES (1)"),
-    ];
+    let migrations: &[(&str, &str)] = &[("1", "INSERT INTO schema_version (version) VALUES (1)")];
 
     for (ver, sql) in migrations {
         let ver_num: i64 = ver.parse().unwrap_or(0);

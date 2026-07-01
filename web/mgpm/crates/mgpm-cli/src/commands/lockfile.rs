@@ -197,10 +197,14 @@ fn cmd_lockfile_migrate() -> Result<(), String> {
         ));
     }
 
-    eprintln!("{} Found v1 lockfile. Migrating to v2...", "[INFO]".cyan().bold());
+    eprintln!(
+        "{} Found v1 lockfile. Migrating to v2...",
+        "[INFO]".cyan().bold()
+    );
 
     let mut lockfile = lockfile;
-    lockfile.migrate_v1_to_v2()
+    lockfile
+        .migrate_v1_to_v2()
         .map_err(|e| format!("migration failed: {e}"))?;
 
     // Write both formats

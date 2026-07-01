@@ -126,7 +126,10 @@ pub fn run_script(script_name: &str) -> Result<(), String> {
 
     let parts: Vec<&str> = script_cmd.split_whitespace().collect();
     if parts.is_empty() {
-        return Err(format!("script '{}' resolves to an empty command", script_name));
+        return Err(format!(
+            "script '{}' resolves to an empty command",
+            script_name
+        ));
     }
 
     let path = build_node_bin_path();

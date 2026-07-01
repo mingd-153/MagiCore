@@ -24,8 +24,7 @@ fn detect_format(path: &Path) -> Option<&'static str> {
 }
 
 fn parse_npm_lock(path: &Path) -> Result<Lockfile, String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("read error: {}", e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {}", e))?;
     let json: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("parse error: {}", e))?;
 
@@ -72,17 +71,14 @@ fn parse_npm_lock(path: &Path) -> Result<Lockfile, String> {
 }
 
 fn parse_yarn_lock(path: &Path) -> Result<Lockfile, String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("read error: {}", e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {}", e))?;
 
     let mut lockfile = Lockfile::new(1, "npm");
     let mut lines = content.lines().peekable();
 
     while let Some(line) = lines.next() {
         let trimmed = line.trim();
-        if trimmed.is_empty()
-            || trimmed.starts_with('#')
-            || trimmed.starts_with("yarn lockfile v")
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("yarn lockfile v")
         {
             continue;
         }
@@ -137,8 +133,7 @@ fn parse_yarn_lock(path: &Path) -> Result<Lockfile, String> {
 }
 
 fn parse_pnpm_lock(path: &Path) -> Result<Lockfile, String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("read error: {}", e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {}", e))?;
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(&content).map_err(|e| format!("parse error: {}", e))?;
 
@@ -150,21 +145,18 @@ fn parse_pnpm_lock(path: &Path) -> Result<Lockfile, String> {
                 continue;
             }
 
-            let version = val
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
             if version.is_empty() {
                 continue;
             }
 
             let name = if let Some((n, _)) = key_str.split_once('@') {
                 if n.starts_with('/') {
-                key_str
-                    .trim_start_matches('/')
-                    .rsplit_once('@')
-                    .map(|(n, _)| n)
-                    .unwrap_or(key_str)
+                    key_str
+                        .trim_start_matches('/')
+                        .rsplit_once('@')
+                        .map(|(n, _)| n)
+                        .unwrap_or(key_str)
                 } else {
                     n
                 }
@@ -179,7 +171,9 @@ fn parse_pnpm_lock(path: &Path) -> Result<Lockfile, String> {
 
             let integrity = val.get("resolution").and_then(|r| {
                 if let Some(m) = r.as_mapping() {
-                    m.get("integrity").and_then(|i| i.as_str()).map(String::from)
+                    m.get("integrity")
+                        .and_then(|i| i.as_str())
+                        .map(String::from)
                 } else {
                     None
                 }
@@ -228,10 +222,7 @@ fn parse_bun_lock(path: &Path) -> Result<Lockfile, String> {
     let mut lockfile = Lockfile::new(1, "npm");
     if let Some(packages) = json.get("packages").and_then(|p| p.as_object()) {
         for (key, val) in packages {
-            let version = val
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
             if version.is_empty() {
                 continue;
             }
@@ -718,7 +709,9 @@ mod bun_import_tests {
         let mut data = Vec::new();
         data.extend_from_slice(b"bunlock\x01");
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(serde_json::to_string(&packages).unwrap().as_bytes()).unwrap();
+        encoder
+            .write_all(serde_json::to_string(&packages).unwrap().as_bytes())
+            .unwrap();
         data.extend_from_slice(&encoder.finish().unwrap());
         std::fs::write(&path, &data).unwrap();
 
@@ -734,7 +727,9 @@ mod bun_import_tests {
         let mut data = Vec::new();
         data.extend_from_slice(b"bunlock\x00");
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(serde_json::to_string(&packages).unwrap().as_bytes()).unwrap();
+        encoder
+            .write_all(serde_json::to_string(&packages).unwrap().as_bytes())
+            .unwrap();
         data.extend_from_slice(&encoder.finish().unwrap());
         std::fs::write(&path, &data).unwrap();
 
@@ -756,7 +751,9 @@ mod bun_import_tests {
         let mut data = Vec::new();
         data.extend_from_slice(b"bunlock\x00");
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(serde_json::to_string(&packages).unwrap().as_bytes()).unwrap();
+        encoder
+            .write_all(serde_json::to_string(&packages).unwrap().as_bytes())
+            .unwrap();
         data.extend_from_slice(&encoder.finish().unwrap());
         std::fs::write(&path, &data).unwrap();
 

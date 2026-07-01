@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use mgpm_core::PackageName;
 use crate::registry::RegistryError;
+use mgpm_core::PackageName;
 
 pub struct FileRegistry;
 
@@ -37,7 +37,10 @@ impl WorkspaceRegistry {
             }
         }
 
-        Err(RegistryError::NotFound(format!("workspace package: {}", name.as_str())))
+        Err(RegistryError::NotFound(format!(
+            "workspace package: {}",
+            name.as_str()
+        )))
     }
 }
 

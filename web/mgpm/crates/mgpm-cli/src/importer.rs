@@ -63,10 +63,7 @@ fn import_npm(path: &Path) -> Result<Lockfile, String> {
         if key.is_empty() {
             continue;
         }
-        let name = val
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let name = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
         if name.is_empty() {
             continue;
         }
@@ -79,18 +76,13 @@ fn import_npm(path: &Path) -> Result<Lockfile, String> {
             continue;
         }
         let pkg_name = if key.contains("node_modules/") {
-            key.split("node_modules/")
-                .last()
-                .unwrap_or(pkg_name)
+            key.split("node_modules/").last().unwrap_or(pkg_name)
         } else {
             pkg_name
         };
         let resolved = val.get("resolved").and_then(|r| r.as_str()).unwrap_or("");
         let integrity = val.get("integrity").and_then(|i| i.as_str());
-        let version = val
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
 
         let pkg = LockfilePackage {
             id: format!("{}@{}", pkg_name, version),
@@ -121,7 +113,8 @@ fn import_yarn(path: &Path) -> Result<Lockfile, String> {
 
     while let Some(line) = lines.next() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("yarn lockfile v") {
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("yarn lockfile v")
+        {
             continue;
         }
 
@@ -147,7 +140,12 @@ fn import_yarn(path: &Path) -> Result<Lockfile, String> {
                         resolved = r.trim().trim_matches('"').to_string();
                     } else if let Some(i) = prop_trimmed.strip_prefix("integrity ") {
                         integrity = Some(i.trim().trim_matches('"').to_string());
-                    } else if prop_trimmed.starts_with("dependencies ") || prop_trimmed.starts_with("optionalDependencies ") || prop_trimmed.starts_with("peerDependencies ") || prop_trimmed.starts_with("  ") || prop_trimmed.ends_with(':') {
+                    } else if prop_trimmed.starts_with("dependencies ")
+                        || prop_trimmed.starts_with("optionalDependencies ")
+                        || prop_trimmed.starts_with("peerDependencies ")
+                        || prop_trimmed.starts_with("  ")
+                        || prop_trimmed.ends_with(':')
+                    {
                         continue;
                     }
                 }
@@ -193,10 +191,7 @@ fn import_pnpm(path: &Path) -> Result<Lockfile, String> {
                 continue;
             }
 
-            let version = val
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
             if version.is_empty() {
                 continue;
             }
@@ -222,7 +217,9 @@ fn import_pnpm(path: &Path) -> Result<Lockfile, String> {
 
             let integrity = val.get("resolution").and_then(|r| {
                 if let Some(m) = r.as_mapping() {
-                    m.get("integrity").and_then(|i| i.as_str()).map(String::from)
+                    m.get("integrity")
+                        .and_then(|i| i.as_str())
+                        .map(String::from)
                 } else {
                     None
                 }
@@ -251,8 +248,8 @@ fn import_pnpm(path: &Path) -> Result<Lockfile, String> {
 }
 
 fn import_bun(path: &Path) -> Result<Lockfile, String> {
-    let data = std::fs::read(path)
-        .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+    let data =
+        std::fs::read(path).map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
 
     if data.len() < 8 {
         return Err("bun.lockb file too short".to_string());
@@ -278,10 +275,7 @@ fn import_bun(path: &Path) -> Result<Lockfile, String> {
 
     if let Some(packages) = json.get("packages").and_then(|p| p.as_object()) {
         for (key, val) in packages {
-            let version = val
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
             if version.is_empty() {
                 continue;
             }

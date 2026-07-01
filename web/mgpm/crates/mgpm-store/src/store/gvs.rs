@@ -202,8 +202,8 @@ impl GlobalVirtualStore {
                     .as_secs(),
             };
             let meta_path = gvs_dir.join(".mgpm-gvs.json");
-            let meta_json =
-                serde_json::to_string_pretty(&meta).map_err(|e| StoreError::Serialization(e.to_string()))?;
+            let meta_json = serde_json::to_string_pretty(&meta)
+                .map_err(|e| StoreError::Serialization(e.to_string()))?;
             fs::write(&meta_path, &meta_json).map_err(|e| StoreError::Io {
                 path: meta_path.clone(),
                 msg: e.to_string(),
@@ -217,7 +217,9 @@ impl GlobalVirtualStore {
             let parsed: GvsMetadata = serde_json::from_str(&verify_meta)
                 .map_err(|e| StoreError::Serialization(e.to_string()))?;
             if parsed.dep_graph_hash != dep_graph_hash || parsed.version != GVS_VERSION {
-                return Err(StoreError::Database("metadata write verification failed".into()));
+                return Err(StoreError::Database(
+                    "metadata write verification failed".into(),
+                ));
             }
 
             true
@@ -239,8 +241,8 @@ impl GlobalVirtualStore {
             path: meta_path,
             msg: e.to_string(),
         })?;
-        let meta: GvsMetadata = serde_json::from_str(&content)
-            .map_err(|e| StoreError::Serialization(e.to_string()))?;
+        let meta: GvsMetadata =
+            serde_json::from_str(&content).map_err(|e| StoreError::Serialization(e.to_string()))?;
         if meta.dep_graph_hash != expected_hash {
             return Err(StoreError::Database(format!(
                 "metadata hash mismatch: expected {}, got {}",
@@ -307,10 +309,8 @@ impl GlobalVirtualStore {
         let projects = index.list_projects()?;
         let total_projects = projects.len();
 
-        let active_hashes: HashSet<String> = projects
-            .iter()
-            .filter_map(|p| p.dep_graph_hash())
-            .collect();
+        let active_hashes: HashSet<String> =
+            projects.iter().filter_map(|p| p.dep_graph_hash()).collect();
 
         let total_packages = index.package_count().unwrap_or(0) as usize;
         let total_size = index.total_size().unwrap_or(0);
@@ -363,10 +363,8 @@ impl GlobalVirtualStore {
         let _lock = self.acquire_lock()?;
 
         let projects = index.list_projects()?;
-        let active_hashes: HashSet<String> = projects
-            .iter()
-            .filter_map(|p| p.dep_graph_hash())
-            .collect();
+        let active_hashes: HashSet<String> =
+            projects.iter().filter_map(|p| p.dep_graph_hash()).collect();
 
         let mut removed_dirs = Vec::new();
         let mut removed_symlinks = 0;
@@ -390,8 +388,7 @@ impl GlobalVirtualStore {
 
                 if !active_hashes.contains(&dir_name) {
                     let project_still_exists = projects.iter().any(|p| {
-                        p.dep_graph_hash() == Some(dir_name.clone())
-                            && Path::new(&p.path).exists()
+                        p.dep_graph_hash() == Some(dir_name.clone()) && Path::new(&p.path).exists()
                     });
                     if project_still_exists {
                         continue;
@@ -452,4 +449,3 @@ impl GlobalVirtualStore {
         fs::remove_dir(&gvs_dir).ok();
     }
 }
-

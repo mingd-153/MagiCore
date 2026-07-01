@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use url::Url;
 
-use mgpm_core::{PackageMetadata, PackageName, Version};
 use crate::registry::{RegistryClient, RegistryError};
+use mgpm_core::{PackageMetadata, PackageName, Version};
 
 pub struct NpmRegistry {
     client: Arc<RegistryClient>,
@@ -80,19 +80,19 @@ impl NpmRegistry {
         Ok(versions)
     }
 
-    pub async fn search(
-        &self,
-        query: &str,
-    ) -> Result<Vec<PackageMetadata>, RegistryError> {
-        let base = Url::parse(&self.base_url)
-            .map_err(|e| RegistryError::NetworkError(e.to_string()))?;
+    pub async fn search(&self, query: &str) -> Result<Vec<PackageMetadata>, RegistryError> {
+        let base =
+            Url::parse(&self.base_url).map_err(|e| RegistryError::NetworkError(e.to_string()))?;
         let url = base
             .join("/-/v1/search")
             .map_err(|e| RegistryError::NetworkError(e.to_string()))?;
         let url = Url::parse_with_params(url.as_str(), &[("text", query)])
             .map_err(|e| RegistryError::NetworkError(e.to_string()))?;
 
-        let json = self.client.get_json(url.as_str(), self.token.clone()).await?;
+        let json = self
+            .client
+            .get_json(url.as_str(), self.token.clone())
+            .await?;
 
         let objects = json["objects"]
             .as_array()

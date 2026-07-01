@@ -1,8 +1,8 @@
 //! Resolver benchmarks
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use mgpm_core::{PackageId, PackageName, Version};
-use mgpm_resolver::{DependencyProvider, Resolver, ResolvedDependency};
+use mgpm_resolver::{DependencyProvider, ResolvedDependency, Resolver};
 
 struct BenchDependencyProvider {
     num_versions: usize,

@@ -1,7 +1,6 @@
 pub mod registry;
 
 pub use registry::{
-    FileRegistry, WorkspaceRegistry, PackageJsonReader, ParsedPackageJson,
-    NpmRegistry, JsrRegistry, GitRegistry, HttpRegistry,
-    RegistryClient, RegistryManager, RegistryError,
+    FileRegistry, GitRegistry, HttpRegistry, JsrRegistry, NpmRegistry, PackageJsonReader,
+    ParsedPackageJson, RegistryClient, RegistryError, RegistryManager, WorkspaceRegistry,
 };

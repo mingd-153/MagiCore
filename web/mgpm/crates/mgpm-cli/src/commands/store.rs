@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use colored::Colorize;
 
 use mgpm_core::config::MgpmConfig;
-use mgpm_store::{GlobalVirtualStore, SqliteStore, StoreVerifier};
 use mgpm_store::store::CasContentStore;
+use mgpm_store::{GlobalVirtualStore, SqliteStore, StoreVerifier};
 
 use super::super::{cpath, format_size};
 
@@ -81,7 +81,9 @@ pub fn cmd_store_verify(config: &MgpmConfig, fix: bool) -> Result<(), String> {
         .map_err(|e| format!("failed to open content store: {}", e))?;
 
     let verifier = StoreVerifier::new(&store, store.index());
-    let report = verifier.verify(fix).map_err(|e| format!("verify failed: {}", e))?;
+    let report = verifier
+        .verify(fix)
+        .map_err(|e| format!("verify failed: {}", e))?;
 
     println!("{} Store verification complete", "[DONE]".green().bold());
     println!("  Packages: {}", report.total_packages);
@@ -115,7 +117,10 @@ pub fn cmd_store_status(config: &MgpmConfig) -> Result<(), String> {
     println!("  Path: {}", cpath(&store_path));
 
     if !store_path.exists() {
-        println!("  {} Store directory does not exist", "[WARN]".yellow().bold());
+        println!(
+            "  {} Store directory does not exist",
+            "[WARN]".yellow().bold()
+        );
         println!("  Packages: 0");
         println!("  Used: 0 B");
         return Ok(());
@@ -131,13 +136,15 @@ pub fn cmd_store_status(config: &MgpmConfig) -> Result<(), String> {
         return Ok(());
     }
 
-    let index = SqliteStore::open(&index_path, true)
-        .map_err(|e| format!("failed to open store: {}", e))?;
+    let index =
+        SqliteStore::open(&index_path, true).map_err(|e| format!("failed to open store: {}", e))?;
     let store = CasContentStore::new(cas_path, Box::new(index))
         .map_err(|e| format!("failed to open content store: {}", e))?;
 
     let verifier = StoreVerifier::new(&store, store.index());
-    let report = verifier.status().map_err(|e| format!("failed to get store status: {}", e))?;
+    let report = verifier
+        .status()
+        .map_err(|e| format!("failed to get store status: {}", e))?;
 
     println!("  Packages: {}", report.total_packages);
     println!("  Projects: {}", report.total_projects);
@@ -173,7 +180,10 @@ pub fn cmd_store_prune(config: &MgpmConfig, dry_run: bool) -> Result<(), String>
             .status()
             .map_err(|e| format!("failed to get store status: {}", e))?;
         println!("{} Dry run — nothing deleted", "[INFO]".cyan().bold());
-        println!("  Would remove: {} packages", report.unreferenced_packages.len());
+        println!(
+            "  Would remove: {} packages",
+            report.unreferenced_packages.len()
+        );
         println!("  Would reclaim: {}", format_size(report.reclaimable_bytes));
     } else {
         let report = verifier
@@ -198,8 +208,8 @@ pub fn cmd_store_gvs(config: &MgpmConfig, cmd: GvsCommand) -> Result<(), String>
         GvsCommand::Register { dep_graph_hash } => {
             let index = SqliteStore::open(&index_path, false)
                 .map_err(|e| format!("failed to open store: {}", e))?;
-            let project_path = std::env::current_dir()
-                .map_err(|e| format!("failed to get current dir: {}", e))?;
+            let project_path =
+                std::env::current_dir().map_err(|e| format!("failed to get current dir: {}", e))?;
 
             gvs.ensure_dirs()
                 .map_err(|e| format!("failed to create GVS dirs: {}", e))?;
@@ -214,8 +224,8 @@ pub fn cmd_store_gvs(config: &MgpmConfig, cmd: GvsCommand) -> Result<(), String>
         GvsCommand::Unregister => {
             let index = SqliteStore::open(&index_path, false)
                 .map_err(|e| format!("failed to open store: {}", e))?;
-            let project_path = std::env::current_dir()
-                .map_err(|e| format!("failed to get current dir: {}", e))?;
+            let project_path =
+                std::env::current_dir().map_err(|e| format!("failed to get current dir: {}", e))?;
 
             gvs.unregister(&project_path, &index)
                 .map_err(|e| format!("failed to unregister project: {}", e))?;
@@ -244,11 +254,7 @@ pub fn cmd_store_gvs(config: &MgpmConfig, cmd: GvsCommand) -> Result<(), String>
             println!("{} Registered projects:", "[LIST]".cyan().bold());
             for p in &projects {
                 let hash = p.dep_graph_hash().unwrap_or_else(|| "N/A".to_string());
-                println!(
-                    "  {} (hash: {})",
-                    cpath(&PathBuf::from(&p.path)),
-                    hash
-                );
+                println!("  {} (hash: {})", cpath(&PathBuf::from(&p.path)), hash);
             }
             println!("  Total: {} project(s)", projects.len());
         }
@@ -282,7 +288,10 @@ pub fn cmd_store_gvs(config: &MgpmConfig, cmd: GvsCommand) -> Result<(), String>
         }
         GvsCommand::Gc => {
             if !index_path.exists() {
-                println!("{} No orphaned GVS directories found", "[OK]".green().bold());
+                println!(
+                    "{} No orphaned GVS directories found",
+                    "[OK]".green().bold()
+                );
                 return Ok(());
             }
 
@@ -294,7 +303,10 @@ pub fn cmd_store_gvs(config: &MgpmConfig, cmd: GvsCommand) -> Result<(), String>
                 .map_err(|e| format!("GVS GC failed: {}", e))?;
 
             if report.removed_dirs.is_empty() {
-                println!("{} No orphaned GVS directories found", "[OK]".green().bold());
+                println!(
+                    "{} No orphaned GVS directories found",
+                    "[OK]".green().bold()
+                );
             } else {
                 println!("{} GVS GC complete", "[OK]".green().bold());
                 for dir in &report.removed_dirs {

@@ -25,10 +25,12 @@ pub fn write_all_verify_and_set_perms(
         path: dest.to_path_buf(),
         msg: e.to_string(),
     })?;
-    writer.seek(std::io::SeekFrom::Start(0)).map_err(|e| StoreError::Io {
-        path: dest.to_path_buf(),
-        msg: e.to_string(),
-    })?;
+    writer
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|e| StoreError::Io {
+            path: dest.to_path_buf(),
+            msg: e.to_string(),
+        })?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
     let mut read_bytes = 0usize;
@@ -44,12 +46,16 @@ pub fn write_all_verify_and_set_perms(
         hasher.update(&buf[..n]);
     }
     if read_bytes != data.len() {
-        return Err(StoreError::IntegrityCheck("size mismatch after write".into()));
+        return Err(StoreError::IntegrityCheck(
+            "size mismatch after write".into(),
+        ));
     }
     let computed = hex::encode(hasher.finalize());
     let expected = hex::encode(Sha256::digest(data));
     if computed != expected {
-        return Err(StoreError::IntegrityCheck("hash mismatch after write".into()));
+        return Err(StoreError::IntegrityCheck(
+            "hash mismatch after write".into(),
+        ));
     }
 
     // Set executable bit if needed
@@ -58,7 +64,11 @@ pub fn write_all_verify_and_set_perms(
     Ok(())
 }
 
-fn apply_executable_bit(writer: &fs::File, dest: &Path, executable: bool) -> Result<(), StoreError> {
+fn apply_executable_bit(
+    writer: &fs::File,
+    dest: &Path,
+    executable: bool,
+) -> Result<(), StoreError> {
     if !executable {
         return Ok(());
     }

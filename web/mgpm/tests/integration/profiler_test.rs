@@ -166,7 +166,10 @@ fn test_profiler_restart_phase() {
 
     let second_duration = profiler.phases.get("fetch").unwrap().1.unwrap();
 
-    assert!(second_duration < first_duration, "Second duration should be shorter");
+    assert!(
+        second_duration < first_duration,
+        "Second duration should be shorter"
+    );
 }
 
 #[test]
@@ -276,7 +279,12 @@ fn test_profiler_report_json_fields() {
     assert_eq!(phase["phase"], "build");
     assert!(phase["duration_ms"].is_number());
     assert!(phase["duration_secs"].is_number());
-    assert!((phase["duration_secs"].as_f64().unwrap() - phase["duration_ms"].as_f64().unwrap() / 1000.0).abs() < 0.001);
+    assert!(
+        (phase["duration_secs"].as_f64().unwrap()
+            - phase["duration_ms"].as_f64().unwrap() / 1000.0)
+            .abs()
+            < 0.001
+    );
 }
 
 #[test]

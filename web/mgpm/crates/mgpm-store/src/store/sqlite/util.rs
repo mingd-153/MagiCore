@@ -81,8 +81,10 @@ pub fn apply_pragmas_readonly(conn: &Connection, ram: u64) -> Result<(), StoreEr
     let cache_size = adaptive_cache_size(ram);
     let mmap_size = adaptive_mmap_size(ram);
 
-    conn.pragma_update(None, "cache_size", cache_size.to_string()).ok();
-    conn.pragma_update(None, "mmap_size", mmap_size.to_string()).ok();
+    conn.pragma_update(None, "cache_size", cache_size.to_string())
+        .ok();
+    conn.pragma_update(None, "mmap_size", mmap_size.to_string())
+        .ok();
     conn.pragma_update(None, "temp_store", "MEMORY").ok();
     conn.pragma_update(None, "busy_timeout", "5000").ok();
     Ok(())
@@ -114,13 +116,18 @@ pub fn deep_integrity_check(conn: &Connection) -> Result<(), StoreError> {
 pub fn get_wal_size(path: &Path) -> i64 {
     let wal_path = append_filename_suffix(path, "-wal");
     let shm_path = append_filename_suffix(path, "-shm");
-    let wal_size = std::fs::metadata(&wal_path).map(|m| m.len() as i64).unwrap_or(0);
-    let shm_size = std::fs::metadata(&shm_path).map(|m| m.len() as i64).unwrap_or(0);
+    let wal_size = std::fs::metadata(&wal_path)
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
+    let shm_size = std::fs::metadata(&shm_path)
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
     wal_size + shm_size
 }
 
 pub fn append_filename_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let name = path.file_name()
+    let name = path
+        .file_name()
         .and_then(|s| s.to_str())
         .filter(|s| !s.is_empty())
         .unwrap_or("db");

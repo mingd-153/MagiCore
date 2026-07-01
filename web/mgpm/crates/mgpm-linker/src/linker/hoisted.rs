@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{LinkError, LinkResult, LinkerOptions, PackageLinkInfo, PackageLinkResult, create_relative_symlink, validate_rel_path};
+use super::{
+    create_relative_symlink, validate_rel_path, LinkError, LinkResult, LinkerOptions,
+    PackageLinkInfo, PackageLinkResult,
+};
 
 pub struct HoistedLinker {
     options: LinkerOptions,
@@ -181,15 +184,14 @@ impl HoistedLinker {
             for (bin_name, bin_path) in &pkg.bin_entries {
                 validate_rel_path(bin_name)?;
                 validate_rel_path(bin_path)?;
-                let src = virtual_store
-                    .join(format!(
-                        "{}@{}_{}/node_modules/{}/{}",
-                        pkg.name.replace(['/', '@'], "_"),
-                        pkg.version,
-                        self.compute_peer_hash(pkg),
-                        pkg.name,
-                        bin_path
-                    ));
+                let src = virtual_store.join(format!(
+                    "{}@{}_{}/node_modules/{}/{}",
+                    pkg.name.replace(['/', '@'], "_"),
+                    pkg.version,
+                    self.compute_peer_hash(pkg),
+                    pkg.name,
+                    bin_path
+                ));
 
                 let dst = bin_dir.join(bin_name);
                 create_relative_symlink(&src, &dst)?;
@@ -275,7 +277,11 @@ impl super::Linker for HoistedLinker {
 
         for dep_name in &pkg.dependencies {
             validate_rel_path(dep_name)?;
-            let dep_src = dest.parent().and_then(|p| p.parent()).map(|p| p.join(dep_name)).unwrap_or_else(|| PathBuf::from("..").join(dep_name));
+            let dep_src = dest
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join(dep_name))
+                .unwrap_or_else(|| PathBuf::from("..").join(dep_name));
             let dep_dst = dest.join("node_modules").join(dep_name);
 
             if !dep_dst.exists() {
