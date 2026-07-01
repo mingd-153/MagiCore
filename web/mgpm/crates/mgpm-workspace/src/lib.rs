@@ -2,10 +2,14 @@
 //!
 //! Discovers and manages monorepo workspace packages.
 
+pub mod graph;
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use mgpm_core::{MgpmConfig, WorkspaceConfig, SecurityConfig, LinkerMode};
+pub use graph::{DepKind, DependencyEdge, PackageGraph, PackageGraphError};
+
+use mgpm_core::{LinkerMode, MgpmConfig, SecurityConfig, WorkspaceConfig};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
@@ -66,6 +70,15 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Create a new workspace directly (for testing).
+    pub fn new(root: PathBuf, config: WorkspaceConfig, members: Vec<WorkspaceMember>) -> Self {
+        Self {
+            root,
+            config,
+            members,
+        }
+    }
+
     /// Discovers a workspace at the given path.
     /// Checks for `mgpm.yaml`, `mgpm.yml`, `mgpm.toml`, or `package.json` with a workspaces field.
     pub fn discover(path: &Path) -> Result<Self, WorkspaceError> {
