@@ -52,8 +52,16 @@ impl PluginHost {
             plugins: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+}
 
-    #[napi]
+impl Default for PluginHost {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[napi]
+impl PluginHost {
     pub async fn load(&self, name: String, path: String) -> Result<()> {
         let plugin = Plugin {
             name: name.clone(),

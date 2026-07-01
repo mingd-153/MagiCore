@@ -298,6 +298,6 @@ fn is_version_vulnerable(version: &semver::Version, ranges: &str) -> bool {
         }
         semver::VersionReq::parse(range)
             .ok()
-            .map_or(false, |req| req.matches(version))
+            .is_some_and(|req| req.matches(version))
     })
 }

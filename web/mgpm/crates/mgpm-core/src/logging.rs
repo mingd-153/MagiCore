@@ -31,7 +31,7 @@ impl Default for TracingConfig {
             with_thread_ids: true,
             with_file: true,
             with_line_number: true,
-            ansi: !env::var("NO_COLOR").is_ok(),
+            ansi: env::var("NO_COLOR").is_err(),
         }
     }
 }

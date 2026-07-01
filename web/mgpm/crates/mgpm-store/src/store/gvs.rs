@@ -34,6 +34,22 @@ pub struct GvsGcReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GvsFileInfo {
+    pub path: String,
+    pub shard: String,
+    pub filename: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GvsPackageInfo {
+    pub name: String,
+    pub version: String,
+    pub files: Vec<GvsFileInfo>,
+    pub dependencies: Vec<String>,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct GvsMetadata {
     version: String,
     dep_graph_hash: String,
@@ -115,6 +131,7 @@ impl GlobalVirtualStore {
 
         let lock_file = fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&lock_path)
             .map_err(|e| StoreError::Io {

@@ -131,7 +131,6 @@ pub enum PipelineError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mgpm_core::PackageName;
     
     #[test]
     fn test_pipeline_config_default() {

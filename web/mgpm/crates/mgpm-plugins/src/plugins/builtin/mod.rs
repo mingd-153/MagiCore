@@ -29,7 +29,15 @@ impl BuiltinPluginRegistry {
     pub fn new() -> Self {
         Self { plugins: Vec::new() }
     }
+}
 
+impl Default for BuiltinPluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BuiltinPluginRegistry {
     pub fn register<P: BuiltinPlugin + 'static>(&mut self, plugin: P) {
         self.plugins.push(Box::new(plugin));
     }

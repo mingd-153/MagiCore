@@ -431,7 +431,7 @@ fn config_list_values() -> Result<String, String> {
     let doc = read_user_toml()?;
     let path = user_config_path();
     let header = format!("Configuration ({})", cpath(&path));
-    if doc.as_table().map_or(true, |t| t.is_empty()) {
+    if doc.as_table().is_none_or(|t| t.is_empty()) {
         Ok(format!("{}\n  (empty)", header))
     } else {
         let body = toml::to_string(&doc).map_err(|e| format!("serialize error: {}", e))?;
@@ -529,6 +529,7 @@ fn run_on_members(
 }
 
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_install_recursive(
     config: &MgpmConfig,
     recursive: bool,
@@ -594,6 +595,7 @@ async fn cmd_install_recursive(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_add_recursive(
     _config: &MgpmConfig,
     recursive: bool,

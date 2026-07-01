@@ -121,7 +121,7 @@ impl PackageId {
     /// Creates a new package ID from name and version strings.
     pub fn new_str(name: &str, version: &str) -> Result<Self, PackageIdError> {
         let name = PackageName::new(name)
-            .map_err(|e| PackageIdError::InvalidName(e))?;
+            .map_err(PackageIdError::InvalidName)?;
         let version = Version::parse(version)
             .map_err(PackageIdError::InvalidVersion)?;
         Ok(Self { name, version })
@@ -312,45 +312,39 @@ impl VersionRange {
             return true;
         }
 
-        if range_str.starts_with('^') {
-            let min = &range_str[1..];
+        if let Some(min) = range_str.strip_prefix('^') {
             if let Ok(min_v) = Version::parse(min) {
                 let max_v = increment_major(&min_v);
                 return *version >= min_v && *version < max_v;
             }
         }
         
-        if range_str.starts_with('~') {
-            let min = &range_str[1..];
+        if let Some(min) = range_str.strip_prefix('~') {
             if let Ok(min_v) = Version::parse(min) {
                 let max_v = increment_minor(&min_v);
                 return *version >= min_v && *version < max_v;
             }
         }
 
-        if range_str.starts_with(">=") {
-            let ver = &range_str[2..];
+        if let Some(ver) = range_str.strip_prefix(">=") {
             if let Ok(v) = Version::parse(ver) {
                 return *version >= v;
             }
         }
 
-        if range_str.starts_with('>') {
-            let ver = &range_str[1..];
+        if let Some(ver) = range_str.strip_prefix('>') {
             if let Ok(v) = Version::parse(ver) {
                 return *version > v;
             }
         }
 
-        if range_str.starts_with("<=") {
-            let ver = &range_str[2..];
+        if let Some(ver) = range_str.strip_prefix("<=") {
             if let Ok(v) = Version::parse(ver) {
                 return *version <= v;
             }
         }
 
-        if range_str.starts_with('<') {
-            let ver = &range_str[1..];
+        if let Some(ver) = range_str.strip_prefix('<') {
             if let Ok(v) = Version::parse(ver) {
                 return *version < v;
             }
@@ -383,24 +377,21 @@ impl VersionRange {
         }
         
         // For ^x.y.z, return highest patch
-        if range_str.starts_with('^') {
-            let min = &range_str[1..];
+        if let Some(min) = range_str.strip_prefix('^') {
             if let Ok(min_v) = Version::parse(min) {
                 return Some(Version::new(min_v.major + 1, 0, 0)); // just above max
             }
         }
         
         // For ~x.y.z, return highest patch
-        if range_str.starts_with('~') {
-            let min = &range_str[1..];
+        if let Some(min) = range_str.strip_prefix('~') {
             if let Ok(min_v) = Version::parse(min) {
                 return Some(Version::new(min_v.major, min_v.minor + 1, 0));
             }
         }
         
         // For >=x.y.z, return that version
-        if range_str.starts_with(">=") {
-            let ver = &range_str[2..];
+        if let Some(ver) = range_str.strip_prefix(">=") {
             if let Ok(v) = Version::parse(ver) {
                 return Some(v);
             }

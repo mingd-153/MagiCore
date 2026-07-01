@@ -3,6 +3,7 @@ use rusqlite::Connection;
 use super::super::index::{PackageInfo, StoreError};
 
 // Column order for packages table — must match row_to_package and all SELECT queries
+#[allow(dead_code)]
 pub const PACKAGE_COLUMNS: &[&str] = &[
     "name",
     "version",
@@ -17,6 +18,7 @@ pub const PACKAGE_COLUMNS: &[&str] = &[
     "metadata",
 ];
 
+#[allow(dead_code)]
 const PACKAGE_COLUMNS_SQL: &str = "name, version, integrity, shard, filename, is_executable, manifest_json, size_bytes, compressed_size_bytes, created_at, metadata";
 
 pub fn create_tables(conn: &Connection) -> Result<(), StoreError> {

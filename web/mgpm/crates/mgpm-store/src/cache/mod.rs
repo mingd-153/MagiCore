@@ -107,7 +107,7 @@ impl PackageCache {
         let tarball_path = self.store.get_file(&cached.tarball_hash)?;
         
         let entries = self.extractor.extract(&tarball_path, dest)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         
         for entry in &entries {
             self.store.import_file(dest.join(&entry.path))?;
