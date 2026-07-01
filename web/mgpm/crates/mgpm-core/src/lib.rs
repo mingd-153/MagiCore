@@ -9,6 +9,7 @@
 //! - Global allocator and tracing setup
 
 pub mod alloc;
+pub mod arena;
 pub mod package;
 pub mod semver;
 pub mod protocol;

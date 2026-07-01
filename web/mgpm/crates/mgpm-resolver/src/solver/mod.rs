@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use mgpm_core::{Catalog, PackageId, PackageName, Version};
+use mgpm_core::{arena::ArenaContext, Catalog, PackageId, PackageName, Version};
 
 /// Information about a dependency for confusion checking.
 #[derive(Debug, Clone)]
@@ -205,6 +205,10 @@ impl Resolver {
     }
 
     pub fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
+        self.solve_with_arena(wanted, None)
+    }
+
+    pub fn solve_with_arena(&self, wanted: &[(PackageName, String)], arena: Option<&ArenaContext>) -> Result<SolveResult, SolveError> {
         let mut resolutions = Vec::new();
         let mut seen = HashSet::new();
         
@@ -217,10 +221,11 @@ impl Resolver {
             let versions = self.provider.get_versions(name);
             if let Some(version) = versions.last() {
                 let package_id = PackageId::new(name.clone(), version.clone());
+                let integrity = arena.map(|a| a.alloc_str("")).unwrap_or_default();
                 resolutions.push(Resolution {
                     package_id: package_id.clone(),
                     version: version.clone(),
-                    integrity: String::new(), // Will be filled by pipeline with real hash from tarball
+                    integrity,
                     deps: Vec::new(),
                 });
                 

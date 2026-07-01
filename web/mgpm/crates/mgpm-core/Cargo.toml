@@ -24,6 +24,7 @@ once_cell.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+bumpalo = { version = "3.16", default-features = false, features = ["collections"] }
 
 [dev-dependencies]
 proptest.workspace = true
