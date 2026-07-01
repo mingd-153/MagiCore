@@ -1,0 +1,22 @@
+[package]
+name = "mgpm-monorepo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Monorepo task graph — dependency resolution, topological sort, and parallel execution"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+mgpm-core = { path = "../mgpm-core" }
+mgpm-workspace = { path = "../mgpm-workspace" }
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
