@@ -6,8 +6,8 @@ pub enum CacheError {
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
 
-    #[error("invalid magic bytes: expected MGPMCACHE")]
-    InvalidMagic,
+    #[error("invalid magic bytes: expected {:?}, got {:?}", expected, actual)]
+    InvalidMagic { expected: [u8; 8], actual: [u8; 8] },
 
     #[error("unsupported cache version: {0}, expected {expected}", expected = crate::CACHE_VERSION)]
     UnsupportedVersion(u32),

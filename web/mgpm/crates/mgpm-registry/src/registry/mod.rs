@@ -143,13 +143,9 @@ impl RegistryClient {
         if let Ok(ref val) = result {
             if let Some(ref cache) = self.cache {
                 if let Ok(data) = serde_json::to_vec(val) {
-                    #[allow(clippy::disallowed_methods)]
-                    let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
                     let entry = CacheEntry {
                         name: url.as_str(),
-                        version: "",
-                        integrity: "",
-                        data: leaked,
+                        data: &data,
                     };
                     let mut guard = cache.lock();
                     let _ = guard.insert(entry);

@@ -4,12 +4,9 @@ use fxhash;
 use memmap2::MmapMut;
 use tracing::warn;
 
-use crate::{binary::CacheHeader, CacheEntry, CacheError, CACHE_MAGIC, CACHE_VERSION, HEADER_SIZE, INITIAL_SIZE};
+use crate::{binary::CacheHeader, CacheEntry, CacheError, CACHE_MAGIC, CACHE_VERSION, HEADER_SIZE, INITIAL_SIZE, PAIR_BYTES, HASH_BYTES};
 
-const PAIRS_PER_ENTRY: u32 = 4;
-const PAIR_BYTES: u32 = PAIRS_PER_ENTRY * 4;
-const HASH_BYTES: u32 = 8;
-
+#[derive(Debug)]
 pub struct MemMapCache {
     map: MmapMut,
     header: CacheHeader,
@@ -20,9 +17,8 @@ pub struct MemMapCache {
     strings_offset: usize,
 }
 
-unsafe impl Send for MemMapCache {}
-
 impl MemMapCache {
+    #[cfg(not(miri))]
     pub fn open(path: impl AsRef<Path>) -> Result<Self, CacheError> {
         use std::fs::OpenOptions;
 
@@ -60,8 +56,8 @@ impl MemMapCache {
         let map_len = map.len();
 
         let overhead_per_entry = (PAIR_BYTES + HASH_BYTES) as usize;
-        let max_entries_for_overhead = (map_len - HEADER_SIZE as usize) / overhead_per_entry;
-        let capacity = (max_entries_for_overhead / 4).max(16) as u32;
+        let max_entries = (map_len - HEADER_SIZE as usize) / overhead_per_entry;
+        let capacity = (max_entries / 4).max(16) as u32;
 
         let pairs_offset = HEADER_SIZE as usize;
         let hashes_offset = pairs_offset + capacity as usize * PAIR_BYTES as usize;
@@ -125,38 +121,39 @@ impl MemMapCache {
             return &[];
         }
         unsafe {
-            let count_u32 = count * PAIRS_PER_ENTRY as usize;
+            let count_u32 = count * 4;
             std::slice::from_raw_parts(self.map.as_ptr().add(self.pairs_offset) as *const u32, count_u32)
         }
     }
 
     fn read_entry<'a>(&'a self, idx: usize) -> CacheEntry<'a> {
         let pairs = self.pairs_slice();
-        let base_idx = idx * PAIRS_PER_ENTRY as usize;
+        let base = idx * 4;
 
-        let name_offset = pairs[base_idx] as usize;
-        let name_len = pairs[base_idx + 1] as usize;
-        let ver_offset = pairs[base_idx + 2] as usize;
-        let ver_len = pairs[base_idx + 3] as usize;
+        let name_offset = pairs[base] as usize;
+        let name_len = pairs[base + 1] as usize;
+        let data_offset = pairs[base + 2] as usize;
+        let data_len = pairs[base + 3] as usize;
 
-        unsafe {
-            let base = self.map.as_ptr();
-            let name = if name_len > 0 {
-                let ptr = base.add(self.strings_offset + name_offset);
+        let map_ptr = self.map.as_ptr();
+        let name = if name_len > 0 {
+            unsafe {
+                let ptr = map_ptr.add(self.strings_offset + name_offset);
                 let bytes = std::slice::from_raw_parts(ptr, name_len);
-                std::str::from_utf8_unchecked(bytes)
-            } else {
-                ""
-            };
-            let version = if ver_len > 0 {
-                let ptr = base.add(self.strings_offset + ver_offset);
-                let bytes = std::slice::from_raw_parts(ptr, ver_len);
-                std::str::from_utf8_unchecked(bytes)
-            } else {
-                ""
-            };
-            CacheEntry { name, version, integrity: "", data: &[] }
-        }
+                std::str::from_utf8(bytes).unwrap_or("")
+            }
+        } else {
+            ""
+        };
+        let data = if data_len > 0 {
+            unsafe {
+                let ptr = map_ptr.add(self.strings_offset + data_offset);
+                std::slice::from_raw_parts(ptr, data_len)
+            }
+        } else {
+            &[]
+        };
+        CacheEntry { name, data }
     }
 
     fn write_entry(&mut self, idx: usize, entry: &CacheEntry<'_>) -> Result<(), CacheError> {
@@ -164,14 +161,14 @@ impl MemMapCache {
         let map_len = self.map.len();
 
         let name_bytes = entry.name.as_bytes();
-        let version_bytes = entry.version.as_bytes();
-        let str_data_offset = self.header.string_table_size as usize;
+        let data_bytes = entry.data;
+        let str_offset = self.header.string_table_size as usize;
 
-        let name_end = str_data_offset + name_bytes.len();
-        let version_end = name_end + version_bytes.len();
+        let name_end = str_offset + name_bytes.len();
+        let data_end = name_end + data_bytes.len();
 
-        if self.strings_offset + version_end > map_len {
-            warn!("cache write out of bounds: {} > {}", self.strings_offset + version_end, map_len);
+        if self.strings_offset + data_end > map_len {
+            warn!("cache write out of bounds");
             return Err(CacheError::CacheFull);
         }
 
@@ -179,23 +176,23 @@ impl MemMapCache {
             let base = self.map.as_ptr() as *mut u8;
 
             let pair_base = base.add(self.pairs_offset) as *mut u32;
-            let pair_idx = idx * PAIRS_PER_ENTRY as usize;
+            let pair_idx = idx * 4;
 
-            pair_base.add(pair_idx).write(str_data_offset as u32);
+            pair_base.add(pair_idx).write(str_offset as u32);
             pair_base.add(pair_idx + 1).write(name_bytes.len() as u32);
             pair_base.add(pair_idx + 2).write(name_end as u32);
-            pair_base.add(pair_idx + 3).write(version_bytes.len() as u32);
+            pair_base.add(pair_idx + 3).write(data_bytes.len() as u32);
 
-            let data_ptr = base.add(self.strings_offset + str_data_offset);
+            let data_ptr = base.add(self.strings_offset + str_offset);
             std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), data_ptr, name_bytes.len());
-            std::ptr::copy_nonoverlapping(version_bytes.as_ptr(), data_ptr.add(name_bytes.len()), version_bytes.len());
+            std::ptr::copy_nonoverlapping(data_bytes.as_ptr(), data_ptr.add(name_bytes.len()), data_bytes.len());
 
             let hash_ptr = base.add(self.hashes_offset) as *mut u64;
             hash_ptr.add(idx).write(hash);
         }
 
-        self.header.string_table_size += (name_bytes.len() + version_bytes.len()) as u32;
-        self.header.hash_table_size = (self.entry_count.load(Ordering::Acquire)) * HASH_BYTES;
+        self.header.string_table_size += (name_bytes.len() + data_bytes.len()) as u32;
+        self.header.hash_table_size = self.entry_count.load(Ordering::Acquire) * HASH_BYTES;
 
         Ok(())
     }
@@ -210,7 +207,7 @@ impl MemMapCache {
                 entry_count: count,
                 string_table_size: self.header.string_table_size,
                 hash_table_size: self.header.hash_table_size,
-                metadata_size: self.header.metadata_size,
+                metadata_size: 0,
                 reserved: [0u8; 4],
             }
             .to_bytes();
@@ -228,6 +225,7 @@ impl Drop for MemMapCache {
 }
 
 #[cfg(test)]
+#[cfg(not(miri))]
 mod tests {
     use super::*;
     use tempfile::tempdir;
@@ -246,19 +244,15 @@ mod tests {
         let path = dir.path().join("test.mgpm_cache");
         let mut cache = MemMapCache::open(&path).unwrap();
 
-        let entry = CacheEntry {
-            name: "lodash",
-            version: "4.17.21",
-            integrity: "",
-            data: &[],
-        };
+        let entry = CacheEntry { name: "lodash", data: b"{\"version\":\"4.17.21\"}" };
         cache.insert(entry).unwrap();
         cache.flush().unwrap();
 
         let result = cache.get("lodash");
         assert!(result.is_some());
-        assert_eq!(result.unwrap().name, "lodash");
-        assert_eq!(result.unwrap().version, "4.17.21");
+        let got = result.unwrap();
+        assert_eq!(got.name, "lodash");
+        assert_eq!(got.data, b"{\"version\":\"4.17.21\"}");
     }
 
     #[test]
@@ -277,13 +271,8 @@ mod tests {
 
         for i in 0..10 {
             let name = format!("pkg-{i}");
-            let version = format!("1.{i}.0");
-            let entry = CacheEntry {
-                name: &name,
-                version: &version,
-                integrity: "",
-                data: &[],
-            };
+            let data = format!("{{\"i\":{i}}}");
+            let entry = CacheEntry { name: &name, data: data.as_bytes() };
             cache.insert(entry).unwrap();
         }
         assert_eq!(cache.entry_count(), 10);
@@ -291,7 +280,28 @@ mod tests {
         for i in 0..10 {
             let name = format!("pkg-{i}");
             let entry = cache.get(&name).unwrap();
-            assert_eq!(entry.version, format!("1.{i}.0"));
+            assert_eq!(entry.data, format!("{{\"i\":{i}}}").as_bytes());
+        }
+    }
+
+    #[test]
+    fn test_cache_corrupt_magic() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("corrupt.mgpm_cache");
+        let mut cache = MemMapCache::open(&path).unwrap();
+        cache.insert(CacheEntry { name: "test", data: b"{}" }).unwrap();
+        drop(cache);
+
+        let mut corrupt = [0u8; 32];
+        corrupt[..8].copy_from_slice(b"CORRUPT!");
+        std::fs::write(&path, &corrupt).unwrap();
+        let err = MemMapCache::open(&path).unwrap_err();
+        match err {
+            CacheError::InvalidMagic { expected, actual } => {
+                assert_eq!(expected, *CACHE_MAGIC);
+                assert_eq!(actual, *b"CORRUPT!");
+            }
+            e => panic!("expected InvalidMagic, got {e}"),
         }
     }
 }
