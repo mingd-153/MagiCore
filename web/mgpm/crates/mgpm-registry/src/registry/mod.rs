@@ -16,6 +16,8 @@ use tokio::sync::OnceCell;
 use mgpm_cache::{CacheEntry, ETagStore, MemMapCache};
 use mgpm_core::{PackageId, RegistryConfig};
 
+use crate::http::{DownloadError, DownloadManager, DownloadRequest, DownloadedPackage};
+
 pub mod npm;
 pub mod jsr;
 pub mod git;
@@ -64,6 +66,7 @@ pub struct RegistryClient {
     registries: RwLock<HashMap<String, RegistryConfig>>,
     cache: Option<Mutex<MemMapCache>>,
     etag_store: Option<Mutex<ETagStore>>,
+    downloader: DownloadManager,
 }
 
 impl RegistryClient {
@@ -120,6 +123,7 @@ impl RegistryClient {
             registries: RwLock::new(HashMap::new()),
             cache,
             etag_store,
+            downloader: DownloadManager::default(),
         }
     }
 
@@ -402,6 +406,35 @@ impl RegistryClient {
         }
 
         Ok(bytes)
+    }
+
+    /// Download multiple tarballs concurrently using DownloadManager
+    pub async fn download_batch(
+        &self,
+        packages: &[DownloadRequest],
+    ) -> Vec<Result<DownloadedPackage, RegistryError>> {
+        let results = self.downloader.download_batch(packages).await;
+        results
+            .into_iter()
+            .map(|r| r.map_err(|e| match e {
+                DownloadError::HttpError(code) => RegistryError::HttpError(code),
+                DownloadError::NetworkError(msg) => RegistryError::NetworkError(msg),
+                DownloadError::Timeout(url) => {
+                    RegistryError::NetworkError(format!("timeout: {}", url))
+                }
+                DownloadError::IntegrityMismatch { expected, actual } => {
+                    RegistryError::NetworkError(format!(
+                        "integrity mismatch: expected {}, got {}",
+                        expected, actual
+                    ))
+                }
+            }))
+            .collect()
+    }
+
+    /// Access the DownloadManager for custom batch operations
+    pub fn download_manager(&self) -> &DownloadManager {
+        &self.downloader
     }
 
     /// Compute SHA-256 SRI format hash (sha256-<base64>)

@@ -5,17 +5,15 @@ use std::sync::Mutex;
 
 use dashmap::DashMap;
 use rayon::ThreadPool;
-use reqwest::Client;
 use rusqlite::Connection;
 use base64::Engine;
-use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinSet;
 
 use mgpm_core::arena::ArenaContext;
 use mgpm_linker::linker::{LinkerFactory, LinkerOptions, LinkerStrategy};
 use mgpm_lockfile::Lockfile;
+use mgpm_registry::http::DownloadManager;
 use mgpm_store::store::cas::ContentStore;
 use mgpm_store::SqliteStore;
 
@@ -129,7 +127,7 @@ pub struct Installer {
     store: Arc<mgpm_store::ContentStore>,
     cache: Arc<mgpm_store::PackageCache>,
     progress_tx: mpsc::Sender<InstallProgress>,
-    client: Arc<Client>,
+    downloader: Arc<DownloadManager>,
     thread_pool: Arc<ThreadPool>,
     conn: Mutex<Connection>,
     package_files: Arc<DashMap<String, Vec<(String, String)>>>,
@@ -147,7 +145,7 @@ impl Clone for Installer {
             store: self.store.clone(),
             cache: self.cache.clone(),
             progress_tx: self.progress_tx.clone(),
-            client: self.client.clone(),
+            downloader: self.downloader.clone(),
             thread_pool: self.thread_pool.clone(),
             conn: Mutex::new(conn_clone),
             package_files: self.package_files.clone(),
@@ -167,14 +165,7 @@ impl Installer {
             options.store_path.join("cache"),
         )?);
 
-        let client = Client::builder()
-            .pool_max_idle_per_host(64)
-            .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .http2_prior_knowledge()
-            .build()
-            .map_err(|e| {
-                std::io::Error::other(e.to_string())
-            })?;
+        let downloader = Arc::new(DownloadManager::new());
 
         let thread_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
@@ -192,7 +183,7 @@ impl Installer {
             store,
             cache,
             progress_tx,
-            client: Arc::new(client),
+            downloader,
             thread_pool,
             conn,
             package_files: Arc::new(DashMap::new()),
@@ -280,7 +271,7 @@ impl Installer {
         let store_arc = self.store.clone();
         let cache_arc = self.cache.clone();
         let package_files_arc = self.package_files.clone();
-        let client_arc = self.client.clone();
+        let downloader_arc = self.downloader.clone();
         let thread_pool_arc = self.thread_pool.clone();
         let sqlite_path = self.options.sqlite_path.clone();
 
@@ -310,7 +301,7 @@ impl Installer {
             let options = self.options.clone();
             let store = store_arc.clone();
             let cache = cache_arc.clone();
-            let client = client_arc.clone();
+            let downloader = downloader_arc.clone();
             let package_files = package_files_arc.clone();
             let package = pkg.clone();
             let sem_clone = semaphore.clone();
@@ -375,126 +366,48 @@ impl Installer {
 
                 let max_retries = options.retries as usize;
                 let retry_delay_ms = options.retry_delay_ms;
-                let actual_sri: String;
-
-                'retry: loop {
+                let actual_sri = {
                     let mut retry_attempt = 0usize;
-
-                    let resp_result = loop {
-                        let result = client
-                            .get(&tarball_url)
-                            .send()
-                            .await
-                            .map_err(|e| InstallError::DownloadFailed(e.to_string()));
-
-                        match result {
-                            Ok(r) if r.status().is_success() => break r,
-                            Ok(r) => {
-                                let err = InstallError::DownloadFailed(format!(
-                                    "HTTP {} for {}",
-                                    r.status(),
-                                    tarball_url
-                                ));
-                                if retry_attempt < max_retries {
-                                    retry_attempt += 1;
-                                    let delay = retry_delay_ms
-                                        * 2u64.pow(retry_attempt.saturating_sub(1) as u32);
-                                    tokio::time::sleep(std::time::Duration::from_millis(delay))
-                                        .await;
-                                    continue;
-                                }
-                                errors_clone.lock().unwrap().push(err);
-                                failed_clone.fetch_add(1, Ordering::SeqCst);
-                                return;
-                            }
-                            Err(e) => {
-                                if retry_attempt < max_retries {
-                                    retry_attempt += 1;
-                                    let delay = retry_delay_ms
-                                        * 2u64.pow(retry_attempt.saturating_sub(1) as u32);
-                                    tokio::time::sleep(std::time::Duration::from_millis(delay))
-                                        .await;
-                                    continue;
-                                }
-                                errors_clone.lock().unwrap().push(e);
-                                failed_clone.fetch_add(1, Ordering::SeqCst);
-                                return;
-                            }
-                        }
-                    };
-
-                    let total = resp_result.content_length();
-                    let mut file = match tokio::fs::File::create(&tarball_path).await {
-                        Ok(f) => f,
-                        Err(e) => {
-                            errors_clone
-                                .lock()
-                                .unwrap()
-                                .push(InstallError::StoreError(e.to_string()));
-                            failed_clone.fetch_add(1, Ordering::SeqCst);
-                            return;
-                        }
-                    };
-
-                    let mut hasher = Sha256::new();
-                    let mut downloaded = 0u64;
-                    let mut stream = resp_result.bytes_stream();
-
+                    let mut result;
                     loop {
-                        match futures_util::StreamExt::next(&mut stream).await {
-                            Some(Ok(chunk)) => {
-                                hasher.update(&chunk);
-                                if let Err(e) = file.write_all(&chunk).await {
-                                    errors_clone.lock().unwrap().push(
-                                        InstallError::StoreError(e.to_string()),
-                                    );
-                                    failed_clone.fetch_add(1, Ordering::SeqCst);
-                                    return;
-                                }
-                                downloaded += chunk.len() as u64;
+                        result = downloader.download_to_file(&tarball_url, &tarball_path).await;
+                        match result {
+                            Ok((downloaded, _)) => {
                                 let _ = tx
                                     .send(InstallProgress {
                                         package: package_id.clone(),
                                         phase: InstallPhase::Downloading,
                                         bytes_downloaded: downloaded,
-                                        total_bytes: total,
+                                        total_bytes: Some(downloaded),
                                     })
                                     .await;
+                                break;
                             }
-                            Some(Err(e)) => {
-                                if retry_attempt < max_retries {
-                                    retry_attempt += 1;
-                                    let delay = retry_delay_ms
-                                        * 2u64.pow(retry_attempt.saturating_sub(1) as u32);
-                                    tokio::time::sleep(std::time::Duration::from_millis(delay))
-                                        .await;
-                                    let _ = tokio::fs::remove_file(&tarball_path).await;
-                                    continue 'retry;
-                                }
-                                errors_clone
-                                    .lock()
-                                    .unwrap()
-                                    .push(InstallError::DownloadFailed(e.to_string()));
-                                failed_clone.fetch_add(1, Ordering::SeqCst);
-                                return;
+                            Err(_) if retry_attempt < max_retries => {
+                                retry_attempt += 1;
+                                let delay = retry_delay_ms
+                                    * 2u64.pow(retry_attempt.saturating_sub(1) as u32);
+                                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                                let _ = tokio::fs::remove_file(&tarball_path).await;
                             }
-                            None => break,
+                            Err(_) => break,
                         }
                     }
-
-                    if let Err(e) = file.flush().await {
-                        errors_clone
-                            .lock()
-                            .unwrap()
-                            .push(InstallError::StoreError(e.to_string()));
-                        failed_clone.fetch_add(1, Ordering::SeqCst);
-                        return;
+                    match result {
+                        Ok((_, hash_bytes)) => {
+                            let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(hash_bytes);
+                            format!("sha256-{}", b64)
+                        }
+                        Err(e) => {
+                            errors_clone
+                                .lock()
+                                .unwrap()
+                                .push(InstallError::DownloadFailed(e.to_string()));
+                            failed_clone.fetch_add(1, Ordering::SeqCst);
+                            return;
+                        }
                     }
-                    let raw_hash = hasher.finalize();
-                    let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(raw_hash);
-                    actual_sri = format!("sha256-{}", b64);
-                    break 'retry;
-                }
+                };
 
                 // Verify package integrity before extracting
                 if let Some(ref expected) = package.integrity {
