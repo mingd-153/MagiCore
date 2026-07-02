@@ -15,6 +15,7 @@ members = [
     "crates/mgpm-bench",
     "crates/mgpm-cache",
     "crates/mgpm-monorepo",
+    "crates/mgpm-scaffold",
 ]
 exclude = ["fuzz"]
 
@@ -159,6 +160,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 # Database
 rusqlite = { version = "0.31", features = ["bundled", "column_decltype", "modern_sqlite", "extra_check", "functions", "blob"] }
+
+# Template / Scaffold
+handlebars = "6.0"
+heck = "0.5"
 
 # Utilities
 dirs = "5.0"
