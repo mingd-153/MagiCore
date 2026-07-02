@@ -16,6 +16,7 @@ mgpm-linker = { path = "../mgpm-linker" }
 mgpm-registry = { path = "../mgpm-registry" }
 mgpm-workspace = { path = "../mgpm-workspace" }
 mgpm-plugins = { path = "../mgpm-plugins" }
+mgpm-scaffold = { path = "../mgpm-scaffold" }
 thiserror.workspace = true
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
