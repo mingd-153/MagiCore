@@ -1,28 +1,5 @@
-import Link from 'next/link';
+import { redirect } from 'next/navigation';
 
 export default function Home() {
-  return (
-    <div className="min-h-screen flex items-center justify-center">
-      <main className="text-center">
-        <h1 className="text-4xl font-bold mb-4">{{name}}</h1>
-        <p className="text-lg text-gray-600 mb-8">
-          Built with Next.js + TypeScript + Tailwind CSS
-        </p>
-        <div className="flex gap-4 justify-center">
-          <Link
-            href="/about"
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
-            About
-          </Link>
-          <Link
-            href="/dashboard"
-            className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-          >
-            Dashboard
-          </Link>
-        </div>
-      </main>
-    </div>
-  );
+  redirect('/dashboard');
 }
