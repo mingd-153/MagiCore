@@ -20,11 +20,13 @@
 //! | `build` | Wait for this package's own `build` script |
 //! | `pkg#build` | Wait for a specific package's `build` script |
 
+pub mod catalogs;
 pub mod config;
 pub mod error;
 pub mod executor;
 pub mod task_graph;
 
+pub use catalogs::{CatalogError, CatalogMode, CatalogResolver, CatalogSource, VersionSpec};
 pub use config::MonorepoConfig;
 pub use error::TaskGraphError;
 pub use executor::{TaskExecutor, TaskReport, TaskResult, TaskStatus};
