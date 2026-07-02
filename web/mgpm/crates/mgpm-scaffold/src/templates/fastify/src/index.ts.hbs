@@ -1,0 +1,10 @@
+import { buildApp } from './app';
+
+async function main() {
+  const app = await buildApp();
+  const port = parseInt(process.env.PORT || '3000', 10);
+  await app.listen({ port });
+  console.log(`Server running on http://localhost:${port}`);
+}
+
+main();

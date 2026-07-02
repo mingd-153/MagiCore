@@ -1,0 +1,15 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import { itemsRouter } from './routes/items';
+
+export async function buildApp() {
+  const app = Fastify({ logger: true });
+
+  await app.register(cors);
+
+  app.get('/health', async () => ({ status: 'ok' }));
+
+  await app.register(itemsRouter, { prefix: '/api/items' });
+
+  return app;
+}

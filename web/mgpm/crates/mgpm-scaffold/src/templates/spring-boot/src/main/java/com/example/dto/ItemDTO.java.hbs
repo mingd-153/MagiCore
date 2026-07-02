@@ -1,0 +1,15 @@
+package com.example.dto;
+
+import com.example.model.Item;
+import java.time.LocalDateTime;
+
+public record ItemDTO(
+    Long id,
+    String name,
+    String description,
+    LocalDateTime createdAt
+) {
+    public ItemDTO(Item item) {
+        this(item.getId(), item.getName(), item.getDescription(), item.getCreatedAt());
+    }
+}
