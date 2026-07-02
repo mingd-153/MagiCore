@@ -68,6 +68,12 @@ impl Default for TemplateRegistry {
 
 fn write_template(base: &Path, relative: &str, content: &str) -> Result<PathBuf, ScaffoldError> {
     let path = base.join(relative);
+    if !path.starts_with(base) {
+        return Err(ScaffoldError::IoError {
+            context: format!("path traversal detected: {relative}"),
+            source: std::io::Error::other("path escapes base directory"),
+        });
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| ScaffoldError::IoError {
             context: format!("create template dir {}", parent.display()),
