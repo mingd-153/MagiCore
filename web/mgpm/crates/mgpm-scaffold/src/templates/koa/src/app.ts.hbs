@@ -1,0 +1,24 @@
+import Koa from 'koa';
+import cors from '@koa/cors';
+import { bodyParser } from 'koa-body';
+import { itemsRouter } from './routes/items';
+import { errorHandler } from './middleware/error';
+
+export function createApp() {
+  const app = new Koa();
+
+  app.use(cors());
+  app.use(bodyParser());
+  app.use(errorHandler);
+
+  app.use(itemsRouter.routes());
+  app.use(itemsRouter.allowedMethods());
+
+  app.use(async (ctx) => {
+    if (ctx.path === '/health' && ctx.method === 'GET') {
+      ctx.body = { status: 'ok' };
+    }
+  });
+
+  return app;
+}
