@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::engine::{FileGenerator, OverwritePolicy, ProjectCreated, ScaffoldContext, ScaffoldEngine};
+use crate::engine::{
+    FileGenerator, OverwritePolicy, ProjectCreated, ScaffoldContext, ScaffoldEngine,
+};
 use crate::error::ScaffoldError;
 use crate::renderer::TemplateRenderer;
 use crate::validate::NameValidator;
@@ -40,7 +42,10 @@ impl ScaffoldEngine for StaticScaffolder {
             ctx.project_path.clone()
         } else {
             std::env::current_dir()
-                .map_err(ScaffoldError::Io)?
+                .map_err(|e| ScaffoldError::IoError {
+                    context: "current_dir".to_string(),
+                    source: e,
+                })?
                 .join(&ctx.project_path)
         };
 
@@ -50,12 +55,9 @@ impl ScaffoldEngine for StaticScaffolder {
             OverwritePolicy::Error
         };
 
-        let result = self.generator.generate(
-            &self.template_dir,
-            &dest_path,
-            &ctx.vars,
-            &policy,
-        )?;
+        let result = self
+            .generator
+            .generate(&self.template_dir, &dest_path, &ctx.vars, &policy)?;
 
         Ok(ProjectCreated {
             features: ctx.features.clone(),
@@ -78,10 +80,7 @@ mod test {
     fn test_invalid_name() {
         let dir = tempfile::tempdir().unwrap();
         let scaffolder = StaticScaffolder::new(dir.path().to_path_buf());
-        let result = scaffolder.create_project(
-            &ctx("", dir.path().join("out")),
-            false,
-        );
+        let result = scaffolder.create_project(&ctx("", dir.path().join("out")), false);
         assert!(matches!(result, Err(ScaffoldError::InvalidName(_, _))));
     }
 
@@ -89,10 +88,7 @@ mod test {
     fn test_template_not_found() {
         let scaffolder = StaticScaffolder::new(PathBuf::from("/nonexistent"));
         let dir = tempfile::tempdir().unwrap();
-        let result = scaffolder.create_project(
-            &ctx("valid-name", dir.path().join("out")),
-            false,
-        );
+        let result = scaffolder.create_project(&ctx("valid-name", dir.path().join("out")), false);
         assert!(matches!(result, Err(ScaffoldError::TemplateNotFound(_))));
     }
 }

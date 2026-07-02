@@ -19,14 +19,25 @@ impl TemplateRenderer {
         Self { registry }
     }
 
-    pub fn render(&self, template: &str, vars: &HashMap<String, String>) -> Result<String, ScaffoldError> {
+    pub fn render(
+        &self,
+        template: &str,
+        vars: &HashMap<String, String>,
+    ) -> Result<String, ScaffoldError> {
         self.registry
             .render_template(template, vars)
             .map_err(|e| ScaffoldError::Template(e.to_string()))
     }
 
-    pub fn render_file(&self, path: &Path, vars: &HashMap<String, String>) -> Result<String, ScaffoldError> {
-        let content = std::fs::read_to_string(path).map_err(ScaffoldError::Io)?;
+    pub fn render_file(
+        &self,
+        path: &Path,
+        vars: &HashMap<String, String>,
+    ) -> Result<String, ScaffoldError> {
+        let content = std::fs::read_to_string(path).map_err(|e| ScaffoldError::IoError {
+            context: format!("read template {}", path.display()),
+            source: e,
+        })?;
         self.render(&content, vars)
     }
 }
@@ -57,7 +68,9 @@ mod test {
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "my-app".to_string());
 
-        let result = renderer.render("Hello {{pascalCase name}}!", &vars).unwrap();
+        let result = renderer
+            .render("Hello {{pascalCase name}}!", &vars)
+            .unwrap();
         assert_eq!(result, "Hello MyApp!");
     }
 
@@ -79,7 +92,10 @@ mod test {
         vars.insert("version".to_string(), "1.0.0".to_string());
 
         let result = renderer
-            .render("{\"name\": \"{{name}}\", \"version\": \"{{version}}\"}", &vars)
+            .render(
+                "{\"name\": \"{{name}}\", \"version\": \"{{version}}\"}",
+                &vars,
+            )
             .unwrap();
         assert_eq!(result, "{\"name\": \"test\", \"version\": \"1.0.0\"}");
     }
