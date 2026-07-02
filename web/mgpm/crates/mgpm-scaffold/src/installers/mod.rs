@@ -341,6 +341,12 @@ mod test {
 
 fn write_file(project_dir: &Path, relative: &str, content: &str) -> Result<PathBuf, ScaffoldError> {
     let path = project_dir.join(relative);
+    if !path.starts_with(project_dir) {
+        return Err(ScaffoldError::IoError {
+            context: format!("path escape: {} resolves outside project dir", relative),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "path traversal"),
+        });
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| ScaffoldError::IoError {
             context: format!("Failed to create directory for {}", relative),

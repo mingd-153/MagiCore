@@ -38,15 +38,19 @@ impl ScaffoldEngine for StaticScaffolder {
         NameValidator::validate(&ctx.project_name)
             .map_err(|e| ScaffoldError::InvalidName(ctx.project_name.clone(), e.to_string()))?;
 
+        let base = std::env::current_dir().map_err(|e| ScaffoldError::IoError {
+            context: "current_dir".to_string(),
+            source: e,
+        })?;
+
         let dest_path = if ctx.project_path.is_absolute() {
-            ctx.project_path.clone()
+            std::fs::canonicalize(&ctx.project_path).unwrap_or(ctx.project_path.clone())
         } else {
-            std::env::current_dir()
-                .map_err(|e| ScaffoldError::IoError {
-                    context: "current_dir".to_string(),
-                    source: e,
-                })?
-                .join(&ctx.project_path)
+            let cwd = base.canonicalize().map_err(|e| ScaffoldError::IoError {
+                context: "canonicalize current dir".to_string(),
+                source: e,
+            })?;
+            cwd.join(&ctx.project_path)
         };
 
         let policy = if force {
