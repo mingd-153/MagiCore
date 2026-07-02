@@ -12,15 +12,14 @@ impl NameValidator {
             return Err(NameValidationError::TooLong);
         }
 
-        let first = name.chars().next().unwrap();
+        let first = name.chars().next().ok_or(NameValidationError::Empty)?;
         if first == '.' || first == '_' {
             return Err(NameValidationError::InvalidStart);
         }
 
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.' | '_' | '~'))
-        {
+        if !name.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.' | '_' | '~')
+        }) {
             return Err(NameValidationError::InvalidCharacters);
         }
 

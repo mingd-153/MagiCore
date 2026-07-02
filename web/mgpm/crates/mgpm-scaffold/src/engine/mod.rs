@@ -1,11 +1,11 @@
-pub mod r#static;
 pub mod generator;
+pub mod r#static;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub use r#static::StaticScaffolder;
 pub use generator::FileGenerator;
+pub use r#static::StaticScaffolder;
 
 #[derive(Debug)]
 pub struct ProjectCreated {
@@ -19,6 +19,7 @@ pub struct ProjectCreated {
 pub struct ScaffoldContext {
     pub project_name: String,
     pub project_path: PathBuf,
+    pub framework: Option<String>,
     pub vars: HashMap<String, String>,
     pub features: Vec<String>,
 }
@@ -28,9 +29,15 @@ impl ScaffoldContext {
         Self {
             project_name: name.to_string(),
             project_path: path,
+            framework: None,
             vars: HashMap::new(),
             features: Vec::new(),
         }
+    }
+
+    pub fn with_framework(mut self, framework: &str) -> Self {
+        self.framework = Some(framework.to_string());
+        self
     }
 
     pub fn with_vars(mut self, vars: HashMap<String, String>) -> Self {
@@ -57,11 +64,6 @@ pub trait ScaffoldEngine: Send + Sync {
     ) -> Result<ProjectCreated, crate::error::ScaffoldError>;
 }
 
-pub trait ModularInstaller: Send + Sync {
-    fn name(&self) -> &str;
-    fn install(&self, ctx: &ScaffoldContext) -> Result<(), crate::error::ScaffoldError>;
-}
-
 pub enum OverwritePolicy {
     Error,
     Force,
@@ -85,8 +87,7 @@ mod test {
     fn test_context_with_vars() {
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "value".to_string());
-        let ctx = ScaffoldContext::new("test", PathBuf::from("/tmp/t"))
-            .with_vars(vars);
+        let ctx = ScaffoldContext::new("test", PathBuf::from("/tmp/t")).with_vars(vars);
 
         assert_eq!(ctx.get_var("name"), Some("value"));
     }
@@ -94,8 +95,7 @@ mod test {
     #[test]
     fn test_context_with_features() {
         let features = vec!["typescript".to_string(), "tailwind".to_string()];
-        let ctx = ScaffoldContext::new("test", PathBuf::from("/tmp/t"))
-            .with_features(features);
+        let ctx = ScaffoldContext::new("test", PathBuf::from("/tmp/t")).with_features(features);
 
         assert_eq!(ctx.features.len(), 2);
     }
@@ -104,5 +104,11 @@ mod test {
     fn test_context_get_var_missing() {
         let ctx = ScaffoldContext::new("test", PathBuf::from("/tmp/t"));
         assert_eq!(ctx.get_var("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_context_with_framework() {
+        let ctx = ScaffoldContext::new("app", PathBuf::from("/tmp/a")).with_framework("react");
+        assert_eq!(ctx.framework.as_deref(), Some("react"));
     }
 }
