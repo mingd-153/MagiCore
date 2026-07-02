@@ -60,7 +60,7 @@ impl FileGenerator {
 
             let relative = path
                 .strip_prefix(template_dir)
-                .unwrap_or_else(|_| Path::new(""));
+                .map_err(|_| ScaffoldError::Internal("path outside template dir".to_string()))?;
             let dest_path = dest.join(relative);
 
             if entry.file_type().is_dir() {
@@ -69,15 +69,6 @@ impl FileGenerator {
             }
 
             if entry.file_type().is_symlink() {
-                let target = std::fs::read_link(path).map_err(|e| ScaffoldError::IoError {
-                    context: "read_link".to_string(),
-                    source: e,
-                })?;
-                std::fs::copy(&target, &dest_path).map_err(|e| ScaffoldError::IoError {
-                    context: "copy for symlink".to_string(),
-                    source: e,
-                })?;
-                files_created.push(dest_path);
                 continue;
             }
 

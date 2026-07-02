@@ -10,8 +10,6 @@ description = "Scaffold engine — create projects from templates with Handlebar
 [dependencies]
 mgpm-core = { path = "../mgpm-core" }
 thiserror.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 walkdir.workspace = true
 handlebars.workspace = true
 heck.workspace = true
