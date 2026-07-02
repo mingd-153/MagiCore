@@ -15,6 +15,16 @@ pub mod fastapi;
 pub mod go_gin;
 pub mod trpc;
 pub mod spring_boot;
+pub mod laravel;
+pub mod koa;
+pub mod django;
+pub mod flask;
+pub mod rails;
+pub mod phoenix;
+pub mod axum;
+pub mod actix;
+pub mod echo;
+pub mod fiber;
 
 use crate::engine::ScaffoldEngine;
 use crate::error::ScaffoldError;
@@ -59,6 +69,16 @@ impl TemplateRegistry {
         self.register(hono::template());
         self.register(trpc::template());
         self.register(spring_boot::template());
+        self.register(django::template());
+        self.register(flask::template());
+        self.register(rails::template());
+        self.register(phoenix::template());
+        self.register(laravel::template());
+        self.register(koa::template());
+        self.register(axum::template());
+        self.register(actix::template());
+        self.register(echo::template());
+        self.register(fiber::template());
     }
 
     pub fn get(&self, name: &str) -> Option<&Template> {
