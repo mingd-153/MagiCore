@@ -94,7 +94,7 @@ const FILES: &[(&str, &str)] = &[
     (".gitignore.hbs", include_str!("vue/.gitignore.hbs")),
     (".env.example.hbs", include_str!("vue/.env.example.hbs")),
     ("README.md.hbs", include_str!("vue/README.md.hbs")),
-    ("public/.gitkeep", include_str!("vue/public/.gitkeep")),
+    ("public/favicon.svg.hbs", include_str!("vue/public/favicon.svg.hbs")),
 ];
 
 use crate::engine::{ProjectCreated, ScaffoldContext, StaticScaffolder};

@@ -1,22 +1,21 @@
+import { computed } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 
 export function useAuth() {
   const authStore = useAuthStore();
 
-  const login = async (email: string, password: string) => {
-    await authStore.login(email, password);
+  const signIn = async (email: string, password: string) => {
+    await authStore.signIn(email, password);
   };
 
-  const logout = () => {
-    authStore.logout();
+  const signOut = () => {
+    authStore.signOut();
   };
 
   return {
     user: computed(() => authStore.user),
     isAuthenticated: computed(() => authStore.isAuthenticated),
-    login,
-    logout,
+    signIn,
+    signOut,
   };
 }
-
-import { computed } from 'vue';
