@@ -93,7 +93,15 @@ impl FileGenerator {
                         std::fs::remove_file(&output_path)?;
                     }
                     OverwritePolicy::Backup => {
-                        let backup = output_path.with_extension("bak");
+                        let mut idx = 1u32;
+                        let backup = loop {
+                            let name = format!(".bak{idx}");
+                            let candidate = output_path.with_extension(&name);
+                            if !candidate.exists() {
+                                break candidate;
+                            }
+                            idx += 1;
+                        };
                         std::fs::rename(&output_path, &backup)?;
                     }
                 }
