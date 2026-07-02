@@ -1,0 +1,22 @@
+import { useAuthStore } from '@/stores/auth';
+
+export function useAuth() {
+  const authStore = useAuthStore();
+
+  const login = async (email: string, password: string) => {
+    await authStore.login(email, password);
+  };
+
+  const logout = () => {
+    authStore.logout();
+  };
+
+  return {
+    user: computed(() => authStore.user),
+    isAuthenticated: computed(() => authStore.isAuthenticated),
+    login,
+    logout,
+  };
+}
+
+import { computed } from 'vue';
