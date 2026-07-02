@@ -1,25 +1,20 @@
+import { ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { User } from '@/types';
 
-interface AuthState {
-  user: User | null;
-  isAuthenticated: boolean;
-}
+export const useAuthStore = defineStore('auth', () => {
+  const user = ref<User | null>(null);
+  const isAuthenticated = ref(false);
 
-export const useAuthStore = defineStore('auth', {
-  state: (): AuthState => ({
-    user: null,
-    isAuthenticated: false,
-  }),
-  actions: {
-    // TODO: Replace with real authentication (call API, handle tokens, etc.)
-    async login(email: string, _password: string) {
-      this.user = { id: '1', email };
-      this.isAuthenticated = true;
-    },
-    logout() {
-      this.user = null;
-      this.isAuthenticated = false;
-    },
-  },
+  async function signIn(email: string, _password: string) {
+    user.value = { id: '1', email };
+    isAuthenticated.value = true;
+  }
+
+  function signOut() {
+    user.value = null;
+    isAuthenticated.value = false;
+  }
+
+  return { user, isAuthenticated, signIn, signOut };
 });

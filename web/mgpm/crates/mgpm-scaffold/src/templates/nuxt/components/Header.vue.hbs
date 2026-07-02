@@ -1,0 +1,18 @@
+<template>
+  <header>
+    <nav>
+      <NuxtLink to="/">Home</NuxtLink>
+      <NuxtLink to="/about">About</NuxtLink>
+    </nav>
+  </header>
+</template>
+
+<style scoped>
+header {
+  padding: 1rem 2rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+nav { display: flex; gap: 1rem; }
+a { color: #3b82f6; text-decoration: none; font-weight: 500; }
+a:hover { text-decoration: underline; }
+</style>
