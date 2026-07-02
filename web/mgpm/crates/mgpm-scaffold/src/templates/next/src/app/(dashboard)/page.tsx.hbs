@@ -1,0 +1,19 @@
+export default function Dashboard() {
+  return (
+    <div>
+      <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[
+          { label: 'Users', value: '—' },
+          { label: 'Revenue', value: '—' },
+          { label: 'Active Sessions', value: '—' },
+        ].map(({ label, value }) => (
+          <div key={label} className="p-6 bg-white rounded-xl border">
+            <p className="text-sm text-gray-500 mb-1">{label}</p>
+            <p className="text-3xl font-bold">{value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
