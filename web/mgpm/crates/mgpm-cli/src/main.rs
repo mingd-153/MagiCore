@@ -168,6 +168,13 @@ enum CliCommand {
         #[command(subcommand)]
         command: AuditCommand,
     },
+    /// Scaffold a new project from a template (e.g. mg create web my-app)
+    Create {
+        /// Template name or shorthand: web, react, next, vue, express, etc.
+        template: String,
+        /// Project directory name (defaults to template name if omitted)
+        project_name: Option<String>,
+    },
     /// Verify lockfile integrity
     Verify {
         /// Deep verification: walk node_modules and cross-reference with lockfile
@@ -1340,6 +1347,54 @@ async fn main() -> Result<(), String> {
             } => cmd_audit(&config, json, severity, remote).await,
             AuditCommand::Update { force } => tuf::update_advisories(force).await,
         },
+        CliCommand::Create {
+            ref template,
+            project_name,
+        } => {
+            use mgpm_scaffold::templates::TemplateRegistry;
+            use mgpm_scaffold::ScaffoldContext;
+            use std::collections::HashMap;
+
+            let mut registry = TemplateRegistry::new();
+            registry.register_defaults();
+
+            let tpl = registry
+                .find_by_command(template)
+                .ok_or_else(|| format!("Unknown template: '{}'. Available: web", template))?;
+
+            let name = project_name
+                .clone()
+                .unwrap_or_else(|| template.clone());
+            let dest = std::env::current_dir()
+                .map_err(|e| format!("Cannot get current directory: {e}"))?
+                .join(&name);
+
+            let engine = (tpl.create_engine)();
+
+            let mut vars = HashMap::new();
+            vars.insert("name".to_string(), name.clone());
+            vars.insert("version".to_string(), "1.0.0".to_string());
+
+            let ctx = ScaffoldContext::new(&name, dest.clone())
+                .with_vars(vars)
+                .with_features(vec!["typescript".to_string()]);
+
+            let result = engine
+                .create_project(&ctx, false)
+                .map_err(|e| format!("Failed to create project: {e}"))?;
+
+            println!(
+                "{} Created project '{}' at {}",
+                "[OK]".green(),
+                name.green(),
+                dest.display().to_string().green()
+            );
+            println!("   {} files", result.files_created.len());
+            for f in &result.files_created {
+                println!("   {}", f.display());
+            }
+            Ok(())
+        }
         CliCommand::Verify { deep } => {
             if deep {
                 cmd_verify_deep(&config)
