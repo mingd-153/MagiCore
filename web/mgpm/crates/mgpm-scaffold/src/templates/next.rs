@@ -46,10 +46,6 @@ const FILES: &[(&str, &str)] = &[
         include_str!("next/src/app/globals.css.hbs"),
     ),
     (
-        "src/app/(marketing)/page.tsx.hbs",
-        include_str!("next/src/app/(marketing)/page.tsx.hbs"),
-    ),
-    (
         "src/app/(marketing)/about/page.tsx.hbs",
         include_str!("next/src/app/(marketing)/about/page.tsx.hbs"),
     ),
@@ -113,7 +109,7 @@ const FILES: &[(&str, &str)] = &[
     ),
     (".gitignore.hbs", include_str!("next/.gitignore.hbs")),
     ("README.md.hbs", include_str!("next/README.md.hbs")),
-    ("public/.gitkeep", include_str!("next/public/.gitkeep")),
+    ("public/favicon.svg.hbs", include_str!("next/public/favicon.svg.hbs")),
 ];
 
 use crate::engine::{ProjectCreated, ScaffoldContext, StaticScaffolder};

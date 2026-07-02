@@ -2,6 +2,11 @@ pub mod vanilla;
 pub mod react;
 pub mod next;
 pub mod vue;
+pub mod astro;
+pub mod sveltekit;
+pub mod nuxt;
+pub mod tanstack;
+pub mod react_router;
 
 use crate::engine::ScaffoldEngine;
 use crate::error::ScaffoldError;
@@ -33,6 +38,11 @@ impl TemplateRegistry {
         self.register(react::template());
         self.register(next::template());
         self.register(vue::template());
+        self.register(astro::template());
+        self.register(sveltekit::template());
+        self.register(nuxt::template());
+        self.register(tanstack::template());
+        self.register(react_router::template());
     }
 
     pub fn get(&self, name: &str) -> Option<&Template> {
