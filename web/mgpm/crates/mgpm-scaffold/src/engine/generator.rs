@@ -56,11 +56,22 @@ impl FileGenerator {
                 continue;
             }
 
-            let relative = path.strip_prefix(template_dir).unwrap();
+            let relative = path
+                .strip_prefix(template_dir)
+                .unwrap_or_else(|_| Path::new(""));
             let dest_path = dest.join(relative);
 
             if entry.file_type().is_dir() {
                 self.create_dir(&dest_path, policy)?;
+                continue;
+            }
+
+            if entry.file_type().is_symlink() {
+                let target = std::fs::read_link(path)
+                    .map_err(ScaffoldError::Io)?;
+                std::fs::copy(&target, &dest_path)
+                    .map_err(ScaffoldError::Io)?;
+                files_created.push(dest_path);
                 continue;
             }
 
