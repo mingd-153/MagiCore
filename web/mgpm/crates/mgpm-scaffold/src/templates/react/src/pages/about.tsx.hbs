@@ -1,0 +1,14 @@
+import { Link } from 'react-router';
+
+export default function About() {
+  return (
+    <div className="about">
+      <h1>About {{name}}</h1>
+      <p>
+        This project was scaffolded with <strong>MGPM</strong> using the React
+        template.
+      </p>
+      <Link to="/">Back to home</Link>
+    </div>
+  );
+}
