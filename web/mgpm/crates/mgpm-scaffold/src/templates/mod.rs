@@ -1,4 +1,5 @@
 pub mod vanilla;
+pub mod react;
 
 use crate::engine::ScaffoldEngine;
 use crate::error::ScaffoldError;
@@ -27,6 +28,7 @@ impl TemplateRegistry {
 
     pub fn register_defaults(&mut self) {
         self.register(vanilla::template());
+        self.register(react::template());
     }
 
     pub fn get(&self, name: &str) -> Option<&Template> {

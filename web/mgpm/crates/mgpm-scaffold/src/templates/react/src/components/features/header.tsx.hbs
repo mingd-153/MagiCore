@@ -1,0 +1,30 @@
+import { NavLink } from 'react-router';
+
+const links = [
+  { to: '/', label: 'Home' },
+  { to: '/about', label: 'About' },
+];
+
+export default function Header() {
+  return (
+    <header className="header">
+      <nav className="header__nav">
+        <span className="header__brand">{{name}}</span>
+        <ul className="header__links">
+          {links.map((link) => (
+            <li key={link.to}>
+              <NavLink
+                to={link.to}
+                className={({ isActive }) =>
+                  isActive ? 'header__link header__link--active' : 'header__link'
+                }
+              >
+                {link.label}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </header>
+  );
+}
