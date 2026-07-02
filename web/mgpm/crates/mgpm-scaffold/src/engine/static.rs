@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::engine::{FileGenerator, OverwritePolicy, ProjectCreated, ScaffoldEngine};
+use crate::engine::{FileGenerator, OverwritePolicy, ProjectCreated, ScaffoldContext, ScaffoldEngine};
 use crate::error::ScaffoldError;
 use crate::renderer::TemplateRenderer;
 use crate::validate::NameValidator;
@@ -31,20 +30,18 @@ impl ScaffoldEngine for StaticScaffolder {
 
     fn create_project(
         &self,
-        name: &str,
-        dest: &Path,
-        vars: &HashMap<String, String>,
+        ctx: &ScaffoldContext,
         force: bool,
     ) -> Result<ProjectCreated, ScaffoldError> {
-        NameValidator::validate(name)
-            .map_err(|e| ScaffoldError::InvalidName(name.to_string(), e.to_string()))?;
+        NameValidator::validate(&ctx.project_name)
+            .map_err(|e| ScaffoldError::InvalidName(ctx.project_name.clone(), e.to_string()))?;
 
-        let dest_path = if dest.is_absolute() {
-            dest.to_path_buf()
+        let dest_path = if ctx.project_path.is_absolute() {
+            ctx.project_path.clone()
         } else {
             std::env::current_dir()
                 .map_err(ScaffoldError::Io)?
-                .join(dest)
+                .join(&ctx.project_path)
         };
 
         let policy = if force {
@@ -53,12 +50,17 @@ impl ScaffoldEngine for StaticScaffolder {
             OverwritePolicy::Error
         };
 
-        let result = self.generator.generate(&self.template_dir, &dest_path, vars, &policy)?;
+        let result = self.generator.generate(
+            &self.template_dir,
+            &dest_path,
+            &ctx.vars,
+            &policy,
+        )?;
 
         Ok(ProjectCreated {
-            features: result.features,
+            features: ctx.features.clone(),
             files_created: result.files_created,
-            name: name.to_string(),
+            name: ctx.project_name.clone(),
             path: dest_path,
         })
     }
@@ -68,14 +70,16 @@ impl ScaffoldEngine for StaticScaffolder {
 mod test {
     use super::*;
 
+    fn ctx(name: &str, dest: PathBuf) -> ScaffoldContext {
+        ScaffoldContext::new(name, dest)
+    }
+
     #[test]
     fn test_invalid_name() {
         let dir = tempfile::tempdir().unwrap();
         let scaffolder = StaticScaffolder::new(dir.path().to_path_buf());
         let result = scaffolder.create_project(
-            "",
-            &dir.path().join("out"),
-            &HashMap::new(),
+            &ctx("", dir.path().join("out")),
             false,
         );
         assert!(matches!(result, Err(ScaffoldError::InvalidName(_, _))));
@@ -86,9 +90,7 @@ mod test {
         let scaffolder = StaticScaffolder::new(PathBuf::from("/nonexistent"));
         let dir = tempfile::tempdir().unwrap();
         let result = scaffolder.create_project(
-            "valid-name",
-            &dir.path().join("out"),
-            &HashMap::new(),
+            &ctx("valid-name", dir.path().join("out")),
             false,
         );
         assert!(matches!(result, Err(ScaffoldError::TemplateNotFound(_))));

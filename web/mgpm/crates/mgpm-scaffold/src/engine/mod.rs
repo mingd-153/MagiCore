@@ -2,7 +2,7 @@ pub mod r#static;
 pub mod generator;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub use r#static::StaticScaffolder;
 pub use generator::FileGenerator;
@@ -52,11 +52,14 @@ pub trait ScaffoldEngine: Send + Sync {
     fn name(&self) -> &str;
     fn create_project(
         &self,
-        name: &str,
-        dest: &Path,
-        vars: &HashMap<String, String>,
+        ctx: &ScaffoldContext,
         force: bool,
     ) -> Result<ProjectCreated, crate::error::ScaffoldError>;
+}
+
+pub trait ModularInstaller: Send + Sync {
+    fn name(&self) -> &str;
+    fn install(&self, ctx: &ScaffoldContext) -> Result<(), crate::error::ScaffoldError>;
 }
 
 pub enum OverwritePolicy {
