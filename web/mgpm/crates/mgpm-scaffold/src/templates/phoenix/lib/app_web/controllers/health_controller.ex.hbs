@@ -1,0 +1,7 @@
+defmodule {{pascalCase name}}.Web.HealthController do
+  use {{pascalCase name}}.Web, :controller
+
+  def show(conn, _params) do
+    json(conn, %{status: "ok"})
+  end
+end
