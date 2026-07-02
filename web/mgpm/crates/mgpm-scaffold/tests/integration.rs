@@ -115,3 +115,5 @@ fn test_features_wired_through() {
     let result = scaffolder.create_project(&ctx, false).unwrap();
     assert_eq!(result.features, vec!["typescript", "tailwind"]);
 }
+
+

@@ -55,9 +55,14 @@ impl ScaffoldEngine for StaticScaffolder {
             OverwritePolicy::Error
         };
 
+        let mut vars = ctx.vars.clone();
+        for feature in &ctx.features {
+            vars.insert(feature.clone(), "true".to_string());
+        }
+
         let result = self
             .generator
-            .generate(&self.template_dir, &dest_path, &ctx.vars, &policy)?;
+            .generate(&self.template_dir, &dest_path, &vars, &policy)?;
 
         Ok(ProjectCreated {
             features: ctx.features.clone(),
