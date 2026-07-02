@@ -2,6 +2,11 @@ use crate::error::NameValidationError;
 
 pub struct NameValidator;
 
+const RESERVED: &[&str] = &[
+    "node_modules", "favicon.ico", ".git", ".mgpm",
+    "con", "nul", "prn", "aux", "com1", "com2", "lpt1", "lpt2",
+];
+
 impl NameValidator {
     pub fn validate(name: &str) -> Result<(), NameValidationError> {
         if name.is_empty() {
@@ -12,7 +17,12 @@ impl NameValidator {
             return Err(NameValidationError::TooLong);
         }
 
-        let first = name.chars().next().ok_or(NameValidationError::Empty)?;
+        let lower = name.to_ascii_lowercase();
+        if RESERVED.contains(&lower.as_str()) {
+            return Err(NameValidationError::InvalidCharacters);
+        }
+
+        let first = name.chars().next().unwrap();
         if first == '.' || first == '_' {
             return Err(NameValidationError::InvalidStart);
         }
