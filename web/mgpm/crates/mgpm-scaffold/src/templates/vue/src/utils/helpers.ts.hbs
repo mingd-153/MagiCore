@@ -1,0 +1,16 @@
+export function cn(...classes: (string | false | null | undefined)[]): string {
+  return classes.filter(Boolean).join(' ');
+}
+
+export function formatDate(date: Date, locale = 'en-US'): string {
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(date);
+}
+
+export function truncate(str: string, maxLength: number): string {
+  if (str.length <= maxLength) return str;
+  return `${str.slice(0, maxLength)}...`;
+}
