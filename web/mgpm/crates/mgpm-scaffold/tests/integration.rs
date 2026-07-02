@@ -5,8 +5,16 @@ use mgpm_scaffold::*;
 
 fn create_template(dir: &Path) {
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("package.json.hbs"), r#"{"name": "{{name}}", "version": "{{version}}"}"#).unwrap();
-    std::fs::write(dir.join("src/index.js.hbs"), r#"console.log("Hello {{pascalCase name}}");"#).unwrap();
+    std::fs::write(
+        dir.join("package.json.hbs"),
+        r#"{"name": "{{name}}", "version": "{{version}}"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/index.js.hbs"),
+        r#"console.log("Hello {{pascalCase name}}");"#,
+    )
+    .unwrap();
     std::fs::write(dir.join("README.md"), "# {{name}}").unwrap();
     std::fs::write(dir.join(".gitignore"), "node_modules/").unwrap();
 }

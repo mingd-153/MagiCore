@@ -3,9 +3,9 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
+use crate::engine::{OverwritePolicy, ProjectCreated};
 use crate::error::ScaffoldError;
 use crate::renderer::TemplateRenderer;
-use crate::engine::{OverwritePolicy, ProjectCreated};
 
 pub struct FileGenerator {
     renderer: TemplateRenderer,
@@ -45,10 +45,12 @@ impl FileGenerator {
         {
             let entry = entry.map_err(|e| {
                 let msg = e.to_string();
-                ScaffoldError::Io(
-                    e.into_io_error()
+                ScaffoldError::IoError {
+                    context: "WalkDir entry".to_string(),
+                    source: e
+                        .into_io_error()
                         .unwrap_or_else(|| std::io::Error::other(msg)),
-                )
+                }
             })?;
             let path = entry.path();
 
@@ -67,10 +69,14 @@ impl FileGenerator {
             }
 
             if entry.file_type().is_symlink() {
-                let target = std::fs::read_link(path)
-                    .map_err(ScaffoldError::Io)?;
-                std::fs::copy(&target, &dest_path)
-                    .map_err(ScaffoldError::Io)?;
+                let target = std::fs::read_link(path).map_err(|e| ScaffoldError::IoError {
+                    context: "read_link".to_string(),
+                    source: e,
+                })?;
+                std::fs::copy(&target, &dest_path).map_err(|e| ScaffoldError::IoError {
+                    context: "copy for symlink".to_string(),
+                    source: e,
+                })?;
                 files_created.push(dest_path);
                 continue;
             }
@@ -163,11 +169,7 @@ mod test {
         let template_dir = dir.path().join("template");
         std::fs::create_dir(&template_dir).unwrap();
         std::fs::write(template_dir.join("test.txt"), "hello").unwrap();
-        std::fs::write(
-            template_dir.join("index.html.hbs"),
-            "<h1>{{name}}</h1>",
-        )
-        .unwrap();
+        std::fs::write(template_dir.join("index.html.hbs"), "<h1>{{name}}</h1>").unwrap();
 
         let dest = dir.path().join("output");
         let gen = FileGenerator::new(TemplateRenderer::new());
@@ -199,7 +201,12 @@ mod test {
         std::fs::write(dest.join("file.txt"), "existing").unwrap();
 
         let gen = FileGenerator::new(TemplateRenderer::new());
-        let result = gen.generate(&template_dir, &dest, &HashMap::new(), &OverwritePolicy::Error);
+        let result = gen.generate(
+            &template_dir,
+            &dest,
+            &HashMap::new(),
+            &OverwritePolicy::Error,
+        );
         assert!(matches!(result, Err(ScaffoldError::PathExists(_))));
     }
 
@@ -215,7 +222,12 @@ mod test {
         std::fs::write(dest.join("file.txt"), "old content").unwrap();
 
         let gen = FileGenerator::new(TemplateRenderer::new());
-        let result = gen.generate(&template_dir, &dest, &HashMap::new(), &OverwritePolicy::Force);
+        let result = gen.generate(
+            &template_dir,
+            &dest,
+            &HashMap::new(),
+            &OverwritePolicy::Force,
+        );
         assert!(result.is_ok());
 
         let content = std::fs::read_to_string(dest.join("file.txt")).unwrap();
