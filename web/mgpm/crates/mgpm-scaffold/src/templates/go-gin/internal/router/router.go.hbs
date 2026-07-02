@@ -1,0 +1,23 @@
+package router
+
+import (
+	"github.com/gin-gonic/gin"
+	"{{name}}/internal/handler"
+)
+
+func Setup() *gin.Engine {
+	r := gin.Default()
+
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	api := r.Group("/api/items")
+	{
+		api.GET("/", handler.ListItems)
+		api.GET("/:id", handler.GetItem)
+		api.POST("/", handler.CreateItem)
+	}
+
+	return r
+}

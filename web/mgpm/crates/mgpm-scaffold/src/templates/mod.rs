@@ -7,6 +7,14 @@ pub mod sveltekit;
 pub mod nuxt;
 pub mod tanstack;
 pub mod react_router;
+pub mod nestjs;
+pub mod hono;
+pub mod express;
+pub mod fastify;
+pub mod fastapi;
+pub mod go_gin;
+pub mod trpc;
+pub mod spring_boot;
 
 use crate::engine::ScaffoldEngine;
 use crate::error::ScaffoldError;
@@ -43,6 +51,14 @@ impl TemplateRegistry {
         self.register(nuxt::template());
         self.register(tanstack::template());
         self.register(react_router::template());
+        self.register(express::template());
+        self.register(fastify::template());
+        self.register(fastapi::template());
+        self.register(go_gin::template());
+        self.register(nestjs::template());
+        self.register(hono::template());
+        self.register(trpc::template());
+        self.register(spring_boot::template());
     }
 
     pub fn get(&self, name: &str) -> Option<&Template> {
