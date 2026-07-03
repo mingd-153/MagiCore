@@ -38,6 +38,7 @@ pub struct LockfilePackage {
     pub version: String,
     pub resolution: PackageResolution,
     pub integrity: Option<String>,
+    pub dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +227,7 @@ impl LockfilePackage {
                 registry,
             },
             integrity: resolution.integrity.clone(),
+            dependencies: Vec::new(),
         }
     }
 
@@ -248,6 +250,7 @@ impl LockfilePackage {
                 registry: Some("npm".to_string()),
             },
             integrity: Some(res.integrity.clone()),
+            dependencies: res.deps.clone(),
         }
     }
 }
@@ -278,6 +281,7 @@ mod tests {
                 registry: None,
             },
             integrity: None,
+            dependencies: vec![],
         });
 
         lock.add_package(LockfilePackage {
@@ -290,6 +294,7 @@ mod tests {
                 registry: None,
             },
             integrity: None,
+            dependencies: vec![],
         });
 
         lock.sort_packages();
@@ -328,6 +333,7 @@ mod tests {
                         registry: Some("npm".to_string()),
                     },
                     integrity: Some(format!("sha512-{}", hex::encode(name))),
+                    dependencies: vec![],
                 });
             }
             lock.sort_packages();

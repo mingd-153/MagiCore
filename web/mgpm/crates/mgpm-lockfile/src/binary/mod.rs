@@ -152,6 +152,7 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-...".to_string()),
+            dependencies: vec![],
         });
 
         write_binary(&lock, &path).unwrap();

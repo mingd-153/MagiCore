@@ -1,5 +1,5 @@
 use base64::Engine;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -69,7 +69,6 @@ impl RegistryClient {
     pub fn new() -> Self {
         let mut builder = reqwest::Client::builder()
             .pool_max_idle_per_host(64)
-            .http2_prior_knowledge()
             .gzip(true)
             .brotli(true)
             .user_agent(concat!("mgpm/", env!("CARGO_PKG_VERSION")));
@@ -292,7 +291,7 @@ impl RegistryClient {
 
         // Verify integrity if provided by registry
         if let Some(ref expected) = expected_integrity {
-            let actual = Self::compute_sha256_sri(&bytes);
+            let actual = Self::compute_sri(&bytes, expected);
             if &actual != expected {
                 return Err(RegistryError::NetworkError(format!(
                     "integrity mismatch: expected {}, got {}",
@@ -304,11 +303,17 @@ impl RegistryClient {
         Ok(bytes)
     }
 
-    /// Compute SHA-256 SRI format hash (sha256-<base64>)
-    fn compute_sha256_sri(bytes: &[u8]) -> String {
-        let hash = Sha256::digest(bytes);
-        let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(hash);
-        format!("sha256-{}", b64)
+    /// Compute SRI hash matching the algorithm prefix from expected integrity
+    fn compute_sri(bytes: &[u8], expected: &str) -> String {
+        if expected.starts_with("sha512-") {
+            let hash = Sha512::digest(bytes);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(hash);
+            format!("sha512-{}", b64)
+        } else {
+            let hash = Sha256::digest(bytes);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(hash);
+            format!("sha256-{}", b64)
+        }
     }
 }
 

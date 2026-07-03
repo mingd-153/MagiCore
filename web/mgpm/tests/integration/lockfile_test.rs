@@ -17,6 +17,7 @@ fn test_roundtrip_binary_text() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc".to_string()),
+        dependencies: vec![],
     });
     original.add_package(LockfilePackage {
         id: "lodash@4.17.21".to_string(),
@@ -28,6 +29,7 @@ fn test_roundtrip_binary_text() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-def".to_string()),
+        dependencies: vec![],
     });
     original.sort_packages();
     original.compute_content_hash();
@@ -70,6 +72,7 @@ fn test_lockfile_sort() {
             registry: None,
         },
         integrity: None,
+        dependencies: vec![],
     });
     lock.add_package(LockfilePackage {
         id: "aaa@1.0.0".to_string(),
@@ -81,6 +84,7 @@ fn test_lockfile_sort() {
             registry: None,
         },
         integrity: None,
+        dependencies: vec![],
     });
 
     lock.sort_packages();
@@ -101,6 +105,7 @@ fn test_lockfile_find_package() {
             registry: None,
         },
         integrity: None,
+        dependencies: vec![],
     });
 
     let found = lock.find_package("react", "18.2.0");
@@ -126,10 +131,9 @@ fn test_migrate_v1_to_v2_roundtrip() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc".to_string()),
+        dependencies: vec![],
     });
-    lock.sort_packages();
     lock.metadata.content_hash = lock.compute_content_hash_v1();
-
     lock.migrate_v1_to_v2().unwrap();
 
     assert_eq!(lock.version, mgpm_lockfile::LOCKFILE_VERSION);
@@ -151,6 +155,7 @@ fn test_migrate_v1_tampered_rejected() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc".to_string()),
+        dependencies: vec![],
     });
     lock.sort_packages();
     lock.metadata.content_hash = "tampered-hash".to_string();
@@ -180,6 +185,7 @@ fn test_text_auto_migrates_v1_to_v2() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-xyz".to_string()),
+        dependencies: vec![],
     });
     lock.sort_packages();
     lock.metadata.content_hash = lock.compute_content_hash_v1();
@@ -212,6 +218,7 @@ fn test_binary_accepts_v1_and_v2() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc".to_string()),
+        dependencies: vec![],
     });
     lock.sort_packages();
     lock.metadata.content_hash = lock.compute_content_hash_v1();

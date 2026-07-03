@@ -12,7 +12,7 @@ fn test_basic_resolution() {
     provider.add_package("react", "18.1.0", vec![]);
     provider.add_package("react", "17.0.0", vec![]);
 
-    let resolver = Resolver::new(Box::new(provider));
+    let resolver = Resolver::new(std::sync::Arc::new(provider));
     let wanted = vec![(PackageName::new("react").unwrap(), "^18.0.0".to_string())];
     let result = resolver.solve(&wanted).unwrap();
     assert_eq!(result.resolutions.len(), 1);
@@ -25,7 +25,7 @@ fn test_catalog_pinning() {
     provider.add_package("react", "19.0.0", vec![]);
     provider.add_package("react", "18.2.0", vec![]);
 
-    let mut resolver = Resolver::new(Box::new(provider));
+    let mut resolver = Resolver::new(std::sync::Arc::new(provider));
     let mut catalog = Catalog::default();
     catalog.set("react", "18.2.0");
     let mut catalogs = std::collections::HashMap::new();
@@ -42,7 +42,7 @@ fn test_workspace_resolution() {
     use std::path::PathBuf;
 
     let provider = MockDependencyProvider::new();
-    let resolver = Resolver::new(Box::new(provider));
+    let resolver = Resolver::new(std::sync::Arc::new(provider));
 
     let workspace = WorkspaceInfo::new(vec![WorkspaceMemberInfo {
         name: "my-pkg".to_string(),
@@ -73,7 +73,7 @@ fn test_override_injection() {
     provider.add_package("react", "18.2.0", vec![]);
     provider.add_package("react", "17.0.0", vec![]);
 
-    let mut resolver = Resolver::new(Box::new(provider));
+    let mut resolver = Resolver::new(std::sync::Arc::new(provider));
     let mut overrides = std::collections::HashMap::new();
     overrides.insert("react".to_string(), "17.0.0".to_string());
     resolver.set_overrides(overrides);
@@ -87,7 +87,7 @@ fn test_override_injection() {
 #[test]
 fn test_resolve_nonexistent_returns_empty() {
     let provider = MockDependencyProvider::new();
-    let resolver = Resolver::new(Box::new(provider));
+    let resolver = Resolver::new(std::sync::Arc::new(provider));
 
     let wanted = vec![(
         PackageName::new("nonexistent").unwrap(),
@@ -100,7 +100,7 @@ fn test_resolve_nonexistent_returns_empty() {
 #[test]
 fn test_catalog_not_found() {
     let provider = MockDependencyProvider::new();
-    let resolver = Resolver::new(Box::new(provider));
+    let resolver = Resolver::new(std::sync::Arc::new(provider));
     let result = resolver.resolve_catalog("react", "missing-catalog");
     assert!(result.is_err());
 }
