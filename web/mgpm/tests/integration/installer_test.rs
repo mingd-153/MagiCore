@@ -39,6 +39,7 @@ async fn test_dry_run_mode() {
             registry: Some("npm".to_string()),
         },
         integrity: None,
+        dependencies: vec![],
     });
 
     let result = installer.install_lockfile(&lockfile).await;
@@ -80,6 +81,7 @@ async fn test_offline_mode() {
             registry: Some("npm".to_string()),
         },
         integrity: None,
+        dependencies: vec![],
     });
 
     let result = installer.install_lockfile(&lockfile).await;

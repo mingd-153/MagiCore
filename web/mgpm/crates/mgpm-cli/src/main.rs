@@ -31,17 +31,35 @@ struct RegistryDependencyProvider {
 
 impl DependencyProvider for RegistryDependencyProvider {
     fn get_versions(&self, package: &mgpm_core::PackageName) -> Vec<mgpm_core::Version> {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(self.registry.get_package_versions(package))
-            .unwrap_or_default()
+        match tokio::runtime::Handle::current()
+            .block_on(self.registry.get_package_versions(package))
+        {
+            Ok(versions) => versions,
+            Err(e) => {
+                eprintln!(
+                    "  {} failed to fetch versions for {}: {}",
+                    "[WARN]".yellow().bold(),
+                    package,
+                    e
+                );
+                Vec::new()
+            }
+        }
     }
 
     fn get_dependencies(&self, package_id: &mgpm_core::PackageId) -> Vec<ResolvedDep> {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        tokio::runtime::Handle::current().block_on(async {
             let json = match self.registry.get_package(package_id.name()).await {
                 Ok(j) => j,
-                Err(_) => return Vec::new(),
+                Err(e) => {
+                    eprintln!(
+                        "  {} failed to fetch dependencies for {}: {}",
+                        "[WARN]".yellow().bold(),
+                        package_id.name(),
+                        e
+                    );
+                    return Vec::new();
+                }
             };
             let version_str = package_id.version().to_string();
             let versions = match json.get("versions").and_then(|v| v.as_object()) {
@@ -922,7 +940,7 @@ async fn cmd_install(
         let provider = RegistryDependencyProvider {
             registry: npm_registry,
         };
-        let resolver = Resolver::new(Box::new(provider));
+        let resolver = Resolver::new(std::sync::Arc::new(provider));
         let config = mgpm_lockfile::ResolutionConfig::default();
         let pipeline = mgpm_lockfile::ResolutionPipeline::new(resolver, config);
         let registry_client = RegistryClient::new();

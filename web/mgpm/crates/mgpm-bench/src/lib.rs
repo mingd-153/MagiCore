@@ -51,7 +51,7 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
     for &n in [10, 50].iter() {
         group.bench_with_input(BenchmarkId::new("packages", n), &n, |b, _n| {
             b.iter(|| {
-                let resolver = Resolver::new(Box::new(TestProvider));
+                let resolver = Resolver::new(std::sync::Arc::new(TestProvider));
                 let wanted = vec![(PackageName::new("pkg_0").unwrap(), "^1.0.0".to_string())];
                 let _ = resolver.solve(&wanted);
             });
@@ -77,6 +77,7 @@ pub fn bench_lockfile_roundtrip(c: &mut Criterion) {
                 registry: Some("npm".to_string()),
             },
             integrity: Some(format!("sha512-{}", i)),
+            dependencies: vec![],
         });
     }
     lock.sort_packages();

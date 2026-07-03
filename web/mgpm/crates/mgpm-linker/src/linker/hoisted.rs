@@ -74,14 +74,17 @@ impl HoistedLinker {
                     .join("sha256")
                     .join(&hash[..2])
                     .join(hash);
-
+ 
                 let dst = store_pkg_dir.join(rel_path);
                 if let Some(parent) = dst.parent() {
                     fs::create_dir_all(parent)?;
                 }
 
                 if self.options.symlinks {
-                    create_relative_symlink(&src, &dst)?;
+                    // Use hardlink for CAS store references to avoid
+                    // firmlink issues on macOS (/tmp -> /private/tmp) and
+                    // to prevent exposing the CAS store path to Node.js
+                    fs::hard_link(&src, &dst)?;
                 } else {
                     fs::copy(&src, &dst)?;
                 }
@@ -209,7 +212,15 @@ impl super::Linker for HoistedLinker {
         _store: &mgpm_store::store::cas::ContentStore,
         project_root: &Path,
     ) -> Result<LinkResult, LinkError> {
-        let temp_dir = project_root.join(format!(".mgpm_temp_{}", std::process::id()));
+        let mgpm_dir = project_root.join(&self.options.virtual_store_dir);
+        // Use a sibling temp dir at the same depth as mgpm_dir so that
+        // relative symlinks computed during linking remain valid after rename
+        let temp_dir = if let Some(parent) = mgpm_dir.parent() {
+            let name = mgpm_dir.file_name().unwrap_or_default();
+            parent.join(format!("{}.tmp_{}", name.to_string_lossy(), std::process::id()))
+        } else {
+            mgpm_dir.with_extension(format!("tmp_{}", std::process::id()))
+        };
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir).ok();
         }
@@ -219,7 +230,6 @@ impl super::Linker for HoistedLinker {
 
         match &result {
             Ok(_) => {
-                let mgpm_dir = project_root.join(&self.options.virtual_store_dir);
                 if mgpm_dir.exists() && !self.options.global_virtual_store {
                     fs::remove_dir_all(&mgpm_dir).ok();
                 }
@@ -229,6 +239,30 @@ impl super::Linker for HoistedLinker {
                     fs::remove_dir_all(&mgpm_dir).ok();
                 }
                 fs::rename(&temp_dir, &mgpm_dir)?;
+
+                // Create pnpm-style node_modules -> .mgpm symlink at project root
+                let root_node_modules = project_root.join("node_modules");
+                if !root_node_modules.exists() {
+                    fs::create_dir_all(&root_node_modules)?;
+                }
+                let mgpm_link = root_node_modules.join(".mgpm");
+                if !mgpm_link.exists() {
+                    create_relative_symlink(&mgpm_dir, &mgpm_link)?;
+                }
+
+                // Hoist packages into project-level node_modules
+                let hoisted_source = mgpm_dir.join("node_modules");
+                if hoisted_source.exists() {
+                    if let Ok(entries) = fs::read_dir(&hoisted_source) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name();
+                            let hoist_dst = root_node_modules.join(&name);
+                            if name != ".bin" && name != ".mgpm" && !hoist_dst.exists() {
+                                create_relative_symlink(&entry.path(), &hoist_dst)?;
+                            }
+                        }
+                    }
+                }
 
                 if let Some(ref callback) = self.options.refcount_callback {
                     for pkg in packages {
@@ -262,14 +296,14 @@ impl super::Linker for HoistedLinker {
                 .join("sha256")
                 .join(&hash[..2])
                 .join(hash);
-
+ 
             let dst = dest.join(rel_path);
             if let Some(parent) = dst.parent() {
                 fs::create_dir_all(parent)?;
             }
 
             if self.options.symlinks {
-                create_relative_symlink(&src, &dst)?;
+                fs::hard_link(&src, &dst)?;
             } else {
                 fs::copy(&src, &dst)?;
             }

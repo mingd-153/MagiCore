@@ -84,6 +84,7 @@ pub struct InstallResult {
     pub succeeded: usize,
     pub failed: usize,
     pub skipped: usize,
+    pub linked: usize,
     pub errors: Vec<InstallError>,
 }
 
@@ -167,7 +168,6 @@ impl Installer {
         let client = Client::builder()
             .pool_max_idle_per_host(64)
             .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .http2_prior_knowledge()
             .build()
             .map_err(|e| std::io::Error::other(e.to_string()))?;
 
@@ -291,6 +291,7 @@ impl Installer {
                 succeeded: 0,
                 failed: 0,
                 skipped: total,
+                linked: 0,
                 errors: vec![],
             };
         }
@@ -641,16 +642,91 @@ impl Installer {
 
         while join_set.join_next().await.is_some() {}
 
-        InstallResult {
+        // Link packages into node_modules
+        let mut result = InstallResult {
             total,
             succeeded: succeeded.load(Ordering::SeqCst),
             failed: failed.load(Ordering::SeqCst),
             skipped: skipped.load(Ordering::SeqCst),
+            linked: 0,
             errors: Arc::try_unwrap(errors)
                 .unwrap_or_else(|_| Mutex::new(vec![]))
                 .into_inner()
                 .unwrap_or_default(),
+        };
+
+        let succeeded_count = result.succeeded;
+        if succeeded_count > 0 {
+            let _ = self
+                .progress_tx
+                .send(InstallProgress {
+                    package: "linking".to_string(),
+                    phase: InstallPhase::Linking,
+                    bytes_downloaded: 0,
+                    total_bytes: None,
+                })
+                .await;
+
+            let link_infos = self.collect_package_link_infos_with_deps(lockfile);
+            match self.link_packages(&link_infos).await {
+                Ok(link_result) => {
+                    let _ = self
+                        .progress_tx
+                        .send(InstallProgress {
+                            package: "linking".to_string(),
+                            phase: InstallPhase::Done,
+                            bytes_downloaded: 0,
+                            total_bytes: None,
+                        })
+                        .await;
+                    result.linked = link_result.linked.len();
+                }
+                Err(e) => {
+                    result.errors.push(e);
+                    result.failed += 1;
+                }
+            }
         }
+
+        result
+    }
+
+    /// Collect link infos from package_files, enriched with lockfile dependency data
+    pub fn collect_package_link_infos_with_deps(
+        &self,
+        lockfile: &Lockfile,
+    ) -> Vec<mgpm_linker::PackageLinkInfo> {
+        let mut infos = Vec::new();
+        for entry in self.package_files.iter() {
+            let package_id = entry.key();
+            let files = entry.value();
+            let parts: Vec<&str> = package_id.splitn(2, '@').collect();
+            let (name, version) = if parts.len() == 2 {
+                (parts[0].to_string(), parts[1].to_string())
+            } else {
+                continue;
+            };
+
+            let deps = lockfile
+                .packages
+                .iter()
+                .find(|p| p.name == name && p.version == version)
+                .map(|p| p.dependencies.clone())
+                .unwrap_or_default();
+
+            infos.push(mgpm_linker::PackageLinkInfo {
+                name,
+                version,
+                dependencies: deps,
+                peer_dependencies: vec![],
+                files: files.clone(),
+                is_root_dep: false,
+                bin_entries: vec![],
+                total_size: 0,
+                dep_graph_hash: String::new(),
+            });
+        }
+        infos
     }
 
     pub fn collect_package_link_infos(&self) -> Vec<mgpm_linker::PackageLinkInfo> {
