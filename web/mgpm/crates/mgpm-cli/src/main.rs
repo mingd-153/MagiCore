@@ -89,7 +89,7 @@ impl DependencyProvider for RegistryDependencyProvider {
 }
 
 #[derive(Parser)]
-#[command(name = "mgpm", version, about = "MegaGate Package Manager")]
+#[command(name = "mg", version, about = "MegaGate Package Manager")]
 struct Cli {
     #[arg(short = 'r', long, global = true)]
     recursive: bool,
@@ -186,12 +186,32 @@ enum CliCommand {
         #[command(subcommand)]
         command: AuditCommand,
     },
-    /// Scaffold a new project from a template (e.g. mg create web my-app)
-    Create {
-        /// Template name or shorthand: web, react, next, vue, express, etc.
-        template: String,
-        /// Project directory name (defaults to template name if omitted)
-        project_name: Option<String>,
+    /// Scaffold a new web project (HTML+CSS+JS/Vite/TS/Tailwind/...)
+    #[command(name = "create-web")]
+    CreateWeb {
+        /// Project directory name
+        name: String,
+        /// Add TypeScript (auto-enables --vite)
+        #[arg(long)]
+        ts: bool,
+        /// Add Vite bundler (dev server, HMR, build)
+        #[arg(long)]
+        vite: bool,
+        /// Add Tailwind CSS (auto-enables --vite)
+        #[arg(long)]
+        tailwind: bool,
+        /// Add Bootstrap CSS
+        #[arg(long)]
+        bootstrap: bool,
+        /// Add NUI component kit (web components)
+        #[arg(long)]
+        nui: bool,
+        /// Add Sass/SCSS support (auto-enables --vite)
+        #[arg(long)]
+        sass: bool,
+        /// Add API client utility
+        #[arg(long)]
+        api: bool,
     },
     /// Verify lockfile integrity
     Verify {
@@ -959,7 +979,7 @@ async fn cmd_install(
 
     // Verify lockfile integrity if reading from an existing lockfile
     if Path::new("mgpm.lock").exists() && !lockfile.verify_content_hash() {
-        return Err("lockfile content hash mismatch — aborting install for security. Run `mgpm lockfile validate` for details.".to_string());
+        return Err("lockfile content hash mismatch — aborting install for security. Run `mg lockfile validate` for details.".to_string());
     }
 
     profiler.end("resolve");
@@ -1365,9 +1385,15 @@ async fn main() -> Result<(), String> {
             } => cmd_audit(&config, json, severity, remote).await,
             AuditCommand::Update { force } => tuf::update_advisories(force).await,
         },
-        CliCommand::Create {
-            ref template,
-            project_name,
+        CliCommand::CreateWeb {
+            name,
+            ts,
+            vite,
+            tailwind,
+            bootstrap,
+            nui,
+            sass,
+            api,
         } => {
             use mgpm_scaffold::templates::TemplateRegistry;
             use mgpm_scaffold::ScaffoldContext;
@@ -1377,12 +1403,9 @@ async fn main() -> Result<(), String> {
             registry.register_defaults();
 
             let tpl = registry
-                .find_by_command(template)
-                .ok_or_else(|| format!("Unknown template: '{}'. Available: web", template))?;
+                .find_by_command("web")
+                .ok_or_else(|| "Vanilla template not found".to_string())?;
 
-            let name = project_name
-                .clone()
-                .unwrap_or_else(|| template.clone());
             let dest = std::env::current_dir()
                 .map_err(|e| format!("Cannot get current directory: {e}"))?
                 .join(&name);
@@ -1393,9 +1416,35 @@ async fn main() -> Result<(), String> {
             vars.insert("name".to_string(), name.clone());
             vars.insert("version".to_string(), "1.0.0".to_string());
 
+            // TS, Tailwind, Sass auto-enable Vite (need compilation)
+            let vite = vite || ts || tailwind || sass;
+
+            let mut features = Vec::new();
+            if vite {
+                features.push("vite".to_string());
+            }
+            if ts {
+                features.push("typescript".to_string());
+            }
+            if tailwind {
+                features.push("tailwind".to_string());
+            }
+            if bootstrap {
+                features.push("bootstrap".to_string());
+            }
+            if nui {
+                features.push("nui".to_string());
+            }
+            if sass {
+                features.push("sass".to_string());
+            }
+            if api {
+                features.push("api".to_string());
+            }
+
             let ctx = ScaffoldContext::new(&name, dest.clone())
                 .with_vars(vars)
-                .with_features(vec!["typescript".to_string()]);
+                .with_features(features);
 
             let result = engine
                 .create_project(&ctx, false)
@@ -1411,6 +1460,12 @@ async fn main() -> Result<(), String> {
             for f in &result.files_created {
                 println!("   {}", f.display());
             }
+
+            // Auto-install if package.json was created
+            if result.files_created.iter().any(|f| f.file_name().map(|n| n == "package.json").unwrap_or(false)) {
+                println!("{} Project has package.json — run `mg install` to install dependencies", "[INFO]".blue());
+            }
+
             Ok(())
         }
         CliCommand::Verify { deep } => {
