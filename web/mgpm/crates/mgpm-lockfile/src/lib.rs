@@ -95,6 +95,7 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-abc123".to_string()),
+            dependencies: vec![],
         };
 
         let pkg2 = LockfilePackage {
@@ -107,6 +108,7 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-def456".to_string()),
+            dependencies: vec![],
         };
 
         original.add_package(pkg1);

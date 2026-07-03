@@ -94,6 +94,7 @@ fn import_npm(path: &Path) -> Result<Lockfile, String> {
                 registry: Some("npm".to_string()),
             },
             integrity: integrity.map(String::from),
+            dependencies: vec![],
         };
         lockfile.add_package(pkg);
     }
@@ -161,6 +162,7 @@ fn import_yarn(path: &Path) -> Result<Lockfile, String> {
                             registry: Some("npm".to_string()),
                         },
                         integrity,
+                        dependencies: vec![],
                     };
                     lockfile.add_package(pkg);
                 }
@@ -236,6 +238,7 @@ fn import_pnpm(path: &Path) -> Result<Lockfile, String> {
                     registry: Some("npm".to_string()),
                 },
                 integrity,
+                dependencies: vec![],
             };
             lockfile.add_package(pkg);
         }
@@ -303,6 +306,7 @@ fn import_bun(path: &Path) -> Result<Lockfile, String> {
                     registry: Some("npm".to_string()),
                 },
                 integrity: integrity.map(String::from),
+                dependencies: vec![],
             };
             lockfile.add_package(pkg);
         }
