@@ -31,6 +31,7 @@ impl IntegrityHash {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct TarballEntry {
     pub path: String,
     pub data: Vec<u8>,

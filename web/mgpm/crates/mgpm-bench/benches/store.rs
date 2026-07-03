@@ -2,13 +2,12 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mgpm_store::{
-    CasContentStore, ContentStore, IntegrityHash, PackageInfo, SqliteStore, StoreIndex,
+    CasContentStore, ContentStore, PackageInfo, SqliteStore, StoreIndex,
     TarballEntry,
 };
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tempfile::tempdir;
 
 fn make_pkg(i: usize) -> PackageInfo {
     PackageInfo {
@@ -271,7 +270,7 @@ fn bench_sqlite_concurrent(c: &mut Criterion) {
 fn make_cas_store() -> CasContentStore {
     let dir = tempfile::tempdir().unwrap();
     let sqlite = SqliteStore::open_in_memory().unwrap();
-    CasContentStore::new(Box::new(sqlite), dir.path().to_path_buf()).unwrap()
+    CasContentStore::new(dir.path().to_path_buf(), Box::new(sqlite)).unwrap()
 }
 
 fn bench_cas_import(c: &mut Criterion) {
@@ -289,7 +288,7 @@ fn bench_cas_import(c: &mut Criterion) {
                 let data = vec![0x42u8; size];
                 b.iter(|| {
                     let store = make_cas_store();
-                    let _ = store.import_bytes(black_box(&data), false).unwrap();
+                    let _ = store.import_bytes(black_box(&data)).unwrap();
                 });
             },
         );
@@ -306,7 +305,7 @@ fn bench_cas_deduplication(c: &mut Criterion) {
         b.iter(|| {
             let store = make_cas_store();
             for _ in 0..1000 {
-                store.import_bytes(black_box(&data), false).unwrap();
+                store.import_bytes(black_box(&data)).unwrap();
             }
         });
     });
@@ -320,7 +319,7 @@ fn bench_cas_export(c: &mut Criterion) {
     for size in [1024, 1024 * 100, 1024 * 1024].iter() {
         let data = vec![0x42u8; *size];
         let store = make_cas_store();
-        let hash = store.import_bytes(&data, false).unwrap();
+        let hash = store.import_bytes(&data).unwrap();
         let temp = tempfile::tempdir().unwrap();
         let dest = temp.path().join("out");
 
@@ -331,7 +330,7 @@ fn bench_cas_export(c: &mut Criterion) {
             |b, &size| {
                 let data = vec![0x42u8; size];
                 let store = make_cas_store();
-                let hash = store.import_bytes(&data, false).unwrap();
+                let hash = store.import_bytes(&data).unwrap();
                 let temp = tempfile::tempdir().unwrap();
                 let dest = temp.path().join("out");
 
@@ -352,7 +351,7 @@ fn bench_cas_verify(c: &mut Criterion) {
     for size in [1024, 1024 * 100, 1024 * 1024, 1024 * 1024 * 10].iter() {
         let data = vec![0x42u8; *size];
         let store = make_cas_store();
-        let hash = store.import_bytes(&data, false).unwrap();
+        let hash = store.import_bytes(&data).unwrap();
 
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(
@@ -360,7 +359,7 @@ fn bench_cas_verify(c: &mut Criterion) {
             size,
             |b, _| {
                 b.iter(|| {
-                    store.verify(black_box(&hash)).unwrap();
+                    store.verify(black_box(std::path::Path::new(&hash.filename))).unwrap();
                 });
             },
         );
@@ -385,7 +384,7 @@ fn bench_cas_concurrent(c: &mut Criterion) {
                         .map(|_| {
                             let store = Arc::clone(&store);
                             let data = Arc::clone(&data);
-                            thread::spawn(move || store.import_bytes(&data, false).unwrap())
+                            thread::spawn(move || store.import_bytes(&data).unwrap())
                         })
                         .collect();
 
@@ -416,7 +415,7 @@ fn bench_cas_tarball_batch(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(*count), count, |b, _| {
             b.iter(|| {
                 let store = make_cas_store();
-                store.import_tarball_entries(black_box(&entries)).unwrap();
+                store.import_tarball_entries(black_box(entries.clone())).unwrap();
             });
         });
     }
