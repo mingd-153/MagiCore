@@ -14,7 +14,7 @@ async fn test_dry_run_mode() {
     let options = InstallOptions {
         dry_run: true,
         store_path: dir.path().join("store"),
-        virtual_store_path: dir.path().join("virtual_store"),
+        virtual_store_path: dir.path().join(".mgpm"),
         project_root: dir.path().to_path_buf(),
         sqlite_path: dir.path().join("mgpm.db"),
         ..Default::default()
@@ -59,7 +59,7 @@ async fn test_offline_mode() {
         offline: true,
         dry_run: false,
         store_path: dir.path().join("store"),
-        virtual_store_path: dir.path().join("virtual_store"),
+        virtual_store_path: dir.path().join(".mgpm"),
         project_root: dir.path().to_path_buf(),
         sqlite_path: dir.path().join("mgpm.db"),
         ..Default::default()

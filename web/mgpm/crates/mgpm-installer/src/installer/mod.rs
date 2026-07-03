@@ -44,7 +44,7 @@ impl Default for InstallOptions {
             retries: 3,
             retry_delay_ms: 1000,
             store_path: home.join(".mgpm").join("store"),
-            virtual_store_path: PathBuf::from(".mgpm").join("virtual_store"),
+            virtual_store_path: PathBuf::from(".mgpm"),
             hoisted_node_modules: false,
             hoist_pattern: vec!["*".to_string()],
             offline: false,

@@ -110,7 +110,9 @@ impl HoistedLinker {
                 validate_rel_path(dep_name)?;
                 if let Some(ref ws) = self.options.workspace {
                     if let Some(ws_member) = ws.find_member(dep_name) {
-                        let dep_dst_dir = store_pkg_dir.join("node_modules");
+                        let dep_dst_dir = virtual_store
+                            .join(&pkg_dir_name)
+                            .join("node_modules");
                         fs::create_dir_all(&dep_dst_dir)?;
                         let dep_dst = dep_dst_dir.join(dep_name);
                         if !dep_dst.exists() && ws_member.path.exists() {
@@ -131,7 +133,9 @@ impl HoistedLinker {
                         .join("node_modules")
                         .join(&dep_pkg.name);
 
-                    let dep_dst_dir = store_pkg_dir.join("node_modules");
+                    let dep_dst_dir = virtual_store
+                        .join(&pkg_dir_name)
+                        .join("node_modules");
                     fs::create_dir_all(&dep_dst_dir)?;
                     let dep_dst = dep_dst_dir.join(&dep_pkg.name);
 

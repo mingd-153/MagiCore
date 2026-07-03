@@ -1002,7 +1002,7 @@ async fn cmd_install(
         retries: config.install.retries,
         retry_delay_ms: 1000,
         store_path,
-        virtual_store_path: PathBuf::from(".mgpm").join("virtual_store"),
+        virtual_store_path: PathBuf::from(".mgpm"),
         hoisted_node_modules: hoist || config.install.hoist,
         hoist_pattern: config.install.hoist_pattern.clone(),
         offline: offline || config.cli.dry_run,
