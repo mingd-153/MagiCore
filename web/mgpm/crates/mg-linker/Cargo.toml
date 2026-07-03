@@ -1,5 +1,5 @@
 [package]
-name = "mgpm-linker"
+name = "mg-linker"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,10 +7,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-mgpm-core = { path = "../mgpm-core" }
-mgpm-store = { path = "../mgpm-store" }
-mgpm-lockfile = { path = "../mgpm-lockfile" }
-mgpm-workspace = { path = "../mgpm-workspace" }
+mg-core = { path = "../mg-core" }
+mg-store = { path = "../mg-store" }
+mg-lockfile = { path = "../mg-lockfile" }
+mg-workspace = { path = "../mg-workspace" }
 thiserror.workspace = true
 anyhow.workspace = true
 serde.workspace = true
