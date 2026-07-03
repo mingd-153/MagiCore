@@ -2,39 +2,39 @@
 resolver = "2"
 members = [
     ".",
-    "crates/mgpm-core",
-    "crates/mgpm-store",
-    "crates/mgpm-resolver",
-    "crates/mgpm-lockfile",
-    "crates/mgpm-installer",
-    "crates/mgpm-linker",
-    "crates/mgpm-registry",
-    "crates/mgpm-workspace",
-    "crates/mgpm-cli",
-    "crates/mgpm-plugins",
-    "crates/mgpm-bench",
-    "crates/mgpm-cache",
-    "crates/mgpm-monorepo",
-    "crates/mgpm-scaffold",
+    "crates/mg-core",
+    "crates/mg-store",
+    "crates/mg-resolver",
+    "crates/mg-lockfile",
+    "crates/mg-installer",
+    "crates/mg-linker",
+    "crates/mg-registry",
+    "crates/mg-workspace",
+    "crates/mg-cli",
+    "crates/mg-plugins",
+    "crates/mg-bench",
+    "crates/mg-cache",
+    "crates/mg-monorepo",
+    "crates/mg-scaffold",
 ]
 exclude = ["fuzz"]
 
 [package]
-name = "mgpm-test"
+name = "mg-test"
 version.workspace = true
 edition.workspace = true
 publish = false
 
 [dev-dependencies]
-mgpm-core = { path = "crates/mgpm-core" }
-mgpm-store = { path = "crates/mgpm-store" }
-mgpm-resolver = { path = "crates/mgpm-resolver" }
-mgpm-lockfile = { path = "crates/mgpm-lockfile" }
-mgpm-installer = { path = "crates/mgpm-installer" }
-mgpm-linker = { path = "crates/mgpm-linker" }
-mgpm-registry = { path = "crates/mgpm-registry" }
-mgpm-workspace = { path = "crates/mgpm-workspace" }
-mgpm-plugins = { path = "crates/mgpm-plugins" }
+mg-core = { path = "crates/mg-core" }
+mg-store = { path = "crates/mg-store" }
+mg-resolver = { path = "crates/mg-resolver" }
+mg-lockfile = { path = "crates/mg-lockfile" }
+mg-installer = { path = "crates/mg-installer" }
+mg-linker = { path = "crates/mg-linker" }
+mg-registry = { path = "crates/mg-registry" }
+mg-workspace = { path = "crates/mg-workspace" }
+mg-plugins = { path = "crates/mg-plugins" }
 tempfile.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
@@ -74,7 +74,7 @@ harness = true
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/megagate/mgpm"
+repository = "https://github.com/megagate/mg"
 authors = ["MegaGate Team <team@megagate.dev>"]
 description = "MegaGate Package Manager - Fast, disk-efficient, smart package manager for JavaScript/TypeScript"
 
@@ -250,5 +250,5 @@ targets = [
     "x86_64-pc-windows-msvc",
 ]
 installer = ["shell", "powershell", "npm"]
-tap = "megagate/homebrew-mgpm"
+tap = "megagate/homebrew-mg"
 

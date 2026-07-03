@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use mgpm_store::store::cas::ContentStore;
-use mgpm_store::store::gvs::GlobalVirtualStore;
+use mg_store::store::cas::ContentStore;
+use mg_store::store::gvs::GlobalVirtualStore;
 
 pub type RefcountCallback = Arc<dyn Fn(&str) -> io::Result<()> + Send + Sync>;
 
@@ -96,7 +96,7 @@ pub struct LinkerOptions {
     pub symlinks: bool,
     pub store_path: PathBuf,
     pub refcount_callback: Option<RefcountCallback>,
-    pub workspace: Option<mgpm_workspace::Workspace>,
+    pub workspace: Option<mg_workspace::Workspace>,
     pub strategy: LinkerStrategy,
     pub gvs_root: PathBuf,
 }
@@ -126,21 +126,21 @@ impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
             project_root: PathBuf::from("."),
-            virtual_store_dir: PathBuf::from(".mgpm"),
+            virtual_store_dir: PathBuf::from(".mg"),
             global_virtual_store: false,
             hoist: false,
             hoist_pattern: vec!["*".to_string()],
             symlinks: true,
             store_path: dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
-                .join(".mgpm")
+                .join(".mg")
                 .join("store"),
             refcount_callback: None,
             workspace: None,
             strategy: LinkerStrategy::Hoisted,
             gvs_root: dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
-                .join(".mgpm")
+                .join(".mg")
                 .join("gvs")
                 .join("v1"),
         }
@@ -192,7 +192,7 @@ pub struct LinkerFactory;
 impl LinkerFactory {
     pub fn create(
         options: LinkerOptions,
-        _store: &mgpm_store::store::cas::ContentStore,
+        _store: &mg_store::store::cas::ContentStore,
     ) -> Result<Box<dyn Linker>, LinkError> {
         match options.strategy {
             LinkerStrategy::Hoisted => Ok(Box::new(HoistedLinker::new(options))),

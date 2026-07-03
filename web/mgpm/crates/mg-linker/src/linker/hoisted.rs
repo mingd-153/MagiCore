@@ -136,10 +136,10 @@ pub fn link_packages_internal(
                 }
             }
 
-            let mgpm_root = temp_dir.join(".mgpm");
-            fs::create_dir_all(&mgpm_root)?;
+            let mg_root = temp_dir.join(".mg");
+            fs::create_dir_all(&mg_root)?;
 
-            let pkg_link = mgpm_root.join(&pkg.name);
+            let pkg_link = mg_root.join(&pkg.name);
             create_relative_symlink(&store_pkg_dir, &pkg_link)?;
 
             for dep_name in &pkg.dependencies {
@@ -196,10 +196,10 @@ pub fn link_packages_internal(
             let nm = temp_dir.join("node_modules");
             fs::create_dir_all(&nm)?;
 
-            let mgpm_root = temp_dir.join(".mgpm");
-            let virtual_store_link = nm.join(".mgpm");
+            let mg_root = temp_dir.join(".mg");
+            let virtual_store_link = nm.join(".mg");
             if !virtual_store_link.exists() {
-                create_relative_symlink(&mgpm_root, &virtual_store_link)?;
+                create_relative_symlink(&mg_root, &virtual_store_link)?;
             }
 
             nm
@@ -249,17 +249,17 @@ impl super::Linker for HoistedLinker {
     fn link_all(
         &self,
         packages: &[PackageLinkInfo],
-        _store: &mgpm_store::store::cas::ContentStore,
+        _store: &mg_store::store::cas::ContentStore,
         project_root: &Path,
     ) -> Result<LinkResult, LinkError> {
-        let mgpm_dir = project_root.join(&self.options.virtual_store_dir);
-        // Use a sibling temp dir at the same depth as mgpm_dir so that
+        let mg_dir = project_root.join(&self.options.virtual_store_dir);
+        // Use a sibling temp dir at the same depth as mg_dir so that
         // relative symlinks computed during linking remain valid after rename
-        let temp_dir = if let Some(parent) = mgpm_dir.parent() {
-            let name = mgpm_dir.file_name().unwrap_or_default();
+        let temp_dir = if let Some(parent) = mg_dir.parent() {
+            let name = mg_dir.file_name().unwrap_or_default();
             parent.join(format!("{}.tmp_{}", name.to_string_lossy(), std::process::id()))
         } else {
-            mgpm_dir.with_extension(format!("tmp_{}", std::process::id()))
+            mg_dir.with_extension(format!("tmp_{}", std::process::id()))
         };
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir).ok();
@@ -270,34 +270,34 @@ impl super::Linker for HoistedLinker {
 
         match &result {
             Ok(_) => {
-                if mgpm_dir.exists() && !self.options.global_virtual_store {
-                    fs::remove_dir_all(&mgpm_dir).ok();
+                if mg_dir.exists() && !self.options.global_virtual_store {
+                    fs::remove_dir_all(&mg_dir).ok();
                 }
-                let mgpm_parent = mgpm_dir.parent().unwrap_or(project_root);
-                fs::create_dir_all(mgpm_parent)?;
-                if mgpm_dir.exists() {
-                    fs::remove_dir_all(&mgpm_dir).ok();
+                let mg_parent = mg_dir.parent().unwrap_or(project_root);
+                fs::create_dir_all(mg_parent)?;
+                if mg_dir.exists() {
+                    fs::remove_dir_all(&mg_dir).ok();
                 }
-                fs::rename(&temp_dir, &mgpm_dir)?;
+                fs::rename(&temp_dir, &mg_dir)?;
 
-                // Create pnpm-style node_modules -> .mgpm symlink at project root
+                // Create pnpm-style node_modules -> .mg symlink at project root
                 let root_node_modules = project_root.join("node_modules");
                 if !root_node_modules.exists() {
                     fs::create_dir_all(&root_node_modules)?;
                 }
-                let mgpm_link = root_node_modules.join(".mgpm");
-                if !mgpm_link.exists() {
-                    create_relative_symlink(&mgpm_dir, &mgpm_link)?;
+                let mg_link = root_node_modules.join(".mg");
+                if !mg_link.exists() {
+                    create_relative_symlink(&mg_dir, &mg_link)?;
                 }
 
                 // Hoist packages into project-level node_modules
-                let hoisted_source = mgpm_dir.join("node_modules");
+                let hoisted_source = mg_dir.join("node_modules");
                 if hoisted_source.exists() {
                     if let Ok(entries) = fs::read_dir(&hoisted_source) {
                         for entry in entries.flatten() {
                             let name = entry.file_name();
                             let hoist_dst = root_node_modules.join(&name);
-                            if name != ".bin" && name != ".mgpm" && !hoist_dst.exists() {
+                            if name != ".bin" && name != ".mg" && !hoist_dst.exists() {
                                 create_relative_symlink(&entry.path(), &hoist_dst)?;
                             }
                         }
@@ -322,7 +322,7 @@ impl super::Linker for HoistedLinker {
     fn link_package(
         &self,
         pkg: &PackageLinkInfo,
-        _store: &mgpm_store::store::cas::ContentStore,
+        _store: &mg_store::store::cas::ContentStore,
         dest: &Path,
     ) -> Result<(), LinkError> {
         fs::create_dir_all(dest)?;
@@ -372,7 +372,7 @@ impl super::Linker for HoistedLinker {
     fn link_bins(
         &self,
         packages: &[PackageLinkInfo],
-        _store: &mgpm_store::store::cas::ContentStore,
+        _store: &mg_store::store::cas::ContentStore,
         bin_dir: &Path,
     ) -> Result<(), LinkError> {
         fs::create_dir_all(bin_dir)?;
@@ -382,7 +382,7 @@ impl super::Linker for HoistedLinker {
                 validate_rel_path(bin_name)?;
                 validate_rel_path(bin_path)?;
                 let src = PathBuf::from("..")
-                    .join(".mgpm")
+                    .join(".mg")
                     .join(&pkg.name)
                     .join(bin_path);
                 let dst = bin_dir.join(bin_name);
