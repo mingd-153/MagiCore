@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "mg"
+path = "src/main.rs"
+
 [dependencies]
 mgpm-core = { path = "../mgpm-core" }
 mgpm-store = { path = "../mgpm-store" }
