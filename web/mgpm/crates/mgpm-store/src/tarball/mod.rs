@@ -66,6 +66,9 @@ impl TarballExtractor {
                 .map_err(|e| TarballError::ExtractError(e.to_string()))?
                 .into_owned();
 
+            // Strip leading package/ prefix (npm tarball convention)
+            let path = strip_package_prefix(&path);
+
             let relative_path = path.to_string_lossy().to_string();
 
             if relative_path.contains("..") {
@@ -213,10 +216,12 @@ impl TarballExtractor {
             let path = entry
                 .path()
                 .map_err(|e| TarballError::ExtractError(e.to_string()))?
-                .into_owned()
-                .to_string_lossy()
-                .to_string();
-            files.push(path);
+                .into_owned();
+            let path = strip_package_prefix(&path);
+            let path_str = path.to_string_lossy().to_string();
+            if !path_str.is_empty() && path_str != "." {
+                files.push(path_str);
+            }
         }
 
         Ok(files)
@@ -242,6 +247,20 @@ pub enum EntryType {
     File,
     Symlink,
     Directory,
+}
+
+/// Strip the leading `package/` prefix from npm tarball entry paths.
+/// npm publishes all tarballs with a `package/` directory prefix, e.g.
+/// `package/index.js` instead of `index.js`.
+fn strip_package_prefix(path: &std::path::Path) -> std::path::PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix("package/") {
+        std::path::PathBuf::from(rest)
+    } else if s == "package" {
+        std::path::PathBuf::from(".")
+    } else {
+        path.to_path_buf()
+    }
 }
 
 #[cfg(test)]

@@ -83,7 +83,7 @@ async fn e2e_smoke_resolve_and_lockfile() {
     .expect("write package.json");
 
     let provider = make_provider();
-    let resolver = Resolver::new(Box::new(provider));
+    let resolver = Resolver::new(std::sync::Arc::new(provider));
     let config = ResolutionConfig::default();
     let pipeline = ResolutionPipeline::new(resolver, config);
 
@@ -103,12 +103,14 @@ async fn e2e_smoke_resolve_and_lockfile() {
     // recurse into transitive dependencies in the simple solve() path).
     assert_eq!(
         lockfile.packages.len(),
-        1,
-        "should resolve is-odd (1 level)"
+        2,
+        "should resolve is-odd and its transitive dep is-number"
     );
 
     let has_odd = lockfile.packages.iter().any(|p| p.name == "is-odd");
     assert!(has_odd, "should include is-odd");
+    let has_number = lockfile.packages.iter().any(|p| p.name == "is-number");
+    assert!(has_number, "should include transitive dep is-number");
 
     assert!(
         root.join("mgpm.lock").exists(),
@@ -147,6 +149,7 @@ fn e2e_smoke_install_from_lockfile() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc123".to_string()),
+        dependencies: vec![],
     });
     lockfile.sort_packages();
     lockfile.compute_content_hash();
@@ -166,7 +169,7 @@ async fn e2e_smoke_empty_project_resolve() {
     let root = tmp.path();
 
     let provider = make_provider();
-    let resolver = Resolver::new(Box::new(provider));
+    let resolver = Resolver::new(std::sync::Arc::new(provider));
     let config = ResolutionConfig::default();
     let pipeline = ResolutionPipeline::new(resolver, config);
 
@@ -183,7 +186,7 @@ async fn e2e_smoke_resolve_nonexistent() {
     let provider = E2eProvider {
         packages: HashMap::new(),
     };
-    let resolver = Resolver::new(Box::new(provider));
+    let resolver = Resolver::new(std::sync::Arc::new(provider));
     let config = ResolutionConfig::default();
     let tmp = tempfile::tempdir().expect("tempdir");
     let pipeline = ResolutionPipeline::new(resolver, config);
@@ -218,6 +221,7 @@ fn e2e_smoke_lockfile_integrity() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-abc".to_string()),
+        dependencies: vec![],
     });
     lockfile.add_package(LockfilePackage {
         id: "lodash@4.17.21".to_string(),
@@ -229,6 +233,7 @@ fn e2e_smoke_lockfile_integrity() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-def".to_string()),
+        dependencies: vec![],
     });
     lockfile.sort_packages();
     lockfile.compute_content_hash();
@@ -262,6 +267,7 @@ fn e2e_smoke_binary_lockfile_roundtrip() {
             registry: Some("npm".to_string()),
         },
         integrity: Some("sha512-xyz".to_string()),
+        dependencies: vec![],
     });
     lockfile.sort_packages();
     lockfile.compute_content_hash();

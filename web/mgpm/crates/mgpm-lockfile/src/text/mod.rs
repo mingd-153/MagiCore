@@ -33,6 +33,8 @@ struct TomlPackage {
     version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     integrity: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    dependencies: Vec<String>,
     resolution: TomlResolution,
 }
 
@@ -68,6 +70,7 @@ impl From<&LockfilePackage> for TomlPackage {
             name: pkg.name.clone(),
             version: pkg.version.clone(),
             integrity: pkg.integrity.clone(),
+            dependencies: pkg.dependencies.clone(),
             resolution: TomlResolution {
                 res_type: pkg.resolution.r#type.clone(),
                 url: pkg.resolution.url.clone(),
@@ -169,6 +172,16 @@ pub fn read_text(path: &Path) -> Result<Lockfile, LockfileError> {
                 .map(String::from),
         };
 
+        let dependencies = pkg_table
+            .get("dependencies")
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
         packages.push(LockfilePackage {
             id: pkg_table
                 .get("id")
@@ -190,6 +203,7 @@ pub fn read_text(path: &Path) -> Result<Lockfile, LockfileError> {
                 .get("integrity")
                 .and_then(|i| i.as_str())
                 .map(String::from),
+            dependencies,
         });
     }
 
@@ -260,6 +274,7 @@ mod tests {
                 registry: Some("npm".to_string()),
             },
             integrity: Some("sha512-...".to_string()),
+            dependencies: vec!["loose-envify".to_string()],
         });
 
         write_text(&lock, &path).unwrap();

@@ -73,8 +73,9 @@ pub fn check_dependency_confusion(
     warnings
 }
 
+#[derive(Clone)]
 pub struct Resolver {
-    provider: Box<dyn DependencyProvider>,
+    provider: std::sync::Arc<dyn DependencyProvider>,
     catalogs: HashMap<String, Catalog>,
     overrides: HashMap<String, String>,
     workspace: Option<mgpm_workspace::Workspace>,
@@ -137,7 +138,7 @@ impl WorkspaceInfo {
 }
 
 impl Resolver {
-    pub fn new(provider: Box<dyn DependencyProvider>) -> Self {
+    pub fn new(provider: std::sync::Arc<dyn DependencyProvider>) -> Self {
         Self {
             provider,
             catalogs: HashMap::new(),
@@ -211,28 +212,35 @@ impl Resolver {
     pub fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
         let mut resolutions = Vec::new();
         let mut seen = HashSet::new();
+        let mut queue: Vec<(PackageName, String)> = wanted.to_vec();
 
-        for (name, _spec) in wanted {
-            if seen.contains(name) {
+        while let Some((name, _spec)) = queue.pop() {
+            if seen.contains(&name) {
                 continue;
             }
             seen.insert(name.clone());
 
-            let versions = self.provider.get_versions(name);
+            let versions = self.provider.get_versions(&name);
             if let Some(version) = versions.last() {
                 let package_id = PackageId::new(name.clone(), version.clone());
+
+                // Fetch dependencies of this package
+                let deps = self.provider.get_dependencies(&package_id);
+                let dep_names: Vec<String> = deps.iter().map(|d| d.package.as_str().to_string()).collect();
+
+                // Queue transitive dependencies
+                for dep in &deps {
+                    if !seen.contains(&dep.package) {
+                        queue.push((dep.package.clone(), dep.spec.clone()));
+                    }
+                }
+
                 resolutions.push(Resolution {
                     package_id: package_id.clone(),
                     version: version.clone(),
-                    integrity: String::new(), // Will be filled by pipeline with real hash from tarball
-                    deps: Vec::new(),
+                    integrity: String::new(),
+                    deps: dep_names,
                 });
-
-                for dep in self.provider.get_dependencies(&package_id) {
-                    if !seen.contains(&dep.package) {
-                        seen.insert(dep.package.clone());
-                    }
-                }
             }
         }
 
@@ -308,7 +316,7 @@ mod tests {
     #[test]
     fn test_set_catalogs() {
         let provider = MockProvider;
-        let mut resolver = Resolver::new(Box::new(provider));
+        let mut resolver = Resolver::new(std::sync::Arc::new(provider));
         let mut catalogs = HashMap::new();
         let mut catalog = Catalog::default();
         catalog.set("react", "18.2.0");
@@ -322,7 +330,7 @@ mod tests {
     #[test]
     fn test_resolve_catalog_not_found() {
         let provider = MockProvider;
-        let resolver = Resolver::new(Box::new(provider));
+        let resolver = Resolver::new(std::sync::Arc::new(provider));
         let result = resolver.resolve_catalog("nonexistent", "default");
         assert!(result.is_err());
     }
@@ -340,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_solve_simple() {
-        let resolver = Resolver::new(Box::new(MockProvider));
+        let resolver = Resolver::new(std::sync::Arc::new(MockProvider));
         let wanted = vec![(PackageName::new("react").unwrap(), "^1.0.0".to_string())];
 
         let result = resolver.solve(&wanted).unwrap();
@@ -351,7 +359,7 @@ mod tests {
         #[test]
         fn proptest_resolve_nonexistent_package(name in "[a-z]{3,10}", major in 0u64..5, minor in 0u64..5, patch in 0u64..5) {
             let provider = MockProvider;
-            let resolver = Resolver::new(Box::new(provider));
+            let resolver = Resolver::new(std::sync::Arc::new(provider));
             let spec = format!("{}.{}.{}", major, minor, patch);
             let wanted = vec![
                 (PackageName::new(&name).unwrap_or_else(|_| PackageName::new("pkg").unwrap()), spec),

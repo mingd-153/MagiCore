@@ -34,7 +34,7 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("packages", n), &n, |b, &n| {
             b.iter(|| {
                 let provider = BenchDependencyProvider::new(20);
-                let resolver = Resolver::new(Box::new(provider));
+                let resolver = Resolver::new(std::sync::Arc::new(provider));
                 let wanted: Vec<(PackageName, String)> = (0..n)
                     .map(|i| {
                         (
@@ -61,7 +61,7 @@ pub fn bench_resolve_catalog(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("entries", n), &n, |b, &n| {
             b.iter(|| {
                 let provider = BenchDependencyProvider::new(5);
-                let mut resolver = Resolver::new(Box::new(provider));
+                let mut resolver = Resolver::new(std::sync::Arc::new(provider));
                 let mut catalog = Catalog::default();
                 let mut catalogs = HashMap::new();
 

@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 use crate::lockfile::Lockfile;
 use crate::LockfileError;
 
+use tokio::task;
+
 /// Input for resolution: packages we want to install
 #[derive(Debug, Clone)]
 pub struct WantedDependency {
@@ -74,10 +76,12 @@ impl ResolutionPipeline {
             .map(|w| (w.name.clone(), w.version_req.clone()))
             .collect();
 
-        // Run resolver
-        let result = self
-            .resolver
-            .solve(&wanted_strs)
+        // Run resolver in blocking task to avoid blocking the async runtime
+        // (resolver uses sync provider which may block on network)
+        let resolver = self.resolver.clone();
+        let result = task::spawn_blocking(move || resolver.solve(&wanted_strs))
+            .await
+            .map_err(|e| PipelineError::ResolveError(format!("resolver task panicked: {}", e)))?
             .map_err(|e| PipelineError::ResolveError(e.to_string()))?;
 
         // Build lockfile from resolutions with real integrity hashes
