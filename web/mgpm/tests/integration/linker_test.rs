@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mgpm_linker::linker::{LinkerFactory, LinkerOptions, LinkerStrategy, PackageLinkInfo};
-use mgpm_store::store::cas::ContentStore;
-use mgpm_store::SqliteStore;
+use mg_linker::linker::{LinkerFactory, LinkerOptions, LinkerStrategy, PackageLinkInfo};
+use mg_store::store::cas::ContentStore;
+use mg_store::SqliteStore;
 use tempfile::tempdir;
 
 fn create_cas_store() -> (ContentStore, tempfile::TempDir) {
@@ -45,25 +45,6 @@ fn compute_dep_graph_hash(packages: &[PackageLinkInfo]) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
-fn prepopulate_isolated_virtual_store(pkg: &PackageLinkInfo, project_root: &Path) -> String {
-    let hash = compute_dep_graph_hash(&[pkg.clone()]);
-    let vs_dir = project_root
-        .join("node_modules")
-        .join(".mgpm")
-        .join(&hash)
-        .join("node_modules")
-        .join(&pkg.name);
-    fs::create_dir_all(&vs_dir).unwrap();
-    for (rel_path, _) in &pkg.files {
-        let file_path = vs_dir.join(rel_path);
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        fs::write(&file_path, b"dummy").unwrap();
-    }
-    hash
-}
-
 #[test]
 fn test_hoisted_linker_layout() {
     let (_cas_store, _cas_dir) = create_cas_store();
@@ -88,7 +69,7 @@ fn test_hoisted_linker_layout() {
 
     let options = LinkerOptions {
         project_root: project_root.clone(),
-        virtual_store_dir: PathBuf::from(".mgpm"),
+        virtual_store_dir: PathBuf::from(".mg"),
         store_path,
         strategy: LinkerStrategy::Hoisted,
         hoist: true,
@@ -102,21 +83,21 @@ fn test_hoisted_linker_layout() {
     let result = linker.link_all(&[pkg], &_cas_store, &project_root).unwrap();
 
     assert!(
-        project_root.join(".mgpm").exists(),
-        ".mgpm dir should exist"
+        project_root.join(".mg").exists(),
+        ".mg dir should exist"
     );
 
     let nm = project_root
-        .join(".mgpm")
+        .join(".mg")
         .join("node_modules")
         .join("test-pkg");
     assert!(
         nm.exists(),
-        "hoisted: node_modules/test-pkg should exist in .mgpm"
+        "hoisted: node_modules/test-pkg should exist in .mg"
     );
     assert!(
         nm.join("index.js").exists(),
-        "hoisted: file should be linked inside .mgpm/node_modules/test-pkg"
+        "hoisted: file should be linked inside .mg/node_modules/test-pkg"
     );
 
     assert_eq!(result.linked.len(), 1);
@@ -129,25 +110,29 @@ fn test_isolated_linker_layout() {
     let (_cas_store, _cas_dir) = create_cas_store();
     let tmp = tempdir().unwrap();
     let project_root = tmp.path().join("project");
+    let store_path = tmp.path().join("store");
+
+    let content = b"module.exports = 42;";
+    let hash = create_store_file(&store_path, content);
 
     let pkg = PackageLinkInfo::new(
         "test-pkg".into(),
         "1.0.0".into(),
         vec![],
         vec![],
-        vec![("index.js".into(), "abc".into())],
+        vec![("index.js".into(), hash)],
         true,
         vec![],
-        0,
+        content.len() as u64,
         "graph-hash".into(),
     );
 
-    let hash = prepopulate_isolated_virtual_store(&pkg, &project_root);
+    let dep_graph_hash = compute_dep_graph_hash(&[pkg.clone()]);
 
     let options = LinkerOptions {
         project_root: project_root.clone(),
-        virtual_store_dir: PathBuf::from(".mgpm"),
-        store_path: tmp.path().join("store"),
+        virtual_store_dir: PathBuf::from(".mg"),
+        store_path,
         strategy: LinkerStrategy::Isolated,
         gvs_root: tmp.path().join("gvs").join("v1"),
         symlinks: true,
@@ -164,13 +149,13 @@ fn test_isolated_linker_layout() {
     let target = fs::read_link(&nm_pkg).unwrap();
     let target_str = target.to_string_lossy();
     assert!(
-        target_str.contains(".mgpm"),
-        "isolated symlink should point into .mgpm virtual store, got: {target_str}"
+        target_str.contains(".mg"),
+        "isolated symlink should point into .mg virtual store, got: {target_str}"
     );
 
     assert_eq!(result.linked.len(), 1);
     assert_eq!(result.linked[0].name, "test-pkg");
-    assert_eq!(result.dep_graph_hash, hash);
+    assert_eq!(result.dep_graph_hash, dep_graph_hash);
     let linked_path = &result.linked[0].path;
     assert!(
         linked_path.exists(),
@@ -199,7 +184,7 @@ fn test_linker_empty_package() {
 
     let options = LinkerOptions {
         project_root: project_root.clone(),
-        virtual_store_dir: PathBuf::from(".mgpm"),
+        virtual_store_dir: PathBuf::from(".mg"),
         store_path,
         strategy: LinkerStrategy::Hoisted,
         hoist: true,
@@ -216,12 +201,12 @@ fn test_linker_empty_package() {
     assert_eq!(result.linked[0].name, "empty-pkg");
 
     let nm_dir = project_root
-        .join(".mgpm")
+        .join(".mg")
         .join("node_modules")
         .join("empty-pkg");
     assert!(
         nm_dir.exists(),
-        "empty package dir should exist in .mgpm/node_modules"
+        "empty package dir should exist in .mg/node_modules"
     );
     let file_count = fs::read_dir(&nm_dir).unwrap().count();
     assert_eq!(
@@ -270,7 +255,7 @@ fn test_linker_multiple_packages() {
 
     let options = LinkerOptions {
         project_root: project_root.clone(),
-        virtual_store_dir: PathBuf::from(".mgpm"),
+        virtual_store_dir: PathBuf::from(".mg"),
         store_path,
         strategy: LinkerStrategy::Hoisted,
         hoist: true,
@@ -287,28 +272,28 @@ fn test_linker_multiple_packages() {
 
     assert_eq!(result.linked.len(), 2);
 
-    let mgpm_nm = project_root.join(".mgpm").join("node_modules");
+    let mg_nm = project_root.join(".mg").join("node_modules");
     assert!(
-        mgpm_nm.join("app").exists(),
-        "app should be in .mgpm/node_modules"
+        mg_nm.join("app").exists(),
+        "app should be in .mg/node_modules"
     );
     assert!(
-        mgpm_nm.join("lib").exists(),
-        "lib should be in .mgpm/node_modules"
+        mg_nm.join("lib").exists(),
+        "lib should be in .mg/node_modules"
     );
 
     assert!(
-        mgpm_nm.join("app").join("main.js").exists(),
+        mg_nm.join("app").join("main.js").exists(),
         "app/main.js should exist"
     );
     assert!(
-        mgpm_nm.join("lib").join("index.js").exists(),
+        mg_nm.join("lib").join("index.js").exists(),
         "lib/index.js should exist"
     );
 
     assert!(
-        project_root.join(".mgpm").exists(),
-        ".mgpm dir should exist"
+        project_root.join(".mg").exists(),
+        ".mg dir should exist"
     );
 }
 
@@ -336,7 +321,7 @@ fn test_hoisted_vs_isolated_different_structure() {
     let hoisted_root = tmp.path().join("hoisted");
     let hoisted_opts = LinkerOptions {
         project_root: hoisted_root.clone(),
-        virtual_store_dir: PathBuf::from(".mgpm"),
+        virtual_store_dir: PathBuf::from(".mg"),
         store_path: store_path.clone(),
         strategy: LinkerStrategy::Hoisted,
         hoist: true,
@@ -351,15 +336,15 @@ fn test_hoisted_vs_isolated_different_structure() {
         .link_all(&[pkg.clone()], &_cas_store, &hoisted_root)
         .unwrap();
 
-    assert!(hoisted_root.join(".mgpm").exists());
+    assert!(hoisted_root.join(".mg").exists());
 
     let hoisted_nm = hoisted_root
-        .join(".mgpm")
+        .join(".mg")
         .join("node_modules")
         .join("compare-pkg");
     assert!(
         hoisted_nm.exists(),
-        "hoisted: package should be in .mgpm/node_modules"
+        "hoisted: package should be in .mg/node_modules"
     );
     assert!(
         hoisted_nm.join("file.js").exists(),
@@ -371,12 +356,11 @@ fn test_hoisted_vs_isolated_different_structure() {
     );
 
     let isolated_root = tmp.path().join("isolated");
-    prepopulate_isolated_virtual_store(&pkg, &isolated_root);
 
     let isolated_opts = LinkerOptions {
         project_root: isolated_root.clone(),
-        virtual_store_dir: PathBuf::from(".mgpm"),
-        store_path,
+        virtual_store_dir: PathBuf::from(".mg"),
+        store_path: store_path.clone(),
         strategy: LinkerStrategy::Isolated,
         gvs_root: tmp.path().join("gvs").join("v1"),
         symlinks: true,
@@ -395,19 +379,19 @@ fn test_hoisted_vs_isolated_different_structure() {
     let isolated_target = fs::read_link(&isolated_nm).unwrap();
     let isolated_target_str = isolated_target.to_string_lossy();
     assert!(
-        isolated_target_str.contains(".mgpm"),
-        "isolated: symlink target should be inside .mgpm, got: {isolated_target_str}"
+        isolated_target_str.contains(".mg"),
+        "isolated: symlink target should be inside .mg, got: {isolated_target_str}"
     );
 
-    let hoisted_mgpm = hoisted_root.join(".mgpm").join("node_modules");
-    let isolated_mgpm = isolated_root.join("node_modules").join(".mgpm");
+    let hoisted_mg = hoisted_root.join(".mg").join("node_modules");
+    let isolated_mg = isolated_root.join("node_modules").join(".mg");
 
     assert!(
-        hoisted_mgpm.exists(),
-        "hoisted: node_modules should live inside .mgpm"
+        hoisted_mg.exists(),
+        "hoisted: node_modules should live inside .mg"
     );
     assert!(
-        isolated_mgpm.exists(),
-        "isolated: .mgpm should live inside node_modules"
+        isolated_mg.exists(),
+        "isolated: .mg should live inside node_modules"
     );
 }
