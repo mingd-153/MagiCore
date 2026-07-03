@@ -8,6 +8,8 @@ use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 use tar::Archive;
 
+use crate::store::cas::ContentStore;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TarballError {
     #[error("failed to read tarball: {0}")]
@@ -225,6 +227,102 @@ impl TarballExtractor {
         }
 
         Ok(files)
+    }
+
+    /// Extract tarball directly to CAS store, streaming content without intermediate disk writes.
+    /// Returns extracted entries with their CAS hashes.
+    pub fn extract_to_cas(
+        &self,
+        tarball: &Path,
+        cas_store: &ContentStore,
+    ) -> Result<Vec<ExtractedEntry>, TarballError> {
+        let file = File::open(tarball).map_err(|e| TarballError::ReadError(e.to_string()))?;
+        let reader = BufReader::new(file);
+        let decoder = GzDecoder::new(reader);
+        let mut archive = Archive::new(decoder);
+
+        let mut entries = Vec::new();
+
+        for entry in archive
+            .entries()
+            .map_err(|e| TarballError::ExtractError(e.to_string()))?
+        {
+            let mut entry = entry.map_err(|e| TarballError::ExtractError(e.to_string()))?;
+
+            let path = entry
+                .path()
+                .map_err(|e| TarballError::ExtractError(e.to_string()))?
+                .into_owned();
+
+            let path = strip_package_prefix(&path);
+            let relative_path = path.to_string_lossy().to_string();
+
+            if relative_path.contains("..") {
+                return Err(TarballError::PathEscape {
+                    path: relative_path.clone(),
+                });
+            }
+
+            let entry_type = entry.header().entry_type();
+            let is_executable = entry
+                .header()
+                .mode()
+                .map(|m| m & 0o111 != 0)
+                .unwrap_or(false);
+
+            if entry_type.is_symlink() {
+                let target = entry
+                    .link_name()
+                    .map_err(|e| TarballError::ExtractError(e.to_string()))?
+                    .map(|l| l.into_owned())
+                    .unwrap_or_else(|| PathBuf::from(""));
+
+                let target_str = target.to_string_lossy().to_string();
+                let target_path = PathBuf::from(&target_str);
+                if target_path.is_absolute() || target_str.starts_with("..") {
+                    return Err(TarballError::SymlinkEscape {
+                        target: target_str,
+                        path: relative_path.clone(),
+                    });
+                }
+
+                // For symlinks, we don't store in CAS, just record metadata
+                entries.push(ExtractedEntry {
+                    path: relative_path,
+                    hash: String::new(),
+                    entry_type: EntryType::Symlink,
+                    size: 0,
+                });
+            } else if entry_type.is_file() {
+                let mut data = Vec::new();
+                entry
+                    .read_to_end(&mut data)
+                    .map_err(|e| TarballError::ExtractError(e.to_string()))?;
+
+                let hash = hex::encode(Sha256::digest(&data));
+
+                let integrity = cas_store.import_bytes_with_exec(&data, is_executable)
+                    .map_err(|e| TarballError::ExtractError(e.to_string()))?;
+
+                // Verify hash matches
+                if integrity.hash != hash {
+                    return Err(TarballError::IntegrityMismatch {
+                        file: relative_path.clone(),
+                        expected: hash,
+                        actual: integrity.hash,
+                    });
+                }
+
+                entries.push(ExtractedEntry {
+                    path: relative_path,
+                    hash: integrity.hash,
+                    entry_type: EntryType::File,
+                    size: data.len() as u64,
+                });
+            }
+        }
+
+        Ok(entries)
     }
 }
 

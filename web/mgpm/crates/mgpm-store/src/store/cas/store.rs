@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use tracing;
@@ -6,7 +7,7 @@ use tracing;
 use super::integrity::{IntegrityHash, TarballEntry};
 use super::lifecycle::{ensure_cas_dirs, set_cas_root_permissions, validate_cas_root};
 use super::security::check_symlink_ancestors;
-use super::write::write_all_verify_and_set_perms;
+use super::write::{write_all_verify_and_set_perms, stream_write_verify_and_set_perms, STREAM_THRESHOLD};
 use crate::store::index::{StoreError, StoreIndex};
 
 pub struct ContentStore {
@@ -38,30 +39,67 @@ impl ContentStore {
             });
         }
 
-        let data = fs::read(src).map_err(|e| StoreError::Io {
+        let meta = fs::metadata(src).map_err(|e| StoreError::Io {
             path: src.to_path_buf(),
             msg: e.to_string(),
         })?;
-
+        
         let is_exec = is_executable(src);
-        let hash = IntegrityHash::from_bytes(&data, is_exec);
-        let dest = hash.cas_path(&self.root);
+        let use_streaming = meta.len() as usize >= STREAM_THRESHOLD;
 
-        if dest.exists() {
-            return Ok(hash);
-        }
+        let hash = if use_streaming {
+            // Stream large files
+            let file = fs::File::open(src).map_err(|e| StoreError::Io {
+                path: src.to_path_buf(),
+                msg: e.to_string(),
+            })?;
+            let reader = BufReader::new(file);
+            
+            let hash = IntegrityHash::from_bytes(&[], is_exec);
+            let dest = hash.cas_path(&self.root);
+            
+            if dest.exists() {
+                return Ok(hash);
+            }
 
-        fs::create_dir_all(dest.parent().unwrap()).map_err(|e| StoreError::Io {
-            path: dest.parent().unwrap().to_path_buf(),
-            msg: e.to_string(),
-        })?;
+            fs::create_dir_all(dest.parent().unwrap()).map_err(|e| StoreError::Io {
+                path: dest.parent().unwrap().to_path_buf(),
+                msg: e.to_string(),
+            })?;
 
-        let writer = fs::File::create_new(&dest).map_err(|e| StoreError::Io {
-            path: dest.clone(),
-            msg: e.to_string(),
-        })?;
+            let writer = fs::File::create_new(&dest).map_err(|e| StoreError::Io {
+                path: dest.clone(),
+                msg: e.to_string(),
+            })?;
 
-        write_all_verify_and_set_perms(writer, &dest, &data, is_exec)?;
+            stream_write_verify_and_set_perms(writer, &dest, reader, is_exec)?
+        } else {
+            // Small files: read into memory then write
+            let data = fs::read(src).map_err(|e| StoreError::Io {
+                path: src.to_path_buf(),
+                msg: e.to_string(),
+            })?;
+
+            let hash = IntegrityHash::from_bytes(&data, is_exec);
+            let dest = hash.cas_path(&self.root);
+
+            if dest.exists() {
+                return Ok(hash);
+            }
+
+            fs::create_dir_all(dest.parent().unwrap()).map_err(|e| StoreError::Io {
+                path: dest.parent().unwrap().to_path_buf(),
+                msg: e.to_string(),
+            })?;
+
+            let writer = fs::File::create_new(&dest).map_err(|e| StoreError::Io {
+                path: dest.clone(),
+                msg: e.to_string(),
+            })?;
+
+            write_all_verify_and_set_perms(writer, &dest, &data, is_exec)?;
+            hash
+        };
         Ok(hash)
     }
 
@@ -74,6 +112,8 @@ impl ContentStore {
         data: &[u8],
         executable: bool,
     ) -> Result<IntegrityHash, StoreError> {
+        let use_streaming = data.len() >= STREAM_THRESHOLD;
+        
         let hash = IntegrityHash::from_bytes(data, executable);
         let dest = hash.cas_path(&self.root);
 
@@ -91,8 +131,15 @@ impl ContentStore {
             msg: e.to_string(),
         })?;
 
-        write_all_verify_and_set_perms(writer, &dest, data, executable)?;
-        Ok(hash)
+        let result_hash = if use_streaming {
+            let cursor = std::io::Cursor::new(data);
+            let reader = BufReader::new(cursor);
+            stream_write_verify_and_set_perms(writer, &dest, reader, executable)?
+        } else {
+            write_all_verify_and_set_perms(writer, &dest, data, executable)?;
+            hash
+        };
+        Ok(result_hash)
     }
 
     pub fn export_to(&self, hash: &IntegrityHash, dest: &Path) -> Result<(), StoreError> {

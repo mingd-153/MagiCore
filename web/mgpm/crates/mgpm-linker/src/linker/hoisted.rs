@@ -1,5 +1,8 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use rayon::prelude::*;
 
 use super::{
     create_relative_symlink, validate_rel_path, LinkError, LinkResult, LinkerOptions,
@@ -44,13 +47,16 @@ impl HoistedLinker {
         })
     }
 
-    pub fn link_packages_internal(
+pub fn link_packages_internal(
         &self,
         packages: &[PackageLinkInfo],
         temp_dir: &Path,
     ) -> Result<LinkResult, LinkError> {
         let virtual_store = temp_dir.join("virtual_store");
         let mut linked = Vec::new();
+
+        // Pre-compute all destination directories to batch create them
+        let mut all_dirs = HashSet::new();
 
         for pkg in packages {
             let peer_hash = self.compute_peer_hash(pkg);
@@ -63,10 +69,43 @@ impl HoistedLinker {
                 .join(&pkg_dir_name)
                 .join("node_modules")
                 .join(&pkg.name);
-            fs::create_dir_all(&store_pkg_dir)?;
 
-            for (rel_path, hash) in &pkg.files {
-                validate_rel_path(rel_path)?;
+            // Ensure package directory exists even for empty packages
+            all_dirs.insert(store_pkg_dir.clone());
+
+            for (rel_path, _hash) in &pkg.files {
+                if let Some(parent) = Path::new(rel_path).parent() {
+                    all_dirs.insert(store_pkg_dir.join(parent));
+                }
+            }
+
+            // Dep dirs
+            let dep_dst_dir = virtual_store
+                .join(&pkg_dir_name)
+                .join("node_modules");
+            all_dirs.insert(dep_dst_dir);
+        }
+
+        // Batch create all directories
+        for dir in all_dirs {
+            fs::create_dir_all(&dir)?;
+        }
+
+        // Now link files with parallel hardlinks
+        for pkg in packages {
+            let peer_hash = self.compute_peer_hash(pkg);
+            let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
+                .replace('/', "_")
+                .replace('@', "_");
+            let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
+
+            let store_pkg_dir = virtual_store
+                .join(&pkg_dir_name)
+                .join("node_modules")
+                .join(&pkg.name);
+
+            // Collect all file link operations for parallel execution
+            let link_ops: Vec<_> = pkg.files.iter().map(|(rel_path, hash)| {
                 let src = self
                     .options
                     .store_path
@@ -74,21 +113,18 @@ impl HoistedLinker {
                     .join("sha256")
                     .join(&hash[..2])
                     .join(hash);
- 
                 let dst = store_pkg_dir.join(rel_path);
-                if let Some(parent) = dst.parent() {
-                    fs::create_dir_all(parent)?;
-                }
+                (src, dst)
+            }).collect();
 
+            // Parallel hardlinks
+            link_ops.par_iter().try_for_each(|(src, dst)| {
                 if self.options.symlinks {
-                    // Use hardlink for CAS store references to avoid
-                    // firmlink issues on macOS (/tmp -> /private/tmp) and
-                    // to prevent exposing the CAS store path to Node.js
-                    fs::hard_link(&src, &dst)?;
+                    fs::hard_link(src, dst).map_err(LinkError::Io)
                 } else {
-                    fs::copy(&src, &dst)?;
+                    fs::copy(src, dst).map(|_| ()).map_err(LinkError::Io)
                 }
-            }
+            })?;
 
             if self.should_hoist(pkg) {
                 let hoist_node_modules = temp_dir.join("node_modules");
