@@ -28,6 +28,7 @@ tempfile.workspace = true
 glob.workspace = true
 dirs.workspace = true
 blake3.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
