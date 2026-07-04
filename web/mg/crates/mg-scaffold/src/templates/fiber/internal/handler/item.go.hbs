@@ -1,0 +1,51 @@
+package handler
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+	"{{name}}/internal/model"
+)
+
+var items []model.Item
+var nextID = 1
+
+type createItemInput struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func ListItems(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{"data": items})
+}
+
+func GetItem(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"message": "Invalid ID"})
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return c.JSON(fiber.Map{"data": item})
+		}
+	}
+	return c.Status(404).JSON(fiber.Map{"message": "Item not found"})
+}
+
+func CreateItem(c *fiber.Ctx) error {
+	var input createItemInput
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(fiber.Map{"message": "Invalid input"})
+	}
+	if input.Name == "" {
+		return c.Status(400).JSON(fiber.Map{"message": "Name is required"})
+	}
+	item := model.Item{
+		ID:          nextID,
+		Name:        input.Name,
+		Description: input.Description,
+	}
+	nextID++
+	items = append(items, item)
+	return c.Status(201).JSON(fiber.Map{"data": item})
+}

@@ -1,0 +1,32 @@
+{
+  "name": "{{name}}",
+  "version": "{{version}}",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "koa": "^2.15.0",
+    "@koa/cors": "^5.0.0",
+    "@koa/router": "^13.0.0",
+    "koa-body": "^6.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/koa": "^2.15.0",
+    "@types/koa__cors": "^5.0.0",
+    "@types/koa__router": "^12.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "tsx": "^4.0.0",
+    "eslint": "^9.0.0",
+    "@eslint/js": "^9.0.0",
+    "globals": "^15.0.0",
+    "typescript-eslint": "^8.0.0",
+    "prettier": "^3.0.0"
+  }
+}
