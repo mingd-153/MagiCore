@@ -96,12 +96,14 @@ impl DependencyProvider for RegistryDependencyProvider {
                     if let (Ok(pkg_name), Some(spec)) =
                         (mg_core::PackageName::new(name), version.as_str())
                     {
-                        deps.push(ResolvedDep {
-                            package: pkg_name,
-                            spec: spec.to_string(),
-                            optional: true,
-                            peer: false,
-                        });
+                        if mg_core::platform::is_platform_match(name) {
+                            deps.push(ResolvedDep {
+                                package: pkg_name,
+                                spec: spec.to_string(),
+                                optional: true,
+                                peer: false,
+                            });
+                        }
                     }
                 }
             }
@@ -223,12 +225,19 @@ enum CliCommand {
         #[arg(long)]
         ts: bool,
     },
-    /// Scaffold a new web project (HTML+CSS+JS/Vite/TS/Tailwind/...)
+    /// Scaffold a new web project
+    ///
+    /// Vanilla: mg create-web <name> [--flags...]
+    ///     → HTML+CSS+JS, no framework
+    ///
+    /// Framework: mg create-web <framework>[@<version>] <name> [--flags...]
+    ///     → Uses framework template (react, vue, next-app, ...)
     #[command(name = "create-web")]
     CreateWeb {
-        /// Project directory name
-        name: String,
-        /// Add TypeScript (auto-enables --vite)
+        /// Framework name (e.g. react, vue) + optional @version — omit for vanilla
+        #[arg()]
+        args: Vec<String>,
+        /// Add TypeScript (auto-enables --vite for vanilla)
         #[arg(long)]
         ts: bool,
         /// Add Vite bundler (dev server, HMR, build)
@@ -965,6 +974,9 @@ async fn cmd_install(
         }
         if let Some(d) = opt_deps {
             for (name, version) in d {
+                if !mg_core::platform::is_platform_match(name) {
+                    continue;
+                }
                 let v = version.as_str().unwrap_or("*");
                 wanted.push(mg_lockfile::WantedDependency {
                     name: mg_core::PackageName::new(name)
@@ -1491,7 +1503,7 @@ async fn main() -> Result<(), String> {
             Ok(())
         }
         CliCommand::CreateWeb {
-            name,
+            args,
             ts,
             vite,
             tailwind,
@@ -1504,24 +1516,53 @@ async fn main() -> Result<(), String> {
             use mg_scaffold::ScaffoldContext;
             use std::collections::HashMap;
 
+            if args.is_empty() || args.len() > 2 {
+                return Err("Usage: mg create-web [<framework>[@<version>]] <name> [--flags...]".into());
+            }
+
             let mut registry = TemplateRegistry::new();
             registry.register_defaults();
 
-            let tpl = registry
-                .find_by_command("web")
-                .ok_or_else(|| "Vanilla template not found".to_string())?;
+            let (framework_name, framework_version, project_name) = if args.len() == 1 {
+                // Vanilla: mg create-web myapp
+                (None, None, args[0].clone())
+            } else {
+                // Framework: mg create-web react myapp  or  mg create-web react@latest myapp
+                let fw = &args[0];
+                let (fw_name, fw_ver) = if let Some(at) = fw.rfind('@') {
+                    (fw[..at].to_string(), Some(fw[at + 1..].to_string()))
+                } else {
+                    (fw.clone(), None)
+                };
+                (Some(fw_name), fw_ver, args[1].clone())
+            };
+
+            let tpl = if let Some(ref fw) = framework_name {
+                // Look up framework template by name
+                let template = registry
+                    .get(fw)
+                    .ok_or_else(|| format!("Unknown framework '{fw}'. Available: {}. Use 'mg create-web <name>' for vanilla.", {
+                        let names: Vec<&str> = registry.list().iter().filter(|t| t.name != "vanilla").map(|t| t.name).collect();
+                        names.join(", ")
+                    }))?;
+                (template.create_engine)()
+            } else {
+                // Vanilla
+                let template = registry
+                    .get("vanilla")
+                    .ok_or_else(|| "Vanilla template not found".to_string())?;
+                (template.create_engine)()
+            };
 
             let dest = std::env::current_dir()
                 .map_err(|e| format!("Cannot get current directory: {e}"))?
-                .join(&name);
-
-            let engine = (tpl.create_engine)();
+                .join(&project_name);
 
             let mut vars = HashMap::new();
-            vars.insert("name".to_string(), name.clone());
-            vars.insert("version".to_string(), "1.0.0".to_string());
+            vars.insert("name".to_string(), project_name.clone());
+            vars.insert("version".to_string(), framework_version.unwrap_or_else(|| "1.0.0".to_string()));
 
-            // TS, Tailwind, Sass auto-enable Vite (need compilation)
+            // TS, Tailwind, Sass auto-enable Vite (need compilation) — vanilla only
             let vite = vite || ts || tailwind || sass;
 
             let mut features = Vec::new();
@@ -1547,18 +1588,18 @@ async fn main() -> Result<(), String> {
                 features.push("api".to_string());
             }
 
-            let ctx = ScaffoldContext::new(&name, dest.clone())
+            let ctx = ScaffoldContext::new(&project_name, dest.clone())
                 .with_vars(vars)
                 .with_features(features);
 
-            let result = engine
+            let result = tpl
                 .create_project(&ctx, false)
                 .map_err(|e| format!("Failed to create project: {e}"))?;
 
             println!(
                 "{} Created project '{}' at {}",
                 "[OK]".green(),
-                name.green(),
+                project_name.green(),
                 dest.display().to_string().green()
             );
             println!("   {} files", result.files_created.len());
