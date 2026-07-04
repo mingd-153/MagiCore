@@ -1,0 +1,110 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/mgpm-cli${{ matrix.target == 'x86_64-pc-windows-msvc' && '.exe' || '' }} dist/
+          cd dist
+          tar czf ../mgpm-${{ matrix.target }}.tar.gz .
+
+      - name: Generate checksums
+        run: |
+          sha256sum mgpm-${{ matrix.target }}.tar.gz | tee mgpm-${{ matrix.target }}.sha256
+
+      # GPG signing
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Sign artifacts
+        run: |
+          gpg --detach-sign --armor mgpm-${{ matrix.target }}.tar.gz
+          gpg --verify mgpm-${{ matrix.target }}.tar.gz.asc mgpm-${{ matrix.target }}.tar.gz
+
+      # Sigstore keyless signing (cosign)
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign with cosign
+        run: |
+          cosign sign-blob --yes mgpm-${{ matrix.target }}.tar.gz \
+            --output-signature mgpm-${{ matrix.target }}.tar.gz.sig \
+            --output-certificate mgpm-${{ matrix.target }}.tar.gz.pem
+        env:
+          COSIGN_EXPERIMENTAL: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mgpm-${{ matrix.target }}
+          path: |
+            mgpm-${{ matrix.target }}.tar.gz
+            mgpm-${{ matrix.target }}.sha256
+            mgpm-${{ matrix.target }}.tar.gz.asc
+            mgpm-${{ matrix.target }}.tar.gz.sig
+            mgpm-${{ matrix.target }}.tar.gz.pem
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Combine checksums
+        run: |
+          cat mgpm-*/mgpm-*.sha256 > checksums.txt
+          cat checksums.txt | sha256sum -c
+
+      - name: Generate SBOM
+        run: |
+          echo '{
+            "spdxVersion": "SPDX-2.3",
+            "name": "mgpm",
+            "packages": [
+              {"name": "mgpm-cli", "version": "${{ github.ref_name }}"}
+            ]
+          }' > sbom.json
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mgpm-*/*.tar.gz
+            mgpm-*/*.sha256
+            mgpm-*/*.asc
+            mgpm-*/*.sig
+            mgpm-*/*.pem
+            checksums.txt
+            sbom.json
+          generate_release_notes: true

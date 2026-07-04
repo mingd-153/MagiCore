@@ -1,0 +1,42 @@
+# {{pascalCase name}}
+
+> Next.js fullstack app built with App Router + TypeScript + Tailwind CSS.
+
+Built with [mg](https://mgpm.dev).
+
+## Getting Started
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:4315](http://localhost:4315).
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start dev server |
+| `npm run build` | Build for production |
+| `npm run start` | Start production server |
+| `npm run lint` | Run Next.js lint |
+| `npm run typecheck` | TypeScript check |
+| `npm run format` | Format with Prettier |
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── (marketing)/   # Public pages
+│   ├── (dashboard)/   # Dashboard pages
+│   ├── api/           # API routes
+│   ├── layout.tsx     # Root layout
+│   └── page.tsx       # Home page
+├── components/
+│   ├── ui/            # Reusable UI primitives
+│   └── features/      # Feature components
+├── actions/           # Server Actions
+└── lib/               # Utilities
+```

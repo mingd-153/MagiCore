@@ -1,0 +1,42 @@
+import { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+
+interface Item {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+const items: Item[] = [];
+
+const createItemSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const itemsRouter: FastifyPluginAsync = async (fastify) => {
+  fastify.get('/', async () => ({ data: items }));
+
+  fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    const item = items.find((i) => i.id === request.params.id);
+    if (!item) {
+      reply.code(404);
+      return { message: 'Item not found' };
+    }
+    return { data: item };
+  });
+
+  fastify.post('/', async (request, reply) => {
+    const parsed = createItemSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { message: 'Validation failed', errors: parsed.error.flatten() };
+    }
+    const item: Item = { id: String(items.length + 1), ...parsed.data };
+    items.push(item);
+    reply.code(201);
+    return { data: item };
+  });
+};
+
+export { itemsRouter };
