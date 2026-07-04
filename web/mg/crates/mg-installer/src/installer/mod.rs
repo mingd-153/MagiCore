@@ -558,6 +558,41 @@ impl Installer {
                     }
                 };
 
+                // Fix scoped package paths: DefinitelyTyped tarballs use {name}/ instead of package/
+                let entries = if let Some(slash_pos) = package.name.rfind('/') {
+                    let unscoped = &package.name[slash_pos + 1..];
+                    let prefix = format!("{}/", unscoped);
+                    if entries.iter().all(|(p, _)| {
+                        p == unscoped || p.starts_with(&prefix)
+                    }) {
+                        // Strip the unscoped name prefix from all paths
+                        let fixed_entries: Vec<_> = entries.into_iter().map(|(path, hash)| {
+                            let fixed = path.strip_prefix(&prefix).unwrap_or(&path).to_string();
+                            (fixed, hash)
+                        }).collect();
+                        // Move files from subdirectory up one level
+                        let src_dir = extract_dir.join(unscoped);
+                        if src_dir.is_dir() {
+                            if let Ok(entries) = std::fs::read_dir(&src_dir) {
+                                for entry in entries.flatten() {
+                                    let file_name = entry.file_name();
+                                    let dst = extract_dir.join(&file_name);
+                                    // If dst exists (e.g. from a previous extraction), skip
+                                    if !dst.exists() {
+                                        std::fs::rename(entry.path(), &dst).ok();
+                                    }
+                                }
+                            }
+                            std::fs::remove_dir(&src_dir).ok();
+                        }
+                        fixed_entries
+                    } else {
+                        entries
+                    }
+                } else {
+                    entries
+                };
+
                 thread_pool.install(|| {
                     for (ref rel_path, _) in &entries {
                         let src_path = extract_dir.join(rel_path);
@@ -577,6 +612,16 @@ impl Installer {
                 // Extract bin entries from package.json
                 let bin_entries = {
                     let pkg_json_path = extract_dir.join("package.json");
+                    // Fallback for scoped packages where files may not have been moved
+                    let pkg_json_path = if pkg_json_path.is_file() {
+                        pkg_json_path
+                    } else if let Some(slash_pos) = package.name.rfind('/') {
+                        let unscoped = &package.name[slash_pos + 1..];
+                        let fallback = extract_dir.join(unscoped).join("package.json");
+                        if fallback.is_file() { fallback } else { pkg_json_path }
+                    } else {
+                        pkg_json_path
+                    };
                     if pkg_json_path.is_file() {
                         match std::fs::read_to_string(&pkg_json_path) {
                             Ok(content) => {
