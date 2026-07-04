@@ -1,0 +1,20 @@
+package main
+
+import (
+	"log"
+	"os"
+	"{{name}}/internal/router"
+)
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	r := router.Setup()
+	log.Printf("Server running on http://localhost:%s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatal(err)
+	}
+}

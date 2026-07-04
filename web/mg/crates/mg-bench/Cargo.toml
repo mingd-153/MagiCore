@@ -1,0 +1,42 @@
+[package]
+name = "mg-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mg-core = { path = "../mg-core" }
+mg-store = { path = "../mg-store" }
+mg-resolver = { path = "../mg-resolver" }
+mg-lockfile = { path = "../mg-lockfile" }
+mg-installer = { path = "../mg-installer" }
+mg-linker = { path = "../mg-linker" }
+mg-registry = { path = "../mg-registry" }
+mg-workspace = { path = "../mg-workspace" }
+criterion.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tempfile = "3.8"
+walkdir.workspace = true
+indicatif.workspace = true
+console.workspace = true
+tracing.workspace = true
+
+[[bench]]
+name = "store"
+path = "benches/store.rs"
+harness = false
+
+[[bench]]
+name = "resolver"
+path = "benches/resolver.rs"
+harness = false
+
+[[bench]]
+name = "lockfile"
+path = "benches/lockfile.rs"
+harness = false

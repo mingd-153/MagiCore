@@ -1,0 +1,35 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
+
+interface Item {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+const items: Item[] = [];
+
+const createItemSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const itemsRouter = new Hono();
+
+itemsRouter.get('/', (c) => c.json({ data: items }));
+
+itemsRouter.get('/:id', (c) => {
+  const item = items.find((i) => i.id === c.req.param('id'));
+  if (!item) return c.json({ message: 'Item not found' }, 404);
+  return c.json({ data: item });
+});
+
+itemsRouter.post('/', zValidator('json', createItemSchema), (c) => {
+  const body = c.req.valid('json');
+  const item: Item = { id: String(items.length + 1), ...body };
+  items.push(item);
+  return c.json({ data: item }, 201);
+});
+
+export { itemsRouter };

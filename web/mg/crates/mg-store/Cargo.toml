@@ -1,0 +1,45 @@
+[package]
+name = "mg-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mg-core = { path = "../mg-core" }
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bincode.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+async-tar.workspace = true
+async-compression.workspace = true
+flume.workspace = true
+walkdir.workspace = true
+ignore.workspace = true
+fs2.workspace = true
+tar.workspace = true
+flate2.workspace = true
+sha2.workspace = true
+blake3.workspace = true
+digest.workspace = true
+rusqlite.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+mimalloc.workspace = true
+hex.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+libc.workspace = true
+lru.workspace = true
+sysinfo.workspace = true
+pathdiff.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
+tempfile = "3.8"
