@@ -1,0 +1,34 @@
+package com.example.service;
+
+import com.example.dto.CreateItemDTO;
+import com.example.dto.ItemDTO;
+import com.example.model.Item;
+import com.example.repository.ItemRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+@Service
+public class ItemService {
+    private final ItemRepository repository;
+
+    public ItemService(ItemRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<ItemDTO> findAll() {
+        return repository.findAll().stream().map(ItemDTO::new).toList();
+    }
+
+    public ItemDTO findById(Long id) {
+        Item item = repository.findById(id).orElseThrow(() -> new RuntimeException("Item not found"));
+        return new ItemDTO(item);
+    }
+
+    public ItemDTO create(CreateItemDTO dto) {
+        Item item = new Item();
+        item.setName(dto.name());
+        item.setDescription(dto.description());
+        return new ItemDTO(repository.save(item));
+    }
+}

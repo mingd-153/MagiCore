@@ -1,0 +1,29 @@
+'use server';
+
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+
+export async function login(formData: FormData) {
+  const email = formData.get('email') as string;
+  const password = formData.get('password') as string;
+
+  if (!email || !password) {
+    return { error: 'Email and password are required' };
+  }
+
+  const cookieStore = await cookies();
+  cookieStore.set('session', 'example-session-token', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24,
+  });
+
+  redirect('/dashboard');
+}
+
+export async function logout() {
+  const cookieStore = await cookies();
+  cookieStore.delete('session');
+  redirect('/');
+}

@@ -1,0 +1,29 @@
+import Link from 'next/link';
+
+const links = [
+  { href: '/', label: 'Home' },
+  { href: '/about', label: 'About' },
+  { href: '/dashboard', label: 'Dashboard' },
+];
+
+export default function Header() {
+  return (
+    <header className="bg-white border-b">
+      <nav className="max-w-7xl mx-auto px-4 h-16 flex items-center gap-8">
+        <span className="font-bold text-lg">{{name}}</span>
+        <ul className="flex gap-6 ml-auto">
+          {links.map(({ href, label }) => (
+            <li key={href}>
+              <Link
+                href={href}
+                className="text-gray-600 hover:text-gray-900 transition text-sm font-medium"
+              >
+                {label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </header>
+  );
+}

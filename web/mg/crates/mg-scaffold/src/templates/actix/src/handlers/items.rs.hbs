@@ -1,0 +1,41 @@
+use actix_web::{web, HttpResponse, Responder};
+use serde_json::json;
+use sqlx::PgPool;
+
+use crate::models::item::{CreateItem, Item};
+
+pub async fn list(pool: web::Data<PgPool>) -> impl Responder {
+    let items = sqlx::query_as::<_, Item>("SELECT * FROM items")
+        .fetch_all(pool.get_ref())
+        .await
+        .unwrap_or_default();
+    HttpResponse::Ok().json(json!({ "data": items }))
+}
+
+pub async fn get_by_id(pool: web::Data<PgPool>, path: web::Path<i32>) -> impl Responder {
+    let id = path.into_inner();
+    match sqlx::query_as::<_, Item>("SELECT * FROM items WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool.get_ref())
+        .await
+    {
+        Ok(Some(item)) => HttpResponse::Ok().json(json!({ "data": item })),
+        Ok(None) => HttpResponse::NotFound().json(json!({ "message": "Item not found" })),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+pub async fn create(pool: web::Data<PgPool>, body: web::Json<CreateItem>) -> impl Responder {
+    let result = sqlx::query_as::<_, Item>(
+        "INSERT INTO items (name, description) VALUES ($1, $2) RETURNING *",
+    )
+    .bind(&body.name)
+    .bind(&body.description)
+    .fetch_one(pool.get_ref())
+    .await;
+
+    match result {
+        Ok(item) => HttpResponse::Created().json(json!({ "data": item })),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}

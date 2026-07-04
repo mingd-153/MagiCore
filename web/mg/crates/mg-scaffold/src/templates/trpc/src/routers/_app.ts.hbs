@@ -1,0 +1,11 @@
+import { router, publicProcedure } from '../trpc';
+import { itemsRouter } from './items';
+
+export const appRouter = router({
+  items: itemsRouter,
+  health: router({
+    check: publicProcedure.query(() => ({ status: 'ok' })),
+  }),
+});
+
+export type AppRouter = typeof appRouter;

@@ -1,0 +1,9 @@
+import Config
+
+config :{{name}},
+  ecto_repos: [{{pascalCase name}}.Repo]
+
+config :{{name}}, {{pascalCase name}}.Web.Endpoint,
+  url: [host: "localhost"],
+  adapter: Bandit.PhoenixAdapter,
+  render_errors: [view: {{pascalCase name}}.Web.ErrorView, accepts: ~w(json)]
