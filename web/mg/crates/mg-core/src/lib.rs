@@ -24,3 +24,4 @@ pub use error::*;
 pub use logging::{init_tracing, TracingConfig};
 
 pub mod arena;
+pub mod platform;
