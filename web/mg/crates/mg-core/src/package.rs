@@ -312,6 +312,16 @@ impl VersionRange {
             return true;
         }
 
+        // Handle || (OR / union) — any sub-range matching is sufficient
+        if range_str.contains("||") {
+            return range_str.split("||").any(|part| {
+                let part = part.trim();
+                if part.is_empty() { return false; }
+                let sub = VersionRange(part.to_string());
+                sub.contains(version)
+            });
+        }
+
         if let Some(min) = range_str.strip_prefix('^') {
             if let Ok(min_v) = Version::parse(min) {
                 let max_v = increment_major(&min_v);
