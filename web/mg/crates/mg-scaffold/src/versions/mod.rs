@@ -47,6 +47,10 @@ version!(VUE_TSC, "vue-tsc", "^2.2.2");
 version!(ESLINT_PLUGIN_VUE, "eslint-plugin-vue", "^9.33.0");
 version!(VUE_ESLINT_PARSER, "vue-eslint-parser", "^9.4.3");
 
+// --- Astro ---
+version!(ASTRO, "astro", "^5.9.1");
+version!(ASTRO_CHECK, "@astrojs/check", "^0.10.1");
+
 // --- State management ---
 version!(ZUSTAND, "zustand", "^5.0.14");
 
