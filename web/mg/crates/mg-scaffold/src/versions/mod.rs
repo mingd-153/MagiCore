@@ -80,6 +80,13 @@ version!(TYPES_NODE, "@types/node", "^22.0.0");
 version!(TYPES_REACT, "@types/react", "^19.0.0");
 version!(TYPES_REACT_DOM, "@types/react-dom", "^19.0.0");
 
+// --- Fastify ---
+version!(FASTIFY, "fastify", "^5.3.1");
+version!(FASTIFY_CORS, "@fastify/cors", "^11.0.1");
+version!(FASTIFY_HELMET, "@fastify/helmet", "^13.0.1");
+version!(ZOD, "zod", "^3.24.4");
+version!(TSX, "tsx", "^4.19.4");
+
 // --- Linting / Formatting ---
 version!(ESLINT, "eslint", "^9.0.0");
 version!(ESLINT_JS, "@eslint/js", "^9.0.0");
