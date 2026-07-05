@@ -38,6 +38,15 @@ version!(REACT, "react", "^19.2.7");
 version!(REACT_DOM, "react-dom", "^19.0.0");
 version!(REACT_ROUTER, "react-router", "^7.0.0");
 
+// --- Vue ---
+version!(VUE, "vue", "^3.5.13");
+version!(VUE_ROUTER, "vue-router", "^4.5.1");
+version!(PINIA, "pinia", "^2.3.1");
+version!(VITE_PLUGIN_VUE, "@vitejs/plugin-vue", "^5.2.4");
+version!(VUE_TSC, "vue-tsc", "^2.2.2");
+version!(ESLINT_PLUGIN_VUE, "eslint-plugin-vue", "^9.33.0");
+version!(VUE_ESLINT_PARSER, "vue-eslint-parser", "^9.4.3");
+
 // --- State management ---
 version!(ZUSTAND, "zustand", "^5.0.14");
 
