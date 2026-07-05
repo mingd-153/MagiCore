@@ -64,6 +64,7 @@ pub fn template() -> Template {
         name: "flask",
         description: "Flask REST API with Python 3.12",
         commands: &["flask"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

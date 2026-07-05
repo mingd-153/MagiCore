@@ -83,6 +83,7 @@ pub fn template() -> Template {
         name: "koa",
         description: "Koa REST API with TypeScript",
         commands: &["koa"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

@@ -68,6 +68,7 @@ pub fn template() -> Template {
         name: "django",
         description: "Django REST API with Python 3.12",
         commands: &["django"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

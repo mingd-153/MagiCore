@@ -62,6 +62,7 @@ pub fn template() -> Template {
         name: "go-gin",
         description: "Go Gin REST API",
         commands: &["go-gin"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

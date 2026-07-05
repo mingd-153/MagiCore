@@ -44,7 +44,7 @@ fn extract_features(features: &[String]) -> Ctx {
         version: "1.0.0".into(),
         has_vite: features.iter().any(|f| f == "vite"),
         has_ts: features.iter().any(|f| f == "typescript"),
-        has_tailwind: features.iter().any(|f| f == "tailwind"),
+        has_tailwind: features.iter().any(|f| f == "tailwindcss"),
         has_bootstrap: features.iter().any(|f| f == "bootstrap"),
         has_nui: features.iter().any(|f| f == "nui"),
         has_sass: features.iter().any(|f| f == "sass"),
@@ -73,9 +73,8 @@ impl VanillaCodegen {
                 devs.push(("@types/node".into(), "\"^22.0.0\"".into()));
             }
             if ctx.has_tailwind {
-                devs.push(("tailwindcss".into(), "\"^3.4.0\"".into()));
-                devs.push(("postcss".into(), "\"^8.4.0\"".into()));
-                devs.push(("autoprefixer".into(), "\"^10.4.0\"".into()));
+                devs.push(("tailwindcss".into(), "\"^4.0.0\"".into()));
+                devs.push(("@tailwindcss/vite".into(), "\"^4.0.0\"".into()));
             }
             if ctx.has_sass {
                 devs.push(("sass".into(), "\"^1.80.0\"".into()));
@@ -91,16 +90,11 @@ impl VanillaCodegen {
             )));
 
             if ctx.has_ts {
-                files.push(("vite.config.ts".into(), Self::vite_config_ts()));
+                files.push(("vite.config.ts".into(), Self::vite_config_ts(&ctx)));
                 files.push(("tsconfig.json".into(), Self::tsconfig()));
                 files.push(("tsconfig.node.json".into(), Self::tsconfig_node()));
             } else {
-                files.push(("vite.config.js".into(), Self::vite_config_js()));
-            }
-
-            if ctx.has_tailwind {
-                files.push(("tailwind.config.js".into(), Self::tailwind_config()));
-                files.push(("postcss.config.js".into(), Self::postcss_config()));
+                files.push(("vite.config.js".into(), Self::vite_config_js(&ctx)));
             }
 
             files.push(("index.html".into(), Self::vite_html(name, &ctx)));
@@ -179,16 +173,51 @@ impl VanillaCodegen {
     }
 
     // --- VITE MODE RENDERERS ---
-    fn vite_config_js() -> String {
-        "import { defineConfig } from \"vite\";\n\
-          export default defineConfig({\n  server: { port: 4315, open: true },\n  preview: { port: 4316 },\n});".to_string()
+    fn vite_config_js(ctx: &Ctx) -> String {
+        let tw_import = if ctx.has_tailwind {
+            "import tailwindcss from '@tailwindcss/vite';\n"
+        } else {
+            ""
+        };
+        let plugins = if ctx.has_tailwind {
+            "  plugins: [tailwindcss()],\n"
+        } else {
+            ""
+        };
+        format!(
+            "import {{ defineConfig }} from \"vite\";\n\
+             {tw_import}\
+             export default defineConfig({{\n\
+             {plugins}\
+             server: {{ port: 4315, open: true }},\n\
+             preview: {{ port: 4316 }},\n\
+             build: {{ target: 'es2022' }},\n}});"
+        )
     }
 
-    fn vite_config_ts() -> String {
-        "import { defineConfig } from \"vite\";\n\
-         import { fileURLToPath, URL } from \"node:url\";\n\
-         const __dirname = fileURLToPath(new URL(\".\", import.meta.url));\n\
-          export default defineConfig({\n  resolve: { alias: { \"@\": __dirname + \"/src\" } },\n  server: { port: 4315, open: true },\n  preview: { port: 4316 },\n});".to_string()
+    fn vite_config_ts(ctx: &Ctx) -> String {
+        let tw_import = if ctx.has_tailwind {
+            "import tailwindcss from '@tailwindcss/vite';\n"
+        } else {
+            ""
+        };
+        let plugins = if ctx.has_tailwind {
+            "  plugins: [tailwindcss()],\n"
+        } else {
+            ""
+        };
+        format!(
+            "import {{ defineConfig }} from \"vite\";\n\
+             import {{ fileURLToPath, URL }} from \"node:url\";\n\
+             {tw_import}\
+             const __dirname = fileURLToPath(new URL(\".\", import.meta.url));\n\
+             export default defineConfig({{\n\
+             {plugins}\
+             resolve: {{ alias: {{ \"@\": __dirname + \"/src\" }} }},\n\
+             server: {{ port: 4315, open: true }},\n\
+             preview: {{ port: 4316 }},\n\
+             build: {{ target: 'es2022' }},\n}});"
+        )
     }
 
     fn tsconfig() -> String {
@@ -197,15 +226,6 @@ impl VanillaCodegen {
 
     fn tsconfig_node() -> String {
         include_str!("vanilla/tsconfig.node.json.hbs").to_string()
-    }
-
-    fn tailwind_config() -> String {
-        "/** @type {import('tailwindcss').Config} */\n\
-         export default {\n  content: [\"./src/**/*.{html,js,ts,jsx,tsx}\"],\n  theme: { extend: {} },\n  plugins: [],\n};".to_string()
-    }
-
-    fn postcss_config() -> String {
-        "export default {\n  plugins: {\n    tailwindcss: {},\n    autoprefixer: {},\n  },\n};".to_string()
     }
 
     fn vite_html(name: &str, ctx: &Ctx) -> String {
@@ -245,7 +265,7 @@ impl VanillaCodegen {
 
     fn vite_styles(ctx: &Ctx) -> String {
         if ctx.has_tailwind {
-            "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n".to_string()
+            "@import \"tailwindcss\";\n".to_string()
         } else {
             Self::pure_css()
         }
@@ -391,6 +411,7 @@ pub fn template() -> Template {
         name: "vanilla",
         description: "Vanilla JS/TS web app with optional Vite, Tailwind, Bootstrap, etc.",
         commands: &["web"],
+        supported_flags: &["vite", "typescript", "tailwindcss", "bootstrap", "nui", "sass", "api"],
         create_engine: || Box::new(VanillaCodegen),
     }
 }
@@ -476,14 +497,14 @@ mod test {
     // --- --tailwind ---
     #[test]
     fn test_tailwind_with_vite() {
-        let f = VanillaCodegen::generate_files("app", "1.0.0", &["vite".into(), "tailwind".into()]);
+        let f = VanillaCodegen::generate_files("app", "1.0.0", &["vite".into(), "tailwindcss".into()]);
         let paths: Vec<_> = f.iter().map(|(p, _)| p.as_str()).collect();
-        assert!(paths.contains(&"tailwind.config.js"));
-        assert!(paths.contains(&"postcss.config.js"));
-        // CSS should be tailwind directives
+        assert!(!paths.contains(&"tailwind.config.js"));
+        assert!(!paths.contains(&"postcss.config.js"));
+        // Tailwind v4 uses @import
         let css = f.iter().find(|(p, _)| p.as_str() == "src/styles/main.css").unwrap().1.clone();
-        assert!(css.contains("@tailwind base"));
-        assert_eq!(f.len(), 14);
+        assert!(css.contains("@import \"tailwindcss\""));
+        assert_eq!(f.len(), 12);
     }
 
     // --- --bootstrap ---
@@ -540,7 +561,7 @@ mod test {
         assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &[]).len(), 7);           // pure
         assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &["vite".into()]).len(), 12); // vite
         assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &["vite".into(), "typescript".into()]).len(), 14); // vite+ts
-        assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &["vite".into(), "tailwind".into()]).len(), 14);   // vite+tw
+        assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &["vite".into(), "tailwindcss".into()]).len(), 12);   // vite+tw (v4: no config files)
         assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &["vite".into(), "nui".into()]).len(), 14);        // vite+nui
         assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &["vite".into(), "api".into()]).len(), 13);        // vite+api
         assert_eq!(VanillaCodegen::generate_files("x", "1.0.0", &["vite".into(), "sass".into()]).len(), 12);       // vite+sass
@@ -577,9 +598,9 @@ mod test {
         let temp = tempfile::tempdir().unwrap();
         let dest = temp.path().join("out");
         let ctx = ScaffoldContext::new("my-app", dest.clone())
-            .with_features(vec!["vite".into(), "typescript".into(), "tailwind".into(), "bootstrap".into(), "nui".into(), "api".into()]);
+            .with_features(vec!["vite".into(), "typescript".into(), "tailwindcss".into(), "bootstrap".into(), "nui".into(), "api".into()]);
         VanillaCodegen.create_project(&ctx, false).unwrap();
-        assert!(dest.join("tailwind.config.js").exists());
+        assert!(!dest.join("tailwind.config.js").exists());
         assert!(dest.join("src/components/button.ts").exists());
         assert!(dest.join("src/services/api.ts").exists());
         let html = std::fs::read_to_string(dest.join("index.html")).unwrap();
@@ -648,7 +669,7 @@ mod test {
     }
 
     #[test]
-    fn test_api_client_ts() {
+        fn test_api_client_ts() {
         let ctx = Ctx { name: "x".into(), version: "1.0.0".into(), has_vite: true, has_ts: true, has_tailwind: false, has_bootstrap: false, has_nui: false, has_sass: false, has_api: true };
         let r = VanillaCodegen::api_client(&ctx);
         assert!(r.contains("<T>"));

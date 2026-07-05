@@ -92,6 +92,7 @@ pub fn template() -> Template {
         name: "astro",
         description: "Astro static site with TypeScript",
         commands: &["astro"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

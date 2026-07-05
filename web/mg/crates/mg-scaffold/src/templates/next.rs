@@ -154,6 +154,7 @@ pub fn template() -> Template {
         name: "next",
         description: "Next.js fullstack app with App Router",
         commands: &["next"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

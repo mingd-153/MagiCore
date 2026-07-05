@@ -54,11 +54,7 @@ pub fn is_platform_match(name: &str) -> bool {
         (true, false) => os_match,
         (false, true) => {
             let has_standard_form = NPM_ARCHES.iter().any(|a| base.ends_with(&format!("-{a}")));
-            if has_standard_form {
-                false
-            } else {
-                true
-            }
+            !has_standard_form
         }
         (true, true) => os_match && arch_match,
     }

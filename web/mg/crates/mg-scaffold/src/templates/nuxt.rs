@@ -69,6 +69,7 @@ pub fn template() -> Template {
         name: "nuxt",
         description: "Nuxt 3 Vue web app with TypeScript",
         commands: &["nuxt"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

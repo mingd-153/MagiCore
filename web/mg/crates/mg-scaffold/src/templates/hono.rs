@@ -70,6 +70,7 @@ pub fn template() -> Template {
         name: "hono",
         description: "Hono API with TypeScript",
         commands: &["hono"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

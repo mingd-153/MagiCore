@@ -84,6 +84,7 @@ pub fn template() -> Template {
         name: "fiber",
         description: "Fiber REST API with Go",
         commands: &["fiber"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

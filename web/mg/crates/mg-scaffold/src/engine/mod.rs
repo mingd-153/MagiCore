@@ -94,7 +94,7 @@ mod test {
 
     #[test]
     fn test_context_with_features() {
-        let features = vec!["typescript".to_string(), "tailwind".to_string()];
+        let features = vec!["typescript".to_string(), "tailwindcss".to_string()];
         let ctx = ScaffoldContext::new("test", PathBuf::from("/tmp/t")).with_features(features);
 
         assert_eq!(ctx.features.len(), 2);
