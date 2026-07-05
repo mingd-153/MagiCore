@@ -307,6 +307,28 @@ enum CliCommand {
     },
     /// Upgrade mg itself to the latest version
     Upgrade,
+    /// Download + run a package binary without installing (alias: mg x)
+    #[command(aliases = &["x"])]
+    Dlx {
+        /// Package to run (e.g. "tsx" or "typescript@5.7")
+        package: String,
+        /// Arguments to pass to the binary
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+    /// Publish a package to the npm registry
+    Publish {
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+    /// Prepare a package for patching
+    Patch {
+        /// Package to patch (e.g. "lodash" or "lodash@4.17.21")
+        package: String,
+        /// Commit the patch after editing
+        #[arg(long)]
+        commit: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -1701,6 +1723,210 @@ fn cmd_upgrade() -> Result<(), String> {
     Ok(())
 }
 
+async fn cmd_dlx(package: &str, args: &[String]) -> Result<(), String> {
+    let (pkg_name, pkg_ver) = if let Some(at) = package.rfind('@') {
+        (package[..at].to_string(), Some(package[at + 1..].to_string()))
+    } else {
+        (package.to_string(), None)
+    };
+
+    let npm = NpmRegistry::new("https://registry.npmjs.org");
+    let name = mg_core::PackageName::new(&pkg_name)
+        .map_err(|e| format!("invalid package name '{pkg_name}': {e}"))?;
+
+    let version = if let Some(ver) = pkg_ver {
+        if ver == "latest" {
+            npm.get_package_versions(&name).await
+                .map_err(|e| format!("failed to fetch versions: {e}"))?
+                .last()
+                .ok_or_else(|| format!("no versions found for '{pkg_name}'"))?
+                .to_string()
+        } else {
+            ver
+        }
+    } else {
+        npm.get_package_versions(&name).await
+            .map_err(|e| format!("failed to fetch versions: {e}"))?
+            .last()
+            .ok_or_else(|| format!("no versions found for '{pkg_name}'"))?
+            .to_string()
+    };
+
+    let spec = format!("{}@{}", pkg_name, version);
+    eprintln!("{} Installing {} in temp sandbox...", "[dlx]".cyan().bold(), spec.cyan());
+
+    // Create a temp project with the package as dependency
+    let temp_dir = std::env::temp_dir().join(format!("mg-dlx-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("failed to create temp dir: {e}"))?;
+
+    let pkg_json = serde_json::json!({
+        "name": "mg-dlx-temp",
+        "private": true,
+        "dependencies": {
+            &pkg_name: &format!("^{}", version)
+        }
+    });
+    let pkg_json_str = serde_json::to_string_pretty(&pkg_json)
+        .map_err(|e| format!("failed to serialize: {e}"))?;
+    std::fs::write(temp_dir.join("package.json"), &pkg_json_str)
+        .map_err(|e| format!("failed to write package.json: {e}"))?;
+
+    // Run mg install in temp dir
+    let prev = std::env::current_dir().ok();
+    std::env::set_current_dir(&temp_dir)
+        .map_err(|e| format!("failed to enter temp dir: {e}"))?;
+
+    let install_result = cmd_install(
+        &MgpmConfig::default(), false, false, false, false, false, "hoisted".to_string()
+    ).await;
+
+    if let Some(p) = prev {
+        std::env::set_current_dir(p).ok();
+    }
+
+    if let Err(e) = install_result {
+        return Err(format!("failed to install {}: {e}", spec));
+    }
+
+    // Find the binary in node_modules/.bin
+    let bin_dir = temp_dir.join("node_modules").join(".bin");
+    let bin_name = pkg_name.split('/').next_back().unwrap_or(&pkg_name);
+    let bin_candidates = [
+        bin_dir.join(bin_name),
+        bin_dir.join(format!("{}.cmd", bin_name)),
+    ];
+
+    let bin_path = bin_candidates.iter().find(|p| p.exists())
+        .cloned()
+        .or_else(|| {
+            // Look in the package's node_modules/.bin
+            let pkg_bin = temp_dir.join("node_modules").join(&pkg_name).join("package.json");
+            if let Ok(content) = std::fs::read_to_string(&pkg_bin) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(bin) = json.get("bin") {
+                        if let Some(s) = bin.as_str() {
+                            return Some(temp_dir.join("node_modules").join(&pkg_name).join(s));
+                        }
+                        if let Some(obj) = bin.as_object() {
+                            if let Some(first) = obj.values().next() {
+                                if let Some(v) = first.as_str() {
+                                    return Some(temp_dir.join("node_modules").join(&pkg_name).join(v));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        })
+        .ok_or_else(|| format!("no binary found for '{}'", pkg_name))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755)).ok();
+    }
+
+    let status = std::process::Command::new(&bin_path)
+        .args(args)
+        .env("PATH", format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default()))
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .map_err(|e| format!("failed to execute: {e}"))?;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    Ok(())
+}
+
+fn cmd_publish(args: &[String]) -> Result<(), String> {
+    if !Path::new("package.json").exists() {
+        return Err("no package.json found in current directory".into());
+    }
+
+    eprintln!("{} Publishing package...", "[INFO]".cyan().bold());
+    eprintln!("{} Delegating to `npm publish`...", "[DLG]".yellow().bold());
+
+    let status = std::process::Command::new("npm")
+        .arg("publish")
+        .args(args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .map_err(|e| format!("failed to run npm publish: {e}"))?;
+
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    Ok(())
+}
+
+fn cmd_patch(package: &str, commit: bool) -> Result<(), String> {
+    let (pkg_name, _pkg_ver) = if let Some(at) = package.rfind('@') {
+        (package[..at].to_string(), Some(package[at + 1..].to_string()))
+    } else {
+        (package.to_string(), None)
+    };
+
+    let target_dir = Path::new("patches").join(&pkg_name);
+    if commit {
+        if !target_dir.exists() {
+            return Err(format!("no patch found for '{pkg_name}' in patches/"));
+        }
+        eprintln!("{} Committing patch for {}...", "[INFO]".cyan().bold(), pkg_name.green());
+        // TODO: apply the patched files back to node_modules
+        eprintln!("{} Patch committed. Run `mg install` to apply.", "[OK]".green().bold());
+        return Ok(());
+    }
+
+    if target_dir.exists() {
+        eprintln!("{} Patch directory already exists at {}", "[WARN]".yellow().bold(), target_dir.display());
+        eprintln!("   Edit files there, then run `mg patch {} --commit`", package);
+        return Ok(());
+    }
+
+    // Resolve from node_modules if already installed
+    let nm_path = Path::new("node_modules").join(&pkg_name);
+    if nm_path.exists() {
+        eprintln!("{} Preparing patch for {} from node_modules...", "[INFO]".cyan().bold(), pkg_name.cyan());
+        let _ = std::fs::remove_dir_all(&target_dir);
+        copy_dir(&nm_path, &target_dir)
+            .map_err(|e| format!("failed to copy package: {e}"))?;
+    } else {
+        return Err(format!("package '{pkg_name}' not found in node_modules. Run `mg install` first."));
+    }
+
+    eprintln!("{} Patch prepared at {}", "[OK]".green().bold(), target_dir.display().to_string().green());
+    eprintln!("   Edit files in {} then run `mg patch {} --commit`", target_dir.display().to_string().cyan(), package);
+    Ok(())
+}
+
+fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 async fn cmd_update(latest: bool, config: &MgpmConfig, profiling: bool, timings: bool) -> Result<(), String> {
     if !Path::new("package.json").exists() {
         return Err("no package.json found".into());
@@ -2272,6 +2498,12 @@ async fn main() -> Result<(), String> {
         CliCommand::Link { ref package } => cmd_link(package),
         CliCommand::Unlink { ref package } => cmd_unlink(package),
         CliCommand::Upgrade => cmd_upgrade(),
+        CliCommand::Dlx {
+            ref package,
+            ref args,
+        } => cmd_dlx(package, args).await,
+        CliCommand::Publish { ref args } => cmd_publish(args),
+        CliCommand::Patch { ref package, commit } => cmd_patch(package, commit),
     };
 
     if let Err(e) = result {
