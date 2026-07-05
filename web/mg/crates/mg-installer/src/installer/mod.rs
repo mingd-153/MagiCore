@@ -168,6 +168,8 @@ impl Installer {
         )?);
 
         let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(30))
             .pool_max_idle_per_host(64)
             .pool_idle_timeout(std::time::Duration::from_secs(30))
             .build()
