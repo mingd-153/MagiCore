@@ -173,6 +173,12 @@ enum CliCommand {
         #[arg(short, long)]
         latest: bool,
     },
+    /// Check for outdated packages (compare installed vs latest)
+    Outdated {
+        /// Include devDependencies (default: true)
+        #[arg(short, long, default_value_t = true)]
+        dev: bool,
+    },
     Run {
         script: String,
         #[arg(trailing_var_arg = true)]
@@ -276,6 +282,31 @@ enum CliCommand {
         #[arg(short, long, default_value = "package-lock.json")]
         output: String,
     },
+    /// Explain why a package is installed
+    Why {
+        /// Package name to investigate
+        package: String,
+    },
+    /// Display package metadata from the registry
+    Info {
+        /// Package name
+        package: String,
+    },
+    /// List installed packages from mg.lock
+    #[command(alias = "ls")]
+    List,
+    /// Link a local package to node_modules
+    Link {
+        /// Package name or local path
+        package: String,
+    },
+    /// Unlink a linked package from node_modules
+    Unlink {
+        /// Package name to unlink
+        package: String,
+    },
+    /// Upgrade mg itself to the latest version
+    Upgrade,
 }
 
 // ---------------------------------------------------------------------------
@@ -852,7 +883,7 @@ async fn cmd_remove_recursive(
 }
 
 async fn cmd_update_recursive(
-    _config: &MgpmConfig,
+    config: &MgpmConfig,
     recursive: bool,
     filter: &[String],
     since: Option<&str>,
@@ -880,35 +911,35 @@ async fn cmd_update_recursive(
         std::env::set_current_dir(&member.path)
             .map_err(|e| format!("cannot enter {}: {e}", member.path.display()))?;
 
-        let result = cmd_update(latest).await;
+        let result = cmd_update(latest, config, false, false).await;
 
-        if let Some(p) = prev {
-            std::env::set_current_dir(p).ok();
-        }
+    if let Some(p) = prev {
+        std::env::set_current_dir(p).ok();
+    }
 
-        match result {
-            Ok(()) => succeeded += 1,
-            Err(e) => {
-                eprintln!("  {} [{}] {}", "[FAIL]".red().bold(), member.name, e.red());
-                if fail_fast {
-                    return Err(format!("[{}] update failed: {}", member.name, e));
-                }
+    match result {
+        Ok(()) => succeeded += 1,
+        Err(e) => {
+            eprintln!("  {} [{}] {}", "[FAIL]".red().bold(), member.name, e.red());
+            if fail_fast {
+                return Err(format!("[{}] update failed: {}", member.name, e));
             }
         }
     }
+}
 
-    println!(
-        "{} Ran update on {}/{} workspace members",
-        "[DONE]".green().bold(),
-        succeeded,
-        total,
-    );
+println!(
+    "{} Ran update on {}/{} workspace members",
+    "[DONE]".green().bold(),
+    succeeded,
+    total,
+);
 
-    if succeeded < total {
-        Err(format!("{} member(s) failed", total - succeeded))
-    } else {
-        Ok(())
-    }
+if succeeded < total {
+    Err(format!("{} member(s) failed", total - succeeded))
+} else {
+    Ok(())
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,13 +1388,386 @@ async fn cmd_remove(
     cmd_install(config, offline, production, hoist, profile, timings, linker).await
 }
 
-async fn cmd_update(latest: bool) -> Result<(), String> {
+async fn cmd_outdated(include_dev: bool) -> Result<(), String> {
+    let lockfile_path = Path::new("mg.lock");
+    if !lockfile_path.exists() {
+        return Err("no mg.lock found — run `mg install` first".into());
+    }
+    let lockfile = mg_lockfile::text::read_text(lockfile_path)
+        .map_err(|e| format!("failed to read mg.lock: {e}"))?;
+
+    // Read package.json for wanted versions
+    let pkg_json: serde_json::Value = {
+        let content = std::fs::read_to_string("package.json")
+            .map_err(|e| format!("failed to read package.json: {e}"))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("failed to parse package.json: {e}"))?
+    };
+
+    let deps: Vec<(String, String)> = {
+        let mut all = Vec::new();
+        if let Some(deps) = pkg_json.get("dependencies").and_then(|v| v.as_object()) {
+            for (name, ver) in deps {
+                if let Some(v) = ver.as_str() {
+                    all.push((name.clone(), v.to_string()));
+                }
+            }
+        }
+        if include_dev {
+            if let Some(devs) = pkg_json.get("devDependencies").and_then(|v| v.as_object()) {
+                for (name, ver) in devs {
+                    if let Some(v) = ver.as_str() {
+                        all.push((name.clone(), v.to_string()));
+                    }
+                }
+            }
+        }
+        all
+    };
+
+    // Build map: name -> installed version from lockfile
+    let installed: std::collections::HashMap<&str, &str> = lockfile
+        .packages
+        .iter()
+        .map(|p| (p.name.as_str(), p.version.as_str()))
+        .collect();
+
+    let npm = NpmRegistry::new("https://registry.npmjs.org");
+    let mut outdated = Vec::new();
+    let mut current = Vec::new();
+
+    for (name, wanted) in &deps {
+        let installed_ver = installed.get(name.as_str()).copied().unwrap_or("-");
+        let pkg_name = mg_core::PackageName::new(name)
+            .map_err(|e| format!("invalid package name '{name}': {e}"))?;
+        let latest_ver = match npm.get_package_versions(&pkg_name).await {
+            Ok(versions) => versions
+                .last()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "?".to_string()),
+            Err(_) => "ERR".to_string(),
+        };
+
+        // Normalize semver: strip leading ^ ~ for comparison
+        let installed_normalized = installed_ver.trim_start_matches('^').trim_start_matches('~');
+
+        // Skip if installed version matches latest
+        if installed_normalized == latest_ver.trim_start_matches('^').trim_start_matches('~') {
+            current.push((name.clone(), installed_ver.to_string(), latest_ver));
+        } else {
+            outdated.push((
+                name.clone(),
+                installed_ver.to_string(),
+                wanted.clone(),
+                latest_ver,
+            ));
+        }
+    }
+
+    // Print results
+    if outdated.is_empty() {
+        eprintln!("{} All packages are up-to-date", "[OK]".green().bold());
+        return Ok(());
+    }
+
     eprintln!(
-        "{} {}",
-        "[INFO]".cyan().bold(),
-        format!("Updating packages (latest={})...", latest).cyan()
+        "{} Found {} outdated package(s)\n",
+        "!!".yellow().bold(),
+        outdated.len()
     );
+
+    // Header
+    eprintln!(
+        "{:<25} {:<14} {:<14} {:<14}",
+        "Package", "Installed", "Wanted", "Latest"
+    );
+    eprintln!("{}", "-".repeat(67));
+
+    for (name, installed, wanted, latest) in &outdated {
+        eprintln!(
+            "{:<25} {:<14} {:<14} {:<14}",
+            name.red(),
+            installed.yellow(),
+            wanted,
+            latest.green()
+        );
+    }
+
+    eprintln!();
+    if !current.is_empty() {
+        eprintln!(
+            "{} {} package(s) up-to-date (not shown)",
+            "[OK]".green().bold(),
+            current.len()
+        );
+    }
+
     Ok(())
+}
+
+async fn cmd_why(package: &str) -> Result<(), String> {
+    let lockfile_path = Path::new("mg.lock");
+    if !lockfile_path.exists() {
+        return Err("no mg.lock found — run `mg install` first".into());
+    }
+    let lockfile = mg_lockfile::text::read_text(lockfile_path)
+        .map_err(|e| format!("failed to read mg.lock: {e}"))?;
+
+    let target = lockfile.packages.iter().find(|p| p.name == package)
+        .ok_or_else(|| format!("package '{}' not found in mg.lock", package))?;
+
+    let mut dependents: Vec<&mg_lockfile::LockfilePackage> = Vec::new();
+    for pkg in &lockfile.packages {
+        for dep in &pkg.dependencies {
+            if dep.starts_with(package) {
+                dependents.push(pkg);
+                break;
+            }
+        }
+    }
+
+    println!("{} {}@{}", "─".red(), package.green().bold(), target.version.green());
+    if dependents.is_empty() {
+        println!("   {} This is a direct dependency or has no dependents", "└─".yellow());
+    } else {
+        println!("   {} Required by:", "└─".yellow());
+        for dep in &dependents {
+            println!("      {} {}@{}", "├─".cyan(), dep.name.yellow(), dep.version.yellow());
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_info(package: &str) -> Result<(), String> {
+    let npm = NpmRegistry::new("https://registry.npmjs.org");
+    let pkg_name = mg_core::PackageName::new(package)
+        .map_err(|e| format!("invalid package name '{package}': {e}"))?;
+
+    let info = npm.get_package(&pkg_name).await
+        .map_err(|e| format!("failed to fetch info for '{package}': {e}"))?;
+
+    let name = info["name"].as_str().unwrap_or(package);
+    let description = info["description"].as_str().unwrap_or("");
+    let latest_ver = info["dist-tags"]["latest"].as_str().unwrap_or("?");
+    let license = info["license"].as_str().unwrap_or("unknown");
+    let version_count = info["versions"].as_object().map(|v| v.len()).unwrap_or(0);
+
+    println!("{}", name.bold().green());
+    if !description.is_empty() {
+        println!("  {description}");
+    }
+    println!();
+    println!("  {}   {}", "Latest version:".bold(), latest_ver.cyan());
+    println!("  {}   {}", "License:".bold(), license);
+    println!("  {}   {}", "Versions:".bold(), version_count.to_string().cyan());
+
+    if let Some(homepage) = info["homepage"].as_str() {
+        if !homepage.is_empty() {
+            println!("  {}   {}", "Homepage:".bold(), homepage);
+        }
+    }
+    if let Some(repository) = info["repository"]["url"].as_str() {
+        println!("  {}   {}", "Repository:".bold(), repository);
+    }
+    if let Some(maintainers) = info["maintainers"].as_array() {
+        if !maintainers.is_empty() {
+            let names: Vec<&str> = maintainers.iter()
+                .filter_map(|m| m["name"].as_str())
+                .collect();
+            println!("  {}   {}", "Maintainers:".bold(), names.join(", "));
+        }
+    }
+    if let Some(keywords) = info["keywords"].as_array() {
+        if !keywords.is_empty() {
+            let kw: Vec<&str> = keywords.iter().filter_map(|k| k.as_str()).collect();
+            println!("  {}   {}", "Keywords:".bold(), kw.join(", "));
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_list() -> Result<(), String> {
+    let lockfile_path = Path::new("mg.lock");
+    if !lockfile_path.exists() {
+        return Err("no mg.lock found — run `mg install` first".into());
+    }
+    let lockfile = mg_lockfile::text::read_text(lockfile_path)
+        .map_err(|e| format!("failed to read mg.lock: {e}"))?;
+
+    let pkg_json: serde_json::Value = {
+        let content = std::fs::read_to_string("package.json")
+            .map_err(|e| format!("failed to read package.json: {e}"))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("failed to parse package.json: {e}"))?
+    };
+
+    let direct_deps: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        if let Some(deps) = pkg_json.get("dependencies").and_then(|v| v.as_object()) {
+            for name in deps.keys() {
+                set.insert(name.clone());
+            }
+        }
+        if let Some(devs) = pkg_json.get("devDependencies").and_then(|v| v.as_object()) {
+            for name in devs.keys() {
+                set.insert(name.clone());
+            }
+        }
+        set
+    };
+
+    let direct_names: Vec<&mg_lockfile::LockfilePackage> = lockfile.packages.iter()
+        .filter(|p| direct_deps.contains(&p.name))
+        .collect();
+
+    eprintln!("{} {} packages installed", "[mg]".green().bold(), lockfile.packages.len());
+    eprintln!();
+
+    if !direct_names.is_empty() {
+        eprintln!("{}", "dependencies:".bold().underline());
+        for pkg in &direct_names {
+            eprintln!("  {} {}", pkg.name.cyan(), pkg.version);
+        }
+        eprintln!();
+    }
+
+    let indirect = lockfile.packages.len() - direct_names.len();
+    eprintln!("{} indirect dependencies", indirect);
+    Ok(())
+}
+
+fn cmd_link(package: &str) -> Result<(), String> {
+    let path = Path::new(package);
+    if !path.is_dir() {
+        return Err(format!("'{}' is not a valid directory. Usage: mg link <local-path>", package));
+    }
+    let pkg_json_path = path.join("package.json");
+    if !pkg_json_path.exists() {
+        return Err(format!("no package.json found at '{}'", path.display()));
+    }
+    let content = std::fs::read_to_string(&pkg_json_path)
+        .map_err(|e| format!("failed to read package.json: {e}"))?;
+    let pkg: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("failed to parse package.json: {e}"))?;
+    let target_name = pkg["name"].as_str()
+        .ok_or_else(|| format!("no 'name' field in package.json at '{}'", path.display()))?
+        .to_string();
+    let target_path = std::fs::canonicalize(path)
+        .map_err(|e| format!("failed to resolve path '{}': {e}", path.display()))?;
+
+    let node_modules = Path::new("node_modules");
+    if !node_modules.exists() {
+        std::fs::create_dir_all(node_modules)
+            .map_err(|e| format!("failed to create node_modules: {e}"))?;
+    }
+
+    let link_path = node_modules.join(&target_name);
+    if link_path.exists() {
+        std::fs::remove_file(&link_path).ok();
+        std::fs::remove_dir_all(&link_path).ok();
+    }
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target_path, &link_path)
+        .map_err(|e| format!("failed to create symlink: {e}"))?;
+    #[cfg(not(unix))]
+    std::os::windows::fs::symlink_dir(&target_path, &link_path)
+        .map_err(|e| format!("failed to create symlink: {e}"))?;
+
+    eprintln!("{} Linked {} → {}", "[OK]".green().bold(), target_name.green(), target_path.display().to_string().cyan());
+    Ok(())
+}
+
+fn cmd_unlink(package: &str) -> Result<(), String> {
+    let link_path = Path::new("node_modules").join(package);
+    if !link_path.exists() {
+        return Err(format!("package '{}' is not linked in node_modules", package));
+    }
+    if link_path.is_symlink() {
+        std::fs::remove_file(&link_path)
+            .map_err(|e| format!("failed to remove symlink: {e}"))?;
+    } else {
+        std::fs::remove_dir_all(&link_path)
+            .map_err(|e| format!("failed to remove directory: {e}"))?;
+    }
+    eprintln!("{} Unlinked {}", "[OK]".green().bold(), package.green());
+    Ok(())
+}
+
+fn cmd_upgrade() -> Result<(), String> {
+    eprintln!("{} Checking for mg upgrade...", "[INFO]".cyan().bold());
+    eprintln!("{} To upgrade, run: curl -fsSL https://mgpm.sh/install.sh | sh", "[HINT]".yellow().bold());
+    eprintln!("   Or build from source: cargo install mg-cli");
+    Ok(())
+}
+
+async fn cmd_update(latest: bool, config: &MgpmConfig, profiling: bool, timings: bool) -> Result<(), String> {
+    if !Path::new("package.json").exists() {
+        return Err("no package.json found".into());
+    }
+
+    if latest {
+        let mut pkg: serde_json::Value = {
+            let content = std::fs::read_to_string("package.json")
+                .map_err(|e| format!("failed to read package.json: {e}"))?;
+            serde_json::from_str(&content)
+                .map_err(|e| format!("failed to parse package.json: {e}"))?
+        };
+
+        let mut deps_to_update: Vec<String> = Vec::new();
+        if let Some(deps) = pkg.get("dependencies").and_then(|v| v.as_object()) {
+            for name in deps.keys() {
+                deps_to_update.push(name.clone());
+            }
+        }
+        if let Some(devs) = pkg.get("devDependencies").and_then(|v| v.as_object()) {
+            for name in devs.keys() {
+                if !deps_to_update.contains(name) {
+                    deps_to_update.push(name.clone());
+                }
+            }
+        }
+
+        let npm = NpmRegistry::new("https://registry.npmjs.org");
+        for name in &deps_to_update {
+            let pkg_name = mg_core::PackageName::new(name)
+                .map_err(|e| format!("invalid package name '{name}': {e}"))?;
+            match npm.get_package_versions(&pkg_name).await {
+                Ok(versions) => {
+                    if let Some(latest_ver) = versions.last() {
+                        if let Some(deps) = pkg.get_mut("dependencies").and_then(|v| v.as_object_mut()) {
+                            if let Some(v) = deps.get_mut(name.as_str()) {
+                                *v = serde_json::Value::String(format!("^{}", latest_ver));
+                            }
+                        }
+                        if let Some(devs) = pkg.get_mut("devDependencies").and_then(|v| v.as_object_mut()) {
+                            if let Some(v) = devs.get_mut(name.as_str()) {
+                                *v = serde_json::Value::String(format!("^{}", latest_ver));
+                            }
+                        }
+                        eprintln!("  {} {} → ^{}", "[UPD]".cyan().bold(), name.cyan(), latest_ver);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  {} failed to fetch '{}': {}", "[WARN]".yellow().bold(), name, e);
+                }
+            }
+        }
+
+        let json_str = serde_json::to_string_pretty(&pkg)
+            .map_err(|e| format!("failed to serialize package.json: {e}"))?;
+        std::fs::write("package.json", json_str)
+            .map_err(|e| format!("failed to write package.json: {e}"))?;
+
+        eprintln!("{} Updated package.json to latest versions", "[OK]".green().bold());
+    } else {
+        eprintln!("{} Re-resolving dependencies (use --latest to bump versions)", "[INFO]".cyan().bold());
+    }
+
+    let _ = std::fs::remove_file("mg.lock");
+    let _ = std::fs::remove_file("mg.lockb");
+
+    cmd_install(config, false, false, false, profiling, timings, "hoisted".to_string()).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1546,11 +1950,14 @@ async fn main() -> Result<(), String> {
                 .await
             }
         }
+        CliCommand::Outdated { dev } => {
+            cmd_outdated(dev).await
+        }
         CliCommand::Update { latest } => {
             if is_workspace_context(rec, &flt, sinc.as_deref()) {
                 cmd_update_recursive(&config, rec, &flt, sinc.as_deref(), ff, latest).await
             } else {
-                cmd_update(latest).await
+                cmd_update(latest, &config, profiling, timings).await
             }
         }
         CliCommand::Run {
@@ -1716,7 +2123,8 @@ async fn main() -> Result<(), String> {
 
             let (tpl, template_entry) = if let Some(ref fw) = framework_name {
                 let template = registry
-                    .get(fw)
+                    .find_by_command(fw)
+                    .or_else(|| registry.get(fw))
                     .ok_or_else(|| format!("Unknown framework '{fw}'. Available: {}. Use 'mg create-web <name>' for vanilla.", {
                         let names: Vec<&str> = registry.list().iter().filter(|t| t.name != "vanilla").map(|t| t.name).collect();
                         names.join(", ")
@@ -1750,7 +2158,7 @@ async fn main() -> Result<(), String> {
 
             let mut vars = HashMap::new();
             vars.insert("name".to_string(), project_name.clone());
-            vars.insert("version".to_string(), framework_version.unwrap_or_else(|| "1.0.0".to_string()));
+            vars.insert("version".to_string(), framework_version.clone().unwrap_or_else(|| "1.0.0".to_string()));
 
             // TS, Tailwind, Sass auto-enable Vite (need compilation) — vanilla only
             let vite = vite || ts || tailwindcss || sass;
@@ -1785,6 +2193,49 @@ async fn main() -> Result<(), String> {
             let result = tpl.create_project(&ctx, false)
                 .map_err(|e| format!("Failed to create project: {e}"))?;
 
+            // If @version was specified (e.g. @latest), resolve from registry and update package.json
+            let fw_version = framework_version.clone();
+            if let Some(ref fw_ver) = fw_version {
+                let pkg_json_path = dest.join("package.json");
+                if pkg_json_path.exists() {
+                    let content = std::fs::read_to_string(&pkg_json_path)
+                        .map_err(|e| format!("failed to read package.json: {e}"))?;
+                    if let Ok(mut pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(ref fw) = framework_name {
+                            let resolve_name = fw.as_str();
+                            let npm = NpmRegistry::new("https://registry.npmjs.org");
+                            if let Ok(pkg_name) = mg_core::PackageName::new(resolve_name) {
+                                if let Ok(versions) = npm.get_package_versions(&pkg_name).await {
+                                    let target_ver = if fw_ver == "latest" || fw_ver.is_empty() {
+                                        versions.last().map(|v| v.to_string())
+                                    } else {
+                                        versions.iter().rev().find(|v| v.to_string().starts_with(fw_ver))
+                                            .map(|v| v.to_string())
+                                    };
+                                    if let Some(actual_ver) = target_ver {
+                                        if let Some(deps) = pkg.get_mut("dependencies").and_then(|v| v.as_object_mut()) {
+                                            if let Some(v) = deps.get_mut(resolve_name) {
+                                                *v = serde_json::Value::String(format!("^{}", actual_ver));
+                                            }
+                                        }
+                                        if let Some(devs) = pkg.get_mut("devDependencies").and_then(|v| v.as_object_mut()) {
+                                            if let Some(v) = devs.get_mut(resolve_name) {
+                                                *v = serde_json::Value::String(format!("^{}", actual_ver));
+                                            }
+                                        }
+                                        let json_str = serde_json::to_string_pretty(&pkg)
+                                            .map_err(|e| format!("failed to serialize: {e}"))?;
+                                        std::fs::write(&pkg_json_path, json_str)
+                                            .map_err(|e| format!("failed to write package.json: {e}"))?;
+                                        eprintln!("   {} Resolved {}@{}", "[OK]".green().bold(), fw.green(), actual_ver.green());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             println!(
                 "{} Created project '{}' at {}",
                 "[OK]".green(),
@@ -1815,6 +2266,12 @@ async fn main() -> Result<(), String> {
             ref format,
         } => cmd_import(source, format),
         CliCommand::Export { ref output } => cmd_export(output),
+        CliCommand::Why { ref package } => cmd_why(package).await,
+        CliCommand::Info { ref package } => cmd_info(package).await,
+        CliCommand::List => cmd_list().await,
+        CliCommand::Link { ref package } => cmd_link(package),
+        CliCommand::Unlink { ref package } => cmd_unlink(package),
+        CliCommand::Upgrade => cmd_upgrade(),
     };
 
     if let Err(e) = result {
