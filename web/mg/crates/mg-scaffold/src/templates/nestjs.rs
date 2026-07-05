@@ -94,6 +94,7 @@ pub fn template() -> Template {
         name: "nestjs",
         description: "NestJS API with TypeScript",
         commands: &["nestjs"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

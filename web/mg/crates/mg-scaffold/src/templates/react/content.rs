@@ -1,14 +1,16 @@
+use crate::versions::*;
 use heck::ToUpperCamelCase;
 
 pub struct Ctx {
     pub name: String,
     pub version: String,
     pub has_ts: bool,
+    pub has_tailwind: bool,
 }
 
 impl Ctx {
     pub fn new(name: &str, version: &str, has_ts: bool) -> Self {
-        Self { name: name.to_string(), version: version.to_string(), has_ts }
+        Self { name: name.to_string(), version: version.to_string(), has_ts, has_tailwind: false }
     }
     pub fn ext(&self) -> &'static str {
         if self.has_ts { "tsx" } else { "jsx" }
@@ -29,14 +31,29 @@ impl Ctx {
 
 pub fn package_json(ctx: &Ctx) -> String {
     let build = if ctx.has_ts { "tsc -b && vite build" } else { "vite build" };
-    let mut devs = r#""@vitejs/plugin-react":"^4.0.0","prettier":"^3.0.0","vite":"^6.0.0""#.to_string();
+    let mut devs = format!(
+        r#""@vitejs/plugin-react":"{}","prettier":"{}","vite":"{}""#,
+        VITE_PLUGIN_REACT, PRETTIER, VITE,
+    );
     if ctx.has_ts {
         devs = format!(
-            r#""@types/node":"^22.0.0","@types/react":"^19.0.0","@types/react-dom":"^19.0.0",{},"typescript":"^5.7.0""#,
-            devs
+            r#""@eslint/js":"{}","@types/node":"{}","@types/react":"{}","@types/react-dom":"{}",{},"eslint":"{}","eslint-plugin-react":"{}","eslint-plugin-react-hooks":"{}","eslint-plugin-react-refresh":"{}","globals":"{}","typescript":"{}","typescript-eslint":"{}""#,
+            ESLINT_JS, TYPES_NODE, TYPES_REACT, TYPES_REACT_DOM,
+            devs,
+            ESLINT, ESLINT_PLUGIN_REACT, ESLINT_PLUGIN_REACT_HOOKS, ESLINT_PLUGIN_REACT_REFRESH,
+            GLOBALS, TYPESCRIPT, TYPESCRIPT_ESLINT,
         );
     }
-    let deps = r#""react":"^19.0.0","react-dom":"^19.0.0","react-router":"^7.0.0","zustand":"^5.0.0""#.to_string();
+    if ctx.has_tailwind {
+        devs = format!(
+            r#""tailwindcss":"{}","@tailwindcss/vite":"{}",{}"#,
+            TAILWINDCSS, TAILWINDCSS_VITE, devs,
+        );
+    }
+    let deps = format!(
+        r#""react":"{}","react-dom":"{}","react-router":"{}","zustand":"{}""#,
+        REACT, REACT_DOM, REACT_ROUTER, ZUSTAND,
+    );
     let lint = if ctx.has_ts {
         r#""lint":"eslint .","format":"prettier --write .""#
     } else {
@@ -374,21 +391,34 @@ pub fn helpers_ts() -> String {
     .into()
 }
 
-pub fn vite_config_js() -> String {
-    "import { defineConfig } from 'vite';\n\
-     import react from '@vitejs/plugin-react';\n\
-     import path from 'node:path';\n\n\
-     export default defineConfig({\n\
-     plugins: [react()],\n\
-     resolve: {\n\
-     alias: {\n      '@': path.resolve(import.meta.dirname, './src'),\n    },\n  },\n\
-      server: {\n    port: 4315,\n    open: true,\n  },\n\
-      preview: {\n    port: 4316,\n  },\n});\n"
-    .into()
+pub fn vite_config_js(ctx: &Ctx) -> String {
+    let tailwind_import = if ctx.has_tailwind {
+        "import tailwindcss from '@tailwindcss/vite';\n"
+    } else {
+        ""
+    };
+    let plugins = if ctx.has_tailwind {
+        "plugins: [react(), tailwindcss()],"
+    } else {
+        "plugins: [react()],"
+    };
+    format!(
+        "import {{ defineConfig }} from 'vite';\n\
+         import react from '@vitejs/plugin-react';\n\
+         import path from 'node:path';\n\
+         {tailwind_import}\
+         export default defineConfig({{\n\
+         {plugins}\n\
+         resolve: {{\n\
+         alias: {{ '@': path.resolve(import.meta.dirname, './src') }},\n  }},\n\
+         server: {{\n    port: 4315,\n    open: true,\n  }},\n\
+         preview: {{\n    port: 4316,\n  }},\n\
+         build: {{\n    target: 'es2022',\n  }},\n}});\n"
+    )
 }
 
-pub fn vite_config_ts() -> String {
-    vite_config_js()
+pub fn vite_config_ts(ctx: &Ctx) -> String {
+    vite_config_js(ctx)
 }
 
 pub fn tsconfig_json() -> String {
@@ -464,7 +494,10 @@ pub fn vite_env_dts() -> String {
     .into()
 }
 
-pub fn globals_css() -> String {
+pub fn globals_css(ctx: &Ctx) -> String {
+    if ctx.has_tailwind {
+        return "@import \"tailwindcss\";\n".into();
+    }
     "*,\n*::before,\n*::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n\
      :root {\n  --color-primary: #646cff;\n  --color-primary-hover: #535bf2;\n\
      --color-secondary: #6c757d;\n  --color-bg: #ffffff;\n  --color-bg-muted: #f8f9fa;\n\

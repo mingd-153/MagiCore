@@ -12,8 +12,8 @@ pub use content::*;
 pub struct ReactCodegen;
 
 impl ReactCodegen {
-    fn generate_files(name: &str, version: &str, has_ts: bool) -> Vec<(String, String)> {
-        let ctx = Ctx { name: name.to_string(), version: version.to_string(), has_ts };
+    fn generate_files(name: &str, version: &str, has_ts: bool, has_tailwind: bool) -> Vec<(String, String)> {
+        let ctx = Ctx { name: name.to_string(), version: version.to_string(), has_ts, has_tailwind };
         let e = ctx.ext();
         let r = ctx.ext_raw();
         let mut files = Vec::with_capacity(if has_ts { 26 } else { 20 });
@@ -24,10 +24,10 @@ impl ReactCodegen {
         files.push((".gitignore".into(), gitignore()));
         files.push((".env.example".into(), env_example()));
         files.push(("README.md".into(), readme(&ctx)));
-        files.push(("src/styles/globals.css".to_string(), globals_css()));
+        files.push(("src/styles/globals.css".to_string(), globals_css(&ctx)));
 
         let cfg_ext = if has_ts { "ts" } else { "js" };
-        files.push((format!("vite.config.{cfg_ext}"), vite_config_js()));
+        files.push((format!("vite.config.{cfg_ext}"), vite_config_js(&ctx)));
 
         if has_ts {
             files.push(("eslint.config.mjs".into(), eslint_config()));
@@ -104,8 +104,9 @@ impl ScaffoldEngine for ReactCodegen {
         let name = &ctx.project_name;
         let version = ctx.get_var("version").unwrap_or("1.0.0");
         let has_ts = ctx.features.iter().any(|f| f == "typescript");
+        let has_tailwind = ctx.features.iter().any(|f| f == "tailwindcss");
         let dest = Self::resolve_dest(ctx)?;
-        let files = Self::generate_files(name, version, has_ts);
+        let files = Self::generate_files(name, version, has_ts, has_tailwind);
         let mut created = Self::write_files(&dest, files, force)?;
         write_favicon(&dest)?;
         created.push(dest.join("public").join("favicon.ico"));
@@ -123,6 +124,7 @@ pub fn template() -> Template {
         name: "react",
         description: "React SPA with Vite, Router, and Zustand",
         commands: &["react"],
+        supported_flags: &["typescript", "tailwindcss"],
         create_engine: || Box::new(ReactCodegen),
     }
 }
@@ -133,19 +135,32 @@ mod test {
 
     #[test]
     fn test_js_default_19_files() {
-        let files = ReactCodegen::generate_files("app", "1.0.0", false);
+        let files = ReactCodegen::generate_files("app", "1.0.0", false, false);
         assert_eq!(files.len(), 19);
     }
 
     #[test]
     fn test_ts_25_files() {
-        let files = ReactCodegen::generate_files("app", "1.0.0", true);
+        let files = ReactCodegen::generate_files("app", "1.0.0", true, false);
         assert_eq!(files.len(), 25);
     }
 
     #[test]
+    fn test_ts_tailwind_files() {
+        let files = ReactCodegen::generate_files("app", "1.0.0", true, true);
+        // Tailwind v4 adds no extra config files (uses @tailwindcss/vite plugin)
+        assert_eq!(files.len(), 25);
+        let paths: Vec<_> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(!paths.contains(&"tailwind.config.js"));
+        assert!(!paths.contains(&"postcss.config.js"));
+        // CSS should use @import, not @tailwind directives
+        let css = files.iter().find(|(p, _)| *p == "src/styles/globals.css").unwrap().1.clone();
+        assert!(css.contains("@import \"tailwindcss\""));
+    }
+
+    #[test]
     fn test_js_has_no_tsconfig() {
-        let files = ReactCodegen::generate_files("app", "1.0.0", false);
+        let files = ReactCodegen::generate_files("app", "1.0.0", false, false);
         let paths: Vec<_> = files.iter().map(|(p, _)| p.as_str()).collect();
         assert!(paths.contains(&"vite.config.js"));
         assert!(!paths.contains(&"tsconfig.json"));
@@ -154,7 +169,7 @@ mod test {
 
     #[test]
     fn test_ts_has_config_files() {
-        let files = ReactCodegen::generate_files("app", "1.0.0", true);
+        let files = ReactCodegen::generate_files("app", "1.0.0", true, false);
         let paths: Vec<_> = files.iter().map(|(p, _)| p.as_str()).collect();
         assert!(paths.contains(&"vite.config.ts"));
         assert!(paths.contains(&"tsconfig.json"));
@@ -164,7 +179,7 @@ mod test {
 
     #[test]
     fn test_js_extensions() {
-        let files = ReactCodegen::generate_files("app", "1.0.0", false);
+        let files = ReactCodegen::generate_files("app", "1.0.0", false, false);
         let paths: Vec<_> = files.iter().map(|(p, _)| p.as_str()).collect();
         assert!(paths.contains(&"src/main.jsx"));
         assert!(paths.contains(&"src/App.jsx"));
@@ -176,7 +191,7 @@ mod test {
 
     #[test]
     fn test_ts_extensions() {
-        let files = ReactCodegen::generate_files("app", "1.0.0", true);
+        let files = ReactCodegen::generate_files("app", "1.0.0", true, false);
         let paths: Vec<_> = files.iter().map(|(p, _)| p.as_str()).collect();
         assert!(paths.contains(&"src/main.tsx"));
         assert!(paths.contains(&"src/App.tsx"));
@@ -192,6 +207,12 @@ mod test {
         assert!(pkg.contains("typescript"));
         assert!(pkg.contains("tsc -b"));
         assert!(pkg.contains("@types/react"));
+        assert!(pkg.contains("eslint-plugin-react"));
+        assert!(pkg.contains("eslint-plugin-react-hooks"));
+        assert!(pkg.contains("eslint-plugin-react-refresh"));
+        assert!(pkg.contains("globals"));
+        assert!(pkg.contains("typescript-eslint"));
+        assert!(pkg.contains("eslint"));
     }
 
     #[test]

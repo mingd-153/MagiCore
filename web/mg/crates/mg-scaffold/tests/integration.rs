@@ -110,10 +110,10 @@ fn test_features_wired_through() {
     vars.insert("name".to_string(), "p".to_string());
     let ctx = ScaffoldContext::new("p", dir.path().join("p"))
         .with_vars(vars)
-        .with_features(vec!["typescript".to_string(), "tailwind".to_string()]);
+        .with_features(vec!["typescript".to_string(), "tailwindcss".to_string()]);
 
     let result = scaffolder.create_project(&ctx, false).unwrap();
-    assert_eq!(result.features, vec!["typescript", "tailwind"]);
+    assert_eq!(result.features, vec!["typescript", "tailwindcss"]);
 }
 
 

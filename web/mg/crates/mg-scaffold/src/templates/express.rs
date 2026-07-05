@@ -87,6 +87,7 @@ pub fn template() -> Template {
         name: "express",
         description: "Express REST API with TypeScript",
         commands: &["express"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

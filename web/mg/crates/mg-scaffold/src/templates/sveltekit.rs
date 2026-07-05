@@ -67,6 +67,7 @@ pub fn template() -> Template {
         name: "sveltekit",
         description: "SvelteKit web app with TypeScript",
         commands: &["sveltekit"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

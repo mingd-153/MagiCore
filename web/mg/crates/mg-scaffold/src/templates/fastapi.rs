@@ -65,6 +65,7 @@ pub fn template() -> Template {
         name: "fastapi",
         description: "FastAPI REST API with Python 3.12",
         commands: &["fastapi"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

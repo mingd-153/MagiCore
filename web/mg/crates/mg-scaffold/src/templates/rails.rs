@@ -98,6 +98,7 @@ pub fn template() -> Template {
         name: "rails",
         description: "Ruby on Rails API with Ruby 3.3",
         commands: &["rails"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

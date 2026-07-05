@@ -77,6 +77,7 @@ pub fn template() -> Template {
         name: "actix",
         description: "Actix Web REST API with Rust",
         commands: &["actix"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }
