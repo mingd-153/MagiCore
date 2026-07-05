@@ -94,6 +94,7 @@ pub fn template() -> Template {
         name: "laravel",
         description: "Laravel REST API with PHP 8.3",
         commands: &["laravel"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

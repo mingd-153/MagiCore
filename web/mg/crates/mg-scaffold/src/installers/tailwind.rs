@@ -7,15 +7,15 @@ pub struct TailwindInstaller;
 
 impl Installer for TailwindInstaller {
     fn name(&self) -> &str {
-        "tailwind"
+        "tailwindcss"
     }
 
     fn description(&self) -> &str {
-        "Tailwind CSS utility framework"
+        "Tailwind CSS v4 utility framework"
     }
 
     fn dev_dependencies(&self) -> Vec<(&str, &str)> {
-        vec![("tailwindcss", "^4.0.0")]
+        vec![("tailwindcss", "^4.0.0"), ("@tailwindcss/vite", "^4.0.0")]
     }
 
     fn install(
@@ -25,60 +25,21 @@ impl Installer for TailwindInstaller {
     ) -> Result<InstallResult, ScaffoldError> {
         let mut files = vec![];
 
-        let content_paths = match ctx.framework.as_deref() {
-            Some("next") => r#" "./pages/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}""#,
-            _ => r#" "./src/**/*.{ts,tsx}""#,
-        };
-
-        let tailwind_config = format!(
-            "import type {{ Config }} from \"tailwindcss\";\n\
-             \n\
-             const config: Config = {{\n\
-             content: [{content_paths}\n\
-             ],\n\
-             theme: {{\n\
-             extend: {{}},\n\
-             }},\n\
-             plugins: [],\n\
-             }};\n\
-             \n\
-             export default config;\n"
-        );
-
-        let postcss_config = r#"export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};
-"#;
-
-        files.push(write_file(
-            project_dir,
-            "tailwind.config.ts",
-            &tailwind_config,
-        )?);
-        files.push(write_file(
-            project_dir,
-            "postcss.config.mjs",
-            postcss_config,
-        )?);
+        // Tailwind v4: no tailwind.config.js, no postcss.config.js
+        // Just create the globals.css with @import
 
         let css_dir = match ctx.framework.as_deref() {
             Some("next") => "app",
             _ => "src",
         };
         let globals_path = format!("{}/globals.css", css_dir);
-        let globals = r#"@tailwind base;
-@tailwind components;
-@tailwind utilities;
-"#;
+        let globals = "@import \"tailwindcss\";\n";
         files.push(write_file(project_dir, &globals_path, globals)?);
 
         Ok(InstallResult {
-            installer_name: "tailwind".to_string(),
+            installer_name: "tailwindcss".to_string(),
             files_created: files,
-            dependencies_added: vec!["tailwindcss".to_string()],
+            dependencies_added: vec!["tailwindcss".to_string(), "@tailwindcss/vite".to_string()],
         })
     }
 }

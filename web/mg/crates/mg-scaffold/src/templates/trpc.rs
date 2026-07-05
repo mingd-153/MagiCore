@@ -87,6 +87,7 @@ pub fn template() -> Template {
         name: "trpc",
         description: "tRPC API with TypeScript",
         commands: &["trpc"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

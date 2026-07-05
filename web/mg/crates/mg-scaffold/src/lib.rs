@@ -5,6 +5,7 @@ pub mod prompts;
 pub mod renderer;
 pub mod templates;
 pub mod validate;
+pub mod versions;
 
 pub use engine::{
     OverwritePolicy, ProjectCreated, ScaffoldContext, ScaffoldEngine, StaticScaffolder,

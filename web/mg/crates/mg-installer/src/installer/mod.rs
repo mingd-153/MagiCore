@@ -559,25 +559,32 @@ impl Installer {
                 };
 
                 // Fix scoped package paths: DefinitelyTyped tarballs use {name}/ instead of package/
+                // Some packages like @types/node use {name} v{version}/ prefix
                 let entries = if let Some(slash_pos) = package.name.rfind('/') {
                     let unscoped = &package.name[slash_pos + 1..];
                     let prefix = format!("{}/", unscoped);
+
+                    // Find the common first-level directory (if any) among all entries
+                    let common_dir = entries
+                        .iter()
+                        .filter_map(|(p, _)| p.split('/').next())
+                        .reduce(|a, b| if a == b { a } else { "" })
+                        .and_then(|d| if d.is_empty() { None } else { Some(d.to_string()) });
+
+                    // Case 1: entries are under {unscoped}/ (DefinitelyTyped standard)
                     if entries.iter().all(|(p, _)| {
                         p == unscoped || p.starts_with(&prefix)
                     }) {
-                        // Strip the unscoped name prefix from all paths
                         let fixed_entries: Vec<_> = entries.into_iter().map(|(path, hash)| {
                             let fixed = path.strip_prefix(&prefix).unwrap_or(&path).to_string();
                             (fixed, hash)
                         }).collect();
-                        // Move files from subdirectory up one level
                         let src_dir = extract_dir.join(unscoped);
                         if src_dir.is_dir() {
                             if let Ok(entries) = std::fs::read_dir(&src_dir) {
                                 for entry in entries.flatten() {
                                     let file_name = entry.file_name();
                                     let dst = extract_dir.join(&file_name);
-                                    // If dst exists (e.g. from a previous extraction), skip
                                     if !dst.exists() {
                                         std::fs::rename(entry.path(), &dst).ok();
                                     }
@@ -586,6 +593,31 @@ impl Installer {
                             std::fs::remove_dir(&src_dir).ok();
                         }
                         fixed_entries
+                    // Case 2: entries share a common non-standard prefix dir (e.g. "node v22.20/")
+                    } else if let Some(dir) = common_dir.as_deref() {
+                        if dir != "package" {
+                            let dir_prefix = format!("{}/", dir);
+                            let fixed_entries: Vec<_> = entries.into_iter().map(|(path, hash)| {
+                                let fixed = path.strip_prefix(&dir_prefix).unwrap_or(&path).to_string();
+                                (fixed, hash)
+                            }).collect();
+                            let src_dir = extract_dir.join(dir);
+                            if src_dir.is_dir() {
+                                if let Ok(child_entries) = std::fs::read_dir(&src_dir) {
+                                    for entry in child_entries.flatten() {
+                                        let file_name = entry.file_name();
+                                        let dst = extract_dir.join(&file_name);
+                                        if !dst.exists() {
+                                            std::fs::rename(entry.path(), &dst).ok();
+                                        }
+                                    }
+                                }
+                                std::fs::remove_dir(&src_dir).ok();
+                            }
+                            fixed_entries
+                        } else {
+                            entries
+                        }
                     } else {
                         entries
                     }

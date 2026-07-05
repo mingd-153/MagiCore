@@ -84,6 +84,7 @@ pub fn template() -> Template {
         name: "echo",
         description: "Echo REST API with Go",
         commands: &["echo"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }
