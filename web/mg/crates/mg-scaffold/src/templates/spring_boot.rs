@@ -110,6 +110,7 @@ pub fn template() -> Template {
         name: "spring-boot",
         description: "Spring Boot REST API with Java 21",
         commands: &["spring-boot"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

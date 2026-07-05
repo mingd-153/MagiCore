@@ -65,6 +65,7 @@ pub fn template() -> Template {
         name: "tanstack",
         description: "TanStack Start full-stack React app with file-based routing",
         commands: &["tanstack"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

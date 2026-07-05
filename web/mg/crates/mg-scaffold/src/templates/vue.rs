@@ -139,6 +139,7 @@ pub fn template() -> Template {
         name: "vue",
         description: "Vue 3 SPA with Vite, Pinia, and Router",
         commands: &["vue"],
+        supported_flags: &["typescript", "tailwindcss"],
         create_engine: build_engine,
     }
 }

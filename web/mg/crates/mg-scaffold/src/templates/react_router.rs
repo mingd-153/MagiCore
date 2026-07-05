@@ -66,6 +66,7 @@ pub fn template() -> Template {
         name: "react-router",
         description: "React Router v7 full-stack React app with SSR and file-based routing",
         commands: &["react-router"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

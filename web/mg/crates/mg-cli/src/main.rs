@@ -245,7 +245,7 @@ enum CliCommand {
         vite: bool,
         /// Add Tailwind CSS (auto-enables --vite)
         #[arg(long)]
-        tailwind: bool,
+        tailwindcss: bool,
         /// Add Bootstrap CSS
         #[arg(long)]
         bootstrap: bool,
@@ -728,7 +728,7 @@ async fn cmd_install_recursive(
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_add_recursive(
-    _config: &MgpmConfig,
+    config: &MgpmConfig,
     recursive: bool,
     filter: &[String],
     since: Option<&str>,
@@ -760,7 +760,7 @@ async fn cmd_add_recursive(
         std::env::set_current_dir(&member.path)
             .map_err(|e| format!("cannot enter {}: {e}", member.path.display()))?;
 
-        let result = cmd_add(packages.to_vec(), dev, peer, optional, exact).await;
+        let result = cmd_add(packages.to_vec(), dev, peer, optional, exact, config, false, false, false, false, false, "hoisted".to_string()).await;
 
         if let Some(p) = prev {
             std::env::set_current_dir(p).ok();
@@ -792,7 +792,7 @@ async fn cmd_add_recursive(
 }
 
 async fn cmd_remove_recursive(
-    _config: &MgpmConfig,
+    config: &MgpmConfig,
     recursive: bool,
     filter: &[String],
     since: Option<&str>,
@@ -820,7 +820,7 @@ async fn cmd_remove_recursive(
         std::env::set_current_dir(&member.path)
             .map_err(|e| format!("cannot enter {}: {e}", member.path.display()))?;
 
-        let result = cmd_remove(packages.to_vec()).await;
+        let result = cmd_remove(packages.to_vec(), config, false, false, false, false, false, "hoisted".to_string()).await;
 
         if let Some(p) = prev {
             std::env::set_current_dir(p).ok();
@@ -1172,36 +1172,189 @@ async fn cmd_install(
     Ok(())
 }
 
-async fn cmd_add(
-    packages: Vec<String>,
+/// Parse a package spec like `zod`, `zod@3.22`, `@types/react@^19`, `zod@latest`
+/// into (package_name, version_or_range).
+/// Returns None for the version when only the package name is given (e.g. `zod`).
+fn parse_package_spec(spec: &str) -> Result<(String, Option<String>), String> {
+    // Scoped packages: @scope/name@version — need to split after the scope
+    if let Some(rest) = spec.strip_prefix('@') {
+        if let Some(at) = rest.find('@') {
+            let name = format!("@{}", &rest[..at]); // @scope/name
+            let version = rest[at + 1..].to_string();
+            Ok((name, Some(version)))
+        } else {
+            let name = format!("@{}", rest);
+            Ok((name, None))
+        }
+    } else if let Some(at) = spec.find('@') {
+        let name = spec[..at].to_string();
+        let version = spec[at + 1..].to_string();
+        Ok((name, Some(version)))
+    } else {
+        Ok((spec.to_string(), None))
+    }
+}
+
+/// Resolve actual version from npm registry
+async fn resolve_latest_version(name: &str) -> Result<String, String> {
+    use mg_registry::NpmRegistry;
+    let npm = NpmRegistry::new("https://registry.npmjs.org");
+    let pkg_name = mg_core::PackageName::new(name)
+        .map_err(|e| format!("invalid package name '{name}': {e}"))?;
+    let versions = npm.get_package_versions(&pkg_name).await
+        .map_err(|e| format!("failed to fetch versions for '{name}': {e}"))?;
+    versions.last()
+        .map(|v| v.to_string())
+        .ok_or_else(|| format!("no versions found for '{name}'"))
+}
+
+fn update_package_json_deps(
+    pkg: &mut serde_json::Value,
+    entries: &[(String, String)],   // (package_name, version_or_range)
     dev: bool,
-    peer: bool,
-    optional: bool,
-    exact: bool,
+    add: bool,
 ) -> Result<(), String> {
-    for pkg in &packages {
-        eprintln!(
-            "{} {} (dev={}, peer={}, optional={}, exact={})",
-            "[INFO]".cyan().bold(),
-            format!("Adding '{}'...", pkg).cyan(),
-            dev,
-            peer,
-            optional,
-            exact,
-        );
+    let section = if dev { "devDependencies" } else { "dependencies" };
+    if pkg.get(section).and_then(|d| d.as_object()).is_none() {
+        pkg[section] = serde_json::Value::Object(serde_json::Map::new());
+    }
+
+    if add {
+        let map = pkg[section].as_object_mut().unwrap();
+        for (pkg_name, version) in entries {
+            map.insert(pkg_name.clone(), serde_json::Value::String(version.clone()));
+        }
+    } else {
+        let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
+        for s in ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] {
+            if let Some(map) = pkg.get_mut(s).and_then(|d| d.as_object_mut()) {
+                for pkg_name in &names {
+                    map.remove(*pkg_name);
+                }
+            }
+        }
     }
     Ok(())
 }
 
-async fn cmd_remove(packages: Vec<String>) -> Result<(), String> {
-    for pkg in &packages {
-        eprintln!(
-            "{} {}",
-            "[INFO]".cyan().bold(),
-            format!("Removing '{}'...", pkg).cyan()
-        );
+#[allow(clippy::too_many_arguments)]
+async fn cmd_add(
+    packages: Vec<String>,
+    dev: bool,
+    peer: bool,
+    _optional: bool,
+    exact: bool,
+    config: &MgpmConfig,
+    offline: bool,
+    production: bool,
+    hoist: bool,
+    profile: bool,
+    timings: bool,
+    linker: String,
+) -> Result<(), String> {
+    if packages.is_empty() {
+        return Err("No packages specified. Usage: mg add <package> [<package>...]".to_string());
     }
-    Ok(())
+
+    let mut pkg = load_package_json(Path::new("package.json"))?;
+
+    // Parse each spec into (name, version)
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for spec in &packages {
+        let (name, version_spec) = parse_package_spec(spec)?;
+        let version = match version_spec {
+            Some(v) if exact => {
+                // User provided version + --exact → use as-is (could be exact or already semver)
+                v
+            }
+            Some(v) => {
+                // User provided version → prefix with ^ if it's a plain number
+                if v.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                    format!("^{}", v)
+                } else {
+                    v // already has a range prefix like ^, ~, >=, etc.
+                }
+            }
+            None if exact => {
+                // No version + --exact → resolve exact from registry
+                let latest = resolve_latest_version(&name).await?;
+                latest
+            }
+            None => {
+                // No version → resolve latest and prefix with ^
+                match resolve_latest_version(&name).await {
+                    Ok(v) => format!("^{}", v),
+                    Err(_) => "*".to_string(), // fallback
+                }
+            }
+        };
+        entries.push((name, version));
+    }
+
+    update_package_json_deps(&mut pkg, &entries, dev || peer, true)?;
+
+    let json_str = serde_json::to_string_pretty(&pkg)
+        .map_err(|e| format!("failed to serialize package.json: {e}"))?;
+    std::fs::write("package.json", json_str)
+        .map_err(|e| format!("failed to write package.json: {e}"))?;
+
+    let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
+    eprintln!(
+        "{} Added {} to {}",
+        "[OK]".green().bold(),
+        names.join(", ").green(),
+        if dev || peer { "devDependencies" } else { "dependencies" }.green()
+    );
+
+    // Force lockfile regeneration to include new packages
+    let _ = std::fs::remove_file("mg.lock");
+    let _ = std::fs::remove_file("mg.lockb");
+
+    cmd_install(config, offline, production, hoist, profile, timings, linker).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_remove(
+    packages: Vec<String>,
+    config: &MgpmConfig,
+    offline: bool,
+    production: bool,
+    hoist: bool,
+    profile: bool,
+    timings: bool,
+    linker: String,
+) -> Result<(), String> {
+    if packages.is_empty() {
+        return Err("No packages specified. Usage: mg remove <package> [<package>...]".to_string());
+    }
+
+    let mut pkg = load_package_json(Path::new("package.json"))?;
+
+    // Parse specs to get just the package names
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for spec in &packages {
+        let (name, _) = parse_package_spec(spec)?;
+        entries.push((name, String::new()));
+    }
+
+    update_package_json_deps(&mut pkg, &entries, false, false)?;
+
+    let json_str = serde_json::to_string_pretty(&pkg)
+        .map_err(|e| format!("failed to serialize package.json: {e}"))?;
+    std::fs::write("package.json", json_str)
+        .map_err(|e| format!("failed to write package.json: {e}"))?;
+
+    eprintln!(
+        "{} Removed {} from package.json",
+        "[OK]".green().bold(),
+        packages.join(", ").green()
+    );
+
+    // Force lockfile regeneration to reflect removed packages
+    let _ = std::fs::remove_file("mg.lock");
+    let _ = std::fs::remove_file("mg.lockb");
+
+    cmd_install(config, offline, production, hoist, profile, timings, linker).await
 }
 
 async fn cmd_update(latest: bool) -> Result<(), String> {
@@ -1359,14 +1512,38 @@ async fn main() -> Result<(), String> {
                 )
                 .await
             } else {
-                cmd_add(packages.clone(), dev, peer, optional, exact).await
+                cmd_add(
+                    packages.clone(),
+                    dev,
+                    peer,
+                    optional,
+                    exact,
+                    &config,
+                    false,
+                    false,
+                    false,
+                    profiling,
+                    timings,
+                    "hoisted".to_string(),
+                )
+                .await
             }
         }
         CliCommand::Remove { ref packages } => {
             if is_workspace_context(rec, &flt, sinc.as_deref()) {
                 cmd_remove_recursive(&config, rec, &flt, sinc.as_deref(), ff, packages).await
             } else {
-                cmd_remove(packages.clone()).await
+                cmd_remove(
+                    packages.clone(),
+                    &config,
+                    false,
+                    false,
+                    false,
+                    profiling,
+                    timings,
+                    "hoisted".to_string(),
+                )
+                .await
             }
         }
         CliCommand::Update { latest } => {
@@ -1506,7 +1683,7 @@ async fn main() -> Result<(), String> {
             args,
             ts,
             vite,
-            tailwind,
+            tailwindcss,
             bootstrap,
             nui,
             sass,
@@ -1537,33 +1714,46 @@ async fn main() -> Result<(), String> {
                 (Some(fw_name), fw_ver, args[1].clone())
             };
 
-            let tpl = if let Some(ref fw) = framework_name {
-                // Look up framework template by name
+            let (tpl, template_entry) = if let Some(ref fw) = framework_name {
                 let template = registry
                     .get(fw)
                     .ok_or_else(|| format!("Unknown framework '{fw}'. Available: {}. Use 'mg create-web <name>' for vanilla.", {
                         let names: Vec<&str> = registry.list().iter().filter(|t| t.name != "vanilla").map(|t| t.name).collect();
                         names.join(", ")
                     }))?;
-                (template.create_engine)()
+                ((template.create_engine)(), template)
             } else {
-                // Vanilla
                 let template = registry
                     .get("vanilla")
                     .ok_or_else(|| "Vanilla template not found".to_string())?;
-                (template.create_engine)()
+                ((template.create_engine)(), template)
             };
-
             let dest = std::env::current_dir()
                 .map_err(|e| format!("Cannot get current directory: {e}"))?
                 .join(&project_name);
+
+            // Warn about unsupported flags for this template
+            let flag_map: [(&str, bool); 6] = [
+                ("typescript", ts),
+                ("tailwindcss", tailwindcss),
+                ("bootstrap", bootstrap),
+                ("nui", nui),
+                ("sass", sass),
+                ("api", api),
+            ];
+            for (flag_name, flag_val) in &flag_map {
+                if *flag_val && !template_entry.supported_flags.contains(flag_name) {
+                    eprintln!("  {} flag '--{}' is not supported by template '{}' (ignored)",
+                        "[WARN]".yellow().bold(), flag_name, template_entry.name);
+                }
+            }
 
             let mut vars = HashMap::new();
             vars.insert("name".to_string(), project_name.clone());
             vars.insert("version".to_string(), framework_version.unwrap_or_else(|| "1.0.0".to_string()));
 
             // TS, Tailwind, Sass auto-enable Vite (need compilation) — vanilla only
-            let vite = vite || ts || tailwind || sass;
+            let vite = vite || ts || tailwindcss || sass;
 
             let mut features = Vec::new();
             if vite {
@@ -1572,8 +1762,8 @@ async fn main() -> Result<(), String> {
             if ts {
                 features.push("typescript".to_string());
             }
-            if tailwind {
-                features.push("tailwind".to_string());
+            if tailwindcss {
+                features.push("tailwindcss".to_string());
             }
             if bootstrap {
                 features.push("bootstrap".to_string());
@@ -1592,8 +1782,7 @@ async fn main() -> Result<(), String> {
                 .with_vars(vars)
                 .with_features(features);
 
-            let result = tpl
-                .create_project(&ctx, false)
+            let result = tpl.create_project(&ctx, false)
                 .map_err(|e| format!("Failed to create project: {e}"))?;
 
             println!(

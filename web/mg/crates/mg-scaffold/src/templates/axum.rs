@@ -77,6 +77,7 @@ pub fn template() -> Template {
         name: "axum",
         description: "Axum REST API with Rust",
         commands: &["axum"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

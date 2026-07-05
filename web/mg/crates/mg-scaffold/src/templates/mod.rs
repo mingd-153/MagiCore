@@ -37,6 +37,7 @@ pub struct Template {
     pub name: &'static str,
     pub description: &'static str,
     pub commands: &'static [&'static str],
+    pub supported_flags: &'static [&'static str],
     pub create_engine: fn() -> Box<dyn ScaffoldEngine>,
 }
 

@@ -79,6 +79,7 @@ pub fn template() -> Template {
         name: "fastify",
         description: "Fastify REST API with TypeScript",
         commands: &["fastify"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

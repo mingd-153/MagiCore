@@ -107,6 +107,7 @@ pub fn template() -> Template {
         name: "phoenix",
         description: "Phoenix API with Elixir 1.17",
         commands: &["phoenix"],
+    supported_flags: &[],
         create_engine: build_engine,
     }
 }

@@ -161,10 +161,13 @@ mod test {
         let installer = TailwindInstaller;
         let ctx = test_ctx();
         let result = installer.install(&ctx, dir.path()).unwrap();
-        assert_eq!(result.installer_name, "tailwind");
-        assert!(dir.path().join("tailwind.config.ts").exists());
-        assert!(dir.path().join("postcss.config.mjs").exists());
+        assert_eq!(result.installer_name, "tailwindcss");
+        // Tailwind v4: no config files, just globals.css
+        assert!(!dir.path().join("tailwind.config.ts").exists());
+        assert!(!dir.path().join("postcss.config.mjs").exists());
         assert!(dir.path().join("src/globals.css").exists());
+        let css = std::fs::read_to_string(dir.path().join("src/globals.css")).unwrap();
+        assert!(css.contains("@import \"tailwindcss\""));
     }
 
     #[test]
@@ -310,7 +313,8 @@ mod test {
         let results = registry.install_all(&test_ctx(), dir.path()).unwrap();
         assert_eq!(results.len(), 9);
         assert!(dir.path().join("tsconfig.json").exists());
-        assert!(dir.path().join("tailwind.config.ts").exists());
+        // Tailwind v4: no config files, just globals.css
+        assert!(dir.path().join("src/globals.css").exists());
         assert!(dir.path().join("eslint.config.mjs").exists());
         assert!(dir.path().join(".prettierrc").exists());
         assert!(dir.path().join("vitest.config.ts").exists());
