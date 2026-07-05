@@ -33,26 +33,26 @@ pub fn package_json(ctx: &Ctx) -> String {
     let build = if ctx.has_ts { "tsc -b && vite build" } else { "vite build" };
     let mut devs = format!(
         r#""@vitejs/plugin-react":"{}","prettier":"{}","vite":"{}""#,
-        VITE_PLUGIN_REACT, PRETTIER, VITE,
+        VITE_PLUGIN_REACT(), PRETTIER(), VITE(),
     );
     if ctx.has_ts {
         devs = format!(
             r#""@eslint/js":"{}","@types/node":"{}","@types/react":"{}","@types/react-dom":"{}",{},"eslint":"{}","eslint-plugin-react":"{}","eslint-plugin-react-hooks":"{}","eslint-plugin-react-refresh":"{}","globals":"{}","typescript":"{}","typescript-eslint":"{}""#,
-            ESLINT_JS, TYPES_NODE, TYPES_REACT, TYPES_REACT_DOM,
+            ESLINT_JS(), TYPES_NODE(), TYPES_REACT(), TYPES_REACT_DOM(),
             devs,
-            ESLINT, ESLINT_PLUGIN_REACT, ESLINT_PLUGIN_REACT_HOOKS, ESLINT_PLUGIN_REACT_REFRESH,
-            GLOBALS, TYPESCRIPT, TYPESCRIPT_ESLINT,
+            ESLINT(), ESLINT_PLUGIN_REACT(), ESLINT_PLUGIN_REACT_HOOKS(), ESLINT_PLUGIN_REACT_REFRESH(),
+            GLOBALS(), TYPESCRIPT(), TYPESCRIPT_ESLINT(),
         );
     }
     if ctx.has_tailwind {
         devs = format!(
             r#""tailwindcss":"{}","@tailwindcss/vite":"{}",{}"#,
-            TAILWINDCSS, TAILWINDCSS_VITE, devs,
+            TAILWINDCSS(), TAILWINDCSS_VITE(), devs,
         );
     }
     let deps = format!(
         r#""react":"{}","react-dom":"{}","react-router":"{}","zustand":"{}""#,
-        REACT, REACT_DOM, REACT_ROUTER, ZUSTAND,
+        REACT(), REACT_DOM(), REACT_ROUTER(), ZUSTAND(),
     );
     let lint = if ctx.has_ts {
         r#""lint":"eslint .","format":"prettier --write .""#
