@@ -7,6 +7,7 @@ use crate::test_utils::MockDependencyProvider;
 
 #[test]
 fn test_basic_resolution() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let mut provider = MockDependencyProvider::new();
     provider.add_package("react", "18.2.0", vec![]);
     provider.add_package("react", "18.1.0", vec![]);
@@ -14,7 +15,7 @@ fn test_basic_resolution() {
 
     let resolver = Resolver::new(std::sync::Arc::new(provider));
     let wanted = vec![(PackageName::new("react").unwrap(), "^18.0.0".to_string())];
-    let result = resolver.solve(&wanted).unwrap();
+    let result = rt.block_on(resolver.solve(&wanted)).unwrap();
     assert_eq!(result.resolutions.len(), 1);
     assert_eq!(result.resolutions[0].version.to_string(), "18.2.0");
 }
@@ -41,6 +42,7 @@ fn test_workspace_resolution() {
     use mg_resolver::solver::{WorkspaceInfo, WorkspaceMemberInfo};
     use std::path::PathBuf;
 
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let provider = MockDependencyProvider::new();
     let resolver = Resolver::new(std::sync::Arc::new(provider));
 
@@ -58,8 +60,8 @@ fn test_workspace_resolution() {
         (PackageName::new("lodash").unwrap(), "^4.0.0".to_string()),
     ];
 
-    let result = resolver
-        .resolve_with_workspace(&wanted, &workspace)
+    let result = rt
+        .block_on(resolver.resolve_with_workspace(&wanted, &workspace))
         .unwrap();
     assert!(result
         .resolutions
@@ -69,6 +71,7 @@ fn test_workspace_resolution() {
 
 #[test]
 fn test_override_injection() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let mut provider = MockDependencyProvider::new();
     provider.add_package("react", "18.2.0", vec![]);
     provider.add_package("react", "17.0.0", vec![]);
@@ -80,12 +83,13 @@ fn test_override_injection() {
     resolver.set_catalogs(std::collections::HashMap::new());
 
     let wanted = vec![(PackageName::new("react").unwrap(), "^18.0.0".to_string())];
-    let result = resolver.solve(&wanted).unwrap();
+    let result = rt.block_on(resolver.solve(&wanted)).unwrap();
     assert_eq!(result.resolutions.len(), 1);
 }
 
 #[test]
 fn test_resolve_nonexistent_returns_empty() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let provider = MockDependencyProvider::new();
     let resolver = Resolver::new(std::sync::Arc::new(provider));
 
@@ -93,7 +97,7 @@ fn test_resolve_nonexistent_returns_empty() {
         PackageName::new("nonexistent").unwrap(),
         "^1.0.0".to_string(),
     )];
-    let result = resolver.solve(&wanted).unwrap();
+    let result = rt.block_on(resolver.solve(&wanted)).unwrap();
     assert!(result.resolutions.is_empty());
 }
 

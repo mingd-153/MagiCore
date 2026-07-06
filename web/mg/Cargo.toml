@@ -42,6 +42,7 @@ serde_yaml.workspace = true
 flate2.workspace = true
 tar.workspace = true
 tokio.workspace = true
+async-trait.workspace = true
 hex.workspace = true
 sha2.workspace = true
 blake3.workspace = true
@@ -98,6 +99,7 @@ rayon = "1.10"
 
 # Async I/O
 async-tar = "0.3"
+async-trait = "0.1"
 async-compression = { version = "0.4", features = ["tokio", "zstd", "gzip", "brotli"] }
 tokio-util = { version = "0.7", features = ["full"] }
 
