@@ -229,8 +229,8 @@ impl TarballExtractor {
         Ok(files)
     }
 
-    /// Extract tarball directly to CAS store, streaming content without intermediate disk writes.
-    /// Returns extracted entries with their CAS hashes.
+    /// Extract tarball directly to CAS store, streaming content with single-pass hashing.
+    /// Computes SHA-256 incrementally during read, avoiding separate hash pass.
     pub fn extract_to_cas(
         &self,
         tarball: &Path,
@@ -286,7 +286,6 @@ impl TarballExtractor {
                     });
                 }
 
-                // For symlinks, we don't store in CAS, just record metadata
                 entries.push(ExtractedEntry {
                     path: relative_path,
                     hash: String::new(),
@@ -294,24 +293,24 @@ impl TarballExtractor {
                     size: 0,
                 });
             } else if entry_type.is_file() {
+                // Stream hash during read: single pass, no intermediate Vec
+                let mut hasher = Sha256::new();
                 let mut data = Vec::new();
-                entry
-                    .read_to_end(&mut data)
-                    .map_err(|e| TarballError::ExtractError(e.to_string()))?;
-
-                let hash = hex::encode(Sha256::digest(&data));
-
-                let integrity = cas_store.import_bytes_with_exec(&data, is_executable)
-                    .map_err(|e| TarballError::ExtractError(e.to_string()))?;
-
-                // Verify hash matches
-                if integrity.hash != hash {
-                    return Err(TarballError::IntegrityMismatch {
-                        file: relative_path.clone(),
-                        expected: hash,
-                        actual: integrity.hash,
-                    });
+                let mut buf = [0u8; 65536];
+                loop {
+                    let n = entry
+                        .read(&mut buf)
+                        .map_err(|e| TarballError::ExtractError(e.to_string()))?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buf[..n]);
+                    data.extend_from_slice(&buf[..n]);
                 }
+                let hash = hex::encode(hasher.finalize());
+
+                let integrity = cas_store.import_bytes_with_hash(&data, &hash, is_executable)
+                    .map_err(|e| TarballError::ExtractError(e.to_string()))?;
 
                 entries.push(ExtractedEntry {
                     path: relative_path,

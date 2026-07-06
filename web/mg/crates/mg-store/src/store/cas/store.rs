@@ -112,13 +112,33 @@ impl ContentStore {
         data: &[u8],
         executable: bool,
     ) -> Result<IntegrityHash, StoreError> {
-        let use_streaming = data.len() >= STREAM_THRESHOLD;
-        
         let hash = IntegrityHash::from_bytes(data, executable);
+        self.write_bytes_with_hash(data, &hash, executable)
+    }
+
+    /// Import bytes with a pre-computed hash, avoiding redundant SHA-256.
+    /// The hash hex must match sha256(data), or integrity will be wrong.
+    pub fn import_bytes_with_hash(
+        &self,
+        data: &[u8],
+        hash_hex: &str,
+        executable: bool,
+    ) -> Result<IntegrityHash, StoreError> {
+        let hash = IntegrityHash::from_hash_str(hash_hex, executable);
+        self.write_bytes_with_hash(data, &hash, executable)
+    }
+
+    fn write_bytes_with_hash(
+        &self,
+        data: &[u8],
+        hash: &IntegrityHash,
+        executable: bool,
+    ) -> Result<IntegrityHash, StoreError> {
+        let use_streaming = data.len() >= STREAM_THRESHOLD;
         let dest = hash.cas_path(&self.root);
 
         if dest.exists() {
-            return Ok(hash);
+            return Ok(hash.clone());
         }
 
         fs::create_dir_all(dest.parent().unwrap()).map_err(|e| StoreError::Io {
@@ -137,7 +157,7 @@ impl ContentStore {
             stream_write_verify_and_set_perms(writer, &dest, reader, executable)?
         } else {
             write_all_verify_and_set_perms(writer, &dest, data, executable)?;
-            hash
+            hash.clone()
         };
         Ok(result_hash)
     }

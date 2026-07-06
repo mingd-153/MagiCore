@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -82,6 +83,7 @@ pub struct RegistryClient {
     registries: RwLock<HashMap<String, RegistryConfig>>,
     cache: Option<Mutex<MemMapCache>>,
     etags: DashMap<String, String>,
+    offline: AtomicBool,
 }
 
 impl RegistryClient {
@@ -126,6 +128,7 @@ impl RegistryClient {
             registries: RwLock::new(HashMap::new()),
             cache,
             etags: DashMap::new(),
+            offline: AtomicBool::new(false),
         }
     }
 
@@ -285,6 +288,20 @@ impl RegistryClient {
         token: Option<String>,
         accept: Option<&str>,
     ) -> Result<serde_json::Value, RegistryError> {
+        if self.is_offline() {
+            if let Some(ref cache) = self.cache {
+                let guard = cache.lock();
+                if let Some(entry) = guard.get(url) {
+                    return serde_json::from_slice(entry.data)
+                        .map_err(|e| RegistryError::NetworkError(e.to_string()));
+                }
+            }
+            return Err(RegistryError::NetworkError(format!(
+                "offline: no cached data for {}",
+                url
+            )));
+        }
+
         let etag = self.etags.get(url).map(|v| v.clone());
         let resp = self.send_with_retry_accept(url, token, etag.as_deref(), accept).await?;
 
@@ -339,6 +356,19 @@ impl RegistryClient {
         token: Option<String>,
         accept: Option<&str>,
     ) -> Result<Vec<u8>, RegistryError> {
+        if self.is_offline() {
+            if let Some(ref cache) = self.cache {
+                let guard = cache.lock();
+                if let Some(entry) = guard.get(url) {
+                    return Ok(entry.data.to_vec());
+                }
+            }
+            return Err(RegistryError::NetworkError(format!(
+                "offline: no cached data for {}",
+                url
+            )));
+        }
+
         let etag = self.etags.get(url).map(|v| v.clone());
         let resp = self.send_with_retry_accept(url, token, etag.as_deref(), accept).await?;
 
@@ -369,6 +399,14 @@ impl RegistryClient {
         }
 
         Ok(body)
+    }
+
+    pub fn set_offline(&self, offline: bool) {
+        self.offline.store(offline, Ordering::Relaxed);
+    }
+
+    pub fn is_offline(&self) -> bool {
+        self.offline.load(Ordering::Relaxed)
     }
 
     pub fn add_registry(&self, name: &str, config: RegistryConfig) {
