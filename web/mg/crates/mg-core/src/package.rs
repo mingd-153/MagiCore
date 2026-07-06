@@ -300,6 +300,13 @@ impl VersionRange {
 
     /// Returns true if this range contains the given version.
     pub fn contains(&self, version: &Version) -> bool {
+        // Fast path: try C FFI first (covers all range types efficiently)
+        if cfg!(not(miri)) {
+            if let Some(result) = crate::cffi::semver::range_contains(&self.0, version) {
+                return result;
+            }
+        }
+
         let version_str = version.to_string();
         
         if self.is_star() {

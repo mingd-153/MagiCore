@@ -134,6 +134,15 @@ impl RegistryClient {
         url: &str,
         token: Option<String>,
     ) -> Result<serde_json::Value, RegistryError> {
+        self.get_json_with_accept(url, token, None).await
+    }
+
+    pub async fn get_json_with_accept(
+        &self,
+        url: &str,
+        token: Option<String>,
+        accept: Option<&str>,
+    ) -> Result<serde_json::Value, RegistryError> {
         if let Some(ref cache) = self.cache {
             let guard = cache.lock();
             if let Some(entry) = guard.get(url) {
@@ -154,8 +163,9 @@ impl RegistryClient {
 
         let url = url.to_string();
         let token = token.clone();
+        let accept = accept.map(|a| a.to_string());
         let result = cell
-            .get_or_init(|| async { self.do_get_json(&url, token).await })
+            .get_or_init(|| async { self.do_get_json(&url, token, accept.as_deref()).await })
             .await
             .clone();
 
@@ -189,6 +199,16 @@ impl RegistryClient {
         token: Option<String>,
         etag: Option<&str>,
     ) -> Result<reqwest::Response, RegistryError> {
+        self.send_with_retry_accept(url, token, etag, None).await
+    }
+
+    async fn send_with_retry_accept(
+        &self,
+        url: &str,
+        token: Option<String>,
+        etag: Option<&str>,
+        accept: Option<&str>,
+    ) -> Result<reqwest::Response, RegistryError> {
         let mut attempt = 0u32;
 
         loop {
@@ -200,6 +220,9 @@ impl RegistryClient {
             }
             if let Some(e) = etag {
                 req = req.header("If-None-Match", e);
+            }
+            if let Some(a) = accept {
+                req = req.header("Accept", a);
             }
 
             let resp = match req.send().await {
@@ -260,9 +283,10 @@ impl RegistryClient {
         &self,
         url: &str,
         token: Option<String>,
+        accept: Option<&str>,
     ) -> Result<serde_json::Value, RegistryError> {
         let etag = self.etags.get(url).map(|v| v.clone());
-        let resp = self.send_with_retry(url, token, etag.as_deref()).await?;
+        let resp = self.send_with_retry_accept(url, token, etag.as_deref(), accept).await?;
 
         let new_etag = resp
             .headers()
@@ -306,8 +330,17 @@ impl RegistryClient {
         url: &str,
         token: Option<String>,
     ) -> Result<Vec<u8>, RegistryError> {
+        self.get_raw_with_accept(url, token, None).await
+    }
+
+    pub async fn get_raw_with_accept(
+        &self,
+        url: &str,
+        token: Option<String>,
+        accept: Option<&str>,
+    ) -> Result<Vec<u8>, RegistryError> {
         let etag = self.etags.get(url).map(|v| v.clone());
-        let resp = self.send_with_retry(url, token, etag.as_deref()).await?;
+        let resp = self.send_with_retry_accept(url, token, etag.as_deref(), accept).await?;
 
         let new_etag = resp
             .headers()

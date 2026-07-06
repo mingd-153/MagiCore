@@ -85,6 +85,24 @@ pub struct Resolver {
 pub trait DependencyProvider: Send + Sync {
     fn get_versions(&self, package: &PackageName) -> Vec<Version>;
     fn get_dependencies(&self, package_id: &PackageId) -> Vec<ResolvedDep>;
+
+    /// Batch prefetch metadata for multiple packages.
+    /// Default implementation calls get_versions for each package sequentially.
+    /// Implementations should override this to use concurrent HTTP fetches.
+    fn prefetch_versions(&self, packages: &[PackageName]) -> Vec<(PackageName, Vec<Version>)> {
+        packages.iter().map(|name| {
+            let versions = self.get_versions(name);
+            (name.clone(), versions)
+        }).collect()
+    }
+
+    /// Batch prefetch dependencies for multiple packages.
+    fn prefetch_dependencies(&self, package_ids: &[PackageId]) -> Vec<(PackageId, Vec<ResolvedDep>)> {
+        package_ids.iter().map(|id| {
+            let deps = self.get_dependencies(id);
+            (id.clone(), deps)
+        }).collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -223,18 +241,33 @@ impl Resolver {
         use mg_core::VersionRange;
 
         let mut resolutions: Vec<Resolution> = Vec::new();
-        // Track the primary resolved version per package (first encountered)
         let mut resolved_versions: HashMap<String, Version> = HashMap::new();
-        // Track all (name, major) pairs already resolved (supports multi-version)
         let mut resolved_majors: HashSet<(String, u64)> = HashSet::new();
         let mut queue: VecDeque<(PackageName, String)> = wanted.iter().map(|(n, s)| (n.clone(), s.clone())).collect();
+        let _solve_start = std::time::Instant::now();
 
-        while let Some((name, spec)) = queue.pop_front() {
-            let name_str = name.as_str().to_string();
+        while !queue.is_empty() {
+            // Collect a batch from the front of the queue for parallel prefetch
+            let batch_size = queue.len().min(50);
+            let batch: Vec<(PackageName, String)> = queue.drain(..batch_size).collect();
 
-            // If already resolved, check if existing version satisfies this new constraint.
-            // If major differs, add a NEW resolution (pnpm-style multi-version).
-            if let Some(existing_version) = resolved_versions.get(&name_str) {
+            // Prefetch unique package names in the batch
+            let mut seen = HashSet::new();
+            let batch_names: Vec<PackageName> = batch.iter()
+                .filter(|(n, _)| seen.insert(n.as_str().to_string()))
+                .map(|(n, _)| n.clone())
+                .collect();
+            if !batch_names.is_empty() {
+                self.provider.prefetch_versions(&batch_names);
+            }
+
+            // Process each package in the batch
+            for (name, spec) in batch {
+                let name_str = name.as_str().to_string();
+
+                // If already resolved, check if existing version satisfies this new constraint.
+                // If major differs, add a NEW resolution (pnpm-style multi-version).
+                if let Some(existing_version) = resolved_versions.get(&name_str) {
                 if let Ok(ref c) = VersionRange::parse(&spec) {
                     if c.contains(existing_version) {
                         continue;
@@ -254,7 +287,7 @@ impl Resolver {
                                 res.version = new_version.clone();
                                 res.package_id = PackageId::new(name.clone(), new_version.clone());
                             }
-                            resolved_versions.insert(name_str, new_version.clone());
+                            resolved_versions.insert(name_str.clone(), new_version.clone());
                         }
                         continue;
                     }
@@ -340,6 +373,7 @@ impl Resolver {
                     dep_specs,
                 });
             }
+        }
         }
 
         Ok(SolveResult { resolutions })
