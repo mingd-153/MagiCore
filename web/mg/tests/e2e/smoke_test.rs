@@ -10,12 +10,15 @@ use mg_resolver::solver::ResolvedDep;
 use mg_resolver::Resolver;
 use mg_store::ContentStore;
 
+use async_trait::async_trait;
+
 struct E2eProvider {
     packages: HashMap<String, HashMap<String, Vec<ResolvedDep>>>,
 }
 
+#[async_trait]
 impl mg_resolver::DependencyProvider for E2eProvider {
-    fn get_versions(&self, package: &mg_core::PackageName) -> Vec<mg_core::Version> {
+    async fn get_versions(&self, package: &mg_core::PackageName) -> Vec<mg_core::Version> {
         self.packages
             .get(package.as_str())
             .map(|versions| {
@@ -29,7 +32,7 @@ impl mg_resolver::DependencyProvider for E2eProvider {
             .unwrap_or_default()
     }
 
-    fn get_dependencies(&self, package_id: &mg_core::PackageId) -> Vec<ResolvedDep> {
+    async fn get_dependencies(&self, package_id: &mg_core::PackageId) -> Vec<ResolvedDep> {
         self.packages
             .get(package_id.name().as_str())
             .and_then(|versions| versions.get(&package_id.version().to_string()))
