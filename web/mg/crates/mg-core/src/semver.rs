@@ -121,12 +121,59 @@ impl Version {
             return cmp;
         }
 
-        // A version without prerelease > version with prerelease
+        // Compare pre-release identifiers per semver spec:
+        // 1. Split on '.', compare field-by-field
+        // 2. Numeric identifiers compare numerically
+        // 3. String identifiers compare lexicographically (ASCII)
+        // 4. Numeric < String
+        // 5. Fewer fields < more fields (if all equal so far)
         match (&self.prerelease, &other.prerelease) {
             (None, None) => std::cmp::Ordering::Equal,
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => a.cmp(b),
+            (Some(a), Some(b)) => {
+                let a_parts: Vec<&str> = a.split('.').collect();
+                let b_parts: Vec<&str> = b.split('.').collect();
+                let max_len = a_parts.len().max(b_parts.len());
+                for i in 0..max_len {
+                    let a_has = i < a_parts.len();
+                    let b_has = i < b_parts.len();
+                    if !a_has && b_has {
+                        return std::cmp::Ordering::Less;
+                    }
+                    if a_has && !b_has {
+                        return std::cmp::Ordering::Greater;
+                    }
+                    let a_field = a_parts[i];
+                    let b_field = b_parts[i];
+                    // Try numeric comparison first
+                    let a_num = a_field.parse::<u64>();
+                    let b_num = b_field.parse::<u64>();
+                    match (a_num, b_num) {
+                        (Ok(an), Ok(bn)) => {
+                            if an != bn {
+                                return an.cmp(&bn);
+                            }
+                        }
+                        (Ok(_), Err(_)) => {
+                            // Numeric < String
+                            return std::cmp::Ordering::Less;
+                        }
+                        (Err(_), Ok(_)) => {
+                            // String > Numeric
+                            return std::cmp::Ordering::Greater;
+                        }
+                        (Err(_), Err(_)) => {
+                            // String comparison
+                            let cmp = a_field.cmp(b_field);
+                            if cmp != std::cmp::Ordering::Equal {
+                                return cmp;
+                            }
+                        }
+                    }
+                }
+                std::cmp::Ordering::Equal
+            }
         }
     }
 }
@@ -296,6 +343,33 @@ mod tests {
 
         assert!(v1 < v2);
         assert!(v1 > v3); // Release > prerelease
+    }
+
+    #[test]
+    fn test_prerelease_numeric_ordering() {
+        // Pre-release identifiers with numeric parts compare numerically
+        let v9 = Version::parse("1.0.0-next.9").unwrap();
+        let v24 = Version::parse("1.0.0-next.24").unwrap();
+        assert!(v9 < v24, "next.9 should be < next.24");
+
+        let v28 = Version::parse("1.0.0-next.28").unwrap();
+        assert!(v24 < v28, "next.24 should be < next.28");
+        assert!(v9 < v28, "next.9 should be < next.28");
+
+        // Non-numeric pre-release compares lexicographically
+        let alpha = Version::parse("1.0.0-alpha").unwrap();
+        let beta = Version::parse("1.0.0-beta").unwrap();
+        assert!(alpha < beta, "alpha < beta");
+
+        // Mixed: numeric < string
+        let rc1 = Version::parse("1.0.0-1").unwrap();
+        let rc_alpha = Version::parse("1.0.0-alpha").unwrap();
+        assert!(rc1 < rc_alpha, "numeric pre-release < string pre-release");
+
+        // Pre-release with multiple dot-separated identifiers
+        let pre1 = Version::parse("1.0.0-rc.1").unwrap();
+        let pre2 = Version::parse("1.0.0-rc.2").unwrap();
+        assert!(pre1 < pre2, "rc.1 < rc.2");
     }
 
     #[test]

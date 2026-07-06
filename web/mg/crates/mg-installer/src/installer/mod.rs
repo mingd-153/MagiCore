@@ -833,6 +833,13 @@ impl Installer {
                 .map(|p| p.dependencies.clone())
                 .unwrap_or_default();
 
+            let dep_specs = lockfile
+                .packages
+                .iter()
+                .find(|p| p.name == name && p.version == version)
+                .map(|p| p.dep_specs.clone())
+                .unwrap_or_default();
+
             let bin_entries = self.package_bins
                 .get(package_id.as_str())
                 .map(|b| b.value().clone())
@@ -842,6 +849,7 @@ impl Installer {
                 name,
                 version,
                 dependencies: deps,
+                dep_specs,
                 peer_dependencies: vec![],
                 files: files.clone(),
                 is_root_dep: false,
@@ -868,6 +876,7 @@ impl Installer {
                 name,
                 version,
                 dependencies: vec![],
+                dep_specs: vec![],
                 peer_dependencies: vec![],
                 files: files.clone(),
                 is_root_dep: false,

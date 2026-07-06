@@ -35,6 +35,8 @@ struct TomlPackage {
     integrity: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     dependencies: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    dep_specs: Vec<(String, String)>,
     resolution: TomlResolution,
 }
 
@@ -71,6 +73,7 @@ impl From<&LockfilePackage> for TomlPackage {
             version: pkg.version.clone(),
             integrity: pkg.integrity.clone(),
             dependencies: pkg.dependencies.clone(),
+            dep_specs: pkg.dep_specs.clone(),
             resolution: TomlResolution {
                 res_type: pkg.resolution.r#type.clone(),
                 url: pkg.resolution.url.clone(),
@@ -182,6 +185,22 @@ pub fn read_text(path: &Path) -> Result<Lockfile, LockfileError> {
             })
             .unwrap_or_default();
 
+        let dep_specs = pkg_table
+            .get("dep_specs")
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        v.as_array().and_then(|pair| {
+                            let first = pair.first().and_then(|v| v.as_str())?;
+                            let second = pair.get(1).and_then(|v| v.as_str())?;
+                            Some((first.to_string(), second.to_string()))
+                        })
+                    })
+                    .collect::<Vec<(String, String)>>()
+            })
+            .unwrap_or_default();
+
         packages.push(LockfilePackage {
             id: pkg_table
                 .get("id")
@@ -204,6 +223,7 @@ pub fn read_text(path: &Path) -> Result<Lockfile, LockfileError> {
                 .and_then(|i| i.as_str())
                 .map(String::from),
             dependencies,
+            dep_specs,
             resolved: pkg_table
                 .get("resolved")
                 .and_then(|r| r.as_bool())
@@ -283,6 +303,7 @@ mod tests {
             },
             integrity: Some("sha512-...".to_string()),
             dependencies: vec!["loose-envify".to_string()],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         });

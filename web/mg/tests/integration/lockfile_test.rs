@@ -18,6 +18,7 @@ fn test_roundtrip_binary_text() {
         },
         integrity: Some("sha512-abc".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -32,6 +33,7 @@ fn test_roundtrip_binary_text() {
         },
         integrity: Some("sha512-def".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -77,6 +79,7 @@ fn test_lockfile_sort() {
         },
         integrity: None,
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -91,6 +94,7 @@ fn test_lockfile_sort() {
         },
         integrity: None,
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -114,6 +118,7 @@ fn test_lockfile_find_package() {
         },
         integrity: None,
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -142,6 +147,7 @@ fn test_migrate_v1_to_v2_roundtrip() {
         },
         integrity: Some("sha512-abc".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -168,6 +174,7 @@ fn test_migrate_v1_tampered_rejected() {
         },
         integrity: Some("sha512-abc".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -200,6 +207,7 @@ fn test_text_auto_migrates_v1_to_v2() {
         },
         integrity: Some("sha512-xyz".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -235,6 +243,7 @@ fn test_binary_accepts_v1_and_v2() {
         },
         integrity: Some("sha512-abc".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });

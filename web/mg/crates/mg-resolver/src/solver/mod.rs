@@ -101,6 +101,8 @@ pub struct Resolution {
     pub version: Version,
     pub integrity: String,
     pub deps: Vec<String>,
+    /// Dep specs: (name, version_spec) for each dependency
+    pub dep_specs: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +204,7 @@ impl Resolver {
                     version,
                     integrity: "workspace".to_string(),
                     deps: Vec::new(),
+                    dep_specs: Vec::new(),
                 });
             } else {
                 remaining.push((name.clone(), spec.clone()));
@@ -220,47 +223,68 @@ impl Resolver {
         use mg_core::VersionRange;
 
         let mut resolutions: Vec<Resolution> = Vec::new();
-        // Track all constraints for each package, keyed by name
-        let mut all_constraints: HashMap<String, Vec<String>> = HashMap::new();
-        // Track resolved version per package
+        // Track the primary resolved version per package (first encountered)
         let mut resolved_versions: HashMap<String, Version> = HashMap::new();
+        // Track all (name, major) pairs already resolved (supports multi-version)
+        let mut resolved_majors: HashSet<(String, u64)> = HashSet::new();
         let mut queue: VecDeque<(PackageName, String)> = wanted.iter().map(|(n, s)| (n.clone(), s.clone())).collect();
 
         while let Some((name, spec)) = queue.pop_front() {
             let name_str = name.as_str().to_string();
 
-            // Collect all constraints for this package
-            all_constraints.entry(name_str.clone())
-                .or_insert_with(Vec::new)
-                .push(spec.clone());
-
-            // If already resolved, check if existing version satisfies this new constraint
-            if let Some(ref existing_version) = resolved_versions.get(&name_str) {
-                if let Some(ref c) = VersionRange::parse(&spec).ok() {
-                    if !c.contains(existing_version) {
-                        // Existing version doesn't satisfy this new constraint.
-                        // Try to find a version that satisfies all known constraints.
-                        let all_versions = self.provider.get_versions(&name);
-                        let constraints = all_constraints.get(&name_str).unwrap();
-                        let ranges: Vec<VersionRange> = constraints.iter()
-                            .filter_map(|s| VersionRange::parse(s).ok())
-                            .collect();
-
-                        let best = all_versions.iter().filter(|v| {
-                            ranges.iter().all(|r| r.contains(v))
-                        }).max().cloned();
-
-                        if let Some(new_version) = best {
-                            // Update the resolution with the new version
+            // If already resolved, check if existing version satisfies this new constraint.
+            // If major differs, add a NEW resolution (pnpm-style multi-version).
+            if let Some(existing_version) = resolved_versions.get(&name_str) {
+                if let Ok(ref c) = VersionRange::parse(&spec) {
+                    if c.contains(existing_version) {
+                        continue;
+                    }
+                    // Try to find a version within the same major first
+                    let all_versions = self.provider.get_versions(&name);
+                    let same_major = all_versions.iter()
+                        .filter(|v| c.contains(v) && v.major == existing_version.major)
+                        .max()
+                        .cloned();
+                    if let Some(ref new_version) = same_major {
+                        if new_version > existing_version {
                             if let Some(res) = resolutions.iter_mut().find(|r| {
                                 r.package_id.name().as_str() == name_str
+                                    && r.version.major == existing_version.major
                             }) {
                                 res.version = new_version.clone();
                                 res.package_id = PackageId::new(name.clone(), new_version.clone());
                             }
-                            resolved_versions.insert(name_str, new_version);
+                            resolved_versions.insert(name_str, new_version.clone());
                         }
-                        // If no compatible version found, keep existing (warn?)
+                        continue;
+                    }
+                    // No same-major version satisfies the new constraint.
+                    // Try a different major version and add as NEW resolution.
+                    let best_other = all_versions.iter()
+                        .filter(|v| c.contains(v))
+                        .max()
+                        .cloned();
+                    if let Some(ref other_version) = best_other {
+                        let major_key = (name_str.clone(), other_version.major);
+                        if !resolved_majors.contains(&major_key) {
+                            resolved_majors.insert(major_key);
+                            let other_id = PackageId::new(name.clone(), other_version.clone());
+                            let deps = self.provider.get_dependencies(&other_id);
+                            let dep_names: Vec<String> = deps.iter().map(|d| d.package.as_str().to_string()).collect();
+                            let dep_specs: Vec<(String, String)> = deps.iter()
+                                .map(|d| (d.package.as_str().to_string(), d.spec.clone()))
+                                .collect();
+                            for dep in &deps {
+                                queue.push_front((dep.package.clone(), dep.spec.clone()));
+                            }
+                            resolutions.push(Resolution {
+                                package_id: other_id,
+                                version: other_version.clone(),
+                                integrity: String::new(),
+                                deps: dep_names,
+                                dep_specs,
+                            });
+                        }
                     }
                 }
                 continue;
@@ -270,12 +294,14 @@ impl Resolver {
             if let Some(ref lockfile_pkgs) = self.lockfile_packages {
                 if let Some(lockfile_version) = lockfile_pkgs.get(name.as_str()) {
                     if let Ok(version) = Version::parse(lockfile_version) {
-                        resolved_versions.insert(name_str, version.clone());
+                        resolved_versions.insert(name_str.clone(), version.clone());
+                        resolved_majors.insert((name_str, version.major));
                         resolutions.push(Resolution {
                             package_id: PackageId::new(name.clone(), version.clone()),
                             version,
                             integrity: String::new(),
                             deps: Vec::new(),
+                            dep_specs: Vec::new(),
                         });
                         continue;
                     }
@@ -285,7 +311,6 @@ impl Resolver {
             let constraint = VersionRange::parse(&spec).ok();
             let all_versions = self.provider.get_versions(&name);
 
-            // Filter versions by the semver constraint, then pick the latest matching version
             let matched_version = if let Some(ref c) = constraint {
                 all_versions.iter().filter(|v| c.contains(v)).max().cloned()
             } else {
@@ -295,15 +320,15 @@ impl Resolver {
             if let Some(version) = matched_version {
                 let package_id = PackageId::new(name.clone(), version.clone());
                 resolved_versions.insert(name_str.clone(), version.clone());
+                resolved_majors.insert((name_str.clone(), version.major));
 
-                // Fetch dependencies of this package
                 let deps = self.provider.get_dependencies(&package_id);
                 let dep_names: Vec<String> = deps.iter().map(|d| d.package.as_str().to_string()).collect();
+                let dep_specs: Vec<(String, String)> = deps.iter()
+                    .map(|d| (d.package.as_str().to_string(), d.spec.clone()))
+                    .collect();
 
-                // Queue transitive dependencies (at the front for DFS-like order)
-                // so that we fully resolve a package's subtree before siblings
                 for dep in &deps {
-                    let dep_name = dep.package.as_str().to_string();
                     queue.push_front((dep.package.clone(), dep.spec.clone()));
                 }
 
@@ -312,6 +337,7 @@ impl Resolver {
                     version: version.clone(),
                     integrity: String::new(),
                     deps: dep_names,
+                    dep_specs,
                 });
             }
         }
@@ -340,6 +366,7 @@ pub fn resolve_workspace_dep(
                 version,
                 integrity: "workspace".to_string(),
                 deps: Vec::new(),
+                dep_specs: Vec::new(),
             })
         }
         _ => None,
