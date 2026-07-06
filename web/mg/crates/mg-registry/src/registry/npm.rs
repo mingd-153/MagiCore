@@ -6,6 +6,8 @@ use crate::registry::{RegistryClient, RegistryError};
 use mg_core::{PackageMetadata, PackageName, Version};
 use mg_parser::{Manifest, ZeroCopyParser};
 
+const ABBREVIATED_ACCEPT: &str = "application/vnd.npm.install-v1+json";
+
 pub struct NpmRegistry {
     client: Arc<RegistryClient>,
     base_url: String,
@@ -47,7 +49,7 @@ impl NpmRegistry {
         name: &PackageName,
     ) -> Result<Manifest<'static>, RegistryError> {
         let url = format!("{}/{}", self.base_url, name.as_str());
-        let bytes = self.client.get_raw(&url, self.token.clone()).await?;
+        let bytes = self.client.get_raw_with_accept(&url, self.token.clone(), Some(ABBREVIATED_ACCEPT)).await?;
         let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let mut parser = ZeroCopyParser::new(leaked);
         parser
@@ -60,7 +62,7 @@ impl NpmRegistry {
         name: &PackageName,
     ) -> Result<serde_json::Value, RegistryError> {
         let url = format!("{}/{}", self.base_url, name.as_str());
-        self.client.get_json(&url, self.token.clone()).await
+        self.client.get_json_with_accept(&url, self.token.clone(), Some(ABBREVIATED_ACCEPT)).await
     }
 
     pub async fn get_tarball(
@@ -81,6 +83,14 @@ impl NpmRegistry {
         &self,
         name: &PackageName,
     ) -> Result<Vec<Version>, RegistryError> {
+        let (versions, _) = self.get_package_versions_with_metadata(name).await?;
+        Ok(versions)
+    }
+
+    pub async fn get_package_versions_with_metadata(
+        &self,
+        name: &PackageName,
+    ) -> Result<(Vec<Version>, Option<serde_json::Value>), RegistryError> {
         let json = self.get_package(name).await?;
         let versions_map = json["versions"]
             .as_object()
@@ -91,7 +101,7 @@ impl NpmRegistry {
             .collect();
         versions.sort();
         versions.dedup();
-        Ok(versions)
+        Ok((versions, Some(json)))
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<PackageMetadata>, RegistryError> {

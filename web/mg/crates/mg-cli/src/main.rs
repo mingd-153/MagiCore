@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use std::str::FromStr;
 
@@ -12,6 +13,7 @@ use mg_installer::installer::{InstallOptions as RealInstallOptions, Installer};
 use mg_linker::linker::LinkerStrategy;
 use mg_registry::{NpmRegistry, RegistryClient};
 use mg_resolver::{solver::ResolvedDep, DependencyProvider, Resolver};
+use mg_resolver::cache::RegistryCache;
 
 mod advisory_db;
 mod auth;
@@ -26,15 +28,84 @@ use profiler::PhaseProfiler;
 
 /// Registry-backed DependencyProvider for resolver
 struct RegistryDependencyProvider {
-    registry: NpmRegistry,
+    registry: Arc<NpmRegistry>,
+    cache: RegistryCache,
+}
+
+impl RegistryDependencyProvider {
+    fn new(registry: NpmRegistry) -> Self {
+        Self {
+            registry: Arc::new(registry),
+            cache: RegistryCache::new(),
+        }
+    }
+}
+
+fn extract_deps_from_json(
+    json: &serde_json::Value,
+    version_str: &str,
+) -> Vec<ResolvedDep> {
+    let versions = match json.get("versions").and_then(|v| v.as_object()) {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    let version_info = match versions.get(version_str) {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    let mut deps = Vec::new();
+
+    if let Some(reg_deps) = version_info.get("dependencies").and_then(|v| v.as_object()) {
+        for (name, version) in reg_deps {
+            if let (Ok(pkg_name), Some(spec)) =
+                (mg_core::PackageName::new(name), version.as_str())
+            {
+                deps.push(ResolvedDep {
+                    package: pkg_name,
+                    spec: spec.to_string(),
+                    optional: false,
+                    peer: false,
+                });
+            }
+        }
+    }
+
+    if let Some(opt_deps) =
+        version_info
+            .get("optionalDependencies")
+            .and_then(|v| v.as_object())
+    {
+        for (name, version) in opt_deps {
+            if let (Ok(pkg_name), Some(spec)) =
+                (mg_core::PackageName::new(name), version.as_str())
+            {
+                if mg_core::platform::is_platform_match(name) {
+                    deps.push(ResolvedDep {
+                        package: pkg_name,
+                        spec: spec.to_string(),
+                        optional: true,
+                        peer: false,
+                    });
+                }
+            }
+        }
+    }
+
+    deps
 }
 
 impl DependencyProvider for RegistryDependencyProvider {
     fn get_versions(&self, package: &mg_core::PackageName) -> Vec<mg_core::Version> {
-        match tokio::runtime::Handle::current()
-            .block_on(self.registry.get_package_versions(package))
+        let key = package.as_str().to_string();
+        if let Some(versions) = self.cache.get_versions(&key) {
+            return versions;
+        }
+
+        let t0 = std::time::Instant::now();
+        let (versions, json) = match tokio::runtime::Handle::current()
+            .block_on(self.registry.get_package_versions_with_metadata(package))
         {
-            Ok(versions) => versions,
+            Ok((v, j)) => (v, j),
             Err(e) => {
                 eprintln!(
                     "  {} failed to fetch versions for {}: {}",
@@ -42,14 +113,37 @@ impl DependencyProvider for RegistryDependencyProvider {
                     package,
                     e
                 );
-                Vec::new()
+                return Vec::new();
             }
+        };
+        let elapsed = t0.elapsed();
+        if elapsed.as_millis() > 200 {
+            eprintln!("  {} get_versions({}) took {}ms ({} versions)", "[TIMING]".yellow().bold(), package, elapsed.as_millis(), versions.len());
         }
+        self.cache.insert_versions(key.clone(), versions.clone());
+        if let Some(json) = json {
+            self.cache.insert_metadata(key, json);
+        }
+        versions
     }
 
     fn get_dependencies(&self, package_id: &mg_core::PackageId) -> Vec<ResolvedDep> {
-        tokio::runtime::Handle::current().block_on(async {
-            let json = match self.registry.get_package(package_id.name()).await {
+        let name_str = package_id.name().as_str().to_string();
+        let version_str = package_id.version().to_string();
+        let cache_key = format!("{}@{}", name_str, version_str);
+        if let Some(deps) = self.cache.get_deps(&cache_key) {
+            return deps;
+        }
+
+        let t0 = std::time::Instant::now();
+        // Try in-memory metadata cache first (avoids MemMapCache deserialization)
+        let deps = if let Some(json) = self.cache.get_metadata(&name_str) {
+            extract_deps_from_json(&json, &version_str)
+        } else {
+            // Fall back to registry fetch
+            let json = match tokio::runtime::Handle::current()
+                .block_on(self.registry.get_package(package_id.name()))
+            {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!(
@@ -61,55 +155,81 @@ impl DependencyProvider for RegistryDependencyProvider {
                     return Vec::new();
                 }
             };
-            let version_str = package_id.version().to_string();
-            let versions = match json.get("versions").and_then(|v| v.as_object()) {
-                Some(v) => v,
-                None => return Vec::new(),
-            };
-            let version_info = match versions.get(&version_str) {
-                Some(v) => v,
-                None => return Vec::new(),
-            };
-            let mut deps = Vec::new();
+            self.cache.insert_metadata(name_str.clone(), json.clone());
+            extract_deps_from_json(&json, &version_str)
+        };
+        let elapsed = t0.elapsed();
+        if elapsed.as_millis() > 100 {
+            eprintln!("  {} get_deps({}@{}) took {}ms ({} deps)", "[TIMING]".yellow().bold(), name_str, version_str, elapsed.as_millis(), deps.len());
+        }
 
-            if let Some(reg_deps) = version_info.get("dependencies").and_then(|v| v.as_object()) {
-                for (name, version) in reg_deps {
-                    if let (Ok(pkg_name), Some(spec)) =
-                        (mg_core::PackageName::new(name), version.as_str())
-                    {
-                        deps.push(ResolvedDep {
-                            package: pkg_name,
-                            spec: spec.to_string(),
-                            optional: false,
-                            peer: false,
-                        });
-                    }
-                }
+        self.cache.insert_deps(cache_key, deps.clone());
+        deps
+    }
+
+    fn prefetch_versions(&self, packages: &[mg_core::PackageName]) -> Vec<(mg_core::PackageName, Vec<mg_core::Version>)> {
+        let mut to_fetch: Vec<mg_core::PackageName> = Vec::new();
+        let mut results: Vec<(mg_core::PackageName, Vec<mg_core::Version>)> = Vec::new();
+
+        for name in packages {
+            let key = name.as_str().to_string();
+            if let Some(versions) = self.cache.get_versions(&key) {
+                results.push((name.clone(), versions));
+            } else {
+                to_fetch.push(name.clone());
             }
+        }
 
-            if let Some(opt_deps) =
-                version_info
-                    .get("optionalDependencies")
-                    .and_then(|v| v.as_object())
-            {
-                for (name, version) in opt_deps {
-                    if let (Ok(pkg_name), Some(spec)) =
-                        (mg_core::PackageName::new(name), version.as_str())
-                    {
-                        if mg_core::platform::is_platform_match(name) {
-                            deps.push(ResolvedDep {
-                                package: pkg_name,
-                                spec: spec.to_string(),
-                                optional: true,
-                                peer: false,
-                            });
+        if to_fetch.is_empty() {
+            return results;
+        }
+
+        // Fetch all uncached packages in parallel, also caching full metadata
+        let reg = self.registry.clone();
+        let cache = self.cache.clone();
+        let t0 = std::time::Instant::now();
+        let num_to_fetch = to_fetch.len();
+        let fetched: Vec<(mg_core::PackageName, Option<Vec<mg_core::Version>>)> = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut handles = Vec::new();
+                for name in to_fetch {
+                    let r = reg.clone();
+                    let c = cache.clone();
+                    handles.push(tokio::spawn(async move {
+                        let result = r.get_package_versions_with_metadata(&name).await;
+                        if let Ok((_, Some(ref json))) = result {
+                            c.insert_metadata(name.as_str().to_string(), json.clone());
                         }
+                        (name, result.ok().map(|(v, _)| v))
+                    }));
+                }
+
+                let mut collected = Vec::new();
+                for handle in handles {
+                    if let Ok((name, versions)) = handle.await {
+                        collected.push((name, versions));
                     }
                 }
-            }
+                collected
+            })
+        });
+        let fetch_ms = t0.elapsed().as_millis();
+        eprintln!("  {} prefetched {} packages in {}ms", "[TIMING]".yellow().bold(), num_to_fetch, fetch_ms);
 
-            deps
-        })
+        for (name, versions_opt) in fetched {
+            let versions = versions_opt.unwrap_or_default();
+            if versions.is_empty() {
+                eprintln!(
+                    "  {} no versions found for {}",
+                    "[WARN]".yellow().bold(),
+                    name
+                );
+            }
+            self.cache.insert_versions(name.to_string(), versions.clone());
+            results.push((name, versions));
+        }
+
+        results
     }
 }
 
@@ -1072,9 +1192,7 @@ async fn cmd_install(
         );
 
         let npm_registry = NpmRegistry::new("https://registry.npmjs.org");
-        let provider = RegistryDependencyProvider {
-            registry: npm_registry,
-        };
+        let provider = RegistryDependencyProvider::new(npm_registry);
         let resolver = Resolver::new(std::sync::Arc::new(provider));
         let config = mg_lockfile::ResolutionConfig::default();
         let pipeline = mg_lockfile::ResolutionPipeline::new(resolver, config);
