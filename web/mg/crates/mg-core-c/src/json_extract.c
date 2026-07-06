@@ -152,10 +152,9 @@ int mg_json_get_string(const char* json, const char* key, char* out, size_t out_
         size_t first_len = (size_t)(dot - key);
         p = find_key(p, key, first_len);
         if (!p) return -1;
-        /* Navigate into value (must be object) */
+        /* Navigate into value (must be object) — pass the '{' to recursive call */
         p = skip_ws(p);
         if (*p != '{') return -1;
-        p++; /* skip '{' */
         return mg_json_get_string(p, dot + 1, out, out_len);
     }
 
@@ -185,11 +184,22 @@ int mg_json_get_string(const char* json, const char* key, char* out, size_t out_
 }
 
 int mg_json_get_int(const char* json, const char* key, int* out) {
-    char buf[32];
-    if (mg_json_get_string(json, key, buf, sizeof(buf)) != 0) return -1;
+    if (!json || !key || !out) return -1;
+
+    const char* p = skip_ws(json);
+    if (!p || *p != '{') return -1;
+    p++;
+
+    size_t key_len = strlen(key);
+    p = find_key(p, key, key_len);
+    if (!p) return -1;
+
+    p = skip_ws(p);
+    if (*p == '"') return -1; /* string value, not an int */
+
     char* end = NULL;
-    long val = strtol(buf, &end, 10);
-    if (end == buf || *end != '\0') return -1;
+    long val = strtol(p, &end, 10);
+    if (end == p) return -1;
     *out = (int)val;
     return 0;
 }
