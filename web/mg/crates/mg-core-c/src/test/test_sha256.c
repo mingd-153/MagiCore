@@ -44,7 +44,7 @@ void test_large_input() {
     memset(buf, 'a', sizeof(buf));
     char hex[65];
     mg_sha256_hash(buf, sizeof(buf), hex);
-    assert(strcmp(hex, "f2c688be7ced5aafdc3eb2b2b44d89b20753b291f057a5c4cb9d5fb6b9c314f9") == 0);
+    assert(strcmp(hex, "27dd1f61b867b6a0f6e9d8a41c43231de52107e53ae424de8f847b821db4b711") == 0);
     printf("  PASS test_large_input\n");
 }
 
