@@ -40,6 +40,7 @@ async fn test_dry_run_mode() {
         },
         integrity: None,
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -84,6 +85,7 @@ async fn test_offline_mode() {
         },
         integrity: None,
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });

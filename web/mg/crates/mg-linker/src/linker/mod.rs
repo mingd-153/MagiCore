@@ -152,6 +152,7 @@ pub struct PackageLinkInfo {
     pub name: String,
     pub version: String,
     pub dependencies: Vec<String>,
+    pub dep_specs: Vec<(String, String)>,
     pub peer_dependencies: Vec<(String, String)>,
     pub files: Vec<(String, String)>,
     pub is_root_dep: bool,
@@ -162,10 +163,12 @@ pub struct PackageLinkInfo {
 
 #[allow(clippy::too_many_arguments)]
 impl PackageLinkInfo {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         version: String,
         dependencies: Vec<String>,
+        dep_specs: Vec<(String, String)>,
         peer_dependencies: Vec<(String, String)>,
         files: Vec<(String, String)>,
         is_root_dep: bool,
@@ -177,6 +180,7 @@ impl PackageLinkInfo {
             name,
             version,
             dependencies,
+            dep_specs,
             peer_dependencies,
             files,
             is_root_dep,
@@ -185,6 +189,41 @@ impl PackageLinkInfo {
             dep_graph_hash,
         }
     }
+}
+
+/// Extract the major version number from a semver constraint spec string.
+/// Examples: "^2.0.2" -> 2, "~3.0.0" -> 3, ">=1.0.0" -> 1, "*" -> None
+pub fn extract_major_from_spec(spec: &str) -> Option<u64> {
+    let s = spec.trim_start_matches(['^', '~', '>', '<', '=', ' ']);
+    s.split('.').next().and_then(|s| s.parse().ok())
+}
+
+/// Find a dependency package that matches based on dep_specs when available.
+/// Falls back to name-only matching when dep_specs is empty (backward compat).
+pub fn find_dep_pkg<'a>(
+    dep_name: &str,
+    packages: &'a [PackageLinkInfo],
+    dep_specs: &[(String, String)],
+) -> Option<&'a PackageLinkInfo> {
+    // When dep_specs are available, match by (name, major version)
+    if !dep_specs.is_empty() {
+        if let Some((_, spec)) = dep_specs.iter().find(|(name, _)| name == dep_name) {
+            let target_major = extract_major_from_spec(spec);
+            // Try to find a package with matching major version
+            for pkg in packages.iter().filter(|p| p.name == dep_name) {
+                if target_major.is_none() {
+                    return Some(pkg);
+                }
+                if let Some(major) = pkg.version.split('.').next().and_then(|s| s.parse::<u64>().ok()) {
+                    if Some(major) == target_major {
+                        return Some(pkg);
+                    }
+                }
+            }
+        }
+        // No matching major found, fall through to name-only
+    }
+    packages.iter().find(|p| p.name == dep_name)
 }
 
 pub struct LinkerFactory;
@@ -239,8 +278,11 @@ pub enum LinkError {
 }
 
 fn create_relative_symlink(src: &Path, dst: &Path) -> io::Result<()> {
-    if dst.exists() {
-        return Ok(());
+    // Use symlink_metadata to catch dangling symlinks that exists() (which follows symlinks) misses
+    match dst.symlink_metadata() {
+        Ok(_) => return Ok(()),
+        Err(ref e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
     }
 
     // Validate destination doesn't escape intended directory

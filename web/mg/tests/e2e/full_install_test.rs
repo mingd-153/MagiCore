@@ -84,6 +84,7 @@ install:
         },
         integrity: Some("sha512-abc123".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -155,6 +156,7 @@ fn e2e_full_install_with_store_verify() {
         },
         integrity: None,
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });

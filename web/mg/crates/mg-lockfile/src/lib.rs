@@ -97,6 +97,7 @@ mod tests {
             },
             integrity: Some("sha512-abc123".to_string()),
             dependencies: vec![],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         };
@@ -112,6 +113,7 @@ mod tests {
             },
             integrity: Some("sha512-def456".to_string()),
             dependencies: vec![],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         };

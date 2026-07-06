@@ -178,7 +178,7 @@ impl super::Linker for IsolatedLinker {
 
             for dep_name in &pkg.dependencies {
                 validate_rel_path(dep_name)?;
-                if let Some(dep_pkg) = packages.iter().find(|p| p.name == *dep_name) {
+                if let Some(dep_pkg) = crate::linker::find_dep_pkg(dep_name, packages, &pkg.dep_specs) {
                     let dep_dir_name = Self::pkg_dir_name(dep_pkg);
                     let dep_src = virtual_store
                         .join(&dep_dir_name)
