@@ -460,8 +460,7 @@ impl Installer {
                                 downloaded += chunk.len() as u64;
 
                                 let should_send = if let Some(t) = total {
-                                    if t > 0 {
-                                        let decade = (downloaded * 10) / t;
+                                    if let Some(decade) = (downloaded * 10).checked_div(t) {
                                         if decade > last_progress_decade || downloaded >= t {
                                             last_progress_decade = decade;
                                             true
