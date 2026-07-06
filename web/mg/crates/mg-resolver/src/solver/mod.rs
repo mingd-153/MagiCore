@@ -7,6 +7,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use mg_core::{Catalog, PackageId, PackageName, Version};
+use async_trait::async_trait;
 
 /// Information about a dependency for confusion checking.
 #[derive(Debug, Clone)]
@@ -82,26 +83,31 @@ pub struct Resolver {
     lockfile_packages: Option<HashMap<String, String>>,
 }
 
+#[async_trait]
 pub trait DependencyProvider: Send + Sync {
-    fn get_versions(&self, package: &PackageName) -> Vec<Version>;
-    fn get_dependencies(&self, package_id: &PackageId) -> Vec<ResolvedDep>;
+    async fn get_versions(&self, package: &PackageName) -> Vec<Version>;
+    async fn get_dependencies(&self, package_id: &PackageId) -> Vec<ResolvedDep>;
 
     /// Batch prefetch metadata for multiple packages.
     /// Default implementation calls get_versions for each package sequentially.
     /// Implementations should override this to use concurrent HTTP fetches.
-    fn prefetch_versions(&self, packages: &[PackageName]) -> Vec<(PackageName, Vec<Version>)> {
-        packages.iter().map(|name| {
-            let versions = self.get_versions(name);
-            (name.clone(), versions)
-        }).collect()
+    async fn prefetch_versions(&self, packages: &[PackageName]) -> Vec<(PackageName, Vec<Version>)> {
+        let mut results = Vec::with_capacity(packages.len());
+        for name in packages {
+            let versions = self.get_versions(name).await;
+            results.push((name.clone(), versions));
+        }
+        results
     }
 
     /// Batch prefetch dependencies for multiple packages.
-    fn prefetch_dependencies(&self, package_ids: &[PackageId]) -> Vec<(PackageId, Vec<ResolvedDep>)> {
-        package_ids.iter().map(|id| {
-            let deps = self.get_dependencies(id);
-            (id.clone(), deps)
-        }).collect()
+    async fn prefetch_dependencies(&self, package_ids: &[PackageId]) -> Vec<(PackageId, Vec<ResolvedDep>)> {
+        let mut results = Vec::with_capacity(package_ids.len());
+        for id in package_ids {
+            let deps = self.get_dependencies(id).await;
+            results.push((id.clone(), deps));
+        }
+        results
     }
 }
 
@@ -204,7 +210,7 @@ impl Resolver {
 
     /// Resolves dependencies while considering workspace packages.
     /// If a wanted package matches a workspace member, it uses the Workspace protocol.
-    pub fn resolve_with_workspace(
+    pub async fn resolve_with_workspace(
         &self,
         wanted: &[(PackageName, String)],
         workspace: &WorkspaceInfo,
@@ -230,21 +236,20 @@ impl Resolver {
         }
 
         if !remaining.is_empty() {
-            let result = self.solve(&remaining)?;
+            let result = self.solve(&remaining).await?;
             resolutions.extend(result.resolutions);
         }
 
         Ok(SolveResult { resolutions })
     }
 
-    pub fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
+    pub async fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
         use mg_core::VersionRange;
 
         let mut resolutions: Vec<Resolution> = Vec::new();
         let mut resolved_versions: HashMap<String, Version> = HashMap::new();
         let mut resolved_majors: HashSet<(String, u64)> = HashSet::new();
         let mut queue: VecDeque<(PackageName, String)> = wanted.iter().map(|(n, s)| (n.clone(), s.clone())).collect();
-        let _solve_start = std::time::Instant::now();
 
         while !queue.is_empty() {
             // Collect a batch from the front of the queue for parallel prefetch
@@ -258,7 +263,7 @@ impl Resolver {
                 .map(|(n, _)| n.clone())
                 .collect();
             if !batch_names.is_empty() {
-                self.provider.prefetch_versions(&batch_names);
+                self.provider.prefetch_versions(&batch_names).await;
             }
 
             // Process each package in the batch
@@ -273,7 +278,7 @@ impl Resolver {
                         continue;
                     }
                     // Try to find a version within the same major first
-                    let all_versions = self.provider.get_versions(&name);
+                    let all_versions = self.provider.get_versions(&name).await;
                     let same_major = all_versions.iter()
                         .filter(|v| c.contains(v) && v.major == existing_version.major)
                         .max()
@@ -302,7 +307,7 @@ impl Resolver {
                         if !resolved_majors.contains(&major_key) {
                             resolved_majors.insert(major_key);
                             let other_id = PackageId::new(name.clone(), other_version.clone());
-                            let deps = self.provider.get_dependencies(&other_id);
+                            let deps = self.provider.get_dependencies(&other_id).await;
                             let dep_names: Vec<String> = deps.iter().map(|d| d.package.as_str().to_string()).collect();
                             let dep_specs: Vec<(String, String)> = deps.iter()
                                 .map(|d| (d.package.as_str().to_string(), d.spec.clone()))
@@ -342,7 +347,7 @@ impl Resolver {
             }
 
             let constraint = VersionRange::parse(&spec).ok();
-            let all_versions = self.provider.get_versions(&name);
+            let all_versions = self.provider.get_versions(&name).await;
 
             let matched_version = if let Some(ref c) = constraint {
                 all_versions.iter().filter(|v| c.contains(v)).max().cloned()
@@ -355,7 +360,7 @@ impl Resolver {
                 resolved_versions.insert(name_str.clone(), version.clone());
                 resolved_majors.insert((name_str.clone(), version.major));
 
-                let deps = self.provider.get_dependencies(&package_id);
+                let deps = self.provider.get_dependencies(&package_id).await;
                 let dep_names: Vec<String> = deps.iter().map(|d| d.package.as_str().to_string()).collect();
                 let dep_specs: Vec<(String, String)> = deps.iter()
                     .map(|d| (d.package.as_str().to_string(), d.spec.clone()))
@@ -433,15 +438,16 @@ mod tests {
 
     struct MockProvider;
 
+    #[async_trait]
     impl DependencyProvider for MockProvider {
-        fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
+        async fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
             vec![
                 Version::parse("1.0.0").unwrap(),
                 Version::parse("2.0.0").unwrap(),
             ]
         }
 
-        fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDep> {
+        async fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDep> {
             vec![]
         }
     }
@@ -481,19 +487,20 @@ mod tests {
 
     #[test]
     fn test_solve_simple() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
         let resolver = Resolver::new(std::sync::Arc::new(MockProvider));
         let wanted = vec![(PackageName::new("react").unwrap(), "^1.0.0".to_string())];
 
-        let result = resolver.solve(&wanted).unwrap();
+        let result = rt.block_on(resolver.solve(&wanted)).unwrap();
         assert_eq!(result.resolutions.len(), 1);
-        // Should resolve to 1.0.0 or 2.0.0, but NOT skip
     }
 
     #[test]
     fn test_semver_constraint_caret() {
         struct CaretProvider;
+        #[async_trait]
         impl DependencyProvider for CaretProvider {
-            fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
+            async fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
                 let mut v = vec![
                     Version::parse("3.4.0").unwrap(),
                     Version::parse("3.4.1").unwrap(),
@@ -506,58 +513,56 @@ mod tests {
                 v.sort();
                 v
             }
-            fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDep> {
+            async fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDep> {
                 vec![]
             }
         }
 
+        let rt = tokio::runtime::Runtime::new().unwrap();
         let resolver = Resolver::new(std::sync::Arc::new(CaretProvider));
 
-        // ^3.4.0 should allow 3.x but NOT 4.x — picks highest 3.x
         let wanted = vec![(PackageName::new("tailwindcss").unwrap(), "^3.4.0".to_string())];
-        let result = resolver.solve(&wanted).unwrap();
+        let result = rt.block_on(resolver.solve(&wanted)).unwrap();
         assert_eq!(result.resolutions.len(), 1);
         assert_eq!(result.resolutions[0].version.to_string(), "3.5.0");
 
-        // ^6.0.0 should allow 6.x but NOT 8.x — picks 6.0.0
         let wanted2 = vec![(PackageName::new("vite").unwrap(), "^6.0.0".to_string())];
-        let result2 = resolver.solve(&wanted2).unwrap();
+        let result2 = rt.block_on(resolver.solve(&wanted2)).unwrap();
         assert_eq!(result2.resolutions.len(), 1);
         assert_eq!(result2.resolutions[0].version.to_string(), "6.0.0");
 
-        // With versions 3.x, 4.x, 6.x, 8.x — ^5.0.0 should return empty (no match)
         let wanted3 = vec![(PackageName::new("vite").unwrap(), "^5.0.0".to_string())];
-        let result3 = resolver.solve(&wanted3).unwrap();
+        let result3 = rt.block_on(resolver.solve(&wanted3)).unwrap();
         assert_eq!(result3.resolutions.len(), 0);
     }
 
     #[test]
     fn test_semver_constraint_exact() {
         struct ExactProvider;
+        #[async_trait]
         impl DependencyProvider for ExactProvider {
-            fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
+            async fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
                 vec![
                     Version::parse("1.0.0").unwrap(),
                     Version::parse("1.0.1").unwrap(),
                     Version::parse("2.0.0").unwrap(),
                 ]
             }
-            fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDep> {
+            async fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDep> {
                 vec![]
             }
         }
 
+        let rt = tokio::runtime::Runtime::new().unwrap();
         let resolver = Resolver::new(std::sync::Arc::new(ExactProvider));
 
-        // Exact match for 1.0.0
         let wanted = vec![(PackageName::new("pkg").unwrap(), "1.0.0".to_string())];
-        let result = resolver.solve(&wanted).unwrap();
+        let result = rt.block_on(resolver.solve(&wanted)).unwrap();
         assert_eq!(result.resolutions.len(), 1);
         assert_eq!(result.resolutions[0].version.to_string(), "1.0.0");
 
-        // Tilde ~1.0.0 should allow 1.0.x only
         let wanted2 = vec![(PackageName::new("pkg").unwrap(), "~1.0.0".to_string())];
-        let result2 = resolver.solve(&wanted2).unwrap();
+        let result2 = rt.block_on(resolver.solve(&wanted2)).unwrap();
         assert_eq!(result2.resolutions.len(), 1);
         assert_eq!(result2.resolutions[0].version.to_string(), "1.0.1");
     }
@@ -565,19 +570,17 @@ mod tests {
     proptest! {
         #[test]
         fn proptest_resolve_nonexistent_package(name in "[a-z]{3,10}", major in 0u64..5, minor in 0u64..5, patch in 0u64..5) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
             let provider = MockProvider;
             let resolver = Resolver::new(std::sync::Arc::new(provider));
             let spec = format!("{}.{}.{}", major, minor, patch);
             let wanted = vec![
                 (PackageName::new(&name).unwrap_or_else(|_| PackageName::new("pkg").unwrap()), spec),
             ];
-            let result = resolver.solve(&wanted);
-            // Resolution may be empty if no versions match the constraint
-            // (MockProvider only has 1.0.0 and 2.0.0)
+            let result = rt.block_on(resolver.solve(&wanted));
             if let Ok(ref sol) = result {
-                // If it resolves, all versions must satisfy their constraints
                 for res in &sol.resolutions {
-                    let _ = res; // at least one resolution
+                    let _ = res;
                 }
             }
         }

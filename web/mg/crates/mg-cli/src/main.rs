@@ -12,6 +12,7 @@ use mg_core::config::{ConfigLoader, DefaultConfigLoader, MgpmConfig};
 use mg_installer::installer::{InstallOptions as RealInstallOptions, Installer};
 use mg_linker::linker::LinkerStrategy;
 use mg_registry::{NpmRegistry, RegistryClient};
+use async_trait::async_trait;
 use mg_resolver::{solver::ResolvedDep, DependencyProvider, Resolver};
 use mg_resolver::cache::RegistryCache;
 
@@ -94,17 +95,16 @@ fn extract_deps_from_json(
     deps
 }
 
+#[async_trait]
 impl DependencyProvider for RegistryDependencyProvider {
-    fn get_versions(&self, package: &mg_core::PackageName) -> Vec<mg_core::Version> {
+    async fn get_versions(&self, package: &mg_core::PackageName) -> Vec<mg_core::Version> {
         let key = package.as_str().to_string();
         if let Some(versions) = self.cache.get_versions(&key) {
             return versions;
         }
 
         let t0 = std::time::Instant::now();
-        let (versions, json) = match tokio::runtime::Handle::current()
-            .block_on(self.registry.get_package_versions_with_metadata(package))
-        {
+        let (versions, json) = match self.registry.get_package_versions_with_metadata(package).await {
             Ok((v, j)) => (v, j),
             Err(e) => {
                 eprintln!(
@@ -127,7 +127,7 @@ impl DependencyProvider for RegistryDependencyProvider {
         versions
     }
 
-    fn get_dependencies(&self, package_id: &mg_core::PackageId) -> Vec<ResolvedDep> {
+    async fn get_dependencies(&self, package_id: &mg_core::PackageId) -> Vec<ResolvedDep> {
         let name_str = package_id.name().as_str().to_string();
         let version_str = package_id.version().to_string();
         let cache_key = format!("{}@{}", name_str, version_str);
@@ -141,9 +141,7 @@ impl DependencyProvider for RegistryDependencyProvider {
             extract_deps_from_json(&json, &version_str)
         } else {
             // Fall back to registry fetch
-            let json = match tokio::runtime::Handle::current()
-                .block_on(self.registry.get_package(package_id.name()))
-            {
+            let json = match self.registry.get_package(package_id.name()).await {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!(
@@ -167,7 +165,7 @@ impl DependencyProvider for RegistryDependencyProvider {
         deps
     }
 
-    fn prefetch_versions(&self, packages: &[mg_core::PackageName]) -> Vec<(mg_core::PackageName, Vec<mg_core::Version>)> {
+    async fn prefetch_versions(&self, packages: &[mg_core::PackageName]) -> Vec<(mg_core::PackageName, Vec<mg_core::Version>)> {
         let mut to_fetch: Vec<mg_core::PackageName> = Vec::new();
         let mut results: Vec<(mg_core::PackageName, Vec<mg_core::Version>)> = Vec::new();
 
@@ -189,30 +187,25 @@ impl DependencyProvider for RegistryDependencyProvider {
         let cache = self.cache.clone();
         let t0 = std::time::Instant::now();
         let num_to_fetch = to_fetch.len();
-        let fetched: Vec<(mg_core::PackageName, Option<Vec<mg_core::Version>>)> = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut handles = Vec::new();
-                for name in to_fetch {
-                    let r = reg.clone();
-                    let c = cache.clone();
-                    handles.push(tokio::spawn(async move {
-                        let result = r.get_package_versions_with_metadata(&name).await;
-                        if let Ok((_, Some(ref json))) = result {
-                            c.insert_metadata(name.as_str().to_string(), json.clone());
-                        }
-                        (name, result.ok().map(|(v, _)| v))
-                    }));
+        let mut handles = Vec::new();
+        for name in to_fetch {
+            let r = reg.clone();
+            let c = cache.clone();
+            handles.push(tokio::spawn(async move {
+                let result = r.get_package_versions_with_metadata(&name).await;
+                if let Ok((_, Some(ref json))) = result {
+                    c.insert_metadata(name.as_str().to_string(), json.clone());
                 }
+                (name, result.ok().map(|(v, _)| v))
+            }));
+        }
 
-                let mut collected = Vec::new();
-                for handle in handles {
-                    if let Ok((name, versions)) = handle.await {
-                        collected.push((name, versions));
-                    }
-                }
-                collected
-            })
-        });
+        let mut fetched = Vec::new();
+        for handle in handles {
+            if let Ok((name, versions)) = handle.await {
+                fetched.push((name, versions));
+            }
+        }
         let fetch_ms = t0.elapsed().as_millis();
         eprintln!("  {} prefetched {} packages in {}ms", "[TIMING]".yellow().bold(), num_to_fetch, fetch_ms);
 
