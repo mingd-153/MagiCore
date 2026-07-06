@@ -248,6 +248,12 @@ impl Resolver {
 
         let mut resolutions: Vec<Resolution> = Vec::new();
         let mut resolved_versions: HashMap<String, Version> = HashMap::new();
+        
+        // Pre-fetch all initial package versions in parallel
+        let initial_packages: Vec<PackageName> = wanted.iter().map(|(name, _)| name.clone()).collect();
+        let _t0 = std::time::Instant::now();
+        self.provider.prefetch_versions(&initial_packages).await;
+        // Prefetch call populates cache, subsequent get_versions() will hit cache
         let mut resolved_majors: HashSet<(String, u64)> = HashSet::new();
         let mut queue: VecDeque<(PackageName, String)> = wanted.iter().map(|(n, s)| (n.clone(), s.clone())).collect();
 
