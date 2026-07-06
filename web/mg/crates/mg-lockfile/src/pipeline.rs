@@ -87,21 +87,37 @@ impl ResolutionPipeline {
         // Build lockfile from resolutions with real integrity hashes
         let mut lockfile = Lockfile::new(self.config.config_version, &self.config.registry);
 
+        // Download tarballs in parallel for integrity computation
+        let integrity_map: std::collections::HashMap<String, Option<String>> = if let Some(client) = registry_client {
+            use futures_util::future::try_join_all;
+
+            let futures: Vec<_> = result.resolutions.iter().map(|res| {
+                let id = res.package_id.clone();
+                async move {
+                    let bytes = client
+                        .download_tarball(&id)
+                        .await
+                        .map_err(|e| PipelineError::DownloadError(e.to_string()))?;
+                    let integrity = compute_package_integrity(&bytes);
+                    Ok::<(String, String), PipelineError>((id.to_string(), integrity))
+                }
+            }).collect();
+            let results: Vec<(String, String)> = try_join_all(futures)
+                .await?;
+            results.into_iter().map(|(k, v)| (k, Some(v))).collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
         for res in result.resolutions {
             let mut pkg = crate::lockfile::LockfilePackage::from_resolver_resolution(
                 &res,
                 &self.config.registry,
             );
 
-            if let Some(client) = registry_client {
-                // Download tarball to compute real SRI hash
-                let tarball_bytes = client
-                    .download_tarball(&res.package_id)
-                    .await
-                    .map_err(|e| PipelineError::DownloadError(e.to_string()))?;
-                pkg.integrity = Some(compute_package_integrity(&tarball_bytes));
+            if let Some(integrity) = integrity_map.get(&res.package_id.to_string()) {
+                pkg.integrity = integrity.clone();
             }
-            // When no registry client, keep integrity from resolver (may be empty)
 
             lockfile.add_package(pkg);
         }

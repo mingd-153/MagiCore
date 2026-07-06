@@ -5,10 +5,10 @@ use std::sync::Mutex;
 
 use base64::Engine;
 use dashmap::DashMap;
+use mg_core::cffi::sha256;
 use rayon::ThreadPool;
 use reqwest::Client;
 use rusqlite::Connection;
-use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinSet;
@@ -266,7 +266,8 @@ impl Installer {
 
     pub async fn install_lockfile(&self, lockfile: &Lockfile) -> InstallResult {
         let total = lockfile.packages.len();
-        let semaphore = Arc::new(Semaphore::new(self.options.concurrency));
+        let download_sem = Arc::new(Semaphore::new(self.options.concurrency.saturating_mul(2).max(4)));
+        let extract_sem = Arc::new(Semaphore::new((self.options.concurrency / 2).max(2)));
         let mut join_set = JoinSet::new();
         let errors = Arc::new(Mutex::new(Vec::new()));
         let succeeded = Arc::new(AtomicUsize::new(0));
@@ -279,6 +280,7 @@ impl Installer {
         let client_arc = self.client.clone();
         let thread_pool_arc = self.thread_pool.clone();
         let sqlite_path = self.options.sqlite_path.clone();
+        let refcounts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
         if self.options.dry_run {
             for pkg in &lockfile.packages {
@@ -311,19 +313,20 @@ impl Installer {
             let package_files = package_files_arc.clone();
             let package_bins = package_bins_arc.clone();
             let package = pkg.clone();
-            let sem_clone = semaphore.clone();
+            let dl_sem_clone = download_sem.clone();
+            let ex_sem_clone = extract_sem.clone();
             let errors_clone = errors.clone();
             let succeeded_clone = succeeded.clone();
             let failed_clone = failed.clone();
             let skipped_clone = skipped.clone();
             let thread_pool = thread_pool_arc.clone();
-            let sqlite = sqlite_path.clone();
+            let refcounts_clone = refcounts.clone();
 
             join_set.spawn(async move {
-                let _permit = sem_clone
+                let _dl_permit = dl_sem_clone
                     .acquire_owned()
                     .await
-                    .unwrap_or_else(|_| panic!("semaphore closed"));
+                    .unwrap_or_else(|_| panic!("download semaphore closed"));
 
                 let package_id = format!("{}@{}", package.name, package.version);
                 let _ = tx
@@ -436,8 +439,10 @@ impl Installer {
                         }
                     };
 
-                    let mut hasher = Sha256::new();
+                    let mut hasher = sha256::Hasher::new();
                     let mut downloaded = 0u64;
+                    let mut last_progress_decade = 0u64;
+                    let mut last_unknown_progress = std::time::Instant::now();
                     let mut stream = resp_result.bytes_stream();
 
                     loop {
@@ -453,14 +458,34 @@ impl Installer {
                                     return;
                                 }
                                 downloaded += chunk.len() as u64;
-                                let _ = tx
-                                    .send(InstallProgress {
-                                        package: package_id.clone(),
-                                        phase: InstallPhase::Downloading,
-                                        bytes_downloaded: downloaded,
-                                        total_bytes: total,
-                                    })
-                                    .await;
+
+                                let should_send = if let Some(t) = total {
+                                    if t > 0 {
+                                        let decade = (downloaded * 10) / t;
+                                        if decade > last_progress_decade || downloaded >= t {
+                                            last_progress_decade = decade;
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    last_unknown_progress.elapsed().as_millis() > 500
+                                };
+
+                                if should_send {
+                                    if total.is_none() { last_unknown_progress = std::time::Instant::now(); }
+                                    let _ = tx
+                                        .send(InstallProgress {
+                                            package: package_id.clone(),
+                                            phase: InstallPhase::Downloading,
+                                            bytes_downloaded: downloaded,
+                                            total_bytes: total,
+                                        })
+                                        .await;
+                                }
                             }
                             Some(Err(e)) => {
                                 if retry_attempt < max_retries {
@@ -491,7 +516,7 @@ impl Installer {
                         failed_clone.fetch_add(1, Ordering::SeqCst);
                         return;
                     }
-                    let raw_hash = hasher.finalize();
+                    let raw_hash = hasher.final_raw();
                     let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(raw_hash);
                     actual_sri = format!("sha256-{}", b64);
                     break 'retry;
@@ -512,6 +537,14 @@ impl Installer {
                         return;
                     }
                 }
+
+                // Release download permit before acquiring extract permit
+                drop(_dl_permit);
+
+                let _ex_permit = ex_sem_clone
+                    .acquire_owned()
+                    .await
+                    .unwrap_or_else(|_| panic!("extract semaphore closed"));
 
                 let _ = tx
                     .send(InstallProgress {
@@ -698,27 +731,10 @@ impl Installer {
                     .await;
 
                 {
-                    let conn = match Connection::open(&sqlite) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            errors_clone
-                                .lock()
-                                .unwrap()
-                                .push(InstallError::SqlError(e.to_string()));
-                            failed_clone.fetch_add(1, Ordering::SeqCst);
-                            return;
-                        }
-                    };
-                    if let Err(e) = conn.execute(
-                        "INSERT INTO refcounts (package_id, refcount) VALUES (?1, 1)
-                         ON CONFLICT(package_id) DO UPDATE SET refcount = refcount + 1",
-                        rusqlite::params![package_id],
-                    ) {
-                        errors_clone
-                            .lock()
-                            .unwrap()
-                            .push(InstallError::SqlError(e.to_string()));
-                    }
+                    refcounts_clone
+                        .lock()
+                        .unwrap()
+                        .push(package_id.clone());
                 }
 
                 if options.jsonl_log {
@@ -760,6 +776,24 @@ impl Installer {
         }
 
         while join_set.join_next().await.is_some() {}
+
+        // Batch-insert refcounts in a single SQLite transaction
+        {
+            let refcount_list = refcounts.lock().unwrap();
+            if !refcount_list.is_empty() {
+                if let Ok(conn) = Connection::open(&sqlite_path) {
+                    let _ = conn.execute("BEGIN TRANSACTION", []);
+                    for package_id in refcount_list.iter() {
+                        let _ = conn.execute(
+                            "INSERT INTO refcounts (package_id, refcount) VALUES (?1, 1)
+                             ON CONFLICT(package_id) DO UPDATE SET refcount = refcount + 1",
+                            rusqlite::params![package_id],
+                        );
+                    }
+                    let _ = conn.execute("COMMIT", []);
+                }
+            }
+        }
 
         // Link packages into node_modules
         let mut result = InstallResult {

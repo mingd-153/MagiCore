@@ -2,6 +2,7 @@
 //!
 //! PubGrub-based dependency resolver with catalog, workspace, and override support.
 
+pub mod cache;
 pub mod solver;
 pub mod version;
 
