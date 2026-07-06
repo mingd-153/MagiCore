@@ -95,6 +95,7 @@ fn import_npm(path: &Path) -> Result<Lockfile, String> {
             },
             integrity: integrity.map(String::from),
             dependencies: vec![],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         };
@@ -165,6 +166,7 @@ fn import_yarn(path: &Path) -> Result<Lockfile, String> {
                         },
                         integrity,
                         dependencies: vec![],
+                        dep_specs: vec![],
                         resolved: false,
                         resolved_at: None,
                     };
@@ -243,6 +245,7 @@ fn import_pnpm(path: &Path) -> Result<Lockfile, String> {
                 },
                 integrity,
                 dependencies: vec![],
+                dep_specs: vec![],
                 resolved: false,
                 resolved_at: None,
             };
@@ -313,6 +316,7 @@ fn import_bun(path: &Path) -> Result<Lockfile, String> {
                 },
                 integrity: integrity.map(String::from),
                 dependencies: vec![],
+                dep_specs: vec![],
                 resolved: false,
                 resolved_at: None,
             };

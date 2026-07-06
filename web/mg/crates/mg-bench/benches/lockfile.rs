@@ -17,6 +17,7 @@ fn create_lockfile(num_packages: usize) -> Lockfile {
                 },
                 integrity: Some(format!("sha512-{}", i)),
                 dependencies: vec![],
+                dep_specs: vec![],
                 resolved: false,
                 resolved_at: None,
             });

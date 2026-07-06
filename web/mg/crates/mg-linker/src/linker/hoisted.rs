@@ -88,17 +88,25 @@ impl HoistedLinker {
                 .join(&pkg.name);
 
             // Collect all file link operations for parallel execution
-            let link_ops: Vec<_> = pkg.files.iter().map(|(rel_path, hash)| {
-                let src = self
-                    .options
-                    .store_path
-                    .join("files")
-                    .join("sha256")
-                    .join(&hash[..2])
-                    .join(hash);
-                let dst = store_pkg_dir.join(rel_path);
-                (src, dst)
-            }).collect();
+            // Deduplicate by dst to avoid EEXIST from parallel hardlinks on duplicate entries
+            let link_ops: Vec<_> = {
+                let mut seen = HashSet::new();
+                pkg.files.iter().filter_map(|(rel_path, hash)| {
+                    let src = self
+                        .options
+                        .store_path
+                        .join("files")
+                        .join("sha256")
+                        .join(&hash[..2])
+                        .join(hash);
+                    let dst = store_pkg_dir.join(rel_path);
+                    if seen.insert(dst.clone()) {
+                        Some((src, dst))
+                    } else {
+                        None
+                    }
+                }).collect()
+            };
 
             // Parallel hardlinks
             link_ops.par_iter().try_for_each(|(src, dst)| {
@@ -114,7 +122,7 @@ impl HoistedLinker {
                 fs::create_dir_all(&hoist_node_modules)?;
 
                 let hoist_dst = hoist_node_modules.join(&pkg.name);
-                if !hoist_dst.exists() {
+                if hoist_dst.symlink_metadata().is_err() {
                     create_relative_symlink(&store_pkg_dir, &hoist_dst)?;
                 }
             }
@@ -125,23 +133,38 @@ impl HoistedLinker {
             let pkg_link = mg_root.join(&pkg.name);
             create_relative_symlink(&store_pkg_dir, &pkg_link)?;
 
+            // NOTE: Deps symlinking is deferred to a second pass (below) so that
+            // all dependency virtual store entries exist with their package.json files.
+        }
+
+        // Second pass: create package-local node_modules symlinks for all dependencies.
+        // This must happen AFTER all packages have their virtual store entries fully created
+        // (including package.json) so that symlinks point to valid packages.
+        for pkg in packages {
+            let peer_hash = self.compute_peer_hash(pkg);
+            let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
+                .replace('/', "_")
+                .replace('@', "_");
+            let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
+
+            let dep_dst_dir = virtual_store
+                .join(&pkg_dir_name)
+                .join("node_modules");
+            fs::create_dir_all(&dep_dst_dir)?;
+
             for dep_name in &pkg.dependencies {
                 validate_rel_path(dep_name)?;
                 if let Some(ref ws) = self.options.workspace {
                     if let Some(ws_member) = ws.find_member(dep_name) {
-                        let dep_dst_dir = virtual_store
-                            .join(&pkg_dir_name)
-                            .join("node_modules");
-                        fs::create_dir_all(&dep_dst_dir)?;
                         let dep_dst = dep_dst_dir.join(dep_name);
-                        if !dep_dst.exists() && ws_member.path.exists() {
+                        if dep_dst.symlink_metadata().is_err() && ws_member.path.exists() {
                             create_relative_symlink(&ws_member.path, &dep_dst)?;
                         }
                         continue;
                     }
                 }
 
-                if let Some(dep_pkg) = packages.iter().find(|p| p.name == *dep_name) {
+                if let Some(dep_pkg) = crate::linker::find_dep_pkg(dep_name, packages, &pkg.dep_specs) {
                     let dep_peer_hash = self.compute_peer_hash(dep_pkg);
                     let dep_suffix = format!("{}@{}", dep_pkg.name, dep_pkg.version)
                         .replace('/', "_")
@@ -152,22 +175,22 @@ impl HoistedLinker {
                         .join("node_modules")
                         .join(&dep_pkg.name);
 
-                    let dep_dst_dir = virtual_store
-                        .join(&pkg_dir_name)
-                        .join("node_modules");
-                    fs::create_dir_all(&dep_dst_dir)?;
-                    let dep_dst = dep_dst_dir.join(&dep_pkg.name);
+                    let dep_dst = dep_dst_dir.join(dep_name);
 
-                    if !dep_dst.exists() && dep_src.exists() {
+                    if dep_dst.symlink_metadata().is_err() && dep_src.exists() {
                         create_relative_symlink(&dep_src, &dep_dst)?;
                     }
                 }
             }
 
+            // Record this package as linked (for second pass)
             linked.push(PackageLinkResult {
                 name: pkg.name.clone(),
                 version: pkg.version.clone(),
-                path: store_pkg_dir,
+                path: virtual_store
+                    .join(&pkg_dir_name)
+                    .join("node_modules")
+                    .join(&pkg.name),
                 peer_hash: peer_hash.clone(),
                 linked_deps: pkg.dependencies.clone(),
             });

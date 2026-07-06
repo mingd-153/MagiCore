@@ -21,6 +21,7 @@ fn test_lockfile_content_hash_blake3() {
         },
         integrity: Some("sha512-abc123".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -46,6 +47,7 @@ fn test_lockfile_deterministic_hash() {
         },
         integrity: Some("sha512-abc123".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     };
@@ -60,6 +62,7 @@ fn test_lockfile_deterministic_hash() {
         },
         integrity: Some("sha512-def456".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     };
@@ -95,6 +98,7 @@ fn test_lockfile_migrate_v1_to_v2() {
         },
         integrity: Some("sha512-abc123".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -130,6 +134,7 @@ fn test_lockfile_v1_backward_compat() {
         },
         integrity: Some("sha512-abc123".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });

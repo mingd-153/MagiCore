@@ -150,6 +150,7 @@ fn e2e_smoke_install_from_lockfile() {
         },
         integrity: Some("sha512-abc123".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -224,6 +225,7 @@ fn e2e_smoke_lockfile_integrity() {
         },
         integrity: Some("sha512-abc".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -238,6 +240,7 @@ fn e2e_smoke_lockfile_integrity() {
         },
         integrity: Some("sha512-def".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });
@@ -274,6 +277,7 @@ fn e2e_smoke_binary_lockfile_roundtrip() {
         },
         integrity: Some("sha512-xyz".to_string()),
         dependencies: vec![],
+        dep_specs: vec![],
         resolved: false,
         resolved_at: None,
     });

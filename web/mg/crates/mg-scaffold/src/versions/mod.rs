@@ -51,6 +51,10 @@ version!(VUE_ESLINT_PARSER, "vue-eslint-parser", "^9.4.3");
 version!(ASTRO, "astro", "^5.9.1");
 version!(ASTRO_CHECK, "@astrojs/check", "^0.10.1");
 
+// --- Nuxt ---
+version!(NUXT, "nuxt", "^3.16.3");
+version!(NUXT_ESLINT, "@nuxt/eslint", "^1.3.1");
+
 // --- State management ---
 version!(ZUSTAND, "zustand", "^5.0.14");
 

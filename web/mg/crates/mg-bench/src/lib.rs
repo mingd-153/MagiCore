@@ -78,6 +78,7 @@ pub fn bench_lockfile_roundtrip(c: &mut Criterion) {
             },
             integrity: Some(format!("sha512-{}", i)),
             dependencies: vec![],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         });
