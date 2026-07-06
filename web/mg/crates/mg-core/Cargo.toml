@@ -29,6 +29,9 @@ bumpalo = { version = "3.16", default-features = false, features = ["collections
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[build-dependencies]
+cc.workspace = true
+
 [dev-dependencies]
 proptest.workspace = true
 pretty_assertions.workspace = true

@@ -24,7 +24,8 @@ once_cell.workspace = true
 tracing.workspace = true
 base64 = { version = "0.22", features = ["std"] }
 sha2 = { version = "0.10", features = ["std"] }
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+futures-util = "0.3"
 
 [dev-dependencies]
 proptest.workspace = true

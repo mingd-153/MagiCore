@@ -15,6 +15,7 @@ pub mod protocol;
 pub mod config;
 pub mod error;
 pub mod logging;
+pub mod cffi;
 
 pub use package::*;
 pub use semver::{Version, SemVerError, IntegrityHash};
