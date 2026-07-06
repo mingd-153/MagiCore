@@ -64,6 +64,7 @@ fn parse_npm_lock(path: &Path) -> Result<Lockfile, String> {
             },
             integrity: integrity.map(String::from),
             dependencies: vec![],
+        dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         });
@@ -125,6 +126,7 @@ fn parse_yarn_lock(path: &Path) -> Result<Lockfile, String> {
                         },
                         integrity,
                         dependencies: vec![],
+        dep_specs: vec![],
             resolved: false,
             resolved_at: None,
                     });
@@ -196,6 +198,7 @@ fn parse_pnpm_lock(path: &Path) -> Result<Lockfile, String> {
                 },
                 integrity,
                 dependencies: vec![],
+        dep_specs: vec![],
             resolved: false,
             resolved_at: None,
             });
@@ -259,6 +262,7 @@ fn parse_bun_lock(path: &Path) -> Result<Lockfile, String> {
                 },
                 integrity: integrity.map(String::from),
                 dependencies: vec![],
+        dep_specs: vec![],
             resolved: false,
             resolved_at: None,
             });

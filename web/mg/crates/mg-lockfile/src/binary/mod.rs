@@ -153,6 +153,7 @@ mod tests {
             },
             integrity: Some("sha512-...".to_string()),
             dependencies: vec![],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         });

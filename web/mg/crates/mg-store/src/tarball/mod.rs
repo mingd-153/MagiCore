@@ -73,7 +73,7 @@ impl TarballExtractor {
 
             let relative_path = path.to_string_lossy().to_string();
 
-            if relative_path.contains("..") {
+            if relative_path.split('/').any(|c| c == "..") {
                 return Err(TarballError::PathEscape {
                     path: relative_path.clone(),
                 });
@@ -257,7 +257,7 @@ impl TarballExtractor {
             let path = strip_package_prefix(&path);
             let relative_path = path.to_string_lossy().to_string();
 
-            if relative_path.contains("..") {
+            if relative_path.split('/').any(|c| c == "..") {
                 return Err(TarballError::PathEscape {
                     path: relative_path.clone(),
                 });

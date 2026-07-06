@@ -41,6 +41,8 @@ pub struct LockfilePackage {
     pub resolution: PackageResolution,
     pub integrity: Option<String>,
     pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub dep_specs: Vec<(String, String)>,
     pub resolved: bool,
     pub resolved_at: Option<u64>,
 }
@@ -236,6 +238,7 @@ impl LockfilePackage {
             },
             integrity: resolution.integrity.clone(),
             dependencies: Vec::new(),
+            dep_specs: Vec::new(),
             resolved: false,
             resolved_at: None,
         }
@@ -263,6 +266,7 @@ impl LockfilePackage {
             },
             integrity: Some(res.integrity.clone()),
             dependencies: res.deps.clone(),
+            dep_specs: res.dep_specs.clone(),
             resolved: false,
             resolved_at: None,
         }
@@ -308,6 +312,7 @@ mod tests {
             },
             integrity: None,
             dependencies: vec![],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         });
@@ -323,6 +328,7 @@ mod tests {
             },
             integrity: None,
             dependencies: vec![],
+            dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         });
@@ -364,6 +370,7 @@ mod tests {
                     },
                     integrity: Some(format!("sha512-{}", hex::encode(name))),
                     dependencies: vec![],
+                    dep_specs: vec![],
                     resolved: false,
                     resolved_at: None,
                 });

@@ -141,6 +141,7 @@ mod tests {
                 },
                 integrity: Some("sha256-abc".into()),
                 dependencies: vec![],
+                dep_specs: vec![],
                 resolved: true,
                 resolved_at: Some(12345),
             }],

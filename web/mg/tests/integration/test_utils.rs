@@ -112,6 +112,7 @@ pub fn create_mock_lockfile(packages: &[(&str, &str)]) -> Lockfile {
             },
             integrity: Some(format!("sha512-{}", name)),
             dependencies: vec![],
+        dep_specs: vec![],
             resolved: false,
             resolved_at: None,
         });
