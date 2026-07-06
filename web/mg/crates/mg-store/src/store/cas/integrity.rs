@@ -12,14 +12,18 @@ pub struct IntegrityHash {
 impl IntegrityHash {
     pub fn from_bytes(data: &[u8], executable: bool) -> Self {
         let hash = hex::encode(Sha256::digest(data));
+        Self::from_hash_str(&hash, executable)
+    }
+
+    pub fn from_hash_str(hash: &str, executable: bool) -> Self {
         let shard = hash[..2].to_string();
         let filename = if executable {
             format!("{}-exec", hash)
         } else {
-            hash.clone()
+            hash.to_string()
         };
         Self {
-            hash,
+            hash: hash.to_string(),
             shard,
             filename,
             is_executable: executable,

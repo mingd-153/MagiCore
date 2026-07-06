@@ -78,6 +78,10 @@ impl Lockfile {
         self.packages.push(pkg);
     }
 
+    pub fn has_package_by_name(&self, name: &str) -> bool {
+        self.packages.iter().any(|p| p.name == name)
+    }
+
     pub fn find_package(&self, name: &str, version: &str) -> Option<&LockfilePackage> {
         self.packages
             .iter()

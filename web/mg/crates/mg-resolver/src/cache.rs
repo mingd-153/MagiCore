@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use mg_core::Version;
+use mg_core::{Version, cffi::json::{iterate_versions, iterate_deps}};
 
 use crate::solver::ResolvedDep;
 
@@ -32,7 +32,7 @@ impl<T> CacheEntry<T> {
 pub struct RegistryCache {
     versions: DashMap<String, CacheEntry<Arc<[Version]>>>,
     deps: DashMap<String, CacheEntry<Arc<[ResolvedDep]>>>,
-    metadata: DashMap<String, CacheEntry<Arc<serde_json::Value>>>,
+    metadata: DashMap<String, CacheEntry<String>>, // raw JSON string
     ttl: Duration,
 }
 
@@ -91,7 +91,8 @@ impl RegistryCache {
         });
     }
 
-    pub fn get_metadata(&self, name: &str) -> Option<Arc<serde_json::Value>> {
+    /// Get raw JSON metadata from cache (string)
+    pub fn get_metadata(&self, name: &str) -> Option<String> {
         let entry = self.metadata.get(name)?;
         if entry.is_fresh(self.ttl) {
             Some(entry.value.clone())
@@ -102,9 +103,32 @@ impl RegistryCache {
         }
     }
 
+    /// Get package versions directly from C FFI (no serde_json deserialize)
+    pub fn get_versions_from_json(&self, _name: &str, json: &str) -> Vec<Version> {
+        iterate_versions(json)
+            .into_iter()
+            .filter_map(|v| Version::parse(&v).ok())
+            .collect()
+    }
+
+    /// Get package dependencies directly from C FFI (no serde_json deserialize)
+    pub fn get_deps_from_json(&self, json: &str, version: &str) -> Vec<ResolvedDep> {
+        iterate_deps(json, version)
+            .into_iter()
+            .filter_map(|(pkg, spec)| {
+                mg_core::PackageName::new(&pkg).ok().map(|name| ResolvedDep {
+                    package: name,
+                    spec,
+                    optional: false,
+                    peer: false,
+                })
+            })
+            .collect()
+    }
+
     pub fn insert_metadata(&self, name: String, metadata: serde_json::Value) {
         self.metadata.insert(name, CacheEntry {
-            value: Arc::new(metadata),
+            value: serde_json::to_string(&metadata).unwrap_or_default(),
             fetched_at: Instant::now(),
         });
     }
@@ -203,5 +227,36 @@ mod tests {
         cache.insert_versions("react".to_string(), sample_versions());
         cache.clear();
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn test_c_json_extract_versions() {
+        let cache = RegistryCache::new();
+        let json = r#"{
+            "name": "react",
+            "versions": {
+                "18.2.0": { "name": "react", "version": "18.2.0", "dependencies": {} },
+                "19.0.0": { "name": "react", "version": "19.0.0", "dependencies": {} }
+            }
+        }"#;
+        let versions = cache.get_versions_from_json("react", json);
+        assert_eq!(versions.len(), 2);
+        assert!(versions.iter().any(|v| v.to_string() == "18.2.0"));
+        assert!(versions.iter().any(|v| v.to_string() == "19.0.0"));
+    }
+
+    #[test]
+    fn test_c_json_extract_deps() {
+        let cache = RegistryCache::new();
+        let json = r#"{
+            "name": "react",
+            "versions": {
+                "18.2.0": { "name": "react", "version": "18.2.0", "dependencies": { "loose-envify": "^1.1.0" } }
+            }
+        }"#;
+        let deps = cache.get_deps_from_json(json, "18.2.0");
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].package.as_str(), "loose-envify");
+        assert_eq!(deps[0].spec, "^1.1.0");
     }
 }

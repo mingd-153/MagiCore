@@ -1,13 +1,56 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
 use super::{
-    create_relative_symlink, validate_rel_path, LinkError, LinkResult, LinkerOptions,
-    PackageLinkInfo, PackageLinkResult,
+    create_relative_symlink, extract_major_from_spec, validate_rel_path, LinkError, LinkResult,
+    LinkerOptions, PackageLinkInfo, PackageLinkResult,
 };
+
+/// Pre-computed package metadata to avoid repeated hash + path computations.
+struct PkgMeta {
+    peer_hash: String,
+    dir_name: String,
+}
+
+fn compute_peer_hash(pkg: &PackageLinkInfo) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for (name, version) in &pkg.peer_dependencies {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(version.as_bytes());
+        hasher.update(b",");
+    }
+    hex::encode(hasher.finalize())[..8].to_string()
+}
+
+fn build_pkg_meta(pkg: &PackageLinkInfo) -> PkgMeta {
+    let peer_hash = compute_peer_hash(pkg);
+    let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
+        .replace('/', "_")
+        .replace('@', "_");
+    let dir_name = format!("{}_{}", dir_suffix, peer_hash);
+    PkgMeta { peer_hash, dir_name }
+}
+
+/// Build a lookup map: dep_name -> (major_version -> PackageLinkInfo)
+/// O(N) to build, O(1) per lookup.
+fn build_dep_map(packages: &[PackageLinkInfo]) -> HashMap<&str, HashMap<u64, &PackageLinkInfo>> {
+    let mut map: HashMap<&str, HashMap<u64, &PackageLinkInfo>> = HashMap::new();
+    for pkg in packages {
+        let major = pkg.version.split('.').next()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        map.entry(pkg.name.as_str())
+            .or_default()
+            .entry(major)
+            .or_insert(pkg);
+    }
+    map
+}
 
 pub struct HoistedLinker {
     options: LinkerOptions,
@@ -18,42 +61,27 @@ impl HoistedLinker {
         Self { options }
     }
 
-    fn compute_peer_hash(&self, pkg: &PackageLinkInfo) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        for (name, version) in &pkg.peer_dependencies {
-            hasher.update(name.as_bytes());
-            hasher.update(b"\0");
-            hasher.update(version.as_bytes());
-            hasher.update(b",");
-        }
-        hex::encode(hasher.finalize())[..8].to_string()
-    }
-
     pub fn link_packages_internal(
         &self,
         packages: &[PackageLinkInfo],
         temp_dir: &Path,
     ) -> Result<LinkResult, LinkError> {
+        // Pre-compute metadata and dep map once
+        let meta: Vec<PkgMeta> = packages.iter().map(build_pkg_meta).collect();
+        let dep_map = build_dep_map(packages);
+
         let virtual_store = temp_dir.join("virtual_store");
         let mut linked = Vec::new();
 
         // Pre-compute all destination directories to batch create them
         let mut all_dirs = HashSet::new();
 
-        for pkg in packages {
-            let peer_hash = self.compute_peer_hash(pkg);
-            let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
-                .replace('/', "_")
-                .replace('@', "_");
-            let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
-
+        for (pkg, meta) in packages.iter().zip(meta.iter()) {
             let store_pkg_dir = virtual_store
-                .join(&pkg_dir_name)
+                .join(&meta.dir_name)
                 .join("node_modules")
                 .join(&pkg.name);
 
-            // Ensure package directory exists even for empty packages
             all_dirs.insert(store_pkg_dir.clone());
 
             for (rel_path, _hash) in &pkg.files {
@@ -62,33 +90,23 @@ impl HoistedLinker {
                 }
             }
 
-            // Dep dirs
             let dep_dst_dir = virtual_store
-                .join(&pkg_dir_name)
+                .join(&meta.dir_name)
                 .join("node_modules");
             all_dirs.insert(dep_dst_dir);
         }
 
-        // Batch create all directories
         for dir in all_dirs {
             fs::create_dir_all(&dir)?;
         }
 
-        // Now link files with parallel hardlinks
-        for pkg in packages {
-            let peer_hash = self.compute_peer_hash(pkg);
-            let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
-                .replace('/', "_")
-                .replace('@', "_");
-            let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
-
+        // First pass: parallel hardlinks + hoist symlinks
+        for (pkg, meta) in packages.iter().zip(meta.iter()) {
             let store_pkg_dir = virtual_store
-                .join(&pkg_dir_name)
+                .join(&meta.dir_name)
                 .join("node_modules")
                 .join(&pkg.name);
 
-            // Collect all file link operations for parallel execution
-            // Deduplicate by dst to avoid EEXIST from parallel hardlinks on duplicate entries
             let link_ops: Vec<_> = {
                 let mut seen = HashSet::new();
                 pkg.files.iter().filter_map(|(rel_path, hash)| {
@@ -108,7 +126,6 @@ impl HoistedLinker {
                 }).collect()
             };
 
-            // Parallel hardlinks
             link_ops.par_iter().try_for_each(|(src, dst)| {
                 if self.options.symlinks {
                     fs::hard_link(src, dst).map_err(LinkError::Io)
@@ -120,7 +137,6 @@ impl HoistedLinker {
             {
                 let hoist_node_modules = temp_dir.join("node_modules");
                 fs::create_dir_all(&hoist_node_modules)?;
-
                 let hoist_dst = hoist_node_modules.join(&pkg.name);
                 if hoist_dst.symlink_metadata().is_err() {
                     create_relative_symlink(&store_pkg_dir, &hoist_dst)?;
@@ -129,26 +145,14 @@ impl HoistedLinker {
 
             let mg_root = temp_dir.join(".mg");
             fs::create_dir_all(&mg_root)?;
-
             let pkg_link = mg_root.join(&pkg.name);
             create_relative_symlink(&store_pkg_dir, &pkg_link)?;
-
-            // NOTE: Deps symlinking is deferred to a second pass (below) so that
-            // all dependency virtual store entries exist with their package.json files.
         }
 
-        // Second pass: create package-local node_modules symlinks for all dependencies.
-        // This must happen AFTER all packages have their virtual store entries fully created
-        // (including package.json) so that symlinks point to valid packages.
-        for pkg in packages {
-            let peer_hash = self.compute_peer_hash(pkg);
-            let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
-                .replace('/', "_")
-                .replace('@', "_");
-            let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
-
+        // Second pass: dep symlinks using HashMap O(1) lookup
+        for (pkg, meta) in packages.iter().zip(meta.iter()) {
             let dep_dst_dir = virtual_store
-                .join(&pkg_dir_name)
+                .join(&meta.dir_name)
                 .join("node_modules");
             fs::create_dir_all(&dep_dst_dir)?;
 
@@ -164,17 +168,20 @@ impl HoistedLinker {
                     }
                 }
 
-                if let Some(dep_pkg) = crate::linker::find_dep_pkg(dep_name, packages, &pkg.dep_specs) {
-                    let dep_peer_hash = self.compute_peer_hash(dep_pkg);
-                    let dep_suffix = format!("{}@{}", dep_pkg.name, dep_pkg.version)
-                        .replace('/', "_")
-                        .replace('@', "_");
-                    let dep_dir_name = format!("{}_{}", dep_suffix, dep_peer_hash);
-                    let dep_src = virtual_store
-                        .join(&dep_dir_name)
+                let target_major = pkg.dep_specs.iter()
+                    .find(|(name, _)| name == dep_name)
+                    .and_then(|(_, spec)| extract_major_from_spec(spec));
+
+                let dep_pkg = target_major
+                    .and_then(|m| dep_map.get(dep_name.as_str()).and_then(|by_major| by_major.get(&m)))
+                    .or_else(|| dep_map.get(dep_name.as_str()).and_then(|by_major| by_major.values().next()));
+
+                if let Some(dep_pkg) = dep_pkg {
+                    let dep_meta = build_pkg_meta(dep_pkg);
+            let dep_src = virtual_store
+                        .join(&dep_meta.dir_name)
                         .join("node_modules")
                         .join(&dep_pkg.name);
-
                     let dep_dst = dep_dst_dir.join(dep_name);
 
                     if dep_dst.symlink_metadata().is_err() && dep_src.exists() {
@@ -183,15 +190,14 @@ impl HoistedLinker {
                 }
             }
 
-            // Record this package as linked (for second pass)
             linked.push(PackageLinkResult {
                 name: pkg.name.clone(),
                 version: pkg.version.clone(),
                 path: virtual_store
-                    .join(&pkg_dir_name)
+                    .join(&meta.dir_name)
                     .join("node_modules")
                     .join(&pkg.name),
-                peer_hash: peer_hash.clone(),
+                peer_hash: meta.peer_hash.clone(),
                 linked_deps: pkg.dependencies.clone(),
             });
         }
@@ -201,13 +207,11 @@ impl HoistedLinker {
         } else {
             let nm = temp_dir.join("node_modules");
             fs::create_dir_all(&nm)?;
-
             let mg_root = temp_dir.join(".mg");
             let virtual_store_link = nm.join(".mg");
             if !virtual_store_link.exists() {
                 create_relative_symlink(&mg_root, &virtual_store_link)?;
             }
-
             nm
         };
 
@@ -230,26 +234,18 @@ impl HoistedLinker {
         fs::create_dir_all(&bin_dir)?;
 
         for pkg in packages {
+            let meta = build_pkg_meta(pkg);
             for (bin_name, bin_path) in &pkg.bin_entries {
                 validate_rel_path(bin_name)?;
                 validate_rel_path(bin_path)?;
-                let peer_hash = self.compute_peer_hash(pkg);
-                let dir_suffix = format!("{}@{}", pkg.name, pkg.version)
-                    .replace('/', "_")
-                    .replace('@', "_");
-                let pkg_dir_name = format!("{}_{}", dir_suffix, peer_hash);
                 let src = virtual_store.join(format!(
                     "{}/node_modules/{}/{}",
-                    pkg_dir_name,
-                    pkg.name,
-                    bin_path
+                    meta.dir_name, pkg.name, bin_path
                 ));
-
                 let dst = bin_dir.join(bin_name);
                 create_relative_symlink(&src, &dst)?;
             }
         }
-
         Ok(())
     }
 }
