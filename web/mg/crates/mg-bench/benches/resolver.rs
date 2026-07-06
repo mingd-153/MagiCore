@@ -1,6 +1,7 @@
 //! Resolver benchmarks
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use async_trait::async_trait;
 use mg_core::{PackageId, PackageName, Version};
 use mg_resolver::{DependencyProvider, ResolvedDependency, Resolver};
 
@@ -14,16 +15,22 @@ impl BenchDependencyProvider {
     }
 }
 
+#[async_trait]
 impl DependencyProvider for BenchDependencyProvider {
-    fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
+    async fn get_versions(&self, _package: &PackageName) -> Vec<Version> {
         (0..self.num_versions)
             .map(|i| Version::parse(&format!("{}.0.0", i)).unwrap())
             .collect()
     }
 
-    fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDependency> {
+    async fn get_dependencies(&self, _package_id: &PackageId) -> Vec<ResolvedDependency> {
         vec![]
     }
+}
+
+fn resolve_sync(resolver: &Resolver, wanted: &[(PackageName, String)]) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async { let _ = resolver.solve(wanted).await; });
 }
 
 pub fn bench_resolve_basic(c: &mut Criterion) {
@@ -43,7 +50,7 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
                         )
                     })
                     .collect();
-                let _ = resolver.solve(&wanted);
+                resolve_sync(&resolver, &wanted);
             });
         });
     }
