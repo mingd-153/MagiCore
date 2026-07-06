@@ -33,17 +33,20 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
 
     struct TestProvider;
 
+    #[async_trait::async_trait]
     impl DependencyProvider for TestProvider {
-        fn get_versions(&self, _package: &PackageName) -> Vec<mg_core::Version> {
+        async fn get_versions(&self, _package: &PackageName) -> Vec<mg_core::Version> {
             vec![
                 mg_core::Version::parse("1.0.0").unwrap(),
                 mg_core::Version::parse("2.0.0").unwrap(),
             ]
         }
-        fn get_dependencies(&self, _package_id: &mg_core::PackageId) -> Vec<ResolvedDependency> {
+        async fn get_dependencies(&self, _package_id: &mg_core::PackageId) -> Vec<ResolvedDependency> {
             vec![]
         }
     }
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("resolver");
     group.sample_size(10);
@@ -53,7 +56,7 @@ pub fn bench_resolve_basic(c: &mut Criterion) {
             b.iter(|| {
                 let resolver = Resolver::new(std::sync::Arc::new(TestProvider));
                 let wanted = vec![(PackageName::new("pkg_0").unwrap(), "^1.0.0".to_string())];
-                let _ = resolver.solve(&wanted);
+                let _ = rt.block_on(resolver.solve(&wanted));
             });
         });
     }

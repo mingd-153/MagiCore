@@ -155,8 +155,11 @@ impl MockDependencyProvider {
     }
 }
 
+use async_trait::async_trait;
+
+#[async_trait]
 impl mg_resolver::DependencyProvider for MockDependencyProvider {
-    fn get_versions(&self, package: &PackageName) -> Vec<Version> {
+    async fn get_versions(&self, package: &PackageName) -> Vec<Version> {
         self.packages
             .get(package.as_str())
             .map(|versions| {
@@ -170,7 +173,7 @@ impl mg_resolver::DependencyProvider for MockDependencyProvider {
             .unwrap_or_default()
     }
 
-    fn get_dependencies(&self, package_id: &PackageId) -> Vec<mg_resolver::ResolvedDependency> {
+    async fn get_dependencies(&self, package_id: &PackageId) -> Vec<mg_resolver::ResolvedDependency> {
         self.packages
             .get(package_id.name().as_str())
             .and_then(|versions| versions.get(&package_id.version().to_string()))

@@ -6,12 +6,9 @@ use base64::Engine;
 use mg_core::PackageName;
 use mg_registry::RegistryClient;
 use mg_resolver::Resolver;
-use sha2::{Digest, Sha256};
 
 use crate::lockfile::Lockfile;
 use crate::LockfileError;
-
-use tokio::task;
 
 /// Input for resolution: packages we want to install
 #[derive(Debug, Clone)]
@@ -44,7 +41,10 @@ impl Default for ResolutionConfig {
 
 /// Compute real SHA-256 integrity hash from tarball bytes (SRI format: sha256-<base64>)
 pub fn compute_package_integrity(tarball_bytes: &[u8]) -> String {
-    let hash = Sha256::digest(tarball_bytes);
+    use mg_core::cffi::sha256::Hasher;
+    let mut hasher = Hasher::new();
+    hasher.update(tarball_bytes);
+    let hash = hasher.final_raw();
     let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(hash);
     format!("sha256-{}", b64)
 }
@@ -76,12 +76,9 @@ impl ResolutionPipeline {
             .map(|w| (w.name.clone(), w.version_req.clone()))
             .collect();
 
-        // Run resolver in blocking task to avoid blocking the async runtime
-        // (resolver uses sync provider which may block on network)
         let resolver = self.resolver.clone();
-        let result = task::spawn_blocking(move || resolver.solve(&wanted_strs))
+        let result = resolver.solve(&wanted_strs)
             .await
-            .map_err(|e| PipelineError::ResolveError(format!("resolver task panicked: {}", e)))?
             .map_err(|e| PipelineError::ResolveError(e.to_string()))?;
 
         // Build lockfile from resolutions with real integrity hashes
