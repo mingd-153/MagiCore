@@ -605,18 +605,23 @@ Templates support Handlebars-style variables:
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "react": "latest",
+    "react-dom": "latest"
   },
   "devDependencies": {
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "typescript": "^5.5.0",
-    "vite": "^5.4.0"
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "typescript": "latest",
+    "vite": "latest"
   }
 }
 ```
+
+**NOTE**: Templates use `"latest"` by default. MegaGate resolves to actual versions from:
+- npm registry (latest tag)
+- GitHub releases (for opensource packages)
+- User can override: `mg add react@18.2.0`
 
 ### Template Processing (`cli/src/template.rs`)
 ```rust
