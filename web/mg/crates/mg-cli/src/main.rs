@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use mg_resolver::{solver::ResolvedDep, DependencyProvider, Resolver};
 use mg_resolver::cache::RegistryCache;
 
+
 mod advisory_db;
 mod auth;
 mod commands;
@@ -40,59 +41,6 @@ impl RegistryDependencyProvider {
             cache: RegistryCache::new(),
         }
     }
-}
-
-fn extract_deps_from_json(
-    json: &serde_json::Value,
-    version_str: &str,
-) -> Vec<ResolvedDep> {
-    let versions = match json.get("versions").and_then(|v| v.as_object()) {
-        Some(v) => v,
-        None => return Vec::new(),
-    };
-    let version_info = match versions.get(version_str) {
-        Some(v) => v,
-        None => return Vec::new(),
-    };
-    let mut deps = Vec::new();
-
-    if let Some(reg_deps) = version_info.get("dependencies").and_then(|v| v.as_object()) {
-        for (name, version) in reg_deps {
-            if let (Ok(pkg_name), Some(spec)) =
-                (mg_core::PackageName::new(name), version.as_str())
-            {
-                deps.push(ResolvedDep {
-                    package: pkg_name,
-                    spec: spec.to_string(),
-                    optional: false,
-                    peer: false,
-                });
-            }
-        }
-    }
-
-    if let Some(opt_deps) =
-        version_info
-            .get("optionalDependencies")
-            .and_then(|v| v.as_object())
-    {
-        for (name, version) in opt_deps {
-            if let (Ok(pkg_name), Some(spec)) =
-                (mg_core::PackageName::new(name), version.as_str())
-            {
-                if mg_core::platform::is_platform_match(name) {
-                    deps.push(ResolvedDep {
-                        package: pkg_name,
-                        spec: spec.to_string(),
-                        optional: true,
-                        peer: false,
-                    });
-                }
-            }
-        }
-    }
-
-    deps
 }
 
 #[async_trait]
@@ -136,9 +84,9 @@ impl DependencyProvider for RegistryDependencyProvider {
         }
 
         let t0 = std::time::Instant::now();
-        // Try in-memory metadata cache first (avoids MemMapCache deserialization)
+        // Try in-memory metadata cache first (avoids serde_json deserialization)
         let deps = if let Some(json) = self.cache.get_metadata(&name_str) {
-            extract_deps_from_json(&json, &version_str)
+            self.cache.get_deps_from_json(&json, &version_str)
         } else {
             // Fall back to registry fetch
             let json = match self.registry.get_package(package_id.name()).await {
@@ -153,8 +101,9 @@ impl DependencyProvider for RegistryDependencyProvider {
                     return Vec::new();
                 }
             };
-            self.cache.insert_metadata(name_str.clone(), json.clone());
-            extract_deps_from_json(&json, &version_str)
+            let json_str = serde_json::to_string(&json).unwrap_or_default();
+            self.cache.insert_metadata(name_str.clone(), json);
+            self.cache.get_deps_from_json(&json_str, &version_str)
         };
         let elapsed = t0.elapsed();
         if elapsed.as_millis() > 100 {
@@ -278,6 +227,8 @@ enum CliCommand {
         optional: bool,
         #[arg(short, long)]
         exact: bool,
+        #[arg(short, long)]
+        offline: bool,
     },
     Remove {
         packages: Vec<String>,
@@ -1176,8 +1127,56 @@ async fn cmd_install(
     }
 
     let lockfile = if Path::new("mg.lock").exists() {
-        mg_lockfile::text::read_text(Path::new("mg.lock"))
-            .map_err(|e| format!("failed to read lockfile: {}", e))?
+        let mut lf = mg_lockfile::text::read_text(Path::new("mg.lock"))
+            .map_err(|e| format!("failed to read lockfile: {}", e))?;
+
+        // Check if any wanted deps are missing from lockfile
+        let missing: Vec<&mg_lockfile::WantedDependency> = wanted_deps
+            .iter()
+            .filter(|w| !lf.has_package_by_name(w.name.as_str()))
+            .collect();
+
+        if !missing.is_empty() {
+            eprintln!(
+                "  {} Resolving {} new packages...",
+                "[INFO]".cyan().bold(),
+                missing.len()
+            );
+
+            let npm_registry = NpmRegistry::new("https://registry.npmjs.org");
+            let provider = RegistryDependencyProvider::new(npm_registry);
+            let resolver = Resolver::new(std::sync::Arc::new(provider));
+            let config = mg_lockfile::ResolutionConfig::default();
+            let pipeline = mg_lockfile::ResolutionPipeline::new(resolver, config);
+            let registry_client = RegistryClient::new();
+            registry_client.set_offline(offline);
+
+            // Resolve only new packages
+            let new_lf = pipeline
+                .resolve_and_lock(
+                    &missing.iter().map(|w| (*w).clone()).collect::<Vec<_>>(),
+                    &std::env::current_dir().unwrap(),
+                    Some(&registry_client),
+                )
+                .await
+                .map_err(|e| format!("failed to resolve new packages: {}", e))?;
+
+            // Merge new packages into existing lockfile
+            for pkg in new_lf.packages {
+                lf.add_package(pkg);
+            }
+            lf.sort_packages();
+            lf.compute_content_hash();
+            lf.update_timestamp();
+
+            // Save merged lockfile
+            mg_lockfile::text::write_text(&lf, Path::new("mg.lock"))
+                .map_err(|e| format!("failed to write lockfile: {}", e))?;
+            mg_lockfile::binary::write_binary(&lf, Path::new("mg.lockb"))
+                .map_err(|e| format!("failed to write binary lockfile: {}", e))?;
+        }
+
+        lf
     } else {
         eprintln!(
             "  {} No lockfile found, generating from registry...",
@@ -1190,6 +1189,7 @@ async fn cmd_install(
         let config = mg_lockfile::ResolutionConfig::default();
         let pipeline = mg_lockfile::ResolutionPipeline::new(resolver, config);
         let registry_client = RegistryClient::new();
+        registry_client.set_offline(offline);
 
         let lockfile = pipeline
             .resolve_and_lock(
@@ -1360,10 +1360,10 @@ fn parse_package_spec(spec: &str) -> Result<(String, Option<String>), String> {
 }
 
 /// Resolve actual version from npm registry
-async fn resolve_latest_version(name: &str) -> Result<String, String> {
+async fn resolve_latest_version(name: String) -> Result<String, String> {
     use mg_registry::NpmRegistry;
     let npm = NpmRegistry::new("https://registry.npmjs.org");
-    let pkg_name = mg_core::PackageName::new(name)
+    let pkg_name = mg_core::PackageName::new(&name)
         .map_err(|e| format!("invalid package name '{name}': {e}"))?;
     let versions = npm.get_package_versions(&pkg_name).await
         .map_err(|e| format!("failed to fetch versions for '{name}': {e}"))?;
@@ -1422,33 +1422,48 @@ async fn cmd_add(
 
     let mut pkg = load_package_json(Path::new("package.json"))?;
 
-    // Parse each spec into (name, version)
-    let mut entries: Vec<(String, String)> = Vec::new();
+    // Parse specs and resolve versions in parallel
+    let mut parsed = Vec::new();
+    let mut resolve_futs = Vec::new();
+
     for spec in &packages {
         let (name, version_spec) = parse_package_spec(spec)?;
+        if version_spec.is_none() {
+            resolve_futs.push(tokio::spawn(resolve_latest_version(name.clone())));
+        }
+        parsed.push((name, version_spec));
+    }
+
+    let resolve_results: Vec<Result<String, String>> = {
+        let mut results = Vec::new();
+        for h in resolve_futs {
+            results.push(h.await.unwrap_or_else(|_| Err("task cancelled".to_string())));
+        }
+        results
+    };
+
+    // Build entries with resolved versions
+    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut res_idx = 0;
+    for (name, version_spec) in parsed {
         let version = match version_spec {
-            Some(v) if exact => {
-                // User provided version + --exact → use as-is (could be exact or already semver)
-                v
-            }
-            Some(v) => {
-                // User provided version → prefix with ^ if it's a plain number
-                if v.chars().all(|c| c.is_ascii_digit() || c == '.') {
-                    format!("^{}", v)
+            None => {
+                let result = &resolve_results[res_idx];
+                res_idx += 1;
+                if exact {
+                    result.clone().unwrap_or_else(|_| "*".to_string())
                 } else {
-                    v // already has a range prefix like ^, ~, >=, etc.
+                    match result {
+                        Ok(v) => format!("^{}", v),
+                        Err(_) => "*".to_string(),
+                    }
                 }
             }
-            None if exact => {
-                // No version + --exact → resolve exact from registry
-                let latest = resolve_latest_version(&name).await?;
-                latest
-            }
-            None => {
-                // No version → resolve latest and prefix with ^
-                match resolve_latest_version(&name).await {
-                    Ok(v) => format!("^{}", v),
-                    Err(_) => "*".to_string(), // fallback
+            Some(v) => {
+                if exact || !v.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                    v.to_string()
+                } else {
+                    format!("^{}", v)
                 }
             }
         };
@@ -1469,10 +1484,6 @@ async fn cmd_add(
         names.join(", ").green(),
         if dev || peer { "devDependencies" } else { "dependencies" }.green()
     );
-
-    // Force lockfile regeneration to include new packages
-    let _ = std::fs::remove_file("mg.lock");
-    let _ = std::fs::remove_file("mg.lockb");
 
     cmd_install(config, offline, production, hoist, profile, timings, linker).await
 }
@@ -2237,6 +2248,7 @@ async fn main() -> Result<(), String> {
             peer,
             optional,
             exact,
+            offline,
         } => {
             if is_workspace_context(rec, &flt, sinc.as_deref()) {
                 cmd_add_recursive(
@@ -2260,7 +2272,7 @@ async fn main() -> Result<(), String> {
                     optional,
                     exact,
                     &config,
-                    false,
+                    offline,
                     false,
                     false,
                     profiling,

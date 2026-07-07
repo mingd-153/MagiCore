@@ -90,18 +90,22 @@ pub fn build(b: *std.Build) void {
     const cargo_test = b.addSystemCommand(&.{ "cargo", "test", "--workspace" });
     cargo_test.setEnvironmentVariable("CC", "zig cc");
 
+    const cargo_check = b.addSystemCommand(&.{ "cargo", "check", "--workspace" });
+    cargo_check.setEnvironmentVariable("CC", "zig cc");
+
     const cargo_clippy = b.addSystemCommand(&.{ "cargo", "clippy", "--workspace" });
+    cargo_clippy.setEnvironmentVariable("CC", "zig cc");
 
     // ── Combine steps ──
     const test_step = b.step("test", "Run all tests (C + Rust)");
     test_step.dependOn(test_c_step);
-    test_step.dependOn(&b.addRunCommand(&.{ "cargo", "test", "--workspace" }).step);
+    test_step.dependOn(&cargo_test.step);
 
     const check_step = b.step("check", "Check all (build + test + clippy)");
-    check_step.dependOn(&b.addRunCommand(&.{ "cargo", "check", "--workspace" }).step);
+    check_step.dependOn(&cargo_check.step);
     check_step.dependOn(test_step);
-    check_step.dependOn(&b.addRunCommand(&.{ "cargo", "clippy", "--workspace" }).step);
+    check_step.dependOn(&cargo_clippy.step);
 
     // Default: build + test
-    b.default_step.dependOn(&b.addRunCommand(&.{ "cargo", "build", "--workspace" }).step);
+    b.default_step.dependOn(&cargo_build.step);
 }
