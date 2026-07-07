@@ -35,7 +35,10 @@ impl DownloadManager {
             .tcp_nodelay(true)
             .user_agent(concat!("mg/", env!("CARGO_PKG_VERSION")))
             .build()
-            .expect("Failed to build HTTP client");
+            .unwrap_or_else(|e| {
+                tracing::warn!("failed to build reqwest client: {e}, using default");
+                reqwest::Client::new()
+            });
 
         Self {
             client,

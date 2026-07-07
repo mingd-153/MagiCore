@@ -1,4 +1,4 @@
-extern "C" {
+unsafe extern "C" {
     fn mg_sha256_init(ctx: *mut mg_sha256_ctx_t);
     fn mg_sha256_update(ctx: *mut mg_sha256_ctx_t, data: *const std::os::raw::c_void, len: usize);
     fn mg_sha256_final_hex(ctx: *mut mg_sha256_ctx_t, out: *mut std::os::raw::c_char);

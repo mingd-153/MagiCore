@@ -40,24 +40,33 @@ fn test_npm_registry_token_methods() {
 fn test_registry_client_creation_with_proxy_envs() {
     tempfile::TempDir::new().unwrap();
 
-    std::env::set_var("HTTPS_PROXY", "http://proxy.local:8080");
-    std::env::set_var("HTTP_PROXY", "http://proxy.local:8080");
-    std::env::set_var("NO_PROXY", "localhost,127.0.0.1");
+    // SAFETY: single-threaded test, no concurrent env access
+    unsafe {
+        std::env::set_var("HTTPS_PROXY", "http://proxy.local:8080");
+        std::env::set_var("HTTP_PROXY", "http://proxy.local:8080");
+        std::env::set_var("NO_PROXY", "localhost,127.0.0.1");
+    }
 
     let client = RegistryClient::new();
     drop(client);
 
-    std::env::remove_var("HTTPS_PROXY");
-    std::env::remove_var("HTTP_PROXY");
-    std::env::remove_var("NO_PROXY");
+    // SAFETY: single-threaded test, no concurrent env access
+    unsafe {
+        std::env::remove_var("HTTPS_PROXY");
+        std::env::remove_var("HTTP_PROXY");
+        std::env::remove_var("NO_PROXY");
+    }
 }
 
 #[test]
 fn test_registry_client_creation_without_proxy() {
-    std::env::remove_var("HTTPS_PROXY");
-    std::env::remove_var("https_proxy");
-    std::env::remove_var("HTTP_PROXY");
-    std::env::remove_var("http_proxy");
+    // SAFETY: single-threaded test, no concurrent env access
+    unsafe {
+        std::env::remove_var("HTTPS_PROXY");
+        std::env::remove_var("https_proxy");
+        std::env::remove_var("HTTP_PROXY");
+        std::env::remove_var("http_proxy");
+    }
 
     let client = RegistryClient::new();
     drop(client);

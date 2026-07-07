@@ -1,5 +1,5 @@
 /* C API declarations */
-extern "C" {
+unsafe extern "C" {
     fn mg_json_get_string(
         json: *const std::os::raw::c_char,
         key: *const std::os::raw::c_char,

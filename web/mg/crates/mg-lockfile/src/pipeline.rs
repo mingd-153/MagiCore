@@ -85,7 +85,12 @@ impl ResolutionPipeline {
         let mut lockfile = Lockfile::new(self.config.config_version, &self.config.registry);
 
         // Download tarballs in parallel for integrity computation
-        let integrity_map: std::collections::HashMap<String, Option<String>> = if let Some(client) = registry_client {
+        let integrity_map: std::collections::HashMap<String, Option<String>> = if self.config.offline {
+            // Offline mode: skip tarball downloads, use placeholder integrity from resolver
+            result.resolutions.iter().map(|res| {
+                (res.package_id.to_string(), None)
+            }).collect()
+        } else if let Some(client) = registry_client {
             use futures_util::future::try_join_all;
 
             let futures: Vec<_> = result.resolutions.iter().map(|res| {

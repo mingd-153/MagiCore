@@ -51,7 +51,7 @@ impl SqliteStore {
         };
 
         if !readonly {
-            let gen: i64 = store
+            let gen_id: i64 = store
                 .conn
                 .lock()
                 .unwrap()
@@ -61,7 +61,7 @@ impl SqliteStore {
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
-            *store.generation.lock().unwrap() = gen as u64;
+            *store.generation.lock().unwrap() = gen_id as u64;
         }
 
         Ok(store)

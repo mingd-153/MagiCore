@@ -63,10 +63,12 @@ mod tests {
     #[test]
     fn test_env_override() {
         let mut config = MgpmConfig::default();
-        std::env::set_var("MGPM_OFFLINE", "true");
+        // SAFETY: single-threaded test, no concurrent env access
+        unsafe { std::env::set_var("MGPM_OFFLINE", "true") };
         DefaultConfigLoader::apply_env(&mut config);
         assert!(config.cli.dry_run);
-        std::env::remove_var("MGPM_OFFLINE");
+        // SAFETY: single-threaded test, no concurrent env access
+        unsafe { std::env::remove_var("MGPM_OFFLINE") };
     }
 
     #[test]
