@@ -537,6 +537,21 @@ impl Installer {
                     }
                 }
 
+                // Cache the downloaded tarball for future offline use
+                let cache_pkg_id = package_id.clone();
+                let cache_name = package.name.clone();
+                let cache_version = package.version.clone();
+                let tarball = tarball_path.clone();
+                if let Err(e) = cache.cache_tarball(
+                    &cache_pkg_id,
+                    &cache_name,
+                    &cache_version,
+                    &tarball,
+                    "npm",
+                ) {
+                    eprintln!("  [WARN] failed to cache {}: {}", cache_pkg_id, e);
+                }
+
                 // Release download permit before acquiring extract permit
                 drop(_dl_permit);
 
@@ -660,7 +675,7 @@ impl Installer {
                 };
 
                 thread_pool.install(|| {
-                    for (ref rel_path, _) in &entries {
+                    for (rel_path, _) in &entries {
                         let src_path = extract_dir.join(rel_path);
                         if src_path.is_file() {
                             if let Err(e) = store.import_file(&src_path) {

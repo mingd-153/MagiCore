@@ -1,24 +1,24 @@
 use std::str;
 
-#[derive(Debug, Default)]
-pub struct Manifest<'a> {
-    pub name: Option<&'a str>,
-    pub version: Option<&'a str>,
-    pub dependencies: Vec<Dep<'a>>,
-    pub dev_dependencies: Vec<Dep<'a>>,
-    pub peer_dependencies: Vec<Dep<'a>>,
+#[derive(Debug, Default, Clone)]
+pub struct Manifest {
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub dependencies: Vec<Dep>,
+    pub dev_dependencies: Vec<Dep>,
+    pub peer_dependencies: Vec<Dep>,
 }
 
-impl<'a> Manifest<'a> {
+impl Manifest {
     pub fn is_complete(&self) -> bool {
         self.name.is_some() && self.version.is_some()
     }
 }
 
-#[derive(Debug)]
-pub struct Dep<'a> {
-    pub name: &'a str,
-    pub version: &'a str,
+#[derive(Debug, Clone)]
+pub struct Dep {
+    pub name: String,
+    pub version: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -51,7 +51,7 @@ impl<'a> ZeroCopyParser<'a> {
         Self { input, pos: 0 }
     }
 
-    pub fn parse_manifest(&mut self) -> Result<Manifest<'a>, ParseError> {
+    pub fn parse_manifest(&mut self) -> Result<Manifest, ParseError> {
         let mut manifest = Manifest::default();
 
         self.skip_whitespace();
@@ -64,17 +64,17 @@ impl<'a> ZeroCopyParser<'a> {
                 break;
             }
 
-            let key = self.read_string_slice()?;
+            let key = self.read_string()?;
             self.skip_whitespace();
             self.expect(b':')?;
             self.skip_whitespace();
 
-            match key {
+            match key.as_str() {
                 "name" => {
-                    manifest.name = Some(self.read_string_slice()?);
+                    manifest.name = Some(self.read_string()?);
                 }
                 "version" => {
-                    manifest.version = Some(self.read_string_slice()?);
+                    manifest.version = Some(self.read_string()?);
                 }
                 "dependencies" => {
                     manifest.dependencies = self.parse_dep_object()?;
@@ -99,7 +99,7 @@ impl<'a> ZeroCopyParser<'a> {
         Ok(manifest)
     }
 
-    fn read_string_slice(&mut self) -> Result<&'a str, ParseError> {
+    fn read_string(&mut self) -> Result<String, ParseError> {
         self.skip_whitespace();
         if self.peek() != Some(b'"') {
             return Err(ParseError::ExpectedString);
@@ -112,7 +112,8 @@ impl<'a> ZeroCopyParser<'a> {
                 Some(b'"') => {
                     let slice = &self.input[start..self.pos];
                     self.pos += 1;
-                    return str::from_utf8(slice).map_err(|_| ParseError::InvalidUtf8);
+                    let s = str::from_utf8(slice).map_err(|_| ParseError::InvalidUtf8)?;
+                    return Ok(s.to_string());
                 }
                 Some(b'\\') => {
                     return Err(ParseError::EscapedString);
@@ -126,10 +127,10 @@ impl<'a> ZeroCopyParser<'a> {
     fn skip_value(&mut self) -> Result<(), ParseError> {
         self.skip_whitespace();
         match self.peek() {
-            Some(b'"') => {
-                self.read_string_slice()?;
-                Ok(())
-            }
+                Some(b'"') => {
+                    self.read_string()?;
+                    Ok(())
+                }
             Some(b'{') => self.skip_object(),
             Some(b'[') => self.skip_array(),
             Some(b't') | Some(b'f') => self.skip_literal(),
@@ -139,7 +140,7 @@ impl<'a> ZeroCopyParser<'a> {
         }
     }
 
-    fn parse_dep_object(&mut self) -> Result<Vec<Dep<'a>>, ParseError> {
+    fn parse_dep_object(&mut self) -> Result<Vec<Dep>, ParseError> {
         let mut deps = Vec::new();
         self.skip_whitespace();
         self.expect(b'{')?;
@@ -151,11 +152,11 @@ impl<'a> ZeroCopyParser<'a> {
                 break;
             }
 
-            let name = self.read_string_slice()?;
+            let name = self.read_string()?;
             self.skip_whitespace();
             self.expect(b':')?;
             self.skip_whitespace();
-            let version = self.read_string_slice()?;
+            let version = self.read_string()?;
 
             deps.push(Dep { name, version });
 
@@ -272,8 +273,8 @@ mod tests {
         let input = br#"{"name": "lodash", "version": "4.17.21"}"#;
         let mut parser = ZeroCopyParser::new(input);
         let manifest = parser.parse_manifest().unwrap();
-        assert_eq!(manifest.name, Some("lodash"));
-        assert_eq!(manifest.version, Some("4.17.21"));
+        assert_eq!(manifest.name.as_deref(), Some("lodash"));
+        assert_eq!(manifest.version.as_deref(), Some("4.17.21"));
     }
 
     #[test]
@@ -288,8 +289,8 @@ mod tests {
         }"#;
         let mut parser = ZeroCopyParser::new(input);
         let manifest = parser.parse_manifest().unwrap();
-        assert_eq!(manifest.name, Some("mypkg"));
-        assert_eq!(manifest.version, Some("1.0.0"));
+        assert_eq!(manifest.name.as_deref(), Some("mypkg"));
+        assert_eq!(manifest.version.as_deref(), Some("1.0.0"));
         assert_eq!(manifest.dependencies.len(), 2);
         assert_eq!(manifest.dependencies[0].name, "react");
         assert_eq!(manifest.dependencies[1].version, "^4.17.0");
@@ -305,8 +306,8 @@ mod tests {
         }"#;
         let mut parser = ZeroCopyParser::new(input);
         let manifest = parser.parse_manifest().unwrap();
-        assert_eq!(manifest.name, Some("fast"));
-        assert_eq!(manifest.version, Some("1.0.0"));
+        assert_eq!(manifest.name.as_deref(), Some("fast"));
+        assert_eq!(manifest.version.as_deref(), Some("1.0.0"));
         assert_eq!(manifest.dependencies.len(), 0);
     }
 

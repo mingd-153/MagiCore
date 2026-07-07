@@ -152,8 +152,8 @@ mod test {
 
     #[test]
     fn test_generator_template_not_found() {
-        let gen = FileGenerator::new(TemplateRenderer::new());
-        let result = gen.generate(
+        let generator = FileGenerator::new(TemplateRenderer::new());
+        let result = generator.generate(
             Path::new("/nonexistent/template"),
             Path::new("/tmp/out"),
             &HashMap::new(),
@@ -171,11 +171,11 @@ mod test {
         std::fs::write(template_dir.join("index.html.hbs"), "<h1>{{name}}</h1>").unwrap();
 
         let dest = dir.path().join("output");
-        let gen = FileGenerator::new(TemplateRenderer::new());
+        let generator = FileGenerator::new(TemplateRenderer::new());
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "World".to_string());
 
-        let result = gen.generate(&template_dir, &dest, &vars, &OverwritePolicy::Error);
+        let result = generator.generate(&template_dir, &dest, &vars, &OverwritePolicy::Error);
         assert!(result.is_ok());
 
         let created = result.unwrap();
@@ -199,8 +199,8 @@ mod test {
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("file.txt"), "existing").unwrap();
 
-        let gen = FileGenerator::new(TemplateRenderer::new());
-        let result = gen.generate(
+        let generator = FileGenerator::new(TemplateRenderer::new());
+        let result = generator.generate(
             &template_dir,
             &dest,
             &HashMap::new(),
@@ -220,8 +220,8 @@ mod test {
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("file.txt"), "old content").unwrap();
 
-        let gen = FileGenerator::new(TemplateRenderer::new());
-        let result = gen.generate(
+        let generator = FileGenerator::new(TemplateRenderer::new());
+        let result = generator.generate(
             &template_dir,
             &dest,
             &HashMap::new(),
@@ -242,11 +242,11 @@ mod test {
         std::fs::write(template_dir.join("README.md"), "# {{name}}").unwrap();
 
         let dest = dir.path().join("project");
-        let gen = FileGenerator::new(TemplateRenderer::new());
+        let generator = FileGenerator::new(TemplateRenderer::new());
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "MyApp".to_string());
 
-        let result = gen.generate(&template_dir, &dest, &vars, &OverwritePolicy::Error);
+        let result = generator.generate(&template_dir, &dest, &vars, &OverwritePolicy::Error);
         assert!(result.is_ok());
 
         assert!(dest.join("src/main.js").exists());

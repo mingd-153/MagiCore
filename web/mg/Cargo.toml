@@ -74,11 +74,11 @@ harness = true
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/megagate/mg"
-authors = ["MegaGate Team <team@megagate.dev>"]
-description = "MegaGate Package Manager - Fast, disk-efficient, smart package manager for JavaScript/TypeScript"
+repository = "https://github.com/mingd-153/MegaGate"
+authors = ["Mg Team <doanmihh1543@gmail.com>"]
+description = "MegaGate-web Package Manager - Fast, disk-efficient, smart package manager for JavaScript/TypeScript"
 
 [workspace.dependencies]
 # Core

@@ -49,12 +49,12 @@ impl PackageCache {
     }
 
     pub fn get_package(&self, package_id: &str) -> Option<CachedPackage> {
-        let index = self.index.read().unwrap();
+        let index = self.index.read().unwrap_or_else(|e| e.into_inner());
         index.get(package_id).cloned()
     }
 
     pub fn has_package(&self, package_id: &str) -> bool {
-        let index = self.index.read().unwrap();
+        let index = self.index.read().unwrap_or_else(|e| e.into_inner());
         index.contains_key(package_id)
     }
 
@@ -84,7 +84,7 @@ impl PackageCache {
         };
 
         {
-            let mut index = self.index.write().unwrap();
+            let mut index = self.index.write().unwrap_or_else(|e| e.into_inner());
             index.insert(package_id.to_string(), cached.clone());
         }
 
@@ -126,14 +126,14 @@ impl PackageCache {
             }
         }
 
-        let mut index = self.index.write().unwrap();
+        let mut index = self.index.write().unwrap_or_else(|e| e.into_inner());
         index.remove(package_id);
 
         Ok(())
     }
 
     pub fn list_packages(&self) -> Vec<CachedPackage> {
-        let index = self.index.read().unwrap();
+        let index = self.index.read().unwrap_or_else(|e| e.into_inner());
         index.values().cloned().collect()
     }
 
@@ -155,7 +155,7 @@ impl PackageCache {
     }
 
     pub fn package_count(&self) -> usize {
-        let index = self.index.read().unwrap();
+        let index = self.index.read().unwrap_or_else(|e| e.into_inner());
         index.len()
     }
 }

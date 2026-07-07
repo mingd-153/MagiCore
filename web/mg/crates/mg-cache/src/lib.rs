@@ -9,7 +9,7 @@ pub use etag::ETagStore;
 pub use memmap::MemMapCache;
 
 pub const CACHE_MAGIC: &[u8; 8] = b"MGPMCACH";
-pub const CACHE_VERSION: u32 = 1;
+pub const CACHE_VERSION: u32 = 2;
 
 pub const INITIAL_SIZE: u64 = 1_048_576;
 
