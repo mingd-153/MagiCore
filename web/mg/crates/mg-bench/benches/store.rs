@@ -359,7 +359,7 @@ fn bench_cas_verify(c: &mut Criterion) {
             size,
             |b, _| {
                 b.iter(|| {
-                    store.verify(black_box(std::path::Path::new(&hash.filename))).unwrap();
+                    store.verify(black_box(&hash.cas_path(store.root()))).unwrap();
                 });
             },
         );
@@ -378,13 +378,14 @@ fn bench_cas_concurrent(c: &mut Criterion) {
             |b, &threads| {
                 b.iter(|| {
                     let store = Arc::new(make_cas_store());
-                    let data = Arc::new(vec![0x42u8; 1024]);
 
                     let handles: Vec<_> = (0..threads)
-                        .map(|_| {
+                        .map(|i| {
                             let store = Arc::clone(&store);
-                            let data = Arc::clone(&data);
-                            thread::spawn(move || store.import_bytes(&data).unwrap())
+                            thread::spawn(move || {
+                                let data = vec![(i as u8).wrapping_mul(0x42); 1024];
+                                store.import_bytes(&data).ok()
+                            })
                         })
                         .collect();
 

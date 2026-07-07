@@ -1,3 +1,3 @@
 pub mod json;
 
-pub use json::{Dep, Manifest, ParseError, ZeroCopyParser};
+pub use json::{Manifest, ParseError, ZeroCopyParser};

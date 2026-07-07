@@ -13,6 +13,7 @@ use dashmap::DashMap;
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::OnceCell;
+use tracing::warn;
 
 use mg_cache::{CacheEntry, MemMapCache};
 use mg_core::{PackageId, RegistryConfig};
@@ -108,10 +109,14 @@ impl RegistryClient {
             }
         }
 
-        let client = builder.build().expect("Failed to build reqwest client");
+        let client = builder.build().unwrap_or_else(|e| {
+            warn!("failed to build reqwest client with proxy: {e}, using default");
+            reqwest::Client::new()
+        });
 
-        let quota = Quota::per_second(NonZeroU32::new(100).unwrap())
-            .allow_burst(NonZeroU32::new(200).unwrap());
+        const RPS: NonZeroU32 = NonZeroU32::new(100).unwrap();
+        const BURST: NonZeroU32 = NonZeroU32::new(200).unwrap();
+        let quota = Quota::per_second(RPS).allow_burst(BURST);
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
         let cache_path = dirs::cache_dir()
@@ -175,13 +180,11 @@ impl RegistryClient {
         if let Ok(ref val) = result {
             if let Some(ref cache) = self.cache {
                 if let Ok(data) = serde_json::to_vec(val) {
-                    #[allow(clippy::disallowed_methods)]
-                    let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
                     let entry = CacheEntry {
                         name: url.as_str(),
                         version: "",
                         integrity: "",
-                        data: leaked,
+                        data: &data,
                     };
                     let mut guard = cache.lock();
                     let _ = guard.insert(entry);
@@ -335,6 +338,18 @@ impl RegistryClient {
         url: &str,
         token: Option<String>,
     ) -> Result<Vec<u8>, RegistryError> {
+        if self.is_offline() {
+            if let Some(ref cache) = self.cache {
+                let guard = cache.lock();
+                if let Some(entry) = guard.get(url) {
+                    return Ok(entry.data.to_vec());
+                }
+            }
+            return Err(RegistryError::NetworkError(format!(
+                "offline: no cached data for {}",
+                url
+            )));
+        }
         let resp = self.send_with_retry(url, token, None).await?;
         resp.bytes()
             .await

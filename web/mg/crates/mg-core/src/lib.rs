@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 //! MegaGate Package Manager - Core Types and Primitives
 //!
 //! This crate contains the foundational types used across all mg components:

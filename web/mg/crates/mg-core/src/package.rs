@@ -30,8 +30,9 @@ impl PackageName {
             if !name.starts_with("@") || name.matches('/').count() != 1 {
                 return Err(PackageNameError::InvalidScopedFormat);
             }
-            let scope = &name[1..name.find('/').unwrap()];
-            let name_part = &name[name.find('/').unwrap() + 1..];
+            let slash_pos = name.find('/').unwrap_or(0);
+            let scope = &name[1..slash_pos];
+            let name_part = &name[slash_pos + 1..];
             if scope.is_empty() || name_part.is_empty() {
                 return Err(PackageNameError::InvalidScopedFormat);
             }
@@ -57,7 +58,7 @@ impl PackageName {
     /// Returns the scope for scoped packages, or None for regular packages.
     pub fn scope(&self) -> Option<&str> {
         if self.is_scoped() {
-            Some(&self.0[1..self.0.find('/').unwrap()])
+            self.0.find('/').map(|pos| &self.0[1..pos])
         } else {
             None
         }
@@ -66,7 +67,7 @@ impl PackageName {
     /// Returns the package name without the scope prefix.
     pub fn unscoped(&self) -> &str {
         if self.is_scoped() {
-            &self.0[self.0.find('/').unwrap() + 1..]
+            self.0.find('/').map_or(&self.0[..], |pos| &self.0[pos + 1..])
         } else {
             &self.0
         }

@@ -55,12 +55,19 @@ impl SqliteStore {
     }
 }
 
+const LRU_CACHE_SIZE: std::num::NonZeroUsize = match std::num::NonZeroUsize::new(1000) {
+    Some(v) => v,
+    None => unreachable!(),
+};
+
 impl Clone for SqliteStore {
     fn clone(&self) -> Self {
-        let conn = Connection::open(&self.path).expect("failed to clone SQLite connection");
+        let conn = Connection::open(&self.path).unwrap_or_else(|e| {
+            panic!("failed to clone SQLite connection at {}: {}", self.path.display(), e)
+        });
         Self {
             conn: Mutex::new(conn),
-            cache: Mutex::new(LruCache::new(std::num::NonZeroUsize::new(1000).unwrap())),
+            cache: Mutex::new(LruCache::new(LRU_CACHE_SIZE)),
             path: self.path.clone(),
             readonly: self.readonly,
             generation: Mutex::new(0),

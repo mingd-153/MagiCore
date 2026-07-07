@@ -22,7 +22,7 @@ impl NameValidator {
             return Err(NameValidationError::InvalidCharacters);
         }
 
-        let first = name.chars().next().unwrap();
+        let first = name.chars().next().unwrap_or(' ');
         if first == '.' || first == '_' {
             return Err(NameValidationError::InvalidStart);
         }

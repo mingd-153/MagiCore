@@ -31,22 +31,35 @@ impl CacheHeader {
         if bytes.len() < HEADER_SIZE as usize {
             return Err(CacheError::Corruption("header too short".into()));
         }
-        let magic: [u8; 8] = bytes[..8].try_into().unwrap();
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&bytes[..8]);
         if &magic != CACHE_MAGIC {
             return Err(CacheError::InvalidMagic);
         }
-        let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let mut buf4 = [0u8; 4];
+        buf4.copy_from_slice(&bytes[8..12]);
+        let version = u32::from_le_bytes(buf4);
         if version != CACHE_VERSION {
             return Err(CacheError::UnsupportedVersion(version));
         }
+        buf4.copy_from_slice(&bytes[12..16]);
+        let entry_count = u32::from_le_bytes(buf4);
+        buf4.copy_from_slice(&bytes[16..20]);
+        let string_table_size = u32::from_le_bytes(buf4);
+        buf4.copy_from_slice(&bytes[20..24]);
+        let hash_table_size = u32::from_le_bytes(buf4);
+        buf4.copy_from_slice(&bytes[24..28]);
+        let metadata_size = u32::from_le_bytes(buf4);
+        let mut reserved = [0u8; 4];
+        reserved.copy_from_slice(&bytes[28..32]);
         Ok(Self {
             magic,
             version,
-            entry_count: u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
-            string_table_size: u32::from_le_bytes(bytes[16..20].try_into().unwrap()),
-            hash_table_size: u32::from_le_bytes(bytes[20..24].try_into().unwrap()),
-            metadata_size: u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
-            reserved: bytes[28..32].try_into().unwrap(),
+            entry_count,
+            string_table_size,
+            hash_table_size,
+            metadata_size,
+            reserved,
         })
     }
 

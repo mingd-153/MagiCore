@@ -10,7 +10,7 @@ use crate::SemVerError;
 
 /* C API declarations */
 #[allow(dead_code)]
-extern "C" {
+unsafe extern "C" {
     fn mg_version_parse(s: *const std::os::raw::c_char, v: *mut mg_version_t) -> std::os::raw::c_int;
     fn mg_version_cmp(a: *const mg_version_t, b: *const mg_version_t) -> std::os::raw::c_int;
     fn mg_version_format(v: *const mg_version_t, out: *mut std::os::raw::c_char, out_len: usize) -> std::os::raw::c_int;

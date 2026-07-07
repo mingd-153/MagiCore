@@ -7,7 +7,7 @@ const TAR_MAX_PATH: usize = 512;
 /// SHA-256 hex string size
 const SHA256_HEX_SIZE: usize = 65;
 
-extern "C" {
+unsafe extern "C" {
     fn mg_tar_extract(
         gz_data: *const u8,
         gz_len: usize,
