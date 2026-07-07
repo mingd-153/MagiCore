@@ -134,7 +134,10 @@ pub async fn cmd_audit(
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        match serde_json::to_string_pretty(&output) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Failed to serialize output: {}", e),
+        }
     } else {
         if findings.is_empty() {
             println!("{} No known vulnerabilities found", "[OK]".green().bold());

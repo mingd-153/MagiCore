@@ -60,7 +60,7 @@ create → check → run → fix → update → fix → done → report → push
 **Branch hiện tại**: `feat-T3.5-task-graph`
 **Branch gốc**: `development`
 **Remote**: `https://github.com/mingd-153/MegaGate.git`
-**Tests**: 395 passed (12 monorepo + 42 protocol + 96 workspace + others), 0 failed, 0 warnings
+**Tests**: 804 passed, 0 failed (after edition 2024 migration + unwrap fixes + cleanup), clippy warnings exist (pre-existing, not errors)
 
 ## What's Been Done
 
@@ -82,7 +82,19 @@ create → check → run → fix → update → fix → done → report → push
 - **5/5 HIGH issues fixed**
 - **3 Critical + 7 High** = 10 security fixes total (all resolved)
 
-### T0.2 — CAS I/O Complete + Refactored ✅
+### Edition 2024 Migration (Latest Session)
+
+The workspace was set to `edition = "2026"` which doesn't exist in cargo 1.96.0. Migrated to `edition = "2024"` with fixes for 6 categories of breaking changes:
+
+| Category | Issue | Files Fixed | Fix |
+|----------|-------|-------------|-----|
+| unsafe function bodies | `unsafe_op_in_unsafe_fn` lint deny-by-default | `mg-core/src/lib.rs` | `#![allow(unsafe_op_in_unsafe_fn)]` |
+| unsafe extern blocks | `extern "C"` must be `unsafe extern "C"` | `mg-core/src/cffi/*.rs` (4 files) | Added `unsafe` keyword |
+| `gen` reserved keyword | `gen` became keyword in 2024 | `lifecycle.rs`, `generator.rs` | Renamed to `gen_id`, `generator` |
+| implicit ref binding | `ref` modifier in for loops removed | `mg-installer/mod.rs` | Removed `ref` |
+| unsafe env functions | `set_var`/`remove_var` became `unsafe` | `config/mod.rs`, `registry_auth_test.rs` | Wrapped in `unsafe {}` |
+
+**Result**: `cargo check --workspace` — 0 errors. `cargo test --workspace` — 804 passed, 0 failed.
 
 | Feature | Implementation | Security |
 |---------|----------------|----------|
@@ -508,7 +520,7 @@ web/mgpm/
 cargo check --workspace          # Kiểm tra compile
 cargo test --workspace           # Chạy tests
 cargo clippy --workspace         # Lint
-cargo bench -p mgpm-bench       # Benchmark
+cargo bench -p mg-bench         # Benchmark (store, resolver)
 cargo doc --open -p mgpm-cli    # Documentation
 cargo run -- --help              # CLI help
 cargo run -- audit              # Chạy audit

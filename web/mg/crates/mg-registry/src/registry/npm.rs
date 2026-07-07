@@ -44,14 +44,18 @@ impl NpmRegistry {
         self.token = token;
     }
 
+    /// Propagate offline mode to the underlying RegistryClient
+    pub fn set_offline(&self, offline: bool) {
+        self.client.set_offline(offline);
+    }
+
     pub async fn get_manifest(
         &self,
         name: &PackageName,
-    ) -> Result<Manifest<'static>, RegistryError> {
+    ) -> Result<Manifest, RegistryError> {
         let url = format!("{}/{}", self.base_url, name.as_str());
         let bytes = self.client.get_raw_with_accept(&url, self.token.clone(), Some(ABBREVIATED_ACCEPT)).await?;
-        let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-        let mut parser = ZeroCopyParser::new(leaked);
+        let mut parser = ZeroCopyParser::new(&bytes);
         parser
             .parse_manifest()
             .map_err(|e| RegistryError::NetworkError(e.to_string()))

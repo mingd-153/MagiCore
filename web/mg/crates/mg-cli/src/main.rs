@@ -227,7 +227,7 @@ enum CliCommand {
         optional: bool,
         #[arg(short, long)]
         exact: bool,
-        #[arg(short, long)]
+        #[arg(long)]
         offline: bool,
     },
     Remove {
@@ -1144,18 +1144,21 @@ async fn cmd_install(
             );
 
             let npm_registry = NpmRegistry::new("https://registry.npmjs.org");
+            npm_registry.set_offline(offline);
             let provider = RegistryDependencyProvider::new(npm_registry);
             let resolver = Resolver::new(std::sync::Arc::new(provider));
-            let config = mg_lockfile::ResolutionConfig::default();
+            let mut config = mg_lockfile::ResolutionConfig::default();
+            config.offline = offline;
             let pipeline = mg_lockfile::ResolutionPipeline::new(resolver, config);
             let registry_client = RegistryClient::new();
             registry_client.set_offline(offline);
 
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
             // Resolve only new packages
             let new_lf = pipeline
                 .resolve_and_lock(
                     &missing.iter().map(|w| (*w).clone()).collect::<Vec<_>>(),
-                    &std::env::current_dir().unwrap(),
+                    &cwd,
                     Some(&registry_client),
                 )
                 .await
@@ -1184,17 +1187,20 @@ async fn cmd_install(
         );
 
         let npm_registry = NpmRegistry::new("https://registry.npmjs.org");
+        npm_registry.set_offline(offline);
         let provider = RegistryDependencyProvider::new(npm_registry);
         let resolver = Resolver::new(std::sync::Arc::new(provider));
-        let config = mg_lockfile::ResolutionConfig::default();
+        let mut config = mg_lockfile::ResolutionConfig::default();
+        config.offline = offline;
         let pipeline = mg_lockfile::ResolutionPipeline::new(resolver, config);
         let registry_client = RegistryClient::new();
         registry_client.set_offline(offline);
 
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         let lockfile = pipeline
             .resolve_and_lock(
                 &wanted_deps,
-                &std::env::current_dir().unwrap(),
+                &cwd,
                 Some(&registry_client),
             )
             .await
@@ -1384,9 +1390,10 @@ fn update_package_json_deps(
     }
 
     if add {
-        let map = pkg[section].as_object_mut().unwrap();
-        for (pkg_name, version) in entries {
-            map.insert(pkg_name.clone(), serde_json::Value::String(version.clone()));
+        if let Some(map) = pkg[section].as_object_mut() {
+            for (pkg_name, version) in entries {
+                map.insert(pkg_name.clone(), serde_json::Value::String(version.clone()));
+            }
         }
     } else {
         let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();

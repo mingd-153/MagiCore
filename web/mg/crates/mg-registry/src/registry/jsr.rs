@@ -26,7 +26,10 @@ impl JsrRegistry {
             .read_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(60))
             .build()
-            .expect("Failed to build reqwest client");
+            .unwrap_or_else(|e| {
+                tracing::warn!("failed to build reqwest client: {e}, using default");
+                reqwest::Client::new()
+            });
         Self {
             client,
             base_url: base_url.to_string(),

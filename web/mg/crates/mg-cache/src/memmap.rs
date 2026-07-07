@@ -9,7 +9,7 @@ use crate::{
     INITIAL_SIZE,
 };
 
-const PAIRS_PER_ENTRY: u32 = 4;
+const PAIRS_PER_ENTRY: u32 = 8;
 const PAIR_BYTES: u32 = PAIRS_PER_ENTRY * 4;
 const HASH_BYTES: u32 = 8;
 
@@ -151,6 +151,10 @@ impl MemMapCache {
         let name_len = pairs[base_idx + 1] as usize;
         let ver_offset = pairs[base_idx + 2] as usize;
         let ver_len = pairs[base_idx + 3] as usize;
+        let int_offset = pairs[base_idx + 4] as usize;
+        let int_len = pairs[base_idx + 5] as usize;
+        let data_offset = pairs[base_idx + 6] as usize;
+        let data_len = pairs[base_idx + 7] as usize;
 
         unsafe {
             let base = self.map.as_ptr();
@@ -168,11 +172,24 @@ impl MemMapCache {
             } else {
                 ""
             };
+            let integrity = if int_len > 0 {
+                let ptr = base.add(self.strings_offset + int_offset);
+                let bytes = std::slice::from_raw_parts(ptr, int_len);
+                std::str::from_utf8_unchecked(bytes)
+            } else {
+                ""
+            };
+            let data = if data_len > 0 {
+                let ptr = base.add(self.strings_offset + data_offset);
+                std::slice::from_raw_parts(ptr, data_len)
+            } else {
+                &[]
+            };
             CacheEntry {
                 name,
                 version,
-                integrity: "",
-                data: &[],
+                integrity,
+                data,
             }
         }
     }
@@ -183,17 +200,19 @@ impl MemMapCache {
 
         let name_bytes = entry.name.as_bytes();
         let version_bytes = entry.version.as_bytes();
-        let str_data_offset = self.header.string_table_size as usize;
+        let integrity_bytes = entry.integrity.as_bytes();
+        let data_bytes = entry.data;
 
-        let name_end = str_data_offset + name_bytes.len();
-        let version_end = name_end + version_bytes.len();
+        let str_offset = self.header.string_table_size as usize;
+        let name_off = str_offset;
+        let ver_off = name_off + name_bytes.len();
+        let int_off = ver_off + version_bytes.len();
+        let data_off = int_off + integrity_bytes.len();
+        let total_len = data_off + data_bytes.len();
 
-        if self.strings_offset + version_end > map_len {
-            warn!(
-                "cache write out of bounds: {} > {}",
-                self.strings_offset + version_end,
-                map_len
-            );
+        let strings_end = self.strings_offset + total_len;
+        if strings_end > map_len {
+            warn!("cache write out of bounds: {strings_end} > {map_len}");
             return Err(CacheError::CacheFull);
         }
 
@@ -201,29 +220,48 @@ impl MemMapCache {
             let base = self.map.as_ptr() as *mut u8;
 
             let pair_base = base.add(self.pairs_offset) as *mut u32;
-            let pair_idx = idx * PAIRS_PER_ENTRY as usize;
+            let pi = idx * PAIRS_PER_ENTRY as usize;
 
-            pair_base.add(pair_idx).write(str_data_offset as u32);
-            pair_base.add(pair_idx + 1).write(name_bytes.len() as u32);
-            pair_base.add(pair_idx + 2).write(name_end as u32);
-            pair_base
-                .add(pair_idx + 3)
-                .write(version_bytes.len() as u32);
+            pair_base.add(pi).write(name_off as u32);
+            pair_base.add(pi + 1).write(name_bytes.len() as u32);
+            pair_base.add(pi + 2).write(ver_off as u32);
+            pair_base.add(pi + 3).write(version_bytes.len() as u32);
+            pair_base.add(pi + 4).write(int_off as u32);
+            pair_base.add(pi + 5).write(integrity_bytes.len() as u32);
+            pair_base.add(pi + 6).write(data_off as u32);
+            pair_base.add(pi + 7).write(data_bytes.len() as u32);
 
-            let data_ptr = base.add(self.strings_offset + str_data_offset);
-            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), data_ptr, name_bytes.len());
-            std::ptr::copy_nonoverlapping(
-                version_bytes.as_ptr(),
-                data_ptr.add(name_bytes.len()),
-                version_bytes.len(),
-            );
+            let str_base = base.add(self.strings_offset + name_off);
+            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), str_base, name_bytes.len());
+            if !version_bytes.is_empty() {
+                std::ptr::copy_nonoverlapping(
+                    version_bytes.as_ptr(),
+                    str_base.add(name_bytes.len()),
+                    version_bytes.len(),
+                );
+            }
+            if !integrity_bytes.is_empty() {
+                std::ptr::copy_nonoverlapping(
+                    integrity_bytes.as_ptr(),
+                    str_base.add(name_bytes.len() + version_bytes.len()),
+                    integrity_bytes.len(),
+                );
+            }
+            if !data_bytes.is_empty() {
+                std::ptr::copy_nonoverlapping(
+                    data_bytes.as_ptr(),
+                    str_base.add(name_bytes.len() + version_bytes.len() + integrity_bytes.len()),
+                    data_bytes.len(),
+                );
+            }
 
             let hash_ptr = base.add(self.hashes_offset) as *mut u64;
             hash_ptr.add(idx).write(hash);
         }
 
-        self.header.string_table_size += (name_bytes.len() + version_bytes.len()) as u32;
-        self.header.hash_table_size = (self.entry_count.load(Ordering::Acquire)) * HASH_BYTES;
+        self.header.string_table_size += total_len as u32;
+        self.header.hash_table_size =
+            self.entry_count.load(Ordering::Acquire) * HASH_BYTES;
 
         Ok(())
     }
@@ -277,16 +315,19 @@ mod tests {
         let entry = CacheEntry {
             name: "lodash",
             version: "4.17.21",
-            integrity: "",
-            data: &[],
+            integrity: "sha512-abc123",
+            data: b"{\"name\":\"lodash\"}",
         };
         cache.insert(entry).unwrap();
         cache.flush().unwrap();
 
         let result = cache.get("lodash");
         assert!(result.is_some());
-        assert_eq!(result.unwrap().name, "lodash");
-        assert_eq!(result.unwrap().version, "4.17.21");
+        let r = result.unwrap();
+        assert_eq!(r.name, "lodash");
+        assert_eq!(r.version, "4.17.21");
+        assert_eq!(r.integrity, "sha512-abc123");
+        assert_eq!(r.data, b"{\"name\":\"lodash\"}");
     }
 
     #[test]
@@ -306,11 +347,13 @@ mod tests {
         for i in 0..10 {
             let name = format!("pkg-{i}");
             let version = format!("1.{i}.0");
+            let integrity = format!("sha256-{i}");
+            let data = format!("{{\"name\":\"pkg-{i}\"}}");
             let entry = CacheEntry {
                 name: &name,
                 version: &version,
-                integrity: "",
-                data: &[],
+                integrity: &integrity,
+                data: data.as_bytes(),
             };
             cache.insert(entry).unwrap();
         }
@@ -320,6 +363,54 @@ mod tests {
             let name = format!("pkg-{i}");
             let entry = cache.get(&name).unwrap();
             assert_eq!(entry.version, format!("1.{i}.0"));
+            assert_eq!(entry.integrity, format!("sha256-{i}"));
+            assert_eq!(entry.data, format!("{{\"name\":\"pkg-{i}\"}}").as_bytes());
+        }
+    }
+
+    #[test]
+    fn test_cache_empty_fields() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mg_cache");
+        let mut cache = MemMapCache::open(&path).unwrap();
+
+        let entry = CacheEntry {
+            name: "empty-test",
+            version: "",
+            integrity: "",
+            data: &[],
+        };
+        cache.insert(entry).unwrap();
+
+        let result = cache.get("empty-test").unwrap();
+        assert_eq!(result.name, "empty-test");
+        assert_eq!(result.version, "");
+        assert_eq!(result.integrity, "");
+        assert_eq!(result.data, &[]);
+    }
+
+    #[test]
+    fn test_cache_flush_and_reopen() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mg_cache");
+        {
+            let mut cache = MemMapCache::open(&path).unwrap();
+            let entry = CacheEntry {
+                name: "persist-test",
+                version: "1.0.0",
+                integrity: "sha256-persist",
+                data: b"persistent-data",
+            };
+            cache.insert(entry).unwrap();
+            cache.flush().unwrap();
+        }
+        {
+            let cache = MemMapCache::open(&path).unwrap();
+            let result = cache.get("persist-test").unwrap();
+            assert_eq!(result.name, "persist-test");
+            assert_eq!(result.version, "1.0.0");
+            assert_eq!(result.integrity, "sha256-persist");
+            assert_eq!(result.data, b"persistent-data");
         }
     }
 }
