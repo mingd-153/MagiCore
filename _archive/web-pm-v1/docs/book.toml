@@ -1,0 +1,9 @@
+[book]
+title = "MGPM Documentation"
+description = "MegaGate Package Manager - Documentation"
+authors = ["MegaGate Team"]
+language = "en"
+
+[output.html]
+git-repository-url = "https://github.com/megagate/mgpm"
+edit-url-template = "https://github.com/megagate/mgpm/edit/main/docs/{path}"

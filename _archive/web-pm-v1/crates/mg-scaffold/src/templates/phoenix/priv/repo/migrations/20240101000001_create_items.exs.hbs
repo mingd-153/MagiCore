@@ -1,0 +1,11 @@
+defmodule {{pascalCase name}}.Repo.Migrations.CreateItems do
+  use Ecto.Migration
+
+  def change do
+    create table(:items) do
+      add :name, :string, null: false
+      add :description, :text
+      timestamps()
+    end
+  end
+end
