@@ -10,16 +10,11 @@ use mg_types::{
     },
     Ecosystem, MgResult, Manifest, PackageId, PackageName, Version, VersionRange,
 };
-use mg_resolver::{DependencyProvider, Resolver as CoreResolver, ResolvedDep};
+use mg_resolver::{DependencyError, DependencyProvider, Resolver as CoreResolver, ResolvedDep};
 use mg_store::ContentStore;
 use serde::{Deserialize, Serialize};
 
 pub mod native;
-pub mod delegate;
-pub mod compiler;
-pub mod manifest;
-pub mod registry;
-pub mod installer;
 
 pub struct WebAdapter {
     registry_url: String,
@@ -56,7 +51,10 @@ impl PackageAdapter for WebAdapter {
         }
         let pkg_json: PackageJson = serde_json::from_str(&std::fs::read_to_string(&pkg_path)?)?;
         let mut manifest = Manifest::new(&pkg_json.name, mg_types::ecosystem::Ecosystem::Web);
-        manifest.version = Some(Version::parse(&pkg_json.version).unwrap_or_default());
+        manifest.version = Some(
+            Version::parse(&pkg_json.version)
+                .map_err(|_| mg_types::MgError::Other(format!("invalid version '{}' in package.json", pkg_json.version)))?
+        );
         let parse_deps = |map: Option<std::collections::HashMap<String, String>>| -> MgResult<Vec<mg_types::DependencySpec>> {
             match map {
                 Some(deps) => {
@@ -117,9 +115,12 @@ impl PackageAdapter for WebAdapter {
     async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
         let reg = native::npm_registry::NpmRegistry::new(&self.registry_url);
         for pkg in &graph.packages {
-            let url = format!("{}/{}/-/{}-{}.tgz", self.registry_url, pkg.id.name_str(), pkg.id.name().unscoped(), pkg.id.version());
-            if let Ok(bytes) = reg.download_tarball(&url).await {
-                if let Some(ref store) = self.store { store.import_bytes(&bytes).map_err(|e| mg_types::MgError::Store(e.to_string()))?; }
+            let unscoped = pkg.id.name().unscoped();
+            let url = format!("{}/{}/-/{}-{}.tgz", self.registry_url, pkg.id.name_str(), unscoped, pkg.id.version());
+            let bytes = reg.download_tarball(&url).await
+                .map_err(|e| mg_types::MgError::Network(format!("download failed for '{}': {}", pkg.id.name_str(), e)))?;
+            if let Some(ref store) = self.store {
+                store.import_bytes(&bytes).map_err(|e| mg_types::MgError::Store(e.to_string()))?;
             }
         }
         Ok(())
@@ -157,19 +158,26 @@ impl NpmDependencyProvider {
 }
 #[async_trait]
 impl DependencyProvider for NpmDependencyProvider {
-    async fn get_versions(&self, package: &PackageName) -> Vec<Version> {
-        match self.registry.fetch_metadata(package.as_str()).await {
-            Ok(meta) => { let mut v: Vec<Version> = meta.versions.keys().filter_map(|k| Version::parse(k).ok()).collect(); v.sort(); v }
-            Err(_) => vec![]
-        }
+    async fn get_versions(&self, package: &PackageName) -> Result<Vec<Version>, DependencyError> {
+        let meta = self.registry.fetch_metadata(package.as_str()).await
+            .map_err(|e| DependencyError(format!("npm metadata fetch failed for '{}': {}", package.as_str(), e)))?;
+        let mut v: Vec<Version> = meta.versions.keys().filter_map(|k| Version::parse(k).ok()).collect();
+        v.sort();
+        Ok(v)
     }
-    async fn get_dependencies(&self, package_id: &PackageId) -> Vec<ResolvedDep> {
-        match self.registry.fetch_metadata(package_id.name_str()).await {
-            Ok(meta) => meta.versions.get(&package_id.version().to_string()).and_then(|v| v.dependencies.as_ref()).map(|deps| {
-                deps.iter().filter_map(|(k, v)| PackageName::new(k).ok().map(|pn| ResolvedDep { package: pn, spec: v.clone(), optional: false, peer: false })).collect()
-            }).unwrap_or_default(),
-            Err(_) => vec![]
-        }
+    async fn get_dependencies(&self, package_id: &PackageId) -> Result<Vec<ResolvedDep>, DependencyError> {
+        let meta = self.registry.fetch_metadata(package_id.name_str()).await
+            .map_err(|e| DependencyError(format!("npm metadata fetch failed for '{}': {}", package_id.name_str(), e)))?;
+        let deps = meta.versions.get(&package_id.version().to_string())
+            .and_then(|v| v.dependencies.as_ref())
+            .map(|deps| {
+                deps.iter()
+                    .filter_map(|(k, v)| PackageName::new(k).ok()
+                        .map(|pn| ResolvedDep { package: pn, spec: v.clone(), optional: false, peer: false }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(deps)
     }
 }
 

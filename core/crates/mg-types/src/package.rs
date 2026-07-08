@@ -163,43 +163,51 @@ impl VersionRange {
     pub fn as_str(&self) -> &str { &self.0 }
     pub fn is_star(&self) -> bool { self.0 == "*" || self.0 == ">=0.0.0" }
 
-    /// Returns a heuristic satisfying version for this range.
-    /// Used by PubGrub solver for candidate selection.
+    /// Heuristic "best candidate" version for this range.
+    ///
+    /// Returns an upper-bound estimate version used by the PubGrub solver to
+    /// pick a candidate. The actual solver may later downgrade if conflicts
+    /// occur. This is NOT the final resolved version.
+    ///
+    /// - `*` → `0.0.0` (any version works)
+    /// - `^1.2.3` → `1.99.9999` (highest minor within major)
+    /// - `~1.2.3` → `1.2.9999` (highest patch within minor)
+    /// - `>=1.0.0` → `1.0.0` (the lower bound itself)
+    /// - `>1.0.0` → `1.0.0` (lower bound)
+    /// - `<=1.0.0` → `1.0.0` (the upper bound)
+    /// - `<1.0.0` → `0.999.9999` (subtract 1 from patch)
     pub fn satisfying_version(&self) -> Option<Version> {
         let range = self.0.trim();
         if self.is_star() { return Some(Version::new(0, 0, 0)); }
 
-        // Exact
         if let Ok(v) = Version::parse(range) {
             return Some(v);
         }
-
-        // Caret: ^1.2.3 -> 1.99.9999
+        // ^1.2.3 → highest in [1.2.3, 2.0.0) = 1.99.9999
         if let Some(min) = range.strip_prefix('^') {
             if let Ok(v) = Version::parse(min.trim()) {
                 return Some(Version::new(v.major, 99, 9999));
             }
         }
-
-        // Tilde: ~1.2.3 -> 1.2.9999
+        // ~1.2.3 → highest in [1.2.3, 1.3.0) = 1.2.9999
         if let Some(min) = range.strip_prefix('~') {
             if let Ok(v) = Version::parse(min.trim()) {
                 return Some(Version::new(v.major, v.minor, 9999));
             }
         }
-
+        // >=1.0.0 → 1.0.0 (lower bound itself)
         if let Some(v) = range.strip_prefix(">=") {
             if let Ok(v) = Version::parse(v.trim()) { return Some(v); }
         }
-
+        // >1.0.0 → 1.0.0 (the first satisfiable version; actual solver picks higher)
         if let Some(v) = range.strip_prefix('>') {
             if let Ok(v) = Version::parse(v.trim()) { return Some(v); }
         }
-
+        // <=1.0.0 → 1.0.0
         if let Some(v) = range.strip_prefix("<=") {
             if let Ok(v) = Version::parse(v.trim()) { return Some(v); }
         }
-
+        // <1.0.0 → 0.9.9999 (one less than boundary)
         if let Some(v) = range.strip_prefix('<') {
             if let Ok(v) = Version::parse(v.trim()) {
                 return Some(Version::new(v.major, v.minor, v.patch.saturating_sub(1)));
@@ -209,55 +217,67 @@ impl VersionRange {
         None
     }
 
-    /// Returns true if `version` satisfies this range.
+    /// Returns true if `version` satisfies this range constraint.
+    ///
+    /// Recognises in order:
+    /// 1. `*` — matches everything
+    /// 2. Exact version string
+    /// 3. `||` (OR) — split on `||`, any part matches
+    /// 4. Whitespace-separated (AND) — all parts must match
+    /// 5. `^major.minor.patch` — [major.minor.patch, major+1.0.0)
+    /// 6. `~major.minor.patch` — [major.minor.patch, major.minor+1.0)
+    /// 7. `>=`, `<=`, `>`, `<` operators
+    ///
+    /// Does NOT support:
+    /// - Hyphen ranges (`1.0.0 - 2.0.0`)
+    /// - Combo without space (`>=1.0.0<2.0.0`)
+    /// - `x` ranges (`1.x`, `1.2.x`)
     pub fn matches(&self, version: &Version) -> bool {
         if self.is_star() { return true; }
 
         let range = self.0.trim();
 
-        // Exact
+        // Check exact match first
         if let Ok(v) = Version::parse(range) {
             return *version == v;
         }
 
-        // OR
+        // OR constraints: ^1.0.0 || ^2.0.0
         if range.contains("||") {
             return range.split("||").any(|part| {
-                let part = part.trim();
-                VersionRange(part.into()).matches(version)
+                VersionRange(part.trim().to_string()).matches(version)
             });
         }
 
-        // AND (space-separated operators)
+        // AND constraints: >=1.0.0 <2.0.0 (space between operators)
         let parts: Vec<&str> = range.split_whitespace().collect();
         if parts.len() > 1 {
             return parts.iter().all(|p| VersionRange(p.to_string()).matches(version));
         }
 
-        // Caret
+        // Caret: ^1.2.3 means >=1.2.3 <2.0.0
         if let Some(min) = range.strip_prefix('^') {
             if let Ok(min_v) = Version::parse(min.trim()) {
                 let max_v = Version::new(min_v.major + 1, 0, 0);
                 if version.is_prerelease() {
-                    let base = version.base();
-                    if !(base >= min_v && base < max_v) { return false; }
+                    if !(version.base() >= min_v && version.base() < max_v) { return false; }
                 }
                 return *version >= min_v && *version < max_v;
             }
         }
 
-        // Tilde
+        // Tilde: ~1.2.3 → >=1.2.3 <1.3.0
         if let Some(min) = range.strip_prefix('~') {
             if let Ok(min_v) = Version::parse(min.trim()) {
                 let max_v = Version::new(min_v.major, min_v.minor + 1, 0);
                 if version.is_prerelease() {
-                    let base = version.base();
-                    if !(base >= min_v && base < max_v) { return false; }
+                    if !(version.base() >= min_v && version.base() < max_v) { return false; }
                 }
                 return *version >= min_v && *version < max_v;
             }
         }
 
+        // >=, <=, >, < operators
         if let Some(v) = range.strip_prefix(">=") {
             if let Ok(v) = Version::parse(v.trim()) { return *version >= v; }
         }
