@@ -65,13 +65,22 @@ pub trait PackageAdapter: Send + Sync {
 
     // ── Mutation ─────────────────────────────────────────────────────────────
 
-    /// Add a new dependency to the project
+    /// Add a new dependency to the project.
+    /// `dev`/`optional`/`peer` control which dep group.
+    /// `exact` means no `^`/`~` prefix.
+    /// `no_save` means do NOT write to manifest.
+    /// `global` means install to global store (~/.mg/store/).
     async fn add(
         &self,
         project_root: &Path,
         name: &PackageName,
         range: Option<&VersionRange>,
         dev: bool,
+        optional: bool,
+        peer: bool,
+        exact: bool,
+        no_save: bool,
+        global: bool,
     ) -> MgResult<PackageId>;
 
     /// Update a package (or all packages if name is None)

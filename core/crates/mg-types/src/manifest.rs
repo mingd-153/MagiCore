@@ -75,4 +75,49 @@ impl Manifest {
     pub fn is_workspace(&self) -> bool {
         !self.workspace_members.is_empty()
     }
+
+    /// Add a dependency to the appropriate group based on flags.
+    /// Returns a mutable reference to the dep vector it was pushed to.
+    pub fn add_dep(&mut self, spec: DependencySpec, dev: bool, optional: bool, peer: bool) -> &mut Vec<DependencySpec> {
+        let target = if peer {
+            &mut self.peer_dependencies
+        } else if optional {
+            &mut self.optional_dependencies
+        } else if dev {
+            &mut self.dev_dependencies
+        } else {
+            &mut self.dependencies
+        };
+        target.push(spec);
+        target
+    }
+
+    /// Remove a dependency by name from ALL groups.
+    /// Returns true if anything was removed.
+    pub fn remove_dep(&mut self, name: &str) -> bool {
+        let old = self.total_deps();
+        self.dependencies.retain(|d| d.name.as_str() != name);
+        self.dev_dependencies.retain(|d| d.name.as_str() != name);
+        self.peer_dependencies.retain(|d| d.name.as_str() != name);
+        self.optional_dependencies.retain(|d| d.name.as_str() != name);
+        self.total_deps() < old
+    }
+
+    /// Count all dependencies across all groups.
+    pub fn total_deps(&self) -> usize {
+        self.dependencies.len()
+            + self.dev_dependencies.len()
+            + self.peer_dependencies.len()
+            + self.optional_dependencies.len()
+    }
+
+    /// Iterate over all named dependency groups with their label.
+    pub fn dep_groups(&self) -> Vec<(&'static str, &[DependencySpec])> {
+        vec![
+            ("dependencies", &self.dependencies),
+            ("devDependencies", &self.dev_dependencies),
+            ("peerDependencies", &self.peer_dependencies),
+            ("optionalDependencies", &self.optional_dependencies),
+        ]
+    }
 }

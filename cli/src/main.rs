@@ -201,8 +201,8 @@ async fn main() -> Result<()> {
         }
 
         // ── Single-core (bare) ────────────────────────────────
-        Some(Commands::Add { package, version, dev, global: _, exact: _, optional: _, peer: _, no_save: _ }) => {
-            commands::add::run(package, version, dev, core).await?;
+        Some(Commands::Add { package, version, dev, global, exact, optional, peer, no_save }) => {
+            commands::add::run(package, version, dev, exact, optional, peer, no_save, global, core).await?;
         }
         Some(Commands::Remove { package }) => {
             commands::remove::run(package, core).await?;
@@ -241,29 +241,29 @@ async fn main() -> Result<()> {
         }
 
         // ── add-<core> ─────────────────────────────────────────
-        Some(Commands::AddWeb { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("web")).await?;
+        Some(Commands::AddWeb { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("web")).await?;
         }
-        Some(Commands::AddGame { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("game")).await?;
+        Some(Commands::AddGame { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("game")).await?;
         }
-        Some(Commands::AddAi { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("ai")).await?;
+        Some(Commands::AddAi { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("ai")).await?;
         }
-        Some(Commands::AddClo { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("clo")).await?;
+        Some(Commands::AddClo { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("clo")).await?;
         }
-        Some(Commands::AddCicd { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("cicd")).await?;
+        Some(Commands::AddCicd { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("cicd")).await?;
         }
-        Some(Commands::AddIot { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("iot")).await?;
+        Some(Commands::AddIot { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("iot")).await?;
         }
-        Some(Commands::AddApp { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("app")).await?;
+        Some(Commands::AddApp { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("app")).await?;
         }
-        Some(Commands::AddLib { package, dev, .. }) => {
-            commands::add::run(package, None, dev, Some("lib")).await?;
+        Some(Commands::AddLib { package, dev, exact, optional, peer, no_save, global }) => {
+            commands::add::run(package, None, dev, exact, optional, peer, no_save, global, Some("lib")).await?;
         }
 
         // ── remove-<core> ──────────────────────────────────────

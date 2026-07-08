@@ -10,6 +10,7 @@ members = [
     "core/crates/mg-http",
     "core/crates/mg-config",
     "core/crates/mg-ui",
+    "core/crates/mg-adapter-base",
     "adapters/web",
     "cli",
 ]
@@ -33,6 +34,7 @@ mg-fetcher  = { path = "core/crates/mg-fetcher" }
 mg-http     = { path = "core/crates/mg-http" }
 mg-config   = { path = "core/crates/mg-config" }
 mg-ui       = { path = "core/crates/mg-ui" }
+mg-adapter-base = { path = "core/crates/mg-adapter-base" }
 
 # Async runtime
 tokio       = { version = "1.38", features = ["full"] }
