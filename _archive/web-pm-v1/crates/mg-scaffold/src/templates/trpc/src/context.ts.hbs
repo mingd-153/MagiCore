@@ -1,0 +1,8 @@
+import { inferAsyncReturnType } from '@trpc/server';
+import { CreateHTTPContextOptions } from '@trpc/server/adapters/standalone';
+
+export async function createContext(opts: CreateHTTPContextOptions) {
+  return {};
+}
+
+export type Context = inferAsyncReturnType<typeof createContext>;

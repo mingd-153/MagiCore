@@ -1,0 +1,10 @@
+import { z } from 'zod';
+
+export const createItemSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+});
+
+export type CreateItemDto = z.infer<typeof createItemSchema>;
+
+export { createItemSchema };

@@ -1,0 +1,42 @@
+[package]
+name = "mg-installer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mg-core = { path = "../mg-core" }
+mg-store = { path = "../mg-store" }
+mg-registry = { path = "../mg-registry" }
+mg-linker = { path = "../mg-linker" }
+mg-lockfile = { path = "../mg-lockfile" }
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+async-tar.workspace = true
+async-compression.workspace = true
+reqwest.workspace = true
+flume.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+crossbeam.workspace = true
+governor.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+base64.workspace = true
+tracing.workspace = true
+rusqlite.workspace = true
+tempfile.workspace = true
+dirs.workspace = true
+futures-util = "0.3"
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
