@@ -1,0 +1,43 @@
+[package]
+name = "mg-web-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Web ecosystem adapter for MegaGate"
+
+[dependencies]
+# Core crates
+mg-types = { workspace = true }
+mg-config = { workspace = true }
+mg-resolver = { workspace = true }
+mg-store = { workspace = true }
+mg-lockfile = { workspace = true }
+mg-fetcher = { workspace = true }
+mg-http = { workspace = true }
+mg-crypto = { workspace = true }
+mg-ui = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utilities
+semver = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+pretty_assertions = { workspace = true }
+
+[lints]
+workspace = true

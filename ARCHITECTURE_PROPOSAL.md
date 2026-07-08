@@ -1,25 +1,26 @@
-# MegaGate - New Folder Structure Proposal
-**Date**: 2026-07-07  
-**Status**: PROPOSAL - Pending User Approval  
-**Based on**: RESEARCH_REPORT.md findings
+# MegaGate - Architecture Proposal (v2)
+**Date**: 2026-07-08  
+**Status**: DESIGN - Approved vision  
+**Based on**: RESEARCH_REPORT.md findings + Competitive Analysis + User Discussion
 
 ---
 
 ## 1. EXECUTIVE SUMMARY
 
-### Current Problems
-- ❌ `/web/mg/` isolated, không share code
-- ❌ `sdk/`, `templates/`, `apps/` trống
-- ❌ CORE.md outdated
-- ❌ Folder structure lung tung
+### Current State
+- ❌ `/web/mg/` was isolated → now archived to `_archive/web-pm-v1/` (kept for reference)
+- ❌ Old adapters had no structure → new 3-tier system (native/delegate/compiler)
+- ❌ CLI had no wizard → new interactive `mg init` with per-core decision trees
+- ❌ No scaffolding → new `cli/src/scaffold/` template processor
 
 ### Proposed Solution
 ```
-✅ Unified Rust core (`core/`) - 80% code reuse
-✅ Ecosystem adapters (`adapters/`) - 20% custom
-✅ Unified CLI (`cli/`) - mg init, mg create-*
-✅ Clean templates (`templates/`) - scaffolding
-✅ Move `/web/mg/` → `_archive/web-pm-v1/` (keep for reference)
+✅ Unified Rust core (`core/`) — 80% code reuse
+✅ 3-tier adapters (`adapters/`) — Native / Delegate / Compiler
+✅ Unified CLI (`cli/`) — mg init (wizard) + mg install/add/remove/...
+✅ Per-core wizard (`cli/src/wizard/`) — each core defines its decision tree
+✅ Clean templates (`templates/`) — scaffolding for ALL ecosystems
+✅ `/web/mg/` archived → `_archive/web-pm-v1/` (40k lines preserved)
 ```
 
 ---
@@ -53,10 +54,18 @@ MegaGate/                                # 🏠 Root
 │   ├── web/                             # Web PM (npm, pnpm compatibility)
 │   │   ├── Cargo.toml
 │   │   ├── src/
-│   │   │   ├── npm_registry.rs          # npm registry client
-│   │   │   ├── package_json.rs          # package.json parser
-│   │   │   ├── node_modules.rs          # node_modules linker
-│   │   │   └── lib.rs                   # Web adapter trait impl
+│   │   ├── lib.rs                   # Web adapter (auto-detect + dispatch)
+│   │   ├── native/                  # 🟢 Rust-native (npm)
+│   │   │   ├── npm_registry.rs      # npm registry client
+│   │   │   ├── resolver.rs          # PubGrub resolver
+│   │   │   └── node_modules.rs      # smart linker
+│   │   ├── delegate/                # 🟡 Wraps existing PMs
+│   │   │   ├── composer.rs          # PHP/Composer
+│   │   │   ├── maven.rs             # Java/Maven
+│   │   │   └── go_mod.rs            # Go modules
+│   │   ├── compiler/                # 🔵 Build pipelines
+│   │   │   ├── vite.rs              # Vite bundler
+│   │   │   └── next.rs              # Next.js build
 │   │   └── tests/
 │   │
 │   ├── game/                            # Game engines adapter
@@ -106,20 +115,25 @@ MegaGate/                                # 🏠 Root
 │   ├── src/
 │   │   ├── main.rs                      # Entry point (clap CLI)
 │   │   ├── commands/
-│   │   │   ├── init.rs                  # mg init (interactive)
-│   │   │   ├── create.rs                # mg create-<core>
+│   │   │   ├── init.rs                  # mg init (wizard orchestrator)
 │   │   │   ├── install.rs               # mg install
-│   │   │   ├── update.rs                # mg update
-
-│   │   │   ├── add.rs                    # mg add <pkg>
+│   │   │   ├── add.rs                   # mg add <pkg>
 │   │   │   ├── remove.rs                # mg remove <pkg>
+│   │   │   ├── update.rs                # mg update
 │   │   │   ├── list.rs                  # mg list
-│   │   │   ├── audit.rs                 # mg audit
-│   │   │   └── ui.rs                    # mg ui (TUI dashboard)
-│   │   ├── adapter_loader.rs            # Dynamic adapter loading
-│   │   ├── detector.rs                  # Auto-detect project type
-│   │   └── config.rs                    # CLI config
-│   └── tests/
+│   │   │   ├── info.rs                  # mg info <pkg>
+│   │   │   └── search.rs                # mg search <query>
+│   │   ├── wizard/                      # 🧙 Interactive project wizard
+│   │   │   ├── mod.rs                   # Module exports
+│   │   │   ├── engine.rs                # Generic TUI flow engine
+│   │   │   ├── web.rs                   # Web core decision tree
+│   │   │   ├── game.rs                  # Game core (future)
+│   │   │   ├── ai.rs                    # AI core (future)
+│   │   │   ├── cloud.rs                 # Cloud core (future)
+│   │   │   └── iot.rs                   # IoT core (future)
+│   │   └── scaffold/                    # 🏗 Project scaffolding
+│   │       ├── mod.rs
+│   │       └── processor.rs             # Template processing + file gen
 │
 ├── templates/                           # 📁 Project Scaffolding Templates
 │   ├── web/
@@ -294,106 +308,109 @@ rm -rf sdk/ apps/ packages/ bindings/ memanto/ proto/
 ### Commands Tree
 ```
 mg
-├── init                                 # Interactive project creation
-│   └── [prompts]
-│       ├── What do you want to build?
-│       │   ├── 🌐 Web application
-│       │   ├── 🎮 Game
-│       │   ├── 🤖 AI agent
-│       │   ├── ☁️  Cloud infrastructure
-│       │   ├── 🔌 IoT device
-│       │   └── 📦 Library
-│       ├── Framework/Engine?
-│       │   (conditional based on choice)
-│       ├── Project name?
-│       └── Additional features? (--flag options)
-│
-├── create-web <name>                    # Direct web project creation
-│   ├── --template <vanilla|react|next|vue|svelte>
-│   ├── --ts                             # TypeScript
-│   └── --tailwind                       # Tailwind CSS
-│
-├── create-game <name>
-│   ├── --engine <bevy|unity|unreal|godot>
-│   └── --template <2d|3d|vr>
-│
-├── create-ai <name>
-│   ├── --framework <langchain|autogen|crewai>
-│   └── --model <gpt4|claude|llama>
-│
-├── create-cloud <name>
-│   ├── --platform <aws|gcp|azure>
-│   └── --tool <pulumi|terraform|cdk>
-│
-├── create-iot <name>
-│   ├── --board <esp32|stm32|rpi|arduino>
-│   └── --rtos <zephyr|freertos|none>
-│
-├── create-lib <name>
-│   └── --lang <rust|typescript|python>
-│
+├── init                                 # Interactive wizard (entry point)
 ├── install [dir]                        # Install dependencies
 ├── add <pkg> [--dev]                    # Add dependency
 ├── update [pkg]                         # Update dependencies
 ├── remove <pkg>                         # Remove dependency
 ├── list [--tree] [--depth N]            # List dependencies
-├── audit                                # Security audit
+├── info <pkg>                           # Package info
+├── search <query>                       # Search packages
 ├── ui                                   # Launch TUI dashboard
 └── --version                            # Show version
 ```
 
+### `mg init` — Web Core Decision Tree (Full)
 
-### `mg init` Interactive Flow
 ```
-┌─────────────────────────────────────────────┐
-│  🚀 Welcome to MegaGate!                    │
-│                                             │
-│  What do you want to build today?          │
-│                                             │
-│  ❯ 🌐 Web application                       │
-│    🎮 Game                                  │
-│    🤖 AI agent/tool                         │
-│    ☁️  Cloud infrastructure                 │
-│    🔌 IoT/Embedded device                   │
-│    📦 Library/Package                       │
-└─────────────────────────────────────────────┘
+mg init
+  └── 🌐 Web
+       └── Type?
+            ├── Frontend
+            │    └── Framework?
+            │         ├── Next.js
+            │         ├── React + Vite
+            │         ├── Vue + Vite
+            │         ├── Nuxt
+            │         ├── SvelteKit
+            │         ├── Angular
+            │         ├── Solid.js
+            │         ├── Qwik
+            │         ├── Vanilla (HTML + TS)
+            │         └── Astro
+            │
+            ├── Backend
+            │    └── Language?
+            │         ├── Node.js / TS
+            │         │    └── Express / Fastify / NestJS / Hono / tRPC
+            │         ├── PHP
+            │         │    └── Laravel / Symfony
+            │         ├── Java
+            │         │    └── Spring Boot / Quarkus
+            │         ├── Go
+            │         │    └── Gin / Echo / Fiber
+            │         ├── Python
+            │         │    └── FastAPI / Django / Flask
+            │         └── Rust
+            │              └── Axum / Actix-Web
+            │
+            ├── Fullstack
+            │    └── Stack?
+            │         ├── Next.js (FE+BE all-in-one)
+            │         ├── Nuxt (FE+BE all-in-one)
+            │         ├── SvelteKit (FE+BE all-in-one)
+            │         ├── Remix (FE+BE all-in-one)
+            │         ├── React + Fastify (separate)
+            │         ├── Vue + Laravel (separate)
+            │         └── Custom (pick your own)
+            │
+            └── Monorepo
+                 ├── FE framework?
+                 │    ├── Next.js / React / Vue / SvelteKit / Vanilla
+                 └── BE framework?
+                      ├── NestJS / Express / Fastify / Laravel
+                      ├── Spring Boot / Gin / FastAPI / Axum
+                      └──
 
-[User selects "Web application"]
+=== After framework selection ===
 
-┌─────────────────────────────────────────────┐
-│  Select a web framework:                    │
-│                                             │
-│  ❯ Vanilla (HTML + TS + CSS)                │
-│    React + Vite                             │
-│    Next.js 15 (App Router)                  │
-│    Vue 3 + Vite                             │
-│    SvelteKit                                │
-└─────────────────────────────────────────────┘
+            └── Project name?
+            │    [my-app]
+            └── Features?
+                 ├─ [1] Use default settings (recommended)
+                 └─ [2] Customize per framework
+                      ├── FE: TypeScript, Tailwind, ESLint, Vitest...
+                      └── BE: TypeScript, Prisma, Jest, Swagger...
 
-[User selects "React + Vite"]
+            └── ✅ Generating...
+                 ├── mg scaffold (copy templates + replace vars)
+                 ├── mg install (run appropriate adapter)
+                 └── Done!
+```
 
-┌─────────────────────────────────────────────┐
-│  Project name: ______                       │
-└─────────────────────────────────────────────┘
+### Architecture: Wizard Engine (`cli/src/wizard/`)
 
-[User enters "my-awesome-app"]
+```
+wizard/
+├── mod.rs            # Module exports
+├── engine.rs         # WizardEngine — generic TUI flow
+│   ├── Question enum (Select / MultiSelect / Input)
+│   ├── Answer struct (value + next_questions)
+│   └── run_question() — renders via dialoguer/ratatui
+│
+├── web.rs            # WebWizard — Web core decision tree
+│   └── build_tree() → Question tree with ALL frameworks
+│
+├── game.rs           # GameWizard (future)
+├── ai.rs             # AiWizard (future)
+├── cloud.rs          # CloudWizard (future)
+└── iot.rs            # IotWizard (future)
+```
 
-┌─────────────────────────────────────────────┐
-│  Additional features:                       │
-│                                             │
-│  ☑ TypeScript (recommended)                 │
-│  ☐ Tailwind CSS                             │
-│  ☐ ESLint + Prettier                        │
-│  ☐ Vitest (unit tests)                      │
-│  ☐ Playwright (e2e tests)                   │
-└─────────────────────────────────────────────┘
-
-[User selects TypeScript + Tailwind]
-
-✨ Creating my-awesome-app...
-  📦 Copying template...
-  📝 Writing package.json...
-  🎨 Setting up Tailwind CSS...
+Each core wizard:
+- Defines its own decision tree (frameworks, features, templates)
+- Returns `ScaffoldConfig` after completion
+- Uses shared `WizardEngine` for TUI rendering
   🔧 Installing dependencies...
   ✅ Done in 2.3s!
 
@@ -504,7 +521,30 @@ jobs:
 
 ---
 
-## 7. ADAPTER TRAIT DESIGN
+## 7. ADAPTER TRAIT DESIGN + 3-TIER SYSTEM
+
+### 3 Adapter Modes
+
+MegaGate supports 3 adapter modes depending on the ecosystem:
+
+| Mode | Approach | Rust resolver? | Use Case | Examples |
+|------|----------|----------------|----------|----------|
+| 🟢 **Native** | Rust tự implement | ✅ Yes | Làm tốt hơn PM hiện tại | npm, PyPI, Cargo |
+| 🟡 **Delegate** | Wrap tool gốc | ❌ No (gọi binary) | Hợp nhất CLI, không thay thế | composer, maven, go mod |
+| 🔵 **Compiler** | Build pipeline | ❌ No (gọi build tool) | Build/bundle/optimize | vite build, next build, tsc |
+
+```rust
+/// Adapter mode — determines how the adapter operates
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdapterMode {
+    /// Rust-native: tự resolve, fetch, store, link
+    Native,
+    /// Delegate: wrap existing package manager binary
+    Delegate { binary: String, manifest: String },
+    /// Compiler: build/bundle pipeline
+    Compiler { build_system: BuildSystem },
+}
+```
 
 ### Core Trait (`core/crates/mg-types/src/adapter.rs`)
 ```rust
@@ -515,6 +555,9 @@ use std::path::Path;
 pub trait PackageAdapter: Send + Sync {
     /// Adapter name (e.g., "web", "game", "ai")
     fn name(&self) -> &str;
+    
+    /// Adapter mode
+    fn mode(&self) -> AdapterMode;
     
     /// Detect if this adapter can handle the project
     fn can_handle(&self, project_root: &Path) -> bool;
@@ -544,6 +587,55 @@ pub trait PackageAdapter: Send + Sync {
     async fn audit(&self) -> Result<AuditReport>;
 }
 ```
+
+### Native vs Delegate — Ví dụ Code
+
+**Native (npm/JS):**
+```rust
+impl PackageAdapter for WebJsAdapter {
+    fn mode(&self) -> AdapterMode { AdapterMode::Native }
+    
+    async fn resolve(&self, deps: &[Dep]) -> Result<ResolvedGraph> {
+        // PubGrub algorithm — tự viết, NHANH hơn npm
+        self.resolver.solve(deps).await
+    }
+}
+```
+
+**Delegate (PHP/Composer):**
+```rust
+impl PackageAdapter for WebPhpAdapter {
+    fn mode(&self) -> AdapterMode { 
+        AdapterMode::Delegate { 
+            binary: "composer".into(), 
+            manifest: "composer.json".into() 
+        }
+    }
+    
+    async fn install(&self) -> Result<()> {
+        // Gọi composer install, parse output
+        Command::new("composer")
+            .arg("install")
+            .arg("--no-interaction")
+            .output()?;
+        // Parse composer.lock → mg.lock
+        self.sync_lockfile().await
+    }
+}
+```
+
+### Ecosystem-Specific Languages
+
+Mỗi core dùng ngôn ngữ phù hợp với ecosystem của nó:
+
+| Core | Engine/CLI | Templates | Rationale |
+|------|-----------|-----------|-----------|
+| **Web** | Rust + Zig + C | JS/TS, PHP, Java, Go, Python, Rust | Tối ưu speed cho npm; delegate cho phần còn lại |
+| **Game** | Rust core | C++, C# | Unity = C#, Unreal = C++, Bevy = Rust |
+| **AI** | Rust (CLI) + Python (runtime) | Python | uv model: CLI nhanh, runtime Python |
+| **Cloud** | Rust core | TypeScript, Go | Pulumi multi-lang, Terraform Go |
+| **App** | Rust core | Kotlin, Swift, Dart, TS | Platform-native mobile |
+| **IoT** | Rust core | Rust, C | Embedded-first, `no_std` |
 
 ### Example: Web Adapter Implementation
 ```rust
