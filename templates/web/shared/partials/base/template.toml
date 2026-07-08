@@ -1,0 +1,18 @@
+[[files]]
+source = "README.md"
+target = "README.md"
+required_context = ["project_name", "mode", "frameworks", "template"]
+
+[[files]]
+source = "gitignore"
+target = ".gitignore"
+
+[[files]]
+source = "mg.lock"
+target = "mg.lock"
+required_context = ["mode", "frameworks"]
+
+[[files]]
+source = "web.toml"
+target = ".megagate/web.toml"
+required_context = ["mode", "frameworks", "template", "features"]

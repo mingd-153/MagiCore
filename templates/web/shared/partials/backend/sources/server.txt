@@ -1,0 +1,3 @@
+MegaGate backend scaffold
+language={{backend_language}}
+framework={{backend_framework}}
