@@ -1,3 +1,8 @@
+//! mg-resolver — dependency resolution engine.
+//!
+//! Provides a `Resolver` with batch pipeline: prefetch → queue → resolve.
+//! Errors from registry/providers are propagated to callers (no silent skips).
+
 pub mod cache;
 pub mod graph;
 pub mod solver;
@@ -6,13 +11,15 @@ pub mod version;
 pub use cache::RegistryCache;
 pub use graph::DependencyGraph;
 pub use solver::{
-    check_dependency_confusion, DepInfo, DependencyProvider, ResolvedDep, Resolution, Resolver,
-    SolveError, SolveResult,
+    check_dependency_confusion, DepInfo, DependencyError, DependencyProvider, ResolvedDep,
+    Resolution, Resolver, SolveError, SolveResult,
 };
 pub use version::VersionSet;
 
 pub use solver::pubgrub::{Cause, DerivationTree, Incompatibility, PubGrubSolver, Term};
 
+/// Generic resolution error wrapping a human-readable message.
+/// Converted from `SolveError`, network errors, or string literals.
 #[derive(Debug, Clone)]
 pub struct ResolveError(String);
 
