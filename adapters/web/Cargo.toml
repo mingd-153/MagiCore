@@ -10,6 +10,7 @@ description = "Web ecosystem adapter for MegaGate"
 [dependencies]
 # Core crates
 mg-types = { workspace = true }
+mg-adapter-base = { workspace = true }
 mg-config = { workspace = true }
 mg-resolver = { workspace = true }
 mg-store = { workspace = true }

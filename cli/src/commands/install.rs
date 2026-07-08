@@ -14,7 +14,7 @@ pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
             tokio::time::sleep(Duration::from_millis(200)).await;
 
             let name = mg_types::PackageName::new(pkg)?;
-            adapter.add(ctx.root(), &name, None, false).await?;
+            adapter.add(ctx.root(), &name, None, false, false, false, false, false, false).await?;
             spinner.finish_and_clear();
         }
     }
