@@ -1,0 +1,12 @@
+import { createHTTPServer } from '@trpc/server/adapters/standalone';
+import { appRouter } from './routers/_app';
+import { createContext } from './context';
+
+const PORT = parseInt(process.env.PORT || '3000', 10);
+
+createHTTPServer({
+  router: appRouter,
+  createContext,
+}).listen(PORT);
+
+console.log(`tRPC server running on http://localhost:${PORT}`);

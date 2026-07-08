@@ -1,0 +1,26 @@
+import { z } from 'zod';
+import { router, publicProcedure } from '../trpc';
+
+interface Item {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+const items: Item[] = [];
+
+export const itemsRouter = router({
+  list: publicProcedure.query(() => ({ data: items })),
+  byId: publicProcedure.input(z.string()).query(({ input }) => {
+    const item = items.find((i) => i.id === input);
+    if (!item) return { error: 'Item not found' };
+    return { data: item };
+  }),
+  create: publicProcedure
+    .input(z.object({ name: z.string().min(1), description: z.string().optional() }))
+    .mutation(({ input }) => {
+      const item: Item = { id: String(items.length + 1), ...input };
+      items.push(item);
+      return { data: item };
+    }),
+});

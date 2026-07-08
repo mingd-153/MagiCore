@@ -1,0 +1,35 @@
+[package]
+name = "mg-resolver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mg-core = { path = "../mg-core" }
+mg-store = { path = "../mg-store" }
+mg-registry = { path = "../mg-registry" }
+mg-workspace = { path = "../mg-workspace" }
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+flume.workspace = true
+crossbeam.workspace = true
+hex.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+
+# PubGrub - vendored source (not external dep)
+# We'll copy pubgrub-rs source into this crate
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
