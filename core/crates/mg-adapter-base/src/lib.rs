@@ -22,7 +22,21 @@ pub struct AddOptions {
 /// BaseAdapter — default implementations for add/remove/list/update.
 ///
 /// Each ecosystem adapter must implement both `PackageAdapter` and `BaseAdapter`.
-/// Blaket impl is not possible in Rust without newtype, so call base_* explicitly.
+/// A blanket impl (`impl<T> BaseAdapter for T where T: PackageAdapter`) is not
+/// possible because Rust's orphan rules prevent adding foreign trait methods
+/// to foreign types. So each adapter explicitly calls self.base_*() in their
+/// PackageAdapter impls.
+///
+/// #  Lifecycle
+///    base_add  = parse_manifest → mutate → write_manifest (no fs lock yet)
+///    base_remove = parse_manifest → mutate → write_manifest
+///    base_list = parse_manifest → read-only
+///    base_update = placeholder (returns empty)
+///
+/// #  TOCTOU warning
+///   These methods are NOT atomic. Concurrent `mg add` + `mg remove` on the
+///   same project will race on read-modify-write. A file-level advisory lock
+///   (.megagate/.lock) is planned but not yet implemented.
 #[async_trait]
 pub trait BaseAdapter: PackageAdapter + Send + Sync {
     fn normalize_range(range: Option<&VersionRange>, exact: bool) -> Option<VersionRange> {
@@ -67,9 +81,13 @@ pub trait BaseAdapter: PackageAdapter + Send + Sync {
     async fn base_list(&self, project_root: &Path) -> Result<Vec<InstalledPackage>, mg_types::error::MgError> {
         let manifest = self.parse_manifest(project_root).await?;
         let mut packages = Vec::new();
-        for (_, deps) in manifest.dep_groups() {
-            let is_dev = deps.as_ptr() == manifest.dev_dependencies.as_ptr();
+        // Use the group label string to detect dev deps — NOT pointer comparison
+        // (as_ptr() on empty Vecs may alias in Rust, causing false positives).
+        for (label, deps) in manifest.dep_groups() {
+            let is_dev = label == "devDependencies";
             for dep in deps {
+                // HARDCODED path: assumes node_modules layout (web-only).
+                // TODO: Make install dir configurable per adapter in BaseAdapter trait.
                 packages.push(InstalledPackage {
                     id: PackageId::new(dep.name.clone(), Version::new(0, 0, 0)),
                     path: project_root.join("node_modules").join(dep.name.as_str()),

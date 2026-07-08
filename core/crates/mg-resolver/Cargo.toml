@@ -30,6 +30,11 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+criterion = { workspace = true, features = ["async_tokio"] }
+
+[[bench]]
+name = "resolver_bench"
+harness = false
 
 [lints]
 workspace = true

@@ -152,8 +152,10 @@ pub struct InstallSummary {
 }
 
 impl InstallSummary {
+    /// Total packages affected (added + updated + unchanged + removed).
+    /// Includes `removed` so callers get a complete picture of install impact.
     pub fn total(&self) -> usize {
-        self.added.len() + self.updated.len() + self.unchanged
+        self.added.len() + self.updated.len() + self.unchanged + self.removed.len()
     }
     pub fn cache_hit_rate(&self) -> f64 {
         let total = self.bytes_downloaded + self.bytes_from_cache;

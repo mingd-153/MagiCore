@@ -127,6 +127,7 @@ cc = "1.0"
 proptest         = "1.4"
 rstest           = "0.18"
 pretty_assertions = "1.4"
+criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile_macro   = "0.1"
 
 [workspace.lints.rust]
