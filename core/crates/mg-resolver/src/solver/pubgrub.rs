@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use mg_types::{PackageName, Version};
 use crate::version::VersionSet;
+use mg_types::{PackageName, Version};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Term {
@@ -130,7 +130,8 @@ impl PubGrubSolver {
             match term {
                 Term::Positive(name, vs) => Some(Decision::Assigned(
                     name.clone(),
-                    vs.satisfying_version().unwrap_or_else(|| Version::new(0, 0, 0)),
+                    vs.satisfying_version()
+                        .unwrap_or_else(|| Version::new(0, 0, 0)),
                     vs.clone(),
                 )),
                 Term::Negative(name, _vs) => Some(Decision::Backtracked(name.clone())),
@@ -144,7 +145,8 @@ impl PubGrubSolver {
         match decision {
             Decision::Assigned(name, version, vs) => {
                 self.decisions.insert(name.clone(), version.clone());
-                self.assignment.push((name.clone(), version.clone(), vs.clone()));
+                self.assignment
+                    .push((name.clone(), version.clone(), vs.clone()));
                 self.decision_level += 1;
             }
             Decision::Backtracked(name) => {
@@ -160,9 +162,10 @@ impl PubGrubSolver {
         wanted: &[(PackageName, VersionSet)],
     ) -> Result<HashMap<PackageName, Version>, SolveError> {
         for (name, vs) in wanted {
-            self.add_incompatibility(Incompatibility::new(vec![
-                Term::Positive(name.clone(), vs.clone()),
-            ]));
+            self.add_incompatibility(Incompatibility::new(vec![Term::Positive(
+                name.clone(),
+                vs.clone(),
+            )]));
         }
 
         self.propagate()?;
@@ -187,7 +190,9 @@ impl PubGrubSolver {
     }
 
     fn is_complete(&self, wanted: &[(PackageName, VersionSet)]) -> bool {
-        wanted.iter().all(|(name, _)| self.decisions.contains_key(name))
+        wanted
+            .iter()
+            .all(|(name, _)| self.decisions.contains_key(name))
     }
 
     fn choose_package(&self, wanted: &[(PackageName, VersionSet)]) -> Result<Decision, SolveError> {
@@ -246,16 +251,25 @@ impl std::fmt::Display for DerivationTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DerivationTree::Root(children) => {
-                for child in children { writeln!(f, "  {child}")?; }
+                for child in children {
+                    writeln!(f, "  {child}")?;
+                }
                 Ok(())
             }
-            DerivationTree::Dependency { package, version, dep } => {
+            DerivationTree::Dependency {
+                package,
+                version,
+                dep,
+            } => {
                 write!(f, "{package}@{version} depends on {dep}")
             }
             DerivationTree::Conflict { left, right } => {
                 write!(f, "conflict: {left} vs {right}")
             }
-            DerivationTree::NoVersion { package, constraint } => {
+            DerivationTree::NoVersion {
+                package,
+                constraint,
+            } => {
                 write!(f, "no version of {package} satisfies {constraint}")
             }
         }
@@ -284,9 +298,10 @@ mod tests {
     fn test_incompatibility() {
         let inc = Incompatibility::new(vec![
             Term::Positive(PackageName::new("react").unwrap(), VersionSet::any()),
-            Term::Negative(PackageName::new("react").unwrap(), VersionSet::range(
-                mg_types::VersionRange::parse("^18.0.0").unwrap(),
-            )),
+            Term::Negative(
+                PackageName::new("react").unwrap(),
+                VersionSet::range(mg_types::VersionRange::parse("^18.0.0").unwrap()),
+            ),
         ]);
         assert_eq!(inc.terms.len(), 2);
     }

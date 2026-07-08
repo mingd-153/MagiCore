@@ -1,25 +1,28 @@
-use anyhow::Result;
-use mg_ui::{print_banner, section, print_next_steps};
-use crate::wizard::engine::{ScaffoldConfig, Question, QuestionKind, Answer, WizardEngine};
-use crate::wizard::web::WebWizard;
-use crate::scaffold::Scaffolder;
 use crate::factory;
+use crate::scaffold::Scaffolder;
+use crate::wizard::engine::{Answer, Question, QuestionKind, ScaffoldConfig, WizardEngine};
+use crate::wizard::web::WebWizard;
+use anyhow::Result;
 use mg_config::project::ProjectConfig;
+use mg_ui::{print_banner, print_next_steps, section};
 
 /// mg init — interactive project wizard
 pub async fn run(template: Option<String>) -> Result<()> {
     print_banner();
 
     if let Some(t) = template {
+        let project_name = ask_project_name();
         let config = ScaffoldConfig {
             core: t.clone(),
             sub_type: String::new(),
             frameworks: vec![],
-            project_name: String::new(),
+            project_name,
             features: vec![],
             template_dir: std::path::PathBuf::new(),
         };
-        Scaffolder::scaffold(&config)?;
+        let project_dir = Scaffolder::scaffold(&config)?;
+        let proj_config = ProjectConfig::new(Scaffolder::display_name(&project_dir), &config.core);
+        proj_config.save(&project_dir)?;
         return Ok(());
     }
 
@@ -45,11 +48,9 @@ pub async fn run(template: Option<String>) -> Result<()> {
 
     // Step 4: Scaffold + save .megagate config
     section("Creating project...", 4, 4);
-    Scaffolder::scaffold(&config)?;
+    let project_dir = Scaffolder::scaffold(&config)?;
 
-    let cwd = std::env::current_dir()?;
-    let project_dir = cwd.join(&config.project_name);
-    let proj_config = ProjectConfig::new(&config.project_name, &config.core);
+    let proj_config = ProjectConfig::new(Scaffolder::display_name(&project_dir), &config.core);
     proj_config.save(&project_dir)?;
 
     print_next_steps(&config.project_name);
@@ -68,7 +69,8 @@ fn pick_core() -> String {
         return avail[0].0.to_string();
     }
 
-    let options: Vec<Answer> = avail.iter()
+    let options: Vec<Answer> = avail
+        .iter()
         .map(|(short, label)| Answer::new(label, short))
         .collect();
 
@@ -109,13 +111,12 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>) {
 }
 
 fn ask_project_name() -> String {
-    mg_ui::prompt::input("Project name:")
-        .unwrap_or_else(|_| "my-project".to_string())
+    mg_ui::prompt::input("Project name:").unwrap_or_else(|_| "my-project".to_string())
 }
 
 fn ask_web_features() -> Vec<Answer> {
-    let use_defaults = mg_ui::prompt::confirm("Use default settings for this framework?")
-        .unwrap_or(true);
+    let use_defaults =
+        mg_ui::prompt::confirm("Use default settings for this framework?").unwrap_or(true);
 
     if use_defaults {
         vec![

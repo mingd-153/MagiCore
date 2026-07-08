@@ -8,33 +8,13 @@ authors.workspace = true
 description = "Dependency resolver for MegaGate"
 
 [dependencies]
-mg-types = { workspace = true }
-
-# Semver
-semver = { workspace = true }
-
-# Serialization
-serde = { workspace = true }
-serde_json = { workspace = true }
-
-# Concurrency
-dashmap = { workspace = true }
-
-# Error handling
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-
-# Async
-tokio = { workspace = true }
 async-trait = { workspace = true }
+dashmap = { workspace = true }
+mg-types = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-criterion = { workspace = true, features = ["async_tokio"] }
-
-[[bench]]
-name = "resolver_bench"
-harness = false
+tokio = { workspace = true }
 
 [lints]
 workspace = true
