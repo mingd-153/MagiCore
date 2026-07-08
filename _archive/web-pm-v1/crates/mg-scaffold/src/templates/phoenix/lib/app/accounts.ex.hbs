@@ -1,0 +1,15 @@
+defmodule {{pascalCase name}}.Accounts do
+  import Ecto.Query, warn: false
+  alias {{pascalCase name}}.Repo
+  alias {{pascalCase name}}.Accounts.Item
+
+  def list_items, do: Repo.all(Item)
+
+  def get_item(id), do: Repo.get(Item, id)
+
+  def create_item(attrs) do
+    %Item{}
+    |> Item.changeset(attrs)
+    |> Repo.insert()
+  end
+end
