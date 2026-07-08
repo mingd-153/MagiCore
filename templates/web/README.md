@@ -275,27 +275,28 @@ Use wizard output values as the canonical template IDs:
 
 If product naming needs a nicer label, keep that in the wizard label only. Folder names should stay stable and machine-oriented.
 
-## Template Contract
+## Template Compiler Contract
 
-Each template directory should eventually support:
+`mg/web` should use a Rust template compiler, not a generic text-template engine.
 
-- base files
-- optional feature flags
-- placeholders such as `{{project_name}}`
-- optional shared partial imports
-- metadata describing:
-    - mode
-    - framework
-    - language
-    - supported features
-    - compatibility notes
+The compiler contract for each template layer is:
+
+- `template.toml` defines the layer manifest
+- `sources/` stores source files
+- Rust validates:
+  - manifest shape
+  - source existence
+  - output target collisions inside a layer
+  - declared context keys
+  - actual token usage in source files
+- materialization fails early if the contract is broken
 
 Suggested files per template:
 
 ```text
-template.toml           # metadata for scaffold processor
-files/                  # actual scaffold files
-partials/               # optional local partials
+template.toml           # typed layer manifest consumed by Rust
+sources/                # source files compiled by Rust into output files
+partials/               # optional local sub-layers later
 hooks/                  # optional generation hooks later
 ```
 
@@ -323,8 +324,8 @@ Example:
 ```text
 templates/web/frontend/react-vite/
 ├── template.toml
-└── files/
-    ├── package.json.tmpl
+└── sources/
+    ├── package.json
     ├── index.html
     └── src/main.tsx
 ```
@@ -334,10 +335,8 @@ Monorepo example:
 ```text
 templates/web/monorepo/base/
 ├── template.toml
-└── files/
-    ├── apps/frontend/
-    ├── apps/backend/
-    └── packages/
+└── sources/
+    └── megagate.workspace.toml
 ```
 
 ## Vanilla Support

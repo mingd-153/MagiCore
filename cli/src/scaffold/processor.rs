@@ -1,4 +1,6 @@
 use anyhow::Result;
+use serde::Deserialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::wizard::engine::ScaffoldConfig;
@@ -114,6 +116,10 @@ impl Scaffolder {
     }
 
     fn write_common_files(target: &Path, config: &ScaffoldConfig) -> Result<()> {
+        if config.core == "web" {
+            return Ok(());
+        }
+
         let name = Self::display_name(target);
         let framework = Self::framework(config);
 
@@ -149,20 +155,11 @@ impl Scaffolder {
     fn write_web_files(
         target: &Path,
         config: &ScaffoldConfig,
-        name: &str,
-        framework: &str,
+        _name: &str,
+        _framework: &str,
     ) -> Result<()> {
-        let template_dir = Self::resolve_web_template_dir(config)?;
-        Self::write_web_manifest(target, config, &template_dir)?;
-        Self::materialize_web_skeleton(target, config)?;
-
-        match config.sub_type.as_str() {
-            "frontend" => Self::write_web_frontend_placeholder(target, name, framework),
-            "backend" => Self::write_web_backend_placeholder(target, name, framework),
-            "fullstack" => Self::write_web_fullstack_placeholder(target, name, framework),
-            "monorepo" => Self::write_web_monorepo_placeholder(target, name, config),
-            _ => Self::write_web_frontend_placeholder(target, name, framework),
-        }
+        let layers = Self::resolve_web_template_layers(config)?;
+        Self::materialize_web_templates(target, config, &layers)
     }
 
     fn write_game_files(target: &Path, name: &str, framework: &str) -> Result<()> {
@@ -459,12 +456,22 @@ impl Scaffolder {
 
         let root = Self::web_templates_root();
         let framework = Self::framework(config);
+        let mode = effective_web_mode(config);
 
-        let dir = match config.sub_type.as_str() {
+        let dir = match mode.as_str() {
             "frontend" => root.join("frontend").join(framework),
             "backend" => {
-                let language = config.frameworks.first().cloned().unwrap_or_default();
-                let backend_framework = config.frameworks.get(1).cloned().unwrap_or_default();
+                let (language, backend_framework) = if config.frameworks.len() >= 2 {
+                    (
+                        config.frameworks.first().cloned().unwrap_or_default(),
+                        config.frameworks.get(1).cloned().unwrap_or_default(),
+                    )
+                } else {
+                    (
+                        infer_backend_language(&framework).unwrap_or_default().to_string(),
+                        framework.clone(),
+                    )
+                };
                 root.join("backend").join(language).join(backend_framework)
             }
             "fullstack" => {
@@ -486,123 +493,269 @@ impl Scaffolder {
         Ok(dir)
     }
 
-    fn write_web_manifest(
-        target: &Path,
-        config: &ScaffoldConfig,
-        template_dir: &Path,
-    ) -> Result<()> {
-        let template_display = template_dir
-            .strip_prefix(Self::workspace_root())
-            .unwrap_or(template_dir)
-            .display()
-            .to_string();
-        let manifest = format!(
-            "mode = \"{}\"\nframeworks = [{}]\ntemplate = \"{}\"\nfeatures = [{}]\n",
-            config.sub_type,
-            quoted_list(&config.frameworks),
-            template_display,
-            quoted_list(&config.features),
-        );
-        Self::write_file(&target.join(".megagate").join("web.toml"), &manifest)
+    fn resolve_web_template_layers(config: &ScaffoldConfig) -> Result<Vec<PathBuf>> {
+        let root = Self::web_templates_root();
+        let mode = effective_web_mode(config);
+        let mut layers = vec![
+            root.join("shared").join("partials").join("base"),
+            root.join("shared").join("partials").join(mode.as_str()),
+        ];
+
+        match mode.as_str() {
+            "frontend" | "backend" | "fullstack" => {
+                layers.push(Self::resolve_web_template_dir(config)?);
+            }
+            "monorepo" => {
+                let frontend = config.frameworks.first().cloned().unwrap_or_default();
+                let backend = config.frameworks.get(1).cloned().unwrap_or_default();
+                let backend_language = infer_backend_language(&backend)
+                    .ok_or_else(|| anyhow::anyhow!("Unsupported monorepo backend '{backend}'"))?;
+
+                layers.push(root.join("monorepo").join("base"));
+                layers.push(root.join("monorepo").join("frontend").join(frontend));
+                layers.push(
+                    root.join("monorepo")
+                        .join("backend")
+                        .join(backend_language)
+                        .join(backend),
+                );
+                layers.push(root.join("monorepo").join("packages"));
+            }
+            other => anyhow::bail!("Unsupported web mode '{other}'"),
+        }
+
+        for layer in &layers {
+            if !layer.exists() {
+                anyhow::bail!("Web template layer '{}' does not exist", layer.display());
+            }
+        }
+
+        Ok(layers)
     }
 
-    fn materialize_web_skeleton(target: &Path, config: &ScaffoldConfig) -> Result<()> {
-        match config.sub_type.as_str() {
-            "monorepo" => {
-                std::fs::create_dir_all(target.join("apps").join("frontend"))?;
-                std::fs::create_dir_all(target.join("apps").join("backend"))?;
-                std::fs::create_dir_all(target.join("packages"))?;
+    fn materialize_web_templates(
+        target: &Path,
+        config: &ScaffoldConfig,
+        layers: &[PathBuf],
+    ) -> Result<()> {
+        let context = WebTemplateContext::new(config, layers);
+        for layer in layers {
+            Self::materialize_template_layer(target, layer, &context)?;
+        }
+        Ok(())
+    }
+
+    fn materialize_template_layer(
+        target: &Path,
+        layer: &Path,
+        context: &WebTemplateContext,
+    ) -> Result<()> {
+        let Some(manifest) = TemplateManifest::load(layer)? else {
+            return Ok(());
+        };
+        let mut seen_targets = HashSet::new();
+        for file in &manifest.files {
+            if !seen_targets.insert(file.target.clone()) {
+                anyhow::bail!(
+                    "Duplicate template target '{}' in '{}'",
+                    file.target,
+                    layer.display()
+                );
             }
-            "frontend" | "fullstack" => {
-                std::fs::create_dir_all(target.join("src"))?;
+        }
+
+        for file in &manifest.files {
+            let source_path = layer.join("sources").join(&file.source);
+            if !source_path.exists() {
+                anyhow::bail!(
+                    "Template source '{}' does not exist in '{}'",
+                    file.source,
+                    layer.display()
+                );
             }
-            "backend" => {
-                std::fs::create_dir_all(target.join("src"))?;
-            }
-            _ => {}
+
+            let contents = std::fs::read_to_string(&source_path)?;
+            let rendered = context.render_with_contract(
+                &contents,
+                &file.required_context,
+                &source_path,
+            )?;
+            Self::write_file(&target.join(&file.target), &rendered)?;
         }
 
         Ok(())
     }
+}
 
-    fn write_web_frontend_placeholder(target: &Path, name: &str, framework: &str) -> Result<()> {
-        let uses_next_style = matches!(framework, "nextjs" | "nuxt" | "sveltekit");
-        let package = if uses_next_style {
-            format!(
-                "{{\n  \"name\": \"{}\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"scripts\": {{\n    \"dev\": \"mg web dev\",\n    \"build\": \"mg web build\"\n  }}\n}}\n",
-                name
-            )
+#[derive(Debug, Clone)]
+struct WebTemplateContext {
+    project_name: String,
+    project_slug: String,
+    mode: String,
+    framework: String,
+    frameworks: String,
+    frontend_framework: String,
+    backend_framework: String,
+    backend_language: String,
+    template: String,
+    features: String,
+}
+
+impl WebTemplateContext {
+    fn new(config: &ScaffoldConfig, layers: &[PathBuf]) -> Self {
+        let primary_template = if config.sub_type == "monorepo" {
+            layers
+                .iter()
+                .filter_map(|layer| {
+                    layer.strip_prefix(Scaffolder::workspace_root())
+                        .ok()
+                        .map(|p| p.display().to_string())
+                })
+                .filter(|layer| !layer.starts_with("templates/web/shared/partials"))
+                .collect::<Vec<_>>()
+                .join(", ")
         } else {
-            format!(
-                "{{\n  \"name\": \"{}\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {{\n    \"dev\": \"mg web dev\",\n    \"build\": \"mg web build\"\n  }}\n}}\n",
-                name
-            )
+            Scaffolder::resolve_web_template_dir(config)
+                .ok()
+                .and_then(|dir| {
+                    dir.strip_prefix(Scaffolder::workspace_root())
+                        .ok()
+                        .map(|p| p.display().to_string())
+                })
+                .unwrap_or_default()
         };
-        Self::write_file(&target.join("package.json"), &package)?;
-        Self::write_file(
-            &target.join("src").join("main.ts"),
-            &format!(
-                "console.log(\"MegaGate web frontend scaffold: {}\");\n",
-                framework
-            ),
-        )
+
+        let project_name = config.project_name.clone();
+        let project_slug = slugify(&project_name);
+        let mode = effective_web_mode(config);
+        let framework = Scaffolder::framework(config);
+        let frontend_framework = match mode.as_str() {
+            "monorepo" => config.frameworks.first().cloned().unwrap_or_default(),
+            "frontend" => framework.clone(),
+            _ => String::new(),
+        };
+        let backend_framework = match mode.as_str() {
+            "backend" => framework.clone(),
+            "monorepo" => config.frameworks.get(1).cloned().unwrap_or_default(),
+            _ => String::new(),
+        };
+        let backend_language = if mode == "backend" {
+            if config.frameworks.len() >= 2 {
+                config.frameworks.first().cloned().unwrap_or_default()
+            } else {
+                infer_backend_language(&framework)
+                    .unwrap_or_default()
+                    .to_string()
+            }
+        } else {
+            infer_backend_language(&backend_framework)
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        Self {
+            project_name,
+            project_slug,
+            mode,
+            framework,
+            frameworks: quoted_list(&config.frameworks),
+            frontend_framework,
+            backend_framework,
+            backend_language,
+            template: primary_template,
+            features: quoted_list(&config.features),
+        }
     }
 
-    fn write_web_backend_placeholder(target: &Path, name: &str, framework: &str) -> Result<()> {
-        Self::write_file(
-            &target.join("package.json"),
-            &format!(
-                "{{\n  \"name\": \"{}\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"scripts\": {{\n    \"dev\": \"mg web dev\",\n    \"build\": \"mg web build\"\n  }}\n}}\n",
-                name
-            ),
-        )?;
-        Self::write_file(
-            &target.join("src").join("server.txt"),
-            &format!("MegaGate web backend scaffold: {}\n", framework),
-        )
+    fn value(&self, key: &str) -> Option<&str> {
+        match key {
+            "project_name" => Some(self.project_name.as_str()),
+            "project_slug" => Some(self.project_slug.as_str()),
+            "mode" => Some(self.mode.as_str()),
+            "framework" => Some(self.framework.as_str()),
+            "frameworks" => Some(self.frameworks.as_str()),
+            "frontend_framework" => Some(self.frontend_framework.as_str()),
+            "backend_framework" => Some(self.backend_framework.as_str()),
+            "backend_language" => Some(self.backend_language.as_str()),
+            "template" => Some(self.template.as_str()),
+            "features" => Some(self.features.as_str()),
+            _ => None,
+        }
     }
 
-    fn write_web_fullstack_placeholder(target: &Path, name: &str, framework: &str) -> Result<()> {
-        Self::write_file(
-            &target.join("package.json"),
-            &format!(
-                "{{\n  \"name\": \"{}\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"scripts\": {{\n    \"dev\": \"mg web dev\",\n    \"build\": \"mg web build\"\n  }}\n}}\n",
-                name
-            ),
-        )?;
-        Self::write_file(
-            &target.join("src").join("app.txt"),
-            &format!("MegaGate web fullstack scaffold: {}\n", framework),
-        )
-    }
+    fn render_with_contract(
+        &self,
+        input: &str,
+        required_context: &[String],
+        source_path: &Path,
+    ) -> Result<String> {
+        let declared: HashSet<&str> = required_context.iter().map(String::as_str).collect();
+        let used = extract_template_tokens(input);
 
-    fn write_web_monorepo_placeholder(
-        target: &Path,
-        name: &str,
-        config: &ScaffoldConfig,
-    ) -> Result<()> {
-        let frontend = config.frameworks.first().cloned().unwrap_or_default();
-        let backend = config.frameworks.get(1).cloned().unwrap_or_default();
-        Self::write_file(
-            &target.join("package.json"),
-            &format!(
-                "{{\n  \"name\": \"{}\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"workspaces\": [\"apps/*\", \"packages/*\"],\n  \"scripts\": {{\n    \"dev\": \"mg web dev\",\n    \"build\": \"mg web build\"\n  }}\n}}\n",
-                name
-            ),
-        )?;
-        Self::write_file(
-            &target.join("apps").join("frontend").join("README.md"),
-            &format!("# Frontend\n\nFramework: `{}`\n", frontend),
-        )?;
-        Self::write_file(
-            &target.join("apps").join("backend").join("README.md"),
-            &format!("# Backend\n\nFramework: `{}`\n", backend),
-        )?;
-        Self::write_file(
-            &target.join("packages").join("README.md"),
-            "Shared packages live here.\n",
-        )
+        for token in &used {
+            if !declared.contains(token.as_str()) {
+                anyhow::bail!(
+                    "Template token '{}' in '{}' is not declared in template.toml",
+                    token,
+                    source_path.display()
+                );
+            }
+            if self.value(token).is_none() {
+                anyhow::bail!(
+                    "Template token '{}' in '{}' is not supported by the Rust compiler context",
+                    token,
+                    source_path.display()
+                );
+            }
+        }
+
+        for key in required_context {
+            if self.value(key).is_none() {
+                anyhow::bail!(
+                    "Template context '{}' required by '{}' is not supported by the Rust compiler context",
+                    key,
+                    source_path.display()
+                );
+            }
+        }
+
+        let mut rendered = input.to_string();
+        for key in required_context {
+            if let Some(value) = self.value(key) {
+                rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
+            }
+        }
+
+        Ok(rendered)
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct TemplateManifest {
+    files: Vec<TemplateFile>,
+}
+
+impl TemplateManifest {
+    fn load(layer: &Path) -> Result<Option<Self>> {
+        let manifest_path = layer.join("template.toml");
+        if !manifest_path.exists() {
+            if !layer.join("sources").exists() {
+                return Ok(None);
+            }
+            anyhow::bail!("Missing template manifest '{}'", manifest_path.display());
+        }
+
+        let contents = std::fs::read_to_string(&manifest_path)?;
+        Ok(Some(toml::from_str(&contents)?))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TemplateFile {
+    source: String,
+    target: String,
+    #[serde(default)]
+    required_context: Vec<String>,
 }
 
 fn common_readme(name: &str, core: &str, framework: &str, features: &[String]) -> String {
@@ -623,6 +776,25 @@ fn quoted_list(values: &[String]) -> String {
         .map(|value| format!("\"{}\"", value))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn extract_template_tokens(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut rest = input;
+
+    while let Some(start) = rest.find("{{") {
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            break;
+        };
+        let token = after_start[..end].trim();
+        if !token.is_empty() && !tokens.iter().any(|existing| existing == token) {
+            tokens.push(token.to_string());
+        }
+        rest = &after_start[end + 2..];
+    }
+
+    tokens
 }
 
 fn common_gitignore(core: &str, framework: &str) -> String {
@@ -688,6 +860,40 @@ fn is_all_in_one_fullstack(framework: &str) -> bool {
     matches!(framework, "nextjs" | "nuxt" | "sveltekit" | "remix")
 }
 
+fn effective_web_mode(config: &ScaffoldConfig) -> String {
+    if !config.sub_type.is_empty() {
+        return config.sub_type.clone();
+    }
+
+    if config.frameworks.len() >= 2 {
+        return "backend".to_string();
+    }
+
+    let framework = config.frameworks.first().map(String::as_str).unwrap_or("vanilla");
+    if matches!(
+        framework,
+        "remix" | "react-fastify" | "vue-laravel" | "react-spring" | "custom"
+    ) {
+        "fullstack".to_string()
+    } else if infer_backend_language(framework).is_some() {
+        "backend".to_string()
+    } else {
+        "frontend".to_string()
+    }
+}
+
+fn infer_backend_language(framework: &str) -> Option<&'static str> {
+    match framework {
+        "express" | "fastify" | "nestjs" | "hono" | "trpc" => Some("node"),
+        "laravel" | "symfony" => Some("php"),
+        "spring-boot" | "quarkus" => Some("java"),
+        "gin" | "echo" | "fiber" => Some("go"),
+        "fastapi" | "django" | "flask" => Some("python"),
+        "axum" | "actix-web" => Some("rust"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,6 +926,10 @@ mod tests {
             let out = Scaffolder::scaffold(&config).unwrap();
             assert!(out.join(expected).exists(), "{} {}", core, expected);
             assert!(out.join("README.md").exists(), "{} README", core);
+            if core == "web" {
+                assert!(out.join("mg.lock").exists(), "web mg.lock");
+                assert!(out.join(".megagate").join("web.toml").exists(), "web manifest");
+            }
         }
     }
 
@@ -727,5 +937,27 @@ mod tests {
     fn test_display_name_uses_last_path_segment() {
         let path = Path::new("/tmp/my-project");
         assert_eq!(Scaffolder::display_name(path), "my-project");
+    }
+
+    #[test]
+    fn test_web_monorepo_uses_template_layers() {
+        let root = tempfile::tempdir().unwrap();
+        let project_dir = root.path().join("web-monorepo");
+        let config = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "monorepo".to_string(),
+            frameworks: vec!["react-vite".to_string(), "fastify".to_string()],
+            project_name: project_dir.to_string_lossy().to_string(),
+            features: vec!["schema".to_string()],
+            template_dir: PathBuf::new(),
+        };
+
+        let out = Scaffolder::scaffold(&config).unwrap();
+        assert!(out.join("mg.lock").exists());
+        assert!(out.join(".megagate").join("web.toml").exists());
+        assert!(out.join("megagate.workspace.toml").exists());
+        assert!(out.join("apps").join("frontend").join("README.md").exists());
+        assert!(out.join("apps").join("backend").join("README.md").exists());
+        assert!(out.join("packages").join("README.md").exists());
     }
 }
