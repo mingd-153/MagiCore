@@ -1,0 +1,18 @@
+[[files]]
+source = "package.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "index.html"
+target = "apps/frontend/index.html"
+required_context = ["project_name"]
+
+[[files]]
+source = "vite.config.ts"
+target = "apps/frontend/vite.config.ts"
+
+[[files]]
+source = "main.ts"
+target = "apps/frontend/src/main.ts"
+required_context = ["project_name"]

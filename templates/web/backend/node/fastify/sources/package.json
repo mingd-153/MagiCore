@@ -1,0 +1,11 @@
+{
+  "name": "{{project_slug}}",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "mg web dev",
+    "build": "mg web build",
+    "check": "mg web check"
+  }
+}
