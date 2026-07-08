@@ -1,6 +1,5 @@
 /// Store directory layout and conventions.
-
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct Layout {
     root: PathBuf,
@@ -11,7 +10,9 @@ impl Layout {
         Self { root }
     }
 
-    pub fn root(&self) -> &PathBuf { &self.root }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
 
     /// CAS files directory (content-addressed blob storage)
     pub fn cas_dir(&self) -> PathBuf {

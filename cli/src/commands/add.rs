@@ -1,4 +1,5 @@
 use anyhow::Result;
+use mg_types::adapter::AddOptions;
 use mg_ui::{success, info, create_spinner, style_cmd};
 use crate::context::ProjectContext;
 
@@ -24,7 +25,8 @@ pub async fn run(
     mg_ui::info(&format!("Adding {} to {} ({})...", package, ctx.config.name, group));
 
     let spinner = mg_ui::create_spinner(&format!("  Resolving {}...", package));
-    let pkg_id = adapter.add(ctx.root(), &name, range.as_ref(), dev, optional, peer, exact, no_save, global).await?;
+    let opts = AddOptions { dev, optional, peer, exact, no_save, global };
+    let pkg_id = adapter.add(ctx.root(), &name, range.as_ref(), opts).await?;
     spinner.finish_and_clear();
 
     if !no_save {

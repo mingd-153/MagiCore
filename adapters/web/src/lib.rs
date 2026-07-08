@@ -2,10 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use mg_adapter_base::{AddOptions, BaseAdapter};
+use mg_adapter_base::BaseAdapter;
 use mg_types::{
     adapter::{
-        AuditReport, InstallSummary, InstalledPackage, PackageAdapter, ResolvedGraph,
+        AddOptions, AuditReport, InstallSummary, InstalledPackage, PackageAdapter, ResolvedGraph,
         ResolvedPackage, UpdatedPackage,
     },
     Ecosystem, MgResult, Manifest, PackageId, PackageName, Version, VersionRange,
@@ -142,8 +142,13 @@ impl PackageAdapter for WebAdapter {
         Ok(summary)
     }
 
-    async fn add(&self, project_root: &Path, name: &PackageName, range: Option<&VersionRange>, dev: bool, optional: bool, peer: bool, exact: bool, no_save: bool, global: bool) -> MgResult<PackageId> {
-        let opts = AddOptions { dev, optional, peer, exact, no_save, global };
+    async fn add(
+        &self,
+        project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<PackageId> {
         self.base_add(project_root, name, range, opts).await
     }
     async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> { self.base_remove(project_root, name).await }

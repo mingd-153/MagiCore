@@ -1,10 +1,14 @@
 /// Interactive prompts with styled UI
 use anyhow::Result;
 use console::style;
-use dialoguer::{Confirm, Input, Select, MultiSelect};
+use dialoguer::{Confirm, Input, MultiSelect, Select};
 
 fn prompt_style(text: &str) -> String {
-    format!("{} {}", style("◆").cyan().bold(), style(text).white().bold())
+    format!(
+        "{} {}",
+        style("◆").cyan().bold(),
+        style(text).white().bold()
+    )
 }
 
 /// Ask yes/no question
@@ -25,9 +29,7 @@ pub fn input(prompt: &str) -> Result<String> {
 
 /// Select one from list with styled items
 pub fn select(prompt: &str, items: &[&str]) -> Result<usize> {
-    let styled: Vec<String> = items.iter()
-        .map(|i| style(i).white().to_string())
-        .collect();
+    let styled: Vec<String> = items.iter().map(|i| style(i).white().to_string()).collect();
     let refs: Vec<&str> = styled.iter().map(|s| s.as_str()).collect();
     Ok(Select::new()
         .with_prompt(prompt_style(prompt))
@@ -38,8 +40,9 @@ pub fn select(prompt: &str, items: &[&str]) -> Result<usize> {
 
 /// Select multiple from list (checkboxes)
 pub fn multi_select(prompt: &str, items: &[&str]) -> Result<Vec<usize>> {
-    let selected: Vec<String> = items.iter()
-        .map(|i| format!(" {} ", style("☐").dim()))
+    let selected: Vec<String> = items
+        .iter()
+        .map(|item| format!("{} {}", style("☐").dim(), style(item).white()))
         .collect();
     let display: Vec<&str> = selected.iter().map(|s| s.as_str()).collect();
     Ok(MultiSelect::new()

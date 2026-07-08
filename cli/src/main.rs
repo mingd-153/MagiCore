@@ -97,7 +97,7 @@ enum Commands {
     #[command(name = "create-app", about = "Scaffold a new app project")]
     CreateApp { framework: String, project_name: String },
     #[command(name = "create-lib", about = "Scaffold a new library project")]
-    CreateLib { framework: String, project_name: String },
+    CreateLib { project_name: String },
 
     // ── Per-core: add-<core> ───────────────────────────────────
     #[command(name = "add-web", about = "Add web dependency")]
@@ -236,8 +236,8 @@ async fn main() -> Result<()> {
         Some(Commands::CreateApp { framework, project_name }) => {
             commands::create::run("app", &framework, &project_name).await?;
         }
-        Some(Commands::CreateLib { framework, project_name }) => {
-            commands::create::run("lib", &framework, &project_name).await?;
+        Some(Commands::CreateLib { project_name }) => {
+            commands::create::run("lib", "rust", &project_name).await?;
         }
 
         // ── add-<core> ─────────────────────────────────────────

@@ -5,31 +5,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Configuration management for MegaGate"
+description = "Config parsing and project metadata for MegaGate"
 
 [dependencies]
-mg-types = { workspace = true }
-
-# Serialization
 serde = { workspace = true }
-serde_json = { workspace = true }
-serde_yaml = { workspace = true }
 toml = { workspace = true }
-toml_edit = { workspace = true }
-
-# File system
-dirs = { workspace = true }
-
-# Error handling
-thiserror = { workspace = true }
 anyhow = { workspace = true }
-
-# Utilities
-url = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
-pretty_assertions = { workspace = true }
 
 [lints]
 workspace = true

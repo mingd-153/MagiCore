@@ -1,11 +1,14 @@
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::integrity::{IntegrityHash, TarballEntry};
 use super::lifecycle::{ensure_cas_dirs, set_cas_root_permissions, validate_cas_root};
 use super::security::check_symlink_ancestors;
-use super::write::{write_all_verify_and_set_perms, stream_write_verify_and_set_perms, STREAM_THRESHOLD};
+use super::write::{
+    stream_write_verify_and_set_perms, write_all_verify_and_set_perms, STREAM_THRESHOLD,
+};
 use crate::cas::integrity;
 
 #[derive(Debug)]
@@ -31,7 +34,10 @@ impl std::error::Error for StoreError {}
 
 impl From<std::io::Error> for StoreError {
     fn from(e: std::io::Error) -> Self {
-        Self::Io { path: PathBuf::new(), msg: e.to_string() }
+        Self::Io {
+            path: PathBuf::new(),
+            msg: e.to_string(),
+        }
     }
 }
 
@@ -47,7 +53,9 @@ impl ContentStore {
         Ok(Self { root })
     }
 
-    pub fn root(&self) -> &Path { &self.root }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
 
     pub fn import_file(&self, src: &Path) -> Result<IntegrityHash, StoreError> {
         if src.is_symlink() {
@@ -64,18 +72,30 @@ impl ContentStore {
         let hash = if use_streaming {
             let file = fs::File::open(src)?;
             let reader = BufReader::new(file);
-            let hash = IntegrityHash::from_bytes(&[], is_exec);
+            let tmp = self.tmp_path("import-file");
+            fs::create_dir_all(tmp.parent().unwrap())?;
+            let writer = fs::File::create_new(&tmp)?;
+            let hash = stream_write_verify_and_set_perms(writer, &tmp, reader, is_exec)?;
             let dest = hash.cas_path(&self.root);
-            if dest.exists() { return Ok(hash); }
+
+            if dest.exists() {
+                fs::remove_file(&tmp)?;
+                return Ok(hash);
+            }
 
             fs::create_dir_all(dest.parent().unwrap())?;
-            let writer = fs::File::create_new(&dest)?;
-            stream_write_verify_and_set_perms(writer, &dest, reader, is_exec)?
+            fs::rename(&tmp, &dest).map_err(|e| StoreError::Io {
+                path: dest.clone(),
+                msg: format!("move streamed file into CAS failed: {e}"),
+            })?;
+            hash
         } else {
             let data = fs::read(src)?;
             let hash = IntegrityHash::from_bytes(&data, is_exec);
             let dest = hash.cas_path(&self.root);
-            if dest.exists() { return Ok(hash); }
+            if dest.exists() {
+                return Ok(hash);
+            }
 
             fs::create_dir_all(dest.parent().unwrap())?;
             let writer = fs::File::create_new(&dest)?;
@@ -89,35 +109,56 @@ impl ContentStore {
         self.import_bytes_with_exec(data, false)
     }
 
-    pub fn import_bytes_with_exec(&self, data: &[u8], executable: bool) -> Result<IntegrityHash, StoreError> {
+    pub fn import_bytes_with_exec(
+        &self,
+        data: &[u8],
+        executable: bool,
+    ) -> Result<IntegrityHash, StoreError> {
         let hash = IntegrityHash::from_bytes(data, executable);
         self.write_bytes_with_hash(data, &hash, executable)
     }
 
     pub fn import_bytes_with_hash(
-        &self, data: &[u8], hash_hex: &str, executable: bool,
+        &self,
+        data: &[u8],
+        hash_hex: &str,
+        executable: bool,
     ) -> Result<IntegrityHash, StoreError> {
         let hash = IntegrityHash::from_hash_str(hash_hex, executable);
         self.write_bytes_with_hash(data, &hash, executable)
     }
 
     fn write_bytes_with_hash(
-        &self, data: &[u8], hash: &IntegrityHash, executable: bool,
+        &self,
+        data: &[u8],
+        hash: &IntegrityHash,
+        executable: bool,
     ) -> Result<IntegrityHash, StoreError> {
         let dest = hash.cas_path(&self.root);
-        if dest.exists() { return Ok(hash.clone()); }
+        if dest.exists() {
+            return Ok(hash.clone());
+        }
 
         fs::create_dir_all(dest.parent().unwrap())?;
         let writer = fs::File::create_new(&dest)?;
 
-        if data.len() >= STREAM_THRESHOLD {
+        let actual = if data.len() >= STREAM_THRESHOLD {
             let cursor = std::io::Cursor::new(data);
             let reader = BufReader::new(cursor);
             stream_write_verify_and_set_perms(writer, &dest, reader, executable)
         } else {
-            write_all_verify_and_set_perms(writer, &dest, data, executable)?;
-            Ok(hash.clone())
+            write_all_verify_and_set_perms(writer, &dest, data, executable)
+        }?;
+
+        if actual.hash != hash.hash {
+            let _ = fs::remove_file(&dest);
+            return Err(StoreError::HashMismatch {
+                expected: hash.hash.clone(),
+                actual: actual.hash,
+            });
         }
+
+        Ok(hash.clone())
     }
 
     pub fn export_to(&self, hash: &IntegrityHash, dest: &Path) -> Result<(), StoreError> {
@@ -195,7 +236,10 @@ impl ContentStore {
         Ok(())
     }
 
-    pub fn import_tarball_entries(&self, entries: Vec<TarballEntry>) -> Result<Vec<IntegrityHash>, StoreError> {
+    pub fn import_tarball_entries(
+        &self,
+        entries: Vec<TarballEntry>,
+    ) -> Result<Vec<IntegrityHash>, StoreError> {
         let mut imported = Vec::with_capacity(entries.len());
         for entry in entries {
             let hash = integrity::IntegrityHash::from_bytes(&entry.data, entry.executable);
@@ -212,6 +256,16 @@ impl ContentStore {
             imported.push(hash);
         }
         Ok(imported)
+    }
+
+    fn tmp_path(&self, prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        self.root
+            .join("tmp")
+            .join(format!("{prefix}-{}-{nanos}", std::process::id()))
     }
 }
 
@@ -254,6 +308,34 @@ mod tests {
         fs::write(&src, b"hello world").unwrap();
         let hash = store.import_file(&src).unwrap();
         assert!(store.contains(&hash));
+    }
+
+    #[test]
+    fn test_import_large_file_uses_content_hash_path() {
+        let dir = tempdir().unwrap();
+        let store = ContentStore::new(dir.path().to_path_buf()).unwrap();
+        let src = dir.path().join("large.bin");
+        let data = vec![42u8; STREAM_THRESHOLD + 1];
+        fs::write(&src, &data).unwrap();
+
+        let hash = store.import_file(&src).unwrap();
+        let expected = IntegrityHash::from_bytes(&data, false);
+
+        assert_eq!(hash, expected);
+        assert!(expected.cas_path(store.root()).exists());
+    }
+
+    #[test]
+    fn test_import_bytes_with_hash_rejects_mismatch() {
+        let dir = tempdir().unwrap();
+        let store = ContentStore::new(dir.path().to_path_buf()).unwrap();
+        let wrong = IntegrityHash::from_bytes(b"different", false);
+
+        let err = store
+            .import_bytes_with_hash(b"actual", &wrong.hash, false)
+            .unwrap_err();
+
+        assert!(matches!(err, StoreError::HashMismatch { .. }));
     }
 
     #[test]

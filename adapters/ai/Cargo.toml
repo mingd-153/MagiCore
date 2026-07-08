@@ -1,14 +1,13 @@
 [package]
-name = "mg-http"
+name = "mg-ai-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "HTTP helpers for MegaGate"
+description = "AI ecosystem adapter for MegaGate"
 
 [dependencies]
-reqwest = { workspace = true }
 
 [lints]
 workspace = true
