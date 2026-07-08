@@ -31,7 +31,6 @@
             bazel_7
             protobuf
             nodejs_20
-            pnpm
             pkg-config
             openssl
           ];
@@ -65,3 +64,4 @@
           '';
         };
       });
+}

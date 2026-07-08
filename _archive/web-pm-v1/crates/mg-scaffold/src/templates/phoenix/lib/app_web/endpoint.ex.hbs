@@ -1,0 +1,6 @@
+defmodule {{pascalCase name}}.Web.Endpoint do
+  use Phoenix.Endpoint, otp_app: :{{name}}
+
+  plug CORSICA, origins: "*"
+  plug {{pascalCase name}}.Web.Router
+end
