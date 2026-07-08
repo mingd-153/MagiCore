@@ -60,3 +60,10 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Zig cache
+.zig-cache/
+
+# Debug symbols
+*.dSYM/
+

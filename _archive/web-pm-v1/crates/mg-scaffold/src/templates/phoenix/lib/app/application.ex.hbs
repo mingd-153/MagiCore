@@ -1,0 +1,14 @@
+defmodule {{pascalCase name}}.Application do
+  use Application
+
+  def start(_type, _args) do
+    children = [
+      {{pascalCase name}}.Repo,
+      {Phoenix.PubSub, name: {{pascalCase name}}.PubSub},
+      {{pascalCase name}}.Web.Endpoint
+    ]
+
+    opts = [strategy: :one_for_one, name: {{pascalCase name}}.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+end

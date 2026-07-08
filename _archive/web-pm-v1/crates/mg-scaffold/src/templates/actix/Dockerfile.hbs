@@ -1,0 +1,13 @@
+FROM rust:1.84-slim AS builder
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release 2>/dev/null || true
+COPY . .
+RUN cargo build --release
+
+FROM debian:bookworm-slim AS runner
+WORKDIR /app
+COPY --from=builder /app/target/release/{{name}} .
+EXPOSE 3000
+CMD ["./{{name}}"]
