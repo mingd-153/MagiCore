@@ -1,0 +1,18 @@
+[[files]]
+source = "package.json"
+target = "package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "frontend.README.md"
+target = "apps/frontend/README.md"
+required_context = ["frontend_framework"]
+
+[[files]]
+source = "backend.README.md"
+target = "apps/backend/README.md"
+required_context = ["backend_language", "backend_framework"]
+
+[[files]]
+source = "packages.README.md"
+target = "packages/README.md"
