@@ -1,4 +1,5 @@
 use anyhow::Result;
+use mg_types::adapter::AddOptions;
 use std::time::Duration;
 use mg_ui::{success, info, create_spinner, create_progress_bar, create_multi_progress, add_multi_bar, print_install_summary, style_cmd};
 use crate::context::ProjectContext;
@@ -14,7 +15,8 @@ pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
             tokio::time::sleep(Duration::from_millis(200)).await;
 
             let name = mg_types::PackageName::new(pkg)?;
-            adapter.add(ctx.root(), &name, None, false, false, false, false, false, false).await?;
+            let opts = AddOptions::default();
+            adapter.add(ctx.root(), &name, None, opts).await?;
             spinner.finish_and_clear();
         }
     }

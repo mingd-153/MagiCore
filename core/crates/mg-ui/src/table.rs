@@ -1,5 +1,5 @@
 /// Table formatting utilities
-use console::{style, pad_str, Alignment};
+use console::style;
 
 /// Simple table for displaying data
 pub struct Table {
@@ -21,7 +21,8 @@ impl Table {
 
     pub fn print(&self) {
         // Print headers
-        let header_str = self.headers
+        let header_str = self
+            .headers
             .iter()
             .map(|h| style(h).bold().to_string())
             .collect::<Vec<_>>()

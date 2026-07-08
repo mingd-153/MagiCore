@@ -15,11 +15,11 @@ pub async fn download_with_progress(
     let client = reqwest::Client::new();
     let response = client.get(url).send().await?;
     let bytes = response.bytes().await?;
-    
+
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    
+
     tokio::fs::write(dest, bytes).await?;
     Ok(())
 }
