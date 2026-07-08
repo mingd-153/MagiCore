@@ -1,0 +1,27 @@
+[[files]]
+source = "package.json"
+target = "package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "index.html"
+target = "index.html"
+required_context = ["project_name"]
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
+
+[[files]]
+source = "vite.config.ts"
+target = "vite.config.ts"
+
+[[files]]
+source = "main.ts"
+target = "src/main.ts"
+required_context = ["project_name"]
+
+[[files]]
+source = "App.ts"
+target = "src/App.ts"
+required_context = ["project_name"]

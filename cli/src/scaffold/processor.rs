@@ -496,16 +496,21 @@ impl Scaffolder {
     fn resolve_web_template_layers(config: &ScaffoldConfig) -> Result<Vec<PathBuf>> {
         let root = Self::web_templates_root();
         let mode = effective_web_mode(config);
-        let mut layers = vec![
-            root.join("shared").join("partials").join("base"),
-            root.join("shared").join("partials").join(mode.as_str()),
-        ];
+        let mut layers = vec![root.join("shared").join("partials").join("base")];
 
         match mode.as_str() {
             "frontend" | "backend" | "fullstack" => {
-                layers.push(Self::resolve_web_template_dir(config)?);
+                let leaf = Self::resolve_web_template_dir(config)?;
+                let fallback = root.join("shared").join("partials").join(mode.as_str());
+                if Self::layer_has_contract(&leaf) {
+                    layers.push(leaf);
+                } else {
+                    layers.push(fallback);
+                    layers.push(leaf);
+                }
             }
             "monorepo" => {
+                layers.push(root.join("shared").join("partials").join("monorepo"));
                 let frontend = config.frameworks.first().cloned().unwrap_or_default();
                 let backend = config.frameworks.get(1).cloned().unwrap_or_default();
                 let backend_language = infer_backend_language(&backend)
@@ -531,6 +536,10 @@ impl Scaffolder {
         }
 
         Ok(layers)
+    }
+
+    fn layer_has_contract(layer: &Path) -> bool {
+        layer.join("template.toml").exists() && layer.join("sources").exists()
     }
 
     fn materialize_web_templates(
@@ -959,5 +968,56 @@ mod tests {
         assert!(out.join("apps").join("frontend").join("README.md").exists());
         assert!(out.join("apps").join("backend").join("README.md").exists());
         assert!(out.join("packages").join("README.md").exists());
+        assert!(out.join("apps").join("frontend").join("vite.config.ts").exists());
+        assert!(out.join("apps").join("backend").join("src").join("server.ts").exists());
+    }
+
+    #[test]
+    fn test_web_leaf_templates_materialize_framework_specific_files() {
+        let root = tempfile::tempdir().unwrap();
+
+        let react_dir = root.path().join("react-vite-app");
+        let react = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["react-vite".to_string()],
+            project_name: react_dir.to_string_lossy().to_string(),
+            features: vec![],
+            template_dir: PathBuf::new(),
+        };
+        let react_out = Scaffolder::scaffold(&react).unwrap();
+        assert!(react_out.join("package.json").exists());
+        assert!(react_out.join("vite.config.ts").exists());
+        assert!(react_out.join("index.html").exists());
+        assert!(react_out.join("src").join("main.ts").exists());
+        assert!(react_out.join("src").join("App.ts").exists());
+
+        let next_dir = root.path().join("next-app");
+        let next = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["nextjs".to_string()],
+            project_name: next_dir.to_string_lossy().to_string(),
+            features: vec![],
+            template_dir: PathBuf::new(),
+        };
+        let next_out = Scaffolder::scaffold(&next).unwrap();
+        assert!(next_out.join("next.config.mjs").exists());
+        assert!(next_out.join("src").join("app").join("page.tsx").exists());
+        assert!(!next_out.join("src").join("main.ts").exists());
+
+        let fastify_dir = root.path().join("fastify-api");
+        let fastify = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "backend".to_string(),
+            frameworks: vec!["node".to_string(), "fastify".to_string()],
+            project_name: fastify_dir.to_string_lossy().to_string(),
+            features: vec![],
+            template_dir: PathBuf::new(),
+        };
+        let fastify_out = Scaffolder::scaffold(&fastify).unwrap();
+        assert!(fastify_out.join("tsconfig.json").exists());
+        assert!(fastify_out.join("src").join("server.ts").exists());
+        assert!(!fastify_out.join("src").join("server.txt").exists());
     }
 }
