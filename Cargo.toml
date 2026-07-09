@@ -73,6 +73,7 @@ proptest = "1.5"
 rstest = "0.18"
 pretty_assertions = "1.4"
 tempfile = "3.12"
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 # Storage / files
 rusqlite = { version = "0.32", features = ["bundled"] }
