@@ -1,11 +1,14 @@
 use anyhow::Result;
-use mg_ui::{info};
+use mg_ui::info;
 
 /// mg search — search packages in registry
 pub async fn run(query: String) -> Result<()> {
     info(&format!("Searching for '{}'... (npm registry)", query));
 
-    let url = format!("https://registry.npmjs.org/-/v1/search?text={}&size=20", urlencoding(&query));
+    let url = format!(
+        "https://registry.npmjs.org/-/v1/search?text={}&size=20",
+        urlencoding(&query)
+    );
     let client = reqwest::Client::new();
 
     match client.get(&url).send().await {

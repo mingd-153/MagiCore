@@ -98,8 +98,12 @@ impl ContentStore {
             }
 
             fs::create_dir_all(dest.parent().unwrap())?;
-            let writer = fs::File::create_new(&dest)?;
-            write_all_verify_and_set_perms(writer, &dest, &data, is_exec)?
+            let tmp = self.tmp_path("import-bytes");
+            fs::create_dir_all(tmp.parent().unwrap())?;
+            let writer = fs::File::create(&tmp)?;
+            write_all_verify_and_set_perms(writer, &tmp, &data, is_exec)?;
+            fs::rename(&tmp, &dest)?;
+            hash
         };
 
         Ok(hash)

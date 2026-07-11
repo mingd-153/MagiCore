@@ -1,6 +1,6 @@
-use anyhow::Result;
-use mg_ui::{success, info, create_spinner, style_cmd};
 use crate::context::ProjectContext;
+use anyhow::Result;
+use mg_ui::{create_spinner, info, style_cmd, success};
 
 /// mg update — update packages to latest versions
 pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
@@ -17,10 +17,16 @@ pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
             info("All packages are up to date");
         } else {
             for pkg in &updated {
-                info(&format!("  {}: {} → {}", pkg.name, pkg.from_version, pkg.to_version));
+                info(&format!(
+                    "  {}: {} → {}",
+                    pkg.name, pkg.from_version, pkg.to_version
+                ));
             }
             success(&format!("Updated {} package(s)", updated.len()));
-            info(&format!("Run '{}' to install updates", style_cmd("mg install")));
+            info(&format!(
+                "Run '{}' to install updates",
+                style_cmd("mg install")
+            ));
         }
     } else {
         for name in &packages {
@@ -30,7 +36,10 @@ pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
             spinner.finish_and_clear();
 
             for pkg in &updated {
-                info(&format!("  {}: {} → {}", pkg.name, pkg.from_version, pkg.to_version));
+                info(&format!(
+                    "  {}: {} → {}",
+                    pkg.name, pkg.from_version, pkg.to_version
+                ));
             }
         }
         success("Update complete");

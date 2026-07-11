@@ -11,3 +11,13 @@ pub fn to_json<T: Serialize>(value: &T) -> Result<String> {
 pub fn from_json<T: for<'de> Deserialize<'de>>(s: &str) -> Result<T> {
     Ok(serde_json::from_str(s)?)
 }
+
+/// Serialize to TOML string
+pub fn to_toml<T: Serialize>(value: &T) -> Result<String> {
+    Ok(toml::to_string_pretty(value)?)
+}
+
+/// Deserialize from TOML string
+pub fn from_toml<T: for<'de> Deserialize<'de>>(s: &str) -> Result<T> {
+    Ok(toml::from_str(s)?)
+}

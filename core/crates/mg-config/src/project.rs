@@ -2,7 +2,6 @@
 ///
 /// Stores which ecosystem/core this project belongs to,
 /// along with optional per-core settings.
-
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

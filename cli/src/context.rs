@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use mg_config::project::ProjectConfig;
-use mg_types::Ecosystem;
 use mg_types::adapter::PackageAdapter;
+use mg_types::Ecosystem;
 
 /// Project context: detects the project, loads config, provides the right adapter.
 pub struct ProjectContext {
@@ -27,7 +27,11 @@ impl ProjectContext {
             .ok_or_else(|| anyhow::anyhow!("Unknown ecosystem: '{}'", config.ecosystem))?;
 
         let adapter = crate::factory::create_adapter(&ecosystem)?;
-        Ok(Self { root, config, adapter })
+        Ok(Self {
+            root,
+            config,
+            adapter,
+        })
     }
 
     fn resolve_config(

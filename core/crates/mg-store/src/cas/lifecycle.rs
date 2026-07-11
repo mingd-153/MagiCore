@@ -26,9 +26,7 @@ pub fn validate_cas_root(root: &Path) -> Result<(), StoreError> {
 }
 
 pub fn ensure_cas_dirs(root: &Path) -> Result<(), StoreError> {
-    let dirs = [
-        root.join("files").join("sha256"),
-    ];
+    let dirs = [root.join("files").join("sha256")];
     for dir in &dirs {
         fs::create_dir_all(dir).map_err(|e| StoreError::Io {
             path: dir.clone(),

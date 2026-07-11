@@ -1,6 +1,6 @@
+use crate::context::ProjectContext;
 use anyhow::Result;
 use mg_ui::{info, success, warning};
-use crate::context::ProjectContext;
 
 /// mg audit — security audit
 pub async fn run(core: Option<&str>) -> Result<()> {
@@ -14,7 +14,10 @@ pub async fn run(core: Option<&str>) -> Result<()> {
         success("No vulnerabilities found");
         info(&format!("{} packages audited", report.packages_audited));
     } else {
-        warning(&format!("Found {} vulnerabilities:", report.vulnerabilities.len()));
+        warning(&format!(
+            "Found {} vulnerabilities:",
+            report.vulnerabilities.len()
+        ));
         for vuln in &report.vulnerabilities {
             warning(&format!(
                 "  {}@{} — {} ({}) {}",

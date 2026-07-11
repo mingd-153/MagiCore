@@ -1,8 +1,7 @@
 /// SQLite-backed database for installed packages and integrity metadata.
-
 use anyhow::Result;
-use rusqlite::{Connection, params};
 use mg_types::PackageId;
+use rusqlite::{params, Connection};
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -35,7 +34,7 @@ impl Database {
             );
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
-            PRAGMA busy_timeout=5000;"
+            PRAGMA busy_timeout=5000;",
         )?;
 
         Ok(Self { conn })
@@ -56,20 +55,20 @@ impl Database {
     }
 
     pub fn is_installed(&self, id: &PackageId) -> Result<bool> {
-        let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) FROM packages WHERE id = ?1 AND version = ?2"
-        )?;
-        let count: i64 = stmt.query_row(
-            params![id.name_str(), id.version().to_string()],
-            |row| row.get(0),
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COUNT(*) FROM packages WHERE id = ?1 AND version = ?2")?;
+        let count: i64 = stmt
+            .query_row(params![id.name_str(), id.version().to_string()], |row| {
+                row.get(0)
+            })?;
         Ok(count > 0)
     }
 
     pub fn list_installed(&self) -> Result<Vec<DatabaseEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, version, integrity, installed_at FROM packages ORDER BY id"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, version, integrity, installed_at FROM packages ORDER BY id")?;
         let entries = stmt.query_map([], |row| {
             Ok(DatabaseEntry {
                 id: row.get(0)?,
@@ -95,9 +94,9 @@ impl Database {
     }
 
     pub fn verify_integrity(&self, hash: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) FROM integrity_cache WHERE hash = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COUNT(*) FROM integrity_cache WHERE hash = ?1")?;
         let count: i64 = stmt.query_row(params![hash], |row| row.get(0))?;
         Ok(count > 0)
     }
@@ -142,8 +141,10 @@ mod tests {
     fn test_list_installed() {
         let dir = tempdir().unwrap();
         let db = Database::open(&dir.path().join("test.db")).unwrap();
-        db.insert_package(&PackageId::parse("react@18.2.0").unwrap(), None).unwrap();
-        db.insert_package(&PackageId::parse("vue@3.4.0").unwrap(), None).unwrap();
+        db.insert_package(&PackageId::parse("react@18.2.0").unwrap(), None)
+            .unwrap();
+        db.insert_package(&PackageId::parse("vue@3.4.0").unwrap(), None)
+            .unwrap();
         let list = db.list_installed().unwrap();
         assert_eq!(list.len(), 2);
     }

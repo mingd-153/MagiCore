@@ -1,5 +1,5 @@
-use std::fmt;
 use mg_types::{Version, VersionRange};
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VersionSet {
@@ -13,13 +13,25 @@ pub enum VersionSet {
 }
 
 impl VersionSet {
-    pub fn any() -> Self { Self::Any }
-    pub fn empty() -> Self { Self::Empty }
-    pub fn exact(v: Version) -> Self { Self::Exact(v) }
-    pub fn range(r: VersionRange) -> Self { Self::Range(r) }
+    pub fn any() -> Self {
+        Self::Any
+    }
+    pub fn empty() -> Self {
+        Self::Empty
+    }
+    pub fn exact(v: Version) -> Self {
+        Self::Exact(v)
+    }
+    pub fn range(r: VersionRange) -> Self {
+        Self::Range(r)
+    }
 
-    pub fn is_empty(&self) -> bool { matches!(self, Self::Empty) }
-    pub fn is_any(&self) -> bool { matches!(self, Self::Any) }
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
+    pub fn is_any(&self) -> bool {
+        matches!(self, Self::Any)
+    }
 
     pub fn contains(&self, version: &Version) -> bool {
         match self {
@@ -52,12 +64,14 @@ impl VersionSet {
             (Self::Any, s) | (s, Self::Any) => s.clone(),
             (Self::Exact(a), Self::Exact(b)) if a == b => self.clone(),
             (Self::Exact(v), Self::Range(r)) | (Self::Range(r), Self::Exact(v)) => {
-                if r.matches(v) { Self::Exact(v.clone()) } else { Self::Empty }
+                if r.matches(v) {
+                    Self::Exact(v.clone())
+                } else {
+                    Self::Empty
+                }
             }
-            (Self::Range(a), Self::Range(b)) => {
-                let inter = VersionRange::parse(&format!("{} {}", a.as_str(), b.as_str()))
-                    .unwrap_or_else(|_| VersionRange::star());
-                Self::Range(inter)
+            (Self::Range(_), Self::Range(_)) => {
+                Self::Intersection(vec![self.clone(), other.clone()])
             }
             _ => Self::Intersection(vec![self.clone(), other.clone()]),
         }
@@ -83,19 +97,19 @@ impl VersionSet {
             Self::Exact(v) => Some(v.clone()),
             Self::Range(r) => r.satisfying_version(),
             Self::Union(sets) => sets.iter().filter_map(|s| s.satisfying_version()).max(),
-            Self::Intersection(sets) => {
-                sets.iter().filter_map(|s| s.satisfying_version())
-                    .find(|v| sets.iter().all(|s| s.contains(v)))
-            }
-            Self::Complement(s) => {
-                s.satisfying_version().filter(|v| !self.contains(v))
-            }
+            Self::Intersection(sets) => sets
+                .iter()
+                .filter_map(|s| s.satisfying_version())
+                .find(|v| sets.iter().all(|s| s.contains(v))),
+            Self::Complement(s) => s.satisfying_version().filter(|v| !self.contains(v)),
         }
     }
 }
 
 impl Default for VersionSet {
-    fn default() -> Self { Self::Any }
+    fn default() -> Self {
+        Self::Any
+    }
 }
 
 impl fmt::Display for VersionSet {
@@ -107,13 +121,17 @@ impl fmt::Display for VersionSet {
             Self::Range(r) => write!(f, "{r}"),
             Self::Union(sets) => {
                 for (i, s) in sets.iter().enumerate() {
-                    if i > 0 { write!(f, " || ")?; }
+                    if i > 0 {
+                        write!(f, " || ")?;
+                    }
                     write!(f, "{s}")?;
                 }
                 Ok(())
             }
             Self::Intersection(sets) => {
-                for s in sets { write!(f, "{s} ")?; }
+                for s in sets {
+                    write!(f, "{s} ")?;
+                }
                 Ok(())
             }
             Self::Complement(s) => write!(f, "!({s})"),
@@ -122,19 +140,27 @@ impl fmt::Display for VersionSet {
 }
 
 impl From<VersionRange> for VersionSet {
-    fn from(r: VersionRange) -> Self { Self::Range(r) }
+    fn from(r: VersionRange) -> Self {
+        Self::Range(r)
+    }
 }
 
 impl From<Version> for VersionSet {
-    fn from(v: Version) -> Self { Self::Exact(v) }
+    fn from(v: Version) -> Self {
+        Self::Exact(v)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn v(s: &str) -> Version { Version::parse(s).unwrap() }
-    fn r(s: &str) -> VersionRange { VersionRange::parse(s).unwrap() }
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+    fn r(s: &str) -> VersionRange {
+        VersionRange::parse(s).unwrap()
+    }
 
     #[test]
     fn test_contains() {
