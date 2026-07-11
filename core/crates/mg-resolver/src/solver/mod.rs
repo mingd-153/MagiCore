@@ -84,6 +84,10 @@ impl From<String> for SolveError {
 pub trait DependencyProvider: Send + Sync {
     async fn get_versions(&self, package: &PackageName) -> Result<Vec<Version>, DependencyError>;
     async fn get_dependencies(&self, id: &PackageId) -> Result<Vec<ResolvedDep>, DependencyError>;
+    async fn should_enqueue(&self, dep: &ResolvedDep) -> Result<bool, DependencyError> {
+        let _ = dep;
+        Ok(true)
+    }
 
     async fn prefetch_versions(
         &self,
@@ -192,6 +196,36 @@ impl Resolver {
         self.overrides = overrides;
     }
 
+    fn select_best_version(
+        versions: &[Version],
+        constraint: &VersionRange,
+        spec: &str,
+    ) -> Option<Version> {
+        let mut matches: Vec<Version> = versions
+            .iter()
+            .filter(|v| constraint.matches(v))
+            .cloned()
+            .collect();
+        if matches.is_empty() {
+            return None;
+        }
+
+        let allows_prerelease = spec.contains('-');
+        if !allows_prerelease {
+            let stable: Vec<Version> = matches
+                .iter()
+                .filter(|v| v.pre.is_none())
+                .cloned()
+                .collect();
+            if let Some(best) = stable.into_iter().max() {
+                return Some(best);
+            }
+        }
+
+        matches.sort();
+        matches.into_iter().max()
+    }
+
     /// Resolve all dependencies. Fails with `SolveError` on provider error or
     /// unresolvable constraint.
     pub async fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
@@ -213,6 +247,7 @@ impl Resolver {
         while !queue.is_empty() {
             let batch_size = queue.len().min(50);
             let batch: Vec<(PackageName, String)> = queue.drain(..batch_size).collect();
+            let mut selected: Vec<(PackageName, String, Version)> = Vec::new();
 
             // Deduplicate and prefetch batch versions
             let mut seen = HashSet::new();
@@ -248,24 +283,13 @@ impl Resolver {
                             .map_err(|e| SolveError {
                                 message: format!("versions fetch failed for '{}': {}", name_str, e),
                             })?;
-                    if let Some(v) = versions
-                        .iter()
-                        .filter(|v| oc.matches(v))
-                        .max()
-                        .cloned()
-                        .or_else(|| versions.into_iter().max())
+                    if let Some(v) = Self::select_best_version(&versions, &oc, override_spec)
+                        .or_else(|| versions.iter().filter(|v| v.pre.is_none()).cloned().max())
+                        .or_else(|| versions.iter().cloned().max())
                     {
-                        Self::add_resolution(
-                            &mut resolutions,
-                            &mut resolved,
-                            &mut resolved_majors,
-                            &name,
-                            &name_str,
-                            v,
-                            &self.provider,
-                            &mut queue,
-                        )
-                        .await?;
+                        resolved.insert(name_str.clone(), v.clone());
+                        resolved_majors.insert((name_str.clone(), v.major));
+                        selected.push((name, name_str, v));
                     }
                     continue;
                 }
@@ -304,26 +328,12 @@ impl Resolver {
                     }
 
                     // Different major → add separate resolution
-                    if let Some(other) = versions
-                        .iter()
-                        .filter(|v| constraint.matches(v))
-                        .max()
-                        .cloned()
-                    {
+                    if let Some(other) = Self::select_best_version(&versions, &constraint, &spec) {
                         let key = (name_str.clone(), other.major);
                         if !resolved_majors.contains(&key) {
+                            resolved.insert(name_str.clone(), other.clone());
                             resolved_majors.insert(key);
-                            Self::add_resolution(
-                                &mut resolutions,
-                                &mut resolved,
-                                &mut resolved_majors,
-                                &name,
-                                &name_str,
-                                other,
-                                &self.provider,
-                                &mut queue,
-                            )
-                            .await?;
+                            selected.push((name, name_str, other));
                         }
                     }
                     continue;
@@ -337,41 +347,44 @@ impl Resolver {
                     .map_err(|e| SolveError {
                         message: format!("cannot fetch versions for '{}': {}", name_str, e),
                     })?;
-                let version = versions
-                    .iter()
-                    .filter(|v| constraint.matches(v))
-                    .max()
-                    .cloned()
-                    .or_else(|| {
-                        eprintln!(
-                            "warning: no version of '{}' matches '{}'; picking latest",
-                            name_str, spec
-                        );
-                        versions.into_iter().max()
-                    });
+                let version = Self::select_best_version(&versions, &constraint, &spec);
 
                 match version {
                     Some(v) => {
-                        Self::add_resolution(
-                            &mut resolutions,
-                            &mut resolved,
-                            &mut resolved_majors,
-                            &name,
-                            &name_str,
-                            v,
-                            &self.provider,
-                            &mut queue,
-                        )
-                        .await?
+                        resolved.insert(name_str.clone(), v.clone());
+                        resolved_majors.insert((name_str.clone(), v.major));
+                        selected.push((name, name_str, v));
                     }
                     None => {
                         return Err(SolveError {
-                            message: format!(
-                                "no versions found for '{}' (spec: '{}')",
-                                name_str, spec
-                            ),
+                            message: format!("no version of '{}' matches '{}'", name_str, spec),
                         })
                     }
+                }
+            }
+
+            if !selected.is_empty() {
+                let ids: Vec<PackageId> = selected
+                    .iter()
+                    .map(|(name, _, version)| PackageId::new(name.clone(), version.clone()))
+                    .collect();
+                self.provider
+                    .prefetch_dependencies(&ids)
+                    .await
+                    .map_err(|e| SolveError {
+                        message: format!("dependency prefetch failed: {e}"),
+                    })?;
+
+                for (name, name_str, version) in selected {
+                    Self::add_resolution(
+                        &mut resolutions,
+                        &name,
+                        &name_str,
+                        version,
+                        &self.provider,
+                        &mut queue,
+                    )
+                    .await?;
                 }
             }
         }
@@ -382,17 +395,13 @@ impl Resolver {
     /// Record a resolved package and enqueue its transitive dependencies.
     async fn add_resolution(
         resolutions: &mut Vec<Resolution>,
-        resolved: &mut HashMap<String, Version>,
-        resolved_majors: &mut HashSet<(String, u64)>,
         name: &PackageName,
-        name_str: &str,
+        _name_str: &str,
         version: Version,
         provider: &std::sync::Arc<dyn DependencyProvider>,
         queue: &mut VecDeque<(PackageName, String)>,
     ) -> Result<(), SolveError> {
         let pid = PackageId::new(name.clone(), version.clone());
-        resolved.insert(name_str.to_string(), version.clone());
-        resolved_majors.insert((name_str.to_string(), version.major));
 
         let deps = provider
             .get_dependencies(&pid)
@@ -410,7 +419,16 @@ impl Resolver {
             .collect();
 
         for dep in &deps {
-            queue.push_front((dep.package.clone(), dep.spec.clone()));
+            if provider.should_enqueue(dep).await.map_err(|e| SolveError {
+                message: format!(
+                    "dependency enqueue check failed for '{}@{}': {}",
+                    dep.package.as_str(),
+                    dep.spec,
+                    e
+                ),
+            })? {
+                queue.push_front((dep.package.clone(), dep.spec.clone()));
+            }
         }
 
         resolutions.push(Resolution {
@@ -505,6 +523,54 @@ mod tests {
         assert_eq!(result.resolutions[0].version.to_string(), "1.0.0");
     }
 
+    #[tokio::test]
+    async fn test_no_matching_version_fails_instead_of_falling_back() {
+        struct NP;
+        #[async_trait]
+        impl DependencyProvider for NP {
+            async fn get_versions(&self, _: &PackageName) -> Result<Vec<Version>, DependencyError> {
+                Ok(vec!["1.0.0", "2.0.0"]
+                    .iter()
+                    .map(|s| Version::parse(s).unwrap())
+                    .collect())
+            }
+            async fn get_dependencies(
+                &self,
+                _: &PackageId,
+            ) -> Result<Vec<ResolvedDep>, DependencyError> {
+                Ok(vec![])
+            }
+        }
+        let resolver = Resolver::new(std::sync::Arc::new(NP));
+        let wanted = vec![(PackageName::new("pkg").unwrap(), "=9.9.9".to_string())];
+        let err = resolver.solve(&wanted).await.unwrap_err();
+        assert!(err.message.contains("no version of 'pkg' matches '=9.9.9'"));
+    }
+
+    #[tokio::test]
+    async fn test_prefers_stable_match_over_prerelease_for_normal_ranges() {
+        struct PP;
+        #[async_trait]
+        impl DependencyProvider for PP {
+            async fn get_versions(&self, _: &PackageName) -> Result<Vec<Version>, DependencyError> {
+                Ok(vec!["4.4.3", "4.5.0-canary.20260504T180558"]
+                    .iter()
+                    .map(|s| Version::parse(s).unwrap())
+                    .collect())
+            }
+            async fn get_dependencies(
+                &self,
+                _: &PackageId,
+            ) -> Result<Vec<ResolvedDep>, DependencyError> {
+                Ok(vec![])
+            }
+        }
+        let resolver = Resolver::new(std::sync::Arc::new(PP));
+        let wanted = vec![(PackageName::new("zod").unwrap(), "^4.4.3".to_string())];
+        let result = resolver.solve(&wanted).await.unwrap();
+        assert_eq!(result.resolutions[0].version.to_string(), "4.4.3");
+    }
+
     #[test]
     fn test_confusion_detection() {
         let deps = vec![DepInfo {
@@ -514,5 +580,62 @@ mod tests {
         }];
         let w = check_dependency_confusion(&["my-pkg".into()], &deps, &HashMap::new(), &[]);
         assert!(w[0].contains("confusion"));
+    }
+
+    #[tokio::test]
+    async fn test_solves_large_tree_without_duplicate_explosion() {
+        struct LargeTreeProvider {
+            depth: usize,
+            width: usize,
+        }
+
+        impl LargeTreeProvider {
+            fn level_of(name: &str) -> usize {
+                name.split('-')
+                    .nth(1)
+                    .and_then(|part| part.parse::<usize>().ok())
+                    .unwrap_or(0)
+            }
+        }
+
+        #[async_trait]
+        impl DependencyProvider for LargeTreeProvider {
+            async fn get_versions(&self, _: &PackageName) -> Result<Vec<Version>, DependencyError> {
+                Ok(vec![Version::parse("1.0.0").unwrap()])
+            }
+
+            async fn get_dependencies(
+                &self,
+                id: &PackageId,
+            ) -> Result<Vec<ResolvedDep>, DependencyError> {
+                let name = id.name_str().to_string();
+                let level = Self::level_of(&name);
+                if level >= self.depth {
+                    return Ok(vec![]);
+                }
+
+                Ok((0..self.width)
+                    .map(|i| ResolvedDep {
+                        package: PackageName::new(format!("pkg-{}-{name}-{i}", level + 1)).unwrap(),
+                        spec: "^1.0.0".to_string(),
+                        optional: false,
+                        peer: false,
+                    })
+                    .collect())
+            }
+        }
+
+        let resolver = Resolver::new(std::sync::Arc::new(LargeTreeProvider {
+            depth: 4,
+            width: 4,
+        }));
+        let wanted = vec![(
+            PackageName::new("pkg-0-root").unwrap(),
+            "^1.0.0".to_string(),
+        )];
+        let result = resolver.solve(&wanted).await.unwrap();
+
+        // 1 + 4 + 16 + 64 + 256
+        assert_eq!(result.resolutions.len(), 341);
     }
 }

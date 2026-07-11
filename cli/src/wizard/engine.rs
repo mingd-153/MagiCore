@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Result of a completed wizard flow
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -19,9 +19,16 @@ pub struct Question {
 }
 
 pub enum QuestionKind {
-    Select { options: Vec<Answer> },
-    MultiSelect { options: Vec<Answer> },
-    Input { default: Option<String> },
+    Select {
+        options: Vec<Answer>,
+    },
+    MultiSelect {
+        options: Vec<Answer>,
+    },
+    #[allow(dead_code)]
+    Input {
+        default: Option<String>,
+    },
 }
 
 pub struct Answer {
@@ -32,7 +39,11 @@ pub struct Answer {
 
 impl Answer {
     pub fn new(label: &str, value: &str) -> Self {
-        Self { label: label.to_string(), value: value.to_string(), next_questions: vec![] }
+        Self {
+            label: label.to_string(),
+            value: value.to_string(),
+            next_questions: vec![],
+        }
     }
 
     pub fn with_questions(mut self, questions: Vec<Question>) -> Self {
@@ -49,13 +60,14 @@ impl WizardEngine {
         match &question.kind {
             QuestionKind::Select { options } => {
                 let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
-                let idx = mg_ui::prompt::select("", &labels).unwrap_or(0);
+                let idx = mg_ui::prompt::select(&question.prompt, &labels).unwrap_or(0);
                 let chosen = &options[idx];
                 Self::run_next(chosen)
             }
             QuestionKind::MultiSelect { options } => {
                 let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
-                let indices = mg_ui::prompt::multi_select("", &labels).unwrap_or(vec![]);
+                let indices =
+                    mg_ui::prompt::multi_select(&question.prompt, &labels).unwrap_or(vec![]);
                 let mut results = vec![];
                 for &i in &indices {
                     let chosen = &options[i];
@@ -65,7 +77,8 @@ impl WizardEngine {
                 results
             }
             QuestionKind::Input { default } => {
-                let answer = mg_ui::prompt::input("").unwrap_or(default.clone().unwrap_or_default());
+                let answer = mg_ui::prompt::input(&question.prompt)
+                    .unwrap_or(default.clone().unwrap_or_default());
                 vec![answer]
             }
         }

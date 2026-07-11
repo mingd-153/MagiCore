@@ -62,13 +62,20 @@ impl fmt::Display for Version {
 
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> Ordering {
-        (self.major, self.minor, self.patch, self.pre.is_some(), &self.pre).cmp(&(
-            other.major,
-            other.minor,
-            other.patch,
-            other.pre.is_some(),
-            &other.pre,
-        ))
+        (
+            self.major,
+            self.minor,
+            self.patch,
+            self.pre.is_some(),
+            &self.pre,
+        )
+            .cmp(&(
+                other.major,
+                other.minor,
+                other.patch,
+                other.pre.is_some(),
+                &other.pre,
+            ))
     }
 }
 

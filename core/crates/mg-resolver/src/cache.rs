@@ -1,7 +1,7 @@
+use crate::solver::ResolvedDep;
+use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use dashmap::DashMap;
-use crate::solver::ResolvedDep;
 
 const DEFAULT_TTL: Duration = Duration::from_secs(300);
 
@@ -12,7 +12,10 @@ struct CacheEntry<T> {
 
 impl<T: Clone> Clone for CacheEntry<T> {
     fn clone(&self) -> Self {
-        Self { value: Arc::clone(&self.value), fetched_at: self.fetched_at }
+        Self {
+            value: Arc::clone(&self.value),
+            fetched_at: self.fetched_at,
+        }
     }
 }
 
@@ -31,11 +34,19 @@ pub struct RegistryCache {
 
 impl RegistryCache {
     pub fn new() -> Self {
-        Self { versions: DashMap::new(), deps: DashMap::new(), ttl: DEFAULT_TTL }
+        Self {
+            versions: DashMap::new(),
+            deps: DashMap::new(),
+            ttl: DEFAULT_TTL,
+        }
     }
 
     pub fn with_ttl(ttl: Duration) -> Self {
-        Self { versions: DashMap::new(), deps: DashMap::new(), ttl }
+        Self {
+            versions: DashMap::new(),
+            deps: DashMap::new(),
+            ttl,
+        }
     }
 
     pub fn get_versions(&self, name: &str) -> Option<Vec<mg_types::Version>> {
@@ -50,10 +61,13 @@ impl RegistryCache {
     }
 
     pub fn insert_versions(&self, name: String, versions: Vec<mg_types::Version>) {
-        self.versions.insert(name, CacheEntry {
-            value: versions.into(),
-            fetched_at: Instant::now(),
-        });
+        self.versions.insert(
+            name,
+            CacheEntry {
+                value: versions.into(),
+                fetched_at: Instant::now(),
+            },
+        );
     }
 
     pub fn get_deps(&self, version_key: &str) -> Option<Vec<ResolvedDep>> {
@@ -68,10 +82,13 @@ impl RegistryCache {
     }
 
     pub fn insert_deps(&self, version_key: String, deps: Vec<ResolvedDep>) {
-        self.deps.insert(version_key, CacheEntry {
-            value: deps.into(),
-            fetched_at: Instant::now(),
-        });
+        self.deps.insert(
+            version_key,
+            CacheEntry {
+                value: deps.into(),
+                fetched_at: Instant::now(),
+            },
+        );
     }
 
     pub fn clear(&self) {
@@ -94,7 +111,9 @@ impl RegistryCache {
 }
 
 impl Default for RegistryCache {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -102,7 +121,10 @@ mod tests {
     use super::*;
 
     fn sample_versions() -> Vec<mg_types::Version> {
-        vec![mg_types::Version::parse("1.0.0").unwrap(), mg_types::Version::parse("2.0.0").unwrap()]
+        vec![
+            mg_types::Version::parse("1.0.0").unwrap(),
+            mg_types::Version::parse("2.0.0").unwrap(),
+        ]
     }
 
     #[test]

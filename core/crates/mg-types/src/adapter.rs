@@ -102,7 +102,8 @@ pub trait PackageAdapter: Send + Sync {
     async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()>;
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph>;
     async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()>;
-    async fn install(&self, graph: &ResolvedGraph, project_root: &Path) -> MgResult<InstallSummary>;
+    async fn install(&self, graph: &ResolvedGraph, project_root: &Path)
+        -> MgResult<InstallSummary>;
     async fn add(
         &self,
         project_root: &Path,

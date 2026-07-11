@@ -167,12 +167,20 @@ fn match_single_range(range: &str, version: &Version) -> bool {
         return version.major == target.major && version >= &target;
     }
     if let Some(target) = range.strip_prefix('~').and_then(|s| Version::parse(s).ok()) {
-        return version.major == target.major && version.minor == target.minor && version >= &target;
+        return version.major == target.major
+            && version.minor == target.minor
+            && version >= &target;
     }
-    if let Some(target) = range.strip_prefix(">=").and_then(|s| Version::parse(s).ok()) {
+    if let Some(target) = range
+        .strip_prefix(">=")
+        .and_then(|s| Version::parse(s).ok())
+    {
         return version >= &target;
     }
-    if let Some(target) = range.strip_prefix("<=").and_then(|s| Version::parse(s).ok()) {
+    if let Some(target) = range
+        .strip_prefix("<=")
+        .and_then(|s| Version::parse(s).ok())
+    {
         return version <= &target;
     }
     if let Some(target) = range.strip_prefix('>').and_then(|s| Version::parse(s).ok()) {
@@ -181,5 +189,7 @@ fn match_single_range(range: &str, version: &Version) -> bool {
     if let Some(target) = range.strip_prefix('<').and_then(|s| Version::parse(s).ok()) {
         return version < &target;
     }
-    Version::parse(range).map(|target| version == &target).unwrap_or(false)
+    Version::parse(range)
+        .map(|target| version == &target)
+        .unwrap_or(false)
 }

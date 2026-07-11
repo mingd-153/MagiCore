@@ -1,9 +1,9 @@
 use anyhow::Result;
 
 #[cfg(feature = "web")]
-use mg_ui::{info, success};
-#[cfg(feature = "web")]
 use crate::context::ProjectContext;
+#[cfg(feature = "web")]
+use mg_ui::{info, success};
 
 /// mg outdated — check for outdated packages
 pub async fn run(core: Option<&str>) -> Result<()> {
@@ -29,9 +29,13 @@ async fn outdated_web(core: Option<&str>) -> Result<()> {
         return Ok(());
     }
 
-    info(&format!("Checking {} dependencies for updates...", all_deps.len()));
+    info(&format!(
+        "Checking {} dependencies for updates...",
+        all_deps.len()
+    ));
 
-    let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
+    let registry =
+        mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
     let mut outdated = 0;
 
     for dep in all_deps {
@@ -41,7 +45,10 @@ async fn outdated_web(core: Option<&str>) -> Result<()> {
                 if let Some(latest_ver) = latest {
                     if let Ok(lv) = mg_types::Version::parse(latest_ver) {
                         if !dep.range.matches(&lv) {
-                            info(&format!("  {}: {} → {} (latest)", dep.name, dep.range, latest_ver));
+                            info(&format!(
+                                "  {}: {} → {} (latest)",
+                                dep.name, dep.range, latest_ver
+                            ));
                             outdated += 1;
                         }
                     }
@@ -54,7 +61,10 @@ async fn outdated_web(core: Option<&str>) -> Result<()> {
     if outdated == 0 {
         success("All packages are up to date!");
     } else {
-        info(&format!("{} package(s) outdated. Run '{}' to update.", outdated, "mg update"));
+        info(&format!(
+            "{} package(s) outdated. Run '{}' to update.",
+            outdated, "mg update"
+        ));
     }
 
     Ok(())

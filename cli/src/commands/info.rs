@@ -16,7 +16,8 @@ pub async fn run(package: String) -> Result<()> {
 
 #[cfg(feature = "web")]
 async fn info_web(package: String) -> Result<()> {
-    let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
+    let registry =
+        mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
 
     info(&format!("Fetching info for {}...", package));
 

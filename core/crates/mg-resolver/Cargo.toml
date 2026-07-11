@@ -19,3 +19,7 @@ criterion = { workspace = true }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "resolver_bench"
+harness = false

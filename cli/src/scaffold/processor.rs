@@ -468,7 +468,9 @@ impl Scaffolder {
                     )
                 } else {
                     (
-                        infer_backend_language(&framework).unwrap_or_default().to_string(),
+                        infer_backend_language(&framework)
+                            .unwrap_or_default()
+                            .to_string(),
                         framework.clone(),
                     )
                 };
@@ -584,11 +586,8 @@ impl Scaffolder {
             }
 
             let contents = std::fs::read_to_string(&source_path)?;
-            let rendered = context.render_with_contract(
-                &contents,
-                &file.required_context,
-                &source_path,
-            )?;
+            let rendered =
+                context.render_with_contract(&contents, &file.required_context, &source_path)?;
             Self::write_file(&target.join(&file.target), &rendered)?;
         }
 
@@ -616,7 +615,8 @@ impl WebTemplateContext {
             layers
                 .iter()
                 .filter_map(|layer| {
-                    layer.strip_prefix(Scaffolder::workspace_root())
+                    layer
+                        .strip_prefix(Scaffolder::workspace_root())
                         .ok()
                         .map(|p| p.display().to_string())
                 })
@@ -878,7 +878,11 @@ fn effective_web_mode(config: &ScaffoldConfig) -> String {
         return "backend".to_string();
     }
 
-    let framework = config.frameworks.first().map(String::as_str).unwrap_or("vanilla");
+    let framework = config
+        .frameworks
+        .first()
+        .map(String::as_str)
+        .unwrap_or("vanilla");
     if matches!(
         framework,
         "remix" | "react-fastify" | "vue-laravel" | "react-spring" | "custom"
@@ -937,7 +941,10 @@ mod tests {
             assert!(out.join("README.md").exists(), "{} README", core);
             if core == "web" {
                 assert!(out.join("mg.lock").exists(), "web mg.lock");
-                assert!(out.join(".megagate").join("web.toml").exists(), "web manifest");
+                assert!(
+                    out.join(".megagate").join("web.toml").exists(),
+                    "web manifest"
+                );
             }
         }
     }
@@ -968,8 +975,17 @@ mod tests {
         assert!(out.join("apps").join("frontend").join("README.md").exists());
         assert!(out.join("apps").join("backend").join("README.md").exists());
         assert!(out.join("packages").join("README.md").exists());
-        assert!(out.join("apps").join("frontend").join("vite.config.ts").exists());
-        assert!(out.join("apps").join("backend").join("src").join("server.ts").exists());
+        assert!(out
+            .join("apps")
+            .join("frontend")
+            .join("vite.config.ts")
+            .exists());
+        assert!(out
+            .join("apps")
+            .join("backend")
+            .join("src")
+            .join("server.ts")
+            .exists());
     }
 
     #[test]

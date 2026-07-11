@@ -16,7 +16,11 @@ pub struct Integrity {
 
 impl Integrity {
     pub fn new(algorithm: super::HashAlgorithm, hash: String, size: u64) -> Self {
-        Self { algorithm, hash, size }
+        Self {
+            algorithm,
+            hash,
+            size,
+        }
     }
 
     /// Verify data matches this integrity
