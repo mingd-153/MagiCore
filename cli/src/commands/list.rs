@@ -1,6 +1,6 @@
+use crate::context::ProjectContext;
 use anyhow::Result;
 use mg_ui::info;
-use crate::context::ProjectContext;
 
 /// mg list — show installed packages
 pub async fn run(core: Option<&str>) -> Result<()> {
@@ -17,7 +17,12 @@ pub async fn run(core: Option<&str>) -> Result<()> {
     info(&format!("Packages in {}:", ctx.config.name));
     for pkg in &packages {
         let dev = if pkg.is_dev { " (dev)" } else { "" };
-        info(&format!("  {}@{}{}", pkg.id.name_str(), pkg.id.version(), dev));
+        info(&format!(
+            "  {}@{}{}",
+            pkg.id.name_str(),
+            pkg.id.version(),
+            dev
+        ));
     }
 
     Ok(())

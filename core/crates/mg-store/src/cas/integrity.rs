@@ -11,11 +11,17 @@ impl IntegrityHash {
     pub fn from_bytes(data: &[u8], executable: bool) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(data);
-        Self { hash: hex::encode(hasher.finalize()), executable }
+        Self {
+            hash: hex::encode(hasher.finalize()),
+            executable,
+        }
     }
 
     pub fn from_hash_str(hash_hex: &str, executable: bool) -> Self {
-        Self { hash: hash_hex.to_string(), executable }
+        Self {
+            hash: hash_hex.to_string(),
+            executable,
+        }
     }
 
     pub fn cas_path(&self, root: &Path) -> PathBuf {
@@ -31,7 +37,10 @@ impl IntegrityHash {
     pub fn to_integrity_str(&self) -> String {
         use base64::Engine;
         let raw = hex::decode(&self.hash).unwrap_or_default();
-        format!("sha256-{}", base64::engine::general_purpose::STANDARD.encode(&raw))
+        format!(
+            "sha256-{}",
+            base64::engine::general_purpose::STANDARD.encode(&raw)
+        )
     }
 }
 

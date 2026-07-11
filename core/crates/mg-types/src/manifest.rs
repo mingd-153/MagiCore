@@ -58,7 +58,8 @@ impl Manifest {
     }
 
     pub fn find_dep(&self, name: &str) -> Option<&DependencySpec> {
-        self.all_dependencies().find(|dep| dep.name.as_str() == name)
+        self.all_dependencies()
+            .find(|dep| dep.name.as_str() == name)
     }
 
     pub fn dep_groups(&self) -> [(&str, &[DependencySpec]); 4] {

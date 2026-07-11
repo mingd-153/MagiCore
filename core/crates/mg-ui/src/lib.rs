@@ -1,10 +1,9 @@
+use console::style;
 /// Terminal UI components for MegaGate
-/// 
+///
 /// Provides progress bars, spinners, interactive prompts, and styled output.
 /// Uses indicatif + console for rich terminal experience.
-
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-use console::style;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 pub mod help;
 pub mod progress;
@@ -13,19 +12,27 @@ pub mod table;
 
 /// MegaGate banner shown at wizard start
 pub fn print_banner() {
-    let banner = style(r#"
+    let banner = style(
+        r#"
     ╔══════════════════════════════════════════╗
     ║           🚀  MegaGate  🚀              ║
     ║      Universal Package Manager           ║
     ╚══════════════════════════════════════════╝
-    "#).cyan().bold();
+    "#,
+    )
+    .cyan()
+    .bold();
     println!("{}", banner);
 }
 
 /// Print a section header
 pub fn section(title: &str, current: usize, total: usize) {
     println!();
-    println!("  {} {}", style("◆").cyan().bold(), style(format!("Step {}/{}", current, total)).dim());
+    println!(
+        "  {} {}",
+        style("◆").cyan().bold(),
+        style(format!("Step {}/{}", current, total)).dim()
+    );
     println!("  {} {}", style("┃").cyan(), style(title).bold().white());
     println!("  {} {}", style("┃").cyan(), style("─".repeat(40)).dim());
 }
@@ -107,9 +114,20 @@ pub fn style_cmd(cmd: &str) -> String {
 /// Print next steps after project creation
 pub fn print_next_steps(project_name: &str) {
     println!();
-    println!("  {}", style("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓").green());
-    println!("  {}", style("┃           ✅  All done!                   ┃").green().bold());
-    println!("  {}", style("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛").green());
+    println!(
+        "  {}",
+        style("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓").green()
+    );
+    println!(
+        "  {}",
+        style("┃           ✅  All done!                   ┃")
+            .green()
+            .bold()
+    );
+    println!(
+        "  {}",
+        style("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛").green()
+    );
     println!();
     success("Project created successfully!");
     println!();
@@ -121,14 +139,32 @@ pub fn print_next_steps(project_name: &str) {
 /// Print a summary table after install
 pub fn print_install_summary(added: usize, cached: usize, duration_ms: u64, disk_saved: &str) {
     println!();
-    println!("  {}", style("┌──────────────────────────────────────────────┐").cyan());
-    println!("  {}", style("│           📦  Install Complete               │").cyan().bold());
-    println!("  {}", style("├──────────────────────────────────────────────┤").cyan());
-    println!("  {} {:>3} packages installed",  style("│").cyan(), added);
-    println!("  {} {:>3} from cache",            style("│").cyan(), cached);
-    println!("  {} {:>5} ms total",              style("│").cyan(), duration_ms);
-    println!("  {} {:>10} saved (CAS dedup)",    style("│").cyan(), style(disk_saved).green().bold());
-    println!("  {}", style("└──────────────────────────────────────────────┘").cyan());
+    println!(
+        "  {}",
+        style("┌──────────────────────────────────────────────┐").cyan()
+    );
+    println!(
+        "  {}",
+        style("│           📦  Install Complete               │")
+            .cyan()
+            .bold()
+    );
+    println!(
+        "  {}",
+        style("├──────────────────────────────────────────────┤").cyan()
+    );
+    println!("  {} {:>3} packages installed", style("│").cyan(), added);
+    println!("  {} {:>3} from cache", style("│").cyan(), cached);
+    println!("  {} {:>5} ms total", style("│").cyan(), duration_ms);
+    println!(
+        "  {} {:>10} saved (CAS dedup)",
+        style("│").cyan(),
+        style(disk_saved).green().bold()
+    );
+    println!(
+        "  {}",
+        style("└──────────────────────────────────────────────┘").cyan()
+    );
 }
 
 #[cfg(test)]

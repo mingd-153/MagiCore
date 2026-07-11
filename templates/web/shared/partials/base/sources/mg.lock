@@ -6,4 +6,4 @@ frameworks = [{{frameworks}}]
 [resolution]
 state = "pending"
 store = "megagate"
-integrity = []
+package_count = 0

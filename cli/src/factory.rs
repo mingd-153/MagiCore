@@ -1,8 +1,7 @@
+use mg_types::adapter::PackageAdapter;
 /// Adapter factory — creates the right adapter based on ecosystem + feature flags.
 /// Each core has a feature gate so single-core builds don't link unused crates.
-
 use mg_types::Ecosystem;
-use mg_types::adapter::PackageAdapter;
 
 /// Available cores in this build (for init menu filtering)
 pub fn available_cores() -> Vec<(&'static str, &'static str)> {
@@ -14,14 +13,14 @@ pub fn available_cores() -> Vec<(&'static str, &'static str)> {
             }
         };
     }
-    push_core!("web",   "web",   "🌐  Web application");
-    push_core!("game",  "game",  "🎮  Game");
-    push_core!("ai",    "ai",    "🤖  AI agent / ML project");
-    push_core!("clo",   "clo",   "☁️   Cloud infrastructure");
-    push_core!("cicd",  "cicd",  "🔄  CI/CD pipeline");
-    push_core!("iot",   "iot",   "🔌  IoT / Embedded device");
-    push_core!("app",   "app",   "📱  Mobile / Desktop app");
-    push_core!("lib",   "lib",   "📦  Library");
+    push_core!("web", "web", "🌐  Web application");
+    push_core!("game", "game", "🎮  Game");
+    push_core!("ai", "ai", "🤖  AI agent / ML project");
+    push_core!("clo", "clo", "☁️   Cloud infrastructure");
+    push_core!("cicd", "cicd", "🔄  CI/CD pipeline");
+    push_core!("iot", "iot", "🔌  IoT / Embedded device");
+    push_core!("app", "app", "📱  Mobile / Desktop app");
+    push_core!("lib", "lib", "📦  Library");
     cores
 }
 
@@ -29,14 +28,14 @@ pub fn available_cores() -> Vec<(&'static str, &'static str)> {
 /// Returns an error if the core is not available in this build.
 pub fn create_adapter(ecosystem: &Ecosystem) -> anyhow::Result<Box<dyn PackageAdapter>> {
     match ecosystem {
-        Ecosystem::Web   => create_web_adapter(),
-        Ecosystem::Game  => create_game_adapter(),
-        Ecosystem::Ai    => create_ai_adapter(),
+        Ecosystem::Web => create_web_adapter(),
+        Ecosystem::Game => create_game_adapter(),
+        Ecosystem::Ai => create_ai_adapter(),
         Ecosystem::Cloud => create_clo_adapter(),
-        Ecosystem::Cicd  => create_cicd_adapter(),
-        Ecosystem::Iot   => create_iot_adapter(),
-        Ecosystem::App   => create_app_adapter(),
-        Ecosystem::Lib   => create_lib_adapter(),
+        Ecosystem::Cicd => create_cicd_adapter(),
+        Ecosystem::Iot => create_iot_adapter(),
+        Ecosystem::App => create_app_adapter(),
+        Ecosystem::Lib => create_lib_adapter(),
     }
 }
 
@@ -66,7 +65,9 @@ fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
 }
 #[cfg(not(feature = "ai"))]
 fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("AI core not available in this build. Install: brew install megagate (full) or megagate-ai")
+    anyhow::bail!(
+        "AI core not available in this build. Install: brew install megagate (full) or megagate-ai"
+    )
 }
 
 #[cfg(feature = "clo")]

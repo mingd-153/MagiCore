@@ -1,19 +1,27 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::Engine;
+use dashmap::DashMap;
 use mg_adapter_base::BaseAdapter;
-use mg_resolver::{DependencyError, DependencyProvider, ResolvedDep, Resolver as CoreResolver};
-use mg_store::ContentStore;
+use mg_fetcher::extract::extract_tarball;
+use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
+use mg_resolver::{
+    DependencyError, DependencyProvider, RegistryCache, ResolvedDep, Resolver as CoreResolver,
+};
+use mg_store::{ContentStore, Database, Layout, PackageCache};
 use mg_types::{
     adapter::{
         AddOptions, AuditReport, InstallSummary, InstalledPackage, PackageAdapter, ResolvedGraph,
         ResolvedPackage, UpdatedPackage,
     },
-    Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
+    DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256, Sha512};
+use walkdir::WalkDir;
 
 pub mod native;
 
@@ -21,29 +29,106 @@ pub struct WebAdapter {
     registry_url: String,
     resolver: Arc<CoreResolver>,
     store: Option<ContentStore>,
+    shared_cache: Option<SharedWebCache>,
 }
 
 impl WebAdapter {
     pub fn new() -> Self {
-        let provider = Arc::new(NpmDependencyProvider::new("https://registry.npmjs.org"));
-        Self {
-            registry_url: "https://registry.npmjs.org".to_string(),
-            resolver: Arc::new(CoreResolver::new(provider)),
-            store: None,
-        }
+        let registry_url = effective_registry_url("https://registry.npmjs.org");
+        let shared_cache = SharedWebCache::discover();
+        Self::build(registry_url, shared_cache)
     }
     pub fn with_registry(registry_url: String) -> Self {
-        let provider = Arc::new(NpmDependencyProvider::new(&registry_url));
+        let registry_url = effective_registry_url(&registry_url);
+        let shared_cache = SharedWebCache::discover();
+        Self::build(registry_url, shared_cache)
+    }
+
+    fn build(registry_url: String, shared_cache: Option<SharedWebCache>) -> Self {
+        let provider = Arc::new(NpmDependencyProvider::new(
+            &registry_url,
+            shared_cache.clone(),
+        ));
         Self {
             registry_url,
             resolver: Arc::new(CoreResolver::new(provider)),
             store: None,
+            shared_cache,
         }
+    }
+
+    #[cfg(test)]
+    fn with_registry_and_shared_cache(registry_url: String, shared_root: PathBuf) -> Self {
+        Self::build(registry_url, Some(SharedWebCache { root: shared_root }))
     }
     pub fn with_store(mut self, store: ContentStore) -> Self {
         self.store = Some(store);
         self
     }
+
+    async fn infer_add_range(
+        &self,
+        name: &PackageName,
+        explicit_range: Option<&VersionRange>,
+        exact: bool,
+    ) -> MgResult<VersionRange> {
+        if let Some(range) = explicit_range {
+            let raw = if exact {
+                range
+                    .as_str()
+                    .trim_start_matches('^')
+                    .trim_start_matches('~')
+            } else {
+                range.as_str()
+            };
+            return VersionRange::parse(raw);
+        }
+
+        let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
+        let latest = self.latest_version_string(name, &registry).await?;
+
+        let saved = if exact { latest } else { format!("^{latest}") };
+        VersionRange::parse(&saved)
+    }
+
+    async fn latest_version_string(
+        &self,
+        name: &PackageName,
+        registry: &native::npm_registry::NpmRegistry,
+    ) -> MgResult<String> {
+        let metadata = load_metadata_with_fallback(name, registry, self.shared_cache.as_ref())
+            .await
+            .map_err(|err| mg_types::MgError::Network(err.to_string()))?;
+
+        preferred_registry_version(&metadata).ok_or_else(|| {
+            mg_types::MgError::Other(format!(
+                "unable to infer latest version for '{}'",
+                name.as_str()
+            ))
+        })
+    }
+
+    fn preferred_saved_range(current: &VersionRange, latest: &str) -> MgResult<VersionRange> {
+        let raw = current.as_str();
+        let next = if raw.starts_with('^') {
+            format!("^{latest}")
+        } else if raw.starts_with('~') {
+            format!("~{latest}")
+        } else if raw == "*" {
+            format!("^{latest}")
+        } else {
+            latest.to_string()
+        };
+        VersionRange::parse(&next)
+    }
+}
+
+fn effective_registry_url(default: &str) -> String {
+    std::env::var("MEGAGATE_WEB_REGISTRY_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 impl Default for WebAdapter {
     fn default() -> Self {
@@ -160,6 +245,18 @@ impl PackageAdapter for WebAdapter {
             .solve(&wanted)
             .await
             .map_err(|e| mg_types::MgError::DependencyConflict(e.message))?;
+        let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
+        let metadata = prefetch_resolution_metadata(
+            &result
+                .resolutions
+                .iter()
+                .map(|r| r.package_id.name().clone())
+                .collect::<Vec<_>>(),
+            &registry,
+            self.shared_cache.as_ref(),
+        )
+        .await
+        .map_err(|err| mg_types::MgError::Network(err.to_string()))?;
         let packages = result
             .resolutions
             .iter()
@@ -169,10 +266,21 @@ impl PackageAdapter for WebAdapter {
                     .dev_dependencies
                     .iter()
                     .any(|d| d.name == *r.package_id.name());
+                let (tarball_url, integrity) = metadata
+                    .get(r.package_id.name_str())
+                    .and_then(|package| package.versions.get(&r.package_id.version().to_string()))
+                    .and_then(|version| version.dist.as_ref())
+                    .map(|dist| {
+                        (
+                            dist.tarball.clone(),
+                            dist.integrity.clone().unwrap_or_default(),
+                        )
+                    })
+                    .unwrap_or_else(|| (String::new(), r.integrity.clone()));
                 ResolvedPackage {
                     id: r.package_id.clone(),
-                    integrity: r.integrity.clone(),
-                    tarball_url: String::new(),
+                    integrity,
+                    tarball_url,
                     deps: r
                         .deps
                         .iter()
@@ -219,21 +327,162 @@ impl PackageAdapter for WebAdapter {
         project_root: &Path,
     ) -> MgResult<InstallSummary> {
         let start = std::time::Instant::now();
+        let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
+        let store_root = project_root.join(".megagate").join("cache").join("web");
+        let layout = Layout::new(store_root);
+        std::fs::create_dir_all(layout.root())?;
+        std::fs::create_dir_all(layout.temp_dir())?;
+
+        let cache = PackageCache::new(layout.cache_dir())
+            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+        let shared_cache = self.shared_cache.clone();
+        let database = Database::open(&layout.db_path())
+            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+        let default_store = ContentStore::new(layout.cas_dir())
+            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+        let store = self.store.as_ref().unwrap_or(&default_store);
         let node_modules = project_root.join("node_modules");
         std::fs::create_dir_all(&node_modules)?;
         let mut summary = InstallSummary::default();
+        let staging_root = layout.temp_dir().join(format!(
+            "install-stage-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        ));
+        let staged_node_modules = staging_root.join("node_modules");
+        std::fs::create_dir_all(&staged_node_modules)?;
+        let already_materialized: std::collections::HashSet<PackageId> = graph
+            .packages
+            .iter()
+            .filter(|pkg| {
+                installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id)
+            })
+            .map(|pkg| pkg.id.clone())
+            .collect();
+
+        write_web_lockfile_with_state(project_root, graph, "installing")?;
+        summary.bytes_from_cache += prefetch_tarballs(
+            graph,
+            &already_materialized,
+            &cache,
+            shared_cache.as_ref(),
+            &registry,
+        )
+        .await?;
+
         for pkg in &graph.packages {
-            let dir = node_modules.join(pkg.id.name().as_str());
-            std::fs::create_dir_all(&dir)?;
-            let meta = serde_json::json!({"name": pkg.id.name_str(), "version": pkg.id.version().to_string()});
-            std::fs::write(
-                dir.join("package.json"),
-                serde_json::to_string_pretty(&meta)
-                    .map_err(|e| mg_types::MgError::Other(e.to_string()))?,
-            )?;
+            let final_dir = node_modules.join(pkg.id.name().as_str());
+            if installed_package_matches(&final_dir, &pkg.id) {
+                database
+                    .insert_package(
+                        &pkg.id,
+                        if pkg.integrity.is_empty() {
+                            None
+                        } else {
+                            Some(pkg.integrity.as_str())
+                        },
+                    )
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                summary.added.push(pkg.id.clone());
+                continue;
+            }
+
+            let tarball_path = cache.tarball_path(&pkg.id);
+            let package_root = match ensure_extracted_package_root(
+                &layout,
+                store,
+                shared_cache.as_ref(),
+                pkg,
+                &tarball_path,
+            ) {
+                Ok(root) => root,
+                Err(err) => {
+                    if staging_root.exists() {
+                        let _ = std::fs::remove_dir_all(&staging_root);
+                    }
+                    return Err(err);
+                }
+            };
+            let materialized_dir = staged_node_modules.join(pkg.id.name().as_str());
+            if materialized_dir.exists() {
+                std::fs::remove_dir_all(&materialized_dir)?;
+            }
+            if let Err(err) =
+                hardlink_tree(&package_root, &materialized_dir)
+            {
+                if staging_root.exists() {
+                    let _ = std::fs::remove_dir_all(&staging_root);
+                }
+                return Err(err);
+            }
+            if let Err(err) = database
+                .insert_package(
+                    &pkg.id,
+                    if pkg.integrity.is_empty() {
+                        None
+                    } else {
+                        Some(pkg.integrity.as_str())
+                    },
+                )
+                .map_err(|e| mg_types::MgError::Store(e.to_string()))
+            {
+                if staging_root.exists() {
+                    let _ = std::fs::remove_dir_all(&staging_root);
+                }
+                return Err(err);
+            }
             summary.added.push(pkg.id.clone());
         }
-        write_web_lockfile(project_root, graph)?;
+
+        for pkg in &graph.packages {
+            let staged_dir = staged_node_modules.join(pkg.id.name().as_str());
+            let final_dir = node_modules.join(pkg.id.name().as_str());
+            if !staged_dir.exists() {
+                continue;
+            }
+            if let Some(parent) = final_dir.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to create parent '{}' for '{}': {}",
+                        parent.display(),
+                        pkg.id.name_str(),
+                        err
+                    ))
+                })?;
+            }
+            if final_dir.exists() {
+                std::fs::remove_dir_all(&final_dir).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to remove existing install dir '{}' for '{}': {}",
+                        final_dir.display(),
+                        pkg.id.name_str(),
+                        err
+                    ))
+                })?;
+            }
+            std::fs::rename(&staged_dir, &final_dir).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to promote staged package '{}' from '{}' to '{}': {}",
+                    pkg.id.name_str(),
+                    staged_dir.display(),
+                    final_dir.display(),
+                    err
+                ))
+            })?;
+        }
+        if staging_root.exists() {
+            std::fs::remove_dir_all(&staging_root).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to clean staging root '{}': {}",
+                    staging_root.display(),
+                    err
+                ))
+            })?;
+        }
+
+        write_web_lockfile_with_state(project_root, graph, "locked")?;
         summary.duration_ms = start.elapsed().as_millis() as u64;
         Ok(summary)
     }
@@ -245,20 +494,138 @@ impl PackageAdapter for WebAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PackageId> {
-        self.base_add(project_root, name, range, opts).await
+        let mut manifest = self.parse_manifest(project_root).await?;
+        let inferred = self.infer_add_range(name, range, opts.exact).await?;
+
+        let mut spec = DependencySpec::new(name.clone(), inferred.clone());
+        spec.dev = opts.dev;
+        spec.optional = opts.optional;
+        spec.peer = opts.peer;
+        manifest.add_dep(spec, opts.dev, opts.optional, opts.peer);
+
+        if !opts.no_save {
+            self.write_manifest(project_root, &manifest).await?;
+        }
+
+        let version = inferred
+            .satisfying_version()
+            .unwrap_or_else(|| Version::new(0, 0, 0));
+        Ok(PackageId::new(name.clone(), version))
     }
     async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
         self.base_remove(project_root, name).await
     }
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        self.base_list(project_root).await
+        let manifest = self.parse_manifest(project_root).await?;
+        let lockfile = read_web_lockfile(project_root);
+        let node_modules = project_root.join("node_modules");
+        let mut packages = Vec::new();
+
+        for (label, deps) in manifest.dep_groups() {
+            let is_dev = label == "devDependencies";
+            for dep in deps {
+                let path = node_modules.join(dep.name.as_str());
+                if !path.exists() {
+                    continue;
+                }
+
+                let version = installed_package_version(&path)
+                    .or_else(|| {
+                        lockfile.as_ref().and_then(|lock| {
+                            lock.packages
+                                .iter()
+                                .find(|pkg| pkg.name == dep.name.as_str())
+                                .and_then(|pkg| Version::parse(&pkg.version).ok())
+                        })
+                    })
+                    .unwrap_or_else(|| Version::new(0, 0, 0));
+
+                let integrity = lockfile.as_ref().and_then(|lock| {
+                    lock.packages
+                        .iter()
+                        .find(|pkg| pkg.name == dep.name.as_str())
+                        .and_then(|pkg| pkg.integrity.clone())
+                });
+                let is_direct = lockfile
+                    .as_ref()
+                    .map(|lock| {
+                        lock.packages
+                            .iter()
+                            .find(|pkg| pkg.name == dep.name.as_str())
+                            .map(|pkg| pkg.direct)
+                            .unwrap_or(true)
+                    })
+                    .unwrap_or(true);
+
+                packages.push(InstalledPackage {
+                    id: PackageId::new(dep.name.clone(), version),
+                    path,
+                    integrity,
+                    is_direct,
+                    is_dev,
+                });
+            }
+        }
+
+        if packages.is_empty() {
+            self.base_list(project_root).await
+        } else {
+            Ok(packages)
+        }
     }
     async fn update(
         &self,
         project_root: &Path,
         name: Option<&PackageName>,
     ) -> MgResult<Vec<UpdatedPackage>> {
-        self.base_update(project_root, name).await
+        let mut manifest = self.parse_manifest(project_root).await?;
+        let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
+        let lockfile = read_web_lockfile(project_root);
+        let mut updated = Vec::new();
+
+        for deps in [
+            &mut manifest.dependencies,
+            &mut manifest.dev_dependencies,
+            &mut manifest.peer_dependencies,
+            &mut manifest.optional_dependencies,
+        ] {
+            for dep in deps.iter_mut() {
+                if let Some(selected) = name {
+                    if dep.name != *selected {
+                        continue;
+                    }
+                }
+
+                let latest = self.latest_version_string(&dep.name, &registry).await?;
+                let latest_version = Version::parse(&latest)?;
+                if dep.range.matches(&latest_version) {
+                    continue;
+                }
+
+                let from_version = lockfile
+                    .as_ref()
+                    .and_then(|lock| {
+                        lock.packages
+                            .iter()
+                            .find(|pkg| pkg.direct && pkg.name == dep.name.as_str())
+                            .map(|pkg| pkg.version.clone())
+                    })
+                    .unwrap_or_else(|| dep.range.to_string());
+
+                dep.range = Self::preferred_saved_range(&dep.range, &latest)?;
+                updated.push(UpdatedPackage {
+                    name: dep.name.as_str().to_string(),
+                    from_version,
+                    to_version: latest,
+                });
+            }
+        }
+
+        if !updated.is_empty() {
+            self.write_manifest(project_root, &manifest).await?;
+        }
+
+        Ok(updated)
     }
     async fn audit(&self, _: &Path) -> MgResult<AuditReport> {
         Ok(AuditReport::clean(0))
@@ -267,69 +634,314 @@ impl PackageAdapter for WebAdapter {
 
 struct NpmDependencyProvider {
     registry: native::npm_registry::NpmRegistry,
+    metadata_cache: DashMap<String, native::npm_registry::PackageMetadata>,
+    registry_cache: RegistryCache,
+    shared_cache: Option<SharedWebCache>,
 }
 impl NpmDependencyProvider {
-    fn new(url: &str) -> Self {
+    fn new(url: &str, shared_cache: Option<SharedWebCache>) -> Self {
         Self {
             registry: native::npm_registry::NpmRegistry::new(url),
+            metadata_cache: DashMap::new(),
+            registry_cache: RegistryCache::new(),
+            shared_cache,
         }
+    }
+
+    async fn metadata(
+        &self,
+        package: &PackageName,
+    ) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
+        if let Some(cached) = self.metadata_cache.get(package.as_str()) {
+            return Ok(cached.clone());
+        }
+        let meta = load_metadata_with_fallback(package, &self.registry, self.shared_cache.as_ref())
+            .await?;
+        self.metadata_cache
+            .insert(package.as_str().to_string(), meta.clone());
+        Ok(meta)
+    }
+
+    fn version_key(package_id: &PackageId) -> String {
+        format!("{}@{}", package_id.name_str(), package_id.version())
+    }
+
+    fn current_npm_os() -> &'static str {
+        match std::env::consts::OS {
+            "macos" => "darwin",
+            "windows" => "win32",
+            other => other,
+        }
+    }
+
+    fn current_npm_cpu() -> &'static str {
+        match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            "x86" => "ia32",
+            "powerpc64" => "ppc64",
+            "loongarch64" => "loong64",
+            other => other,
+        }
+    }
+
+    fn platform_matches(rules: Option<&[String]>, current: &str) -> bool {
+        let Some(rules) = rules else {
+            return true;
+        };
+        if rules.is_empty() {
+            return true;
+        }
+
+        let mut positive = Vec::new();
+        let mut negative = Vec::new();
+        for rule in rules {
+            if let Some(stripped) = rule.strip_prefix('!') {
+                negative.push(stripped);
+            } else {
+                positive.push(rule.as_str());
+            }
+        }
+
+        if negative.contains(&current) {
+            return false;
+        }
+        if positive.is_empty() {
+            true
+        } else {
+            positive.contains(&current)
+        }
+    }
+
+    fn version_supported(info: &native::npm_registry::VersionInfo) -> bool {
+        Self::platform_matches(info.os.as_deref(), Self::current_npm_os())
+            && Self::platform_matches(info.cpu.as_deref(), Self::current_npm_cpu())
+    }
+
+    fn select_best_version(
+        versions: &[Version],
+        spec: &str,
+    ) -> Result<Option<Version>, DependencyError> {
+        let constraint = VersionRange::parse(spec)
+            .map_err(|e| DependencyError(format!("invalid spec '{}': {}", spec, e)))?;
+        let mut matches: Vec<Version> = versions
+            .iter()
+            .filter(|v| constraint.matches(v))
+            .cloned()
+            .collect();
+        if matches.is_empty() {
+            return Ok(None);
+        }
+
+        let allows_prerelease = spec.contains('-');
+        if !allows_prerelease {
+            let stable = matches.iter().filter(|v| v.pre.is_none()).cloned().max();
+            if stable.is_some() {
+                return Ok(stable);
+            }
+        }
+
+        matches.sort();
+        Ok(matches.into_iter().max())
     }
 }
 #[async_trait]
 impl DependencyProvider for NpmDependencyProvider {
     async fn get_versions(&self, package: &PackageName) -> Result<Vec<Version>, DependencyError> {
-        let meta = self
-            .registry
-            .fetch_metadata(package.as_str())
-            .await
-            .map_err(|e| {
-                DependencyError(format!(
-                    "npm metadata fetch failed for '{}': {}",
-                    package.as_str(),
-                    e
-                ))
-            })?;
+        if let Some(cached) = self.registry_cache.get_versions(package.as_str()) {
+            return Ok(cached);
+        }
+        let meta = self.metadata(package).await?;
         let mut v: Vec<Version> = meta
             .versions
             .keys()
             .filter_map(|k| Version::parse(k).ok())
             .collect();
         v.sort();
+        self.registry_cache
+            .insert_versions(package.as_str().to_string(), v.clone());
         Ok(v)
     }
     async fn get_dependencies(
         &self,
         package_id: &PackageId,
     ) -> Result<Vec<ResolvedDep>, DependencyError> {
-        let meta = self
-            .registry
-            .fetch_metadata(package_id.name_str())
-            .await
-            .map_err(|e| {
-                DependencyError(format!(
-                    "npm metadata fetch failed for '{}': {}",
-                    package_id.name_str(),
-                    e
-                ))
-            })?;
-        let deps = meta
+        let cache_key = Self::version_key(package_id);
+        if let Some(cached) = self.registry_cache.get_deps(&cache_key) {
+            return Ok(cached);
+        }
+        let meta = self.metadata(package_id.name()).await?;
+        let deps: Vec<ResolvedDep> = meta
             .versions
             .get(&package_id.version().to_string())
-            .and_then(|v| v.dependencies.as_ref())
-            .map(|deps| {
-                deps.iter()
-                    .filter_map(|(k, v)| {
+            .map(|v| {
+                let mut collected = Vec::new();
+                if let Some(deps) = v.dependencies.as_ref() {
+                    collected.extend(deps.iter().filter_map(|(k, v)| {
                         PackageName::new(k).ok().map(|pn| ResolvedDep {
                             package: pn,
                             spec: v.clone(),
                             optional: false,
                             peer: false,
                         })
-                    })
-                    .collect()
+                    }));
+                }
+                if let Some(deps) = v.optional_dependencies.as_ref() {
+                    collected.extend(deps.iter().filter_map(|(k, v)| {
+                        PackageName::new(k).ok().map(|pn| ResolvedDep {
+                            package: pn,
+                            spec: v.clone(),
+                            optional: true,
+                            peer: false,
+                        })
+                    }));
+                }
+                collected
             })
             .unwrap_or_default();
+        self.registry_cache.insert_deps(cache_key, deps.clone());
         Ok(deps)
+    }
+
+    async fn should_enqueue(&self, dep: &ResolvedDep) -> Result<bool, DependencyError> {
+        let versions = self.get_versions(&dep.package).await?;
+        let Some(selected) = Self::select_best_version(&versions, &dep.spec)? else {
+            return Ok(!dep.optional);
+        };
+        let meta = self.metadata(&dep.package).await?;
+        let Some(info) = meta.versions.get(&selected.to_string()) else {
+            return Ok(!dep.optional);
+        };
+
+        Ok(Self::version_supported(info))
+    }
+
+    async fn prefetch_versions(
+        &self,
+        packages: &[PackageName],
+    ) -> Result<Vec<(PackageName, Vec<Version>)>, DependencyError> {
+        let mut results = Vec::with_capacity(packages.len());
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for package in packages {
+            if let Some(cached) = self.registry_cache.get_versions(package.as_str()) {
+                results.push((package.clone(), cached));
+                continue;
+            }
+
+            let package_name = package.clone();
+            let package_key = package.as_str().to_string();
+            let registry = native::npm_registry::NpmRegistry::new(self.registry.registry_url());
+            let shared_cache = self.shared_cache.clone();
+            join_set.spawn(async move {
+                let metadata = load_metadata_by_name_with_fallback(
+                    &package_key,
+                    &registry,
+                    shared_cache.as_ref(),
+                )
+                .await?;
+                Ok::<_, DependencyError>((package_name, metadata))
+            });
+        }
+
+        while let Some(joined) = join_set.join_next().await {
+            let (package, metadata) =
+                joined.map_err(|e| DependencyError(format!("prefetch task failed: {e}")))??;
+            self.metadata_cache
+                .insert(package.as_str().to_string(), metadata.clone());
+            let mut versions: Vec<Version> = metadata
+                .versions
+                .keys()
+                .filter_map(|k| Version::parse(k).ok())
+                .collect();
+            versions.sort();
+            self.registry_cache
+                .insert_versions(package.as_str().to_string(), versions.clone());
+            results.push((package, versions));
+        }
+
+        Ok(results)
+    }
+
+    async fn prefetch_dependencies(
+        &self,
+        ids: &[PackageId],
+    ) -> Result<Vec<(PackageId, Vec<ResolvedDep>)>, DependencyError> {
+        let mut results = Vec::with_capacity(ids.len());
+        let mut preloaded = Vec::new();
+
+        for id in ids {
+            let cache_key = Self::version_key(id);
+            if let Some(cached) = self.registry_cache.get_deps(&cache_key) {
+                results.push((id.clone(), cached));
+            } else {
+                preloaded.push(id.clone());
+            }
+        }
+
+        if preloaded.is_empty() {
+            return Ok(results);
+        }
+
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for id in preloaded {
+            let package_id = id.clone();
+            let registry_url = self.registry.registry_url().to_string();
+            let shared_cache = self.shared_cache.clone();
+
+            join_set.spawn(async move {
+                let reg = native::npm_registry::NpmRegistry::new(&registry_url);
+                let meta = load_metadata_with_fallback(
+                    package_id.name(),
+                    &reg,
+                    shared_cache.as_ref(),
+                )
+                .await?;
+
+                let deps = meta
+                    .versions
+                    .get(&package_id.version().to_string())
+                    .map(|v| {
+                        let mut collected = Vec::new();
+                        if let Some(deps) = v.dependencies.as_ref() {
+                            collected.extend(deps.iter().filter_map(|(k, v)| {
+                                PackageName::new(k).ok().map(|pn| ResolvedDep {
+                                    package: pn,
+                                    spec: v.clone(),
+                                    optional: false,
+                                    peer: false,
+                                })
+                            }));
+                        }
+                        if let Some(deps) = v.optional_dependencies.as_ref() {
+                            collected.extend(deps.iter().filter_map(|(k, v)| {
+                                PackageName::new(k).ok().map(|pn| ResolvedDep {
+                                    package: pn,
+                                    spec: v.clone(),
+                                    optional: true,
+                                    peer: false,
+                                })
+                            }));
+                        }
+                        collected
+                    })
+                    .unwrap_or_default();
+
+                Ok::<_, DependencyError>((package_id, deps))
+            });
+        }
+
+        while let Some(joined) = join_set.join_next().await {
+            let result: Result<(PackageId, Vec<ResolvedDep>), DependencyError> =
+                joined.map_err(|e| DependencyError(format!("prefetch task failed: {e}")))?;
+            let (package_id, deps) = result?;
+            self.registry_cache
+                .insert_deps(Self::version_key(&package_id), deps.clone());
+            results.push((package_id, deps));
+        }
+
+        Ok(results)
     }
 }
 
@@ -374,90 +986,823 @@ impl PackageJson {
     }
 }
 
-fn write_web_lockfile(project_root: &Path, graph: &ResolvedGraph) -> MgResult<()> {
-    let existing = std::fs::read_to_string(project_root.join("mg.lock")).unwrap_or_default();
-    let mode = read_lock_value(&existing, "mode").unwrap_or_else(|| "web".to_string());
-    let frameworks = read_lock_array(&existing, "frameworks").unwrap_or_default();
+#[derive(Debug, Clone)]
+struct SharedWebCache {
+    root: PathBuf,
+}
 
-    let mut out = String::new();
-    out.push_str("version = 1\n");
-    out.push_str("core = \"web\"\n");
-    out.push_str(&format!("mode = \"{}\"\n", escape_toml_string(&mode)));
-    out.push_str(&format!("frameworks = [{}]\n\n", frameworks.join(", ")));
-    out.push_str("[resolution]\n");
-    out.push_str("state = \"locked\"\n");
-    out.push_str("store = \"megagate\"\n");
-    out.push_str(&format!("package_count = {}\n\n", graph.packages.len()));
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedMetadataEnvelope {
+    fetched_at: u64,
+    #[serde(default)]
+    etag: Option<String>,
+    metadata: native::npm_registry::PackageMetadata,
+}
 
-    for pkg in &graph.packages {
-        out.push_str("[[package]]\n");
-        out.push_str(&format!(
-            "name = \"{}\"\n",
-            escape_toml_string(pkg.id.name_str())
-        ));
-        out.push_str(&format!("version = \"{}\"\n", pkg.id.version()));
-        out.push_str(&format!(
-            "integrity = \"{}\"\n",
-            escape_toml_string(&pkg.integrity)
-        ));
-        out.push_str(&format!("direct = {}\n", pkg.direct));
-        out.push_str(&format!("dev = {}\n", pkg.dev));
-        let deps = pkg
-            .deps
-            .iter()
-            .map(|dep| {
-                format!(
-                    "\"{}@{}\"",
-                    escape_toml_string(dep.name_str()),
-                    dep.version()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        out.push_str(&format!("dependencies = [{}]\n\n", deps));
+#[derive(Debug, Clone)]
+struct CachedMetadataRecord {
+    fetched_at: u64,
+    etag: Option<String>,
+    metadata: native::npm_registry::PackageMetadata,
+}
+
+impl SharedWebCache {
+    fn discover() -> Option<Self> {
+        if let Ok(path) = std::env::var("MEGAGATE_SHARED_CACHE_DIR") {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                let candidate = Self {
+                    root: PathBuf::from(trimmed),
+                };
+                return candidate.is_usable().then_some(candidate);
+            }
+        }
+
+        dirs::cache_dir().and_then(|root| {
+            let candidate = Self {
+                root: root.join("megagate").join("web"),
+            };
+            candidate.is_usable().then_some(candidate)
+        })
     }
 
-    std::fs::write(project_root.join("mg.lock"), out)?;
+    fn is_usable(&self) -> bool {
+        if std::fs::create_dir_all(&self.root).is_err() {
+            return false;
+        }
+
+        let probe = self.root.join(".mg-write-probe");
+        match std::fs::create_dir(&probe) {
+            Ok(()) => {
+                let _ = std::fs::remove_dir(&probe);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn package_cache(&self) -> anyhow::Result<PackageCache> {
+        let layout = Layout::new(self.root.clone());
+        std::fs::create_dir_all(layout.root())?;
+        PackageCache::new(layout.cache_dir())
+    }
+
+    fn extracted_package_root(&self, pkg: &ResolvedPackage) -> PathBuf {
+        shared_extracted_package_root(&self.root, pkg)
+    }
+
+    fn metadata_path(&self, package: &str) -> PathBuf {
+        self.root
+            .join("metadata")
+            .join(package)
+            .join("metadata.json")
+    }
+
+    fn read_metadata(
+        &self,
+        package: &str,
+    ) -> Result<Option<CachedMetadataRecord>, DependencyError> {
+        let path = self.metadata_path(package);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let contents = std::fs::read_to_string(&path).map_err(|e| {
+            DependencyError(format!(
+                "failed to read cached metadata for '{}': {}",
+                package, e
+            ))
+        })?;
+        if let Ok(envelope) = serde_json::from_str::<CachedMetadataEnvelope>(&contents) {
+            return Ok(Some(CachedMetadataRecord {
+                fetched_at: envelope.fetched_at,
+                etag: envelope.etag.clone(),
+                metadata: envelope.metadata,
+            }));
+        }
+
+        let metadata = serde_json::from_str(&contents).map_err(|e| {
+            DependencyError(format!(
+                "failed to parse cached metadata for '{}': {}",
+                package, e
+            ))
+        })?;
+        Ok(Some(CachedMetadataRecord {
+            fetched_at: 0,
+            etag: None,
+            metadata,
+        }))
+    }
+
+    fn write_metadata(
+        &self,
+        package: &str,
+        metadata: &native::npm_registry::PackageMetadata,
+        etag: Option<String>,
+    ) -> Result<(), DependencyError> {
+        let path = self.metadata_path(package);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                DependencyError(format!(
+                    "failed to create metadata cache dir for '{}': {}",
+                    package, e
+                ))
+            })?;
+        }
+        let payload = serde_json::to_vec(&CachedMetadataEnvelope {
+            fetched_at: current_unix_secs(),
+            etag,
+            metadata: metadata.clone(),
+        })
+        .map_err(|e| {
+            DependencyError(format!(
+                "failed to serialize cached metadata for '{}': {}",
+                package, e
+            ))
+        })?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, payload).map_err(|e| {
+            DependencyError(format!(
+                "failed to write cached metadata for '{}': {}",
+                package, e
+            ))
+        })?;
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            DependencyError(format!(
+                "failed to finalize cached metadata for '{}': {}",
+                package, e
+            ))
+        })?;
+        Ok(())
+    }
+}
+
+async fn load_metadata_with_fallback(
+    package: &PackageName,
+    registry: &native::npm_registry::NpmRegistry,
+    shared_cache: Option<&SharedWebCache>,
+) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
+    load_metadata_by_name_with_fallback(package.as_str(), registry, shared_cache).await
+}
+
+async fn load_metadata_by_name_with_fallback(
+    package: &str,
+    registry: &native::npm_registry::NpmRegistry,
+    shared_cache: Option<&SharedWebCache>,
+) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
+    let cached = if let Some(shared_cache) = shared_cache {
+        shared_cache.read_metadata(package)?
+    } else {
+        None
+    };
+
+    if let Some(cached) = cached.as_ref() {
+        if metadata_record_is_fresh(cached) {
+            return Ok(cached.metadata.clone());
+        }
+
+        if let Some(etag) = &cached.etag {
+            match registry
+                .fetch_metadata_conditional(package, Some(etag))
+                .await
+            {
+                Ok(None) => {
+                    if let Some(shared_cache) = shared_cache {
+                        let _ = shared_cache.write_metadata(
+                            package,
+                            &cached.metadata,
+                            Some(etag.clone()),
+                        );
+                    }
+                    return Ok(cached.metadata.clone());
+                }
+                Ok(Some((metadata, new_etag))) => {
+                    if let Some(shared_cache) = shared_cache {
+                        let _ = shared_cache.write_metadata(
+                            package,
+                            &metadata,
+                            Some(new_etag),
+                        );
+                    }
+                    return Ok(metadata);
+                }
+                Err(_) => {
+                    return Ok(cached.metadata.clone());
+                }
+            }
+        }
+    }
+
+    match registry.fetch_metadata(package).await {
+        Ok(metadata) => {
+            if let Some(shared_cache) = shared_cache {
+                let _ = shared_cache.write_metadata(package, &metadata, None);
+            }
+            Ok(metadata)
+        }
+        Err(network_err) => {
+            if let Some(cached) = cached {
+                return Ok(cached.metadata);
+            }
+            Err(DependencyError(format!(
+                "npm metadata fetch failed for '{}': {}",
+                package, network_err
+            )))
+        }
+    }
+}
+
+async fn prefetch_resolution_metadata(
+    names: &[PackageName],
+    registry: &native::npm_registry::NpmRegistry,
+    shared_cache: Option<&SharedWebCache>,
+) -> Result<std::collections::HashMap<String, native::npm_registry::PackageMetadata>, DependencyError>
+{
+    let mut results = std::collections::HashMap::new();
+    let mut join_set = tokio::task::JoinSet::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for name in names {
+        if !seen.insert(name.as_str().to_string()) {
+            continue;
+        }
+
+        let package_name = name.clone();
+        let registry = native::npm_registry::NpmRegistry::new(registry.registry_url());
+        let shared_cache = shared_cache.cloned();
+        join_set.spawn(async move {
+            let metadata =
+                load_metadata_with_fallback(&package_name, &registry, shared_cache.as_ref())
+                    .await?;
+            Ok::<_, DependencyError>((package_name.as_str().to_string(), metadata))
+        });
+    }
+
+    while let Some(joined) = join_set.join_next().await {
+        let (name, metadata) = joined
+            .map_err(|e| DependencyError(format!("metadata prefetch task failed: {e}")))??;
+        results.insert(name, metadata);
+    }
+
+    Ok(results)
+}
+
+async fn prefetch_tarballs(
+    graph: &ResolvedGraph,
+    skip: &std::collections::HashSet<PackageId>,
+    cache: &PackageCache,
+    shared_cache: Option<&SharedWebCache>,
+    registry: &native::npm_registry::NpmRegistry,
+) -> MgResult<u64> {
+    let mut bytes_from_cache = 0u64;
+    let shared_package_cache = shared_cache
+        .map(|shared| shared.package_cache())
+        .transpose()
+        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+    let mut downloads = tokio::task::JoinSet::new();
+
+    for pkg in &graph.packages {
+        if skip.contains(&pkg.id) {
+            continue;
+        }
+        if let Some(bytes) = cache
+            .get_tarball(&pkg.id)
+            .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+        {
+            if verify_tarball_integrity(pkg, &bytes).is_ok() {
+                bytes_from_cache += bytes.len() as u64;
+                continue;
+            }
+            let _ = std::fs::remove_file(cache.tarball_path(&pkg.id));
+        }
+
+        if let Some(shared_package_cache) = shared_package_cache.as_ref() {
+            if let Some(bytes) = shared_package_cache
+                .get_tarball(&pkg.id)
+                .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+            {
+                if verify_tarball_integrity(pkg, &bytes).is_ok() {
+                    cache
+                        .cache_tarball(&pkg.id, &bytes)
+                        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                    bytes_from_cache += bytes.len() as u64;
+                    continue;
+                }
+                let _ = std::fs::remove_file(shared_package_cache.tarball_path(&pkg.id));
+            }
+        }
+
+        let pkg_clone = pkg.clone();
+        let registry = native::npm_registry::NpmRegistry::new(registry.registry_url());
+        downloads.spawn(async move {
+            let url = package_tarball_url(registry.registry_url(), &pkg_clone);
+            let bytes = registry.download_tarball(&url).await.map_err(|e| {
+                mg_types::MgError::Network(format!(
+                    "download failed for '{}': {}",
+                    pkg_clone.id.name_str(),
+                    e
+                ))
+            })?;
+            Ok::<_, mg_types::MgError>((pkg_clone, bytes))
+        });
+    }
+
+    while let Some(joined) = downloads.join_next().await {
+        let (mut pkg, bytes) = joined
+            .map_err(|e| mg_types::MgError::Other(format!("download task failed: {e}")))??;
+        if pkg.integrity.is_empty() {
+            pkg.integrity = compute_tarball_integrity(&bytes);
+        }
+        verify_tarball_integrity(&pkg, &bytes)?;
+        cache
+            .cache_tarball(&pkg.id, &bytes)
+            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+        if let Some(shared_package_cache) = shared_package_cache.as_ref() {
+            let _ = shared_package_cache.cache_tarball(&pkg.id, &bytes);
+        }
+    }
+
+    Ok(bytes_from_cache)
+}
+
+fn metadata_record_is_fresh(record: &CachedMetadataRecord) -> bool {
+    if record.fetched_at == 0 {
+        return false;
+    }
+    current_unix_secs().saturating_sub(record.fetched_at) <= metadata_ttl_secs()
+}
+
+fn metadata_ttl_secs() -> u64 {
+    std::env::var("MEGAGATE_WEB_METADATA_TTL_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|ttl| *ttl > 0)
+        .unwrap_or(300)
+}
+
+fn current_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
+    if !pkg.tarball_url.is_empty() {
+        return pkg.tarball_url.clone();
+    }
+
+    let unscoped = pkg.id.name().unscoped();
+    format!(
+        "{}/{}/-/{}-{}.tgz",
+        registry_url.trim_end_matches('/'),
+        pkg.id.name_str(),
+        unscoped,
+        pkg.id.version()
+    )
+}
+
+fn extracted_package_root(layout: &Layout, pkg: &ResolvedPackage) -> std::path::PathBuf {
+    let safe_name = pkg.id.name_str().replace('/', "__").replace('@', "");
+    layout
+        .temp_dir()
+        .join(format!("{}-{}", safe_name, pkg.id.version()))
+}
+
+fn local_extracted_package_root(layout: &Layout, pkg: &ResolvedPackage) -> PathBuf {
+    shared_extracted_package_root(layout.root(), pkg)
+}
+
+fn shared_extracted_package_root(root: &Path, pkg: &ResolvedPackage) -> PathBuf {
+    let safe_name = pkg.id.name_str().replace('/', "__").replace('@', "");
+    let cache_key = extracted_package_cache_key(pkg);
+    root.join("packages")
+        .join(safe_name)
+        .join(cache_key)
+        .join("package")
+}
+
+fn extracted_package_cache_key(pkg: &ResolvedPackage) -> String {
+    let integrity_source = if pkg.integrity.is_empty() {
+        format!("{}-{}", pkg.id.name_str(), pkg.id.version())
+    } else {
+        pkg.integrity.clone()
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(integrity_source.as_bytes());
+    let digest = hex::encode(hasher.finalize());
+    format!("{}-{}", pkg.id.version(), &digest[..12])
+}
+
+fn compute_sha256_b64(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+}
+
+fn compute_sha512_b64(bytes: &[u8]) -> String {
+    let mut hasher = Sha512::new();
+    hasher.update(bytes);
+    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+}
+
+fn verify_tarball_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
+    if pkg.integrity.is_empty() {
+        return Ok(());
+    }
+
+    let Some((algorithm, expected)) = parse_sri_integrity(&pkg.integrity) else {
+        return Ok(());
+    };
+
+    let actual = match algorithm {
+        "sha256" => compute_sha256_b64(bytes),
+        "sha512" => compute_sha512_b64(bytes),
+        _ => return Ok(()),
+    };
+
+    if actual != expected {
+        return Err(mg_types::MgError::Other(format!(
+            "integrity mismatch for '{}': expected {}, got {}",
+            pkg.id.name_str(),
+            pkg.integrity,
+            actual
+        )));
+    }
+
     Ok(())
 }
 
-fn read_lock_value(contents: &str, key: &str) -> Option<String> {
-    let prefix = format!("{key} = ");
-    contents.lines().find_map(|line| {
-        let value = line.trim().strip_prefix(&prefix)?;
-        Some(value.trim().trim_matches('"').to_string())
-    })
+fn compute_tarball_integrity(bytes: &[u8]) -> String {
+    format!("sha512-{}", compute_sha512_b64(bytes))
 }
 
-fn read_lock_array(contents: &str, key: &str) -> Option<Vec<String>> {
-    let prefix = format!("{key} = ");
-    contents.lines().find_map(|line| {
-        let value = line.trim().strip_prefix(&prefix)?;
-        let value = value.trim();
-        if value.starts_with('[') && value.ends_with(']') {
-            Some(
-                value
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect(),
-            )
-        } else {
-            None
+fn parse_sri_integrity(input: &str) -> Option<(&str, &str)> {
+    let first = input.split_whitespace().next()?;
+    let (algorithm, expected) = first.split_once('-')?;
+    Some((algorithm, expected))
+}
+
+fn materialize_package_from_store(
+    store: &ContentStore,
+    source_root: &Path,
+    target_root: &Path,
+) -> MgResult<()> {
+    std::fs::create_dir_all(target_root).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to create target '{}': {}",
+            target_root.display(),
+            err
+        ))
+    })?;
+
+    let mut entries: Vec<_> = WalkDir::new(source_root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .collect();
+    entries.sort_by_key(|e| e.path().to_owned());
+
+    for entry in &entries {
+        let relative = entry
+            .path()
+            .strip_prefix(source_root)
+            .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+        let target = target_root.join(relative);
+
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to create parent '{}': {}",
+                    parent.display(),
+                    err
+                ))
+            })?;
         }
+
+        if target.exists() {
+            std::fs::remove_file(&target).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to remove existing '{}': {}",
+                    target.display(),
+                    err
+                ))
+            })?;
+        }
+
+        let hash = store.import_file(entry.path()).map_err(|e| {
+            mg_types::MgError::Store(format!(
+                "failed to import '{}' to store: {}",
+                entry.path().display(),
+                e
+            ))
+        })?;
+
+        store.export_to(&hash, &target).map_err(|e| {
+            mg_types::MgError::Store(format!(
+                "failed to export '{}' from store: {}",
+                target.display(),
+                e
+            ))
+        })?;
+
+        let executable = is_executable(entry.path())?;
+        set_executable(&target, executable)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_extracted_package_root(
+    layout: &Layout,
+    store: &ContentStore,
+    shared_cache: Option<&SharedWebCache>,
+    pkg: &ResolvedPackage,
+    tarball_path: &Path,
+) -> MgResult<PathBuf> {
+    let canonical_root = shared_cache
+        .map(|shared| shared.extracted_package_root(pkg))
+        .unwrap_or_else(|| local_extracted_package_root(layout, pkg));
+    if canonical_root.join("package.json").exists() {
+        return Ok(canonical_root);
+    }
+
+    let extract_root = extracted_package_root(layout, pkg);
+    if extract_root.exists() {
+        std::fs::remove_dir_all(&extract_root).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to remove stale extract root '{}' for '{}': {}",
+                extract_root.display(),
+                pkg.id.name_str(),
+                err
+            ))
+        })?;
+    }
+    std::fs::create_dir_all(&extract_root).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to create extract root '{}' for '{}': {}",
+            extract_root.display(),
+            pkg.id.name_str(),
+            err
+        ))
+    })?;
+    extract_tarball(tarball_path, &extract_root)
+        .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+    let package_root = locate_package_dir(&extract_root)?;
+
+    if canonical_root.exists() {
+        std::fs::remove_dir_all(&canonical_root).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to remove stale canonical root '{}' for '{}': {}",
+                canonical_root.display(),
+                pkg.id.name_str(),
+                err
+            ))
+        })?;
+    }
+    materialize_package_from_store(store, &package_root, &canonical_root)?;
+    if extract_root.exists() {
+        std::fs::remove_dir_all(&extract_root).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to clean extract root '{}' for '{}': {}",
+                extract_root.display(),
+                pkg.id.name_str(),
+                err
+            ))
+        })?;
+    }
+    Ok(canonical_root)
+}
+
+fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
+    std::fs::create_dir_all(target_root).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to create target '{}': {}",
+            target_root.display(),
+            err
+        ))
+    })?;
+
+    for entry in WalkDir::new(source_root) {
+        let entry = entry.map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+        let path = entry.path();
+        if path == source_root {
+            continue;
+        }
+
+        let relative = path
+            .strip_prefix(source_root)
+            .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+        let target = target_root.join(relative);
+
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to create directory '{}' while cloning '{}': {}",
+                    target.display(),
+                    source_root.display(),
+                    err
+                ))
+            })?;
+            continue;
+        }
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let executable = is_executable(path)?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to create parent '{}' for '{}': {}",
+                    parent.display(),
+                    target.display(),
+                    err
+                ))
+            })?;
+        }
+        if target.exists() {
+            std::fs::remove_file(&target).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to remove existing file '{}' before clone: {}",
+                    target.display(),
+                    err
+                ))
+            })?;
+        }
+        std::fs::hard_link(path, &target).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to hardlink '{}' to '{}': {}",
+                path.display(),
+                target.display(),
+                err
+            ))
+        })?;
+        set_executable(&target, executable)?;
+    }
+
+    Ok(())
+}
+
+fn locate_package_dir(extract_root: &Path) -> MgResult<std::path::PathBuf> {
+    let package_dir = extract_root.join("package");
+    if package_dir.is_dir() {
+        return Ok(package_dir);
+    }
+
+    let first_dir = std::fs::read_dir(extract_root)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.is_dir());
+
+    first_dir.ok_or_else(|| {
+        mg_types::MgError::Other(format!(
+            "extracted tarball missing package root in '{}'",
+            extract_root.display()
+        ))
     })
 }
 
-fn escape_toml_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+fn is_executable(path: &Path) -> MgResult<bool> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = std::fs::metadata(path)?.permissions().mode();
+    Ok(mode & 0o111 != 0)
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path, executable: bool) -> MgResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut perms = std::fs::metadata(path)?.permissions();
+    let mode = if executable { 0o755 } else { 0o644 };
+    perms.set_mode(mode);
+    std::fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn is_executable(_: &Path) -> MgResult<bool> {
+    Ok(false)
+}
+
+#[cfg(not(unix))]
+fn set_executable(_: &Path, _: bool) -> MgResult<()> {
+    Ok(())
+}
+
+fn write_web_lockfile_with_state(
+    project_root: &Path,
+    graph: &ResolvedGraph,
+    state: &str,
+) -> MgResult<()> {
+    let lock_path = project_root.join("mg.lock");
+    let mut lockfile =
+        read_web_lockfile(project_root).unwrap_or_else(|| Lockfile::new("web", "frontend"));
+
+    let local_layout = Layout::new(project_root.join(".megagate").join("cache").join("web"));
+    let cache = PackageCache::new(local_layout.cache_dir())
+        .map_err(|e| mg_types::MgError::Store(e.to_string()))
+        .ok();
+
+    lockfile.version = 1;
+    lockfile.core = "web".to_string();
+    lockfile.resolution = ResolutionMeta {
+        state: state.to_string(),
+        store: "megagate".to_string(),
+        package_count: graph.packages.len(),
+    };
+    lockfile.packages = graph
+        .packages
+        .iter()
+        .map(|pkg| {
+            let integrity = if pkg.integrity.is_empty() {
+                if let Some(ref cache) = cache {
+                    if let Ok(Some(bytes)) = cache.get_tarball(&pkg.id) {
+                        Some(compute_tarball_integrity(&bytes))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                Some(pkg.integrity.clone())
+            };
+            LockPackage {
+                name: pkg.id.name_str().to_string(),
+                version: pkg.id.version().to_string(),
+                integrity,
+                direct: pkg.direct,
+                dev: pkg.dev,
+                dependencies: pkg.deps.iter().map(ToString::to_string).collect(),
+            }
+        })
+        .collect();
+
+    std::fs::write(&lock_path, serialization::to_toml(&lockfile)?)?;
+    Ok(())
+}
+
+fn installed_package_version(path: &Path) -> Option<Version> {
+    let package_json = path.join("package.json");
+    let contents = std::fs::read_to_string(package_json).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let version = value.get("version")?.as_str()?;
+    Version::parse(version).ok()
+}
+
+fn installed_package_matches(path: &Path, package_id: &PackageId) -> bool {
+    installed_package_version(path)
+        .map(|version| version == *package_id.version())
+        .unwrap_or(false)
+}
+
+fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
+    let lock_path = project_root.join("mg.lock");
+    let existing = std::fs::read_to_string(lock_path).ok()?;
+    serialization::from_toml::<Lockfile>(&existing).ok()
+}
+
+fn preferred_registry_version(metadata: &native::npm_registry::PackageMetadata) -> Option<String> {
+    let stable_max = metadata
+        .versions
+        .keys()
+        .filter_map(|v| Version::parse(v).ok())
+        .filter(|v| v.pre.is_none())
+        .max()
+        .map(|v| v.to_string());
+
+    if let Some(latest) = metadata.dist_tags.get("latest") {
+        if let Ok(version) = Version::parse(latest) {
+            if version.pre.is_none() {
+                return Some(version.to_string());
+            }
+        }
+    }
+
+    stable_max
+        .or_else(|| metadata.dist_tags.get("latest").cloned())
+        .or_else(|| {
+            metadata
+                .versions
+                .keys()
+                .filter_map(|v| Version::parse(v).ok())
+                .max()
+                .map(|v| v.to_string())
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use tar::{Builder, Header};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
     #[test]
     fn test_web_adapter() {
         assert_eq!(WebAdapter::new().registry_url, "https://registry.npmjs.org");
@@ -521,6 +1866,7 @@ mod tests {
             }],
         };
 
+        seed_cached_tarball(dir.path(), &package_id);
         let summary = adapter.install(&graph, dir.path()).await.unwrap();
         assert_eq!(summary.added, vec![package_id]);
         assert!(dir
@@ -529,10 +1875,1095 @@ mod tests {
             .join("tailwindcss")
             .join("package.json")
             .exists());
+        assert!(dir
+            .path()
+            .join("node_modules")
+            .join("tailwindcss")
+            .join("index.css")
+            .exists());
 
         let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-        assert!(lock.contains("state = \"locked\""));
-        assert!(lock.contains("name = \"tailwindcss\""));
-        assert!(lock.contains("version = \"3.4.0\""));
+        let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
+        assert_eq!(parsed.resolution.state, "locked");
+        assert_eq!(parsed.packages.len(), 1);
+        assert_eq!(parsed.packages[0].name, "tailwindcss");
+        assert_eq!(parsed.packages[0].version, "3.4.0");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_populates_tarball_url_and_integrity_from_shared_metadata() {
+        let shared = tempfile::tempdir().unwrap();
+
+        seed_shared_metadata(
+            shared.path(),
+            "react",
+            serde_json::json!({
+                "name": "react",
+                "description": null,
+                "versions": {
+                    "18.2.0": {
+                        "version": "18.2.0",
+                        "dependencies": null,
+                        "optionalDependencies": null,
+                        "os": null,
+                        "cpu": null,
+                        "dist": {
+                            "tarball": "https://registry.example.test/react-18.2.0.tgz",
+                            "integrity": "sha512-c2hhcmVk"
+                        }
+                    }
+                },
+                "dist-tags": {
+                    "latest": "18.2.0"
+                }
+            }),
+        );
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "http://127.0.0.1:9".into(),
+            shared.path().to_path_buf(),
+        );
+        let mut manifest = Manifest::new("demo", mg_types::ecosystem::Ecosystem::Web);
+        manifest.add_dep(
+            DependencySpec::new(
+                PackageName::new("react").unwrap(),
+                VersionRange::parse("^18.2.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+
+        let graph = adapter.resolve(&manifest).await.unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(
+            graph.packages[0].tarball_url,
+            "https://registry.example.test/react-18.2.0.tgz"
+        );
+        assert_eq!(graph.packages[0].integrity, "sha512-c2hhcmVk");
+    }
+
+    #[tokio::test]
+    async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
+        let shared = tempfile::tempdir().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        seed_shared_metadata(
+            shared.path(),
+            "react",
+            serde_json::json!({
+                "name": "react",
+                "description": null,
+                "versions": {
+                    "18.2.0": {
+                        "version": "18.2.0",
+                        "dependencies": null,
+                        "optionalDependencies": null,
+                        "os": null,
+                        "cpu": null,
+                        "dist": {
+                            "tarball": "http://127.0.0.1:9/react.tgz",
+                            "integrity": null
+                        }
+                    }
+                },
+                "dist-tags": {
+                    "latest": "18.2.0"
+                }
+            }),
+        );
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "http://127.0.0.1:9".into(),
+            shared.path().to_path_buf(),
+        );
+        let package_id = adapter
+            .add(
+                dir.path(),
+                &PackageName::new("react").unwrap(),
+                None,
+                AddOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(package_id.version().to_string(), "18.2.0");
+        let package_json = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
+        assert!(package_json.contains("\"react\": \"^18.2.0\""));
+    }
+
+    #[tokio::test]
+    async fn test_list_prefers_lockfile_state() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "tailwindcss": "^4.3.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let package_dir = dir.path().join("node_modules").join("tailwindcss");
+        std::fs::create_dir_all(&package_dir).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            "{\"name\":\"tailwindcss\",\"version\":\"4.3.2\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mg.lock"),
+            serialization::to_toml(&Lockfile {
+                version: 1,
+                core: "web".into(),
+                mode: "frontend".into(),
+                frameworks: vec![],
+                resolution: ResolutionMeta {
+                    state: "locked".into(),
+                    store: "megagate".into(),
+                    package_count: 1,
+                },
+                packages: vec![LockPackage {
+                    name: "tailwindcss".into(),
+                    version: "4.3.2".into(),
+                    integrity: Some("sha256-test".into()),
+                    direct: true,
+                    dev: false,
+                    dependencies: vec![],
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let adapter = WebAdapter::new();
+        let installed = adapter.list(dir.path()).await.unwrap();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].id.name_str(), "tailwindcss");
+        assert_eq!(installed[0].id.version().to_string(), "4.3.2");
+        assert_eq!(installed[0].integrity.as_deref(), Some("sha256-test"));
+    }
+
+    #[tokio::test]
+    async fn test_install_multiple_packages_from_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0",
+                    "tailwindcss": "^4.3.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        let tailwind = PackageId::new(
+            PackageName::new("tailwindcss").unwrap(),
+            Version::parse("4.3.2").unwrap(),
+        );
+
+        seed_cached_tarball_with_files(
+            dir.path(),
+            &react,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+                ),
+                ("package/index.js", b"export const version = '18.2.0';"),
+            ],
+        );
+        seed_cached_tarball_with_files(
+            dir.path(),
+            &tailwind,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"tailwindcss","version":"4.3.2"}"#.as_slice(),
+                ),
+                ("package/index.css", b"@import 'tailwindcss';"),
+            ],
+        );
+
+        let graph = ResolvedGraph {
+            packages: vec![
+                ResolvedPackage {
+                    id: react.clone(),
+                    integrity: String::new(),
+                    tarball_url: String::new(),
+                    deps: vec![],
+                    direct: true,
+                    dev: false,
+                },
+                ResolvedPackage {
+                    id: tailwind.clone(),
+                    integrity: String::new(),
+                    tarball_url: String::new(),
+                    deps: vec![],
+                    direct: true,
+                    dev: false,
+                },
+            ],
+        };
+
+        let adapter = WebAdapter::new();
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added.len(), 2);
+        assert!(summary.bytes_from_cache > 0);
+        assert!(dir.path().join("node_modules/react/index.js").exists());
+        assert!(dir
+            .path()
+            .join("node_modules/tailwindcss/index.css")
+            .exists());
+
+        let installed = adapter.list(dir.path()).await.unwrap();
+        assert_eq!(installed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0",
+                    "@types/react": "^19.2.17"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        let react_types = PackageId::new(
+            PackageName::new("@types/react").unwrap(),
+            Version::parse("19.2.17").unwrap(),
+        );
+
+        seed_cached_tarball_with_files(
+            dir.path(),
+            &react,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+                ),
+                ("package/index.js", b"export default 'react';"),
+            ],
+        );
+        seed_cached_tarball_with_files(
+            dir.path(),
+            &react_types,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"@types/react","version":"19.2.17"}"#.as_slice(),
+                ),
+                ("package/index.d.ts", b"export = React;"),
+            ],
+        );
+
+        let graph = ResolvedGraph {
+            packages: vec![
+                ResolvedPackage {
+                    id: react.clone(),
+                    integrity: String::new(),
+                    tarball_url: String::new(),
+                    deps: vec![],
+                    direct: true,
+                    dev: false,
+                },
+                ResolvedPackage {
+                    id: react_types.clone(),
+                    integrity: String::new(),
+                    tarball_url: String::new(),
+                    deps: vec![],
+                    direct: true,
+                    dev: true,
+                },
+            ],
+        };
+
+        let adapter = WebAdapter::new();
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added.len(), 2);
+        assert!(dir.path().join("node_modules/react/index.js").exists());
+        assert!(dir
+            .path()
+            .join("node_modules/@types/react/index.d.ts")
+            .exists());
+
+        let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
+        let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
+        assert_eq!(parsed.resolution.state, "locked");
+        assert_eq!(parsed.resolution.package_count, 2);
+
+        let tmp_dir = dir
+            .path()
+            .join(".megagate")
+            .join("cache")
+            .join("web")
+            .join("tmp");
+        let lingering_entries = std::fs::read_dir(&tmp_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert!(
+            lingering_entries.is_empty(),
+            "expected staging tmp to be cleaned, found {:?}",
+            lingering_entries
+                .iter()
+                .map(|entry| entry.path())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_install_uses_cache_when_registry_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "tailwindcss": "^4.3.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let package_id = PackageId::new(
+            PackageName::new("tailwindcss").unwrap(),
+            Version::parse("4.3.2").unwrap(),
+        );
+        seed_cached_tarball(dir.path(), &package_id);
+
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: package_id.clone(),
+                integrity: String::new(),
+                tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added, vec![package_id]);
+        assert!(summary.bytes_from_cache > 0);
+    }
+
+    #[tokio::test]
+    async fn test_install_uses_shared_tarball_cache_for_new_project() {
+        let shared = tempfile::tempdir().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        seed_shared_tarball_with_files(
+            shared.path(),
+            &react,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+                ),
+                ("package/index.js", b"export default 'react';"),
+            ],
+        );
+
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: react.clone(),
+                integrity: String::new(),
+                tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "http://127.0.0.1:9".into(),
+            shared.path().to_path_buf(),
+        );
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added, vec![react.clone()]);
+        assert!(summary.bytes_from_cache > 0);
+        assert!(dir.path().join("node_modules/react/index.js").exists());
+        assert!(dir
+            .path()
+            .join(".megagate")
+            .join("cache")
+            .join("web")
+            .join("cache")
+            .join("react")
+            .join("18.2.0.tgz")
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn test_install_recovers_from_corrupted_local_cache_using_shared_cache() {
+        let shared = tempfile::tempdir().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        let files = vec![
+            (
+                "package/package.json",
+                br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+            ),
+            ("package/index.js", b"export default 'react';".as_slice()),
+        ];
+        let good_tarball = build_tarball_bytes(&files);
+        seed_shared_tarball_with_files(shared.path(), &react, &files);
+        let local_layout = Layout::new(dir.path().join(".megagate").join("cache").join("web"));
+        std::fs::create_dir_all(local_layout.root()).unwrap();
+        let local_cache = PackageCache::new(local_layout.cache_dir()).unwrap();
+        local_cache.cache_tarball(&react, b"corrupted").unwrap();
+
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: react.clone(),
+                integrity: sri_sha512(&good_tarball),
+                tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "http://127.0.0.1:9".into(),
+            shared.path().to_path_buf(),
+        );
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added, vec![react.clone()]);
+        assert!(dir.path().join("node_modules/react/index.js").exists());
+
+        let repaired = local_cache.get_tarball(&react).unwrap().unwrap();
+        assert_eq!(repaired, good_tarball);
+    }
+
+    #[tokio::test]
+    async fn test_install_fails_when_registry_is_unavailable_and_cache_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "tailwindcss": "^4.3.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let package_id = PackageId::new(
+            PackageName::new("tailwindcss").unwrap(),
+            Version::parse("4.3.2").unwrap(),
+        );
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: package_id,
+                integrity: String::new(),
+                tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None);
+        let err = adapter.install(&graph, dir.path()).await.unwrap_err();
+        assert!(err.to_string().contains("download failed"));
+    }
+
+    #[tokio::test]
+    async fn test_install_failure_does_not_materialize_partial_node_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0",
+                    "tailwindcss": "^4.3.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        let missing = PackageId::new(
+            PackageName::new("tailwindcss").unwrap(),
+            Version::parse("4.3.2").unwrap(),
+        );
+
+        seed_cached_tarball_with_files(
+            dir.path(),
+            &react,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+                ),
+                ("package/index.js", b"export default 'react';"),
+            ],
+        );
+
+        let graph = ResolvedGraph {
+            packages: vec![
+                ResolvedPackage {
+                    id: react,
+                    integrity: String::new(),
+                    tarball_url: String::new(),
+                    deps: vec![],
+                    direct: true,
+                    dev: false,
+                },
+                ResolvedPackage {
+                    id: missing,
+                    integrity: String::new(),
+                    tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
+                    deps: vec![],
+                    direct: true,
+                    dev: false,
+                },
+            ],
+        };
+
+        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None);
+        let _err = adapter.install(&graph, dir.path()).await.unwrap_err();
+        assert!(!dir.path().join("node_modules/react").exists());
+
+        let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
+        let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
+        assert_eq!(parsed.resolution.state, "installing");
+        assert_eq!(parsed.packages.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_install_skips_when_matching_package_is_already_materialized() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "zod": "^4.4.3"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let package_id = PackageId::new(
+            PackageName::new("zod").unwrap(),
+            Version::parse("4.4.3").unwrap(),
+        );
+        let pkg_dir = dir.path().join("node_modules").join("zod");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            br#"{"name":"zod","version":"4.4.3"}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.join("marker.txt"), "keep-me").unwrap();
+
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: package_id.clone(),
+                integrity: String::new(),
+                tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added, vec![package_id]);
+        assert_eq!(
+            std::fs::read_to_string(pkg_dir.join("marker.txt")).unwrap(),
+            "keep-me"
+        );
+
+        let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
+        let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
+        assert_eq!(parsed.resolution.state, "locked");
+        assert_eq!(parsed.packages[0].version, "4.4.3");
+    }
+
+    #[tokio::test]
+    async fn test_install_materializes_scoped_package() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "devDependencies": {
+                    "@types/node": "26.1.1"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let package_id = PackageId::new(
+            PackageName::new("@types/node").unwrap(),
+            Version::parse("26.1.1").unwrap(),
+        );
+        seed_cached_tarball_with_files(
+            dir.path(),
+            &package_id,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"@types/node","version":"26.1.1"}"#.as_slice(),
+                ),
+                ("package/index.d.ts", b"export {};"),
+            ],
+        );
+
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: package_id.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: true,
+                dev: true,
+            }],
+        };
+
+        let adapter = WebAdapter::new();
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added, vec![package_id]);
+        assert!(dir
+            .path()
+            .join("node_modules")
+            .join("@types")
+            .join("node")
+            .join("package.json")
+            .exists());
+        assert!(dir
+            .path()
+            .join("node_modules")
+            .join("@types")
+            .join("node")
+            .join("index.d.ts")
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn test_install_retries_flaky_tarball_download() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let tarball = build_tarball_bytes(&[
+            (
+                "package/package.json",
+                br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+            ),
+            ("package/index.js", b"export default 'react';"),
+        ]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut attempts = 0usize;
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                attempts += 1;
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+                if attempts == 1 {
+                    let _ = stream
+                        .write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\n\r\nnope",
+                        )
+                        .await;
+                } else {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                        tarball.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.write_all(&tarball).await;
+                }
+            }
+        });
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: react.clone(),
+                integrity: String::new(),
+                tarball_url: format!("http://{addr}/react-18.2.0.tgz"),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::new();
+        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        assert_eq!(summary.added, vec![react]);
+        assert!(dir.path().join("node_modules/react/index.js").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_install_materialization_uses_hardlinks_from_cached_extract_root() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let shared = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        seed_cached_tarball_with_files(
+            dir.path(),
+            &react,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+                ),
+                ("package/index.js", b"export default 'react';"),
+            ],
+        );
+
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: react.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "https://registry.npmjs.org".into(),
+            shared.path().to_path_buf(),
+        );
+        adapter.install(&graph, dir.path()).await.unwrap();
+
+        let cache_key = extracted_package_cache_key(&graph.packages[0]);
+        let cached_file = shared
+            .path()
+            .join("packages")
+            .join("react")
+            .join(cache_key)
+            .join("package")
+            .join("index.js");
+        let installed_file = dir
+            .path()
+            .join("node_modules")
+            .join("react")
+            .join("index.js");
+        let cached_meta = std::fs::metadata(&cached_file).unwrap_or_else(|_| {
+            panic!("cached file not found at: {}", cached_file.display())
+        });
+        let installed_meta = std::fs::metadata(&installed_file).unwrap_or_else(|_| {
+            panic!("installed file not found at: {}", installed_file.display())
+        });
+        assert_eq!(cached_meta.ino(), installed_meta.ino());
+    }
+
+    fn seed_cached_tarball(root: &Path, pkg: &PackageId) {
+        let package_json = format!(
+            "{{\"name\":\"{}\",\"version\":\"{}\"}}",
+            pkg.name_str(),
+            pkg.version()
+        );
+        seed_cached_tarball_with_files(
+            root,
+            pkg,
+            &[
+                ("package/package.json", package_json.as_bytes()),
+                ("package/index.css", b"@import 'tailwindcss';"),
+            ],
+        );
+    }
+
+    fn seed_cached_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) {
+        let layout = Layout::new(root.join(".megagate").join("cache").join("web"));
+        std::fs::create_dir_all(layout.root()).unwrap();
+        let cache = PackageCache::new(layout.cache_dir()).unwrap();
+        let tarball_path = cache.tarball_path(pkg);
+        if let Some(parent) = tarball_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+
+        let file = std::fs::File::create(&tarball_path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+
+        for (path, data) in files {
+            write_tar_entry(&mut builder, path, data);
+        }
+
+        builder.finish().unwrap();
+        let encoder = builder.into_inner().unwrap();
+        encoder.finish().unwrap();
+    }
+
+    fn seed_shared_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) {
+        let layout = Layout::new(root.to_path_buf());
+        std::fs::create_dir_all(layout.root()).unwrap();
+        let cache = PackageCache::new(layout.cache_dir()).unwrap();
+        let tarball_path = cache.tarball_path(pkg);
+        if let Some(parent) = tarball_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&tarball_path, build_tarball_bytes(files)).unwrap();
+    }
+
+    fn seed_shared_metadata(root: &Path, package: &str, payload: serde_json::Value) {
+        let path = root.join("metadata").join(package).join("metadata.json");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, serde_json::to_vec(&payload).unwrap()).unwrap();
+    }
+
+    fn build_tarball_bytes(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let file = temp.reopen().unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        for (path, data) in files {
+            write_tar_entry(&mut builder, path, data);
+        }
+        builder.finish().unwrap();
+        let encoder = builder.into_inner().unwrap();
+        encoder.finish().unwrap();
+        std::fs::read(temp.path()).unwrap()
+    }
+
+    fn sri_sha512(data: &[u8]) -> String {
+        let mut hasher = Sha512::new();
+        hasher.update(data);
+        format!(
+            "sha512-{}",
+            base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+        )
+    }
+
+    fn write_tar_entry(builder: &mut Builder<GzEncoder<std::fs::File>>, path: &str, data: &[u8]) {
+        let mut header = Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, path, data).unwrap();
+    }
+
+    #[test]
+    fn test_preferred_saved_range_preserves_strategy() {
+        assert_eq!(
+            WebAdapter::preferred_saved_range(&VersionRange::parse("^4.0.0").unwrap(), "5.1.2")
+                .unwrap()
+                .to_string(),
+            "^5.1.2"
+        );
+        assert_eq!(
+            WebAdapter::preferred_saved_range(&VersionRange::parse("~4.0.0").unwrap(), "5.1.2")
+                .unwrap()
+                .to_string(),
+            "~5.1.2"
+        );
+        assert_eq!(
+            WebAdapter::preferred_saved_range(&VersionRange::parse("*").unwrap(), "5.1.2")
+                .unwrap()
+                .to_string(),
+            "^5.1.2"
+        );
+        assert_eq!(
+            WebAdapter::preferred_saved_range(&VersionRange::parse("4.0.0").unwrap(), "5.1.2")
+                .unwrap()
+                .to_string(),
+            "5.1.2"
+        );
+    }
+
+    #[test]
+    fn test_preferred_registry_version_prefers_stable_over_prerelease() {
+        let metadata = native::npm_registry::PackageMetadata {
+            name: "demo".into(),
+            description: None,
+            versions: std::collections::HashMap::from([
+                (
+                    "4.4.3".into(),
+                    native::npm_registry::VersionInfo {
+                        version: "4.4.3".into(),
+                        dependencies: None,
+                        optional_dependencies: None,
+                        os: None,
+                        cpu: None,
+                        dist: None,
+                    },
+                ),
+                (
+                    "4.5.0-canary.20260504T180558".into(),
+                    native::npm_registry::VersionInfo {
+                        version: "4.5.0-canary.20260504T180558".into(),
+                        dependencies: None,
+                        optional_dependencies: None,
+                        os: None,
+                        cpu: None,
+                        dist: None,
+                    },
+                ),
+            ]),
+            dist_tags: std::collections::HashMap::from([(
+                "latest".into(),
+                "4.5.0-canary.20260504T180558".into(),
+            )]),
+        };
+
+        assert_eq!(
+            preferred_registry_version(&metadata).as_deref(),
+            Some("4.4.3")
+        );
+    }
+
+    #[test]
+    fn test_installed_package_version_reads_real_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_dir = dir.path().join("node_modules").join("zod");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            br#"{"name":"zod","version":"4.4.3"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            installed_package_version(&pkg_dir).unwrap().to_string(),
+            "4.4.3"
+        );
+    }
+
+    #[test]
+    fn test_installed_package_matches_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_dir = dir.path().join("node_modules").join("zod");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            br#"{"name":"zod","version":"4.4.3"}"#,
+        )
+        .unwrap();
+        let package_id = PackageId::new(
+            PackageName::new("zod").unwrap(),
+            Version::parse("4.4.3").unwrap(),
+        );
+        assert!(installed_package_matches(&pkg_dir, &package_id));
     }
 }

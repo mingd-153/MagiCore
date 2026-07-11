@@ -1,5 +1,4 @@
 /// Package cache for downloaded tarballs and metadata.
-
 use anyhow::Result;
 use mg_types::PackageId;
 use std::path::PathBuf;
@@ -18,8 +17,7 @@ impl PackageCache {
     pub fn tarball_path(&self, id: &PackageId) -> PathBuf {
         self.root
             .join(id.name_str())
-            .join(id.version().to_string())
-            .with_extension("tgz")
+            .join(format!("{}.tgz", id.version()))
     }
 
     /// Path to cached metadata JSON for a package
@@ -43,7 +41,9 @@ impl PackageCache {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, data)?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, data)?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
@@ -53,7 +53,9 @@ impl PackageCache {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, data)?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, data)?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
@@ -84,7 +86,11 @@ impl PackageCache {
                 let pkg_dir = entry.path();
                 if pkg_dir.is_dir() {
                     count += std::fs::read_dir(&pkg_dir)
-                        .map(|e| e.filter_map(|e| e.ok()).filter(|e| e.path().extension().unwrap_or_default() == "tgz").count())
+                        .map(|e| {
+                            e.filter_map(|e| e.ok())
+                                .filter(|e| e.path().extension().unwrap_or_default() == "tgz")
+                                .count()
+                        })
                         .unwrap_or(0);
                 }
             }

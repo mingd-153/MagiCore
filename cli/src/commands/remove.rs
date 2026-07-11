@@ -1,6 +1,6 @@
-use anyhow::Result;
-use mg_ui::{success, info, style_cmd};
 use crate::context::ProjectContext;
+use anyhow::Result;
+use mg_ui::{info, style_cmd, success};
 
 /// mg remove — remove a dependency from the project
 pub async fn run(package: String, core: Option<&str>) -> Result<()> {
@@ -13,7 +13,10 @@ pub async fn run(package: String, core: Option<&str>) -> Result<()> {
     adapter.remove(ctx.root(), &name).await?;
 
     success(&format!("Removed {}", package));
-    info(&format!("Run '{}' to update lockfile", style_cmd("mg install")));
+    info(&format!(
+        "Run '{}' to update lockfile",
+        style_cmd("mg install")
+    ));
 
     Ok(())
 }
