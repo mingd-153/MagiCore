@@ -1,0 +1,1 @@
+../../../../frontend/sveltekit/sources/svelte.config.ts

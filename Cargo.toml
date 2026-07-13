@@ -3,6 +3,7 @@ members = [
     "core/crates/*",
     "adapters/*",
     "cli",
+    "tools/*",
 ]
 resolver = "2"
 

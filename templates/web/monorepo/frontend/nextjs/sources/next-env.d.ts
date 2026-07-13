@@ -1,0 +1,1 @@
+../../../../frontend/nextjs/sources/next-env.d.ts

@@ -7,6 +7,7 @@ use mg_types::Ecosystem;
 /// Project context: detects the project, loads config, provides the right adapter.
 pub struct ProjectContext {
     pub root: PathBuf,
+    #[allow(dead_code)]
     pub config: ProjectConfig,
     pub adapter: Box<dyn PackageAdapter>,
 }
@@ -97,9 +98,9 @@ impl ProjectContext {
     }
 
     fn single_core_default() -> Option<String> {
-        let avail = crate::factory::available_cores();
-        if avail.len() == 1 {
-            Some(avail[0].0.to_string())
+        let avail = crate::factory::available_core_names();
+        if crate::factory::is_single_core_build() {
+            Some(avail[0].to_string())
         } else {
             None
         }

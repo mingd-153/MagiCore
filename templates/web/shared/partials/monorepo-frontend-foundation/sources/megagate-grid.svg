@@ -1,0 +1,13 @@
+<svg width="720" height="720" viewBox="0 0 720 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="megagate-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" stroke="rgba(115,219,255,0.18)" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="megagate-bloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(360 220) rotate(90) scale(280)">
+      <stop stop-color="#73DBFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#73DBFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="720" height="720" fill="url(#megagate-grid)"/>
+  <rect width="720" height="720" fill="url(#megagate-bloom)"/>
+</svg>

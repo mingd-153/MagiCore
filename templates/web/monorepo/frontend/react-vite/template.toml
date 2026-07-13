@@ -1,18 +1,92 @@
 [[files]]
-source = "package.json"
+source = "package.js.json"
 target = "apps/frontend/package.json"
 required_context = ["project_slug"]
+exclude_features = ["typescript"]
 
 [[files]]
-source = "index.html"
-target = "apps/frontend/index.html"
-required_context = ["project_name"]
+source = "package.ts.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "jsconfig.json"
+target = "apps/frontend/jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "apps/frontend/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite-env.d.ts"
+target = "apps/frontend/src/vite-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite.config.js"
+target = "apps/frontend/vite.config.js"
+exclude_features = ["typescript"]
 
 [[files]]
 source = "vite.config.ts"
 target = "apps/frontend/vite.config.ts"
+include_features = ["typescript"]
 
 [[files]]
-source = "main.ts"
-target = "apps/frontend/src/main.ts"
+source = "index.js.html"
+target = "apps/frontend/index.html"
 required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "index.ts.html"
+target = "apps/frontend/index.html"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "main.jsx"
+target = "apps/frontend/src/main.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "main.tsx"
+target = "apps/frontend/src/main.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "App.jsx"
+target = "apps/frontend/src/App.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "App.tsx"
+target = "apps/frontend/src/App.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "config/framework.js"
+target = "apps/frontend/src/config/framework.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "config/framework.ts"
+target = "apps/frontend/src/config/framework.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "router/AppRouter.jsx"
+target = "apps/frontend/src/router/AppRouter.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "router/AppRouter.tsx"
+target = "apps/frontend/src/router/AppRouter.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]

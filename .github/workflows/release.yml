@@ -1,0 +1,39 @@
+name: MegaGate Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-release-artifacts:
+    name: Release artifact (${{ matrix.os }} / ${{ matrix.package }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        package:
+          - megagate
+          - megagate-web
+          - megagate-ai
+          - megagate-game
+          - megagate-clo
+          - megagate-cicd
+          - megagate-iot
+          - megagate-app
+          - megagate-lib
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release package
+        shell: bash
+        run: cargo run -p mg-dist -- build ${{ matrix.package }}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package }}-${{ matrix.os }}
+          path: dist/${{ matrix.package }}/

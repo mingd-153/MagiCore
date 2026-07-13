@@ -61,24 +61,68 @@ impl ProjectConfig {
 
     /// Get the project root by looking for .megagate/ or package.json.
     ///
-    /// - `.megagate/` is checked in CWD and ALL parent directories (monorepo support).
+    /// - `.megagate/project.toml` is checked in CWD and ALL parent directories
+    ///   (monorepo support).
     /// - `package.json` is checked in CWD ONLY (no parent walking — prevents detecting
     ///   unrelated parent projects).
     pub fn find_project_root(from: &Path) -> Option<PathBuf> {
         // CWD: check both .megagate/ and package.json
-        if from.join(".megagate").exists() || from.join("package.json").exists() {
+        if from.join(".megagate").join("project.toml").exists()
+            || from.join("package.json").exists()
+        {
             return Some(from.to_path_buf());
         }
 
-        // Parent dirs: only .megagate/ (user may be in a subdirectory)
+        // Parent dirs: only .megagate/project.toml (user may be in a subdirectory)
         let mut current = from.parent();
         while let Some(dir) = current {
-            if dir.join(".megagate").exists() {
+            if dir.join(".megagate").join("project.toml").exists() {
                 return Some(dir.to_path_buf());
             }
             current = dir.parent();
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProjectConfig;
+    use std::path::PathBuf;
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "megagate-mg-config-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn find_project_root_ignores_parent_package_json_without_project_config() {
+        let root = temp_test_dir("parent-package-json");
+        let child = root.join("apps").join("frontend");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+
+        assert_eq!(ProjectConfig::find_project_root(&child), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn find_project_root_accepts_parent_project_toml() {
+        let root = temp_test_dir("parent-project-toml");
+        let child = root.join("apps").join("frontend");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir_all(root.join(".megagate")).unwrap();
+        std::fs::write(root.join(".megagate").join("project.toml"), "").unwrap();
+
+        assert_eq!(ProjectConfig::find_project_root(&child), Some(root.clone()));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

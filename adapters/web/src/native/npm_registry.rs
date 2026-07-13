@@ -48,7 +48,9 @@ fn global_http_client() -> &'static reqwest::Client {
 }
 
 fn jitter_ms(attempt: u32) -> u64 {
-    let state = (attempt as u64).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    let state = (attempt as u64)
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     (state >> 33) % 100
 }
 
@@ -60,6 +62,14 @@ impl NpmRegistry {
     }
 
     pub async fn fetch_metadata(&self, package: &str) -> Result<PackageMetadata> {
+        let (metadata, _) = self.fetch_metadata_with_etag(package).await?;
+        Ok(metadata)
+    }
+
+    pub async fn fetch_metadata_with_etag(
+        &self,
+        package: &str,
+    ) -> Result<(PackageMetadata, Option<String>)> {
         let url = format!("{}/{}", self.registry_url, package);
         let client = global_http_client();
 
@@ -67,8 +77,13 @@ impl NpmRegistry {
             let resp_future = client.get(&url);
             let metadata_future = async move {
                 let resp = resp_future.send().await?.error_for_status()?;
+                let etag = resp
+                    .headers()
+                    .get("etag")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned);
                 let metadata: PackageMetadata = resp.json().await?;
-                Ok(metadata)
+                Ok((metadata, etag))
             };
             metadata_future
         })

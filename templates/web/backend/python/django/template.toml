@@ -1,0 +1,43 @@
+[[files]]
+source = "requirements.txt"
+target = "requirements.txt"
+
+[[files]]
+source = "manage.py"
+target = "manage.py"
+
+[[files]]
+source = "config.py"
+target = "src/settings.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "wsgi.py"
+target = "src/wsgi.py"
+
+[[files]]
+source = "urls.py"
+target = "src/urls.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "health.py"
+target = "src/routes/health.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "status.py"
+target = "src/services/status.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "__init__.py"
+target = "src/__init__.py"
+
+[[files]]
+source = "routes__init__.py"
+target = "src/routes/__init__.py"
+
+[[files]]
+source = "services__init__.py"
+target = "src/services/__init__.py"

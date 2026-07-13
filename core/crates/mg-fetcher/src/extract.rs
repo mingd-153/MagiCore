@@ -36,6 +36,12 @@ pub fn extract_tarball(tarball_path: &Path, dest: &Path) -> Result<()> {
             continue;
         }
 
+        // Some npm tarballs contain pax metadata entries. They are archive
+        // metadata only and should not be materialized into the package tree.
+        if matches!(entry_type.as_byte(), b'g' | b'x') {
+            continue;
+        }
+
         if !entry_type.is_file() {
             bail!("unsupported tar entry type for {}", target.display());
         }
@@ -110,5 +116,42 @@ mod tests {
         builder.finish().unwrap();
         let encoder = builder.into_inner().unwrap();
         encoder.finish().unwrap();
+    }
+
+    #[test]
+    fn test_extract_skips_pax_global_header_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let tarball = temp_dir.path().join("pax.tgz");
+
+        let file = File::create(&tarball).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+
+        let mut pax = Header::new_gnu();
+        pax.set_entry_type(tar::EntryType::new(b'g'));
+        pax.set_size(0);
+        pax.set_mode(0o644);
+        pax.set_cksum();
+        builder
+            .append_data(&mut pax, "package/pax_global_header", std::io::empty())
+            .unwrap();
+
+        let mut file_header = Header::new_gnu();
+        file_header.set_size(2);
+        file_header.set_mode(0o644);
+        file_header.set_cksum();
+        builder
+            .append_data(&mut file_header, "package/index.js", &b"ok"[..])
+            .unwrap();
+
+        builder.finish().unwrap();
+        let encoder = builder.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let dest = temp_dir.path().join("out");
+        extract_tarball(&tarball, &dest).unwrap();
+
+        assert!(dest.join("package/index.js").exists());
+        assert!(!dest.join("package/pax_global_header").exists());
     }
 }
