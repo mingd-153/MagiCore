@@ -5,47 +5,239 @@ use std::path::{Path, PathBuf};
 
 use crate::wizard::engine::ScaffoldConfig;
 
+struct WebFrameworkConfig {
+    name: &'static str,
+    sub_type: &'static str,
+    base: Option<&'static str>,
+}
+
+const WEB_FRAMEWORKS: &[WebFrameworkConfig] = &[
+    WebFrameworkConfig {
+        name: "vanilla",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "react-vite",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "vue-vite",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "nextjs",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "sveltekit",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "nuxt",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "angular",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "solidjs",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "qwik",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "astro",
+        sub_type: "frontend",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "express",
+        sub_type: "backend",
+        base: Some("node"),
+    },
+    WebFrameworkConfig {
+        name: "fastify",
+        sub_type: "backend",
+        base: Some("node"),
+    },
+    WebFrameworkConfig {
+        name: "nestjs",
+        sub_type: "backend",
+        base: Some("node"),
+    },
+    WebFrameworkConfig {
+        name: "hono",
+        sub_type: "backend",
+        base: Some("node"),
+    },
+    WebFrameworkConfig {
+        name: "trpc",
+        sub_type: "backend",
+        base: Some("node"),
+    },
+    WebFrameworkConfig {
+        name: "laravel",
+        sub_type: "backend",
+        base: Some("php"),
+    },
+    WebFrameworkConfig {
+        name: "symfony",
+        sub_type: "backend",
+        base: Some("php"),
+    },
+    WebFrameworkConfig {
+        name: "spring-boot",
+        sub_type: "backend",
+        base: Some("java"),
+    },
+    WebFrameworkConfig {
+        name: "quarkus",
+        sub_type: "backend",
+        base: Some("java"),
+    },
+    WebFrameworkConfig {
+        name: "gin",
+        sub_type: "backend",
+        base: Some("go"),
+    },
+    WebFrameworkConfig {
+        name: "echo",
+        sub_type: "backend",
+        base: Some("go"),
+    },
+    WebFrameworkConfig {
+        name: "fiber",
+        sub_type: "backend",
+        base: Some("go"),
+    },
+    WebFrameworkConfig {
+        name: "fastapi",
+        sub_type: "backend",
+        base: Some("python"),
+    },
+    WebFrameworkConfig {
+        name: "django",
+        sub_type: "backend",
+        base: Some("python"),
+    },
+    WebFrameworkConfig {
+        name: "flask",
+        sub_type: "backend",
+        base: Some("python"),
+    },
+    WebFrameworkConfig {
+        name: "axum",
+        sub_type: "backend",
+        base: Some("rust"),
+    },
+    WebFrameworkConfig {
+        name: "actix-web",
+        sub_type: "backend",
+        base: Some("rust"),
+    },
+    WebFrameworkConfig {
+        name: "remix",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "react-fastify",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "vue-laravel",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "react-spring",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "custom",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "react-express",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "react-hono",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "react-nestjs",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "react-trpc",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "vue-express",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "vue-hono",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "vue-nestjs",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "svelte-express",
+        sub_type: "fullstack",
+        base: None,
+    },
+    WebFrameworkConfig {
+        name: "svelte-hono",
+        sub_type: "fullstack",
+        base: None,
+    },
+];
+
 pub struct Scaffolder;
 
 impl Scaffolder {
+    #[allow(dead_code)]
     pub fn infer_web_create_config(framework: &str, project_name: &str) -> Result<ScaffoldConfig> {
         let framework = normalize_web_framework(framework);
-        let (sub_type, frameworks) = match framework.as_str() {
-            "vanilla" | "react-vite" | "vue-vite" | "nextjs" | "sveltekit" | "nuxt" | "angular"
-            | "solidjs" | "qwik" | "astro" => ("frontend".to_string(), vec![framework.clone()]),
-            "express" | "fastify" | "nestjs" | "hono" | "trpc" => (
-                "backend".to_string(),
-                vec!["node".to_string(), framework.clone()],
-            ),
-            "laravel" | "symfony" => (
-                "backend".to_string(),
-                vec!["php".to_string(), framework.clone()],
-            ),
-            "spring-boot" | "quarkus" => (
-                "backend".to_string(),
-                vec!["java".to_string(), framework.clone()],
-            ),
-            "gin" | "echo" | "fiber" => (
-                "backend".to_string(),
-                vec!["go".to_string(), framework.clone()],
-            ),
-            "fastapi" | "django" | "flask" => (
-                "backend".to_string(),
-                vec!["python".to_string(), framework.clone()],
-            ),
-            "axum" | "actix-web" => (
-                "backend".to_string(),
-                vec!["rust".to_string(), framework.clone()],
-            ),
-            "remix" | "react-fastify" | "vue-laravel" | "react-spring" | "custom" => {
-                ("fullstack".to_string(), vec![framework.clone()])
-            }
-            other => anyhow::bail!("Unsupported web framework '{other}'"),
+        let cfg = WEB_FRAMEWORKS
+            .iter()
+            .find(|f| f.name == framework)
+            .ok_or_else(|| anyhow::anyhow!("Unsupported web framework '{framework}'"))?;
+
+        let frameworks = match cfg.base {
+            Some(base) => vec![base.to_string(), framework.clone()],
+            None => vec![framework.clone()],
         };
 
         Ok(ScaffoldConfig {
             core: "web".to_string(),
-            sub_type,
+            sub_type: cfg.sub_type.to_string(),
             frameworks,
             project_name: project_name.to_string(),
             features: vec![],
@@ -449,6 +641,14 @@ impl Scaffolder {
         Ok(())
     }
 
+    fn write_bytes(path: &Path, content: &[u8]) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
     fn resolve_web_template_dir(config: &ScaffoldConfig) -> Result<PathBuf> {
         if !config.template_dir.as_os_str().is_empty() {
             return Ok(config.template_dir.clone());
@@ -499,15 +699,48 @@ impl Scaffolder {
         let root = Self::web_templates_root();
         let mode = effective_web_mode(config);
         let mut layers = vec![root.join("shared").join("partials").join("base")];
+        let frontend_framework = config.frameworks.first().cloned().unwrap_or_default();
 
         match mode.as_str() {
             "frontend" | "backend" | "fullstack" => {
                 let leaf = Self::resolve_web_template_dir(config)?;
-                let fallback = root.join("shared").join("partials").join(mode.as_str());
-                if Self::layer_has_contract(&leaf) {
+                let shared_mode_partial = root.join("shared").join("partials").join(mode.as_str());
+                let frontend_foundation_partial = root
+                    .join("shared")
+                    .join("partials")
+                    .join("frontend-foundation");
+                let frontend_common_partial =
+                    root.join("shared").join("partials").join("frontend-common");
+                let frontend_rust_ready_partial = root
+                    .join("shared")
+                    .join("partials")
+                    .join("frontend-rust-ready");
+
+                if mode == "frontend" || mode == "backend" {
+                    if mode == "frontend" {
+                        Self::ensure_web_layer_ready(
+                            &leaf,
+                            &format!("frontend framework '{frontend_framework}'"),
+                        )?;
+                        layers.push(frontend_foundation_partial);
+                        layers.push(frontend_rust_ready_partial);
+                        if framework_uses_react_shell(&frontend_framework) {
+                            layers.push(frontend_common_partial);
+                        }
+                    }
+                    layers.push(shared_mode_partial);
+                    layers.push(leaf);
+                } else if Self::layer_has_contract(&leaf) {
+                    if fullstack_uses_frontend_foundation(&frontend_framework) {
+                        layers.push(frontend_foundation_partial);
+                        layers.push(frontend_rust_ready_partial);
+                    }
+                    if fullstack_uses_react_shell(&frontend_framework) {
+                        layers.push(frontend_common_partial);
+                    }
                     layers.push(leaf);
                 } else {
-                    layers.push(fallback);
+                    layers.push(shared_mode_partial);
                     layers.push(leaf);
                 }
             }
@@ -517,14 +750,51 @@ impl Scaffolder {
                 let backend = config.frameworks.get(1).cloned().unwrap_or_default();
                 let backend_language = infer_backend_language(&backend)
                     .ok_or_else(|| anyhow::anyhow!("Unsupported monorepo backend '{backend}'"))?;
+                let frontend_leaf = root.join("monorepo").join("frontend").join(&frontend);
+                Self::ensure_web_layer_ready(
+                    &frontend_leaf,
+                    &format!("monorepo frontend framework '{frontend}'"),
+                )?;
 
                 layers.push(root.join("monorepo").join("base"));
-                layers.push(root.join("monorepo").join("frontend").join(frontend));
+                layers.push(
+                    root.join("shared")
+                        .join("partials")
+                        .join("monorepo-frontend-foundation"),
+                );
+                layers.push(
+                    root.join("shared")
+                        .join("partials")
+                        .join("monorepo-frontend-rust-ready"),
+                );
+                if framework_uses_react_shell(&frontend) {
+                    layers.push(
+                        root.join("shared")
+                            .join("partials")
+                            .join("monorepo-frontend-common"),
+                    );
+                }
+                layers.push(
+                    root.join("shared")
+                        .join("partials")
+                        .join("monorepo-frontend"),
+                );
+                layers.push(frontend_leaf);
+                layers.push(
+                    root.join("shared")
+                        .join("partials")
+                        .join("monorepo-backend"),
+                );
                 layers.push(
                     root.join("monorepo")
                         .join("backend")
                         .join(backend_language)
                         .join(backend),
+                );
+                layers.push(
+                    root.join("shared")
+                        .join("partials")
+                        .join("monorepo-packages"),
                 );
                 layers.push(root.join("monorepo").join("packages"));
             }
@@ -542,6 +812,18 @@ impl Scaffolder {
 
     fn layer_has_contract(layer: &Path) -> bool {
         layer.join("template.toml").exists() && layer.join("sources").exists()
+    }
+
+    fn ensure_web_layer_ready(layer: &Path, label: &str) -> Result<()> {
+        if Self::layer_has_contract(layer) {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "Scaffold for {} is not implemented yet at '{}'",
+            label,
+            layer.display()
+        )
     }
 
     fn materialize_web_templates(
@@ -564,8 +846,15 @@ impl Scaffolder {
         let Some(manifest) = TemplateManifest::load(layer)? else {
             return Ok(());
         };
+        let active_features: HashSet<&str> = config_feature_set(&context.features);
+        let active_files = manifest
+            .files
+            .iter()
+            .filter(|file| file.is_enabled(&active_features))
+            .collect::<Vec<_>>();
+
         let mut seen_targets = HashSet::new();
-        for file in &manifest.files {
+        for file in &active_files {
             if !seen_targets.insert(file.target.clone()) {
                 anyhow::bail!(
                     "Duplicate template target '{}' in '{}'",
@@ -575,7 +864,7 @@ impl Scaffolder {
             }
         }
 
-        for file in &manifest.files {
+        for file in active_files {
             let source_path = layer.join("sources").join(&file.source);
             if !source_path.exists() {
                 anyhow::bail!(
@@ -585,13 +874,90 @@ impl Scaffolder {
                 );
             }
 
-            let contents = std::fs::read_to_string(&source_path)?;
-            let rendered =
-                context.render_with_contract(&contents, &file.required_context, &source_path)?;
-            Self::write_file(&target.join(&file.target), &rendered)?;
+            let bytes = std::fs::read(&source_path)?;
+            match std::str::from_utf8(&bytes) {
+                Ok(contents) => {
+                    let rendered = context.render_with_contract(
+                        contents,
+                        &file.required_context,
+                        &source_path,
+                    )?;
+                    Self::write_file(&target.join(&file.target), &rendered)?;
+                }
+                Err(_) => {
+                    if !file.required_context.is_empty() {
+                        anyhow::bail!(
+                            "Binary template source '{}' cannot declare template context",
+                            source_path.display()
+                        );
+                    }
+                    Self::write_bytes(&target.join(&file.target), &bytes)?;
+                }
+            }
         }
 
         Ok(())
+    }
+}
+
+fn framework_uses_react_shell(framework: &str) -> bool {
+    matches!(framework, "react-vite" | "nextjs" | "solidjs")
+}
+
+fn fullstack_uses_frontend_foundation(framework: &str) -> bool {
+    matches!(
+        framework,
+        "react-fastify"
+            | "react-spring"
+            | "react-express"
+            | "react-hono"
+            | "react-nestjs"
+            | "react-trpc"
+            | "vue-laravel"
+            | "vue-express"
+            | "vue-hono"
+            | "vue-nestjs"
+            | "svelte-express"
+            | "svelte-hono"
+    )
+}
+
+fn fullstack_uses_react_shell(framework: &str) -> bool {
+    matches!(
+        framework,
+        "react-fastify"
+            | "react-spring"
+            | "react-express"
+            | "react-hono"
+            | "react-nestjs"
+            | "react-trpc"
+    )
+}
+
+fn fullstack_frontend_framework<'a>(framework: &'a str) -> &'a str {
+    match framework {
+        "react-fastify"
+        | "react-spring"
+        | "react-express"
+        | "react-hono"
+        | "react-nestjs"
+        | "react-trpc" => "react-vite",
+        "vue-laravel" | "vue-express" | "vue-hono" | "vue-nestjs" => "vue-vite",
+        "svelte-express" | "svelte-hono" => "sveltekit",
+        other => other,
+    }
+}
+
+fn fullstack_backend_framework<'a>(framework: &'a str) -> &'a str {
+    match framework {
+        "react-fastify" => "fastify",
+        "react-spring" => "spring-boot",
+        "vue-laravel" => "laravel",
+        "react-express" | "svelte-express" | "vue-express" => "express",
+        "react-hono" | "svelte-hono" | "vue-hono" => "hono",
+        "react-nestjs" | "vue-nestjs" => "nestjs",
+        "react-trpc" => "trpc",
+        other => other,
     }
 }
 
@@ -634,18 +1000,20 @@ impl WebTemplateContext {
                 .unwrap_or_default()
         };
 
-        let project_name = config.project_name.clone();
+        let project_name = Scaffolder::display_name(Path::new(&config.project_name));
         let project_slug = slugify(&project_name);
         let mode = effective_web_mode(config);
         let framework = Scaffolder::framework(config);
         let frontend_framework = match mode.as_str() {
             "monorepo" => config.frameworks.first().cloned().unwrap_or_default(),
             "frontend" => framework.clone(),
+            "fullstack" => fullstack_frontend_framework(&framework).to_string(),
             _ => String::new(),
         };
         let backend_framework = match mode.as_str() {
             "backend" => framework.clone(),
             "monorepo" => config.frameworks.get(1).cloned().unwrap_or_default(),
+            "fullstack" => fullstack_backend_framework(&framework).to_string(),
             _ => String::new(),
         };
         let backend_language = if mode == "backend" {
@@ -765,6 +1133,22 @@ struct TemplateFile {
     target: String,
     #[serde(default)]
     required_context: Vec<String>,
+    #[serde(default)]
+    include_features: Vec<String>,
+    #[serde(default)]
+    exclude_features: Vec<String>,
+}
+
+impl TemplateFile {
+    fn is_enabled(&self, active_features: &HashSet<&str>) -> bool {
+        self.include_features
+            .iter()
+            .all(|feature| active_features.contains(feature.as_str()))
+            && self
+                .exclude_features
+                .iter()
+                .all(|feature| !active_features.contains(feature.as_str()))
+    }
 }
 
 fn common_readme(name: &str, core: &str, framework: &str, features: &[String]) -> String {
@@ -775,7 +1159,12 @@ fn common_readme(name: &str, core: &str, framework: &str, features: &[String]) -
     if !features.is_empty() {
         out.push_str(&format!("- Features: `{}`\n", features.join("`, `")));
     }
-    out.push_str("\n## Next\n\nRun `mg install` in this directory when the adapter for this core is ready.\n");
+    let next_step = if core == "web" {
+        "Run `mg install-web` in this directory when the adapter for this core is ready."
+    } else {
+        "Run `mg install` in this directory when the adapter for this core is ready."
+    };
+    out.push_str(&format!("\n## Next\n\n{next_step}\n"));
     out
 }
 
@@ -785,6 +1174,15 @@ fn quoted_list(values: &[String]) -> String {
         .map(|value| format!("\"{}\"", value))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn config_feature_set(raw: &str) -> HashSet<&str> {
+    raw.split(',')
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.trim_matches('"'))
+        .filter(|part| !part.is_empty())
+        .collect()
 }
 
 fn extract_template_tokens(input: &str) -> Vec<String> {
@@ -858,9 +1256,13 @@ fn slugify(name: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn normalize_web_framework(framework: &str) -> String {
     match framework {
         "next" | "next-app" => "nextjs".to_string(),
+        "react-express" | "react-hono" | "react-nestjs" | "react-trpc" => framework.to_string(),
+        "vue-express" | "vue-hono" | "vue-nestjs" => framework.to_string(),
+        "svelte-express" | "svelte-hono" => framework.to_string(),
         other => other.to_string(),
     }
 }
@@ -883,11 +1285,8 @@ fn effective_web_mode(config: &ScaffoldConfig) -> String {
         .first()
         .map(String::as_str)
         .unwrap_or("vanilla");
-    if matches!(
-        framework,
-        "remix" | "react-fastify" | "vue-laravel" | "react-spring" | "custom"
-    ) {
-        "fullstack".to_string()
+    if let Some(cfg) = WEB_FRAMEWORKS.iter().find(|f| f.name == framework) {
+        cfg.sub_type.to_string()
     } else if infer_backend_language(framework).is_some() {
         "backend".to_string()
     } else {
@@ -896,15 +1295,10 @@ fn effective_web_mode(config: &ScaffoldConfig) -> String {
 }
 
 fn infer_backend_language(framework: &str) -> Option<&'static str> {
-    match framework {
-        "express" | "fastify" | "nestjs" | "hono" | "trpc" => Some("node"),
-        "laravel" | "symfony" => Some("php"),
-        "spring-boot" | "quarkus" => Some("java"),
-        "gin" | "echo" | "fiber" => Some("go"),
-        "fastapi" | "django" | "flask" => Some("python"),
-        "axum" | "actix-web" => Some("rust"),
-        _ => None,
-    }
+    WEB_FRAMEWORKS
+        .iter()
+        .find(|f| f.name == framework)
+        .and_then(|f| f.base)
 }
 
 #[cfg(test)]
@@ -972,19 +1366,44 @@ mod tests {
         assert!(out.join("mg.lock").exists());
         assert!(out.join(".megagate").join("web.toml").exists());
         assert!(out.join("megagate.workspace.toml").exists());
+        let root_package = std::fs::read_to_string(out.join("package.json")).unwrap();
+        assert!(root_package.contains("\"dev\": \"mg --core web dev\""));
+        assert!(!root_package.contains("mg web build"));
+        assert!(!root_package.contains("mg web check"));
+        let readme = std::fs::read_to_string(out.join("README.md")).unwrap();
+        assert!(readme.contains("mg install-web"));
         assert!(out.join("apps").join("frontend").join("README.md").exists());
         assert!(out.join("apps").join("backend").join("README.md").exists());
         assert!(out.join("packages").join("README.md").exists());
         assert!(out
             .join("apps")
             .join("frontend")
-            .join("vite.config.ts")
+            .join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists());
+        assert!(out
+            .join("apps")
+            .join("frontend")
+            .join("src")
+            .join("bridges")
+            .join("engine.js")
+            .exists());
+        assert!(out
+            .join("packages")
+            .join("contracts")
+            .join("package.json")
+            .exists());
+        assert!(out
+            .join("apps")
+            .join("frontend")
+            .join("vite.config.js")
             .exists());
         assert!(out
             .join("apps")
             .join("backend")
             .join("src")
-            .join("server.ts")
+            .join("server.js")
             .exists());
     }
 
@@ -1003,10 +1422,31 @@ mod tests {
         };
         let react_out = Scaffolder::scaffold(&react).unwrap();
         assert!(react_out.join("package.json").exists());
-        assert!(react_out.join("vite.config.ts").exists());
+        assert!(react_out.join("vite.config.js").exists());
         assert!(react_out.join("index.html").exists());
-        assert!(react_out.join("src").join("main.ts").exists());
-        assert!(react_out.join("src").join("App.ts").exists());
+        assert!(react_out
+            .join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists());
+        assert!(react_out.join("src").join("main.jsx").exists());
+        assert!(react_out.join("src").join("App.jsx").exists());
+        assert!(react_out
+            .join("src")
+            .join("bridges")
+            .join("engine.js")
+            .exists());
+        assert!(react_out
+            .join("src")
+            .join("styles")
+            .join("theme.css")
+            .exists());
+        assert!(react_out
+            .join("src")
+            .join("assets")
+            .join("megagate-grid.svg")
+            .exists());
+        assert!(!react_out.join("tsconfig.json").exists());
 
         let next_dir = root.path().join("next-app");
         let next = ScaffoldConfig {
@@ -1019,8 +1459,129 @@ mod tests {
         };
         let next_out = Scaffolder::scaffold(&next).unwrap();
         assert!(next_out.join("next.config.mjs").exists());
-        assert!(next_out.join("src").join("app").join("page.tsx").exists());
-        assert!(!next_out.join("src").join("main.ts").exists());
+        assert!(next_out
+            .join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists());
+        assert!(next_out.join("src").join("app").join("page.jsx").exists());
+        assert!(next_out
+            .join("src")
+            .join("bridges")
+            .join("engine.js")
+            .exists());
+        assert!(next_out.join("jsconfig.json").exists());
+        assert!(!next_out.join("src").join("main.tsx").exists());
+
+        let vue_dir = root.path().join("vue-app");
+        let vue = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["vue-vite".to_string()],
+            project_name: vue_dir.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let vue_out = Scaffolder::scaffold(&vue).unwrap();
+        assert!(vue_out.join("package.json").exists());
+        assert!(vue_out.join("vite.config.ts").exists());
+        assert!(vue_out.join("src").join("main.ts").exists());
+        assert!(vue_out.join("src").join("App.vue").exists());
+        assert!(vue_out
+            .join("src")
+            .join("components")
+            .join("AppShell.vue")
+            .exists());
+        assert!(vue_out
+            .join("src")
+            .join("router")
+            .join("AppRouter.vue")
+            .exists());
+        assert!(vue_out
+            .join("src")
+            .join("hooks")
+            .join("useProjectLinks.ts")
+            .exists());
+        assert!(!vue_out
+            .join("src")
+            .join("components")
+            .join("AppShell.tsx")
+            .exists());
+
+        let vanilla_dir = root.path().join("vanilla-app");
+        let vanilla = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["vanilla".to_string()],
+            project_name: vanilla_dir.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let vanilla_out = Scaffolder::scaffold(&vanilla).unwrap();
+        assert!(vanilla_out.join("package.json").exists());
+        assert!(vanilla_out.join("vite.config.ts").exists());
+        assert!(vanilla_out.join("src").join("main.ts").exists());
+        assert!(vanilla_out.join("src").join("App.ts").exists());
+        assert!(vanilla_out
+            .join("src")
+            .join("components")
+            .join("AppShell.ts")
+            .exists());
+        assert!(vanilla_out
+            .join("src")
+            .join("router")
+            .join("AppRouter.ts")
+            .exists());
+        assert!(!vanilla_out.join("src").join("main.tsx").exists());
+
+        let react_express_dir = root.path().join("react-express-app");
+        let react_express = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "fullstack".to_string(),
+            frameworks: vec!["react-express".to_string()],
+            project_name: react_express_dir.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let react_express_out = Scaffolder::scaffold(&react_express).unwrap();
+        assert!(react_express_out.join("package.json").exists());
+        assert!(react_express_out.join("vite.config.ts").exists());
+        assert!(react_express_out.join("src").join("main.tsx").exists());
+        assert!(react_express_out
+            .join("src")
+            .join("styles")
+            .join("theme.css")
+            .exists());
+        assert!(react_express_out
+            .join("server")
+            .join("src")
+            .join("server.ts")
+            .exists());
+
+        let solid_dir = root.path().join("solid-app");
+        let solid = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["solidjs".to_string()],
+            project_name: solid_dir.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let solid_out = Scaffolder::scaffold(&solid).unwrap();
+        assert!(solid_out.join("package.json").exists());
+        assert!(solid_out.join("vite.config.ts").exists());
+        assert!(solid_out.join("src").join("main.tsx").exists());
+        assert!(solid_out.join("src").join("App.tsx").exists());
+        assert!(solid_out
+            .join("src")
+            .join("components")
+            .join("AppShell.tsx")
+            .exists());
+        assert!(solid_out
+            .join("src")
+            .join("router")
+            .join("AppRouter.tsx")
+            .exists());
 
         let fastify_dir = root.path().join("fastify-api");
         let fastify = ScaffoldConfig {
@@ -1032,8 +1593,80 @@ mod tests {
             template_dir: PathBuf::new(),
         };
         let fastify_out = Scaffolder::scaffold(&fastify).unwrap();
-        assert!(fastify_out.join("tsconfig.json").exists());
-        assert!(fastify_out.join("src").join("server.ts").exists());
-        assert!(!fastify_out.join("src").join("server.txt").exists());
+        assert!(fastify_out.join("src").join("server.js").exists());
+        assert!(fastify_out
+            .join("src")
+            .join("config")
+            .join("app.js")
+            .exists());
+        assert!(fastify_out
+            .join("src")
+            .join("routes")
+            .join("health.js")
+            .exists());
+        assert!(fastify_out
+            .join("src")
+            .join("services")
+            .join("status.js")
+            .exists());
+        assert!(!fastify_out.join("tsconfig.json").exists());
+    }
+
+    #[test]
+    fn test_web_typescript_feature_switches_extensions() {
+        let root = tempfile::tempdir().unwrap();
+        let project_dir = root.path().join("react-ts");
+        let config = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["react-vite".to_string()],
+            project_name: project_dir.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+
+        let out = Scaffolder::scaffold(&config).unwrap();
+        assert!(out.join("tsconfig.json").exists());
+        assert!(out.join("vite.config.ts").exists());
+        assert!(out
+            .join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists());
+        assert!(out.join("src").join("main.tsx").exists());
+        assert!(out.join("src").join("App.tsx").exists());
+        assert!(out.join("src").join("bridges").join("engine.ts").exists());
+        assert!(!out.join("src").join("main.jsx").exists());
+    }
+
+    #[test]
+    fn test_unknown_frameworks_fail_fast() {
+        let root = tempfile::tempdir().unwrap();
+
+        let unsupported_dir = root.path().join("ember-app");
+        let unsupported = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["ember".to_string()],
+            project_name: unsupported_dir.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let unsupported_err = Scaffolder::scaffold(&unsupported).unwrap_err();
+        assert!(unsupported_err.to_string().contains("Web template path"));
+
+        let broken_mono_dir = root.path().join("broken-mono");
+        let broken_mono = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "monorepo".to_string(),
+            frameworks: vec!["ember".to_string(), "fastify".to_string()],
+            project_name: broken_mono_dir.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let broken_mono_err = Scaffolder::scaffold(&broken_mono).unwrap_err();
+        assert!(broken_mono_err
+            .to_string()
+            .contains("Scaffold for monorepo frontend framework 'ember' is not implemented yet"));
     }
 }

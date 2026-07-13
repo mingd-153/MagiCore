@@ -1,0 +1,8 @@
+name = "megagate-ai"
+binary = "mg"
+description = "MegaGate single-core AI distribution"
+mode = "single-core"
+primary_core = "ai"
+no_default_features = true
+features = ["ai"]
+install_hint = "brew install megagate-ai"

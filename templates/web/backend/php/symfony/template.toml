@@ -1,0 +1,39 @@
+[[files]]
+source = "composer.json"
+target = "composer.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "bin/console"
+target = "bin/console"
+
+[[files]]
+source = "public/index.php"
+target = "public/index.php"
+
+[[files]]
+source = "config/routes.yaml"
+target = "config/routes.yaml"
+
+[[files]]
+source = "config/packages/framework.yaml"
+target = "config/packages/framework.yaml"
+
+[[files]]
+source = "config/services.yaml"
+target = "config/services.yaml"
+required_context = ["project_name"]
+
+[[files]]
+source = "src/Kernel.php"
+target = "src/Kernel.php"
+
+[[files]]
+source = "src/Controller/HealthController.php"
+target = "src/Controller/HealthController.php"
+required_context = ["project_name"]
+
+[[files]]
+source = ".env"
+target = ".env"
+required_context = ["project_name"]

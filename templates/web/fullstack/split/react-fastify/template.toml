@@ -1,0 +1,142 @@
+[[files]]
+source = "root/package.json"
+target = "package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "client/index.ts.html"
+target = "index.html"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "client/index.js.html"
+target = "index.html"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/tsconfig.json"
+target = "tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/jsconfig.json"
+target = "jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/vite-env.d.ts"
+target = "src/vite-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite.config.ts"
+target = "vite.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite.config.js"
+target = "vite.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/main.tsx"
+target = "src/main.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "client/main.jsx"
+target = "src/main.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/App.tsx"
+target = "src/App.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "client/App.jsx"
+target = "src/App.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/package.ts.json"
+target = "server/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/package.js.json"
+target = "server/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/tsconfig.json"
+target = "server/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "server/server.ts"
+target = "server/src/server.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/server.js"
+target = "server/src/server.js"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/app.ts"
+target = "server/src/lib/app.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/app.js"
+target = "server/src/lib/app.js"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/config.ts"
+target = "server/src/config/app.ts"
+required_context = ["project_name", "backend_framework"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/config.js"
+target = "server/src/config/app.js"
+required_context = ["project_name", "backend_framework"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/health.ts"
+target = "server/src/routes/health.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/health.js"
+target = "server/src/routes/health.js"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/status.ts"
+target = "server/src/services/status.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/status.js"
+target = "server/src/services/status.js"
+required_context = ["project_name"]
+exclude_features = ["typescript"]

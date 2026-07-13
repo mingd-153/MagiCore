@@ -1,7 +1,7 @@
+use mg_types::PackageAdapter;
 /// Compare MegaGate vs npm / pnpm / bun on the same packages.
 /// Usage: cargo bench -p mg-web-adapter --bench compare
 use std::time::{Duration, Instant};
-use mg_types::PackageAdapter;
 
 const PACKAGES: &[&str] = &["lodash", "uuid", "dayjs", "axios", "tslib"];
 const PKG_JSON: &str = r#"{"name":"cmp","version":"0.1.0","dependencies":{"lodash":"*","uuid":"*","dayjs":"*","axios":"*","tslib":"*"}}"#;
@@ -33,18 +33,32 @@ fn run_npm(dir: &std::path::Path) -> (Duration, Duration) {
         .current_dir(dir)
         .output()
         .expect("npm failed");
-    assert!(out.status.success(), "npm install failed: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "npm install failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let cold = t0.elapsed();
 
     // clean lockfile to force re-resolve but keep cache
     let _ = std::fs::remove_file(dir.join("package-lock.json"));
     let t1 = Instant::now();
     let out = std::process::Command::new("npm")
-        .args(["install", "--no-audit", "--no-fund", "--loglevel=silent", "--prefer-offline"])
+        .args([
+            "install",
+            "--no-audit",
+            "--no-fund",
+            "--loglevel=silent",
+            "--prefer-offline",
+        ])
         .current_dir(dir)
         .output()
         .expect("npm failed");
-    assert!(out.status.success(), "npm warm failed: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "npm warm failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let warm = t1.elapsed();
 
     (cold, warm)
@@ -57,7 +71,11 @@ fn run_pnpm(dir: &std::path::Path) -> (Duration, Duration) {
         .current_dir(dir)
         .output()
         .expect("pnpm failed");
-    assert!(out.status.success(), "pnpm install failed: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "pnpm install failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let cold = t0.elapsed();
 
     let _ = std::fs::remove_file(dir.join("pnpm-lock.yaml"));
@@ -67,7 +85,11 @@ fn run_pnpm(dir: &std::path::Path) -> (Duration, Duration) {
         .current_dir(dir)
         .output()
         .expect("pnpm failed");
-    assert!(out.status.success(), "pnpm warm failed: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "pnpm warm failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let warm = t1.elapsed();
 
     (cold, warm)
@@ -80,7 +102,11 @@ fn run_bun(dir: &std::path::Path) -> (Duration, Duration) {
         .current_dir(dir)
         .output()
         .expect("bun failed");
-    assert!(out.status.success(), "bun install failed: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "bun install failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let cold = t0.elapsed();
 
     let _ = std::fs::remove_file(dir.join("bun.lock"));
@@ -90,7 +116,11 @@ fn run_bun(dir: &std::path::Path) -> (Duration, Duration) {
         .current_dir(dir)
         .output()
         .expect("bun failed");
-    assert!(out.status.success(), "bun warm failed: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "bun warm failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let warm = t1.elapsed();
 
     (cold, warm)
@@ -98,8 +128,11 @@ fn run_bun(dir: &std::path::Path) -> (Duration, Duration) {
 
 fn count_node_modules(dir: &std::path::Path) -> usize {
     let nm = dir.join("node_modules");
-    if !nm.exists() { return 0; }
-    std::fs::read_dir(&nm).ok()
+    if !nm.exists() {
+        return 0;
+    }
+    std::fs::read_dir(&nm)
+        .ok()
         .map(|e| e.filter_map(|e| e.ok()).count())
         .unwrap_or(0)
 }
@@ -111,7 +144,12 @@ fn measure_disk(dir: &std::path::Path) -> String {
         .ok();
     if let Some(out) = output {
         if out.status.success() {
-            return String::from_utf8_lossy(&out.stdout).trim().split('\t').next().unwrap_or("?").to_string();
+            return String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .split('\t')
+                .next()
+                .unwrap_or("?")
+                .to_string();
         }
     }
     "?".to_string()
@@ -135,12 +173,20 @@ fn main() {
         let disk = measure_disk(dir.path());
         println!("┌─ MegaGate");
         println!("│   resolve │ {:.3}s", resolve.as_secs_f64());
-        println!("│   install │ cold {:.3}s  warm {:.3}s", cold.as_secs_f64(), warm.as_secs_f64());
+        println!(
+            "│   install │ cold {:.3}s  warm {:.3}s",
+            cold.as_secs_f64(),
+            warm.as_secs_f64()
+        );
         println!("│   packages│ {} │ disk {}", count, disk);
-        results.push(("MegaGate",
+        results.push((
+            "MegaGate",
             format!("{:.3}s", cold.as_secs_f64()),
             format!("{:.3}s", warm.as_secs_f64()),
-            format!("{}", count), count, disk));
+            format!("{}", count),
+            count,
+            disk,
+        ));
     }
 
     // ── npm ──
@@ -151,12 +197,20 @@ fn main() {
         let count = count_node_modules(dir.path());
         let disk = measure_disk(dir.path());
         println!("┌─ npm");
-        println!("│   install │ cold {:.3}s  warm {:.3}s", cold.as_secs_f64(), warm.as_secs_f64());
+        println!(
+            "│   install │ cold {:.3}s  warm {:.3}s",
+            cold.as_secs_f64(),
+            warm.as_secs_f64()
+        );
         println!("│   packages│ {} │ disk {}", count, disk);
-        results.push(("npm",
+        results.push((
+            "npm",
             format!("{:.3}s", cold.as_secs_f64()),
             format!("{:.3}s", warm.as_secs_f64()),
-            format!("{}", count), count, disk));
+            format!("{}", count),
+            count,
+            disk,
+        ));
     }
 
     // ── pnpm ──
@@ -167,12 +221,20 @@ fn main() {
         let count = count_node_modules(dir.path());
         let disk = measure_disk(dir.path());
         println!("┌─ pnpm");
-        println!("│   install │ cold {:.3}s  warm {:.3}s", cold.as_secs_f64(), warm.as_secs_f64());
+        println!(
+            "│   install │ cold {:.3}s  warm {:.3}s",
+            cold.as_secs_f64(),
+            warm.as_secs_f64()
+        );
         println!("│   packages│ {} │ disk {}", count, disk);
-        results.push(("pnpm",
+        results.push((
+            "pnpm",
             format!("{:.3}s", cold.as_secs_f64()),
             format!("{:.3}s", warm.as_secs_f64()),
-            format!("{}", count), count, disk));
+            format!("{}", count),
+            count,
+            disk,
+        ));
     }
 
     // ── bun ──
@@ -183,12 +245,20 @@ fn main() {
         let count = count_node_modules(dir.path());
         let disk = measure_disk(dir.path());
         println!("┌─ bun");
-        println!("│   install │ cold {:.3}s  warm {:.3}s", cold.as_secs_f64(), warm.as_secs_f64());
+        println!(
+            "│   install │ cold {:.3}s  warm {:.3}s",
+            cold.as_secs_f64(),
+            warm.as_secs_f64()
+        );
         println!("│   packages│ {} │ disk {}", count, disk);
-        results.push(("bun",
+        results.push((
+            "bun",
             format!("{:.3}s", cold.as_secs_f64()),
             format!("{:.3}s", warm.as_secs_f64()),
-            format!("{}", count), count, disk));
+            format!("{}", count),
+            count,
+            disk,
+        ));
     }
 
     // ── Summary Table ──
@@ -196,14 +266,17 @@ fn main() {
     println!("╔══════════╤════════════╤════════════╤═══════════╤══════════╗");
     println!("║ PM       │ Cold       │ Warm       │ Packages  │ Disk     ║");
     println!("╠══════════╪════════════╪════════════╪═══════════╪══════════╣");
-    let best_cold = results.iter().filter_map(|(_, c, _, _, _, _)| {
-        c.trim_end_matches('s').parse::<f64>().ok()
-    }).fold(f64::MAX, |a, b| a.min(b));
+    let best_cold = results
+        .iter()
+        .filter_map(|(_, c, _, _, _, _)| c.trim_end_matches('s').parse::<f64>().ok())
+        .fold(f64::MAX, |a, b| a.min(b));
     for (name, cold, warm, pkgs, _count, disk) in &results {
         let cold_s = cold.trim_end_matches('s').parse::<f64>().unwrap_or(0.0);
         let marker = if cold_s == best_cold { " 🏆" } else { "" };
-        println!("║ {:<8}│ {:<10}│ {:<10}│ {:<9}│ {:<8}║{}",
-            name, cold, warm, pkgs, disk, marker);
+        println!(
+            "║ {:<8}│ {:<10}│ {:<10}│ {:<9}│ {:<8}║{}",
+            name, cold, warm, pkgs, disk, marker
+        );
     }
     println!("╚══════════╧════════════╧════════════╧═══════════╧══════════╝");
     println!();

@@ -7,8 +7,6 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "mg web dev",
-    "build": "mg web build",
-    "check": "mg web check"
+    "dev": "mg --core web dev"
   }
 }

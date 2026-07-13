@@ -1,0 +1,8 @@
+name = "megagate-app"
+binary = "mg"
+description = "MegaGate single-core app distribution"
+mode = "single-core"
+primary_core = "app"
+no_default_features = true
+features = ["app"]
+install_hint = "brew install megagate-app"

@@ -1,0 +1,19 @@
+[[files]]
+source = "pom.xml"
+target = "apps/backend/pom.xml"
+required_context = ["project_slug"]
+
+[[files]]
+source = "GreetingResource.java"
+target = "apps/backend/src/main/java/com/example/GreetingResource.java"
+required_context = ["project_name"]
+
+[[files]]
+source = "HealthResource.java"
+target = "apps/backend/src/main/java/com/example/HealthResource.java"
+required_context = ["project_name"]
+
+[[files]]
+source = "application.properties"
+target = "apps/backend/src/main/resources/application.properties"
+required_context = ["project_name"]

@@ -1,0 +1,11 @@
+{
+  "name": "@{{project_slug}}/frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --mode ssr",
+    "build": "qwik build",
+    "preview": "vite preview"
+  }
+}

@@ -1,0 +1,8 @@
+name = "megagate-cicd"
+binary = "mg"
+description = "MegaGate single-core CI/CD distribution"
+mode = "single-core"
+primary_core = "cicd"
+no_default_features = true
+features = ["cicd"]
+install_hint = "brew install megagate-cicd"

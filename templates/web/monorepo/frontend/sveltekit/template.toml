@@ -1,0 +1,73 @@
+[[files]]
+source = "package.js.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "package.ts.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "app.html"
+target = "apps/frontend/src/app.html"
+
+[[files]]
+source = "+page.svelte"
+target = "apps/frontend/src/routes/+page.svelte"
+required_context = ["project_name"]
+
+[[files]]
+source = "+layout.svelte"
+target = "apps/frontend/src/routes/+layout.svelte"
+
+[[files]]
+source = "app.css"
+target = "apps/frontend/src/app.css"
+
+[[files]]
+source = "jsconfig.json"
+target = "apps/frontend/jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "apps/frontend/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite-env.d.ts"
+target = "apps/frontend/src/vite-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite.config.js"
+target = "apps/frontend/vite.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "vite.config.ts"
+target = "apps/frontend/vite.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "svelte.config.js"
+target = "apps/frontend/svelte.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "svelte.config.ts"
+target = "apps/frontend/svelte.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "config/framework.js"
+target = "apps/frontend/src/config/framework.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "config/framework.ts"
+target = "apps/frontend/src/config/framework.ts"
+include_features = ["typescript"]

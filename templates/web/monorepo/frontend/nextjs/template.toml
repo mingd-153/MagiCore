@@ -1,0 +1,62 @@
+[[files]]
+source = "package.js.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "package.ts.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "jsconfig.json"
+target = "apps/frontend/jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "apps/frontend/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "next-env.d.ts"
+target = "apps/frontend/next-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "next.config.mjs"
+target = "apps/frontend/next.config.mjs"
+
+[[files]]
+source = "layout.jsx"
+target = "apps/frontend/src/app/layout.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "layout.tsx"
+target = "apps/frontend/src/app/layout.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "page.jsx"
+target = "apps/frontend/src/app/page.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "page.tsx"
+target = "apps/frontend/src/app/page.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "config/framework.js"
+target = "apps/frontend/src/config/framework.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "config/framework.ts"
+target = "apps/frontend/src/config/framework.ts"
+include_features = ["typescript"]

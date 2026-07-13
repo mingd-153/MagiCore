@@ -1,0 +1,45 @@
+[[files]]
+source = "package.ts.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "package.js.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "nuxt.config.ts"
+target = "apps/frontend/nuxt.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "nuxt.config.js"
+target = "apps/frontend/nuxt.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "apps/frontend/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "app.vue"
+target = "apps/frontend/app.vue"
+
+[[files]]
+source = "pages/index.vue"
+target = "apps/frontend/pages/index.vue"
+required_context = ["project_name"]
+
+[[files]]
+source = "config/framework.ts"
+target = "apps/frontend/config/framework.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "config/framework.js"
+target = "apps/frontend/config/framework.js"
+exclude_features = ["typescript"]

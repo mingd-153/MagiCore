@@ -1,0 +1,139 @@
+[[files]]
+source = "root/package.json"
+target = "package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "client/app.html"
+target = "src/app.html"
+
+[[files]]
+source = "client/+page.svelte"
+target = "src/routes/+page.svelte"
+required_context = ["project_name"]
+
+[[files]]
+source = "client/+layout.svelte"
+target = "src/routes/+layout.svelte"
+
+[[files]]
+source = "client/app.css"
+target = "src/app.css"
+
+[[files]]
+source = "client/jsconfig.json"
+target = "jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/tsconfig.json"
+target = "tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite-env.d.ts"
+target = "src/vite-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite.config.ts"
+target = "vite.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite.config.js"
+target = "vite.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/svelte.config.ts"
+target = "svelte.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/svelte.config.js"
+target = "svelte.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/config/framework.ts"
+target = "src/config/framework.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/config/framework.js"
+target = "src/config/framework.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/package.ts.json"
+target = "server/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/package.js.json"
+target = "server/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/tsconfig.json"
+target = "server/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "server/server.ts"
+target = "server/src/server.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "server/server.js"
+target = "server/src/server.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/app.ts"
+target = "server/src/lib/app.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "server/app.js"
+target = "server/src/lib/app.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/config.ts"
+target = "server/src/config/app.ts"
+required_context = ["project_name", "backend_framework"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/config.js"
+target = "server/src/config/app.js"
+required_context = ["project_name", "backend_framework"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/health.ts"
+target = "server/src/routes/health.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/health.js"
+target = "server/src/routes/health.js"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/status.ts"
+target = "server/src/services/status.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/status.js"
+target = "server/src/services/status.js"
+required_context = ["project_name"]
+exclude_features = ["typescript"]

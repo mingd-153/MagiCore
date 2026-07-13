@@ -1,0 +1,23 @@
+[[files]]
+source = "requirements.txt"
+target = "apps/backend/requirements.txt"
+
+[[files]]
+source = "config.py"
+target = "apps/backend/src/config.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "health.py"
+target = "apps/backend/src/routes/health.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "status.py"
+target = "apps/backend/src/services/status.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "main.py"
+target = "apps/backend/main.py"
+required_context = ["project_name"]

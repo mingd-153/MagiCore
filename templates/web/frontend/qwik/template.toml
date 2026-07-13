@@ -1,0 +1,63 @@
+[[files]]
+source = "package.json"
+target = "package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "vite.config.ts"
+target = "vite.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite.config.js"
+target = "vite.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "src/root.tsx"
+target = "src/root.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "src/root.jsx"
+target = "src/root.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/entry.ssr.tsx"
+target = "src/entry.ssr.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "src/entry.ssr.jsx"
+target = "src/entry.ssr.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/entry.dev.tsx"
+target = "src/entry.dev.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "src/entry.dev.jsx"
+target = "src/entry.dev.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/routes/index.tsx"
+target = "src/routes/index.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "src/routes/index.jsx"
+target = "src/routes/index.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]

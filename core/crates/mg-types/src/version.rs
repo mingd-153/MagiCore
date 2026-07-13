@@ -62,25 +62,67 @@ impl fmt::Display for Version {
 
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> Ordering {
-        (
-            self.major,
-            self.minor,
-            self.patch,
-            self.pre.is_some(),
-            &self.pre,
-        )
-            .cmp(&(
-                other.major,
-                other.minor,
-                other.patch,
-                other.pre.is_some(),
-                &other.pre,
-            ))
+        match (self.major, self.minor, self.patch).cmp(&(other.major, other.minor, other.patch)) {
+            Ordering::Equal => compare_prerelease(self.pre.as_deref(), other.pre.as_deref()),
+            ordering => ordering,
+        }
     }
 }
 
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+fn compare_prerelease(left: Option<&str>, right: Option<&str>) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(left), Some(right)) => {
+            let mut left_parts = left.split('.');
+            let mut right_parts = right.split('.');
+
+            loop {
+                match (left_parts.next(), right_parts.next()) {
+                    (None, None) => return Ordering::Equal,
+                    (None, Some(_)) => return Ordering::Less,
+                    (Some(_), None) => return Ordering::Greater,
+                    (Some(left), Some(right)) => {
+                        let left_num = left.parse::<u64>();
+                        let right_num = right.parse::<u64>();
+                        let ordering = match (left_num, right_num) {
+                            (Ok(left), Ok(right)) => left.cmp(&right),
+                            (Ok(_), Err(_)) => Ordering::Less,
+                            (Err(_), Ok(_)) => Ordering::Greater,
+                            (Err(_), Err(_)) => left.cmp(right),
+                        };
+                        if ordering != Ordering::Equal {
+                            return ordering;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Version;
+
+    #[test]
+    fn stable_version_sorts_after_prerelease() {
+        let stable = Version::parse("1.0.0").unwrap();
+        let prerelease = Version::parse("1.0.0-next.24").unwrap();
+        assert!(stable > prerelease);
+    }
+
+    #[test]
+    fn numeric_prerelease_segments_sort_numerically() {
+        let earlier = Version::parse("1.0.0-next.9").unwrap();
+        let later = Version::parse("1.0.0-next.24").unwrap();
+        assert!(later > earlier);
     }
 }

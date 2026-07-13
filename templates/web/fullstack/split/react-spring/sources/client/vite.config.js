@@ -1,0 +1,1 @@
+/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/fullstack/split/react-express/sources/client/vite.config.js

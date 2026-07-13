@@ -1,3 +1,1 @@
-import { defineConfig } from "vite";
-
-export default defineConfig({});
+../../../../frontend/react-vite/sources/vite.config.ts

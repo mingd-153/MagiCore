@@ -1,4 +1,38 @@
 [[files]]
-source = "server.txt"
-target = "src/server.txt"
-required_context = ["backend_language", "backend_framework"]
+source = "config.js"
+target = "src/config/app.js"
+required_context = ["project_name", "backend_framework"]
+exclude_features = ["typescript", "go", "python", "rust", "php", "java"]
+
+[[files]]
+source = "config.ts"
+target = "src/config/app.ts"
+required_context = ["project_name", "backend_framework"]
+include_features = ["typescript"]
+exclude_features = ["go", "python", "rust", "php", "java"]
+
+[[files]]
+source = "health.js"
+target = "src/routes/health.js"
+required_context = ["project_name"]
+exclude_features = ["typescript", "go", "python", "rust", "php", "java"]
+
+[[files]]
+source = "health.ts"
+target = "src/routes/health.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+exclude_features = ["go", "python", "rust", "php", "java"]
+
+[[files]]
+source = "status.js"
+target = "src/services/status.js"
+required_context = ["project_name"]
+exclude_features = ["typescript", "go", "python", "rust", "php", "java"]
+
+[[files]]
+source = "status.ts"
+target = "src/services/status.ts"
+required_context = ["project_name"]
+include_features = ["typescript"]
+exclude_features = ["go", "python", "rust", "php", "java"]
