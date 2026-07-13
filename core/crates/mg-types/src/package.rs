@@ -242,7 +242,10 @@ mod tests {
     #[test]
     fn exact_equals_range_matches_same_version() {
         let range = VersionRange::parse("=0.139.0").unwrap();
-        assert!(range.matches(&v("0.139.0")), "=0.139.0 should match 0.139.0");
+        assert!(
+            range.matches(&v("0.139.0")),
+            "=0.139.0 should match 0.139.0"
+        );
         assert!(!range.matches(&v("0.139.1")));
     }
 
@@ -285,8 +288,17 @@ mod tests {
     #[test]
     fn npm_single_equals_matches_oxc_types() {
         let range = VersionRange::parse("=0.139.0").unwrap();
-        assert!(range.matches(&v("0.139.0")), "=0.139.0 should match 0.139.0");
-        assert!(!range.matches(&v("0.138.0")), "=0.139.0 should NOT match 0.138.0");
-        assert!(!range.matches(&v("0.139.1")), "=0.139.0 should NOT match 0.139.1");
+        assert!(
+            range.matches(&v("0.139.0")),
+            "=0.139.0 should match 0.139.0"
+        );
+        assert!(
+            !range.matches(&v("0.138.0")),
+            "=0.139.0 should NOT match 0.138.0"
+        );
+        assert!(
+            !range.matches(&v("0.139.1")),
+            "=0.139.0 should NOT match 0.139.1"
+        );
     }
 }

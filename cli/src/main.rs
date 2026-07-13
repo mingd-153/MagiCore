@@ -54,7 +54,11 @@ pub(crate) enum Commands {
         ))
     ))]
     #[command(about = "Install all dependencies")]
-    Install { packages: Vec<String> },
+    Install {
+        packages: Vec<String>,
+        #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
+        frozen: bool,
+    },
     #[cfg(all(
         feature = "web",
         any(
@@ -785,8 +789,11 @@ mod tests {
         {
             let cli = Cli::try_parse_from(["mg", "install", "react", "vite"]).unwrap();
             match cli.command.unwrap() {
-                Commands::Install { packages } => {
+                Commands::Install {
+                    packages, frozen, ..
+                } => {
                     assert_eq!(packages, vec!["react", "vite"]);
+                    assert!(!frozen);
                 }
                 _ => panic!("expected bare install in web-only build"),
             }
@@ -811,8 +818,11 @@ mod tests {
             );
             let cli = Cli::try_parse_from(["mg", "install-web", "react", "vite"]).unwrap();
             match cli.command.unwrap() {
-                Commands::InstallWeb { packages } => {
+                Commands::InstallWeb {
+                    packages, frozen, ..
+                } => {
                     assert_eq!(packages, vec!["react", "vite"]);
+                    assert!(!frozen);
                 }
                 _ => panic!("expected install-web in multi-core build"),
             }

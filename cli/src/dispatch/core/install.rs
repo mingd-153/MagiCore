@@ -64,7 +64,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
                 feature = "lib"
             ))
         ))]
-        CoreCommand::Install { packages } => commands::core::web::install(packages, false).await,
+        CoreCommand::Install {
+            packages, frozen, ..
+        } => commands::core::web::install(packages, frozen).await,
         #[cfg(all(
             feature = "web",
             any(
