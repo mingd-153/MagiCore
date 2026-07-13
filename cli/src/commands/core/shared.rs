@@ -286,6 +286,12 @@ fn load_locked_graph(
     if lock.core != adapter_name || !state_ok || lock.packages.is_empty() {
         return Ok(None);
     }
+    if lock.version != 1 {
+        return Ok(None);
+    }
+    if lock.packages.iter().any(|p| p.name.is_empty()) {
+        return Ok(None);
+    }
     if !lock_matches_manifest(&lock, manifest) {
         return Ok(None);
     }
