@@ -149,6 +149,7 @@ pub async fn update(
     adapter: &dyn PackageAdapter,
     root: &Path,
     packages: Vec<String>,
+    install: bool,
 ) -> Result<()> {
     if packages.is_empty() {
         info("Checking for outdated packages...");
@@ -165,10 +166,16 @@ pub async fn update(
                 ));
             }
             success(&format!("Updated {} package(s)", updated.len()));
-            info(&format!(
-                "Run '{}' to install updates",
-                style_cmd(install_command_for_adapter(adapter))
-            ));
+            if install {
+                info("Installing updated packages...");
+                install_with_adapter(adapter, root, install_command_for_adapter(adapter), false)
+                    .await?;
+            } else {
+                info(&format!(
+                    "Run '{}' to install updates",
+                    style_cmd(install_command_for_adapter(adapter))
+                ));
+            }
         }
     } else {
         for name in &packages {
@@ -184,6 +191,15 @@ pub async fn update(
             }
         }
         success("Update complete");
+        if install {
+            info("Installing updated packages...");
+            install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
+        } else {
+            info(&format!(
+                "Run '{}' to install updates",
+                style_cmd(install_command_for_adapter(adapter))
+            ));
+        }
     }
     Ok(())
 }
