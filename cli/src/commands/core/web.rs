@@ -7,6 +7,7 @@ use mg_types::adapter::PackageAdapter;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use crate::commands::core::scaffold_flags::ScaffoldFlags;
 use crate::commands::core::shared;
 use mg_ui::info;
 
@@ -1089,15 +1090,6 @@ fn prepend_path(local_bin: &Path) -> Result<OsString> {
 
 // ── Scaffold (create) ────────────────────────────────────────────
 
-#[derive(Debug, Clone, Default)]
-pub struct WebCreateOptions {
-    pub typescript: bool,
-    pub tailwindcss: bool,
-    pub monorepo: bool,
-    pub backend: Option<String>,
-    pub features: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FrameworkRequest {
     raw: String,
@@ -1105,7 +1097,6 @@ struct FrameworkRequest {
     version: Option<String>,
 }
 
-#[allow(dead_code)]
 pub async fn run_create(framework: &str, project_name: &str) -> Result<()> {
     run_create_with_options(framework, project_name, None).await
 }
@@ -1113,15 +1104,23 @@ pub async fn run_create(framework: &str, project_name: &str) -> Result<()> {
 pub async fn run_create_with_options(
     framework: &str,
     project_name: &str,
-    web: Option<WebCreateOptions>,
+    flags: Option<ScaffoldFlags>,
 ) -> Result<()> {
+    let mut flags = flags.unwrap_or_default();
+
+    if let Some(preset_name) = &flags.preset.clone() {
+        apply_preset(preset_name, &mut flags);
+    }
+
+    let fe_framework = resolve_framework(Some(framework), &flags)?;
+    validate_flags(&flags, &fe_framework)?;
+
     info(&format!(
         "Creating new web project '{}' with {}",
-        project_name, framework
+        project_name, fe_framework
     ));
 
-    let web_options = web.unwrap_or_default();
-    let config = build_web_config(framework, project_name, &web_options)?;
+    let config = build_web_config(&fe_framework, project_name, &flags)?;
     let project_dir = crate::scaffold::Scaffolder::scaffold(&config)?;
 
     let proj_config = mg_config::project::ProjectConfig::new(
@@ -1130,13 +1129,13 @@ pub async fn run_create_with_options(
     );
     proj_config.save(&project_dir)?;
 
-    let frontend = parse_framework_request(framework);
-    let backend = web_options
-        .backend
+    let frontend = parse_framework_request(&fe_framework);
+    let be_name = detect_backend_framework(&flags);
+    let backend = be_name
         .as_deref()
         .map(parse_framework_request)
         .or_else(|| fullstack_backend_framework(&frontend.normalized).map(parse_framework_request));
-    enrich_web_project_manifest(&project_dir, &frontend, backend.as_ref(), &web_options).await?;
+    enrich_web_project_manifest(&project_dir, &frontend, backend.as_ref(), &flags).await?;
 
     info(&format!("Project '{}' created!", project_dir.display()));
     info(&format!(
@@ -1148,19 +1147,112 @@ pub async fn run_create_with_options(
     Ok(())
 }
 
+fn resolve_framework(pos: Option<&str>, flags: &ScaffoldFlags) -> Result<String> {
+    if let Some(fw) = pos {
+        return Ok(fw.to_string());
+    }
+    if flags.react { Ok("react".into()) }
+    else if flags.next { Ok("next".into()) }
+    else if flags.vue { Ok("vue".into()) }
+    else if flags.nuxt { Ok("nuxt".into()) }
+    else if flags.svelte { Ok("svelte".into()) }
+    else if flags.sveltekit { Ok("sveltekit".into()) }
+    else if flags.solid { Ok("solid".into()) }
+    else if flags.astro { Ok("astro".into()) }
+    else if flags.remix { Ok("remix".into()) }
+    else {
+        anyhow::bail!("No framework specified. Use a flag like --react, --next, --vue, or pass a framework name as the first argument.")
+    }
+}
+
+fn detect_backend_framework(flags: &ScaffoldFlags) -> Option<String> {
+    if flags.express { Some("express".into()) }
+    else if flags.fastify { Some("fastify".into()) }
+    else if flags.nestjs { Some("nestjs".into()) }
+    else if flags.hono { Some("hono".into()) }
+    else if flags.koa { Some("koa".into()) }
+    else if flags.trpc { Some("trpc".into()) }
+    else { None }
+}
+
+fn validate_flags(flags: &ScaffoldFlags, fe_framework: &str) -> Result<()> {
+    let fe_count = [
+        flags.react, flags.next, flags.vue, flags.nuxt,
+        flags.svelte, flags.sveltekit, flags.solid, flags.astro, flags.remix,
+    ].iter().filter(|&&b| b).count();
+
+    if fe_count > 1 {
+        anyhow::bail!("Multiple frontend frameworks specified. Choose only one (--react, --next, --vue, etc.).");
+    }
+
+    if flags.pinia && fe_framework != "vue" && fe_framework != "nuxt" {
+        anyhow::bail!("--pinia requires --vue or --nuxt");
+    }
+
+    if flags.shadcn && !flags.tailwindcss {
+        // auto-enable tailwindcss, don't error
+    }
+
+    Ok(())
+}
+
+fn apply_preset(name: &str, flags: &mut ScaffoldFlags) {
+    match name {
+        "t3" => {
+            flags.next = true;
+            flags.ts = true;
+            flags.tailwindcss = true;
+            flags.trpc = true;
+            flags.prisma = true;
+            flags.zod = true;
+            flags.nextauth = true;
+        }
+        "mern" => {
+            flags.react = true;
+            flags.express = true;
+            flags.mongoose = true;
+            flags.mongodb = true;
+            flags.zod = true;
+            flags.jwt = true;
+        }
+        "jamstack" => {
+            flags.astro = true;
+            flags.tailwindcss = true;
+            flags.dotenv = true;
+            flags.vercel = true;
+        }
+        "saas" => {
+            flags.next = true;
+            flags.tailwindcss = true;
+            flags.shadcn = true;
+            flags.prisma = true;
+            flags.postgres = true;
+            flags.clerk = true;
+            flags.docker = true;
+        }
+        "mevn" => {
+            flags.vue = true;
+            flags.express = true;
+            flags.mongoose = true;
+            flags.mongodb = true;
+            flags.zod = true;
+        }
+        _ => {}
+    }
+}
+
 fn build_web_config(
     framework: &str,
     project_name: &str,
-    options: &WebCreateOptions,
+    flags: &ScaffoldFlags,
 ) -> Result<crate::wizard::engine::ScaffoldConfig> {
     let frontend = parse_framework_request(framework);
 
-    let mut config = if options.monorepo {
-        let backend = options
-            .backend
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--monorepo requires --backend <framework>"))?;
-        let backend = parse_framework_request(backend);
+    let mut config = if flags.monorepo {
+        let be_name = detect_backend_framework(flags)
+            .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string))
+            .ok_or_else(|| anyhow::anyhow!("--monorepo requires a backend framework flag (--express, --fastify, etc.) or a fullstack FE like --next"))?;
+        let backend = parse_framework_request(&be_name);
         crate::wizard::engine::ScaffoldConfig {
             core: "web".to_string(),
             sub_type: "monorepo".to_string(),
@@ -1173,10 +1265,8 @@ fn build_web_config(
         crate::scaffold::Scaffolder::infer_web_create_config(&frontend.normalized, project_name)?
     };
 
-    config.features = web_features(options);
+    config.features = web_features(flags);
 
-    // Auto-inject backend base language as a feature so template.toml
-    // files can use include/exclude_features to filter per-language.
     if config.frameworks.len() >= 2 {
         let lang = &config.frameworks[0];
         if !config.features.contains(lang) {
@@ -1187,19 +1277,111 @@ fn build_web_config(
     Ok(config)
 }
 
-fn web_features(options: &WebCreateOptions) -> Vec<String> {
+fn web_features(flags: &ScaffoldFlags) -> Vec<String> {
     let mut features = Vec::new();
-    if options.typescript {
-        features.push("typescript".to_string());
-    }
-    if options.tailwindcss {
-        features.push("tailwindcss".to_string());
-    }
-    for feature in &options.features {
-        if !features.iter().any(|existing| existing == feature) {
+
+    // Language
+    if flags.ts { features.push("typescript".into()); }
+    if flags.js { features.push("javascript".into()); }
+
+    // Styling
+    if flags.tailwindcss || flags.shadcn || flags.daisyui { features.push("tailwindcss".into()); }
+    if flags.css_modules { features.push("css-modules".into()); }
+    if flags.styled_components { features.push("styled-components".into()); }
+    if flags.sass { features.push("sass".into()); }
+    if flags.unocss { features.push("unocss".into()); }
+    if flags.shadcn { features.push("shadcn".into()); }
+    if flags.daisyui { features.push("daisyui".into()); }
+
+    // State
+    if flags.zustand { features.push("zustand".into()); }
+    if flags.redux { features.push("redux".into()); }
+    if flags.jotai { features.push("jotai".into()); }
+    if flags.recoil { features.push("recoil".into()); }
+    if flags.pinia { features.push("pinia".into()); }
+    if flags.tanstack_query { features.push("tanstack-query".into()); }
+
+    // Backend
+    if flags.express { features.push("express".into()); }
+    if flags.fastify { features.push("fastify".into()); }
+    if flags.nestjs { features.push("nestjs".into()); }
+    if flags.hono { features.push("hono".into()); }
+    if flags.koa { features.push("koa".into()); }
+    if flags.trpc { features.push("trpc".into()); }
+
+    // Database / ORM
+    if flags.prisma { features.push("prisma".into()); }
+    if flags.drizzle { features.push("drizzle".into()); }
+    if flags.typeorm { features.push("typeorm".into()); }
+    if flags.mongoose { features.push("mongoose".into()); }
+    if flags.postgres { features.push("postgres".into()); }
+    if flags.mysql { features.push("mysql".into()); }
+    if flags.sqlite { features.push("sqlite".into()); }
+    if flags.mongodb { features.push("mongodb".into()); }
+
+    // Validation
+    if flags.zod { features.push("zod".into()); }
+    if flags.yup { features.push("yup".into()); }
+    if flags.joi { features.push("joi".into()); }
+    if flags.valibot { features.push("valibot".into()); }
+
+    // Auth
+    if flags.nextauth { features.push("nextauth".into()); }
+    if flags.clerk { features.push("clerk".into()); }
+    if flags.lucia { features.push("lucia".into()); }
+    if flags.jwt { features.push("jwt".into()); }
+    if flags.oauth { features.push("oauth".into()); }
+
+    // Testing
+    if flags.vitest { features.push("vitest".into()); }
+    if flags.jest { features.push("jest".into()); }
+    if flags.playwright { features.push("playwright".into()); }
+    if flags.cypress { features.push("cypress".into()); }
+    if flags.testing_library { features.push("testing-library".into()); }
+
+    // Linting
+    if flags.eslint { features.push("eslint".into()); }
+    if flags.prettier { features.push("prettier".into()); }
+    if flags.biome { features.push("biome".into()); }
+    if flags.husky { features.push("husky".into()); }
+    if flags.lint_staged { features.push("lint-staged".into()); }
+    if flags.commitlint { features.push("commitlint".into()); }
+
+    // Monorepo
+    if flags.monorepo { features.push("monorepo".into()); }
+    if flags.turborepo { features.push("turborepo".into()); }
+    if flags.nx { features.push("nx".into()); }
+    if flags.workspaces { features.push("workspaces".into()); }
+    if flags.changesets { features.push("changesets".into()); }
+
+    // API
+    if flags.rest { features.push("rest".into()); }
+    if flags.graphql { features.push("graphql".into()); }
+    if flags.trpc_api { features.push("trpc-api".into()); }
+    if flags.grpc { features.push("grpc".into()); }
+
+    // Deployment
+    if flags.docker { features.push("docker".into()); }
+    if flags.github_actions { features.push("github-actions".into()); }
+    if flags.vercel { features.push("vercel".into()); }
+    if flags.railway { features.push("railway".into()); }
+    if flags.fly { features.push("fly".into()); }
+
+    // Misc
+    if flags.dotenv { features.push("dotenv".into()); }
+    if flags.i18n { features.push("i18n".into()); }
+    if flags.pwa { features.push("pwa".into()); }
+    if flags.storybook { features.push("storybook".into()); }
+    if flags.sentry { features.push("sentry".into()); }
+    if flags.analytics { features.push("analytics".into()); }
+
+    // Extra
+    for feature in &flags.features {
+        if !features.contains(feature) {
             features.push(feature.clone());
         }
     }
+
     features
 }
 
@@ -1787,7 +1969,7 @@ fn ensure_package(root: &mut Map<String, Value>, section: &str, package: &str, v
 async fn apply_web_manifest_seed(
     package_json_path: &Path,
     request: &FrameworkRequest,
-    options: &WebCreateOptions,
+    flags: &ScaffoldFlags,
 ) -> Result<()> {
     if !package_json_path.exists() {
         return Ok(());
@@ -1812,7 +1994,7 @@ async fn apply_web_manifest_seed(
             ensure_package(object, "dependencies", package, &version);
         }
         for tool in seed.toolchain {
-            if tool.typescript_only && !options.typescript {
+            if tool.typescript_only && !flags.ts {
                 continue;
             }
             let version = match tool.version {
@@ -1825,7 +2007,7 @@ async fn apply_web_manifest_seed(
         }
     }
 
-    if options.tailwindcss {
+    if flags.tailwindcss || flags.shadcn || flags.daisyui {
         let version = fetch_npm_latest_version("tailwindcss").await?;
         ensure_package(object, "devDependencies", "tailwindcss", &version);
     }
@@ -1838,16 +2020,16 @@ async fn enrich_web_project_manifest(
     project_dir: &Path,
     frontend: &FrameworkRequest,
     backend: Option<&FrameworkRequest>,
-    options: &WebCreateOptions,
+    flags: &ScaffoldFlags,
 ) -> Result<()> {
-    if options.monorepo {
+    if flags.monorepo {
         apply_web_manifest_seed(
             &project_dir
                 .join("apps")
                 .join("frontend")
                 .join("package.json"),
             frontend,
-            options,
+            flags,
         )
         .await?;
         if let Some(backend) = backend {
@@ -1857,22 +2039,22 @@ async fn enrich_web_project_manifest(
                     .join("backend")
                     .join("package.json"),
                 backend,
-                options,
+                flags,
             )
             .await?;
         }
         return Ok(());
     }
     if let Some(backend) = backend {
-        apply_web_manifest_seed(&project_dir.join("package.json"), frontend, options).await?;
+        apply_web_manifest_seed(&project_dir.join("package.json"), frontend, flags).await?;
         apply_web_manifest_seed(
             &project_dir.join("server").join("package.json"),
             backend,
-            options,
+            flags,
         )
         .await
     } else {
-        apply_web_manifest_seed(&project_dir.join("package.json"), frontend, options).await
+        apply_web_manifest_seed(&project_dir.join("package.json"), frontend, flags).await
     }
 }
 
@@ -1898,12 +2080,10 @@ mod tests {
         let _guard = scaffold_env_lock().lock().unwrap();
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("cli-react");
-        let options = WebCreateOptions {
-            typescript: true,
+        let flags = ScaffoldFlags {
+            ts: true,
             tailwindcss: true,
-            monorepo: false,
-            backend: None,
-            features: vec![],
+            ..Default::default()
         };
         std::env::set_var(
             SCAFFOLD_VERSION_OVERRIDES_ENV,
@@ -1915,7 +2095,7 @@ mod tests {
             .block_on(run_create_with_options(
                 "react@18.3.1",
                 &project.to_string_lossy(),
-                Some(options),
+                Some(flags),
             ))
             .map(|_| ());
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
@@ -1972,20 +2152,14 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-qwik");
-        let options = WebCreateOptions {
-            typescript: true,
-            tailwindcss: false,
-            monorepo: false,
-            backend: None,
-            features: vec![],
-        };
+        let flags = ScaffoldFlags { ts: true, ..Default::default() };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
             .block_on(run_create_with_options(
                 "qwik",
                 &project.to_string_lossy(),
-                Some(options),
+                Some(flags),
             ))
             .unwrap();
 
@@ -2004,20 +2178,14 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-react");
-        let options = WebCreateOptions {
-            typescript: true,
-            tailwindcss: true,
-            monorepo: false,
-            backend: None,
-            features: vec![],
-        };
+        let flags = ScaffoldFlags { ts: true, tailwindcss: true, ..Default::default() };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
             .block_on(run_create_with_options(
                 "react@18.3.1",
                 &project.to_string_lossy(),
-                Some(options),
+                Some(flags),
             ))
             .unwrap();
 
@@ -2037,20 +2205,14 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-vanilla");
-        let options = WebCreateOptions {
-            typescript: true,
-            tailwindcss: false,
-            monorepo: false,
-            backend: None,
-            features: vec![],
-        };
+        let flags = ScaffoldFlags { ts: true, ..Default::default() };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
             .block_on(run_create_with_options(
                 "vanilla",
                 &project.to_string_lossy(),
-                Some(options),
+                Some(flags),
             ))
             .unwrap();
 
@@ -2067,20 +2229,14 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-next");
-        let options = WebCreateOptions {
-            typescript: true,
-            tailwindcss: false,
-            monorepo: false,
-            backend: None,
-            features: vec![],
-        };
+        let flags = ScaffoldFlags { ts: true, ..Default::default() };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
             .block_on(run_create_with_options(
                 "nextjs",
                 &project.to_string_lossy(),
-                Some(options),
+                Some(flags),
             ))
             .unwrap();
 
@@ -2499,20 +2655,19 @@ apps_dir = "apps"
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("monorepo-fastapi");
-        let options = WebCreateOptions {
-            typescript: true,
-            tailwindcss: false,
+        let flags = ScaffoldFlags {
+            ts: true,
             monorepo: true,
-            backend: Some("fastapi".to_string()),
-            features: vec![],
+            express: true,
+            ..Default::default()
         };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
             .block_on(run_create_with_options(
-                "react-vite",
+                "react",
                 &project.to_string_lossy(),
-                Some(options),
+                Some(flags),
             ))
             .unwrap();
 
