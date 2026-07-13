@@ -20,7 +20,7 @@ pub async fn remove(_package: String) -> Result<()> {
 pub async fn list() -> Result<()> {
     anyhow::bail!("Library adapter is not yet implemented")
 }
-pub async fn update(_packages: Vec<String>) -> Result<()> {
+pub async fn update(_packages: Vec<String>, _install: bool) -> Result<()> {
     anyhow::bail!("Library adapter is not yet implemented")
 }
 pub async fn install(_packages: Vec<String>) -> Result<()> {
