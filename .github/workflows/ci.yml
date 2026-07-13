@@ -29,6 +29,12 @@ jobs:
       - name: Cargo check workspace
         run: cargo check --workspace
 
+      - name: Cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Cargo fmt check
+        run: cargo fmt --check
+
       - name: Cargo deny check
         run: cargo deny check
 
@@ -49,13 +55,6 @@ jobs:
         package:
           - megagate
           - megagate-web
-          - megagate-ai
-          - megagate-game
-          - megagate-clo
-          - megagate-cicd
-          - megagate-iot
-          - megagate-app
-          - megagate-lib
     steps:
       - uses: actions/checkout@v4
 

@@ -15,13 +15,6 @@ jobs:
         package:
           - megagate
           - megagate-web
-          - megagate-ai
-          - megagate-game
-          - megagate-clo
-          - megagate-cicd
-          - megagate-iot
-          - megagate-app
-          - megagate-lib
     steps:
       - uses: actions/checkout@v4
 
