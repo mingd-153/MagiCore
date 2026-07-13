@@ -81,6 +81,21 @@ impl WebAdapter {
         explicit_range: Option<&VersionRange>,
         exact: bool,
     ) -> MgResult<VersionRange> {
+        let should_fetch = match explicit_range {
+            Some(range) => {
+                let raw = range.as_str();
+                raw == "latest" || raw == "*" || raw.is_empty()
+            }
+            None => true,
+        };
+
+        if should_fetch {
+            let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
+            let latest = self.latest_version_string(name, &registry).await?;
+            let saved = if exact { latest } else { format!("^{latest}") };
+            return VersionRange::parse(&saved);
+        }
+
         if let Some(range) = explicit_range {
             let raw = if exact {
                 range
@@ -93,11 +108,7 @@ impl WebAdapter {
             return VersionRange::parse(raw);
         }
 
-        let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
-        let latest = self.latest_version_string(name, &registry).await?;
-
-        let saved = if exact { latest } else { format!("^{latest}") };
-        VersionRange::parse(&saved)
+        unreachable!()
     }
 
     async fn latest_version_string(
