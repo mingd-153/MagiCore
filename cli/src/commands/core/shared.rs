@@ -16,37 +16,7 @@ pub fn find_project_root(cwd: &Path) -> Result<Option<PathBuf>> {
 
 fn install_command_for_adapter(adapter: &dyn PackageAdapter) -> &'static str {
     if adapter.name() == "web" {
-        #[cfg(all(
-            feature = "web",
-            not(any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            ))
-        ))]
-        {
-            return "mg install";
-        }
-
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        {
-            return "mg install-web";
-        }
+        return "mg install";
     }
 
     "mg install"
@@ -247,9 +217,10 @@ pub async fn install_with_adapter(
         (graph, true)
     } else {
         if frozen {
+            let cmd = install_command_for_adapter(adapter);
             anyhow::bail!(
                 "--frozen: mg.lock is missing or does not match package.json.\n\
-                 Run 'mg install-web' to generate an up-to-date lockfile."
+                 Run '{cmd}' to generate an up-to-date lockfile."
             );
         }
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
