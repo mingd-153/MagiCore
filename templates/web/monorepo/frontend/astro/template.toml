@@ -1,0 +1,35 @@
+[[files]]
+source = "package.ts.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "package.js.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "astro.config.ts"
+target = "apps/frontend/astro.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "astro.config.mjs"
+target = "apps/frontend/astro.config.mjs"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "apps/frontend/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "src/pages/index.astro"
+target = "apps/frontend/src/pages/index.astro"
+required_context = ["project_name"]
+
+[[files]]
+source = "src/layouts/Layout.astro"
+target = "apps/frontend/src/layouts/Layout.astro"

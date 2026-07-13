@@ -1,0 +1,66 @@
+[[files]]
+source = "package.js.json"
+target = "package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "package.ts.json"
+target = "package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "server.js"
+target = "src/server.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server.ts"
+target = "src/server.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "app.js"
+target = "src/lib/app.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.ts"
+target = "src/lib/app.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "trpc.js"
+target = "src/trpc.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "trpc.ts"
+target = "src/trpc.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "router.js"
+target = "src/router.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "router.ts"
+target = "src/router.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "context.js"
+target = "src/context.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "context.ts"
+target = "src/context.ts"
+include_features = ["typescript"]

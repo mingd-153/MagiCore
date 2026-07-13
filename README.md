@@ -2,37 +2,83 @@
 
 # MegaGate
 
-**MegaGate** – a lightweight, extensible command‑line tool that unifies dependency management across multiple language ecosystems (npm, Cargo, Gradle, Python, etc.).
+**MegaGate** is a Rust-first multi-core package and project manager.
 
-## Core features
-- **Unified CLI** with sub‑commands: `install`, `update <pkg>`, `remove <pkg>`, `list`, `audit`, `export <format>` and a terminal UI (`MegaGate ui`).
-- **Pluggable adapters** – each package manager implements the `Adapter` trait (`parse`, `install`, `update`, `remove`). Adding a new manager is just a new module implementing the trait.
-- **Global lock file** – `mega-lock.json` stores a consolidated dependency graph (`LockFile`) that aggregates data from all adapters.
-- **In-memory agent memory** - the `agent_memory` crate provides a global key/value store for agents (exposed via the `recall` CLI command).
-- **Responsive terminal UI** built with **Ratatui**/Crossterm, showing a logo, menu, progress bar and status messages.
+Hiện tại repo đang bootstrap chắc trước cho:
 
-## Quick start
+- `megagate` -> full multi-core build
+- `megagate-web` -> single-core web build
+
+Web là core được triển khai sâu nhất ở vòng này, và đang là chuẩn để mở rộng runtime dần sang các core còn lại.
+
+## Current shape
+
+- unified CLI binary: `mg`
+- single-core và multi-core command surface tách riêng
+- web adapter có resolver / lockfile / install path / scaffold riêng
+- packaging manifest đã có cho toàn bộ core package
+
+## Build local distributions
+
 ```bash
-# Build
-cargo build
+# Full multi-core build
+./scripts/build.sh megagate
 
-# Install dependencies in the current project (detects the appropriate manager)
-mg install
+# Single-core web build
+./scripts/build.sh megagate-web
 
-# Update a specific package
-mg update <package-name>
+# Build both bootstrap packages
+./scripts/build.sh bootstrap
 
-# Recall a stored value from the global memory
-mg recall my.key
-
-# Launch the interactive UI
-mg ui
+# Build every packaged core shape
+./scripts/build.sh all
 ```
 
-## Extending the core
-1. **Add a new adapter** – create `src/adapters/<new>.rs`, implement `Adapter`, and register it in `src/adapters/mod.rs`.
-2. **Expose new CLI commands** – extend the `Commands` enum in `src/main.rs` and add a matching async function in `src/commands/mod.rs`.
-3. **Custom UI panels** – modify `src/ui/mod.rs` to add new menu items and handling logic.
+Artifacts được đặt ở:
 
-## License
-MIT – see the `LICENSE` file.
+```bash
+dist/megagate/<target>/mg
+dist/megagate-web/<target>/mg
+```
+
+## Build profile behavior
+
+### `megagate`
+
+- build mode: multi-core
+- expected command shape:
+  - `mg create-web ...`
+  - `mg add-web ...`
+  - `mg install-web ...`
+  - các core khác dùng `create-<core>`, `add-<core>`, `install-<core>`
+
+### `megagate-web`
+
+- build mode: single-core web
+- expected command shape:
+  - `mg create ...`
+  - `mg add ...`
+  - `mg install ...`
+
+## Key references
+
+- [scripts/DESIGN_FLOW.md](/Users/doanmihh/Documents/Workspace/MegaGate/scripts/DESIGN_FLOW.md:1)
+- [scripts/CLI_INSTALL_MODEL.md](/Users/doanmihh/Documents/Workspace/MegaGate/scripts/CLI_INSTALL_MODEL.md:1)
+- [scripts/MEGAGATE_BOOTSTRAP_RELEASE.md](/Users/doanmihh/Documents/Workspace/MegaGate/scripts/MEGAGATE_BOOTSTRAP_RELEASE.md:1)
+- [REPORT.md](/Users/doanmihh/Documents/Workspace/MegaGate/REPORT.md:1)
+
+## Packaged core matrix
+
+Repo hiện đã có manifest cho:
+
+- `megagate`
+- `megagate-web`
+- `megagate-ai`
+- `megagate-game`
+- `megagate-clo`
+- `megagate-cicd`
+- `megagate-iot`
+- `megagate-app`
+- `megagate-lib`
+
+Phần runtime thật vẫn đang đi từ web ra các core còn lại.

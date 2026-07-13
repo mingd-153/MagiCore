@@ -58,7 +58,7 @@ impl VersionRange {
             return true;
         }
         for part in raw.split("||").map(str::trim) {
-            if match_single_range(part, version) {
+            if match_compound_range(part, version) {
                 return true;
             }
         }
@@ -71,6 +71,7 @@ impl VersionRange {
             return Some(Version::new(0, 0, 0));
         }
         let normalized = raw
+            .trim_start_matches('=')
             .trim_start_matches('^')
             .trim_start_matches('~')
             .trim_start_matches(">=")
@@ -163,6 +164,9 @@ fn match_single_range(range: &str, version: &Version) -> bool {
     if range == "*" {
         return true;
     }
+    if let Some(target) = range.strip_prefix('=').and_then(|s| Version::parse(s).ok()) {
+        return version == &target;
+    }
     if let Some(target) = range.strip_prefix('^').and_then(|s| Version::parse(s).ok()) {
         return version.major == target.major && version >= &target;
     }
@@ -192,4 +196,70 @@ fn match_single_range(range: &str, version: &Version) -> bool {
     Version::parse(range)
         .map(|target| version == &target)
         .unwrap_or(false)
+}
+
+fn match_compound_range(range: &str, version: &Version) -> bool {
+    let trimmed = range.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed == "*" {
+        return true;
+    }
+
+    let mut parts = Vec::new();
+    let mut tokens = trimmed.split_whitespace().peekable();
+    while let Some(token) = tokens.next() {
+        if matches!(token, ">=" | "<=" | ">" | "<" | "=" | "^" | "~") {
+            if let Some(next) = tokens.next() {
+                parts.push(format!("{token}{next}"));
+            } else {
+                return false;
+            }
+        } else {
+            parts.push(token.to_string());
+        }
+    }
+
+    parts
+        .iter()
+        .all(|part| match_single_range(part.as_str(), version))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(input: &str) -> Version {
+        Version::parse(input).unwrap()
+    }
+
+    #[test]
+    fn exact_equals_range_matches_same_version() {
+        let range = VersionRange::parse("=0.139.0").unwrap();
+        assert!(range.matches(&v("0.139.0")));
+        assert!(!range.matches(&v("0.139.1")));
+    }
+
+    #[test]
+    fn exact_equals_range_produces_satisfying_version() {
+        let range = VersionRange::parse("=18.3.1").unwrap();
+        assert_eq!(range.satisfying_version(), Some(v("18.3.1")));
+    }
+
+    #[test]
+    fn compound_range_matches_intersection() {
+        let range = VersionRange::parse(">=0.2.0 <0.5.0").unwrap();
+        assert!(range.matches(&v("0.4.9")));
+        assert!(!range.matches(&v("0.5.0")));
+        assert!(!range.matches(&v("0.1.9")));
+    }
+
+    #[test]
+    fn compound_range_matches_spaced_comparators() {
+        let range = VersionRange::parse(">= 2.1.2 < 3.0.0").unwrap();
+        assert!(range.matches(&v("2.8.1")));
+        assert!(!range.matches(&v("2.1.1")));
+        assert!(!range.matches(&v("3.0.0")));
+    }
 }

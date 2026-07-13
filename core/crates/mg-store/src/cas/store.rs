@@ -166,8 +166,9 @@ impl ContentStore {
     }
 
     pub fn export_to(&self, hash: &IntegrityHash, dest: &Path) -> Result<(), StoreError> {
-        // Check parent directory for symlinks (dest doesn't exist yet)
         if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+            // Check parent directory for symlinks (dest doesn't exist yet)
             check_symlink_ancestors(parent)?;
         }
 

@@ -4,24 +4,80 @@ target = "package.json"
 required_context = ["project_slug"]
 
 [[files]]
-source = "index.html"
+source = "index.js.html"
 target = "index.html"
 required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "index.ts.html"
+target = "index.html"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "jsconfig.json"
+target = "jsconfig.json"
+exclude_features = ["typescript"]
 
 [[files]]
 source = "tsconfig.json"
 target = "tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite-env.d.ts"
+target = "src/vite-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite.config.js"
+target = "vite.config.js"
+exclude_features = ["typescript"]
 
 [[files]]
 source = "vite.config.ts"
 target = "vite.config.ts"
+include_features = ["typescript"]
 
 [[files]]
-source = "main.ts"
-target = "src/main.ts"
-required_context = ["project_name"]
+source = "main.jsx"
+target = "src/main.jsx"
+exclude_features = ["typescript"]
 
 [[files]]
-source = "App.ts"
-target = "src/App.ts"
+source = "main.tsx"
+target = "src/main.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "App.jsx"
+target = "src/App.jsx"
 required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "App.tsx"
+target = "src/App.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "config/framework.js"
+target = "src/config/framework.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "config/framework.ts"
+target = "src/config/framework.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "router/AppRouter.jsx"
+target = "src/router/AppRouter.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "router/AppRouter.tsx"
+target = "src/router/AppRouter.tsx"
+include_features = ["typescript"]

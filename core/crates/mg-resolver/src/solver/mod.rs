@@ -12,7 +12,6 @@
 //! ## Limitations
 //! - No PubGrub backtracking for conflicts
 //! - No multi-version hoisting
-//! - `prefetch_*` is sequential, not concurrent
 
 pub mod pubgrub;
 
@@ -233,7 +232,7 @@ impl Resolver {
         let mut resolved: HashMap<String, Version> = HashMap::new();
         let mut queue: VecDeque<(PackageName, String)> =
             wanted.iter().map(|(n, s)| (n.clone(), s.clone())).collect();
-        let mut resolved_majors: HashSet<(String, u64)> = HashSet::new();
+        let mut resolved_versions: HashSet<(String, Version)> = HashSet::new();
 
         // Pre-fetch initial batch
         let initial_names: Vec<PackageName> = wanted.iter().map(|(n, _)| n.clone()).collect();
@@ -288,15 +287,15 @@ impl Resolver {
                         .or_else(|| versions.iter().cloned().max())
                     {
                         resolved.insert(name_str.clone(), v.clone());
-                        resolved_majors.insert((name_str.clone(), v.major));
+                        resolved_versions.insert((name_str.clone(), v.clone()));
                         selected.push((name, name_str, v));
                     }
                     continue;
                 }
 
                 // Phase 2: already resolved
-                if let Some(existing) = resolved.get(&name_str) {
-                    if constraint.matches(existing) {
+                if let Some(existing) = resolved.get(&name_str).cloned() {
+                    if constraint.matches(&existing) {
                         continue;
                     }
                     let versions =
@@ -305,34 +304,12 @@ impl Resolver {
                             .await
                             .map_err(|e| SolveError {
                                 message: format!("cannot fetch versions for '{}': {}", name_str, e),
-                            })?;
+                    })?;
 
-                    // Try same major (minor/patch upgrade)
-                    if let Some(new_v) = versions
-                        .iter()
-                        .filter(|v| constraint.matches(v) && v.major == existing.major)
-                        .max()
-                        .cloned()
-                    {
-                        if &new_v > existing {
-                            if let Some(r) = resolutions.iter_mut().find(|r| {
-                                r.package_id.name().as_str() == name_str
-                                    && r.version.major == existing.major
-                            }) {
-                                r.version = new_v.clone();
-                                r.package_id = PackageId::new(name.clone(), new_v.clone());
-                            }
-                            resolved.insert(name_str.clone(), new_v);
-                        }
-                        continue;
-                    }
-
-                    // Different major → add separate resolution
                     if let Some(other) = Self::select_best_version(&versions, &constraint, &spec) {
-                        let key = (name_str.clone(), other.major);
-                        if !resolved_majors.contains(&key) {
-                            resolved.insert(name_str.clone(), other.clone());
-                            resolved_majors.insert(key);
+                        let key = (name_str.clone(), other.clone());
+                        if !resolved_versions.contains(&key) {
+                            resolved_versions.insert(key);
                             selected.push((name, name_str, other));
                         }
                     }
@@ -352,7 +329,7 @@ impl Resolver {
                 match version {
                     Some(v) => {
                         resolved.insert(name_str.clone(), v.clone());
-                        resolved_majors.insert((name_str.clone(), v.major));
+                        resolved_versions.insert((name_str.clone(), v.clone()));
                         selected.push((name, name_str, v));
                     }
                     None => {
@@ -521,6 +498,66 @@ mod tests {
         let wanted = vec![(PackageName::new("pkg").unwrap(), "1.0.0".to_string())];
         let result = resolver.solve(&wanted).await.unwrap();
         assert_eq!(result.resolutions[0].version.to_string(), "1.0.0");
+    }
+
+    #[tokio::test]
+    async fn test_same_major_conflict_keeps_multiple_versions() {
+        struct SameMajorProvider;
+
+        #[async_trait]
+        impl DependencyProvider for SameMajorProvider {
+            async fn get_versions(
+                &self,
+                package: &PackageName,
+            ) -> Result<Vec<Version>, DependencyError> {
+                let versions = match package.as_str() {
+                    "root" | "plugin" => vec!["1.0.0"],
+                    "esbuild" => vec!["0.17.6", "0.28.1"],
+                    _ => vec![],
+                };
+                Ok(versions
+                    .into_iter()
+                    .map(|value| Version::parse(value).unwrap())
+                    .collect())
+            }
+
+            async fn get_dependencies(
+                &self,
+                package_id: &PackageId,
+            ) -> Result<Vec<ResolvedDep>, DependencyError> {
+                let dep = |name: &str, spec: &str| ResolvedDep {
+                    package: PackageName::new(name).unwrap(),
+                    spec: spec.to_string(),
+                    optional: false,
+                    peer: false,
+                };
+
+                let deps = match package_id.name_str() {
+                    "root" => vec![dep("esbuild", "0.28.1")],
+                    "plugin" => vec![dep("esbuild", "0.17.6")],
+                    _ => vec![],
+                };
+
+                Ok(deps)
+            }
+        }
+
+        let resolver = Resolver::new(std::sync::Arc::new(SameMajorProvider));
+        let wanted = vec![
+            (PackageName::new("root").unwrap(), "1.0.0".to_string()),
+            (PackageName::new("plugin").unwrap(), "1.0.0".to_string()),
+        ];
+
+        let result = resolver.solve(&wanted).await.unwrap();
+        let esbuild_versions: Vec<String> = result
+            .resolutions
+            .iter()
+            .filter(|resolution| resolution.package_id.name_str() == "esbuild")
+            .map(|resolution| resolution.version.to_string())
+            .collect();
+
+        assert!(esbuild_versions.iter().any(|version| version == "0.17.6"));
+        assert!(esbuild_versions.iter().any(|version| version == "0.28.1"));
     }
 
     #[tokio::test]

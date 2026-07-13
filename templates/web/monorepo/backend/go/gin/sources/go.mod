@@ -1,0 +1,1 @@
+/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/go/gin/sources/go.mod

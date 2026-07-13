@@ -1,0 +1,8 @@
+name = "megagate-web"
+binary = "mg"
+description = "MegaGate single-core web distribution"
+mode = "single-core"
+primary_core = "web"
+no_default_features = true
+features = ["web"]
+install_hint = "brew install megagate-web"

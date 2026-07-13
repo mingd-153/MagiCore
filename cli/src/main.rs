@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 mod context;
+mod dispatch;
 mod factory;
 mod scaffold;
 mod wizard;
@@ -13,7 +14,7 @@ mod wizard;
 #[command(about = "MegaGate - Universal Package Manager", long_about = None)]
 #[command(version)]
 
-struct Cli {
+pub(crate) struct Cli {
     /// Target core (web, game, ai, clo, cicd, iot, app, lib)
     #[arg(global = true, long)]
     core: Option<String>,
@@ -22,18 +23,37 @@ struct Cli {
     command: Option<Commands>,
 }
 
-// ─── Per-core commands (7 cores × 5 commands = 35 variants) ───────
+// ─── Per-core commands (8 cores × 5 commands = 40 variants) ───────
 // Global mode:   mg add-web react, mg remove-web lodash, ...
 // Single mode:   mg add react, mg remove lodash, ...
 
 #[derive(Subcommand)]
-enum Commands {
+pub(crate) enum Commands {
     // ── Common commands ────────────────────────────────────────
     #[command(about = "Interactive project wizard")]
     Init {
         #[arg(short, long)]
         template: Option<String>,
     },
+    #[command(about = "Start the local development server")]
+    Dev {
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    #[cfg(all(
+        feature = "web",
+        not(any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        ))
+    ))]
     #[command(about = "Install all dependencies")]
     Install { packages: Vec<String> },
     #[cfg(all(
@@ -51,25 +71,41 @@ enum Commands {
     #[command(name = "install-web", about = "Install web dependencies")]
     InstallWeb { packages: Vec<String> },
     #[cfg(feature = "game")]
-    #[command(name = "install-game", about = "Install game dependencies")]
+    #[command(
+        name = "install-game",
+        about = "Install game dependencies",
+        hide = true
+    )]
     InstallGame { packages: Vec<String> },
     #[cfg(feature = "ai")]
-    #[command(name = "install-ai", about = "Install AI dependencies")]
+    #[command(name = "install-ai", about = "Install AI dependencies", hide = true)]
     InstallAi { packages: Vec<String> },
     #[cfg(feature = "clo")]
-    #[command(name = "install-clo", about = "Install cloud dependencies")]
+    #[command(
+        name = "install-clo",
+        about = "Install cloud dependencies",
+        hide = true
+    )]
     InstallClo { packages: Vec<String> },
     #[cfg(feature = "cicd")]
-    #[command(name = "install-cicd", about = "Install CI/CD dependencies")]
+    #[command(
+        name = "install-cicd",
+        about = "Install CI/CD dependencies",
+        hide = true
+    )]
     InstallCicd { packages: Vec<String> },
     #[cfg(feature = "iot")]
-    #[command(name = "install-iot", about = "Install IoT dependencies")]
+    #[command(name = "install-iot", about = "Install IoT dependencies", hide = true)]
     InstallIot { packages: Vec<String> },
     #[cfg(feature = "app")]
-    #[command(name = "install-app", about = "Install app dependencies")]
+    #[command(name = "install-app", about = "Install app dependencies", hide = true)]
     InstallApp { packages: Vec<String> },
     #[cfg(feature = "lib")]
-    #[command(name = "install-lib", about = "Install library dependencies")]
+    #[command(
+        name = "install-lib",
+        about = "Install library dependencies",
+        hide = true
+    )]
     InstallLib { packages: Vec<String> },
     #[command(about = "Show package information")]
     Info { package: String },
@@ -80,7 +116,19 @@ enum Commands {
     #[command(about = "Audit packages for vulnerabilities")]
     Audit,
 
-    // ── Single-core (bare) — reads .megagate/ ──────────────────
+    // ── Single-core (bare) — only in single-core builds ────────
+    #[cfg(all(
+        feature = "web",
+        not(any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        ))
+    ))]
     #[command(about = "Add a dependency")]
     Add {
         #[arg(required = true)]
@@ -100,10 +148,46 @@ enum Commands {
         #[arg(long)]
         no_save: bool,
     },
+    #[cfg(all(
+        feature = "web",
+        not(any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        ))
+    ))]
     #[command(about = "Remove a dependency")]
     Remove { package: String },
+    #[cfg(all(
+        feature = "web",
+        not(any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        ))
+    ))]
     #[command(about = "Update packages")]
     Update { packages: Vec<String> },
+    #[cfg(all(
+        feature = "web",
+        not(any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        ))
+    ))]
     #[command(about = "List installed packages")]
     List,
 
@@ -118,11 +202,7 @@ enum Commands {
         not(feature = "app"),
         not(feature = "lib")
     ))]
-    #[command(
-        name = "create",
-        visible_alias = "create-web",
-        about = "Scaffold a new web project"
-    )]
+    #[command(name = "create", about = "Scaffold a new web project")]
     CreateWeb {
         framework: String,
         project_name: String,
@@ -165,43 +245,59 @@ enum Commands {
         features: Vec<String>,
     },
     #[cfg(feature = "game")]
-    #[command(name = "create-game", about = "Scaffold a new game project")]
+    #[command(
+        name = "create-game",
+        about = "Scaffold a new game project",
+        hide = true
+    )]
     CreateGame {
         framework: String,
         project_name: String,
     },
     #[cfg(feature = "ai")]
-    #[command(name = "create-ai", about = "Scaffold a new AI project")]
+    #[command(name = "create-ai", about = "Scaffold a new AI project", hide = true)]
     CreateAi {
         framework: String,
         project_name: String,
     },
     #[cfg(feature = "clo")]
-    #[command(name = "create-clo", about = "Scaffold a new cloud project")]
+    #[command(
+        name = "create-clo",
+        about = "Scaffold a new cloud project",
+        hide = true
+    )]
     CreateClo {
         framework: String,
         project_name: String,
     },
     #[cfg(feature = "cicd")]
-    #[command(name = "create-cicd", about = "Scaffold a new CI/CD project")]
+    #[command(
+        name = "create-cicd",
+        about = "Scaffold a new CI/CD project",
+        hide = true
+    )]
     CreateCicd {
         framework: String,
         project_name: String,
     },
     #[cfg(feature = "iot")]
-    #[command(name = "create-iot", about = "Scaffold a new IoT project")]
+    #[command(name = "create-iot", about = "Scaffold a new IoT project", hide = true)]
     CreateIot {
         framework: String,
         project_name: String,
     },
     #[cfg(feature = "app")]
-    #[command(name = "create-app", about = "Scaffold a new app project")]
+    #[command(name = "create-app", about = "Scaffold a new app project", hide = true)]
     CreateApp {
         framework: String,
         project_name: String,
     },
     #[cfg(feature = "lib")]
-    #[command(name = "create-lib", about = "Scaffold a new library project")]
+    #[command(
+        name = "create-lib",
+        about = "Scaffold a new library project",
+        hide = true
+    )]
     CreateLib { project_name: String },
 
     // ── Per-core: add-<core> ───────────────────────────────────
@@ -235,7 +331,7 @@ enum Commands {
         global: bool,
     },
     #[cfg(feature = "game")]
-    #[command(name = "add-game", about = "Add game dependency")]
+    #[command(name = "add-game", about = "Add game dependency", hide = true)]
     AddGame {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -253,7 +349,7 @@ enum Commands {
         global: bool,
     },
     #[cfg(feature = "ai")]
-    #[command(name = "add-ai", about = "Add AI dependency")]
+    #[command(name = "add-ai", about = "Add AI dependency", hide = true)]
     AddAi {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -271,7 +367,7 @@ enum Commands {
         global: bool,
     },
     #[cfg(feature = "clo")]
-    #[command(name = "add-clo", about = "Add cloud dependency")]
+    #[command(name = "add-clo", about = "Add cloud dependency", hide = true)]
     AddClo {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -289,7 +385,7 @@ enum Commands {
         global: bool,
     },
     #[cfg(feature = "cicd")]
-    #[command(name = "add-cicd", about = "Add CI/CD dependency")]
+    #[command(name = "add-cicd", about = "Add CI/CD dependency", hide = true)]
     AddCicd {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -307,7 +403,7 @@ enum Commands {
         global: bool,
     },
     #[cfg(feature = "iot")]
-    #[command(name = "add-iot", about = "Add IoT dependency")]
+    #[command(name = "add-iot", about = "Add IoT dependency", hide = true)]
     AddIot {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -325,7 +421,7 @@ enum Commands {
         global: bool,
     },
     #[cfg(feature = "app")]
-    #[command(name = "add-app", about = "Add app dependency")]
+    #[command(name = "add-app", about = "Add app dependency", hide = true)]
     AddApp {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -343,7 +439,7 @@ enum Commands {
         global: bool,
     },
     #[cfg(feature = "lib")]
-    #[command(name = "add-lib", about = "Add library dependency")]
+    #[command(name = "add-lib", about = "Add library dependency", hide = true)]
     AddLib {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -377,25 +473,25 @@ enum Commands {
     #[command(name = "remove-web", about = "Remove web dependency")]
     RemoveWeb { package: String },
     #[cfg(feature = "game")]
-    #[command(name = "remove-game", about = "Remove game dependency")]
+    #[command(name = "remove-game", about = "Remove game dependency", hide = true)]
     RemoveGame { package: String },
     #[cfg(feature = "ai")]
-    #[command(name = "remove-ai", about = "Remove AI dependency")]
+    #[command(name = "remove-ai", about = "Remove AI dependency", hide = true)]
     RemoveAi { package: String },
     #[cfg(feature = "clo")]
-    #[command(name = "remove-clo", about = "Remove cloud dependency")]
+    #[command(name = "remove-clo", about = "Remove cloud dependency", hide = true)]
     RemoveClo { package: String },
     #[cfg(feature = "cicd")]
-    #[command(name = "remove-cicd", about = "Remove CI/CD dependency")]
+    #[command(name = "remove-cicd", about = "Remove CI/CD dependency", hide = true)]
     RemoveCicd { package: String },
     #[cfg(feature = "iot")]
-    #[command(name = "remove-iot", about = "Remove IoT dependency")]
+    #[command(name = "remove-iot", about = "Remove IoT dependency", hide = true)]
     RemoveIot { package: String },
     #[cfg(feature = "app")]
-    #[command(name = "remove-app", about = "Remove app dependency")]
+    #[command(name = "remove-app", about = "Remove app dependency", hide = true)]
     RemoveApp { package: String },
     #[cfg(feature = "lib")]
-    #[command(name = "remove-lib", about = "Remove library dependency")]
+    #[command(name = "remove-lib", about = "Remove library dependency", hide = true)]
     RemoveLib { package: String },
 
     // ── Per-core: list-<core> ──────────────────────────────────
@@ -414,25 +510,25 @@ enum Commands {
     #[command(name = "list-web", about = "List web packages")]
     ListWeb,
     #[cfg(feature = "game")]
-    #[command(name = "list-game", about = "List game packages")]
+    #[command(name = "list-game", about = "List game packages", hide = true)]
     ListGame,
     #[cfg(feature = "ai")]
-    #[command(name = "list-ai", about = "List AI packages")]
+    #[command(name = "list-ai", about = "List AI packages", hide = true)]
     ListAi,
     #[cfg(feature = "clo")]
-    #[command(name = "list-clo", about = "List cloud packages")]
+    #[command(name = "list-clo", about = "List cloud packages", hide = true)]
     ListClo,
     #[cfg(feature = "cicd")]
-    #[command(name = "list-cicd", about = "List CI/CD packages")]
+    #[command(name = "list-cicd", about = "List CI/CD packages", hide = true)]
     ListCicd,
     #[cfg(feature = "iot")]
-    #[command(name = "list-iot", about = "List IoT packages")]
+    #[command(name = "list-iot", about = "List IoT packages", hide = true)]
     ListIot,
     #[cfg(feature = "app")]
-    #[command(name = "list-app", about = "List app packages")]
+    #[command(name = "list-app", about = "List app packages", hide = true)]
     ListApp,
     #[cfg(feature = "lib")]
-    #[command(name = "list-lib", about = "List library packages")]
+    #[command(name = "list-lib", about = "List library packages", hide = true)]
     ListLib,
 
     // ── Per-core: update-<core> ────────────────────────────────
@@ -451,519 +547,32 @@ enum Commands {
     #[command(name = "update-web", about = "Update web packages")]
     UpdateWeb { packages: Vec<String> },
     #[cfg(feature = "game")]
-    #[command(name = "update-game", about = "Update game packages")]
+    #[command(name = "update-game", about = "Update game packages", hide = true)]
     UpdateGame { packages: Vec<String> },
     #[cfg(feature = "ai")]
-    #[command(name = "update-ai", about = "Update AI packages")]
+    #[command(name = "update-ai", about = "Update AI packages", hide = true)]
     UpdateAi { packages: Vec<String> },
     #[cfg(feature = "clo")]
-    #[command(name = "update-clo", about = "Update cloud packages")]
+    #[command(name = "update-clo", about = "Update cloud packages", hide = true)]
     UpdateClo { packages: Vec<String> },
     #[cfg(feature = "cicd")]
-    #[command(name = "update-cicd", about = "Update CI/CD packages")]
+    #[command(name = "update-cicd", about = "Update CI/CD packages", hide = true)]
     UpdateCicd { packages: Vec<String> },
     #[cfg(feature = "iot")]
-    #[command(name = "update-iot", about = "Update IoT packages")]
+    #[command(name = "update-iot", about = "Update IoT packages", hide = true)]
     UpdateIot { packages: Vec<String> },
     #[cfg(feature = "app")]
-    #[command(name = "update-app", about = "Update app packages")]
+    #[command(name = "update-app", about = "Update app packages", hide = true)]
     UpdateApp { packages: Vec<String> },
     #[cfg(feature = "lib")]
-    #[command(name = "update-lib", about = "Update library packages")]
+    #[command(name = "update-lib", about = "Update library packages", hide = true)]
     UpdateLib { packages: Vec<String> },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-
-    let cli = Cli::parse();
-    let core = cli.core.as_deref();
-
-    match cli.command {
-        // ── Common ─────────────────────────────────────────────
-        Some(Commands::Init { template }) => {
-            commands::init::run(template).await?;
-        }
-        Some(Commands::Install { packages }) => {
-            commands::install::run(packages, core).await?;
-        }
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        Some(Commands::InstallWeb { packages }) => {
-            commands::install::run(packages, Some("web")).await?;
-        }
-        #[cfg(feature = "game")]
-        Some(Commands::InstallGame { packages }) => {
-            commands::install::run(packages, Some("game")).await?;
-        }
-        #[cfg(feature = "ai")]
-        Some(Commands::InstallAi { packages }) => {
-            commands::install::run(packages, Some("ai")).await?;
-        }
-        #[cfg(feature = "clo")]
-        Some(Commands::InstallClo { packages }) => {
-            commands::install::run(packages, Some("clo")).await?;
-        }
-        #[cfg(feature = "cicd")]
-        Some(Commands::InstallCicd { packages }) => {
-            commands::install::run(packages, Some("cicd")).await?;
-        }
-        #[cfg(feature = "iot")]
-        Some(Commands::InstallIot { packages }) => {
-            commands::install::run(packages, Some("iot")).await?;
-        }
-        #[cfg(feature = "app")]
-        Some(Commands::InstallApp { packages }) => {
-            commands::install::run(packages, Some("app")).await?;
-        }
-        #[cfg(feature = "lib")]
-        Some(Commands::InstallLib { packages }) => {
-            commands::install::run(packages, Some("lib")).await?;
-        }
-        Some(Commands::Info { package }) => {
-            commands::info::run(package).await?;
-        }
-        Some(Commands::Search { query }) => {
-            commands::search::run(query).await?;
-        }
-        Some(Commands::Outdated) => {
-            commands::outdated::run(core).await?;
-        }
-        Some(Commands::Audit) => {
-            commands::audit::run(core).await?;
-        }
-
-        // ── Single-core (bare) ────────────────────────────────
-        Some(Commands::Add {
-            packages,
-            version,
-            dev,
-            global,
-            exact,
-            optional,
-            peer,
-            no_save,
-        }) => {
-            commands::add::run_many(
-                packages, version, dev, exact, optional, peer, no_save, global, core,
-            )
-            .await?;
-        }
-        Some(Commands::Remove { package }) => {
-            commands::remove::run(package, core).await?;
-        }
-        Some(Commands::Update { packages }) => {
-            commands::update::run(packages, core).await?;
-        }
-        Some(Commands::List) => {
-            commands::list::run(core).await?;
-        }
-
-        // ── create-<core> ──────────────────────────────────────
-        Some(Commands::CreateWeb {
-            framework,
-            project_name,
-            ts,
-            tailwindcss,
-            monorepo,
-            backend,
-            features,
-        }) => {
-            commands::create::run_with_options(
-                "web",
-                &framework,
-                &project_name,
-                Some(commands::create::WebCreateOptions {
-                    typescript: ts,
-                    tailwindcss,
-                    monorepo,
-                    backend,
-                    features,
-                }),
-            )
-            .await?;
-        }
-        #[cfg(feature = "game")]
-        Some(Commands::CreateGame {
-            framework,
-            project_name,
-        }) => {
-            commands::create::run("game", &framework, &project_name).await?;
-        }
-        #[cfg(feature = "ai")]
-        Some(Commands::CreateAi {
-            framework,
-            project_name,
-        }) => {
-            commands::create::run("ai", &framework, &project_name).await?;
-        }
-        #[cfg(feature = "clo")]
-        Some(Commands::CreateClo {
-            framework,
-            project_name,
-        }) => {
-            commands::create::run("clo", &framework, &project_name).await?;
-        }
-        #[cfg(feature = "cicd")]
-        Some(Commands::CreateCicd {
-            framework,
-            project_name,
-        }) => {
-            commands::create::run("cicd", &framework, &project_name).await?;
-        }
-        #[cfg(feature = "iot")]
-        Some(Commands::CreateIot {
-            framework,
-            project_name,
-        }) => {
-            commands::create::run("iot", &framework, &project_name).await?;
-        }
-        #[cfg(feature = "app")]
-        Some(Commands::CreateApp {
-            framework,
-            project_name,
-        }) => {
-            commands::create::run("app", &framework, &project_name).await?;
-        }
-        #[cfg(feature = "lib")]
-        Some(Commands::CreateLib { project_name }) => {
-            commands::create::run("lib", "rust", &project_name).await?;
-        }
-
-        // ── add-<core> ─────────────────────────────────────────
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        Some(Commands::AddWeb {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("web"),
-            )
-            .await?;
-        }
-        #[cfg(feature = "game")]
-        Some(Commands::AddGame {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("game"),
-            )
-            .await?;
-        }
-        #[cfg(feature = "ai")]
-        Some(Commands::AddAi {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("ai"),
-            )
-            .await?;
-        }
-        #[cfg(feature = "clo")]
-        Some(Commands::AddClo {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("clo"),
-            )
-            .await?;
-        }
-        #[cfg(feature = "cicd")]
-        Some(Commands::AddCicd {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("cicd"),
-            )
-            .await?;
-        }
-        #[cfg(feature = "iot")]
-        Some(Commands::AddIot {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("iot"),
-            )
-            .await?;
-        }
-        #[cfg(feature = "app")]
-        Some(Commands::AddApp {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("app"),
-            )
-            .await?;
-        }
-        #[cfg(feature = "lib")]
-        Some(Commands::AddLib {
-            packages,
-            dev,
-            exact,
-            optional,
-            peer,
-            no_save,
-            global,
-        }) => {
-            commands::add::run_many(
-                packages,
-                None,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-                Some("lib"),
-            )
-            .await?;
-        }
-
-        // ── remove-<core> ──────────────────────────────────────
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        Some(Commands::RemoveWeb { package }) => {
-            commands::remove::run(package, Some("web")).await?;
-        }
-        #[cfg(feature = "game")]
-        Some(Commands::RemoveGame { package }) => {
-            commands::remove::run(package, Some("game")).await?;
-        }
-        #[cfg(feature = "ai")]
-        Some(Commands::RemoveAi { package }) => {
-            commands::remove::run(package, Some("ai")).await?;
-        }
-        #[cfg(feature = "clo")]
-        Some(Commands::RemoveClo { package }) => {
-            commands::remove::run(package, Some("clo")).await?;
-        }
-        #[cfg(feature = "cicd")]
-        Some(Commands::RemoveCicd { package }) => {
-            commands::remove::run(package, Some("cicd")).await?;
-        }
-        #[cfg(feature = "iot")]
-        Some(Commands::RemoveIot { package }) => {
-            commands::remove::run(package, Some("iot")).await?;
-        }
-        #[cfg(feature = "app")]
-        Some(Commands::RemoveApp { package }) => {
-            commands::remove::run(package, Some("app")).await?;
-        }
-        #[cfg(feature = "lib")]
-        Some(Commands::RemoveLib { package }) => {
-            commands::remove::run(package, Some("lib")).await?;
-        }
-
-        // ── list-<core> ────────────────────────────────────────
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        Some(Commands::ListWeb) => commands::list::run(Some("web")).await?,
-        #[cfg(feature = "game")]
-        Some(Commands::ListGame) => commands::list::run(Some("game")).await?,
-        #[cfg(feature = "ai")]
-        Some(Commands::ListAi) => commands::list::run(Some("ai")).await?,
-        #[cfg(feature = "clo")]
-        Some(Commands::ListClo) => commands::list::run(Some("clo")).await?,
-        #[cfg(feature = "cicd")]
-        Some(Commands::ListCicd) => commands::list::run(Some("cicd")).await?,
-        #[cfg(feature = "iot")]
-        Some(Commands::ListIot) => commands::list::run(Some("iot")).await?,
-        #[cfg(feature = "app")]
-        Some(Commands::ListApp) => commands::list::run(Some("app")).await?,
-        #[cfg(feature = "lib")]
-        Some(Commands::ListLib) => commands::list::run(Some("lib")).await?,
-
-        // ── update-<core> ──────────────────────────────────────
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        Some(Commands::UpdateWeb { packages }) => {
-            commands::update::run(packages, Some("web")).await?;
-        }
-        #[cfg(feature = "game")]
-        Some(Commands::UpdateGame { packages }) => {
-            commands::update::run(packages, Some("game")).await?;
-        }
-        #[cfg(feature = "ai")]
-        Some(Commands::UpdateAi { packages }) => {
-            commands::update::run(packages, Some("ai")).await?;
-        }
-        #[cfg(feature = "clo")]
-        Some(Commands::UpdateClo { packages }) => {
-            commands::update::run(packages, Some("clo")).await?;
-        }
-        #[cfg(feature = "cicd")]
-        Some(Commands::UpdateCicd { packages }) => {
-            commands::update::run(packages, Some("cicd")).await?;
-        }
-        #[cfg(feature = "iot")]
-        Some(Commands::UpdateIot { packages }) => {
-            commands::update::run(packages, Some("iot")).await?;
-        }
-        #[cfg(feature = "app")]
-        Some(Commands::UpdateApp { packages }) => {
-            commands::update::run(packages, Some("app")).await?;
-        }
-        #[cfg(feature = "lib")]
-        Some(Commands::UpdateLib { packages }) => {
-            commands::update::run(packages, Some("lib")).await?;
-        }
-
-        None => {
-            // Custom colored help
-            mg_ui::help::print_custom_help();
-        }
-    }
-
-    Ok(())
+    dispatch::run(Cli::parse()).await
 }
 
 #[cfg(test)]
@@ -1023,7 +632,19 @@ mod tests {
             Cli::try_parse_from(["mg", command, "zod", "lodash", "@types/node", "-D"]).unwrap();
 
         match cli.command.unwrap() {
-            Commands::Add { packages, dev, .. } if IS_WEB_ONLY_BUILD => {
+            #[cfg(all(
+                feature = "web",
+                not(any(
+                    feature = "game",
+                    feature = "ai",
+                    feature = "clo",
+                    feature = "cicd",
+                    feature = "iot",
+                    feature = "app",
+                    feature = "lib"
+                ))
+            ))]
+            Commands::Add { packages, dev, .. } => {
                 assert_eq!(packages, vec!["zod", "lodash", "@types/node"]);
                 assert!(dev);
             }
@@ -1064,10 +685,9 @@ mod tests {
 
     #[test]
     fn test_create_alias_behavior_matches_build_shape() {
-        let parsed = Cli::try_parse_from(["mg", "create", "react@latest", "demo-app", "--ts"]);
-
         if IS_WEB_ONLY_BUILD {
-            let cli = parsed.expect("web-only build should accept `mg create ...`");
+            let cli = Cli::try_parse_from(["mg", "create", "react@latest", "demo-app", "--ts"])
+                .expect("web-only build should accept `mg create ...`");
             match cli.command.unwrap() {
                 Commands::CreateWeb {
                     framework,
@@ -1083,15 +703,33 @@ mod tests {
             }
         } else {
             assert!(
-                parsed.is_err(),
-                "multi-core build should require `mg create-<core> ...`"
+                Cli::try_parse_from(["mg", "create", "react@latest", "demo-app", "--ts"]).is_err(),
+                "multi-core build should reject bare `mg create`"
             );
+            // But create-web works
+            let cli = Cli::try_parse_from(["mg", "create-web", "react@latest", "demo-app", "--ts"])
+                .expect("multi-core build should accept `mg create-web ...`");
+            match cli.command.unwrap() {
+                Commands::CreateWeb {
+                    framework,
+                    project_name,
+                    ts,
+                    ..
+                } => {
+                    assert_eq!(framework, "react@latest");
+                    assert_eq!(project_name, "demo-app");
+                    assert!(ts);
+                }
+                _ => panic!("expected create-web in multi-core build"),
+            }
         }
     }
 
     #[test]
     fn test_help_surface_matches_build_shape() {
         let help = Cli::command().render_long_help().to_string();
+
+        assert!(help.contains("dev"));
 
         if IS_WEB_ONLY_BUILD {
             assert!(
@@ -1117,15 +755,31 @@ mod tests {
         } else {
             assert!(help.contains("install-web"));
             assert!(help.contains("create-web"));
-            assert!(help.contains("create-game"));
             assert!(help.contains("add-web"));
-            assert!(help.contains("add-game"));
+            assert!(!help.contains("create-game"));
+            assert!(!help.contains("add-game"));
+            assert!(
+                !help.contains("create "),
+                "multi-core should not have bare create"
+            );
         }
     }
 
     #[test]
     fn test_install_command_surface_matches_build_shape() {
-        if IS_WEB_ONLY_BUILD {
+        #[cfg(all(
+            feature = "web",
+            not(any(
+                feature = "game",
+                feature = "ai",
+                feature = "clo",
+                feature = "cicd",
+                feature = "iot",
+                feature = "app",
+                feature = "lib"
+            ))
+        ))]
+        {
             let cli = Cli::try_parse_from(["mg", "install", "react", "vite"]).unwrap();
             match cli.command.unwrap() {
                 Commands::Install { packages } => {
@@ -1134,28 +788,45 @@ mod tests {
                 _ => panic!("expected bare install in web-only build"),
             }
             assert!(Cli::try_parse_from(["mg", "install-web"]).is_err());
-        } else {
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
-            {
-                let cli = Cli::try_parse_from(["mg", "install-web", "react", "vite"]).unwrap();
-                match cli.command.unwrap() {
-                    Commands::InstallWeb { packages } => {
-                        assert_eq!(packages, vec!["react", "vite"]);
-                    }
-                    _ => panic!("expected install-web in multi-core build"),
+        }
+        #[cfg(all(
+            feature = "web",
+            any(
+                feature = "game",
+                feature = "ai",
+                feature = "clo",
+                feature = "cicd",
+                feature = "iot",
+                feature = "app",
+                feature = "lib"
+            )
+        ))]
+        {
+            assert!(
+                Cli::try_parse_from(["mg", "install", "react"]).is_err(),
+                "multi-core build should reject bare `mg install`"
+            );
+            let cli = Cli::try_parse_from(["mg", "install-web", "react", "vite"]).unwrap();
+            match cli.command.unwrap() {
+                Commands::InstallWeb { packages } => {
+                    assert_eq!(packages, vec!["react", "vite"]);
                 }
+                _ => panic!("expected install-web in multi-core build"),
             }
+        }
+    }
+
+    #[test]
+    fn test_dev_command_accepts_host_and_port() {
+        let cli =
+            Cli::try_parse_from(["mg", "dev", "--host", "127.0.0.1", "--port", "4315"]).unwrap();
+
+        match cli.command.unwrap() {
+            Commands::Dev { host, port } => {
+                assert_eq!(host.as_deref(), Some("127.0.0.1"));
+                assert_eq!(port, Some(4315));
+            }
+            _ => panic!("expected dev command"),
         }
     }
 }

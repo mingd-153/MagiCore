@@ -1,34 +1,107 @@
-name: CI
+name: MegaGate CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  build:
+  rust-check:
+    name: Rust Check + Test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./webapp-core
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
         with:
-          node-version: '20'
-      - name: Install dependencies
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            npm i -g pnpm
-            pnpm install
-          else
-            npm ci
-          fi
-      - name: Lint
-        run: npm run lint
-      - name: Build
-        run: npm run build
-      - name: Test
-        run: npm test
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cargo check workspace
+        run: cargo check --workspace
+
+      - name: Cargo deny check
+        run: cargo deny check
+
+      - name: Cargo audit
+        run: cargo audit --deny warnings
+
+      - name: Test full build shape
+        run: cargo test -p mg -- --nocapture
+
+      - name: Test web-only build shape
+        run: cargo test -p mg --no-default-features --features web -- --nocapture
+
+  dist-packages:
+    name: Dist package (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package:
+          - megagate
+          - megagate-web
+          - megagate-ai
+          - megagate-game
+          - megagate-clo
+          - megagate-cicd
+          - megagate-iot
+          - megagate-app
+          - megagate-lib
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build package
+        run: cargo run -p mg-dist -- build ${{ matrix.package }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package }}-linux
+          path: dist/${{ matrix.package }}/
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run cold_path benchmarks
+        run: cargo bench --bench cold_path --manifest-path adapters/web/Cargo.toml -- --save-baseline main
+
+      - name: Run stress benchmarks
+        run: cargo bench --bench stress --manifest-path adapters/web/Cargo.toml -- --save-baseline main
+
+      - name: Run install_bench benchmarks
+        run: cargo bench --bench install_bench --manifest-path adapters/web/Cargo.toml -- --save-baseline main
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-results
+          path: adapters/web/target/criterion/

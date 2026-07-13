@@ -1,0 +1,36 @@
+[[files]]
+source = "package.js.json"
+target = "package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "package.ts.json"
+target = "package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "server.js"
+target = "src/server.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server.ts"
+target = "src/server.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "app.js"
+target = "src/lib/app.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.ts"
+target = "src/lib/app.ts"
+include_features = ["typescript"]

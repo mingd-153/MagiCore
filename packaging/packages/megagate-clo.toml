@@ -1,0 +1,8 @@
+name = "megagate-clo"
+binary = "mg"
+description = "MegaGate single-core cloud distribution"
+mode = "single-core"
+primary_core = "clo"
+no_default_features = true
+features = ["clo"]
+install_hint = "brew install megagate-clo"

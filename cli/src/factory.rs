@@ -3,6 +3,12 @@ use mg_types::adapter::PackageAdapter;
 /// Each core has a feature gate so single-core builds don't link unused crates.
 use mg_types::Ecosystem;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildShape {
+    SingleCore,
+    MultiCore,
+}
+
 /// Available cores in this build (for init menu filtering)
 pub fn available_cores() -> Vec<(&'static str, &'static str)> {
     let mut cores: Vec<(&'static str, &'static str)> = Vec::new();
@@ -22,6 +28,25 @@ pub fn available_cores() -> Vec<(&'static str, &'static str)> {
     push_core!("app", "app", "📱  Mobile / Desktop app");
     push_core!("lib", "lib", "📦  Library");
     cores
+}
+
+pub fn available_core_names() -> Vec<&'static str> {
+    available_cores()
+        .into_iter()
+        .map(|(short, _)| short)
+        .collect()
+}
+
+pub fn build_shape() -> BuildShape {
+    if available_cores().len() == 1 {
+        BuildShape::SingleCore
+    } else {
+        BuildShape::MultiCore
+    }
+}
+
+pub fn is_single_core_build() -> bool {
+    matches!(build_shape(), BuildShape::SingleCore)
 }
 
 /// Create an adapter for the given ecosystem.

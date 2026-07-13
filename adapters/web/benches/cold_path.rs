@@ -1,61 +1,142 @@
-use std::time::Instant;
-use mg_types::PackageAdapter;
+use criterion::{criterion_group, criterion_main, Criterion};
+use mg_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mg_web_adapter::WebAdapter;
+use std::path::Path;
 
-fn main() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let total_start = Instant::now();
+fn pkg_id(name: &str, version: &str) -> PackageId {
+    PackageId::new(
+        PackageName::new(name).unwrap(),
+        Version::parse(version).unwrap(),
+    )
+}
 
-    let tests = vec![
-        ("tiny", serde_json::json!({"is-even": "*", "is-odd": "*", "ansi-styles": "*"})),
-        ("medium", serde_json::json!({"semver": "*", "commander": "*", "chalk": "*"})),
-        ("real", serde_json::json!({"lodash": "*", "uuid": "*", "dayjs": "*", "axios": "*", "tslib": "*"})),
-    ];
-
-    for (label, deps) in &tests {
-        println!("\n=== {} ===", label);
-
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("package.json"),
-            serde_json::json!({"name": "cold-test","version":"0.1.0","dependencies": deps}).to_string(),
-        ).unwrap();
-
-        let adapter = mg_web_adapter::WebAdapter::new();
-
-        // --- PARSE ---
-        let manifest = rt.block_on(adapter.parse_manifest(dir.path())).unwrap();
-
-        // --- RESOLVE ---
-        let t0 = Instant::now();
-        let graph = rt.block_on(adapter.resolve(&manifest)).unwrap();
-        let resolve_time = t0.elapsed();
-        println!("  resolve: {} packages in {}.{:03}s",
-            graph.packages.len(),
-            resolve_time.as_secs(),
-            resolve_time.subsec_millis(),
-        );
-
-        // --- DOWNLOAD + INSTALL (cold) ---
-        let t1 = Instant::now();
-        rt.block_on(adapter.install(&graph, dir.path())).unwrap();
-        let cold_install = t1.elapsed();
-        println!("  cold install: {}.{:03}s", cold_install.as_secs(), cold_install.subsec_millis());
-
-        // verify
-        let mut ok = 0;
-        for pkg in &graph.packages {
-            let pkg_dir = dir.path().join("node_modules").join(pkg.id.name_str());
-            if pkg_dir.join("package.json").exists() { ok += 1; }
-        }
-        println!("  {} / {} packages verified", ok, graph.packages.len());
-
-        // --- WARM INSTALL (2nd run) ---
-        let t2 = Instant::now();
-        rt.block_on(adapter.install(&graph, dir.path())).unwrap();
-        let warm_install = t2.elapsed();
-        println!("  warm install: {}.{:03}s", warm_install.as_secs(), warm_install.subsec_millis());
+fn seed_cached_tarball(root: &Path, pkg: &PackageId) {
+    let store_root = root.join(".megagate").join("cache").join("web");
+    std::fs::create_dir_all(&store_root).unwrap();
+    let cache = mg_store::PackageCache::new(store_root.join("cache")).unwrap();
+    let tarball_path = cache.tarball_path(pkg);
+    if let Some(parent) = tarball_path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
     }
 
-    let total = total_start.elapsed();
-    println!("\n=== TOTAL: {}.{:03}s ===", total.as_secs(), total.subsec_millis());
+    let file = std::fs::File::create(&tarball_path).unwrap();
+    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut builder = tar::Builder::new(encoder);
+    let mut header = tar::Header::new_gnu();
+    let pkg_json = format!(
+        "{{\"name\":\"{}\",\"version\":\"{}\"}}",
+        pkg.name_str(),
+        pkg.version()
+    );
+    header.set_size(pkg_json.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, "package/package.json", pkg_json.as_bytes())
+        .unwrap();
+    builder.finish().unwrap();
+    let encoder = builder.into_inner().unwrap();
+    encoder.finish().unwrap();
 }
+
+fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
+    ResolvedGraph {
+        packages: packages
+            .iter()
+            .cloned()
+            .map(|id| ResolvedPackage {
+                id,
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            })
+            .collect(),
+    }
+}
+
+fn bench_cached_install_small(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let pkgs = vec![
+        pkg_id("is-even", "1.0.0"),
+        pkg_id("is-odd", "1.0.0"),
+        pkg_id("ansi-styles", "1.0.0"),
+    ];
+    c.bench_function("cached_install_3_pkgs", |b| {
+        b.to_async(&rt).iter_with_setup(
+            || {
+                let dir = tempfile::tempdir().unwrap();
+                for pkg in &pkgs {
+                    seed_cached_tarball(dir.path(), pkg);
+                }
+                let graph = make_graph(&pkgs);
+                (dir, graph)
+            },
+            |(dir, graph)| async move {
+                let adapter = WebAdapter::new();
+                adapter.install(&graph, dir.path()).await.unwrap();
+            },
+        )
+    });
+}
+
+fn bench_cached_install_medium(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let pkgs = vec![
+        pkg_id("semver", "7.6.0"),
+        pkg_id("commander", "12.0.0"),
+        pkg_id("chalk", "5.3.0"),
+    ];
+    c.bench_function("cached_install_medium_3_pkgs", |b| {
+        b.to_async(&rt).iter_with_setup(
+            || {
+                let dir = tempfile::tempdir().unwrap();
+                for pkg in &pkgs {
+                    seed_cached_tarball(dir.path(), pkg);
+                }
+                let graph = make_graph(&pkgs);
+                (dir, graph)
+            },
+            |(dir, graph)| async move {
+                let adapter = WebAdapter::new();
+                adapter.install(&graph, dir.path()).await.unwrap();
+            },
+        )
+    });
+}
+
+fn bench_cached_install_real(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let pkgs = vec![
+        pkg_id("lodash", "4.17.21"),
+        pkg_id("uuid", "9.0.0"),
+        pkg_id("dayjs", "1.11.10"),
+        pkg_id("axios", "1.7.0"),
+        pkg_id("tslib", "2.6.0"),
+    ];
+    c.bench_function("cached_install_real_5_pkgs", |b| {
+        b.to_async(&rt).iter_with_setup(
+            || {
+                let dir = tempfile::tempdir().unwrap();
+                for pkg in &pkgs {
+                    seed_cached_tarball(dir.path(), pkg);
+                }
+                let graph = make_graph(&pkgs);
+                (dir, graph)
+            },
+            |(dir, graph)| async move {
+                let adapter = WebAdapter::new();
+                adapter.install(&graph, dir.path()).await.unwrap();
+            },
+        )
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_cached_install_small,
+    bench_cached_install_medium,
+    bench_cached_install_real,
+);
+criterion_main!(benches);

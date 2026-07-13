@@ -9,22 +9,43 @@ app    → brew install megagate-app
 ai     → brew install megagate-ai
 clo    → brew install megagate-clo
 cicd   → brew install megagate-cicd
+iot    → brew install megagate-iot
 lib    → brew install megagate-lib
 ```
 
-Full build: `brew install megagate` → includes all 7 cores.
+Full build: `brew install megagate` → includes all 8 cores.
+
+Current install model for the repo:
+
+- OP2 / binary-shape model
+- no runtime machine-wide core scanner yet
+- the installed `mg` binary itself determines whether the user is in:
+  - single-core mode
+  - multi-core mode
+
+Examples:
+
+- `brew install megagate-web` → `mg` behaves as single-core web build
+- `brew install megagate-ai` → `mg` behaves as single-core ai build
+- `brew install megagate` → `mg` behaves as multi-core/full build
 
 ---
 
 ## Quick create (non-interactive)
 
 ```
+Single-core build:
+mg create <framework>[@<version>] <project-name>
+
+Multi-core build:
 mg create-<core> <framework>[@<version>] <project-name>
 ```
 
 Examples:
 
 ```
+mg create next-app@latest my-app              # single-core web build
+mg create react-vite@latest my-app           # single-core web build
 mg create-web next-app@latest my-app
 mg create-web react-vite@latest my-app
 mg create-web express@latest api-server
@@ -55,12 +76,13 @@ mg create-lib my-library
 ```
 mg init
 │
-├── Pick core (7 options):
+├── Pick core (8 options):
 │   ├── web   → Web application
 │   ├── game  → Game
 │   ├── ai    → AI agent / ML project
 │   ├── clo   → Cloud infrastructure
 │   ├── cicd  → CI/CD pipeline
+│   ├── iot   → IoT / Embedded device
 │   ├── app   → Mobile / Desktop app
 │   └── lib   → Library
 │
@@ -103,58 +125,66 @@ mg help
 MegaGate - Universal Package Manager
 Usage: mg [OPTIONS] [COMMAND]
 
-Commands:
-  init         Interactive project wizard
-  install      Install all dependencies
-  info         Show package information
-  search       Search for packages
-  outdated     Check for outdated packages
-  audit        Audit packages for vulnerabilities
-  add          Add a dependency
-  remove       Remove a dependency
-  update       Update packages
-  list         List installed packages
-  create-web   Scaffold a new web project
-  create-game  Scaffold a new game project
-  create-ai    Scaffold a new AI project
-  create-clo   Scaffold a new cloud project
-  create-cicd  Scaffold a new CI/CD project
-  create-iot   Scaffold a new IoT project
-  create-app   Scaffold a new app project
-  create-lib   Scaffold a new library project
-  add-web      Add web dependency
-  add-game     Add game dependency
-  add-ai       Add AI dependency
-  add-clo      Add cloud dependency
-  add-cicd     Add CI/CD dependency
-  add-iot      Add IoT dependency
-  add-app      Add app dependency
-  add-lib      Add library dependency
-  remove-web   Remove web dependency
-  remove-game  Remove game dependency
-  remove-ai    Remove AI dependency
-  remove-clo   Remove cloud dependency
-  remove-cicd  Remove CI/CD dependency
-  remove-iot   Remove IoT dependency
-  remove-app   Remove app dependency
-  remove-lib   Remove library dependency
-  list-web     List web packages
-  list-game    List game packages
-  list-ai      List AI packages
-  list-clo     List cloud packages
-  list-cicd    List CI/CD packages
-  list-iot     List IoT packages
-  list-app     List app packages
-  list-lib     List library packages
-  update-web   Update web packages
-  update-game  Update game packages
-  update-ai    Update AI packages
-  update-clo   Update cloud packages
-  update-cicd  Update CI/CD packages
-  update-iot   Update IoT packages
-  update-app   Update app packages
-  update-lib   Update library packages
-  help         Print this message or the help of the given subcommand(s)
+Single-core web build:
+  init
+  install
+  info
+  search
+  outdated
+  audit
+  add
+  remove
+  update
+  list
+  create
+
+Multi-core build:
+  init
+  install-web
+  info
+  search
+  outdated
+  audit
+  create-web
+  create-game
+  create-ai
+  create-clo
+  create-cicd
+  create-iot
+  create-app
+  create-lib
+  add-web
+  add-game
+  add-ai
+  add-clo
+  add-cicd
+  add-iot
+  add-app
+  add-lib
+  remove-web
+  remove-game
+  remove-ai
+  remove-clo
+  remove-cicd
+  remove-iot
+  remove-app
+  remove-lib
+  list-web
+  list-game
+  list-ai
+  list-clo
+  list-cicd
+  list-iot
+  list-app
+  list-lib
+  update-web
+  update-game
+  update-ai
+  update-clo
+  update-cicd
+  update-iot
+  update-app
+  update-lib
 ```
 
 ---
@@ -172,7 +202,11 @@ mg init [OPTIONS]
 ### `install`
 
 ```
+single-core:
 mg install [PACKAGES]... [OPTIONS]
+
+multi-core:
+mg install-web [PACKAGES]... [OPTIONS]
       --core <CORE>            Target core
 ```
 
@@ -264,6 +298,10 @@ mg update-web [PACKAGES]... [OPTIONS]
 ### `create-<core>`
 
 ```
+single-core web:
+mg create <FRAMEWORK> <PROJECT_NAME> [OPTIONS]
+
+multi-core:
 mg create-web <FRAMEWORK> <PROJECT_NAME> [OPTIONS]
       --core <CORE>            Target core
 ```
@@ -316,7 +354,7 @@ mg update-iot
 mg update-app
 mg update-lib
 
-mg install
+mg install-web
 mg info lodash
 mg search react
 mg outdated
@@ -340,6 +378,7 @@ mg add --no-save prettier         ← không ghi
 mg remove lodash
 mg list
 mg update
+mg install
 ```
 
 Hoặc dùng `--core` override:

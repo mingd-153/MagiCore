@@ -22,6 +22,8 @@ The goal is not just scaffolding convenience. The template tree is part of the p
 5. Output structure must stay simple, stable, and easy to maintain.
 6. Monorepo must be flexible, but it should grow carefully and not become chaotic again.
 7. Shared components may be reused aggressively, but the final scaffold must still match the requested framework and core-web requirements.
+8. The scaffold compiler is Rust. Generated app code follows the target framework language/runtime.
+9. For single-core web create flows, JavaScript is the default output. TypeScript is opt-in via `--ts`.
 
 ## Web Modes
 
@@ -134,6 +136,94 @@ templates/web/
     │       ├── axum/
     │       └── actix-web/
     └── packages/
+```
+
+## Shared Template Lanes
+
+To avoid duplicating the same UI and branding logic across many web frameworks, the scaffold now uses layered partials:
+
+- `shared/partials/frontend-common/`
+  - shared frontend UI shell
+  - shared theme
+  - shared brand config
+  - shared link hook
+  - shared favicon and logo assets
+- `shared/partials/frontend/`
+  - single-frontend content copy
+- `shared/partials/monorepo-frontend-common/`
+  - the same shared frontend shell, but targeted to `apps/frontend/...`
+- `shared/partials/monorepo-frontend/`
+  - monorepo-specific content copy
+- `shared/partials/backend/`
+  - backend config, routes, and shared service building blocks
+- `shared/partials/monorepo-backend/`
+  - backend structure targeted to `apps/backend/...`
+
+This keeps the Rust scaffold compiler in control while making later UI or branding changes much easier.
+
+## Generated Structure Targets
+
+The generated project should not dump everything into a single `src` bucket.
+
+### Frontend React/Vite
+
+```text
+src/
+├── assets/
+├── bridges/
+├── components/
+├── config/
+├── content/
+├── hooks/
+├── router/
+├── styles/
+├── App.tsx
+└── main.tsx
+
+crates/
+└── engine/
+```
+
+### Frontend Next.js
+
+```text
+src/
+├── app/
+├── assets/
+├── bridges/
+├── components/
+├── config/
+├── content/
+├── hooks/
+└── styles/
+
+crates/
+└── engine/
+```
+
+### Monorepo
+
+```text
+apps/
+├── frontend/
+│   └── src/
+│       ├── assets/
+│       ├── bridges/
+│       ├── components/
+│       ├── config/
+│       ├── content/
+│       ├── hooks/
+│       ├── router/
+│       └── styles/
+│
+│   └── crates/
+│       └── engine/
+└── backend/
+    └── src/
+        ├── config/
+        ├── lib/
+        ├── routes/
+        └── services/
 ```
 
 ## Mapping to `mg init`
@@ -257,6 +347,35 @@ The design needs shared pieces for:
 Current CLI scaffolding writes files from Rust code. That is temporary and should be removed in favor of template processing from this directory.
 
 ## Naming Standard
+
+## Compiler vs Output
+
+Two layers must stay separate:
+
+1. MegaGate scaffold compiler:
+   - implemented in Rust
+   - validates template contracts
+   - selects files/layers/features
+   - should remain the source of truth
+
+2. Generated project code:
+   - should match the target framework ecosystem
+   - React/Vite or Next.js can emit JS by default
+   - `--ts` upgrades the scaffold to TypeScript files and TypeScript toolchain dependencies
+
+This means:
+
+- do not replace the Rust scaffold compiler with a TypeScript-based generator
+- do generate TS when the user explicitly requests `--ts`
+- do keep the default single-core flow simple:
+
+```text
+mg create react@latest myApp
+=> JavaScript scaffold
+
+mg create react@latest myApp --ts
+=> TypeScript scaffold
+```
 
 Use wizard output values as the canonical template IDs:
 
