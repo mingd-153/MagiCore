@@ -36,6 +36,14 @@ pub async fn add(
     no_save: bool,
     global: bool,
 ) -> Result<()> {
+    const MAX_PACKAGES: usize = 50;
+    if packages.len() > MAX_PACKAGES {
+        anyhow::bail!(
+            "Too many packages ({}). Maximum per add command is {}.",
+            packages.len(),
+            MAX_PACKAGES
+        );
+    }
     let total = packages.len();
     let group = if peer {
         "peerDependencies"
@@ -294,6 +302,19 @@ fn load_locked_graph(
         return Ok(None);
     }
     let contents = std::fs::read_to_string(&lock_path)?;
+
+    // Lockfile integrity check: verify SHA-256 checksum from sidecar
+    let checksum_path = project_root.join("mg.lock.sha256");
+    if checksum_path.exists() {
+        let expected = std::fs::read_to_string(&checksum_path)?.trim().to_string();
+        let actual = mg_crypto::hash(contents.as_bytes(), mg_crypto::HashAlgorithm::Sha256)?;
+        if expected != actual {
+            anyhow::bail!(
+                "Lockfile checksum mismatch: mg.lock has been tampered with.\n  expected: {expected}\n  actual:   {actual}"
+            );
+        }
+    }
+
     let lock: Lockfile = match serialization::from_toml(&contents) {
         Ok(lock) => lock,
         Err(_) => return Ok(None),
