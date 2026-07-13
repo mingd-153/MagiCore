@@ -2459,7 +2459,7 @@ fn installed_package_matches(path: &Path, package_id: &PackageId) -> bool {
         .unwrap_or(false)
 }
 
-fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
+pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
     let lock_path = project_root.join("mg.lock");
     let existing = std::fs::read_to_string(lock_path).ok()?;
     serialization::from_toml::<Lockfile>(&existing).ok()

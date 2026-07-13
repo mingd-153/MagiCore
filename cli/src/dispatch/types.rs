@@ -152,7 +152,10 @@ pub enum CoreCommand {
             feature = "lib"
         )
     ))]
-    InstallWeb { packages: Vec<String> },
+    InstallWeb {
+        packages: Vec<String>,
+        frozen: bool,
+    },
     #[cfg(feature = "game")]
     InstallGame { packages: Vec<String> },
     #[cfg(feature = "ai")]
@@ -517,7 +520,9 @@ impl From<Commands> for DispatchCommand {
                     feature = "lib"
                 )
             ))]
-            Commands::InstallWeb { packages } => SomeCore(CoreCommand::InstallWeb { packages }),
+            Commands::InstallWeb { packages, frozen } => {
+                SomeCore(CoreCommand::InstallWeb { packages, frozen })
+            }
             #[cfg(feature = "game")]
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
             #[cfg(feature = "ai")]
