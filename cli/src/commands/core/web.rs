@@ -142,10 +142,10 @@ pub async fn list() -> Result<()> {
 }
 
 /// Update web packages
-pub async fn update(packages: Vec<String>) -> Result<()> {
+pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
     let root = project_root()?;
     let adapter = mg_web_adapter::WebAdapter::new();
-    shared::update(&adapter, &root, packages).await
+    shared::update(&adapter, &root, packages, install).await
 }
 
 /// Install web dependencies
