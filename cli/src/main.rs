@@ -115,11 +115,26 @@ pub(crate) enum Commands {
     )]
     InstallLib { packages: Vec<String> },
     #[command(about = "Show package information")]
-    Info { package: String },
+    Info {
+        package: String,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
     #[command(about = "Search for packages")]
-    Search { query: String },
+    Search {
+        query: String,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+        #[arg(long, help = "Exact match search")]
+        exact: bool,
+        #[arg(long, help = "Page number (20 results per page)")]
+        page: Option<u32>,
+    },
     #[command(about = "Check for outdated packages")]
-    Outdated,
+    Outdated {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
     #[command(about = "Audit packages for vulnerabilities")]
     Audit,
 
@@ -182,7 +197,11 @@ pub(crate) enum Commands {
         ))
     ))]
     #[command(about = "Update packages")]
-    Update { packages: Vec<String> },
+    Update {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(all(
         feature = "web",
         not(any(
@@ -275,7 +294,11 @@ pub(crate) enum Commands {
         )
     ))]
     #[command(about = "Update packages (auto-detect core)")]
-    Update { packages: Vec<String> },
+    Update {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(all(
         feature = "web",
         any(
@@ -645,28 +668,60 @@ pub(crate) enum Commands {
         )
     ))]
     #[command(name = "update-web", about = "Update web packages")]
-    UpdateWeb { packages: Vec<String> },
+    UpdateWeb {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(feature = "game")]
     #[command(name = "update-game", about = "Update game packages", hide = true)]
-    UpdateGame { packages: Vec<String> },
+    UpdateGame {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(feature = "ai")]
     #[command(name = "update-ai", about = "Update AI packages", hide = true)]
-    UpdateAi { packages: Vec<String> },
+    UpdateAi {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(feature = "clo")]
     #[command(name = "update-clo", about = "Update cloud packages", hide = true)]
-    UpdateClo { packages: Vec<String> },
+    UpdateClo {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(feature = "cicd")]
     #[command(name = "update-cicd", about = "Update CI/CD packages", hide = true)]
-    UpdateCicd { packages: Vec<String> },
+    UpdateCicd {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(feature = "iot")]
     #[command(name = "update-iot", about = "Update IoT packages", hide = true)]
-    UpdateIot { packages: Vec<String> },
+    UpdateIot {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(feature = "app")]
     #[command(name = "update-app", about = "Update app packages", hide = true)]
-    UpdateApp { packages: Vec<String> },
+    UpdateApp {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
     #[cfg(feature = "lib")]
     #[command(name = "update-lib", about = "Update library packages", hide = true)]
-    UpdateLib { packages: Vec<String> },
+    UpdateLib {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+    },
 }
 
 #[tokio::main]
