@@ -1,0 +1,70 @@
+{
+  "generated_at_epoch_secs": 1783945626,
+  "scenarios": [
+    {
+      "name": "cold-local-cache",
+      "runs": 3,
+      "median_ms": 266.898208,
+      "avg_ms": 273.4582083333333,
+      "min_ms": 214.136375,
+      "max_ms": 339.340042,
+      "packages": 6,
+      "bytes_from_cache": 2985,
+      "node_modules_files": 114,
+      "node_modules_bytes": 3422,
+      "hardlinked_files": 114
+    },
+    {
+      "name": "warm-reinstall",
+      "runs": 3,
+      "median_ms": 6.090959,
+      "avg_ms": 5.886236666666666,
+      "min_ms": 5.238084,
+      "max_ms": 6.329667,
+      "packages": 6,
+      "bytes_from_cache": 0,
+      "node_modules_files": 114,
+      "node_modules_bytes": 3422,
+      "hardlinked_files": 114
+    },
+    {
+      "name": "cold-online-registry",
+      "runs": 3,
+      "median_ms": 328.018375,
+      "avg_ms": 312.82869466666665,
+      "min_ms": 243.722792,
+      "max_ms": 366.744917,
+      "packages": 6,
+      "bytes_from_cache": 0,
+      "node_modules_files": 114,
+      "node_modules_bytes": 3422,
+      "hardlinked_files": 114
+    },
+    {
+      "name": "shared-cache-bootstrap",
+      "runs": 3,
+      "median_ms": 341.946209,
+      "avg_ms": 331.1842086666666,
+      "min_ms": 298.75649999999996,
+      "max_ms": 352.849917,
+      "packages": 6,
+      "bytes_from_cache": 2985,
+      "node_modules_files": 114,
+      "node_modules_bytes": 3422,
+      "hardlinked_files": 114
+    },
+    {
+      "name": "offline-cached-install",
+      "runs": 3,
+      "median_ms": 45.396542,
+      "avg_ms": 49.26463933333333,
+      "min_ms": 32.726584,
+      "max_ms": 69.67079199999999,
+      "packages": 6,
+      "bytes_from_cache": 2985,
+      "node_modules_files": 114,
+      "node_modules_bytes": 3422,
+      "hardlinked_files": 114
+    }
+  ]
+}

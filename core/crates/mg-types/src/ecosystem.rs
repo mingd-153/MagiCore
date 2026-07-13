@@ -11,6 +11,7 @@ pub enum Ecosystem {
 }
 
 impl Ecosystem {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(value: &str) -> Option<Self> {
         match value {
             "web" => Some(Self::Web),

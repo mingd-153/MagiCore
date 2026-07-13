@@ -1,8 +1,9 @@
 use mg_types::{Version, VersionRange};
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum VersionSet {
+    #[default]
     Any,
     Empty,
     Exact(Version),
@@ -103,12 +104,6 @@ impl VersionSet {
                 .find(|v| sets.iter().all(|s| s.contains(v))),
             Self::Complement(s) => s.satisfying_version().filter(|v| !self.contains(v)),
         }
-    }
-}
-
-impl Default for VersionSet {
-    fn default() -> Self {
-        Self::Any
     }
 }
 

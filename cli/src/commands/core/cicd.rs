@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn add(
     packages: Vec<String>,
     _version: Option<String>,

@@ -43,7 +43,7 @@ pub fn create_progress_bar(len: u64, msg: &str) -> ProgressBar {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] {bar:30.cyan/blue} {pos:>3}/{len:3} {msg:.white}")
-            .unwrap()
+            .expect("valid progress template")
             .progress_chars("━╾─"),
     );
     pb.set_message(msg.to_string());
@@ -61,7 +61,7 @@ pub fn add_multi_bar(multi: &MultiProgress, len: u64, msg: &str) -> ProgressBar 
     pb.set_style(
         ProgressStyle::default_bar()
             .template("  {spinner:.green} {msg:25.cyan/blue} {bar:20.cyan/blue} {bytes:>7}/{total_bytes:7} {eta}")
-            .unwrap()
+            .expect("valid progress template")
             .progress_chars("━╾─"),
     );
     pb.set_message(msg.to_string());
@@ -74,7 +74,7 @@ pub fn create_spinner(msg: &str) -> ProgressBar {
     spinner.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.green} {msg}")
-            .unwrap()
+            .expect("valid progress template")
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
     );
     spinner.set_message(msg.to_string());

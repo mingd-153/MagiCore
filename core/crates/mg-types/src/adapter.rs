@@ -80,6 +80,10 @@ impl ResolvedGraph {
     pub fn len(&self) -> usize {
         self.packages.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.packages.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

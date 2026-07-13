@@ -934,13 +934,9 @@ fn fullstack_uses_react_shell(framework: &str) -> bool {
     )
 }
 
-fn fullstack_frontend_framework<'a>(framework: &'a str) -> &'a str {
+fn fullstack_frontend_framework(framework: &str) -> &str {
     match framework {
-        "react-fastify"
-        | "react-spring"
-        | "react-express"
-        | "react-hono"
-        | "react-nestjs"
+        "react-fastify" | "react-spring" | "react-express" | "react-hono" | "react-nestjs"
         | "react-trpc" => "react-vite",
         "vue-laravel" | "vue-express" | "vue-hono" | "vue-nestjs" => "vue-vite",
         "svelte-express" | "svelte-hono" => "sveltekit",
@@ -948,7 +944,7 @@ fn fullstack_frontend_framework<'a>(framework: &'a str) -> &'a str {
     }
 }
 
-fn fullstack_backend_framework<'a>(framework: &'a str) -> &'a str {
+fn fullstack_backend_framework(framework: &str) -> &str {
     match framework {
         "react-fastify" => "fastify",
         "react-spring" => "spring-boot",
@@ -1241,10 +1237,8 @@ fn slugify(name: &str) -> String {
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() {
             slug.push(ch.to_ascii_lowercase());
-        } else if matches!(ch, '-' | '_' | ' ') {
-            if !slug.ends_with('-') {
-                slug.push('-');
-            }
+        } else if matches!(ch, '-' | '_' | ' ') && !slug.ends_with('-') {
+            slug.push('-');
         }
     }
 
