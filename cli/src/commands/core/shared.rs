@@ -53,6 +53,7 @@ fn install_command_for_adapter(adapter: &dyn PackageAdapter) -> &'static str {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub async fn add(
     adapter: &dyn PackageAdapter,
     root: &Path,

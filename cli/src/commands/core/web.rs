@@ -108,6 +108,7 @@ fn project_root() -> Result<std::path::PathBuf> {
 }
 
 /// Add web dependency
+#[allow(clippy::too_many_arguments)]
 pub async fn add(
     packages: Vec<String>,
     version: Option<String>,
@@ -652,14 +653,8 @@ fn build_dev_launch(
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
                 envs: vec![
-                    (
-                        OsString::from("NG_CLI_ANALYTICS"),
-                        OsString::from("false"),
-                    ),
-                    (
-                        OsString::from("CI"),
-                        OsString::from("1"),
-                    ),
+                    (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
+                    (OsString::from("CI"), OsString::from("1")),
                 ],
             })
         }
@@ -678,14 +673,8 @@ fn build_dev_launch(
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
                 envs: vec![
-                    (
-                        OsString::from("NG_CLI_ANALYTICS"),
-                        OsString::from("false"),
-                    ),
-                    (
-                        OsString::from("CI"),
-                        OsString::from("1"),
-                    ),
+                    (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
+                    (OsString::from("CI"), OsString::from("1")),
                 ],
             })
         }
@@ -919,7 +908,11 @@ fn native_install_target(project_root: &Path) -> Result<()> {
             "Fetching native Maven dependencies in {}",
             project_root.display()
         ));
-        return run_native_install(project_root, "mvn", &["-q", "-DskipTests", "dependency:go-offline"]);
+        return run_native_install(
+            project_root,
+            "mvn",
+            &["-q", "-DskipTests", "dependency:go-offline"],
+        );
     }
 
     if project_root.join("composer.json").exists() || project_root.join("artisan").exists() {
@@ -951,7 +944,7 @@ fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Resu
     } else {
         bail!(
             "native install command '{}' exited with status {}",
-            format!("{} {}", program, args.join(" ")),
+            format_args!("{} {}", program, args.join(" ")),
             status
         )
     }
@@ -2292,7 +2285,11 @@ mod tests {
         std::fs::create_dir_all(symfony_dir.path().join("bin")).unwrap();
         std::fs::write(symfony_dir.path().join("composer.json"), "{}").unwrap();
         std::fs::write(symfony_dir.path().join("public/index.php"), "<?php\n").unwrap();
-        std::fs::write(symfony_dir.path().join("bin/console"), "#!/usr/bin/env php\n").unwrap();
+        std::fs::write(
+            symfony_dir.path().join("bin/console"),
+            "#!/usr/bin/env php\n",
+        )
+        .unwrap();
 
         let symfony_launch = build_dev_launch(symfony_dir.path(), "dev", None, Some(4404)).unwrap();
         assert_eq!(symfony_launch.program, PathBuf::from("php"));

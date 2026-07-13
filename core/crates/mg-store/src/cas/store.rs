@@ -73,7 +73,7 @@ impl ContentStore {
             let file = fs::File::open(src)?;
             let reader = BufReader::new(file);
             let tmp = self.tmp_path("import-file");
-            fs::create_dir_all(tmp.parent().unwrap())?;
+            fs::create_dir_all(tmp.parent().expect("tmp path has parent"))?;
             let writer = fs::File::create_new(&tmp)?;
             let hash = stream_write_verify_and_set_perms(writer, &tmp, reader, is_exec)?;
             let dest = hash.cas_path(&self.root);
@@ -83,7 +83,7 @@ impl ContentStore {
                 return Ok(hash);
             }
 
-            fs::create_dir_all(dest.parent().unwrap())?;
+            fs::create_dir_all(dest.parent().expect("dest path has parent"))?;
             fs::rename(&tmp, &dest).map_err(|e| StoreError::Io {
                 path: dest.clone(),
                 msg: format!("move streamed file into CAS failed: {e}"),
@@ -97,9 +97,9 @@ impl ContentStore {
                 return Ok(hash);
             }
 
-            fs::create_dir_all(dest.parent().unwrap())?;
+            fs::create_dir_all(dest.parent().expect("dest path has parent"))?;
             let tmp = self.tmp_path("import-bytes");
-            fs::create_dir_all(tmp.parent().unwrap())?;
+            fs::create_dir_all(tmp.parent().expect("tmp path has parent"))?;
             let writer = fs::File::create(&tmp)?;
             write_all_verify_and_set_perms(writer, &tmp, &data, is_exec)?;
             fs::rename(&tmp, &dest)?;
@@ -143,7 +143,7 @@ impl ContentStore {
             return Ok(hash.clone());
         }
 
-        fs::create_dir_all(dest.parent().unwrap())?;
+        fs::create_dir_all(dest.parent().expect("dest path has parent"))?;
         let writer = fs::File::create_new(&dest)?;
 
         let actual = if data.len() >= STREAM_THRESHOLD {
@@ -255,7 +255,7 @@ impl ContentStore {
                 continue;
             }
 
-            fs::create_dir_all(dest.parent().unwrap())?;
+            fs::create_dir_all(dest.parent().expect("dest path has parent"))?;
             let writer = fs::File::create_new(&dest)?;
             write_all_verify_and_set_perms(writer, &dest, &entry.data, entry.executable)?;
             imported.push(hash);

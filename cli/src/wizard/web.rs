@@ -15,7 +15,7 @@ impl WebWizard {
 
         ScaffoldConfig {
             core: "web".to_string(),
-            sub_type: results.get(0).cloned().unwrap_or_default(),
+            sub_type: results.first().cloned().unwrap_or_default(),
             frameworks,
             project_name: String::new(),
             features: vec![],
