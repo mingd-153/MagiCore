@@ -35,11 +35,8 @@ jobs:
       - name: Cargo fmt check
         run: cargo fmt --check
 
-      - name: Cargo deny check
+      - name: Cargo deny check (advisories + bans + licenses)
         run: cargo deny check
-
-      - name: Cargo audit
-        run: cargo audit --deny warnings
 
       - name: Test full build shape
         run: cargo test -p mg -- --nocapture
