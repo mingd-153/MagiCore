@@ -329,16 +329,8 @@ pub(crate) enum Commands {
     CreateWeb {
         framework: String,
         project_name: String,
-        #[arg(long)]
-        ts: bool,
-        #[arg(long, visible_alias = "tailwind")]
-        tailwindcss: bool,
-        #[arg(long)]
-        monorepo: bool,
-        #[arg(long)]
-        backend: Option<String>,
-        #[arg(long = "feature")]
-        features: Vec<String>,
+        #[command(flatten)]
+        flags: crate::commands::core::scaffold_flags::ScaffoldFlags,
     },
     #[cfg(all(
         feature = "web",
@@ -356,16 +348,8 @@ pub(crate) enum Commands {
     CreateWeb {
         framework: String,
         project_name: String,
-        #[arg(long)]
-        ts: bool,
-        #[arg(long, visible_alias = "tailwind")]
-        tailwindcss: bool,
-        #[arg(long)]
-        monorepo: bool,
-        #[arg(long)]
-        backend: Option<String>,
-        #[arg(long = "feature")]
-        features: Vec<String>,
+        #[command(flatten)]
+        flags: crate::commands::core::scaffold_flags::ScaffoldFlags,
     },
     #[cfg(feature = "game")]
     #[command(
@@ -764,18 +748,16 @@ mod tests {
         .unwrap();
 
         match cli.command.unwrap() {
-            Commands::CreateWeb {
-                framework,
-                project_name,
-                ts,
-                tailwindcss,
-                ..
-            } => {
-                assert_eq!(framework, "react@latest");
-                assert_eq!(project_name, "demo-app");
-                assert!(ts);
-                assert!(tailwindcss);
-            }
+                Commands::CreateWeb {
+                    framework,
+                    project_name,
+                    flags,
+                } => {
+                    assert_eq!(framework, "react@latest");
+                    assert_eq!(project_name, "demo-app");
+                    assert!(flags.ts);
+                    assert!(flags.tailwindcss);
+                }
             _ => panic!("expected create-web command"),
         }
     }
@@ -847,12 +829,11 @@ mod tests {
                 Commands::CreateWeb {
                     framework,
                     project_name,
-                    ts,
-                    ..
+                    flags,
                 } => {
                     assert_eq!(framework, "react@latest");
                     assert_eq!(project_name, "demo-app");
-                    assert!(ts);
+                    assert!(flags.ts);
                 }
                 _ => panic!("expected create alias to resolve to web scaffold"),
             }
@@ -868,12 +849,11 @@ mod tests {
                 Commands::CreateWeb {
                     framework,
                     project_name,
-                    ts,
-                    ..
+                    flags,
                 } => {
                     assert_eq!(framework, "react@latest");
                     assert_eq!(project_name, "demo-app");
-                    assert!(ts);
+                    assert!(flags.ts);
                 }
                 _ => panic!("expected create-web in multi-core build"),
             }

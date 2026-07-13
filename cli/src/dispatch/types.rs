@@ -108,11 +108,7 @@ pub enum CoreCommand {
     CreateWeb {
         framework: String,
         project_name: String,
-        ts: bool,
-        tailwindcss: bool,
-        monorepo: bool,
-        backend: Option<String>,
-        features: Vec<String>,
+        flags: crate::commands::core::scaffold_flags::ScaffoldFlags,
     },
     #[cfg(feature = "game")]
     CreateGame {
@@ -663,19 +659,11 @@ impl From<Commands> for DispatchCommand {
             Commands::CreateWeb {
                 framework,
                 project_name,
-                ts,
-                tailwindcss,
-                monorepo,
-                backend,
-                features,
+                flags,
             } => SomeCore(CoreCommand::CreateWeb {
                 framework,
                 project_name,
-                ts,
-                tailwindcss,
-                monorepo,
-                backend,
-                features,
+                flags,
             }),
             #[cfg(feature = "game")]
             Commands::CreateGame {
