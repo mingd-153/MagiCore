@@ -58,7 +58,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
                 feature = "lib"
             ))
         ))]
-        CoreCommand::Update { packages } => commands::core::web::update(packages).await,
+        CoreCommand::Update { packages, install } => {
+            commands::core::web::update(packages, install).await
+        }
         #[cfg(all(
             feature = "web",
             not(any(
@@ -255,21 +257,37 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
                 feature = "lib"
             )
         ))]
-        CoreCommand::UpdateWeb { packages } => commands::core::web::update(packages).await,
+        CoreCommand::UpdateWeb { packages, install } => {
+            commands::core::web::update(packages, install).await
+        }
         #[cfg(feature = "game")]
-        CoreCommand::UpdateGame { packages } => commands::core::game::update(packages).await,
+        CoreCommand::UpdateGame { packages, install } => {
+            commands::core::game::update(packages, install).await
+        }
         #[cfg(feature = "ai")]
-        CoreCommand::UpdateAi { packages } => commands::core::ai::update(packages).await,
+        CoreCommand::UpdateAi { packages, install } => {
+            commands::core::ai::update(packages, install).await
+        }
         #[cfg(feature = "clo")]
-        CoreCommand::UpdateClo { packages } => commands::core::clo::update(packages).await,
+        CoreCommand::UpdateClo { packages, install } => {
+            commands::core::clo::update(packages, install).await
+        }
         #[cfg(feature = "cicd")]
-        CoreCommand::UpdateCicd { packages } => commands::core::cicd::update(packages).await,
+        CoreCommand::UpdateCicd { packages, install } => {
+            commands::core::cicd::update(packages, install).await
+        }
         #[cfg(feature = "iot")]
-        CoreCommand::UpdateIot { packages } => commands::core::iot::update(packages).await,
+        CoreCommand::UpdateIot { packages, install } => {
+            commands::core::iot::update(packages, install).await
+        }
         #[cfg(feature = "app")]
-        CoreCommand::UpdateApp { packages } => commands::core::app::update(packages).await,
+        CoreCommand::UpdateApp { packages, install } => {
+            commands::core::app::update(packages, install).await
+        }
         #[cfg(feature = "lib")]
-        CoreCommand::UpdateLib { packages } => commands::core::library::update(packages).await,
+        CoreCommand::UpdateLib { packages, install } => {
+            commands::core::library::update(packages, install).await
+        }
         _ => unreachable!("non-package command routed to package dispatcher"),
     }
 }
