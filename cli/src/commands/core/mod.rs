@@ -1,6 +1,8 @@
 pub mod shared;
 
 #[cfg(feature = "web")]
+pub mod scaffold_flags;
+#[cfg(feature = "web")]
 pub mod web;
 
 #[cfg(feature = "ai")]
