@@ -1249,17 +1249,27 @@ fn build_web_config(
     let frontend = parse_framework_request(framework);
 
     let mut config = if flags.monorepo {
-        let be_name = detect_backend_framework(flags)
+        match detect_backend_framework(flags)
             .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string))
-            .ok_or_else(|| anyhow::anyhow!("--monorepo requires a backend framework flag (--express, --fastify, etc.) or a fullstack FE like --next"))?;
-        let backend = parse_framework_request(&be_name);
-        crate::wizard::engine::ScaffoldConfig {
-            core: "web".to_string(),
-            sub_type: "monorepo".to_string(),
-            frameworks: vec![frontend.normalized.clone(), backend.normalized],
-            project_name: project_name.to_string(),
-            features: vec![],
-            template_dir: std::path::PathBuf::new(),
+        {
+            Some(be) => {
+                let backend = parse_framework_request(&be);
+                crate::wizard::engine::ScaffoldConfig {
+                    core: "web".to_string(),
+                    sub_type: "monorepo".to_string(),
+                    frameworks: vec![frontend.normalized.clone(), backend.normalized],
+                    project_name: project_name.to_string(),
+                    features: vec![],
+                    template_dir: std::path::PathBuf::new(),
+                }
+            }
+            None => {
+                info("--monorepo ignored: no backend framework specified (add --express, --fastify, etc.)");
+                crate::scaffold::Scaffolder::infer_web_create_config(
+                    &frontend.normalized,
+                    project_name,
+                )?
+            }
         }
     } else {
         crate::scaffold::Scaffolder::infer_web_create_config(&frontend.normalized, project_name)?
@@ -1922,6 +1932,8 @@ fn fullstack_backend_framework(framework: &str) -> Option<&'static str> {
         "vue-nestjs" => Some("nestjs"),
         "svelte-express" => Some("express"),
         "svelte-hono" => Some("hono"),
+        "next" | "nextjs" => Some("express"),
+        "nuxt" | "nuxtjs" => Some("hono"),
         _ => None,
     }
 }
