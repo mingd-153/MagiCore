@@ -32,22 +32,12 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         CoreCommand::CreateWeb {
             framework,
             project_name,
-            ts,
-            tailwindcss,
-            monorepo,
-            backend,
-            features,
+            flags,
         } => {
             commands::core::web::run_create_with_options(
                 &framework,
                 &project_name,
-                Some(commands::core::web::WebCreateOptions {
-                    typescript: ts,
-                    tailwindcss,
-                    monorepo,
-                    backend,
-                    features,
-                }),
+                Some(flags),
             )
             .await
         }
