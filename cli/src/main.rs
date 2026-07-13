@@ -13,7 +13,6 @@ mod wizard;
 #[command(name = "mg")]
 #[command(about = "MegaGate - Universal Package Manager", long_about = None)]
 #[command(version)]
-
 pub(crate) struct Cli {
     /// Target core (web, game, ai, clo, cicd, iot, app, lib)
     #[arg(global = true, long)]

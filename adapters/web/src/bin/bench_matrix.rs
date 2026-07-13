@@ -120,10 +120,13 @@ fn run() -> anyhow::Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         acquire_baseline_lock(&name)?;
-        std::fs::write(&path, serde_json::to_vec_pretty(&BenchmarkBaseline {
-            generated_at_epoch_secs: current_unix_secs(),
-            scenarios: scenarios.clone(),
-        })?)?;
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&BenchmarkBaseline {
+                generated_at_epoch_secs: current_unix_secs(),
+                scenarios: scenarios.clone(),
+            })?,
+        )?;
         release_baseline_lock(&name)?;
         println!();
         println!("saved baseline: {}", path.display());
@@ -168,7 +171,11 @@ fn run_fixture_matrix(
     let cold_local_cache = measure_scenario(&scenario_name("cold-local-cache"), runs, || {
         let dir = tempfile::tempdir()?;
         write_package_json(dir.path(), &fixture.direct_dependencies)?;
-        seed_local_tarballs(dir.path(), &fixture.graph.packages, fixture.files_per_package)?;
+        seed_local_tarballs(
+            dir.path(),
+            &fixture.graph.packages,
+            fixture.files_per_package,
+        )?;
         with_isolated_shared_cache(rt, None, || {
             let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
             let started = Instant::now();
@@ -182,7 +189,11 @@ fn run_fixture_matrix(
     let warm_reinstall = measure_scenario(&scenario_name("warm-reinstall"), runs, || {
         let dir = tempfile::tempdir()?;
         write_package_json(dir.path(), &fixture.direct_dependencies)?;
-        seed_local_tarballs(dir.path(), &fixture.graph.packages, fixture.files_per_package)?;
+        seed_local_tarballs(
+            dir.path(),
+            &fixture.graph.packages,
+            fixture.files_per_package,
+        )?;
         with_isolated_shared_cache(rt, None, || {
             let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
             rt.block_on(adapter.install(&fixture.graph, dir.path()))?;
@@ -213,25 +224,34 @@ fn run_fixture_matrix(
         })
     })?;
 
-    let shared_cache_bootstrap = measure_scenario(&scenario_name("shared-cache-bootstrap"), runs, || {
-        let shared = tempfile::tempdir()?;
-        seed_shared_tarballs(shared.path(), &fixture.graph.packages, fixture.files_per_package)?;
-        let dir = tempfile::tempdir()?;
-        write_package_json(dir.path(), &fixture.direct_dependencies)?;
-        with_isolated_shared_cache(rt, Some(shared.path()), || {
-            let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
-            let started = Instant::now();
-            let summary = rt.block_on(adapter.install(&fixture.graph, dir.path()))?;
-            let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-            let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
-            Ok((elapsed, summary.bytes_from_cache, stats))
-        })
-    })?;
+    let shared_cache_bootstrap =
+        measure_scenario(&scenario_name("shared-cache-bootstrap"), runs, || {
+            let shared = tempfile::tempdir()?;
+            seed_shared_tarballs(
+                shared.path(),
+                &fixture.graph.packages,
+                fixture.files_per_package,
+            )?;
+            let dir = tempfile::tempdir()?;
+            write_package_json(dir.path(), &fixture.direct_dependencies)?;
+            with_isolated_shared_cache(rt, Some(shared.path()), || {
+                let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+                let started = Instant::now();
+                let summary = rt.block_on(adapter.install(&fixture.graph, dir.path()))?;
+                let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
+                Ok((elapsed, summary.bytes_from_cache, stats))
+            })
+        })?;
 
     let offline_cached = measure_scenario(&scenario_name("offline-cached-install"), runs, || {
         let dir = tempfile::tempdir()?;
         write_package_json(dir.path(), &fixture.direct_dependencies)?;
-        seed_local_tarballs(dir.path(), &fixture.graph.packages, fixture.files_per_package)?;
+        seed_local_tarballs(
+            dir.path(),
+            &fixture.graph.packages,
+            fixture.files_per_package,
+        )?;
         with_isolated_shared_cache(rt, None, || {
             let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
             rt.block_on(adapter.install(&fixture.graph, dir.path()))?;
@@ -268,14 +288,14 @@ struct RegistryFixture {
 impl ScenarioAccumulator {
     fn with_packages(self, packages: usize) -> ScenarioMeasurement {
         let mut samples = self.samples_ms;
-        samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        samples.sort_by(|a, b| a.partial_cmp(b).expect("non-NaN samples"));
         let median_ms = samples[samples.len() / 2];
         let n = samples.len() as f64;
         let avg_ms = samples.iter().sum::<f64>() / n;
         let variance = samples.iter().map(|s| (s - avg_ms).powi(2)).sum::<f64>() / n;
         let stddev_ms = variance.sqrt();
-        let min_ms = *samples.first().unwrap();
-        let max_ms = *samples.last().unwrap();
+        let min_ms = *samples.first().expect("non-empty samples");
+        let max_ms = *samples.last().expect("non-empty samples");
         ScenarioMeasurement {
             name: self.name,
             runs: samples.len(),
@@ -293,7 +313,11 @@ impl ScenarioAccumulator {
     }
 }
 
-fn measure_scenario<F>(name: &str, runs: usize, mut run_once: F) -> anyhow::Result<ScenarioAccumulator>
+fn measure_scenario<F>(
+    name: &str,
+    runs: usize,
+    mut run_once: F,
+) -> anyhow::Result<ScenarioAccumulator>
 where
     F: FnMut() -> anyhow::Result<(f64, u64, NodeModulesStats)>,
 {
@@ -385,9 +409,17 @@ fn heavy_fixture() -> FixtureSpec {
                 vec![react.clone(), scheduler.clone()],
                 true,
             ),
-            resolved_pkg(vite.clone(), vec![typescript.clone(), semver7.clone()], true),
+            resolved_pkg(
+                vite.clone(),
+                vec![typescript.clone(), semver7.clone()],
+                true,
+            ),
             resolved_pkg(typescript.clone(), vec![tslib.clone()], true),
-            resolved_pkg(tailwind.clone(), vec![postcss.clone(), autoprefixer.clone()], true),
+            resolved_pkg(
+                tailwind.clone(),
+                vec![postcss.clone(), autoprefixer.clone()],
+                true,
+            ),
             resolved_pkg(query.clone(), vec![query_core.clone()], true),
             resolved_pkg(
                 admin_shell.clone(),
@@ -434,7 +466,11 @@ fn heavy_fixture() -> FixtureSpec {
             resolved_pkg(history.clone(), vec![], false),
             resolved_pkg(tslib.clone(), vec![], false),
             resolved_pkg(shared_util_v1.clone(), vec![], false),
-            resolved_pkg(autoprefixer.clone(), vec![browserslist.clone(), postcss.clone()], false),
+            resolved_pkg(
+                autoprefixer.clone(),
+                vec![browserslist.clone(), postcss.clone()],
+                false,
+            ),
             resolved_pkg(browserslist.clone(), vec![caniuse.clone()], false),
             resolved_pkg(caniuse.clone(), vec![], false),
         ],
@@ -472,7 +508,7 @@ async fn spawn_registry_fixture(
             .iter()
             .map(|pkg| pkg.id.version().clone())
             .max()
-            .unwrap()
+            .expect("versions should be non-empty")
             .to_string();
         let version_entries = versions
             .iter()
@@ -520,15 +556,20 @@ async fn spawn_registry_fixture(
                 "latest": latest
             }
         });
-        (format!("/{}", name), serde_json::to_vec(&metadata).unwrap())
+        (format!("/{}", name), serde_json::to_vec(&metadata).expect("metadata serializable"))
     }).collect::<std::collections::HashMap<_, _>>());
     let tarball_map = Arc::new(
         packages
             .iter()
             .map(|pkg| {
                 (
-                    format!("/tarballs/{}-{}.tgz", sanitize_pkg_name(pkg.id.name_str()), pkg.id.version()),
-                    build_tarball_bytes(&pkg.id, files_per_package).unwrap(),
+                    format!(
+                        "/tarballs/{}-{}.tgz",
+                        sanitize_pkg_name(pkg.id.name_str()),
+                        pkg.id.version()
+                    ),
+                    build_tarball_bytes(&pkg.id, files_per_package)
+                        .expect("tarball build succeeds"),
                 )
             })
             .collect::<std::collections::HashMap<_, _>>(),
@@ -585,8 +626,8 @@ async fn spawn_registry_fixture(
 
 fn package_id(name: &str, version: &str) -> PackageId {
     PackageId::new(
-        PackageName::new(name).unwrap(),
-        Version::parse(version).unwrap(),
+        PackageName::new(name).expect("valid package name"),
+        Version::parse(version).expect("valid version"),
     )
 }
 
@@ -675,7 +716,10 @@ fn seed_tarballs_into_layout(
         if let Some(parent) = tarball_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(tarball_path, build_tarball_bytes(&pkg.id, files_per_package)?)?;
+        std::fs::write(
+            tarball_path,
+            build_tarball_bytes(&pkg.id, files_per_package)?,
+        )?;
     }
     Ok(())
 }
@@ -691,7 +735,11 @@ fn build_tarball_bytes(pkg: &PackageId, files_per_package: usize) -> anyhow::Res
         pkg.name_str(),
         pkg.version()
     );
-    write_tar_entry(&mut builder, "package/package.json", package_json.as_bytes())?;
+    write_tar_entry(
+        &mut builder,
+        "package/package.json",
+        package_json.as_bytes(),
+    )?;
     write_tar_entry(
         &mut builder,
         "package/src/index.js",
@@ -948,14 +996,8 @@ where
 
     restore_env("MEGAGATE_SHARED_CACHE_DIR", previous_shared);
     restore_env("MEGAGATE_WEB_METADATA_TTL_SECS", previous_ttl);
-    restore_env(
-        "MEGAGATE_WEB_METADATA_STALE_RETRY_TTL_SECS",
-        previous_retry,
-    );
-    restore_env(
-        "MEGAGATE_WEB_METADATA_MAX_STALE_SECS",
-        previous_max_stale,
-    );
+    restore_env("MEGAGATE_WEB_METADATA_STALE_RETRY_TTL_SECS", previous_retry);
+    restore_env("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", previous_max_stale);
 
     result
 }

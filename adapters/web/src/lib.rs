@@ -146,7 +146,11 @@ fn validate_registry_allowed(url: &str) {
     let Some(allowed) = std::env::var("MEGAGATE_WEB_ALLOWED_REGISTRIES").ok() else {
         return;
     };
-    let allowed_list: Vec<&str> = allowed.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let allowed_list: Vec<&str> = allowed
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     if allowed_list.is_empty() {
         return;
     }
@@ -1263,13 +1267,7 @@ impl SharedWebCache {
         metadata: &native::npm_registry::PackageMetadata,
         etag: Option<String>,
     ) -> Result<(), DependencyError> {
-        self.write_metadata_record(
-            package,
-            metadata,
-            etag,
-            current_unix_secs(),
-            None,
-        )
+        self.write_metadata_record(package, metadata, etag, current_unix_secs(), None)
     }
 
     fn write_metadata_record(
@@ -1330,9 +1328,9 @@ impl SharedWebCache {
     }
 
     fn maybe_prune_once_per_process(&self) {
-        static PRUNED_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> =
-            OnceLock::new();
-        let pruned_roots = PRUNED_ROOTS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
+        static PRUNED_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+        let pruned_roots =
+            PRUNED_ROOTS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
         let mut guard = match pruned_roots.lock() {
             Ok(guard) => guard,
             Err(_) => return,
@@ -1369,10 +1367,8 @@ async fn load_metadata_by_name_with_fallback(
             return Ok(cached.metadata.clone());
         }
 
-        if metadata_record_retry_deferred(cached) {
-            if metadata_record_is_usable_stale(cached) {
-                return Ok(cached.metadata.clone());
-            }
+        if metadata_record_retry_deferred(cached) && metadata_record_is_usable_stale(cached) {
+            return Ok(cached.metadata.clone());
         }
 
         if let Some(etag) = &cached.etag {
@@ -1642,7 +1638,11 @@ fn prune_old_files_under(root: &Path, max_age: std::time::Duration) -> MgResult<
         return Ok(());
     }
     let mut directories = Vec::new();
-    for entry in WalkDir::new(root).min_depth(1).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         if entry.file_type().is_dir() {
             directories.push(entry.path().to_path_buf());
             continue;
@@ -1666,7 +1666,11 @@ fn prune_old_package_dirs_under(root: &Path, max_age: std::time::Duration) -> Mg
         return Ok(());
     }
     let mut directories = Vec::new();
-    for entry in WalkDir::new(root).min_depth(1).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         if entry.file_type().is_dir() {
             directories.push(entry.path().to_path_buf());
         }
@@ -1676,7 +1680,14 @@ fn prune_old_package_dirs_under(root: &Path, max_age: std::time::Duration) -> Mg
         let marker = dir.join(".megagate-package-root.json");
         let package_json = dir.join("package.json");
         if marker.exists() || package_json.exists() {
-            if path_is_older_than(if marker.exists() { &marker } else { &package_json }, max_age) {
+            if path_is_older_than(
+                if marker.exists() {
+                    &marker
+                } else {
+                    &package_json
+                },
+                max_age,
+            ) {
                 let _ = std::fs::remove_dir_all(&dir);
             }
         } else {
@@ -2139,6 +2150,7 @@ fn select_root_packages(graph: &ResolvedGraph) -> Vec<&ResolvedPackage> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn materialize_nested_dependencies(
     package_dir: &Path,
     pkg: &ResolvedPackage,
@@ -2839,8 +2851,8 @@ mod tests {
         let cache = SharedWebCache {
             root: shared.path().to_path_buf(),
         };
-        let metadata: native::npm_registry::PackageMetadata = serde_json::from_value(
-            serde_json::json!({
+        let metadata: native::npm_registry::PackageMetadata =
+            serde_json::from_value(serde_json::json!({
                 "name": "react",
                 "description": null,
                 "versions": {
@@ -2859,9 +2871,8 @@ mod tests {
                 "dist-tags": {
                     "latest": "18.2.0"
                 }
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
 
         cache
             .write_metadata_record(
@@ -2921,8 +2932,8 @@ mod tests {
         let cache = SharedWebCache {
             root: shared.path().to_path_buf(),
         };
-        let metadata: native::npm_registry::PackageMetadata = serde_json::from_value(
-            serde_json::json!({
+        let metadata: native::npm_registry::PackageMetadata =
+            serde_json::from_value(serde_json::json!({
                 "name": "react",
                 "description": null,
                 "versions": {
@@ -2941,14 +2952,19 @@ mod tests {
                 "dist-tags": {
                     "latest": "18.2.0"
                 }
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
 
         let previous = std::env::var_os("MEGAGATE_WEB_METADATA_MAX_STALE_SECS");
         std::env::set_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", "60");
         cache
-            .write_metadata_record("react", &metadata, Some("\"react-v1\"".to_string()), 1, None)
+            .write_metadata_record(
+                "react",
+                &metadata,
+                Some("\"react-v1\"".to_string()),
+                1,
+                None,
+            )
             .unwrap();
 
         let err = load_metadata_by_name_with_fallback("react", &registry, Some(&cache))
@@ -2969,8 +2985,8 @@ mod tests {
         let cache = SharedWebCache {
             root: shared.path().to_path_buf(),
         };
-        let metadata: native::npm_registry::PackageMetadata = serde_json::from_value(
-            serde_json::json!({
+        let metadata: native::npm_registry::PackageMetadata =
+            serde_json::from_value(serde_json::json!({
                 "name": "react",
                 "description": null,
                 "versions": {
@@ -2989,9 +3005,8 @@ mod tests {
                 "dist-tags": {
                     "latest": "18.2.0"
                 }
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
 
         let previous = std::env::var_os("MEGAGATE_WEB_METADATA_MAX_STALE_SECS");
         std::env::set_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", "60");
@@ -3825,7 +3840,10 @@ mod tests {
         } else {
             hoisted_semver
         };
-        assert!(nuxt_semver_dir.join("functions").join("satisfies.js").exists());
+        assert!(nuxt_semver_dir
+            .join("functions")
+            .join("satisfies.js")
+            .exists());
         assert_eq!(
             installed_package_version(&nuxt_semver_dir)
                 .unwrap()
@@ -4091,7 +4109,9 @@ mod tests {
             std::fs::read_to_string(second.path().join("node_modules/react/index.js")).unwrap(),
             "export default 'react';\n"
         );
-        let marker = read_extracted_package_marker(&shared_root).unwrap().unwrap();
+        let marker = read_extracted_package_marker(&shared_root)
+            .unwrap()
+            .unwrap();
         assert_ne!(marker.tarball_sha256, "bad-digest");
     }
 

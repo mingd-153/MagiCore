@@ -20,7 +20,7 @@ impl DependencyGraph {
     }
 
     pub fn add_edge(&mut self, from: PackageId, to: PackageId) {
-        self.edges.entry(from).or_insert_with(Vec::new).push(to);
+        self.edges.entry(from).or_default().push(to);
     }
 
     pub fn dependencies(&self, id: &PackageId) -> Option<&[PackageId]> {

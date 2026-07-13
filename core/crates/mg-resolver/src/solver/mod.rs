@@ -131,12 +131,10 @@ pub fn check_dependency_confusion(
 ) -> Vec<String> {
     let mut warnings = Vec::new();
     for dep in dependencies {
-        if workspace_packages.contains(&dep.name) {
-            if dep.version.is_some() {
-                warnings.push(format!(
+        if workspace_packages.contains(&dep.name) && dep.version.is_some() {
+            warnings.push(format!(
                     "Dependency confusion: '{}' is both workspace package and external dep. Use \"workspace:*\".", dep.name
                 ));
-            }
         }
         if dep.name.starts_with('@') {
             if let Some(scope) = dep.name.split('/').next() {
@@ -304,7 +302,7 @@ impl Resolver {
                             .await
                             .map_err(|e| SolveError {
                                 message: format!("cannot fetch versions for '{}': {}", name_str, e),
-                    })?;
+                            })?;
 
                     if let Some(other) = Self::select_best_version(&versions, &constraint, &spec) {
                         let key = (name_str.clone(), other.clone());

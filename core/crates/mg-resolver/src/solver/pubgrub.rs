@@ -62,6 +62,7 @@ impl PubGrubSolver {
         self.incompatibilities.push(inc);
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn check_consistency(&self) -> Result<(), Incompatibility> {
         for inc in &self.incompatibilities {
             if inc.terms.iter().all(|term| self.term_satisfied(term)) {
@@ -86,6 +87,7 @@ impl PubGrubSolver {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn propagate(&mut self) -> Result<Vec<Decision>, Incompatibility> {
         let mut propagated = Vec::new();
         let mut changed = true;
@@ -157,6 +159,7 @@ impl PubGrubSolver {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn solve(
         &mut self,
         wanted: &[(PackageName, VersionSet)],
@@ -195,6 +198,7 @@ impl PubGrubSolver {
             .all(|(name, _)| self.decisions.contains_key(name))
     }
 
+    #[allow(clippy::result_large_err)]
     fn choose_package(&self, wanted: &[(PackageName, VersionSet)]) -> Result<Decision, SolveError> {
         for (name, vs) in wanted {
             if !self.decisions.contains_key(name) {
@@ -219,6 +223,7 @@ impl PubGrubSolver {
         Err(SolveError::NoPackageFound)
     }
 
+    #[allow(clippy::result_large_err)]
     fn backtrack(&mut self, _conflict: &Incompatibility) -> Result<bool, SolveError> {
         if let Some(last) = self.assignment.pop() {
             self.decisions.remove(&last.0);

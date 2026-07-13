@@ -39,22 +39,19 @@ async fn outdated_web(core: Option<&str>) -> Result<()> {
     let mut outdated = 0;
 
     for dep in all_deps {
-        match registry.fetch_metadata(dep.name.as_str()).await {
-            Ok(meta) => {
-                let latest = meta.dist_tags.get("latest");
-                if let Some(latest_ver) = latest {
-                    if let Ok(lv) = mg_types::Version::parse(latest_ver) {
-                        if !dep.range.matches(&lv) {
-                            info(&format!(
-                                "  {}: {} → {} (latest)",
-                                dep.name, dep.range, latest_ver
-                            ));
-                            outdated += 1;
-                        }
+        if let Ok(meta) = registry.fetch_metadata(dep.name.as_str()).await {
+            let latest = meta.dist_tags.get("latest");
+            if let Some(latest_ver) = latest {
+                if let Ok(lv) = mg_types::Version::parse(latest_ver) {
+                    if !dep.range.matches(&lv) {
+                        info(&format!(
+                            "  {}: {} → {} (latest)",
+                            dep.name, dep.range, latest_ver
+                        ));
+                        outdated += 1;
                     }
                 }
             }
-            Err(_) => {}
         }
     }
 
