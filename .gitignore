@@ -67,3 +67,6 @@ temp/
 # Debug symbols
 *.dSYM/
 
+# Markdown docs (not allowed in repo unless explicitly requested)
+*.md
+
