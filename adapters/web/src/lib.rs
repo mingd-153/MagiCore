@@ -28,6 +28,19 @@ pub mod native;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 
+fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let tmp_path = dir.join(format!(".mg-tmp-{}", std::process::id()));
+    std::fs::write(&tmp_path, data).map_err(|e| {
+        mg_types::MgError::Other(format!("failed to write temp file: {e}"))
+    })?;
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        mg_types::MgError::Other(format!("failed to rename temp file: {e}"))
+    })?;
+    Ok(())
+}
+
 fn project_cache_dir(project_root: &Path) -> PathBuf {
     project_root.join(".megagate").join("cache").join("web")
 }
@@ -1137,7 +1150,9 @@ impl PackageJson {
         Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
     pub fn save(&self, path: &Path) -> Result<(), anyhow::Error> {
-        Ok(std::fs::write(path, serde_json::to_string_pretty(self)?)?)
+        let content = serde_json::to_string_pretty(self)?;
+        atomic_write(path, content.as_bytes())?;
+        Ok(())
     }
 }
 
@@ -1598,9 +1613,11 @@ fn shared_cache_max_age_secs() -> u64 {
 }
 
 fn strict_integrity_enforced() -> bool {
-    std::env::var("MEGAGATE_WEB_STRICT_INTEGRITY")
-        .ok()
-        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    let val = std::env::var("MEGAGATE_WEB_STRICT_INTEGRITY");
+    match val.as_deref() {
+        Ok("0" | "false" | "no" | "off") => false,
+        _ => true,
+    }
 }
 
 fn next_stale_retry_after() -> u64 {
@@ -2289,8 +2306,14 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
     for pkg in packages {
         let package_dir = node_modules.join(pkg.id.name().as_str());
         for (bin_name, relative_target) in package_bin_entries(&package_dir)? {
+            if relative_target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                continue;
+            }
             let target = package_dir.join(&relative_target);
             if !target.exists() {
+                continue;
+            }
+            if !target.starts_with(&node_modules) {
                 continue;
             }
             let link = bin_dir.join(bin_name);
@@ -2452,7 +2475,8 @@ fn write_web_lockfile_with_state(
         })
         .collect();
 
-    std::fs::write(&lock_path, serialization::to_toml(&lockfile)?)?;
+    let toml = serialization::to_toml(&lockfile)?;
+    atomic_write(&lock_path, toml.as_bytes())?;
     Ok(())
 }
 
