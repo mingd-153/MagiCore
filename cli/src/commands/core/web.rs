@@ -149,7 +149,7 @@ pub async fn update(packages: Vec<String>) -> Result<()> {
 }
 
 /// Install web dependencies
-pub async fn install(packages: Vec<String>) -> Result<()> {
+pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
     let root = project_root()?;
     let adapter = mg_web_adapter::WebAdapter::new();
 
@@ -163,7 +163,7 @@ pub async fn install(packages: Vec<String>) -> Result<()> {
 
     for target in install_targets(&root)? {
         if target.join("package.json").exists() {
-            shared::install_with_adapter(&adapter, &target, "mg add").await?;
+            shared::install_with_adapter(&adapter, &target, "mg add", frozen).await?;
         } else {
             native_install_target(&target)?;
         }

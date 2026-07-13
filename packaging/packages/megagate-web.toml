@@ -5,4 +5,4 @@ mode = "single-core"
 primary_core = "web"
 no_default_features = true
 features = ["web"]
-install_hint = "brew install megagate-web"
+install_hint = "brew install megagate-web  |  curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install.sh | sh"
