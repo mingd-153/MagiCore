@@ -437,6 +437,220 @@ impl From<Commands> for DispatchCommand {
                 ))
             ))]
             Commands::List => SomeCore(CoreCommand::List),
+            // ── Bare commands (multi-core: auto-detect from .megagate/) ──
+            #[cfg(all(
+                feature = "web",
+                any(
+                    feature = "game",
+                    feature = "ai",
+                    feature = "clo",
+                    feature = "cicd",
+                    feature = "iot",
+                    feature = "app",
+                    feature = "lib"
+                )
+            ))]
+            Commands::Install {
+                packages, frozen, ..
+            } => {
+                let ecosystem = detect_ecosystem();
+                match ecosystem.as_deref() {
+                    Some("web") => SomeCore(CoreCommand::InstallWeb { packages, frozen }),
+                    Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
+                    Some("ai") => SomeCore(CoreCommand::InstallAi { packages }),
+                    Some("clo") => SomeCore(CoreCommand::InstallClo { packages }),
+                    Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages }),
+                    Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
+                    Some("app") => SomeCore(CoreCommand::InstallApp { packages }),
+                    Some("lib") => SomeCore(CoreCommand::InstallLib { packages }),
+                    _ => SomeCore(CoreCommand::InstallWeb { packages, frozen }),
+                }
+            }
+            #[cfg(all(
+                feature = "web",
+                any(
+                    feature = "game",
+                    feature = "ai",
+                    feature = "clo",
+                    feature = "cicd",
+                    feature = "iot",
+                    feature = "app",
+                    feature = "lib"
+                )
+            ))]
+            Commands::Add {
+                packages,
+                dev,
+                global,
+                exact,
+                optional,
+                peer,
+                no_save,
+                ..
+            } => {
+                let ecosystem = detect_ecosystem();
+                match ecosystem.as_deref() {
+                    Some("web") => SomeCore(CoreCommand::AddWeb {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    Some("game") => SomeCore(CoreCommand::AddGame {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    Some("ai") => SomeCore(CoreCommand::AddAi {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    Some("clo") => SomeCore(CoreCommand::AddClo {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    Some("cicd") => SomeCore(CoreCommand::AddCicd {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    Some("iot") => SomeCore(CoreCommand::AddIot {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    Some("app") => SomeCore(CoreCommand::AddApp {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    Some("lib") => SomeCore(CoreCommand::AddLib {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                    _ => SomeCore(CoreCommand::AddWeb {
+                        packages,
+                        dev,
+                        exact,
+                        optional,
+                        peer,
+                        no_save,
+                        global,
+                    }),
+                }
+            }
+            #[cfg(all(
+                feature = "web",
+                any(
+                    feature = "game",
+                    feature = "ai",
+                    feature = "clo",
+                    feature = "cicd",
+                    feature = "iot",
+                    feature = "app",
+                    feature = "lib"
+                )
+            ))]
+            Commands::Remove { package } => {
+                let ecosystem = detect_ecosystem();
+                match ecosystem.as_deref() {
+                    Some("web") => SomeCore(CoreCommand::RemoveWeb { package }),
+                    Some("game") => SomeCore(CoreCommand::RemoveGame { package }),
+                    Some("ai") => SomeCore(CoreCommand::RemoveAi { package }),
+                    Some("clo") => SomeCore(CoreCommand::RemoveClo { package }),
+                    Some("cicd") => SomeCore(CoreCommand::RemoveCicd { package }),
+                    Some("iot") => SomeCore(CoreCommand::RemoveIot { package }),
+                    Some("app") => SomeCore(CoreCommand::RemoveApp { package }),
+                    Some("lib") => SomeCore(CoreCommand::RemoveLib { package }),
+                    _ => SomeCore(CoreCommand::RemoveWeb { package }),
+                }
+            }
+            #[cfg(all(
+                feature = "web",
+                any(
+                    feature = "game",
+                    feature = "ai",
+                    feature = "clo",
+                    feature = "cicd",
+                    feature = "iot",
+                    feature = "app",
+                    feature = "lib"
+                )
+            ))]
+            Commands::List => {
+                let ecosystem = detect_ecosystem();
+                match ecosystem.as_deref() {
+                    Some("web") => SomeCore(CoreCommand::ListWeb),
+                    Some("game") => SomeCore(CoreCommand::ListGame),
+                    Some("ai") => SomeCore(CoreCommand::ListAi),
+                    Some("clo") => SomeCore(CoreCommand::ListClo),
+                    Some("cicd") => SomeCore(CoreCommand::ListCicd),
+                    Some("iot") => SomeCore(CoreCommand::ListIot),
+                    Some("app") => SomeCore(CoreCommand::ListApp),
+                    Some("lib") => SomeCore(CoreCommand::ListLib),
+                    _ => SomeCore(CoreCommand::ListWeb),
+                }
+            }
+            #[cfg(all(
+                feature = "web",
+                any(
+                    feature = "game",
+                    feature = "ai",
+                    feature = "clo",
+                    feature = "cicd",
+                    feature = "iot",
+                    feature = "app",
+                    feature = "lib"
+                )
+            ))]
+            Commands::Update { packages } => {
+                let ecosystem = detect_ecosystem();
+                match ecosystem.as_deref() {
+                    Some("web") => SomeCore(CoreCommand::UpdateWeb { packages }),
+                    Some("game") => SomeCore(CoreCommand::UpdateGame { packages }),
+                    Some("ai") => SomeCore(CoreCommand::UpdateAi { packages }),
+                    Some("clo") => SomeCore(CoreCommand::UpdateClo { packages }),
+                    Some("cicd") => SomeCore(CoreCommand::UpdateCicd { packages }),
+                    Some("iot") => SomeCore(CoreCommand::UpdateIot { packages }),
+                    Some("app") => SomeCore(CoreCommand::UpdateApp { packages }),
+                    Some("lib") => SomeCore(CoreCommand::UpdateLib { packages }),
+                    _ => SomeCore(CoreCommand::UpdateWeb { packages }),
+                }
+            }
             #[cfg(feature = "web")]
             Commands::CreateWeb {
                 framework,
@@ -774,4 +988,54 @@ impl From<Commands> for DispatchCommand {
             Commands::UpdateLib { packages } => SomeCore(CoreCommand::UpdateLib { packages }),
         }
     }
+}
+
+/// Detect the project ecosystem (core type) from the current working directory.
+///
+/// Priority:
+///   1. `.megagate/project.toml` — ecosystem field
+///   2. Auto-detect: `package.json` → web, `Cargo.toml` → lib, `pyproject.toml` → ai
+#[cfg(all(
+    feature = "web",
+    any(
+        feature = "game",
+        feature = "ai",
+        feature = "clo",
+        feature = "cicd",
+        feature = "iot",
+        feature = "app",
+        feature = "lib"
+    )
+))]
+fn detect_ecosystem() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+
+    // 1. Try .megagate/project.toml
+    let megagate_path = cwd.join(".megagate").join("project.toml");
+    if megagate_path.exists() {
+        let content = std::fs::read_to_string(megagate_path).ok()?;
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(val) = line.strip_prefix("ecosystem = \"") {
+                if let Some(eco) = val.strip_suffix('"') {
+                    if !eco.is_empty() {
+                        return Some(eco.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Auto-detect
+    if cwd.join("package.json").exists() {
+        return Some("web".to_string());
+    }
+    if cwd.join("Cargo.toml").exists() {
+        return Some("lib".to_string());
+    }
+    if cwd.join("pyproject.toml").exists() {
+        return Some("ai".to_string());
+    }
+
+    None
 }

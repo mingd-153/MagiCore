@@ -198,6 +198,99 @@ pub(crate) enum Commands {
     #[command(about = "List installed packages")]
     List,
 
+    // ── Bare (multi-core auto-detect from .megagate/) ──────────
+    #[cfg(all(
+        feature = "web",
+        any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        )
+    ))]
+    #[command(about = "Install dependencies (auto-detect core)")]
+    Install {
+        packages: Vec<String>,
+        #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
+        frozen: bool,
+    },
+    #[cfg(all(
+        feature = "web",
+        any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        )
+    ))]
+    #[command(about = "Add a dependency (auto-detect core)")]
+    Add {
+        #[arg(required = true)]
+        packages: Vec<String>,
+        #[arg(short, long)]
+        version: Option<String>,
+        #[arg(short = 'D', long)]
+        dev: bool,
+        #[arg(short = 'g', long)]
+        global: bool,
+        #[arg(short = 'E', long)]
+        exact: bool,
+        #[arg(short = 'O', long)]
+        optional: bool,
+        #[arg(short = 'P', long)]
+        peer: bool,
+        #[arg(long)]
+        no_save: bool,
+    },
+    #[cfg(all(
+        feature = "web",
+        any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        )
+    ))]
+    #[command(about = "Remove a dependency (auto-detect core)")]
+    Remove { package: String },
+    #[cfg(all(
+        feature = "web",
+        any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        )
+    ))]
+    #[command(about = "Update packages (auto-detect core)")]
+    Update { packages: Vec<String> },
+    #[cfg(all(
+        feature = "web",
+        any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        )
+    ))]
+    #[command(about = "List installed packages (auto-detect core)")]
+    List,
+
     // ── Per-core: create-<core> ────────────────────────────────
     #[cfg(all(
         feature = "web",
@@ -812,10 +905,16 @@ mod tests {
             )
         ))]
         {
-            assert!(
-                Cli::try_parse_from(["mg", "install", "react"]).is_err(),
-                "multi-core build should reject bare `mg install`"
-            );
+            let cli = Cli::try_parse_from(["mg", "install", "react_vite"]).unwrap();
+            match cli.command.unwrap() {
+                Commands::Install {
+                    packages, frozen, ..
+                } => {
+                    assert_eq!(packages, vec!["react_vite"]);
+                    assert!(!frozen);
+                }
+                _ => panic!("expected auto-detect install in multi-core build"),
+            }
             let cli = Cli::try_parse_from(["mg", "install-web", "react", "vite"]).unwrap();
             match cli.command.unwrap() {
                 Commands::InstallWeb {
