@@ -133,11 +133,30 @@ impl WebAdapter {
 }
 
 fn effective_registry_url(default: &str) -> String {
-    std::env::var("MEGAGATE_WEB_REGISTRY_URL")
+    let url = std::env::var("MEGAGATE_WEB_REGISTRY_URL")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| default.to_string())
+        .unwrap_or_else(|| default.to_string());
+    validate_registry_allowed(&url);
+    url
+}
+
+fn validate_registry_allowed(url: &str) {
+    let Some(allowed) = std::env::var("MEGAGATE_WEB_ALLOWED_REGISTRIES").ok() else {
+        return;
+    };
+    let allowed_list: Vec<&str> = allowed.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if allowed_list.is_empty() {
+        return;
+    }
+    if allowed_list.iter().any(|a| url.starts_with(a)) {
+        return;
+    }
+    panic!(
+        "registry '{}' is not in MEGAGATE_WEB_ALLOWED_REGISTRIES ({})",
+        url, allowed
+    );
 }
 impl Default for WebAdapter {
     fn default() -> Self {
@@ -1568,7 +1587,13 @@ fn shared_cache_max_age_secs() -> u64 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
-        .unwrap_or(30 * 24 * 60 * 60)
+        .unwrap_or(7 * 24 * 60 * 60)
+}
+
+fn strict_integrity_enforced() -> bool {
+    std::env::var("MEGAGATE_WEB_STRICT_INTEGRITY")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
 fn next_stale_retry_after() -> u64 {
@@ -1771,6 +1796,12 @@ fn compute_tarball_integrity(bytes: &[u8]) -> String {
 
 fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
     if pkg.integrity.is_empty() {
+        if strict_integrity_enforced() {
+            return Err(mg_types::MgError::Other(format!(
+                "strict integrity: '{}' has no SRI integrity field",
+                pkg.id.name_str()
+            )));
+        }
         return Ok(());
     }
     for entry in pkg.integrity.split_whitespace() {
