@@ -68,7 +68,11 @@ pub(crate) enum Commands {
         )
     ))]
     #[command(name = "install-web", about = "Install web dependencies")]
-    InstallWeb { packages: Vec<String> },
+    InstallWeb {
+        packages: Vec<String>,
+        #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
+        frozen: bool,
+    },
     #[cfg(feature = "game")]
     #[command(
         name = "install-game",

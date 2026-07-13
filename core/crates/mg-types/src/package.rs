@@ -164,7 +164,12 @@ fn match_single_range(range: &str, version: &Version) -> bool {
     if range == "*" {
         return true;
     }
-    if let Some(target) = range.strip_prefix('=').and_then(|s| Version::parse(s).ok()) {
+    if let Some(target) = range
+        .trim_start_matches('=')
+        .split_whitespace()
+        .next()
+        .and_then(|s| Version::parse(s).ok())
+    {
         return version == &target;
     }
     if let Some(target) = range.strip_prefix('^').and_then(|s| Version::parse(s).ok()) {
@@ -210,7 +215,7 @@ fn match_compound_range(range: &str, version: &Version) -> bool {
     let mut parts = Vec::new();
     let mut tokens = trimmed.split_whitespace().peekable();
     while let Some(token) = tokens.next() {
-        if matches!(token, ">=" | "<=" | ">" | "<" | "=" | "^" | "~") {
+        if matches!(token, ">=" | "<=" | ">" | "<" | "=" | "==" | "^" | "~") {
             if let Some(next) = tokens.next() {
                 parts.push(format!("{token}{next}"));
             } else {
@@ -237,7 +242,7 @@ mod tests {
     #[test]
     fn exact_equals_range_matches_same_version() {
         let range = VersionRange::parse("=0.139.0").unwrap();
-        assert!(range.matches(&v("0.139.0")));
+        assert!(range.matches(&v("0.139.0")), "=0.139.0 should match 0.139.0");
         assert!(!range.matches(&v("0.139.1")));
     }
 
@@ -261,5 +266,27 @@ mod tests {
         assert!(range.matches(&v("2.8.1")));
         assert!(!range.matches(&v("2.1.1")));
         assert!(!range.matches(&v("3.0.0")));
+    }
+
+    #[test]
+    fn npm_double_equals_matches_same_version() {
+        let range = VersionRange::parse("==0.139.0").unwrap();
+        assert!(range.matches(&v("0.139.0")));
+        assert!(!range.matches(&v("0.139.1")));
+    }
+
+    #[test]
+    fn npm_double_equals_resolves_as_op() {
+        let range = VersionRange::parse("== 0.139.0").unwrap();
+        assert!(range.matches(&v("0.139.0")));
+        assert!(!range.matches(&v("0.139.1")));
+    }
+
+    #[test]
+    fn npm_single_equals_matches_oxc_types() {
+        let range = VersionRange::parse("=0.139.0").unwrap();
+        assert!(range.matches(&v("0.139.0")), "=0.139.0 should match 0.139.0");
+        assert!(!range.matches(&v("0.138.0")), "=0.139.0 should NOT match 0.138.0");
+        assert!(!range.matches(&v("0.139.1")), "=0.139.0 should NOT match 0.139.1");
     }
 }

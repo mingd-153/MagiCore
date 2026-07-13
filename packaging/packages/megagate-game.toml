@@ -5,4 +5,4 @@ mode = "single-core"
 primary_core = "game"
 no_default_features = true
 features = ["game"]
-install_hint = "brew install megagate-game"
+install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install.sh | MEGAGATE_PACKAGE=megagate-game sh"

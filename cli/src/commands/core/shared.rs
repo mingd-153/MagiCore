@@ -223,6 +223,7 @@ pub async fn install_with_adapter(
     adapter: &dyn PackageAdapter,
     root: &Path,
     add_cmd: &str,
+    frozen: bool,
 ) -> Result<()> {
     let started_at = std::time::Instant::now();
     let spinner = create_spinner("  Reading project manifest...");
@@ -245,6 +246,12 @@ pub async fn install_with_adapter(
         info("Using mg.lock for install state.");
         (graph, true)
     } else {
+        if frozen {
+            anyhow::bail!(
+                "--frozen: mg.lock is missing or does not match package.json.\n\
+                 Run 'mg install-web' to generate an up-to-date lockfile."
+            );
+        }
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
         let graph = adapter.resolve(&manifest).await?;
         spinner.finish_and_clear();
