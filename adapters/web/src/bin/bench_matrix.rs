@@ -18,6 +18,7 @@ struct ScenarioMeasurement {
     runs: usize,
     median_ms: f64,
     avg_ms: f64,
+    stddev_ms: f64,
     min_ms: f64,
     max_ms: f64,
     packages: usize,
@@ -114,23 +115,29 @@ fn run() -> anyhow::Result<()> {
     print_report(&scenarios);
 
     if let Some(name) = save_baseline {
-        let baseline = BenchmarkBaseline {
-            generated_at_epoch_secs: current_unix_secs(),
-            scenarios: scenarios.clone(),
-        };
         let path = baseline_path(&name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, serde_json::to_vec_pretty(&baseline)?)?;
+        acquire_baseline_lock(&name)?;
+        std::fs::write(&path, serde_json::to_vec_pretty(&BenchmarkBaseline {
+            generated_at_epoch_secs: current_unix_secs(),
+            scenarios: scenarios.clone(),
+        })?)?;
+        release_baseline_lock(&name)?;
         println!();
         println!("saved baseline: {}", path.display());
     }
 
     if let Some(name) = compare_baseline {
+        acquire_baseline_lock(&name)?;
         let path = baseline_path(&name);
         let baseline: BenchmarkBaseline = serde_json::from_slice(&std::fs::read(&path)?)?;
-        print_comparison(&baseline.scenarios, &scenarios);
+        release_baseline_lock(&name)?;
+        let has_regression = print_comparison(&baseline.scenarios, &scenarios);
+        if has_regression {
+            eprintln!("⚠️  REGRESSION DETECTED: some scenarios degraded >10% vs baseline");
+        }
     }
 
     Ok(())
@@ -263,7 +270,10 @@ impl ScenarioAccumulator {
         let mut samples = self.samples_ms;
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let median_ms = samples[samples.len() / 2];
-        let avg_ms = samples.iter().sum::<f64>() / samples.len() as f64;
+        let n = samples.len() as f64;
+        let avg_ms = samples.iter().sum::<f64>() / n;
+        let variance = samples.iter().map(|s| (s - avg_ms).powi(2)).sum::<f64>() / n;
+        let stddev_ms = variance.sqrt();
         let min_ms = *samples.first().unwrap();
         let max_ms = *samples.last().unwrap();
         ScenarioMeasurement {
@@ -271,6 +281,7 @@ impl ScenarioAccumulator {
             runs: samples.len(),
             median_ms,
             avg_ms,
+            stddev_ms,
             min_ms,
             max_ms,
             packages,
@@ -765,11 +776,12 @@ fn current_unix_secs() -> u64 {
 fn print_report(scenarios: &[ScenarioMeasurement]) {
     println!("Benchmark matrix (install/materialization only)");
     println!(
-        "{:<24} {:>4} {:>10} {:>10} {:>10} {:>10} {:>12} {:>10} {:>10} {:>10}",
+        "{:<24} {:>4} {:>10} {:>10} {:>10} {:>10} {:>10} {:>12} {:>10} {:>10} {:>10}",
         "scenario",
         "runs",
         "median",
         "avg",
+        "stddev",
         "min",
         "max",
         "cache-bytes",
@@ -779,11 +791,12 @@ fn print_report(scenarios: &[ScenarioMeasurement]) {
     );
     for scenario in scenarios {
         println!(
-            "{:<24} {:>4} {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>12} {:>10} {:>10} {:>10}",
+            "{:<24} {:>4} {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>12} {:>10} {:>10} {:>10}",
             scenario.name,
             scenario.runs,
             scenario.median_ms,
             scenario.avg_ms,
+            scenario.stddev_ms,
             scenario.min_ms,
             scenario.max_ms,
             scenario.bytes_from_cache,
@@ -794,13 +807,14 @@ fn print_report(scenarios: &[ScenarioMeasurement]) {
     }
 }
 
-fn print_comparison(previous: &[ScenarioMeasurement], current: &[ScenarioMeasurement]) {
+fn print_comparison(previous: &[ScenarioMeasurement], current: &[ScenarioMeasurement]) -> bool {
     println!();
     println!("Baseline comparison");
     println!(
-        "{:<24} {:>12} {:>12} {:>12}",
-        "scenario", "prev-med", "curr-med", "delta"
+        "{:<24} {:>12} {:>12} {:>12} {:>12} {:>12}",
+        "scenario", "prev-med", "curr-med", "delta", "prev-σ", "curr-σ"
     );
+    let mut has_regression = false;
 
     for current_scenario in current {
         let Some(previous_scenario) = previous
@@ -808,11 +822,13 @@ fn print_comparison(previous: &[ScenarioMeasurement], current: &[ScenarioMeasure
             .find(|candidate| candidate.name == current_scenario.name)
         else {
             println!(
-                "{:<24} {:>12} {:>12.2}ms {:>12}",
+                "{:<24} {:>12} {:>12.2}ms {:>12} {:>12} {:>12}",
                 current_scenario.name,
                 "-",
                 current_scenario.median_ms,
-                "new"
+                "new",
+                "-",
+                format!("{:.2}ms", current_scenario.stddev_ms),
             );
             continue;
         };
@@ -823,14 +839,79 @@ fn print_comparison(previous: &[ScenarioMeasurement], current: &[ScenarioMeasure
         } else {
             0.0
         };
+        if delta_pct > 10.0 {
+            has_regression = true;
+        }
+        let flag = if delta_pct > 10.0 { " ⚠️" } else { "" };
         println!(
-            "{:<24} {:>8.2}ms {:>8.2}ms {:>11.2}%",
+            "{:<24} {:>8.2}ms {:>8.2}ms {:>10.2}%{:>4} {:>8.2}ms {:>8.2}ms",
             current_scenario.name,
             previous_scenario.median_ms,
             current_scenario.median_ms,
-            delta_pct
+            delta_pct,
+            flag,
+            previous_scenario.stddev_ms,
+            current_scenario.stddev_ms,
         );
     }
+
+    has_regression
+}
+
+fn acquire_baseline_lock(name: &str) -> anyhow::Result<()> {
+    let lock_path = baseline_lock_path(name);
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let max_attempts = 10usize;
+    let retry_delay = std::time::Duration::from_millis(200);
+    for attempt in 0..max_attempts {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(_file) => {
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if is_stale_lock(&lock_path) {
+                    let _ = std::fs::remove_file(&lock_path);
+                    continue;
+                }
+                if attempt + 1 < max_attempts {
+                    std::thread::sleep(retry_delay);
+                }
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("failed to acquire baseline lock: {e}"));
+            }
+        }
+    }
+    Err(anyhow::anyhow!(
+        "baseline '{name}' is locked by another process (lock exists at {})",
+        lock_path.display()
+    ))
+}
+
+fn release_baseline_lock(name: &str) -> anyhow::Result<()> {
+    let lock_path = baseline_lock_path(name);
+    let _ = std::fs::remove_file(&lock_path);
+    Ok(())
+}
+
+fn baseline_lock_path(name: &str) -> PathBuf {
+    let mut path = baseline_path(name);
+    path.set_extension("lock");
+    path
+}
+
+fn is_stale_lock(lock_path: &Path) -> bool {
+    std::fs::metadata(lock_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age.as_secs() > 60)
 }
 
 fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
