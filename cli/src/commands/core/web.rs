@@ -1,8 +1,11 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
+use mg_crypto::HashAlgorithm;
+use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta, WorkspaceLock};
 use mg_types::adapter::PackageAdapter;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -206,7 +209,8 @@ pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
 /// Install web dependencies
 pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
     let root = project_root()?;
-    let adapter = mg_web_adapter::WebAdapter::new();
+    let adapter = Arc::new(mg_web_adapter::WebAdapter::new());
+    let targets = install_targets(&root)?;
 
     for pkg in &packages {
         let spinner = mg_ui::create_spinner(&format!("  Adding {}...", pkg));
@@ -216,11 +220,18 @@ pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
         spinner.finish_and_clear();
     }
 
-    for target in install_targets(&root)? {
-        if target.join("package.json").exists() {
-            shared::install_with_adapter(&adapter, &target, "mg add", frozen).await?;
-        } else {
-            native_install_target(&target)?;
+    let project_mode = detect_project_mode(&root)?;
+    if matches!(project_mode, WebProjectMode::Monorepo) {
+        install_monorepo_targets(&adapter, &targets, frozen).await?;
+        link_monorepo_workspace_packages(&root, &targets)?;
+        write_monorepo_root_lockfile(&root, &targets)?;
+    } else {
+        for target in &targets {
+            if target.join("package.json").exists() {
+                shared::install_with_adapter(adapter.as_ref(), target, "mg add", frozen).await?;
+            } else {
+                native_install_target(target)?;
+            }
         }
     }
 
@@ -272,11 +283,19 @@ struct DevPackageJson {
 struct WorkspaceConfig {
     mode: Option<String>,
     layout: Option<WorkspaceLayout>,
+    workspace: Option<WorkspaceManifest>,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceLayout {
     apps_dir: Option<String>,
+    packages_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceManifest {
+    apps: Option<Vec<String>>,
+    packages: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -329,7 +348,7 @@ fn workspace_frontend_dir(project_root: &Path) -> Result<PathBuf> {
     if workspace_path.exists() {
         let contents = std::fs::read_to_string(&workspace_path)?;
         let config: WorkspaceConfig = toml::from_str(&contents)?;
-        if config.mode.as_deref() == Some("monorepo") {
+        if is_workspace_monorepo(&config) {
             let apps_dir = config
                 .layout
                 .as_ref()
@@ -346,7 +365,7 @@ fn workspace_backend_dir(project_root: &Path) -> Result<PathBuf> {
     if workspace_path.exists() {
         let contents = std::fs::read_to_string(&workspace_path)?;
         let config: WorkspaceConfig = toml::from_str(&contents)?;
-        if config.mode.as_deref() == Some("monorepo") {
+        if is_workspace_monorepo(&config) {
             let apps_dir = config
                 .layout
                 .as_ref()
@@ -363,7 +382,7 @@ fn detect_project_mode(project_root: &Path) -> Result<WebProjectMode> {
     if workspace_path.exists() {
         let contents = std::fs::read_to_string(&workspace_path)?;
         let config: WorkspaceConfig = toml::from_str(&contents)?;
-        if config.mode.as_deref() == Some("monorepo") {
+        if is_workspace_monorepo(&config) {
             return Ok(WebProjectMode::Monorepo);
         }
     }
@@ -382,35 +401,339 @@ fn install_targets(project_root: &Path) -> Result<Vec<PathBuf>> {
             project_root.to_path_buf(),
             project_root.join("server"),
         ]),
-        WebProjectMode::Monorepo => {
-            let mut targets = Vec::new();
+        WebProjectMode::Monorepo => discover_monorepo_install_targets(project_root),
+    }
+}
 
-            let frontend = workspace_frontend_dir(project_root)?;
-            if frontend.join("package.json").exists() {
-                targets.push(frontend);
+fn is_workspace_monorepo(config: &WorkspaceConfig) -> bool {
+    if config.mode.as_deref() == Some("monorepo") {
+        return true;
+    }
+
+    config.workspace.as_ref().is_some_and(|workspace| {
+        workspace.apps.as_ref().is_some_and(|apps| !apps.is_empty())
+            || workspace
+                .packages
+                .as_ref()
+                .is_some_and(|packages| !packages.is_empty())
+    })
+}
+
+fn discover_monorepo_install_targets(project_root: &Path) -> Result<Vec<PathBuf>> {
+    let workspace_path = project_root.join("megagate.workspace.toml");
+    let mut targets = Vec::new();
+
+    let (apps_dir, packages_dir) = if workspace_path.exists() {
+        let contents = std::fs::read_to_string(&workspace_path)?;
+        let config: WorkspaceConfig = toml::from_str(&contents)?;
+        let apps_dir = config
+            .layout
+            .as_ref()
+            .and_then(|layout| layout.apps_dir.as_deref())
+            .unwrap_or("apps");
+        let packages_dir = config
+            .layout
+            .as_ref()
+            .and_then(|layout| layout.packages_dir.as_deref())
+            .unwrap_or("packages");
+        (apps_dir.to_string(), packages_dir.to_string())
+    } else {
+        ("apps".to_string(), "packages".to_string())
+    };
+
+    collect_monorepo_installable_projects(project_root.join(apps_dir), &mut targets)?;
+    collect_monorepo_installable_projects(project_root.join(packages_dir), &mut targets)?;
+
+    targets.sort();
+    targets.dedup();
+    Ok(targets)
+}
+
+fn collect_monorepo_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result<()> {
+    if !root.exists() || !root.is_dir() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        if path.join("package.json").exists() || has_backend_manifest(&path) {
+            out.push(path);
+            continue;
+        }
+
+        collect_monorepo_installable_projects(path, out)?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspacePackageJson {
+    name: String,
+    #[serde(default)]
+    dependencies: std::collections::HashMap<String, String>,
+    #[serde(default, rename = "devDependencies")]
+    dev_dependencies: std::collections::HashMap<String, String>,
+    #[serde(default, rename = "peerDependencies")]
+    peer_dependencies: std::collections::HashMap<String, String>,
+    #[serde(default, rename = "optionalDependencies")]
+    optional_dependencies: std::collections::HashMap<String, String>,
+}
+
+fn link_monorepo_workspace_packages(project_root: &Path, targets: &[PathBuf]) -> Result<()> {
+    let package_targets = targets
+        .iter()
+        .filter(|path| path.join("package.json").exists())
+        .cloned()
+        .collect::<Vec<_>>();
+    if package_targets.is_empty() {
+        return Ok(());
+    }
+
+    let mut workspace_index = std::collections::HashMap::<String, PathBuf>::new();
+    let mut manifests = Vec::new();
+
+    for target in &package_targets {
+        let manifest = read_workspace_package_manifest(target)?;
+        workspace_index.insert(manifest.name.clone(), target.clone());
+        manifests.push((target.clone(), manifest));
+    }
+
+    for (target, manifest) in manifests {
+        let node_modules = target.join("node_modules");
+        std::fs::create_dir_all(&node_modules)?;
+
+        for (dep_name, spec) in manifest
+            .dependencies
+            .into_iter()
+            .chain(manifest.dev_dependencies.into_iter())
+            .chain(manifest.peer_dependencies.into_iter())
+            .chain(manifest.optional_dependencies.into_iter())
+        {
+            if !spec.trim().starts_with("workspace:") {
+                continue;
             }
+            let Some(source_dir) = workspace_index.get(&dep_name) else {
+                bail!(
+                    "workspace dependency '{}' referenced by '{}' was not found under '{}'",
+                    dep_name,
+                    target.display(),
+                    project_root.display()
+                );
+            };
 
-            let backend = workspace_backend_dir(project_root)?;
-            if has_backend_manifest(&backend) {
-                targets.push(backend);
+            let link_path = node_modules.join(dep_name.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if let Some(parent) = link_path.parent() {
+                std::fs::create_dir_all(parent)?;
             }
-
-            let packages_dir = project_root.join("packages");
-            if packages_dir.exists() {
-                let mut package_paths = std::fs::read_dir(&packages_dir)?
-                    .filter_map(|entry| entry.ok().map(|item| item.path()))
-                    .collect::<Vec<_>>();
-                package_paths.sort();
-                for path in package_paths {
-                    if path.join("package.json").exists() {
-                        targets.push(path);
-                    }
+            if link_path.exists() {
+                let metadata = std::fs::symlink_metadata(&link_path)?;
+                if metadata.file_type().is_symlink() || metadata.is_file() {
+                    std::fs::remove_file(&link_path)?;
+                } else if metadata.is_dir() {
+                    std::fs::remove_dir_all(&link_path)?;
                 }
             }
-
-            Ok(targets)
+            create_workspace_dir_link(source_dir, &link_path)?;
         }
     }
+
+    Ok(())
+}
+
+fn read_workspace_package_manifest(project_root: &Path) -> Result<WorkspacePackageJson> {
+    let path = project_root.join("package.json");
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read workspace package manifest '{}'", path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse workspace package manifest '{}'", path.display()))
+}
+
+async fn install_monorepo_targets(
+    adapter: &Arc<mg_web_adapter::WebAdapter>,
+    targets: &[PathBuf],
+    frozen: bool,
+) -> Result<()> {
+    let mut native_targets = Vec::new();
+    let mut package_targets = Vec::new();
+
+    for target in targets {
+        if target.join("package.json").exists() {
+            package_targets.push(target.clone());
+        } else {
+            native_targets.push(target.clone());
+        }
+    }
+
+    let concurrency = std::thread::available_parallelism()
+        .map(|count| count.get().min(4))
+        .unwrap_or(2)
+        .max(1);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for target in package_targets {
+        let adapter = Arc::clone(adapter);
+        let semaphore = Arc::clone(&semaphore);
+        join_set.spawn(async move {
+            let _permit = semaphore
+                .acquire_owned()
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
+            install_web_target_quiet(adapter.as_ref(), &target, frozen).await?;
+            Ok::<PathBuf, anyhow::Error>(target)
+        });
+    }
+
+    while let Some(result) = join_set.join_next().await {
+        result.map_err(|e| anyhow::anyhow!("monorepo install task failed: {e}"))??;
+    }
+
+    for target in native_targets {
+        native_install_target(&target)?;
+    }
+
+    Ok(())
+}
+
+async fn install_web_target_quiet(
+    adapter: &dyn PackageAdapter,
+    target: &Path,
+    frozen: bool,
+) -> Result<()> {
+    let execution = shared::prepare_install_execution(adapter, target, frozen, None).await?;
+    if execution.graph.is_empty() {
+        return Ok(());
+    }
+    adapter.install(&execution.graph, target).await?;
+    Ok(())
+}
+
+fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Result<()> {
+    let package_targets = targets
+        .iter()
+        .filter(|path| path.join("package.json").exists())
+        .collect::<Vec<_>>();
+    if package_targets.is_empty() {
+        return Ok(());
+    }
+
+    let mut frameworks = std::collections::BTreeSet::new();
+    let mut packages = std::collections::BTreeMap::<(String, String), LockPackage>::new();
+    let mut workspaces = Vec::new();
+    let mut total_packages = 0usize;
+
+    for target in package_targets {
+        let Some(lock) = mg_web_adapter::read_web_lockfile(target) else {
+            continue;
+        };
+
+        let package_manifest = read_workspace_package_manifest(target)?;
+        let rel_path = target
+            .strip_prefix(project_root)
+            .unwrap_or(target)
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+
+        total_packages += lock.packages.len();
+        frameworks.extend(lock.frameworks.iter().cloned());
+        workspaces.push(WorkspaceLock {
+            path: rel_path,
+            name: package_manifest.name,
+            mode: lock.mode.clone(),
+            frameworks: lock.frameworks.clone(),
+            package_count: lock.packages.len(),
+        });
+
+        for pkg in lock.packages {
+            let key = (pkg.name.clone(), pkg.version.clone());
+            match packages.get_mut(&key) {
+                Some(existing) => {
+                    existing.direct |= pkg.direct;
+                    existing.dev |= pkg.dev;
+                    if existing.integrity.is_none() {
+                        existing.integrity = pkg.integrity.clone();
+                    }
+                    for dep in pkg.dependencies {
+                        if !existing.dependencies.contains(&dep) {
+                            existing.dependencies.push(dep);
+                        }
+                    }
+                    existing.dependencies.sort();
+                }
+                None => {
+                    packages.insert(key, pkg);
+                }
+            }
+        }
+    }
+
+    if workspaces.is_empty() {
+        return Ok(());
+    }
+
+    workspaces.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut lockfile = Lockfile::new("web", "monorepo");
+    lockfile.frameworks = frameworks.into_iter().collect();
+    lockfile.resolution = ResolutionMeta {
+        state: "locked".to_string(),
+        store: "megagate".to_string(),
+        package_count: total_packages,
+    };
+    lockfile.workspaces = workspaces;
+    lockfile.packages = packages.into_values().collect();
+
+    let lock_toml = serialization::to_toml(&lockfile)?;
+    atomic_write(&project_root.join("mg.lock"), lock_toml.as_bytes())?;
+    let checksum = mg_crypto::hash(lock_toml.as_bytes(), HashAlgorithm::Sha256)?;
+    atomic_write(&project_root.join("mg.lock.sha256"), checksum.as_bytes())?;
+    Ok(())
+}
+
+fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let tmp_path = dir.join(format!(".mg-tmp-{}", std::process::id()));
+    std::fs::write(&tmp_path, data)
+        .with_context(|| format!("failed to write temp file '{}'", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, path).with_context(|| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!(
+            "failed to rename temp file '{}' into '{}'",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_workspace_dir_link(source: &Path, target: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(source, target).with_context(|| {
+        format!(
+            "failed to symlink workspace package '{}' -> '{}'",
+            target.display(),
+            source.display()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn create_workspace_dir_link(source: &Path, target: &Path) -> Result<()> {
+    std::os::windows::fs::symlink_dir(source, target).with_context(|| {
+        format!(
+            "failed to symlink workspace package '{}' -> '{}'",
+            target.display(),
+            source.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn dev_targets(
@@ -418,8 +741,8 @@ fn dev_targets(
     host: Option<String>,
     port: Option<u16>,
 ) -> Result<Vec<DevTarget>> {
-    let fullstack_backend_port = port.map(|value| value.saturating_add(1)).or(Some(3000));
-    let monorepo_backend_port = port.map(|value| value.saturating_add(1)).or(Some(4000));
+    let fullstack_backend_port = Some(3000);
+    let monorepo_backend_port = Some(4000);
 
     match detect_project_mode(project_root)? {
         WebProjectMode::Standalone => Ok(vec![DevTarget {
@@ -1151,6 +1474,7 @@ struct FrameworkRequest {
     version: Option<String>,
 }
 
+#[allow(dead_code)]
 pub async fn run_create(framework: &str, project_name: &str) -> Result<()> {
     run_create_with_options(framework, project_name, None).await
 }
@@ -1167,6 +1491,7 @@ pub async fn run_create_with_options(
     }
 
     let fe_framework = resolve_framework(Some(framework), &flags)?;
+    enforce_framework_language_defaults(&fe_framework, &mut flags);
     validate_flags(&flags, &fe_framework)?;
 
     info(&format!(
@@ -1339,6 +1664,17 @@ fn build_web_config(
     }
 
     Ok(config)
+}
+
+fn enforce_framework_language_defaults(framework: &str, flags: &mut ScaffoldFlags) {
+    let frontend = parse_framework_request(framework);
+    let backend = detect_backend_framework(flags)
+        .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string));
+
+    if frontend.normalized == "nestjs" || backend.as_deref() == Some("nestjs") {
+        flags.ts = true;
+        flags.js = false;
+    }
 }
 
 fn web_features(flags: &ScaffoldFlags) -> Vec<String> {
@@ -3185,8 +3521,8 @@ apps_dir = "apps"
         assert_eq!(
             monorepo_targets,
             vec![
-                monorepo.path().join("apps/frontend"),
                 monorepo.path().join("apps/backend"),
+                monorepo.path().join("apps/frontend"),
                 monorepo.path().join("packages/contracts")
             ]
         );
@@ -3223,10 +3559,174 @@ apps_dir = "apps"
         assert_eq!(
             monorepo_targets,
             vec![
-                monorepo.path().join("apps/frontend"),
-                monorepo.path().join("apps/backend")
+                monorepo.path().join("apps/backend"),
+                monorepo.path().join("apps/frontend")
             ]
         );
+    }
+
+    #[test]
+    fn test_install_targets_detect_workspace_manifest_without_mode_flag() {
+        let monorepo = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(monorepo.path().join("apps/frontend")).unwrap();
+        std::fs::create_dir_all(monorepo.path().join("apps/backend")).unwrap();
+        std::fs::create_dir_all(monorepo.path().join("packages/shared")).unwrap();
+        std::fs::write(monorepo.path().join("apps/frontend/package.json"), "{}").unwrap();
+        std::fs::write(monorepo.path().join("apps/backend/package.json"), "{}").unwrap();
+        std::fs::write(monorepo.path().join("packages/shared/package.json"), "{}").unwrap();
+        std::fs::write(
+            monorepo.path().join("megagate.workspace.toml"),
+            r#"
+version = 1
+
+[workspace]
+apps = ["apps/*"]
+packages = ["packages/*"]
+"#,
+        )
+        .unwrap();
+
+        let targets = install_targets(monorepo.path()).unwrap();
+        assert_eq!(
+            targets,
+            vec![
+                monorepo.path().join("apps/backend"),
+                monorepo.path().join("apps/frontend"),
+                monorepo.path().join("packages/shared"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_link_monorepo_workspace_packages_symlinks_workspace_deps() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        let shared = monorepo.path().join("packages/shared");
+        std::fs::create_dir_all(&frontend).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            frontend.join("package.json"),
+            serde_json::json!({
+                "name": "@core/frontend",
+                "version": "0.1.0",
+                "dependencies": {
+                    "@core/shared": "workspace:*"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            shared.join("package.json"),
+            serde_json::json!({
+                "name": "@core/shared",
+                "version": "0.1.0"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        link_monorepo_workspace_packages(monorepo.path(), &[frontend.clone(), shared.clone()])
+            .unwrap();
+
+        let linked = frontend.join("node_modules").join("@core").join("shared");
+        assert!(linked.exists());
+        let metadata = std::fs::symlink_metadata(&linked).unwrap();
+        assert!(metadata.file_type().is_symlink() || metadata.is_dir());
+    }
+
+    #[test]
+    fn test_write_monorepo_root_lockfile_aggregates_child_workspace_locks() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        let shared = monorepo.path().join("packages/shared");
+        std::fs::create_dir_all(&frontend).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+
+        std::fs::write(
+            frontend.join("package.json"),
+            serde_json::json!({
+                "name": "@core/frontend",
+                "version": "0.1.0"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            shared.join("package.json"),
+            serde_json::json!({
+                "name": "@core/shared",
+                "version": "0.1.0"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut frontend_lock = Lockfile::new("web", "frontend");
+        frontend_lock.frameworks = vec!["react-vite".to_string()];
+        frontend_lock.resolution = ResolutionMeta {
+            state: "locked".to_string(),
+            store: "megagate".to_string(),
+            package_count: 2,
+        };
+        frontend_lock.packages = vec![
+            LockPackage {
+                name: "react".to_string(),
+                version: "19.2.0".to_string(),
+                integrity: Some("sha512-react".to_string()),
+                direct: true,
+                dev: false,
+                dependencies: vec![],
+            },
+            LockPackage {
+                name: "@core/shared".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: None,
+                direct: true,
+                dev: false,
+                dependencies: vec![],
+            },
+        ];
+        std::fs::write(
+            frontend.join("mg.lock"),
+            serialization::to_toml(&frontend_lock).unwrap(),
+        )
+        .unwrap();
+
+        let mut shared_lock = Lockfile::new("web", "package");
+        shared_lock.frameworks = vec!["library".to_string()];
+        shared_lock.resolution = ResolutionMeta {
+            state: "locked".to_string(),
+            store: "megagate".to_string(),
+            package_count: 1,
+        };
+        shared_lock.packages = vec![LockPackage {
+            name: "zod".to_string(),
+            version: "4.0.0".to_string(),
+            integrity: Some("sha512-zod".to_string()),
+            direct: true,
+            dev: false,
+            dependencies: vec![],
+        }];
+        std::fs::write(
+            shared.join("mg.lock"),
+            serialization::to_toml(&shared_lock).unwrap(),
+        )
+        .unwrap();
+
+        write_monorepo_root_lockfile(monorepo.path(), &[frontend.clone(), shared.clone()]).unwrap();
+
+        let root_lock = std::fs::read_to_string(monorepo.path().join("mg.lock")).unwrap();
+        let parsed: Lockfile = serialization::from_toml(&root_lock).unwrap();
+        assert_eq!(parsed.mode, "monorepo");
+        assert_eq!(parsed.workspaces.len(), 2);
+        assert_eq!(parsed.workspaces[0].path, "apps/frontend");
+        assert_eq!(parsed.workspaces[1].path, "packages/shared");
+        assert_eq!(parsed.resolution.package_count, 3);
+        assert!(parsed.frameworks.contains(&"react-vite".to_string()));
+        assert!(parsed.frameworks.contains(&"library".to_string()));
+        assert_eq!(parsed.packages.len(), 3);
+        assert!(monorepo.path().join("mg.lock.sha256").exists());
     }
 
     #[test]
@@ -3314,6 +3814,6 @@ apps_dir = "apps"
         assert_eq!(targets[0].dir, dir.path());
         assert_eq!(targets[0].port, Some(4318));
         assert_eq!(targets[1].dir, dir.path().join("server"));
-        assert_eq!(targets[1].port, Some(4319));
+        assert_eq!(targets[1].port, Some(3000));
     }
 }

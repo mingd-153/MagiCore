@@ -1,8 +1,1 @@
-export function buildStatusPayload(service) {
-  return {
-    status: "ok",
-    service,
-    timestamp: new Date().toISOString(),
-    mode: "fullstack",
-  };
-}
+export const status = { ok: "ok" };

@@ -23,12 +23,10 @@ exclude_features = ["typescript"]
 [[files]]
 source = "server/tsconfig.json"
 target = "server/tsconfig.json"
-include_features = ["typescript"]
 
 [[files]]
 source = "server/server.ts"
 target = "server/src/server.ts"
-include_features = ["typescript"]
 
 [[files]]
 source = "server/server.js"
@@ -36,13 +34,30 @@ target = "server/src/server.js"
 exclude_features = ["typescript"]
 
 [[files]]
-source = "server/app.ts"
-target = "server/src/app.ts"
-include_features = ["typescript"]
+source = "server/app.module.ts"
+target = "server/src/app.module.ts"
 
 [[files]]
-source = "server/app.js"
-target = "server/src/app.js"
+source = "server/app.module.js"
+target = "server/src/app.module.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/app.controller.ts"
+target = "server/src/app.controller.ts"
+
+[[files]]
+source = "server/app.controller.js"
+target = "server/src/app.controller.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/app.service.ts"
+target = "server/src/app.service.ts"
+
+[[files]]
+source = "server/app.service.js"
+target = "server/src/app.service.js"
 exclude_features = ["typescript"]
 
 [[files]]

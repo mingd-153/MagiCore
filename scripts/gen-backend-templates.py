@@ -32,6 +32,7 @@ app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     "package.ts.json": """{
   "name": "@project/backend",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -43,6 +44,7 @@ app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     "package.js.json": """{
   "name": "@project/backend",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "node --watch src/server.js",
@@ -84,6 +86,272 @@ EXPOSE 3000
 CMD ["node", "dist/server.js"]
 """,
 }
+
+FASTIFY_TS_SERVER = """import { app } from "./app.js";
+
+const port = parseInt(process.env.PORT || "3000", 10);
+await app.listen({ host: "0.0.0.0", port });
+console.log(`Server running on :${port}`);
+"""
+
+FASTIFY_JS_SERVER = """import { app } from "./app.js";
+
+const port = parseInt(process.env.PORT || "3000", 10);
+await app.listen({ host: "0.0.0.0", port });
+console.log(`Server running on :${port}`);
+"""
+
+FASTIFY_TS_APP = """import Fastify from "fastify";
+
+export const app = Fastify({ logger: false });
+
+app.get("/health", async () => ({ status: "ok" }));
+"""
+
+FASTIFY_JS_APP = """import Fastify from "fastify";
+
+export const app = Fastify({ logger: false });
+
+app.get("/health", async () => ({ status: "ok" }));
+"""
+
+HONO_TS_SERVER = """import { serve } from "@hono/node-server";
+import { app } from "./app.js";
+
+const port = parseInt(process.env.PORT || "3000", 10);
+serve({ fetch: app.fetch, port });
+console.log(`Server running on :${port}`);
+"""
+
+HONO_JS_SERVER = """import { serve } from "@hono/node-server";
+import { app } from "./app.js";
+
+const port = parseInt(process.env.PORT || "3000", 10);
+serve({ fetch: app.fetch, port });
+console.log(`Server running on :${port}`);
+"""
+
+HONO_TS_APP = """import { Hono } from "hono";
+
+export const app = new Hono();
+
+app.get("/health", (c) => c.json({ status: "ok" }));
+"""
+
+HONO_JS_APP = """import { Hono } from "hono";
+
+export const app = new Hono();
+
+app.get("/health", (c) => c.json({ status: "ok" }));
+"""
+
+TRPC_TS_APP = """import express from "express";
+import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { appRouter } from "./router.js";
+import { createContext } from "./context.js";
+
+export const app = express();
+
+app.use("/trpc", createExpressMiddleware({ router: appRouter, createContext }));
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
+"""
+
+TRPC_JS_APP = """import express from "express";
+import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { appRouter } from "./router.js";
+import { createContext } from "./context.js";
+
+export const app = express();
+
+app.use("/trpc", createExpressMiddleware({ router: appRouter, createContext }));
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
+"""
+
+TRPC_TS_TRPC = """import { initTRPC } from "@trpc/server";
+
+const t = initTRPC.create();
+
+export const router = t.router;
+export const publicProcedure = t.procedure;
+"""
+
+TRPC_JS_TRPC = """import { initTRPC } from "@trpc/server";
+
+const t = initTRPC.create();
+
+export const router = t.router;
+export const publicProcedure = t.procedure;
+"""
+
+TRPC_TS_ROUTER = """import { z } from "zod";
+import { router, publicProcedure } from "./trpc.js";
+
+export const appRouter = router({
+  greeting: publicProcedure
+    .input(z.object({ name: z.string().optional() }).optional())
+    .query(({ input }) => `hello ${input?.name ?? "megagate"}`),
+});
+
+export type AppRouter = typeof appRouter;
+"""
+
+TRPC_JS_ROUTER = """import { z } from "zod";
+import { router, publicProcedure } from "./trpc.js";
+
+export const appRouter = router({
+  greeting: publicProcedure
+    .input(z.object({ name: z.string().optional() }).optional())
+    .query(({ input }) => `hello ${input?.name ?? "megagate"}`),
+});
+"""
+
+TRPC_TS_CONTEXT = """export async function createContext() {
+  return {};
+}
+"""
+
+TRPC_JS_CONTEXT = """export async function createContext() {
+  return {};
+}
+"""
+
+NESTJS_PACKAGE_TS = """{
+  "name": "@project/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}
+"""
+
+NESTJS_PACKAGE_JS = """{
+  "name": "@project/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}
+"""
+
+NESTJS_TSCONFIG = """{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
+"""
+
+NESTJS_SERVER_TS = """import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module.js";
+
+const port = parseInt(process.env.PORT || "3000", 10);
+const app = await NestFactory.create(AppModule);
+await app.listen(port);
+console.log(`Server running on :${port}`);
+"""
+
+NESTJS_SERVER_JS = """import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module.js";
+
+const port = parseInt(process.env.PORT || "3000", 10);
+const app = await NestFactory.create(AppModule);
+await app.listen(port);
+console.log(`Server running on :${port}`);
+"""
+
+NESTJS_APP_MODULE_TS = """import { Module } from "@nestjs/common";
+import { AppController } from "./app.controller.js";
+import { AppService } from "./app.service.js";
+
+@Module({
+  imports: [],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+"""
+
+NESTJS_APP_MODULE_JS = """import { Module } from "@nestjs/common";
+import { AppController } from "./app.controller.js";
+import { AppService } from "./app.service.js";
+
+@Module({
+  imports: [],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+"""
+
+NESTJS_APP_CONTROLLER_TS = """import { Controller, Get } from "@nestjs/common";
+
+@Controller()
+export class AppController {
+  @Get("/health")
+  health() {
+    return { status: "ok" };
+  }
+}
+"""
+
+NESTJS_APP_CONTROLLER_JS = """import { Controller, Get } from "@nestjs/common";
+
+@Controller()
+export class AppController {
+  @Get("/health")
+  health() {
+    return { status: "ok" };
+  }
+}
+"""
+
+NESTJS_APP_SERVICE_TS = """import { Injectable } from "@nestjs/common";
+
+@Injectable()
+export class AppService {
+  health() {
+    return { status: "ok" };
+  }
+}
+"""
+
+NESTJS_APP_SERVICE_JS = """import { Injectable } from "@nestjs/common";
+
+@Injectable()
+export class AppService {
+  health() {
+    return { status: "ok" };
+  }
+}
+"""
+
+NESTJS_TEST_TS = """import { describe, it, expect } from "vitest";
+import { AppModule } from "../src/app.module.js";
+
+describe("AppModule", () => {
+  it("exports module", () => {
+    expect(AppModule).toBeDefined();
+  });
+});
+"""
 
 NODE_TEST_SOURCES = {
     "vitest.config.ts": """import { defineConfig } from "vitest/config";
@@ -249,6 +517,79 @@ NODE_FWS = ["express", "fastify", "nestjs", "hono", "trpc"]
 NODE_FEATURES = ["eslint", "prettier", "vitest", "jest", "prisma", "drizzle", "docker"]
 
 def make_node_toml(fw):
+    if fw == "nestjs":
+        return """[[files]]
+source = "package.ts.json"
+target = "package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "package.js.json"
+target = "package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
+
+[[files]]
+source = "server.ts"
+target = "src/server.ts"
+
+[[files]]
+source = "server.js"
+target = "src/server.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.module.ts"
+target = "src/app.module.ts"
+
+[[files]]
+source = "app.module.js"
+target = "src/app.module.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.controller.ts"
+target = "src/app.controller.ts"
+
+[[files]]
+source = "app.controller.js"
+target = "src/app.controller.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.service.ts"
+target = "src/app.service.ts"
+
+[[files]]
+source = "app.service.js"
+target = "src/app.service.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "Dockerfile"
+target = "Dockerfile"
+include_features = ["docker"]
+
+[[files]]
+source = ".dockerignore"
+target = ".dockerignore"
+include_features = ["docker"]
+
+[[files]]
+source = "vitest.config.ts"
+target = "vitest.config.ts"
+include_features = ["vitest"]
+
+[[files]]
+source = "app.spec.ts"
+target = "src/app.spec.ts"
+include_features = ["vitest"]
+"""
     parts = []
     # Core files with TS/JS gating
     for ext in ["ts", "js"]:
@@ -307,6 +648,37 @@ source = "prisma.ts"
 target = "src/lib/prisma.ts"
 include_features = ["prisma"]
 """)
+    if fw == "trpc":
+        parts.append("""[[files]]
+source = "trpc.ts"
+target = "src/trpc.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "trpc.js"
+target = "src/trpc.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "router.ts"
+target = "src/router.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "router.js"
+target = "src/router.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "context.ts"
+target = "src/context.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "context.js"
+target = "src/context.js"
+exclude_features = ["typescript"]
+""")
     return "\n".join(parts)
 
 for fw in NODE_FWS:
@@ -314,8 +686,41 @@ for fw in NODE_FWS:
     ensure_dir(f"{d}/sources")
     for name, content in NODE_SOURCES.items():
         write_file(f"{d}/sources/{name}", content)
+    if fw == "fastify":
+        write_file(f"{d}/sources/server.ts", FASTIFY_TS_SERVER)
+        write_file(f"{d}/sources/server.js", FASTIFY_JS_SERVER)
+        write_file(f"{d}/sources/app.ts", FASTIFY_TS_APP)
+        write_file(f"{d}/sources/app.js", FASTIFY_JS_APP)
+    if fw == "hono":
+        write_file(f"{d}/sources/server.ts", HONO_TS_SERVER)
+        write_file(f"{d}/sources/server.js", HONO_JS_SERVER)
+        write_file(f"{d}/sources/app.ts", HONO_TS_APP)
+        write_file(f"{d}/sources/app.js", HONO_JS_APP)
+    if fw == "trpc":
+        write_file(f"{d}/sources/app.ts", TRPC_TS_APP)
+        write_file(f"{d}/sources/app.js", TRPC_JS_APP)
+        write_file(f"{d}/sources/trpc.ts", TRPC_TS_TRPC)
+        write_file(f"{d}/sources/trpc.js", TRPC_JS_TRPC)
+        write_file(f"{d}/sources/router.ts", TRPC_TS_ROUTER)
+        write_file(f"{d}/sources/router.js", TRPC_JS_ROUTER)
+        write_file(f"{d}/sources/context.ts", TRPC_TS_CONTEXT)
+        write_file(f"{d}/sources/context.js", TRPC_JS_CONTEXT)
+    if fw == "nestjs":
+        write_file(f"{d}/sources/package.ts.json", NESTJS_PACKAGE_TS)
+        write_file(f"{d}/sources/package.js.json", NESTJS_PACKAGE_JS)
+        write_file(f"{d}/sources/tsconfig.json", NESTJS_TSCONFIG)
+        write_file(f"{d}/sources/server.ts", NESTJS_SERVER_TS)
+        write_file(f"{d}/sources/server.js", NESTJS_SERVER_JS)
+        write_file(f"{d}/sources/app.module.ts", NESTJS_APP_MODULE_TS)
+        write_file(f"{d}/sources/app.module.js", NESTJS_APP_MODULE_JS)
+        write_file(f"{d}/sources/app.controller.ts", NESTJS_APP_CONTROLLER_TS)
+        write_file(f"{d}/sources/app.controller.js", NESTJS_APP_CONTROLLER_JS)
+        write_file(f"{d}/sources/app.service.ts", NESTJS_APP_SERVICE_TS)
+        write_file(f"{d}/sources/app.service.js", NESTJS_APP_SERVICE_JS)
     for name, content in NODE_TEST_SOURCES.items():
         write_file(f"{d}/sources/{name}", content)
+    if fw == "nestjs":
+        write_file(f"{d}/sources/app.spec.ts", NESTJS_TEST_TS)
     for name, content in NODE_ORM_SOURCES.items():
         write_file(f"{d}/sources/{name}", content)
     with open(f"{d}/template.toml", "w") as f:

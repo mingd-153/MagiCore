@@ -1,9 +1,11 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use mg_store::{Layout, PackageCache};
 use mg_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
 use mg_web_adapter::WebAdapter;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha512};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -63,6 +65,8 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
+    std::env::set_var("MEGAGATE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut runs = 7usize;
     let mut save_baseline: Option<String> = None;
@@ -354,7 +358,7 @@ fn standard_fixture() -> FixtureSpec {
         package_id("tailwindcss", "4.3.2"),
     ];
     FixtureSpec {
-        graph: make_graph(&direct_dependencies),
+        graph: make_graph(&direct_dependencies, 16),
         direct_dependencies,
         files_per_package: 16,
         scenario_prefix: "",
@@ -403,24 +407,27 @@ fn heavy_fixture() -> FixtureSpec {
 
     let graph = ResolvedGraph {
         packages: vec![
-            resolved_pkg(react.clone(), vec![scheduler.clone()], true),
+            resolved_pkg(react.clone(), vec![scheduler.clone()], true, 48),
             resolved_pkg(
                 react_dom.clone(),
                 vec![react.clone(), scheduler.clone()],
                 true,
+                48,
             ),
             resolved_pkg(
                 vite.clone(),
                 vec![typescript.clone(), semver7.clone()],
                 true,
+                48,
             ),
-            resolved_pkg(typescript.clone(), vec![tslib.clone()], true),
+            resolved_pkg(typescript.clone(), vec![tslib.clone()], true, 48),
             resolved_pkg(
                 tailwind.clone(),
                 vec![postcss.clone(), autoprefixer.clone()],
                 true,
+                48,
             ),
-            resolved_pkg(query.clone(), vec![query_core.clone()], true),
+            resolved_pkg(query.clone(), vec![query_core.clone()], true, 48),
             resolved_pkg(
                 admin_shell.clone(),
                 vec![
@@ -430,13 +437,15 @@ fn heavy_fixture() -> FixtureSpec {
                     color_tokens.clone(),
                 ],
                 true,
+                48,
             ),
             resolved_pkg(
                 legacy_tool.clone(),
                 vec![shared_util_v1.clone(), semver6.clone()],
                 true,
+                48,
             ),
-            resolved_pkg(scheduler.clone(), vec![], false),
+            resolved_pkg(scheduler.clone(), vec![], false, 48),
             resolved_pkg(
                 design_system.clone(),
                 vec![
@@ -445,34 +454,38 @@ fn heavy_fixture() -> FixtureSpec {
                     shared_util_v1.clone(),
                 ],
                 false,
+                48,
             ),
             resolved_pkg(
                 react_router.clone(),
                 vec![history.clone(), react.clone()],
                 false,
+                48,
             ),
             resolved_pkg(
                 postcss.clone(),
                 vec![source_map.clone(), browserslist.clone()],
                 false,
+                48,
             ),
-            resolved_pkg(query_core.clone(), vec![tslib.clone()], false),
-            resolved_pkg(semver7.clone(), vec![], false),
-            resolved_pkg(shared_util_v2.clone(), vec![tslib.clone()], false),
-            resolved_pkg(semver6.clone(), vec![], false),
-            resolved_pkg(source_map.clone(), vec![], false),
-            resolved_pkg(color_tokens.clone(), vec![], false),
-            resolved_pkg(icon_pack.clone(), vec![shared_util_v1.clone()], false),
-            resolved_pkg(history.clone(), vec![], false),
-            resolved_pkg(tslib.clone(), vec![], false),
-            resolved_pkg(shared_util_v1.clone(), vec![], false),
+            resolved_pkg(query_core.clone(), vec![tslib.clone()], false, 48),
+            resolved_pkg(semver7.clone(), vec![], false, 48),
+            resolved_pkg(shared_util_v2.clone(), vec![tslib.clone()], false, 48),
+            resolved_pkg(semver6.clone(), vec![], false, 48),
+            resolved_pkg(source_map.clone(), vec![], false, 48),
+            resolved_pkg(color_tokens.clone(), vec![], false, 48),
+            resolved_pkg(icon_pack.clone(), vec![shared_util_v1.clone()], false, 48),
+            resolved_pkg(history.clone(), vec![], false, 48),
+            resolved_pkg(tslib.clone(), vec![], false, 48),
+            resolved_pkg(shared_util_v1.clone(), vec![], false, 48),
             resolved_pkg(
                 autoprefixer.clone(),
                 vec![browserslist.clone(), postcss.clone()],
                 false,
+                48,
             ),
-            resolved_pkg(browserslist.clone(), vec![caniuse.clone()], false),
-            resolved_pkg(caniuse.clone(), vec![], false),
+            resolved_pkg(browserslist.clone(), vec![caniuse.clone()], false, 48),
+            resolved_pkg(caniuse.clone(), vec![], false, 48),
         ],
     };
 
@@ -631,27 +644,27 @@ fn package_id(name: &str, version: &str) -> PackageId {
     )
 }
 
-fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
+fn make_graph(packages: &[PackageId], files_per_package: usize) -> ResolvedGraph {
     ResolvedGraph {
         packages: packages
             .iter()
             .cloned()
-            .map(|id| ResolvedPackage {
-                id,
-                integrity: String::new(),
-                tarball_url: String::new(),
-                deps: vec![],
-                direct: true,
-                dev: false,
-            })
+            .map(|id| resolved_pkg(id, vec![], true, files_per_package))
             .collect(),
     }
 }
 
-fn resolved_pkg(id: PackageId, deps: Vec<PackageId>, direct: bool) -> ResolvedPackage {
+fn resolved_pkg(
+    id: PackageId,
+    deps: Vec<PackageId>,
+    direct: bool,
+    files_per_package: usize,
+) -> ResolvedPackage {
+    let bytes = build_tarball_bytes(&id, files_per_package)
+        .expect("benchmark fixture tarball should build");
     ResolvedPackage {
         id,
-        integrity: String::new(),
+        integrity: sri_sha512(&bytes),
         tarball_url: String::new(),
         deps,
         direct,
@@ -757,6 +770,11 @@ fn build_tarball_bytes(pkg: &PackageId, files_per_package: usize) -> anyhow::Res
     let encoder = builder.into_inner()?;
     encoder.finish()?;
     Ok(std::fs::read(temp.path())?)
+}
+
+fn sri_sha512(bytes: &[u8]) -> String {
+    let digest = Sha512::digest(bytes);
+    format!("sha512-{}", BASE64_STANDARD.encode(digest))
 }
 
 fn write_tar_entry(

@@ -5,6 +5,7 @@ members = [
     "cli",
     "tools/*",
 ]
+exclude = ["tools/core-web-lab"]
 resolver = "2"
 
 [workspace.package]
