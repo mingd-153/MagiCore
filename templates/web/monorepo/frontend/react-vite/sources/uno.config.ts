@@ -1,0 +1,1 @@
+../../../../frontend/react-vite/sources/uno.config.ts

@@ -1,29 +1,18 @@
 package main
 
 import (
-	"fmt"
-	"log"
-
-	"github.com/gin-gonic/gin"
+  "log"
+  "net/http"
+  "os"
 )
 
 func main() {
-	cfg := LoadConfig()
-	r := gin.Default()
-
-	r.GET("/health", HealthHandler)
-	r.GET("/status", func(c *gin.Context) {
-		c.JSON(200, GetStatus())
-	})
-	r.GET("/", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"service":   cfg.Name,
-			"framework": cfg.Framework,
-			"message":   "{{project_name}} backend scaffold ready",
-		})
-	})
-
-	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Starting %s (gin) on %s", cfg.Name, addr)
-	r.Run(addr)
+  port := os.Getenv("PORT")
+  if port == "" { port = "3000" }
+  http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.Write([]byte(`{"status":"ok"}`))
+  })
+  log.Printf("Listening on :%s", port)
+  log.Fatal(http.ListenAndServe(":"+port, nil))
 }

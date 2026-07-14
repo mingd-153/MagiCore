@@ -1,0 +1,1 @@
+../../../../frontend/vue-vite/sources/sentry.client.config.ts

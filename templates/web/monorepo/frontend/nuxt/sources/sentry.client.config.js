@@ -1,0 +1,1 @@
+../../../../frontend/nuxt/sources/sentry.client.config.js

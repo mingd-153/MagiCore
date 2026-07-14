@@ -1,0 +1,1 @@
+../../../../frontend/nextjs/sources/jest.config.ts

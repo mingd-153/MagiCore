@@ -1,5 +1,2 @@
-module {{project_slug}}-backend
-
-go 1.22.0
-
-require github.com/gofiber/fiber/v2 v2.52.0
+module github.com/{{ project_slug }}/api
+go 1.22

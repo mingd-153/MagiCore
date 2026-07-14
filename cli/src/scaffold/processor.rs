@@ -1663,4 +1663,115 @@ mod tests {
             .to_string()
             .contains("Scaffold for monorepo frontend framework 'ember' is not implemented yet"));
     }
+
+    #[test]
+    fn test_web_feature_gated_templates_materialize_only_when_active() {
+        let root = tempfile::tempdir().unwrap();
+
+        // Next.js with prisma + tailwindcss + eslint + prettier + vitest
+        let with_features = root.path().join("next-features");
+        let config = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["nextjs".to_string()],
+            project_name: with_features.to_string_lossy().to_string(),
+            features: vec![
+                "typescript".to_string(),
+                "prisma".to_string(),
+                "tailwindcss".to_string(),
+                "daisyui".to_string(),
+                "eslint".to_string(),
+                "prettier".to_string(),
+                "vitest".to_string(),
+            ],
+            template_dir: PathBuf::new(),
+        };
+        let out = Scaffolder::scaffold(&config).unwrap();
+        assert!(out.join("prisma").join("schema.prisma").exists());
+        assert!(out.join("tailwind.config.ts").exists());
+        assert!(out.join("postcss.config.mjs").exists());
+        assert!(out.join(".eslintrc.json").exists());
+        assert!(out.join(".prettierrc").exists());
+        assert!(out.join("vitest.config.ts").exists());
+
+        // Next.js without features — feature files must NOT exist
+        let no_features = root.path().join("next-bare");
+        let config_bare = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["nextjs".to_string()],
+            project_name: no_features.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let out_bare = Scaffolder::scaffold(&config_bare).unwrap();
+        assert!(!out_bare.join("prisma").join("schema.prisma").exists());
+        assert!(!out_bare.join("tailwind.config.ts").exists());
+        assert!(!out_bare.join(".eslintrc.json").exists());
+        assert!(!out_bare.join(".prettierrc").exists());
+        assert!(!out_bare.join("vitest.config.ts").exists());
+    }
+
+    #[test]
+    fn test_web_docker_templates_materialize_in_base_layer() {
+        let root = tempfile::tempdir().unwrap();
+
+        // Frontend with docker feature
+        let docker_dir = root.path().join("docker-app");
+        let config = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["nextjs".to_string()],
+            project_name: docker_dir.to_string_lossy().to_string(),
+            features: vec!["docker".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let out = Scaffolder::scaffold(&config).unwrap();
+        assert!(out.join("Dockerfile").exists());
+        assert!(out.join("docker-compose.yml").exists());
+        assert!(out.join(".dockerignore").exists());
+
+        // Without docker — no docker files
+        let no_docker = root.path().join("no-docker");
+        let config_no = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["nextjs".to_string()],
+            project_name: no_docker.to_string_lossy().to_string(),
+            features: vec!["typescript".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let out_no = Scaffolder::scaffold(&config_no).unwrap();
+        assert!(!out_no.join("Dockerfile").exists());
+        assert!(!out_no.join("docker-compose.yml").exists());
+    }
+
+    #[test]
+    fn test_web_postgres_env_template_materializes_with_feature() {
+        let root = tempfile::tempdir().unwrap();
+
+        let pg_dir = root.path().join("pg-app");
+        let config = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["nextjs".to_string()],
+            project_name: pg_dir.to_string_lossy().to_string(),
+            features: vec!["postgres".to_string()],
+            template_dir: PathBuf::new(),
+        };
+        let out = Scaffolder::scaffold(&config).unwrap();
+        assert!(out.join(".env").exists());
+
+        let no_pg = root.path().join("no-pg");
+        let config_no = ScaffoldConfig {
+            core: "web".to_string(),
+            sub_type: "frontend".to_string(),
+            frameworks: vec!["nextjs".to_string()],
+            project_name: no_pg.to_string_lossy().to_string(),
+            features: vec![],
+            template_dir: PathBuf::new(),
+        };
+        let out_no = Scaffolder::scaffold(&config_no).unwrap();
+        assert!(!out_no.join(".env").exists());
+    }
 }

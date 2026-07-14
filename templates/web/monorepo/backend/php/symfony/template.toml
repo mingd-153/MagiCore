@@ -1,39 +1,18 @@
 [[files]]
 source = "composer.json"
-target = "apps/backend/composer.json"
 required_context = ["project_slug"]
+target = "apps/backend/composer.json"
 
 [[files]]
-source = "bin/console"
-target = "apps/backend/bin/console"
-
-[[files]]
-source = "public/index.php"
+source = "index.php"
 target = "apps/backend/public/index.php"
 
 [[files]]
-source = "config/routes.yaml"
-target = "apps/backend/config/routes.yaml"
+source = "Dockerfile"
+target = "apps/backend/Dockerfile"
+include_features = ["docker"]
 
 [[files]]
-source = "config/packages/framework.yaml"
-target = "apps/backend/config/packages/framework.yaml"
-
-[[files]]
-source = "config/services.yaml"
-target = "apps/backend/config/services.yaml"
-required_context = ["project_name"]
-
-[[files]]
-source = "src/Kernel.php"
-target = "apps/backend/src/Kernel.php"
-
-[[files]]
-source = "src/Controller/HealthController.php"
-target = "apps/backend/src/Controller/HealthController.php"
-required_context = ["project_name"]
-
-[[files]]
-source = ".env"
-target = "apps/backend/.env"
-required_context = ["project_name"]
+source = ".dockerignore"
+target = "apps/backend/.dockerignore"
+include_features = ["docker"]

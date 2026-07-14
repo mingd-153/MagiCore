@@ -1,11 +1,9 @@
 {
-  "name": "{{project_slug}}-backend",
+  "name": "@project/backend",
   "private": true,
-    "version": "0.1.0",
-    "type": "module",
-    "scripts": {
-        "dev": "node --watch src/server.js",
-        "build": "node --check src/server.js",
-        "start": "node src/server.js"
-    }
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  }
 }
