@@ -163,13 +163,53 @@ fn effective_registry_url(default: &str) -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_string());
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://") && !allow_insecure_loopback_url(&url) {
         panic!(
             "registry URL must use HTTPS: '{url}' (set MEGAGATE_WEB_REGISTRY_URL to an HTTPS URL)"
         );
     }
     validate_registry_allowed(&url);
     url
+}
+
+fn allow_insecure_loopback_url(url: &str) -> bool {
+    #[cfg(test)]
+    {
+        let Ok(parsed) = url::Url::parse(url) else {
+            return false;
+        };
+        if parsed.scheme() != "http" {
+            return false;
+        }
+        return matches!(
+            parsed.host_str(),
+            Some("127.0.0.1") | Some("localhost") | Some("::1")
+        );
+    }
+
+    #[cfg(not(test))]
+    {
+        let flag = std::env::var("MEGAGATE_WEB_ALLOW_INSECURE_LOCALHOST")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let enabled = matches!(flag.as_str(), "1" | "true" | "yes" | "on");
+        if !enabled {
+            return false;
+        }
+
+        let Ok(parsed) = url::Url::parse(url) else {
+            return false;
+        };
+        if parsed.scheme() != "http" {
+            return false;
+        }
+
+        return matches!(
+            parsed.host_str(),
+            Some("127.0.0.1") | Some("localhost") | Some("::1")
+        );
+    }
 }
 
 fn validate_registry_allowed(url: &str) {
@@ -247,6 +287,9 @@ impl PackageAdapter for WebAdapter {
                 Some(deps) => {
                     let mut out = Vec::with_capacity(deps.len());
                     for (name, range) in deps {
+                        if is_workspace_protocol_range(&range) {
+                            continue;
+                        }
                         let pn = PackageName::new(name)?;
                         let vr = VersionRange::parse(&range)?;
                         out.push(mg_types::DependencySpec::new(pn, vr));
@@ -750,6 +793,10 @@ impl PackageAdapter for WebAdapter {
     async fn audit(&self, _: &Path) -> MgResult<AuditReport> {
         Ok(AuditReport::clean(0))
     }
+}
+
+fn is_workspace_protocol_range(range: &str) -> bool {
+    range.trim().starts_with("workspace:")
 }
 
 struct NpmDependencyProvider {
@@ -1494,11 +1541,18 @@ async fn prefetch_tarballs(
     shared_cache: Option<&SharedWebCache>,
     registry: &native::npm_registry::NpmRegistry,
 ) -> MgResult<u64> {
+    enum PrefetchOutcome {
+        CacheHit(u64),
+        Downloaded(ResolvedPackage, Vec<u8>),
+    }
+
     let mut bytes_from_cache = 0u64;
     let shared_package_cache = shared_cache
         .map(|shared| shared.package_cache())
         .transpose()
         .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+    let download_semaphore =
+        Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
     let mut downloads = tokio::task::JoinSet::new();
 
     for pkg in &graph.packages {
@@ -1533,9 +1587,49 @@ async fn prefetch_tarballs(
         }
 
         let pkg_clone = pkg.clone();
+        let local_cache = cache.clone();
+        let shared_package_cache = shared_package_cache.clone();
+        let download_semaphore = Arc::clone(&download_semaphore);
         let registry = native::npm_registry::NpmRegistry::new(registry.registry_url());
         downloads.spawn(async move {
+            let prefetch_lock = tarball_prefetch_lock(&pkg_clone.id);
+            let _guard = prefetch_lock.lock().await;
+
+            if let Some(bytes) = local_cache
+                .get_tarball(&pkg_clone.id)
+                .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+            {
+                if verify_tarball_integrity(&pkg_clone, &bytes).is_ok() {
+                    return Ok::<_, mg_types::MgError>(PrefetchOutcome::CacheHit(
+                        bytes.len() as u64,
+                    ));
+                }
+                let _ = std::fs::remove_file(local_cache.tarball_path(&pkg_clone.id));
+            }
+
+            if let Some(shared_package_cache) = shared_package_cache.as_ref() {
+                if let Some(bytes) = shared_package_cache
+                    .get_tarball(&pkg_clone.id)
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+                {
+                    if verify_tarball_integrity(&pkg_clone, &bytes).is_ok() {
+                        local_cache
+                            .cache_tarball(&pkg_clone.id, &bytes)
+                            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                        return Ok::<_, mg_types::MgError>(PrefetchOutcome::CacheHit(
+                            bytes.len() as u64,
+                        ));
+                    }
+                    let _ =
+                        std::fs::remove_file(shared_package_cache.tarball_path(&pkg_clone.id));
+                }
+            }
+
             let url = package_tarball_url(registry.registry_url(), &pkg_clone);
+            let _permit = download_semaphore
+                .acquire_owned()
+                .await
+                .map_err(|e| mg_types::MgError::Other(format!("download semaphore closed: {e}")))?;
             let bytes = registry.download_tarball(&url).await.map_err(|e| {
                 mg_types::MgError::Network(format!(
                     "download failed for '{}': {}",
@@ -1543,22 +1637,28 @@ async fn prefetch_tarballs(
                     e
                 ))
             })?;
-            Ok::<_, mg_types::MgError>((pkg_clone, bytes))
+            Ok::<_, mg_types::MgError>(PrefetchOutcome::Downloaded(pkg_clone, bytes))
         });
     }
 
     while let Some(joined) = downloads.join_next().await {
-        let (mut pkg, bytes) = joined
-            .map_err(|e| mg_types::MgError::Other(format!("download task failed: {e}")))??;
-        if pkg.integrity.is_empty() {
-            pkg.integrity = compute_tarball_integrity(&bytes);
-        }
-        verify_tarball_integrity(&pkg, &bytes)?;
-        cache
-            .cache_tarball(&pkg.id, &bytes)
-            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-        if let Some(shared_package_cache) = shared_package_cache.as_ref() {
-            let _ = shared_package_cache.cache_tarball(&pkg.id, &bytes);
+        match joined
+            .map_err(|e| mg_types::MgError::Other(format!("download task failed: {e}")))?? {
+            PrefetchOutcome::CacheHit(bytes) => {
+                bytes_from_cache += bytes;
+            }
+            PrefetchOutcome::Downloaded(mut pkg, bytes) => {
+                if pkg.integrity.is_empty() {
+                    pkg.integrity = compute_tarball_integrity(&bytes);
+                }
+                verify_tarball_integrity(&pkg, &bytes)?;
+                cache
+                    .cache_tarball(&pkg.id, &bytes)
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                if let Some(shared_package_cache) = shared_package_cache.as_ref() {
+                    let _ = shared_package_cache.cache_tarball(&pkg.id, &bytes);
+                }
+            }
         }
     }
 
@@ -1615,6 +1715,14 @@ fn shared_cache_prune_interval_secs() -> u64 {
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
         .unwrap_or(6 * 60 * 60)
+}
+
+fn download_concurrency_limit() -> usize {
+    std::env::var("MEGAGATE_WEB_DOWNLOAD_CONCURRENCY")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(24)
 }
 
 fn shared_cache_max_age_secs() -> u64 {
@@ -1775,7 +1883,9 @@ fn remove_dir_if_empty(path: &Path) {
 
 fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
     if !pkg.tarball_url.is_empty() {
-        if !pkg.tarball_url.starts_with("https://") {
+        if !pkg.tarball_url.starts_with("https://")
+            && !allow_insecure_loopback_url(&pkg.tarball_url)
+        {
             // tarball URL from registry must be HTTPS
             let registry = registry_url.trim_end_matches('/');
             let unscoped = pkg.id.name().unscoped();
@@ -1818,6 +1928,36 @@ fn shared_extracted_package_root(root: &Path, pkg: &ResolvedPackage) -> PathBuf 
         .join(safe_name)
         .join(cache_key)
         .join("package")
+}
+
+fn extracted_package_root_lock(root: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<()>>>>> =
+        OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let mut guard = match locks.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    guard
+        .entry(root.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+fn tarball_prefetch_lock(id: &PackageId) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: OnceLock<
+        Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    > = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let key = format!("{}@{}", id.name_str(), id.version());
+    let mut guard = match locks.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    guard
+        .entry(key)
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
 }
 
 fn extracted_package_cache_key(pkg: &ResolvedPackage) -> String {
@@ -2041,15 +2181,23 @@ fn ensure_extracted_package_root(
     let canonical_root = shared_cache
         .map(|shared| shared.extracted_package_root(pkg))
         .unwrap_or_else(|| local_extracted_package_root(layout, pkg));
+    let canonical_lock = extracted_package_root_lock(&canonical_root);
+    let _canonical_guard = match canonical_lock.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     if canonical_root.join("package.json").exists()
         && read_extracted_package_marker(&canonical_root)?
             .as_ref()
             .map(|marker| marker == &expected_marker)
             .unwrap_or(false)
     {
-        // Re-verify tarball integrity before trusting cache (TOCTOU mitigation)
-        if !tarball_path.exists() || verify_tarball_integrity(pkg, &std::fs::read(tarball_path)?).is_err() {
-            // cached tarball was tampered, remove and re-fetch will happen at caller
+        // Re-verify local tarball integrity when present before trusting cache.
+        // Missing local tarballs should not invalidate a valid shared extracted root.
+        if tarball_path.exists()
+            && verify_tarball_integrity(pkg, &std::fs::read(tarball_path)?).is_err()
+        {
+            // local tarball was tampered, remove and re-fetch will happen at caller
             let _ = std::fs::remove_file(tarball_path);
             let _ = std::fs::remove_dir_all(&canonical_root);
         } else {
@@ -2636,18 +2784,17 @@ mod tests {
         assert!(package_json.contains("\"dev\": \"mg web dev\""));
 
         let package_id = PackageId::new(name, Version::parse("3.4.0").unwrap());
+        let integrity = seed_cached_tarball(dir.path(), &package_id);
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: package_id.clone(),
-                integrity: String::new(),
+                integrity,
                 tarball_url: String::new(),
                 deps: vec![],
                 direct: true,
                 dev: false,
             }],
         };
-
-        seed_cached_tarball(dir.path(), &package_id);
         let summary = adapter.install(&graph, dir.path()).await.unwrap();
         assert_eq!(summary.added, vec![package_id]);
         assert!(dir
@@ -2691,7 +2838,7 @@ mod tests {
             PackageName::new("vite").unwrap(),
             Version::parse("8.1.4").unwrap(),
         );
-        seed_cached_tarball_with_files(
+        let integrity = seed_cached_tarball_with_files(
             dir.path(),
             &package_id,
             &[
@@ -2709,7 +2856,7 @@ mod tests {
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: package_id,
-                integrity: String::new(),
+                integrity,
                 tarball_url: String::new(),
                 deps: vec![],
                 direct: true,
@@ -3166,6 +3313,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "frontend",
+                "version": "0.1.0",
+                "dependencies": {
+                    "@core/shared": "workspace:*",
+                    "react": "^18.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let adapter = WebAdapter::new();
+        let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
+        assert!(manifest.find_dep("react").is_some());
+        assert!(manifest.find_dep("@core/shared").is_none());
+    }
+
+    #[tokio::test]
     async fn test_list_prefers_lockfile_state() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -3200,6 +3370,7 @@ mod tests {
                     store: "megagate".into(),
                     package_count: 1,
                 },
+                workspaces: vec![],
                 packages: vec![LockPackage {
                     name: "tailwindcss".into(),
                     version: "4.3.2".into(),
@@ -3247,7 +3418,7 @@ mod tests {
             Version::parse("4.3.2").unwrap(),
         );
 
-        seed_cached_tarball_with_files(
+        let react_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &react,
             &[
@@ -3258,7 +3429,7 @@ mod tests {
                 ("package/index.js", b"export const version = '18.2.0';"),
             ],
         );
-        seed_cached_tarball_with_files(
+        let tailwind_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &tailwind,
             &[
@@ -3274,7 +3445,7 @@ mod tests {
             packages: vec![
                 ResolvedPackage {
                     id: react.clone(),
-                    integrity: String::new(),
+                    integrity: react_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
                     direct: true,
@@ -3282,7 +3453,7 @@ mod tests {
                 },
                 ResolvedPackage {
                     id: tailwind.clone(),
-                    integrity: String::new(),
+                    integrity: tailwind_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
                     direct: true,
@@ -3331,7 +3502,7 @@ mod tests {
             Version::parse("19.2.17").unwrap(),
         );
 
-        seed_cached_tarball_with_files(
+        let react_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &react,
             &[
@@ -3342,7 +3513,7 @@ mod tests {
                 ("package/index.js", b"export default 'react';"),
             ],
         );
-        seed_cached_tarball_with_files(
+        let react_types_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &react_types,
             &[
@@ -3358,7 +3529,7 @@ mod tests {
             packages: vec![
                 ResolvedPackage {
                     id: react.clone(),
-                    integrity: String::new(),
+                    integrity: react_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
                     direct: true,
@@ -3366,7 +3537,7 @@ mod tests {
                 },
                 ResolvedPackage {
                     id: react_types.clone(),
-                    integrity: String::new(),
+                    integrity: react_types_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
                     direct: true,
@@ -3429,12 +3600,12 @@ mod tests {
             PackageName::new("tailwindcss").unwrap(),
             Version::parse("4.3.2").unwrap(),
         );
-        seed_cached_tarball(dir.path(), &package_id);
+        let integrity = seed_cached_tarball(dir.path(), &package_id);
 
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: package_id.clone(),
-                integrity: String::new(),
+                integrity,
                 tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                 deps: vec![],
                 direct: true,
@@ -3470,7 +3641,7 @@ mod tests {
             PackageName::new("react").unwrap(),
             Version::parse("18.2.0").unwrap(),
         );
-        seed_shared_tarball_with_files(
+        let integrity = seed_shared_tarball_with_files(
             shared.path(),
             &react,
             &[
@@ -3485,7 +3656,7 @@ mod tests {
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: react.clone(),
-                integrity: String::new(),
+                integrity,
                 tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                 deps: vec![],
                 direct: true,
@@ -3633,7 +3804,7 @@ mod tests {
             Version::parse("4.3.2").unwrap(),
         );
 
-        seed_cached_tarball_with_files(
+        let react_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &react,
             &[
@@ -3649,7 +3820,7 @@ mod tests {
             packages: vec![
                 ResolvedPackage {
                     id: react,
-                    integrity: String::new(),
+                    integrity: react_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
                     direct: true,
@@ -3750,7 +3921,7 @@ mod tests {
             PackageName::new("@types/node").unwrap(),
             Version::parse("26.1.1").unwrap(),
         );
-        seed_cached_tarball_with_files(
+        let integrity = seed_cached_tarball_with_files(
             dir.path(),
             &package_id,
             &[
@@ -3765,7 +3936,7 @@ mod tests {
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: package_id.clone(),
-                integrity: String::new(),
+                integrity,
                 tarball_url: String::new(),
                 deps: vec![],
                 direct: true,
@@ -3826,7 +3997,7 @@ mod tests {
             Version::parse("6.3.1").unwrap(),
         );
 
-        seed_cached_tarball_with_files(
+        let nuxt_kit_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &nuxt_kit,
             &[(
@@ -3834,7 +4005,7 @@ mod tests {
                 br#"{"name":"@nuxt/kit","version":"1.0.0"}"#.as_slice(),
             )],
         );
-        seed_cached_tarball_with_files(
+        let legacy_tool_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &legacy_tool,
             &[(
@@ -3842,7 +4013,7 @@ mod tests {
                 br#"{"name":"legacy-tool","version":"1.0.0"}"#.as_slice(),
             )],
         );
-        seed_cached_tarball_with_files(
+        let semver7_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &semver7,
             &[
@@ -3854,7 +4025,7 @@ mod tests {
                 ("package/functions/satisfies.js", b"export default true;\n"),
             ],
         );
-        seed_cached_tarball_with_files(
+        let semver6_integrity = seed_cached_tarball_with_files(
             dir.path(),
             &semver6,
             &[(
@@ -3867,7 +4038,7 @@ mod tests {
             packages: vec![
                 ResolvedPackage {
                     id: nuxt_kit.clone(),
-                    integrity: String::new(),
+                    integrity: nuxt_kit_integrity,
                     tarball_url: String::new(),
                     deps: vec![semver7.clone()],
                     direct: true,
@@ -3875,7 +4046,7 @@ mod tests {
                 },
                 ResolvedPackage {
                     id: legacy_tool.clone(),
-                    integrity: String::new(),
+                    integrity: legacy_tool_integrity,
                     tarball_url: String::new(),
                     deps: vec![semver6.clone()],
                     direct: true,
@@ -3883,7 +4054,7 @@ mod tests {
                 },
                 ResolvedPackage {
                     id: semver7.clone(),
-                    integrity: String::new(),
+                    integrity: semver7_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
                     direct: false,
@@ -3891,7 +4062,7 @@ mod tests {
                 },
                 ResolvedPackage {
                     id: semver6.clone(),
-                    integrity: String::new(),
+                    integrity: semver6_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
                     direct: false,
@@ -3963,6 +4134,8 @@ mod tests {
             ),
             ("package/index.js", b"export default 'react';"),
         ]);
+        let integrity = sri_sha512(&tarball);
+        let tarball_for_server = tarball.clone();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -3983,10 +4156,10 @@ mod tests {
                 } else {
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-                        tarball.len()
+                        tarball_for_server.len()
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
-                    let _ = stream.write_all(&tarball).await;
+                    let _ = stream.write_all(&tarball_for_server).await;
                 }
             }
         });
@@ -3998,7 +4171,7 @@ mod tests {
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: react.clone(),
-                integrity: String::new(),
+                integrity,
                 tarball_url: format!("http://{addr}/react-18.2.0.tgz"),
                 deps: vec![],
                 direct: true,
@@ -4036,7 +4209,7 @@ mod tests {
             PackageName::new("react").unwrap(),
             Version::parse("18.2.0").unwrap(),
         );
-        seed_cached_tarball_with_files(
+        let integrity = seed_cached_tarball_with_files(
             dir.path(),
             &react,
             &[
@@ -4051,7 +4224,7 @@ mod tests {
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: react.clone(),
-                integrity: String::new(),
+                integrity: integrity.clone(),
                 tarball_url: String::new(),
                 deps: vec![],
                 direct: true,
@@ -4108,7 +4281,7 @@ mod tests {
             PackageName::new("react").unwrap(),
             Version::parse("18.2.0").unwrap(),
         );
-        seed_cached_tarball_with_files(
+        let integrity = seed_cached_tarball_with_files(
             first.path(),
             &react,
             &[
@@ -4123,7 +4296,7 @@ mod tests {
         let graph = ResolvedGraph {
             packages: vec![ResolvedPackage {
                 id: react.clone(),
-                integrity: String::new(),
+                integrity: integrity.clone(),
                 tarball_url: String::new(),
                 deps: vec![],
                 direct: true,
@@ -4144,7 +4317,7 @@ mod tests {
             &ExtractedPackageMarker {
                 name: "react".into(),
                 version: "18.2.0".into(),
-                integrity: None,
+                integrity: Some(integrity),
                 tarball_sha256: "bad-digest".into(),
             },
         )
@@ -4191,7 +4364,7 @@ mod tests {
         assert_ne!(marker.tarball_sha256, "bad-digest");
     }
 
-    fn seed_cached_tarball(root: &Path, pkg: &PackageId) {
+    fn seed_cached_tarball(root: &Path, pkg: &PackageId) -> String {
         let package_json = format!(
             "{{\"name\":\"{}\",\"version\":\"{}\"}}",
             pkg.name_str(),
@@ -4204,10 +4377,10 @@ mod tests {
                 ("package/package.json", package_json.as_bytes()),
                 ("package/index.css", b"@import 'tailwindcss';"),
             ],
-        );
+        )
     }
 
-    fn seed_cached_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) {
+    fn seed_cached_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) -> String {
         let layout = Layout::new(root.join(".megagate").join("cache").join("web"));
         std::fs::create_dir_all(layout.root()).unwrap();
         let cache = PackageCache::new(layout.cache_dir()).unwrap();
@@ -4215,21 +4388,12 @@ mod tests {
         if let Some(parent) = tarball_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-
-        let file = std::fs::File::create(&tarball_path).unwrap();
-        let encoder = GzEncoder::new(file, Compression::default());
-        let mut builder = Builder::new(encoder);
-
-        for (path, data) in files {
-            write_tar_entry(&mut builder, path, data);
-        }
-
-        builder.finish().unwrap();
-        let encoder = builder.into_inner().unwrap();
-        encoder.finish().unwrap();
+        let tarball = build_tarball_bytes(files);
+        std::fs::write(&tarball_path, &tarball).unwrap();
+        sri_sha512(&tarball)
     }
 
-    fn seed_shared_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) {
+    fn seed_shared_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) -> String {
         let layout = Layout::new(root.to_path_buf());
         std::fs::create_dir_all(layout.root()).unwrap();
         let cache = PackageCache::new(layout.cache_dir()).unwrap();
@@ -4237,7 +4401,9 @@ mod tests {
         if let Some(parent) = tarball_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        std::fs::write(&tarball_path, build_tarball_bytes(files)).unwrap();
+        let tarball = build_tarball_bytes(files);
+        std::fs::write(&tarball_path, &tarball).unwrap();
+        sri_sha512(&tarball)
     }
 
     fn seed_shared_metadata(root: &Path, package: &str, payload: serde_json::Value) {

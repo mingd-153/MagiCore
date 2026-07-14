@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { app } from "../src/lib/app.js";
+import { AppModule } from "../src/app.module.js";
 
-describe("app", () => {
-  it("exports app", () => { expect(app).toBeDefined(); });
+describe("AppModule", () => {
+  it("exports module", () => {
+    expect(AppModule).toBeDefined();
+  });
 });

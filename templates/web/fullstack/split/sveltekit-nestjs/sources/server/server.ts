@@ -1,3 +1,7 @@
-import { app } from "./app.js";
+import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module.js";
 const port = parseInt(process.env.PORT || "3000", 10);
-app.listen(port, () => console.log(`Server running on :${port}`));
+const app = await NestFactory.create(AppModule);
+await app.listen(port);
+console.log(`Server running on :${port}`);

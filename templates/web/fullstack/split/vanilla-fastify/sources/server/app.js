@@ -1,4 +1,3 @@
-import express from "express";
-export const app = express();
-app.use(express.json());
-app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+import Fastify from "fastify";
+export const app = Fastify({ logger: false });
+app.get("/health", async () => ({ status: "ok" }));

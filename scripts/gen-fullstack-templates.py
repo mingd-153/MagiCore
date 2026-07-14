@@ -189,6 +189,160 @@ app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 """,
 }
 
+FASTIFY_SPLIT_SERVER = {
+    "package.ts.json": SPLIT_SERVER["package.ts.json"],
+    "package.js.json": SPLIT_SERVER["package.js.json"],
+    "tsconfig.json": SPLIT_SERVER["tsconfig.json"],
+    "server.ts": """import { app } from "./app.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+await app.listen({ host: "0.0.0.0", port });
+console.log(`Server running on :${port}`);
+""",
+    "server.js": """import { app } from "./app.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+await app.listen({ host: "0.0.0.0", port });
+console.log(`Server running on :${port}`);
+""",
+    "app.ts": """import Fastify from "fastify";
+export const app = Fastify({ logger: false });
+app.get("/health", async () => ({ status: "ok" }));
+""",
+    "app.js": """import Fastify from "fastify";
+export const app = Fastify({ logger: false });
+app.get("/health", async () => ({ status: "ok" }));
+""",
+}
+
+HONO_SPLIT_SERVER = {
+    "package.ts.json": SPLIT_SERVER["package.ts.json"],
+    "package.js.json": SPLIT_SERVER["package.js.json"],
+    "tsconfig.json": SPLIT_SERVER["tsconfig.json"],
+    "server.ts": """import { serve } from "@hono/node-server";
+import { app } from "./app.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+serve({ fetch: app.fetch, port });
+console.log(`Server running on :${port}`);
+""",
+    "server.js": """import { serve } from "@hono/node-server";
+import { app } from "./app.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+serve({ fetch: app.fetch, port });
+console.log(`Server running on :${port}`);
+""",
+    "app.ts": """import { Hono } from "hono";
+export const app = new Hono();
+app.get("/health", (c) => c.json({ status: "ok" }));
+""",
+    "app.js": """import { Hono } from "hono";
+export const app = new Hono();
+app.get("/health", (c) => c.json({ status: "ok" }));
+""",
+}
+
+NESTJS_SPLIT_SERVER = {
+    "package.ts.json": """{
+  "name": "@project/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}
+""",
+    "package.js.json": """{
+  "name": "@project/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}
+""",
+    "tsconfig.json": """{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
+""",
+    "server.ts": """import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+const app = await NestFactory.create(AppModule);
+await app.listen(port);
+console.log(`Server running on :${port}`);
+""",
+    "server.js": """import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+const app = await NestFactory.create(AppModule);
+await app.listen(port);
+console.log(`Server running on :${port}`);
+""",
+    "app.module.ts": """import { Module } from "@nestjs/common";
+import { AppController } from "./app.controller.js";
+import { AppService } from "./app.service.js";
+@Module({ imports: [], controllers: [AppController], providers: [AppService] })
+export class AppModule {}
+""",
+    "app.module.js": """import { Module } from "@nestjs/common";
+import { AppController } from "./app.controller.js";
+import { AppService } from "./app.service.js";
+@Module({ imports: [], controllers: [AppController], providers: [AppService] })
+export class AppModule {}
+""",
+    "app.controller.ts": """import { Controller, Get } from "@nestjs/common";
+@Controller()
+export class AppController {
+  @Get("/health")
+  health() {
+    return { status: "ok" };
+  }
+}
+""",
+    "app.controller.js": """import { Controller, Get } from "@nestjs/common";
+@Controller()
+export class AppController {
+  @Get("/health")
+  health() {
+    return { status: "ok" };
+  }
+}
+""",
+    "app.service.ts": """import { Injectable } from "@nestjs/common";
+@Injectable()
+export class AppService {
+  health() {
+    return { status: "ok" };
+  }
+}
+""",
+    "app.service.js": """import { Injectable } from "@nestjs/common";
+@Injectable()
+export class AppService {
+  health() {
+    return { status: "ok" };
+  }
+}
+""",
+}
+
 SPLIT_FE = {
     "react-vite": """import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -206,6 +360,91 @@ render(() => <main><h1>Welcome</h1></main>, document.getElementById("root")!);
 
 def gen_split_toml(fe, be):
     """Generate template.toml for a split fullstack combo."""
+    if be == "nestjs":
+        return """[[files]]
+source = "root/package.json"
+target = "package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "client/package.json"
+target = "client/package.json"
+required_context = ["project_slug"]
+
+[[files]]
+source = "server/package.ts.json"
+target = "server/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "server/package.js.json"
+target = "server/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/tsconfig.json"
+target = "server/tsconfig.json"
+
+[[files]]
+source = "server/server.ts"
+target = "server/src/server.ts"
+
+[[files]]
+source = "server/server.js"
+target = "server/src/server.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/app.module.ts"
+target = "server/src/app.module.ts"
+
+[[files]]
+source = "server/app.module.js"
+target = "server/src/app.module.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/app.controller.ts"
+target = "server/src/app.controller.ts"
+
+[[files]]
+source = "server/app.controller.js"
+target = "server/src/app.controller.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/app.service.ts"
+target = "server/src/app.service.ts"
+
+[[files]]
+source = "server/app.service.js"
+target = "server/src/app.service.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/app.tsx"
+target = "client/src/App.tsx"
+include_features = ["typescript"]
+required_context = ["project_name"]
+
+[[files]]
+source = "client/app.jsx"
+target = "client/src/App.jsx"
+exclude_features = ["typescript"]
+required_context = ["project_name"]
+
+[[files]]
+source = "client/vite.config.ts"
+target = "client/vite.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite.config.js"
+target = "client/vite.config.js"
+exclude_features = ["typescript"]
+"""
     return f"""[[files]]
 source = "root/package.json"
 target = "package.json"
@@ -286,7 +525,14 @@ for fe in FRONTENDS:
         
         write_file(f"{d}/sources/root/package.json", SPLIT_ROOT["package.json"])
         write_file(f"{d}/sources/client/package.json", SPLIT_CLIENT["package.json"])
-        for name, content in SPLIT_SERVER.items():
+        server_files = SPLIT_SERVER
+        if be == "fastify":
+            server_files = FASTIFY_SPLIT_SERVER
+        elif be == "hono":
+            server_files = HONO_SPLIT_SERVER
+        elif be == "nestjs":
+            server_files = NESTJS_SPLIT_SERVER
+        for name, content in server_files.items():
             write_file(f"{d}/sources/server/{name}", content)
         
         # Minimal FE source

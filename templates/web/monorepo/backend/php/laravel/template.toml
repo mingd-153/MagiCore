@@ -1,6 +1,5 @@
 [[files]]
 source = "composer.json"
-required_context = ["project_slug"]
 target = "apps/backend/composer.json"
 
 [[files]]
