@@ -34,7 +34,7 @@ pub(crate) enum Commands {
         #[arg(short, long)]
         template: Option<String>,
     },
-    #[command(about = "Start the local development server")]
+    #[command(about = "Start the local development server", alias = "dev-web")]
     Dev {
         #[arg(long)]
         host: Option<String>,
@@ -53,7 +53,7 @@ pub(crate) enum Commands {
             feature = "lib"
         ))
     ))]
-    #[command(about = "Install all dependencies")]
+    #[command(about = "Install all dependencies", alias = "install-web")]
     Install {
         packages: Vec<String>,
         #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
@@ -151,7 +151,7 @@ pub(crate) enum Commands {
             feature = "lib"
         ))
     ))]
-    #[command(about = "Add a dependency")]
+    #[command(about = "Add a dependency", alias = "add-web")]
     Add {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -182,7 +182,7 @@ pub(crate) enum Commands {
             feature = "lib"
         ))
     ))]
-    #[command(about = "Remove a dependency")]
+    #[command(about = "Remove a dependency", alias = "remove-web")]
     Remove { package: String },
     #[cfg(all(
         feature = "web",
@@ -196,7 +196,7 @@ pub(crate) enum Commands {
             feature = "lib"
         ))
     ))]
-    #[command(about = "Update packages")]
+    #[command(about = "Update packages", alias = "update-web")]
     Update {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
@@ -214,7 +214,7 @@ pub(crate) enum Commands {
             feature = "lib"
         ))
     ))]
-    #[command(about = "List installed packages")]
+    #[command(about = "List installed packages", alias = "list-web")]
     List,
 
     // ── Bare (multi-core auto-detect from .megagate/) ──────────
@@ -325,7 +325,7 @@ pub(crate) enum Commands {
         not(feature = "app"),
         not(feature = "lib")
     ))]
-    #[command(name = "create", about = "Scaffold a new web project")]
+    #[command(name = "create", about = "Scaffold a new web project", alias = "create-web")]
     CreateWeb {
         framework: String,
         project_name: String,
@@ -837,6 +837,20 @@ mod tests {
                 }
                 _ => panic!("expected create alias to resolve to web scaffold"),
             }
+            let cli = Cli::try_parse_from(["mg", "create-web", "react@latest", "demo-app", "--ts"])
+                .expect("web-only build should also accept `mg create-web ...` as compatibility alias");
+            match cli.command.unwrap() {
+                Commands::CreateWeb {
+                    framework,
+                    project_name,
+                    flags,
+                } => {
+                    assert_eq!(framework, "react@latest");
+                    assert_eq!(project_name, "demo-app");
+                    assert!(flags.ts);
+                }
+                _ => panic!("expected create-web alias to resolve to web scaffold"),
+            }
         } else {
             assert!(
                 Cli::try_parse_from(["mg", "create", "react@latest", "demo-app", "--ts"]).is_err(),
@@ -925,7 +939,16 @@ mod tests {
                 }
                 _ => panic!("expected bare install in web-only build"),
             }
-            assert!(Cli::try_parse_from(["mg", "install-web"]).is_err());
+            let cli = Cli::try_parse_from(["mg", "install-web"]).unwrap();
+            match cli.command.unwrap() {
+                Commands::Install {
+                    packages, frozen, ..
+                } => {
+                    assert!(packages.is_empty());
+                    assert!(!frozen);
+                }
+                _ => panic!("expected install-web alias in web-only build"),
+            }
         }
         #[cfg(all(
             feature = "web",
@@ -974,6 +997,24 @@ mod tests {
                 assert_eq!(port, Some(4315));
             }
             _ => panic!("expected dev command"),
+        }
+
+        let alias_cli = Cli::try_parse_from([
+            "mg",
+            "dev-web",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "4316",
+        ])
+        .unwrap();
+
+        match alias_cli.command.unwrap() {
+            Commands::Dev { host, port } => {
+                assert_eq!(host.as_deref(), Some("127.0.0.1"));
+                assert_eq!(port, Some(4316));
+            }
+            _ => panic!("expected dev alias command"),
         }
     }
 }
