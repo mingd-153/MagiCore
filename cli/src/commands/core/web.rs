@@ -1092,9 +1092,14 @@ fn infer_native_dev_launch(
     port: Option<u16>,
 ) -> Result<DevLaunch> {
     if project_root.join("go.mod").exists() {
+        let go_dir = if project_root.join("cmd/server").exists() {
+            OsString::from("./cmd/server")
+        } else {
+            OsString::from(".")
+        };
         return Ok(DevLaunch {
             program: PathBuf::from("go"),
-            args: vec![OsString::from("run"), OsString::from(".")],
+            args: vec![OsString::from("run"), go_dir],
             envs: env_port_pairs(port),
         });
     }
@@ -1126,7 +1131,7 @@ fn infer_native_dev_launch(
         let python = native_python_program(project_root);
         return Ok(DevLaunch {
             program: python,
-            args: vec![OsString::from("src/main.py")],
+            args: vec![OsString::from("-m"), OsString::from("src.main")],
             envs: env_port_pairs(port),
         });
     }
@@ -1155,6 +1160,22 @@ fn infer_native_dev_launch(
     if project_root.join("composer.json").exists()
         && project_root.join("public/index.php").exists()
         && project_root.join("bin/console").exists()
+    {
+        return Ok(DevLaunch {
+            program: PathBuf::from("php"),
+            args: vec![
+                OsString::from("-S"),
+                OsString::from(format!("0.0.0.0:{}", port.unwrap_or(8000))),
+                OsString::from("-t"),
+                OsString::from("public"),
+                OsString::from("public/index.php"),
+            ],
+            envs: env_port_pairs(port),
+        });
+    }
+
+    if project_root.join("composer.json").exists()
+        && project_root.join("public/index.php").exists()
     {
         return Ok(DevLaunch {
             program: PathBuf::from("php"),

@@ -1,17 +1,22 @@
 [[files]]
 source = "pom.xml"
 target = "apps/backend/pom.xml"
-required_context = ["project_slug"]
+required_context = ["project_package"]
 
 [[files]]
 source = "Application.java"
-target = "apps/backend/src/main/java/com/{{ project_slug }}/Application.java"
-required_context = ["project_slug"]
+target = "apps/backend/src/main/java/com/{{ project_package }}/Application.java"
+required_context = ["project_package"]
 
 [[files]]
 source = "HealthResource.java"
-target = "apps/backend/src/main/java/com/{{ project_slug }}/api/HealthResource.java"
-required_context = ["project_slug", "project_name"]
+target = "apps/backend/src/main/java/com/{{ project_package }}/api/HealthResource.java"
+required_context = ["project_package", "project_name"]
+
+[[files]]
+source = "GreetingResource.java"
+target = "apps/backend/src/main/java/com/{{ project_package }}/api/GreetingResource.java"
+required_context = ["project_package", "project_name"]
 
 [[files]]
 source = "application.properties"

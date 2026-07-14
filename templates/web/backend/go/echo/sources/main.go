@@ -2,17 +2,15 @@ package main
 
 import (
   "log"
-  "net/http"
   "os"
+  "github.com/labstack/echo/v4"
 )
 
 func main() {
   port := os.Getenv("PORT")
   if port == "" { port = "3000" }
-  http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
-    w.Write([]byte(`{"status":"ok"}`))
-  })
+  e := echo.New()
+  e.GET("/api/health", HealthHandler)
   log.Printf("Listening on :%s", port)
-  log.Fatal(http.ListenAndServe(":"+port, nil))
+  e.Logger.Fatal(e.Start(":" + port))
 }

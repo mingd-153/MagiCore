@@ -1,11 +1,11 @@
-from flask import Flask, jsonify
+import os
+from flask import Flask
+from .config import config
+from .health import bp as health_bp
 
 app = Flask(__name__)
-
-@app.route("/api/health")
-def health():
-    return jsonify({"status": "ok"})
+app.config["SERVICE_NAME"] = config.name
+app.register_blueprint(health_bp)
 
 if __name__ == "__main__":
-    import os
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "3000")))
+    app.run(host="0.0.0.0", port=config.port, debug=config.debug)
