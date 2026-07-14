@@ -3,6 +3,7 @@ use std::env;
 #[derive(Clone)]
 pub struct Config {
     pub name: String,
+    #[allow(dead_code)]
     pub framework: String,
     pub port: String,
 }
