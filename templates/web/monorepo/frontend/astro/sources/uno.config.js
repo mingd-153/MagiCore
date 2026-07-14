@@ -1,0 +1,1 @@
+../../../../frontend/astro/sources/uno.config.js

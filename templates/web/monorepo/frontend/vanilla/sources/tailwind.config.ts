@@ -1,0 +1,1 @@
+../../../../frontend/vanilla/sources/tailwind.config.ts

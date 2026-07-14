@@ -1,0 +1,1 @@
+../../../../frontend/qwik/sources/jest.config.ts

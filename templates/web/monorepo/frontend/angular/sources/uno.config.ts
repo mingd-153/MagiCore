@@ -1,0 +1,1 @@
+../../../../frontend/angular/sources/uno.config.ts

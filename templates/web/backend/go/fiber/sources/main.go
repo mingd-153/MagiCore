@@ -1,29 +1,18 @@
 package main
 
 import (
-	"fmt"
-	"log"
-
-	"github.com/gofiber/fiber/v2"
+  "log"
+  "net/http"
+  "os"
 )
 
 func main() {
-	cfg := LoadConfig()
-	app := fiber.New()
-
-	app.Get("/health", HealthHandler)
-	app.Get("/status", func(c *fiber.Ctx) error {
-		return c.JSON(GetStatus())
-	})
-	app.Get("/", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"service":   cfg.Name,
-			"framework": cfg.Framework,
-			"message":   "{{project_name}} backend scaffold ready",
-		})
-	})
-
-	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Starting %s (fiber) on %s", cfg.Name, addr)
-	log.Fatal(app.Listen(addr))
+  port := os.Getenv("PORT")
+  if port == "" { port = "3000" }
+  http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.Write([]byte(`{"status":"ok"}`))
+  })
+  log.Printf("Listening on :%s", port)
+  log.Fatal(http.ListenAndServe(":"+port, nil))
 }

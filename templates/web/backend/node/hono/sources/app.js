@@ -1,18 +1,5 @@
-import { Hono } from "hono";
-import { loadConfig } from "../config/app.js";
-import { healthRoute } from "../routes/health.js";
+import express from "express";
 
-export function buildApp() {
-  const config = loadConfig();
-  const app = new Hono();
-
-  app.get("/health", async (c) => c.json(await healthRoute()));
-  app.get("/", (c) => c.json({
-    service: config.name,
-    framework: config.framework,
-    mode: "fullstack",
-    message: "MegaGate fullstack API scaffold ready",
-  }));
-
-  return app;
-}
+export const app = express();
+app.use(express.json());
+app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
