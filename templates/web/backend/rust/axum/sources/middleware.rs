@@ -4,7 +4,7 @@ use axum::{
     extract::Request,
     http::HeaderValue,
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use uuid::Uuid;
 
