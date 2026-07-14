@@ -1,0 +1,4 @@
+mode = "frontend"
+frameworks = ["nextjs"]
+template = "templates/web/frontend/nextjs"
+features = ["typescript", "tailwindcss", "sass", "unocss", "shadcn", "daisyui", "zustand", "redux", "tanstack-query", "prisma", "drizzle", "zod", "nextauth", "clerk", "vitest", "jest", "playwright", "cypress", "eslint", "prettier", "biome", "husky", "lint-staged", "docker", "github-actions", "vercel", "railway", "fly", "i18n", "pwa", "storybook", "sentry", "analytics"]

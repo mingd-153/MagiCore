@@ -1,1 +1,1 @@
-/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/node/trpc/sources/context.js
+export const createContext = ({ req, res }) => ({});

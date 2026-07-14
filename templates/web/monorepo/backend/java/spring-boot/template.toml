@@ -1,23 +1,24 @@
 [[files]]
 source = "pom.xml"
-target = "apps/backend/pom.xml"
 required_context = ["project_slug"]
+target = "apps/backend/pom.xml"
 
 [[files]]
-source = "App.java"
-target = "apps/backend/src/main/java/com/example/App.java"
-
-[[files]]
-source = "AppConfig.java"
-target = "apps/backend/src/main/java/com/example/config/AppConfig.java"
-required_context = ["project_name"]
+source = "Application.java"
+required_context = ["project_slug"]
+target = "apps/backend/src/main/java/com/app/Application.java"
 
 [[files]]
 source = "HealthController.java"
-target = "apps/backend/src/main/java/com/example/controller/HealthController.java"
-required_context = ["project_name"]
+required_context = ["project_slug"]
+target = "apps/backend/src/main/java/com/app/api/HealthController.java"
 
 [[files]]
-source = "application.properties"
-target = "apps/backend/src/main/resources/application.properties"
-required_context = ["project_name"]
+source = "Dockerfile"
+target = "apps/backend/Dockerfile"
+include_features = ["docker"]
+
+[[files]]
+source = ".dockerignore"
+target = "apps/backend/.dockerignore"
+include_features = ["docker"]

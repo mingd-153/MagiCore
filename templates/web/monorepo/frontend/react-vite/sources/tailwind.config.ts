@@ -1,0 +1,1 @@
+../../../../frontend/react-vite/sources/tailwind.config.ts

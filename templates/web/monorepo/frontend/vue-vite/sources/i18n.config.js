@@ -1,0 +1,1 @@
+../../../../frontend/vue-vite/sources/i18n.config.js

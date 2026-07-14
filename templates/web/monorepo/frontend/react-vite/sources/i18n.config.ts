@@ -1,0 +1,1 @@
+../../../../frontend/react-vite/sources/i18n.config.ts

@@ -1,0 +1,1 @@
+../../../../frontend/solidjs/sources/playwright.config.js

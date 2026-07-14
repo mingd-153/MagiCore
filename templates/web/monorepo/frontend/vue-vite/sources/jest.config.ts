@@ -1,0 +1,1 @@
+../../../../frontend/vue-vite/sources/jest.config.ts

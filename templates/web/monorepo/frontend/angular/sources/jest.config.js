@@ -1,0 +1,1 @@
+../../../../frontend/angular/sources/jest.config.js

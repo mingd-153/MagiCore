@@ -1,6 +1,12 @@
 [[files]]
 source = "theme.css"
 target = "src/styles/theme.css"
+exclude_features = ["tailwindcss"]
+
+[[files]]
+source = "theme.tailwind.css"
+target = "src/styles/theme.css"
+include_features = ["tailwindcss"]
 
 [[files]]
 source = "favicon.ico"
