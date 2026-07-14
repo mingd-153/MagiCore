@@ -1,4 +1,4 @@
-package com.{{ project_slug }};
+package com.{{ project_package }};
 
 import io.quarkus.runtime.Quarkus;
 

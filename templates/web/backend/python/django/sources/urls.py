@@ -2,8 +2,8 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.urls import path
 
-from .routes.health import health_view
-from .services.status import Status
+from .health import health_view
+from .status import Status
 
 
 def root(request):
@@ -19,7 +19,7 @@ def status_view(request):
 
 
 urlpatterns = [
-    path("health", health_view, name="health"),
-    path("status", status_view, name="status"),
+    path("api/health", health_view, name="health"),
+    path("api/status", status_view, name="status"),
     path("", root, name="root"),
 ]

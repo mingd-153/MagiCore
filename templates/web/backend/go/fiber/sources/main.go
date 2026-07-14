@@ -2,17 +2,15 @@ package main
 
 import (
   "log"
-  "net/http"
   "os"
+  "github.com/gofiber/fiber/v2"
 )
 
 func main() {
   port := os.Getenv("PORT")
   if port == "" { port = "3000" }
-  http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
-    w.Write([]byte(`{"status":"ok"}`))
-  })
+  app := fiber.New()
+  app.Get("/api/health", HealthHandler)
   log.Printf("Listening on :%s", port)
-  log.Fatal(http.ListenAndServe(":"+port, nil))
+  log.Fatal(app.Listen(":" + port))
 }

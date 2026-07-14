@@ -1,11 +1,11 @@
+import os
 from fastapi import FastAPI
 import uvicorn
+from .config import config
+from .health import router as health_router
 
-app = FastAPI()
-
-@app.get("/api/health")
-async def health():
-    return {"status": "ok"}
+app = FastAPI(title=config.name)
+app.include_router(health_router)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "3000")))
+    uvicorn.run("src.main:app", host="0.0.0.0", port=config.port, reload=True)
