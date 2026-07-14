@@ -911,6 +911,9 @@ fn render_target_path(target: &str, context: &WebTemplateContext) -> String {
     if let Some(v) = context.value("project_name") {
         s = s.replace("{{ project_name }}", v).replace("{{project_name}}", v);
     }
+    if let Some(v) = context.value("project_package") {
+        s = s.replace("{{ project_package }}", v).replace("{{project_package}}", v);
+    }
     s
 }
 
@@ -975,6 +978,7 @@ fn fullstack_backend_framework(framework: &str) -> &str {
 struct WebTemplateContext {
     project_name: String,
     project_slug: String,
+    project_package: String,
     mode: String,
     framework: String,
     frameworks: String,
@@ -1040,9 +1044,12 @@ impl WebTemplateContext {
                 .to_string()
         };
 
+        let project_package = project_slug.replace('-', "_");
+
         Self {
             project_name,
             project_slug,
+            project_package,
             mode,
             framework,
             frameworks: quoted_list(&config.frameworks),
@@ -1058,6 +1065,7 @@ impl WebTemplateContext {
         match key {
             "project_name" => Some(self.project_name.as_str()),
             "project_slug" => Some(self.project_slug.as_str()),
+            "project_package" => Some(self.project_package.as_str()),
             "mode" => Some(self.mode.as_str()),
             "framework" => Some(self.framework.as_str()),
             "frameworks" => Some(self.frameworks.as_str()),

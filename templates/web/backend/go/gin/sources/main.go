@@ -2,17 +2,15 @@ package main
 
 import (
   "log"
-  "net/http"
   "os"
+  "github.com/gin-gonic/gin"
 )
 
 func main() {
   port := os.Getenv("PORT")
   if port == "" { port = "3000" }
-  http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
-    w.Write([]byte(`{"status":"ok"}`))
-  })
+  r := gin.Default()
+  r.GET("/api/health", HealthHandler)
   log.Printf("Listening on :%s", port)
-  log.Fatal(http.ListenAndServe(":"+port, nil))
+  r.Run(":" + port)
 }

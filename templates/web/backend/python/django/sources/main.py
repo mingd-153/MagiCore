@@ -1,7 +1,7 @@
 import os
 import sys
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "src.config")
 
 from django.core.wsgi import get_wsgi_application
 
