@@ -1,0 +1,1 @@
+../../../../frontend/remix/sources/vite-env.d.ts

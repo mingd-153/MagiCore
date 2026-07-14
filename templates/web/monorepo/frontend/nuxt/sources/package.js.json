@@ -1,12 +1,7 @@
 {
-  "name": "@{{project_slug}}/frontend",
+  "name": "{{project_slug}}-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": {
-    "dev": "nuxt dev",
-    "build": "nuxt build",
-    "preview": "nuxt preview",
-    "generate": "nuxt generate"
-  }
+  "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview" }
 }

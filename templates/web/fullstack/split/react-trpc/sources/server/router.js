@@ -1,1 +1,2 @@
-/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/node/trpc/sources/router.js
+import { router, publicProcedure } from "./trpc.js";
+export const appRouter = router({ greeting: publicProcedure.query(() => "hello") });

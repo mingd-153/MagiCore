@@ -1,0 +1,1 @@
+../../../../../../frontend/angular/sources/src/lib/graphql/schema.ts

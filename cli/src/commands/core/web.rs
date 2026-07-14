@@ -60,6 +60,60 @@ const SCAFFOLD_BASELINE_VERSIONS: &[(&str, &str)] = &[
     ("@trpc/server", "^11.18.0"),
     ("fastify", "^5.10.0"),
     ("tsx", "^4.23.0"),
+    ("@prisma/client", "^6.6.0"),
+    ("prisma", "^6.6.0"),
+    ("vitest", "^3.2.0"),
+    ("eslint", "^9.28.0"),
+    ("eslint-config-next", "^16.2.10"),
+    ("prettier", "^3.6.0"),
+    ("@tailwindcss/postcss", "^4.3.2"),
+    ("pg", "^8.15.0"),
+    ("zustand", "^5.0.3"),
+    ("@tanstack/react-query", "^5.62.0"),
+    ("next-auth", "^5.0.0"),
+    ("@playwright/test", "^1.52.0"),
+    ("husky", "^9.2.0"),
+    ("lint-staged", "^15.5.0"),
+    ("@biomejs/biome", "^1.9.0"),
+    ("clsx", "^2.1.0"),
+    ("tailwind-merge", "^3.2.0"),
+    ("class-variance-authority", "^0.7.0"),
+    ("sass", "^1.83.0"),
+    ("unocss", "^65.5.0"),
+    ("daisyui", "^4.12.0"),
+    ("@reduxjs/toolkit", "^2.6.0"),
+    ("react-redux", "^9.2.0"),
+    ("jest", "^29.7.0"),
+    ("@testing-library/react", "^16.0.0"),
+    ("@testing-library/jest-dom", "^6.6.0"),
+    ("jest-environment-jsdom", "^29.7.0"),
+    ("cypress", "^14.2.0"),
+    ("drizzle-orm", "^0.38.0"),
+    ("drizzle-kit", "^0.30.0"),
+    ("@clerk/nextjs", "^6.12.0"),
+    ("styled-components", "^6.1.0"),
+    ("@types/styled-components", "^5.1.0"),
+    ("@commitlint/cli", "^19.5.0"),
+    ("@commitlint/config-conventional", "^19.5.0"),
+    ("@apollo/server", "^4.11.0"),
+    ("@as-integrations/next", "^3.2.0"),
+    ("@trpc/server", "^11.0.0"),
+    ("@trpc/client", "^11.0.0"),
+    ("@trpc/next", "^11.0.0"),
+    ("@grpc/grpc-js", "^1.11.0"),
+    ("@grpc/proto-loader", "^0.7.0"),
+    ("lucia", "^3.2.0"),
+    ("@lucia-auth/adapter-drizzle", "^1.1.0"),
+    ("jose", "^5.7.0"),
+    ("dotenv-cli", "^7.4.0"),
+    ("next-i18next", "^15.3.0"),
+    ("next-pwa", "^5.6.0"),
+    ("@storybook/nextjs", "^8.2.0"),
+    ("@storybook/react", "^8.2.0"),
+    ("@sentry/nextjs", "^8.21.0"),
+    ("@vercel/analytics", "^1.3.0"),
+    ("@railway/cli", "^4.2.0"),
+    ("flyctl", "^0.2.0"),
 ];
 
 fn install_hint_command() -> &'static str {
@@ -1249,17 +1303,27 @@ fn build_web_config(
     let frontend = parse_framework_request(framework);
 
     let mut config = if flags.monorepo {
-        let be_name = detect_backend_framework(flags)
+        match detect_backend_framework(flags)
             .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string))
-            .ok_or_else(|| anyhow::anyhow!("--monorepo requires a backend framework flag (--express, --fastify, etc.) or a fullstack FE like --next"))?;
-        let backend = parse_framework_request(&be_name);
-        crate::wizard::engine::ScaffoldConfig {
-            core: "web".to_string(),
-            sub_type: "monorepo".to_string(),
-            frameworks: vec![frontend.normalized.clone(), backend.normalized],
-            project_name: project_name.to_string(),
-            features: vec![],
-            template_dir: std::path::PathBuf::new(),
+        {
+            Some(be) => {
+                let backend = parse_framework_request(&be);
+                crate::wizard::engine::ScaffoldConfig {
+                    core: "web".to_string(),
+                    sub_type: "monorepo".to_string(),
+                    frameworks: vec![frontend.normalized.clone(), backend.normalized],
+                    project_name: project_name.to_string(),
+                    features: vec![],
+                    template_dir: std::path::PathBuf::new(),
+                }
+            }
+            None => {
+                info("--monorepo ignored: no backend framework specified (add --express, --fastify, etc.)");
+                crate::scaffold::Scaffolder::infer_web_create_config(
+                    &frontend.normalized,
+                    project_name,
+                )?
+            }
         }
     } else {
         crate::scaffold::Scaffolder::infer_web_create_config(&frontend.normalized, project_name)?
@@ -1829,6 +1893,495 @@ const FRAMEWORK_SEEDS: &[WebFrameworkSeed] = &[
     },
 ];
 
+struct WebFeaturePackage {
+    feature: &'static str,
+    section: &'static str,
+    package: &'static str,
+}
+
+const FEATURE_PACKAGES: &[WebFeaturePackage] = &[
+    WebFeaturePackage {
+        feature: "prisma",
+        section: "dependencies",
+        package: "@prisma/client",
+    },
+    WebFeaturePackage {
+        feature: "prisma",
+        section: "devDependencies",
+        package: "prisma",
+    },
+    WebFeaturePackage {
+        feature: "vitest",
+        section: "devDependencies",
+        package: "vitest",
+    },
+    WebFeaturePackage {
+        feature: "eslint",
+        section: "devDependencies",
+        package: "eslint",
+    },
+    WebFeaturePackage {
+        feature: "eslint",
+        section: "devDependencies",
+        package: "eslint-config-next",
+    },
+    WebFeaturePackage {
+        feature: "prettier",
+        section: "devDependencies",
+        package: "prettier",
+    },
+    WebFeaturePackage {
+        feature: "tailwindcss",
+        section: "devDependencies",
+        package: "@tailwindcss/postcss",
+    },
+    WebFeaturePackage {
+        feature: "postgres",
+        section: "dependencies",
+        package: "pg",
+    },
+    WebFeaturePackage {
+        feature: "zustand",
+        section: "dependencies",
+        package: "zustand",
+    },
+    WebFeaturePackage {
+        feature: "tanstack-query",
+        section: "dependencies",
+        package: "@tanstack/react-query",
+    },
+    WebFeaturePackage {
+        feature: "zod",
+        section: "dependencies",
+        package: "zod",
+    },
+    WebFeaturePackage {
+        feature: "shadcn",
+        section: "dependencies",
+        package: "clsx",
+    },
+    WebFeaturePackage {
+        feature: "shadcn",
+        section: "dependencies",
+        package: "tailwind-merge",
+    },
+    WebFeaturePackage {
+        feature: "shadcn",
+        section: "dependencies",
+        package: "class-variance-authority",
+    },
+    WebFeaturePackage {
+        feature: "nextauth",
+        section: "dependencies",
+        package: "next-auth",
+    },
+    WebFeaturePackage {
+        feature: "playwright",
+        section: "devDependencies",
+        package: "@playwright/test",
+    },
+    WebFeaturePackage {
+        feature: "husky",
+        section: "devDependencies",
+        package: "husky",
+    },
+    WebFeaturePackage {
+        feature: "lint-staged",
+        section: "devDependencies",
+        package: "lint-staged",
+    },
+    WebFeaturePackage {
+        feature: "biome",
+        section: "devDependencies",
+        package: "@biomejs/biome",
+    },
+    WebFeaturePackage {
+        feature: "sass",
+        section: "devDependencies",
+        package: "sass",
+    },
+    WebFeaturePackage {
+        feature: "unocss",
+        section: "devDependencies",
+        package: "unocss",
+    },
+    WebFeaturePackage {
+        feature: "daisyui",
+        section: "devDependencies",
+        package: "daisyui",
+    },
+    WebFeaturePackage {
+        feature: "redux",
+        section: "dependencies",
+        package: "@reduxjs/toolkit",
+    },
+    WebFeaturePackage {
+        feature: "redux",
+        section: "dependencies",
+        package: "react-redux",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "jest",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "@testing-library/react",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "@testing-library/jest-dom",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "jest-environment-jsdom",
+    },
+    WebFeaturePackage {
+        feature: "cypress",
+        section: "devDependencies",
+        package: "cypress",
+    },
+    WebFeaturePackage {
+        feature: "drizzle",
+        section: "dependencies",
+        package: "drizzle-orm",
+    },
+    WebFeaturePackage {
+        feature: "drizzle",
+        section: "devDependencies",
+        package: "drizzle-kit",
+    },
+WebFeaturePackage {
+        feature: "biome",
+        section: "devDependencies",
+        package: "@biomejs/biome",
+    },
+    WebFeaturePackage {
+        feature: "sass",
+        section: "devDependencies",
+        package: "sass",
+    },
+    WebFeaturePackage {
+        feature: "unocss",
+        section: "devDependencies",
+        package: "unocss",
+    },
+    WebFeaturePackage {
+        feature: "daisyui",
+        section: "devDependencies",
+        package: "daisyui",
+    },
+    WebFeaturePackage {
+        feature: "redux",
+        section: "dependencies",
+        package: "@reduxjs/toolkit",
+    },
+    WebFeaturePackage {
+        feature: "redux",
+        section: "dependencies",
+        package: "react-redux",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "jest",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "@testing-library/react",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "@testing-library/jest-dom",
+    },
+    WebFeaturePackage {
+        feature: "jest",
+        section: "devDependencies",
+        package: "jest-environment-jsdom",
+    },
+    WebFeaturePackage {
+        feature: "cypress",
+        section: "devDependencies",
+        package: "cypress",
+    },
+    WebFeaturePackage {
+        feature: "drizzle",
+        section: "dependencies",
+        package: "drizzle-orm",
+    },
+    WebFeaturePackage {
+        feature: "drizzle",
+        section: "devDependencies",
+        package: "drizzle-kit",
+    },
+    WebFeaturePackage {
+        feature: "clerk",
+        section: "dependencies",
+        package: "@clerk/nextjs",
+    },
+    WebFeaturePackage {
+        feature: "sass",
+        section: "devDependencies",
+        package: "sass",
+    },
+    WebFeaturePackage {
+        feature: "styled-components",
+        section: "dependencies",
+        package: "styled-components",
+    },
+    WebFeaturePackage {
+        feature: "styled-components",
+        section: "devDependencies",
+        package: "@types/styled-components",
+    },
+    WebFeaturePackage {
+        feature: "commitlint",
+        section: "devDependencies",
+        package: "@commitlint/cli",
+    },
+    WebFeaturePackage {
+        feature: "commitlint",
+        section: "devDependencies",
+        package: "@commitlint/config-conventional",
+    },
+    WebFeaturePackage {
+        feature: "rest",
+        section: "dependencies",
+        package: "express",
+    },
+    WebFeaturePackage {
+        feature: "graphql",
+        section: "dependencies",
+        package: "@apollo/server",
+    },
+    WebFeaturePackage {
+        feature: "graphql",
+        section: "dependencies",
+        package: "graphql",
+    },
+    WebFeaturePackage {
+        feature: "graphql",
+        section: "dependencies",
+        package: "@as-integrations/next",
+    },
+    WebFeaturePackage {
+        feature: "trpc",
+        section: "dependencies",
+        package: "@trpc/server",
+    },
+    WebFeaturePackage {
+        feature: "trpc",
+        section: "dependencies",
+        package: "@trpc/client",
+    },
+    WebFeaturePackage {
+        feature: "trpc",
+        section: "dependencies",
+        package: "@trpc/next",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "dependencies",
+        package: "@grpc/grpc-js",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "dependencies",
+        package: "@grpc/proto-loader",
+    },
+    WebFeaturePackage {
+        feature: "lucia",
+        section: "dependencies",
+        package: "lucia",
+    },
+    WebFeaturePackage {
+        feature: "lucia",
+        section: "dependencies",
+        package: "@lucia-auth/adapter-drizzle",
+    },
+    WebFeaturePackage {
+        feature: "jwt",
+        section: "dependencies",
+        package: "jose",
+    },
+    WebFeaturePackage {
+        feature: "oauth",
+        section: "dependencies",
+        package: "next-auth",
+    },
+    WebFeaturePackage {
+        feature: "dotenv",
+        section: "devDependencies",
+        package: "dotenv-cli",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "dependencies",
+        package: "next-i18next",
+    },
+    WebFeaturePackage {
+        feature: "pwa",
+        section: "devDependencies",
+        package: "next-pwa",
+    },
+    WebFeaturePackage {
+        feature: "storybook",
+        section: "devDependencies",
+        package: "@storybook/nextjs",
+    },
+    WebFeaturePackage {
+        feature: "storybook",
+        section: "devDependencies",
+        package: "@storybook/react",
+    },
+    WebFeaturePackage {
+        feature: "sentry",
+        section: "devDependencies",
+        package: "@sentry/nextjs",
+    },
+    WebFeaturePackage {
+        feature: "analytics",
+        section: "dependencies",
+        package: "@vercel/analytics",
+    },
+    WebFeaturePackage {
+        feature: "railway",
+        section: "dependencies",
+        package: "@railway/cli",
+    },
+    WebFeaturePackage {
+        feature: "fly",
+        section: "dependencies",
+        package: "flyctl",
+    },
+    WebFeaturePackage {
+        feature: "styled-components",
+        section: "dependencies",
+        package: "styled-components",
+    },
+    WebFeaturePackage {
+        feature: "styled-components",
+        section: "devDependencies",
+        package: "@types/styled-components",
+    },
+    WebFeaturePackage {
+        feature: "commitlint",
+        section: "devDependencies",
+        package: "@commitlint/cli",
+    },
+    WebFeaturePackage {
+        feature: "commitlint",
+        section: "devDependencies",
+        package: "@commitlint/config-conventional",
+    },
+    WebFeaturePackage {
+        feature: "rest",
+        section: "dependencies",
+        package: "express",
+    },
+    WebFeaturePackage {
+        feature: "graphql",
+        section: "dependencies",
+        package: "@apollo/server",
+    },
+    WebFeaturePackage {
+        feature: "graphql",
+        section: "dependencies",
+        package: "graphql",
+    },
+    WebFeaturePackage {
+        feature: "trpc",
+        section: "dependencies",
+        package: "@trpc/server",
+    },
+    WebFeaturePackage {
+        feature: "trpc",
+        section: "dependencies",
+        package: "@trpc/client",
+    },
+    WebFeaturePackage {
+        feature: "trpc",
+        section: "dependencies",
+        package: "@trpc/next",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "dependencies",
+        package: "@grpc/grpc-js",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "devDependencies",
+        package: "@grpc/proto-loader",
+    },
+    WebFeaturePackage {
+        feature: "lucia",
+        section: "dependencies",
+        package: "lucia",
+    },
+    WebFeaturePackage {
+        feature: "jwt",
+        section: "dependencies",
+        package: "jsonwebtoken",
+    },
+    WebFeaturePackage {
+        feature: "jwt",
+        section: "devDependencies",
+        package: "@types/jsonwebtoken",
+    },
+    WebFeaturePackage {
+        feature: "oauth",
+        section: "dependencies",
+        package: "oauth4webapi",
+    },
+    WebFeaturePackage {
+        feature: "dotenv",
+        section: "dependencies",
+        package: "dotenv",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "dependencies",
+        package: "next-i18next",
+    },
+    WebFeaturePackage {
+        feature: "pwa",
+        section: "devDependencies",
+        package: "next-pwa",
+    },
+    WebFeaturePackage {
+        feature: "storybook",
+        section: "devDependencies",
+        package: "@storybook/nextjs",
+    },
+    WebFeaturePackage {
+        feature: "storybook",
+        section: "devDependencies",
+        package: "@storybook/react",
+    },
+    WebFeaturePackage {
+        feature: "storybook",
+        section: "devDependencies",
+        package: "@storybook/addon-essentials",
+    },
+    WebFeaturePackage {
+        feature: "sentry",
+        section: "dependencies",
+        package: "@sentry/nextjs",
+    },
+    WebFeaturePackage {
+        feature: "analytics",
+        section: "dependencies",
+        package: "@vercel/analytics",
+    },
+];
+
 fn framework_primary_package(framework: &str) -> Option<String> {
     let seed_name = resolve_seed_name(framework);
     FRAMEWORK_SEEDS
@@ -1922,6 +2475,8 @@ fn fullstack_backend_framework(framework: &str) -> Option<&'static str> {
         "vue-nestjs" => Some("nestjs"),
         "svelte-express" => Some("express"),
         "svelte-hono" => Some("hono"),
+        "next" | "nextjs" => Some("express"),
+        "nuxt" | "nuxtjs" => Some("hono"),
         _ => None,
     }
 }
@@ -2010,6 +2565,58 @@ async fn apply_web_manifest_seed(
     if flags.tailwindcss || flags.shadcn || flags.daisyui {
         let version = fetch_npm_latest_version("tailwindcss").await?;
         ensure_package(object, "devDependencies", "tailwindcss", &version);
+    }
+
+    for feat_pkg in FEATURE_PACKAGES {
+        let is_active = match feat_pkg.feature {
+            "prisma" => flags.prisma,
+            "vitest" => flags.vitest,
+            "eslint" => flags.eslint,
+            "prettier" => flags.prettier,
+            "tailwindcss" => flags.tailwindcss,
+            "postgres" => flags.postgres,
+            "zustand" => flags.zustand,
+            "tanstack-query" => flags.tanstack_query,
+            "zod" => flags.zod,
+            "shadcn" => flags.shadcn,
+            "nextauth" => flags.nextauth,
+            "playwright" => flags.playwright,
+            "husky" => flags.husky,
+            "lint-staged" => flags.lint_staged,
+            "biome" => flags.biome,
+            "sass" => flags.sass,
+            "unocss" => flags.unocss,
+            "daisyui" => flags.daisyui,
+            "redux" => flags.redux,
+            "jest" => flags.jest,
+            "cypress" => flags.cypress,
+            "drizzle" => flags.drizzle,
+            "clerk" => flags.clerk,
+            "styled-components" => flags.styled_components,
+            "commitlint" => flags.commitlint,
+            "rest" => flags.rest,
+            "graphql" => flags.graphql,
+            "trpc" => flags.trpc,
+            "grpc" => flags.grpc,
+            "lucia" => flags.lucia,
+            "jwt" => flags.jwt,
+            "oauth" => flags.oauth,
+            "dotenv" => flags.dotenv,
+            "i18n" => flags.i18n,
+            "pwa" => flags.pwa,
+            "storybook" => flags.storybook,
+            "sentry" => flags.sentry,
+            "analytics" => flags.analytics,
+            "railway" => flags.railway,
+            "fly" => flags.fly,
+            _ => false,
+        };
+        if is_active {
+            let version = scaffold_baseline_version(feat_pkg.package)
+                .map(str::to_string)
+                .unwrap_or(fetch_npm_latest_version(feat_pkg.package).await?);
+            ensure_package(object, feat_pkg.section, feat_pkg.package, &version);
+        }
     }
 
     std::fs::write(package_json_path, serde_json::to_string_pretty(&value)?)?;

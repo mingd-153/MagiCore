@@ -1,0 +1,9 @@
+version = 1
+core = "web"
+mode = "frontend"
+frameworks = ["nextjs"]
+
+[resolution]
+state = "pending"
+store = "megagate"
+package_count = 0

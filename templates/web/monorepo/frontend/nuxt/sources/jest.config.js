@@ -1,0 +1,1 @@
+../../../../frontend/nuxt/sources/jest.config.js

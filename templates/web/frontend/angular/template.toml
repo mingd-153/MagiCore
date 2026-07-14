@@ -1,3 +1,6 @@
+# MegaGate template for angular
+# Auto-generated — do not edit manually
+
 [[files]]
 source = "package.json"
 target = "package.json"
@@ -9,16 +12,6 @@ target = "angular.json"
 required_context = ["project_slug"]
 
 [[files]]
-source = "tsconfig.json"
-target = "tsconfig.json"
-include_features = ["typescript"]
-
-[[files]]
-source = "tsconfig.app.json"
-target = "tsconfig.app.json"
-include_features = ["typescript"]
-
-[[files]]
 source = "src/index.html"
 target = "src/index.html"
 required_context = ["project_name"]
@@ -26,7 +19,6 @@ required_context = ["project_name"]
 [[files]]
 source = "src/main.ts"
 target = "src/main.ts"
-include_features = ["typescript"]
 
 [[files]]
 source = "src/styles.css"
@@ -35,19 +27,373 @@ target = "src/styles.css"
 [[files]]
 source = "src/app/app.config.ts"
 target = "src/app/app.config.ts"
-include_features = ["typescript"]
 
 [[files]]
 source = "src/app/app.routes.ts"
 target = "src/app/app.routes.ts"
-include_features = ["typescript"]
 
 [[files]]
 source = "src/app/app.component.ts"
 target = "src/app/app.component.ts"
 required_context = ["project_name"]
+
+[[files]]
+source = "tsconfig.app.json"
+target = "tsconfig.app.json"
+
+[[files]]
+source = "jsconfig.json"
+target = "jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
 include_features = ["typescript"]
 
 [[files]]
-source = "src/public/.gitkeep"
-target = "src/public/.gitkeep"
+source = "config/framework.ts"
+target = "src/config/framework.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "config/framework.js"
+target = "src/config/framework.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tailwind.config.js"
+target = "tailwind.config.js"
+include_features = ["tailwindcss", "daisyui"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tailwind.config.ts"
+target = "tailwind.config.ts"
+include_features = ["tailwindcss", "daisyui"]
+
+[[files]]
+source = "postcss.config.js"
+target = "postcss.config.js"
+include_features = ["tailwindcss"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "postcss.config.mjs"
+target = "postcss.config.mjs"
+include_features = ["tailwindcss"]
+
+[[files]]
+source = "eslintrc.json"
+target = ".eslintrc.json"
+include_features = ["eslint"]
+
+[[files]]
+source = "prettierrc"
+target = ".prettierrc"
+include_features = ["prettier"]
+
+[[files]]
+source = "biome.json"
+target = "biome.json"
+include_features = ["biome"]
+
+[[files]]
+source = "vitest.config.js"
+target = "vitest.config.js"
+include_features = ["vitest"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "vitest.config.ts"
+target = "vitest.config.ts"
+include_features = ["vitest"]
+
+[[files]]
+source = "jest.config.js"
+target = "jest.config.js"
+include_features = ["jest"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "jest.config.ts"
+target = "jest.config.ts"
+include_features = ["jest"]
+
+[[files]]
+source = "cypress.config.js"
+target = "cypress.config.js"
+include_features = ["cypress"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "cypress.config.ts"
+target = "cypress.config.ts"
+include_features = ["cypress"]
+
+[[files]]
+source = "playwright.config.js"
+target = "playwright.config.js"
+include_features = ["playwright"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "playwright.config.ts"
+target = "playwright.config.ts"
+include_features = ["playwright"]
+
+[[files]]
+source = "e2e/example.spec.ts"
+target = "e2e/example.spec.ts"
+include_features = ["playwright"]
+
+[[files]]
+source = "src/store/zustand.js"
+target = "src/store/index.js"
+include_features = ["zustand"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/store/zustand.ts"
+target = "src/store/index.ts"
+include_features = ["zustand"]
+
+[[files]]
+source = "src/lib/query-provider.js"
+target = "src/lib/query-provider.js"
+include_features = ["tanstack-query"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/lib/query-provider.ts"
+target = "src/lib/query-provider.ts"
+include_features = ["tanstack-query"]
+
+[[files]]
+source = "src/lib/schemas.js"
+target = "src/lib/schemas.js"
+include_features = ["zod"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/lib/schemas.ts"
+target = "src/lib/schemas.ts"
+include_features = ["zod"]
+
+[[files]]
+source = "components.json"
+target = "components.json"
+include_features = ["shadcn"]
+
+[[files]]
+source = "src/lib/utils.js"
+target = "src/lib/utils.js"
+include_features = ["shadcn"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/lib/utils.ts"
+target = "src/lib/utils.ts"
+include_features = ["shadcn"]
+
+[[files]]
+source = "src/store/redux/index.js"
+target = "src/store/redux/index.js"
+include_features = ["redux"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/store/redux/index.ts"
+target = "src/store/redux/index.ts"
+include_features = ["redux"]
+
+[[files]]
+source = "src/store/redux/slices/counterSlice.js"
+target = "src/store/redux/slices/counterSlice.js"
+include_features = ["redux"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/store/redux/slices/counterSlice.ts"
+target = "src/store/redux/slices/counterSlice.ts"
+include_features = ["redux"]
+
+[[files]]
+source = "drizzle.config.js"
+target = "drizzle.config.js"
+include_features = ["drizzle"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "drizzle.config.ts"
+target = "drizzle.config.ts"
+include_features = ["drizzle"]
+
+[[files]]
+source = "src/db/schema.js"
+target = "src/db/schema.js"
+include_features = ["drizzle"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/db/schema.ts"
+target = "src/db/schema.ts"
+include_features = ["drizzle"]
+
+[[files]]
+source = "prisma/schema.prisma"
+target = "prisma/schema.prisma"
+include_features = ["prisma"]
+
+[[files]]
+source = "src/lib/clerk.js"
+target = "src/lib/clerk.js"
+include_features = ["clerk"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/lib/clerk.ts"
+target = "src/lib/clerk.ts"
+include_features = ["clerk"]
+
+[[files]]
+source = "vercel.json"
+target = "vercel.json"
+include_features = ["vercel"]
+
+[[files]]
+source = "uno.config.js"
+target = "uno.config.js"
+include_features = ["unocss"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "uno.config.ts"
+target = "uno.config.ts"
+include_features = ["unocss"]
+
+[[files]]
+source = "sentry.client.config.js"
+target = "sentry.client.config.js"
+include_features = ["sentry"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "sentry.client.config.ts"
+target = "sentry.client.config.ts"
+include_features = ["sentry"]
+
+[[files]]
+source = "i18n.config.js"
+target = "i18n.config.js"
+include_features = ["i18n"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "i18n.config.ts"
+target = "i18n.config.ts"
+include_features = ["i18n"]
+
+[[files]]
+source = "public/manifest.json"
+target = "public/manifest.json"
+include_features = ["pwa"]
+
+[[files]]
+source = "public/sw.js"
+target = "public/sw.js"
+include_features = ["pwa"]
+
+[[files]]
+source = "grpc/greeter.proto"
+target = "grpc/greeter.proto"
+include_features = ["grpc"]
+
+[[files]]
+source = "src/lib/auth.js"
+target = "src/lib/auth.js"
+include_features = ["lucia", "jwt", "oauth"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/lib/auth.ts"
+target = "src/lib/auth.ts"
+include_features = ["lucia", "jwt", "oauth"]
+
+[[files]]
+source = "src/components/StyledExample.js"
+target = "src/components/StyledExample.js"
+include_features = ["styled-components"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/components/StyledExample.ts"
+target = "src/components/StyledExample.ts"
+include_features = ["styled-components"]
+
+[[files]]
+source = "babel.config.json"
+target = "babel.config.json"
+include_features = ["styled-components"]
+
+[[files]]
+source = "src/styles/breakpoints.scss"
+target = "src/styles/breakpoints.scss"
+include_features = ["sass"]
+
+[[files]]
+source = "src/styles/globals.css"
+target = "src/styles/globals.css"
+
+[[files]]
+source = "src/middleware.ts"
+target = "src/middleware.ts"
+include_features = ["clerk"]
+
+[[files]]
+source = "src/middleware.js"
+target = "src/middleware.js"
+include_features = ["clerk"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/trpc/router.ts"
+target = "src/trpc/router.ts"
+include_features = ["trpc"]
+
+[[files]]
+source = "src/lib/graphql/schema.ts"
+target = "src/lib/graphql/schema.ts"
+include_features = ["graphql"]
+
+[[files]]
+source = ".storybook/main.js"
+target = ".storybook/main.js"
+include_features = ["storybook"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = ".storybook/main.ts"
+target = ".storybook/main.ts"
+include_features = ["storybook"]
+
+[[files]]
+source = "src/pages/Home.ts"
+target = "src/pages/Home.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "src/pages/Home.js"
+target = "src/pages/Home.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "src/app/api/rest/route.ts"
+target = "src/app/api/rest/route.ts"
+include_features = ["rest"]
+
+[[files]]
+source = "src/test/setup.ts"
+target = "src/test/setup.ts"
+include_features = ["vitest", "jest"]
+

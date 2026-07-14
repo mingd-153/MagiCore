@@ -16,3 +16,79 @@ required_context = ["mode", "frameworks"]
 source = "web.toml"
 target = ".megagate/web.toml"
 required_context = ["mode", "frameworks", "template", "features"]
+
+[[files]]
+source = "Dockerfile"
+target = "Dockerfile"
+include_features = ["docker"]
+
+[[files]]
+source = "docker-compose.yml"
+target = "docker-compose.yml"
+include_features = ["docker"]
+exclude_features = ["postgres"]
+
+[[files]]
+source = "docker-compose.postgres.yml"
+target = "docker-compose.yml"
+include_features = ["docker", "postgres"]
+
+[[files]]
+source = "dockerignore"
+target = ".dockerignore"
+include_features = ["docker"]
+
+[[files]]
+source = "env"
+target = ".env"
+include_features = ["postgres"]
+
+[[files]]
+source = "husky-pre-commit"
+target = ".husky/pre-commit"
+include_features = ["husky"]
+
+[[files]]
+source = "lintstagedrc.json"
+target = ".lintstagedrc.json"
+include_features = ["lint-staged"]
+
+[[files]]
+source = "ci.yml"
+target = ".github/workflows/ci.yml"
+include_features = ["github-actions"]
+
+[[files]]
+source = "playwright.config.ts"
+target = "playwright.config.ts"
+include_features = ["playwright"]
+
+[[files]]
+source = "e2e/example.spec.ts"
+target = "e2e/example.spec.ts"
+include_features = ["playwright"]
+
+[[files]]
+source = "biome.json"
+target = "biome.json"
+include_features = ["biome"]
+
+[[files]]
+source = "commitlint.config.json"
+target = "commitlint.config.json"
+include_features = ["commitlint"]
+
+[[files]]
+source = "railway.json"
+target = "railway.json"
+include_features = ["railway"]
+
+[[files]]
+source = "fly.toml"
+target = "fly.toml"
+include_features = ["fly"]
+
+[[files]]
+source = "env.example"
+target = ".env.example"
+include_features = ["dotenv"]

@@ -1,9 +1,7 @@
-import { renderRoute } from "./router/AppRouter";
-
-export function renderApp(root: Element | null): void {
-  if (!root) {
-    throw new Error("Missing #app root element");
-  }
-
-  root.innerHTML = renderRoute();
+import { AppRouter } from "./router/AppRouter";
+export function App(root: HTMLElement) {
+  const h1 = document.createElement("h1");
+  h1.textContent = "{{project_name}}";
+  root.appendChild(h1);
+  AppRouter(root);
 }

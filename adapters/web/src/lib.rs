@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use dashmap::DashMap;
 use mg_adapter_base::BaseAdapter;
+use mg_crypto;
 use mg_fetcher::extract::extract_tarball;
 use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
 use mg_resolver::{
@@ -27,6 +28,19 @@ use walkdir::WalkDir;
 pub mod native;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
+
+fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let tmp_path = dir.join(format!(".mg-tmp-{}", std::process::id()));
+    std::fs::write(&tmp_path, data).map_err(|e| {
+        mg_types::MgError::Other(format!("failed to write temp file: {e}"))
+    })?;
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        mg_types::MgError::Other(format!("failed to rename temp file: {e}"))
+    })?;
+    Ok(())
+}
 
 fn project_cache_dir(project_root: &Path) -> PathBuf {
     project_root.join(".megagate").join("cache").join("web")
@@ -149,6 +163,11 @@ fn effective_registry_url(default: &str) -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_string());
+    if !url.starts_with("https://") {
+        panic!(
+            "registry URL must use HTTPS: '{url}' (set MEGAGATE_WEB_REGISTRY_URL to an HTTPS URL)"
+        );
+    }
     validate_registry_allowed(&url);
     url
 }
@@ -165,7 +184,11 @@ fn validate_registry_allowed(url: &str) {
     if allowed_list.is_empty() {
         return;
     }
-    if allowed_list.iter().any(|a| url.starts_with(a)) {
+    let normalized = url.trim_end_matches('/');
+    let matched = allowed_list
+        .iter()
+        .any(|a| normalized == a.trim_end_matches('/'));
+    if matched {
         return;
     }
     panic!(
@@ -200,6 +223,15 @@ impl PackageAdapter for WebAdapter {
             return Err(mg_types::MgError::Other(format!(
                 "No package.json in '{}'. Run 'mg init --template web' first.",
                 project_root.display()
+            )));
+        }
+        const MAX_MANIFEST_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+        let metadata = std::fs::metadata(&pkg_path)?;
+        if metadata.len() > MAX_MANIFEST_SIZE {
+            return Err(mg_types::MgError::Other(format!(
+                "package.json is too large ({} bytes, max {})",
+                metadata.len(),
+                MAX_MANIFEST_SIZE
             )));
         }
         let pkg_json: PackageJson = serde_json::from_str(&std::fs::read_to_string(&pkg_path)?)?;
@@ -415,7 +447,8 @@ impl PackageAdapter for WebAdapter {
         std::fs::create_dir_all(&node_modules)?;
         let mut summary = InstallSummary::default();
         let staging_root = layout.temp_dir().join(format!(
-            "install-stage-{}",
+            "install-stage-{}-{}",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -554,15 +587,8 @@ impl PackageAdapter for WebAdapter {
             let package_dir = node_modules.join(pkg.id.name().as_str());
             let mut visiting = std::collections::HashSet::new();
             materialize_nested_dependencies(
-                &package_dir,
-                pkg,
-                &package_map,
-                &root_package_versions,
-                &layout,
-                store,
-                shared_cache.as_ref(),
-                &cache,
-                &mut visiting,
+                &package_dir, pkg, &package_map, &root_package_versions,
+                &layout, store, shared_cache.as_ref(), &cache, &mut visiting, 0,
             )?;
         }
         if staging_root.exists() {
@@ -1137,7 +1163,9 @@ impl PackageJson {
         Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
     pub fn save(&self, path: &Path) -> Result<(), anyhow::Error> {
-        Ok(std::fs::write(path, serde_json::to_string_pretty(self)?)?)
+        let content = serde_json::to_string_pretty(self)?;
+        atomic_write(path, content.as_bytes())?;
+        Ok(())
     }
 }
 
@@ -1598,9 +1626,11 @@ fn shared_cache_max_age_secs() -> u64 {
 }
 
 fn strict_integrity_enforced() -> bool {
-    std::env::var("MEGAGATE_WEB_STRICT_INTEGRITY")
-        .ok()
-        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    let val = std::env::var("MEGAGATE_WEB_STRICT_INTEGRITY");
+    match val.as_deref() {
+        Ok("0" | "false" | "no" | "off") => false,
+        _ => true,
+    }
 }
 
 fn next_stale_retry_after() -> u64 {
@@ -1745,6 +1775,18 @@ fn remove_dir_if_empty(path: &Path) {
 
 fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
     if !pkg.tarball_url.is_empty() {
+        if !pkg.tarball_url.starts_with("https://") {
+            // tarball URL from registry must be HTTPS
+            let registry = registry_url.trim_end_matches('/');
+            let unscoped = pkg.id.name().unscoped();
+            return format!(
+                "{}/{}/-/{}-{}.tgz",
+                registry,
+                pkg.id.name_str(),
+                unscoped,
+                pkg.id.version()
+            );
+        }
         return pkg.tarball_url.clone();
     }
 
@@ -2005,7 +2047,14 @@ fn ensure_extracted_package_root(
             .map(|marker| marker == &expected_marker)
             .unwrap_or(false)
     {
-        return Ok(canonical_root);
+        // Re-verify tarball integrity before trusting cache (TOCTOU mitigation)
+        if !tarball_path.exists() || verify_tarball_integrity(pkg, &std::fs::read(tarball_path)?).is_err() {
+            // cached tarball was tampered, remove and re-fetch will happen at caller
+            let _ = std::fs::remove_file(tarball_path);
+            let _ = std::fs::remove_dir_all(&canonical_root);
+        } else {
+            return Ok(canonical_root);
+        }
     }
 
     let extract_root = extracted_package_root(layout, pkg);
@@ -2172,7 +2221,16 @@ fn materialize_nested_dependencies(
     shared_cache: Option<&SharedWebCache>,
     cache: &PackageCache,
     visiting: &mut std::collections::HashSet<String>,
+    depth: usize,
 ) -> MgResult<()> {
+    const MAX_DEPTH: usize = 50;
+    if depth > MAX_DEPTH {
+        return Err(mg_types::MgError::Other(format!(
+            "dependency graph too deep (>{}) for '{}'",
+            MAX_DEPTH,
+            pkg.id.name_str()
+        )));
+    }
     if !visiting.insert(pkg.id.name_str().to_string()) {
         return Ok(());
     }
@@ -2219,15 +2277,8 @@ fn materialize_nested_dependencies(
         }
 
         materialize_nested_dependencies(
-            &nested_dir,
-            dep_pkg,
-            package_map,
-            root_package_versions,
-            layout,
-            store,
-            shared_cache,
-            cache,
-            visiting,
+            &nested_dir, dep_pkg, package_map, root_package_versions,
+            layout, store, shared_cache, cache, visiting, depth + 1,
         )?;
     }
 
@@ -2289,8 +2340,14 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
     for pkg in packages {
         let package_dir = node_modules.join(pkg.id.name().as_str());
         for (bin_name, relative_target) in package_bin_entries(&package_dir)? {
+            if relative_target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                continue;
+            }
             let target = package_dir.join(&relative_target);
             if !target.exists() {
+                continue;
+            }
+            if !target.starts_with(&node_modules) {
                 continue;
             }
             let link = bin_dir.join(bin_name);
@@ -2452,7 +2509,15 @@ fn write_web_lockfile_with_state(
         })
         .collect();
 
-    std::fs::write(&lock_path, serialization::to_toml(&lockfile)?)?;
+    let toml = serialization::to_toml(&lockfile)?;
+    atomic_write(&lock_path, toml.as_bytes())?;
+    // Write lockfile checksum for tamper detection
+    let checksum = mg_crypto::hash(toml.as_bytes(), mg_crypto::HashAlgorithm::Sha256)
+        .map_err(|e| mg_types::MgError::Other(format!("checksum failed: {e}")))?;
+    let checksum_path = project_root.join("mg.lock.sha256");
+    std::fs::write(&checksum_path, &checksum).map_err(|e| {
+        mg_types::MgError::Other(format!("failed to write lockfile checksum: {e}"))
+    })?;
     Ok(())
 }
 
