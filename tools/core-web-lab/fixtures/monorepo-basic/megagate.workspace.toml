@@ -1,0 +1,6 @@
+version = 1
+name = "core-web-lab-monorepo-basic"
+
+[workspace]
+apps = ["apps/*"]
+packages = ["packages/*"]

@@ -1,11 +1,9 @@
 [[files]]
 source = "go.mod"
-required_context = ["project_slug"]
 target = "apps/backend/go.mod"
 
 [[files]]
 source = "main.go"
-required_context = ["project_name"]
 target = "apps/backend/cmd/server/main.go"
 
 [[files]]

@@ -1,1 +1,11 @@
-/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/node/nestjs/sources/package.ts.json
+{
+  "name": "@project/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}

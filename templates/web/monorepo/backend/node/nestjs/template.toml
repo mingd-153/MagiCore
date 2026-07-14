@@ -13,7 +13,10 @@ exclude_features = ["typescript"]
 [[files]]
 source = "tsconfig.json"
 target = "apps/backend/tsconfig.json"
-include_features = ["typescript"]
+
+[[files]]
+source = "server.ts"
+target = "apps/backend/src/server.ts"
 
 [[files]]
 source = "server.js"
@@ -21,19 +24,31 @@ target = "apps/backend/src/server.js"
 exclude_features = ["typescript"]
 
 [[files]]
-source = "server.ts"
-target = "apps/backend/src/server.ts"
-include_features = ["typescript"]
+source = "app.module.ts"
+target = "apps/backend/src/app.module.ts"
 
 [[files]]
-source = "app.js"
-target = "apps/backend/src/app.js"
+source = "app.module.js"
+target = "apps/backend/src/app.module.js"
 exclude_features = ["typescript"]
 
 [[files]]
-source = "app.ts"
-target = "apps/backend/src/app.ts"
-include_features = ["typescript"]
+source = "app.controller.ts"
+target = "apps/backend/src/app.controller.ts"
+
+[[files]]
+source = "app.controller.js"
+target = "apps/backend/src/app.controller.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.service.ts"
+target = "apps/backend/src/app.service.ts"
+
+[[files]]
+source = "app.service.js"
+target = "apps/backend/src/app.service.js"
+exclude_features = ["typescript"]
 
 [[files]]
 source = "vitest.config.ts"
@@ -44,13 +59,3 @@ include_features = ["vitest"]
 source = "app.spec.ts"
 target = "apps/backend/src/app.spec.ts"
 include_features = ["vitest"]
-
-[[files]]
-source = "schema.prisma"
-target = "apps/backend/prisma/schema.prisma"
-include_features = ["prisma"]
-
-[[files]]
-source = "prisma.ts"
-target = "apps/backend/src/lib/prisma.ts"
-include_features = ["prisma"]

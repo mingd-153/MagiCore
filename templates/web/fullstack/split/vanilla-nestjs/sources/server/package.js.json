@@ -1,2 +1,11 @@
-{ "name": "@project/server", "private": true, "type": "module", "version": "0.1.0",
-  "scripts": { "dev": "node --watch src/server.js", "start": "node src/server.js" } }
+{
+  "name": "@project/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}

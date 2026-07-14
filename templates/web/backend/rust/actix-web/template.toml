@@ -1,6 +1,5 @@
 [[files]]
 source = "Cargo.toml"
-required_context = ["project_slug"]
 target = "Cargo.toml"
 
 [[files]]

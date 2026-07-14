@@ -31,6 +31,19 @@ pub struct LockPackage {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceLock {
+    pub path: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub frameworks: Vec<String>,
+    #[serde(default)]
+    pub package_count: usize,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Lockfile {
     pub version: u32,
     pub core: String,
@@ -39,6 +52,8 @@ pub struct Lockfile {
     pub frameworks: Vec<String>,
     #[serde(default)]
     pub resolution: ResolutionMeta,
+    #[serde(rename = "workspace", default)]
+    pub workspaces: Vec<WorkspaceLock>,
     #[serde(rename = "package", default)]
     pub packages: Vec<LockPackage>,
 }
@@ -51,6 +66,7 @@ impl Lockfile {
             mode: mode.into(),
             frameworks: vec![],
             resolution: ResolutionMeta::default(),
+            workspaces: vec![],
             packages: vec![],
         }
     }
@@ -86,6 +102,7 @@ mod tests {
         assert_eq!(parsed.mode, "frontend");
         assert_eq!(parsed.frameworks, vec!["react-vite"]);
         assert_eq!(parsed.resolution.package_count, 1);
+        assert!(parsed.workspaces.is_empty());
         assert_eq!(parsed.packages.len(), 1);
         assert_eq!(parsed.packages[0].name, "tailwindcss");
         assert_eq!(parsed.packages[0].version, "4.3.2");
