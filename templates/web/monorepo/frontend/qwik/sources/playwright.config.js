@@ -1,0 +1,1 @@
+../../../../frontend/qwik/sources/playwright.config.js

@@ -1,0 +1,1 @@
+../../../../../../frontend/sveltekit/sources/src/lib/graphql/schema.ts

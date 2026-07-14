@@ -1,0 +1,1 @@
+../../../../frontend/vanilla/sources/vite-env.d.ts
