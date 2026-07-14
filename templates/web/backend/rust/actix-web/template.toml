@@ -13,6 +13,10 @@ target = "src/config.rs"
 required_context = ["project_name"]
 
 [[files]]
+source = "middleware.rs"
+target = "src/middleware.rs"
+
+[[files]]
 source = "health.rs"
 target = "src/routes/health.rs"
 required_context = ["project_name"]

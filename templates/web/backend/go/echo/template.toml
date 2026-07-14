@@ -13,6 +13,10 @@ target = "cmd/server/health.go"
 required_context = ["project_name"]
 
 [[files]]
+source = "middleware.go"
+target = "cmd/server/middleware.go"
+
+[[files]]
 source = "config.go"
 target = "cmd/server/config.go"
 required_context = ["project_name"]
