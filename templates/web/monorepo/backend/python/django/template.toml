@@ -16,6 +16,10 @@ target = "apps/backend/src/config.py"
 required_context = ["project_name"]
 
 [[files]]
+source = "middleware.py"
+target = "apps/backend/src/middleware.py"
+
+[[files]]
 source = "wsgi.py"
 target = "apps/backend/src/wsgi.py"
 

@@ -24,6 +24,11 @@ target = "src/main/resources/application.properties"
 required_context = ["project_name"]
 
 [[files]]
+source = "RequestIdFilter.java"
+target = "src/main/java/com/{{ project_package }}/api/RequestIdFilter.java"
+required_context = ["project_package"]
+
+[[files]]
 source = "Dockerfile"
 target = "Dockerfile"
 include_features = ["docker"]
