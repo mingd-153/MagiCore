@@ -1080,6 +1080,7 @@ fn has_backend_manifest(dir: &Path) -> bool {
         || dir.join("Cargo.toml").exists()
         || dir.join("manage.py").exists()
         || dir.join("main.py").exists()
+        || dir.join("src/main.py").exists()
         || dir.join("pom.xml").exists()
         || dir.join("artisan").exists()
         || dir.join("composer.json").exists()
@@ -1117,6 +1118,15 @@ fn infer_native_dev_launch(
         return Ok(DevLaunch {
             program: python,
             args: vec![OsString::from("main.py")],
+            envs: env_port_pairs(port),
+        });
+    }
+
+    if project_root.join("src/main.py").exists() {
+        let python = native_python_program(project_root);
+        return Ok(DevLaunch {
+            program: python,
+            args: vec![OsString::from("src/main.py")],
             envs: env_port_pairs(port),
         });
     }
@@ -1161,7 +1171,7 @@ fn infer_native_dev_launch(
 
     if project_root.join("pom.xml").exists() {
         let pom = std::fs::read_to_string(project_root.join("pom.xml")).unwrap_or_default();
-        if pom.contains("quarkus.platform.version") {
+        if pom.contains("quarkus.platform") {
             let mut args = vec![
                 OsString::from("quarkus:dev"),
                 OsString::from("-Dquarkus.http.host=0.0.0.0"),
