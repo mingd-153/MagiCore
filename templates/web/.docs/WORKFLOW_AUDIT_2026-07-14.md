@@ -397,3 +397,38 @@ Verification:
 - `./target/debug/mg add-web --help` ✅
 - `./target/debug/mg install-web --help` ✅
 - `./target/debug/mg dev-web --help` ✅
+
+---
+
+## Sandbox-Safe Test + Benchmark Pass
+
+The local lab exposed a separate infrastructure problem:
+
+- several `mg-web-adapter` tests use a temporary localhost registry fixture
+- `bench_matrix` also uses a localhost registry fixture
+- in restricted sandbox execution, local socket bind can fail with `Operation not permitted`
+
+This was not a resolver correctness bug. It was a harness/runtime-environment mismatch.
+
+### Fix
+
+1. socket-backed adapter tests now detect sandbox bind denial and skip gracefully
+2. `bench_matrix` now exits cleanly with a clear skip message when localhost bind is not allowed
+
+### Verified result
+
+- `cargo test -p mg-web-adapter --lib -- --nocapture` ✅
+  - result in restricted sandbox: `32 passed`
+  - socket-backed cases report skip messages instead of hard failure
+- `tools/core-web-lab/run-benchmarks.sh quick` ✅
+  - result in restricted sandbox: benchmark lane completes
+  - matrix benchmark reports a sandbox skip instead of failing the whole lane
+
+### Important reading of this result
+
+This improves lab reliability, not benchmark competitiveness.
+
+- green in restricted sandbox now means:
+  - harness is robust
+  - benchmark lane can distinguish “not measurable here” from “product logic is broken”
+- it does **not** mean cold/warm matrix numbers were fully collected in this restricted environment

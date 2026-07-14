@@ -1,14 +1,22 @@
 [[files]]
 source = "pom.xml"
 target = "pom.xml"
+required_context = ["project_slug"]
 
 [[files]]
 source = "Application.java"
 target = "src/main/java/com/{{ project_slug }}/Application.java"
+required_context = ["project_slug"]
 
 [[files]]
-source = "HealthController.java"
-target = "src/main/java/com/{{ project_slug }}/api/HealthController.java"
+source = "HealthResource.java"
+target = "src/main/java/com/{{ project_slug }}/api/HealthResource.java"
+required_context = ["project_slug", "project_name"]
+
+[[files]]
+source = "application.properties"
+target = "src/main/resources/application.properties"
+required_context = ["project_name"]
 
 [[files]]
 source = "Dockerfile"

@@ -1,6 +1,7 @@
 [[files]]
 source = "composer.json"
 target = "apps/backend/composer.json"
+required_context = ["project_slug"]
 
 [[files]]
 source = "index.php"

@@ -1,6 +1,7 @@
 [[files]]
 source = "go.mod"
 target = "apps/backend/go.mod"
+required_context = ["project_slug"]
 
 [[files]]
 source = "main.go"

@@ -1,14 +1,17 @@
 [[files]]
 source = "pom.xml"
 target = "apps/backend/pom.xml"
+required_context = ["project_slug"]
 
 [[files]]
 source = "Application.java"
 target = "apps/backend/src/main/java/com/{{ project_slug }}/Application.java"
+required_context = ["project_slug"]
 
 [[files]]
 source = "HealthController.java"
 target = "apps/backend/src/main/java/com/{{ project_slug }}/api/HealthController.java"
+required_context = ["project_slug"]
 
 [[files]]
 source = "Dockerfile"
