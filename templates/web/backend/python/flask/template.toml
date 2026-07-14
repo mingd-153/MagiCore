@@ -1,23 +1,17 @@
 [[files]]
+source = "main.py"
+target = "src/main.py"
+
+[[files]]
 source = "requirements.txt"
 target = "requirements.txt"
 
 [[files]]
-source = "config.py"
-target = "src/config.py"
-required_context = ["project_name"]
+source = "Dockerfile"
+target = "Dockerfile"
+include_features = ["docker"]
 
 [[files]]
-source = "health.py"
-target = "src/routes/health.py"
-required_context = ["project_name"]
-
-[[files]]
-source = "status.py"
-target = "src/services/status.py"
-required_context = ["project_name"]
-
-[[files]]
-source = "main.py"
-target = "main.py"
-required_context = ["project_name"]
+source = ".dockerignore"
+target = ".dockerignore"
+include_features = ["docker"]

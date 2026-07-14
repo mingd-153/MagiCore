@@ -1,31 +1,18 @@
 [[files]]
 source = "Cargo.toml"
-target = "apps/backend/Cargo.toml"
 required_context = ["project_slug"]
+target = "apps/backend/Cargo.toml"
 
 [[files]]
 source = "main.rs"
 target = "apps/backend/src/main.rs"
-required_context = ["project_name"]
 
 [[files]]
-source = "config.rs"
-target = "apps/backend/src/config.rs"
-required_context = ["project_name"]
+source = "Dockerfile"
+target = "apps/backend/Dockerfile"
+include_features = ["docker"]
 
 [[files]]
-source = "mod_routes.rs"
-target = "apps/backend/src/routes/mod.rs"
-
-[[files]]
-source = "health.rs"
-target = "apps/backend/src/routes/health.rs"
-
-[[files]]
-source = "mod_services.rs"
-target = "apps/backend/src/services/mod.rs"
-
-[[files]]
-source = "status.rs"
-target = "apps/backend/src/services/status.rs"
-required_context = ["project_name"]
+source = ".dockerignore"
+target = "apps/backend/.dockerignore"
+include_features = ["docker"]

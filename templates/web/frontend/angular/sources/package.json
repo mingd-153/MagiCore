@@ -2,11 +2,10 @@
   "name": "{{project_slug}}",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "ng": "ng",
-    "start": "ng serve",
-    "build": "ng build",
-    "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   }
 }

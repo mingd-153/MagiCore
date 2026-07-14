@@ -1,1 +1,3 @@
-/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/node/nestjs/sources/app.service.js
+import { Injectable } from "@nestjs/common";
+@Injectable()
+export class AppService {}

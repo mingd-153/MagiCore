@@ -1,0 +1,1 @@
+../../../src/store/redux/slices/counterSlice.ts

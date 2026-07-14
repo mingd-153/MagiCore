@@ -1,0 +1,1 @@
+../../../../frontend/sveltekit/sources/playwright.config.ts

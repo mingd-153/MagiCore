@@ -1,1 +1,4 @@
-/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/node/trpc/sources/context.ts
+import { inferAsyncReturnType } from "@trpc/server";
+import { CreateExpressContextOptions } from "@trpc/server/adapters/express";
+export const createContext = ({ req, res }: CreateExpressContextOptions) => ({});
+export type Context = inferAsyncReturnType<typeof createContext>;

@@ -1,0 +1,1 @@
+../../../../frontend/qwik/sources/sentry.client.config.js
