@@ -30,14 +30,41 @@ const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 
 fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    let tmp_path = dir.join(format!(".mg-tmp-{}", std::process::id()));
+    
+    let tmp_path = dir.join(format!(
+        ".mg-tmp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    
+    if path.exists() {
+        let backup_path = path.with_extension("bak");
+        let _ = std::fs::copy(path, &backup_path);
+    }
+    
     std::fs::write(&tmp_path, data).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
         mg_types::MgError::Other(format!("failed to write temp file: {e}"))
     })?;
+    
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tmp_path)
+            .map(|m| m.permissions())
+            .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o644));
+        perms.set_mode(0o644);
+        let _ = std::fs::set_permissions(&tmp_path, perms);
+    }
+    
     std::fs::rename(&tmp_path, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp_path);
         mg_types::MgError::Other(format!("failed to rename temp file: {e}"))
     })?;
+    
     Ok(())
 }
 
@@ -1384,17 +1411,10 @@ impl SharedWebCache {
                 package, e
             ))
         })?;
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, payload).map_err(|e| {
+        atomic_write(&path, &payload).map_err(|e| {
             DependencyError(format!(
                 "failed to write cached metadata for '{}': {}",
-                package, e
-            ))
-        })?;
-        std::fs::rename(&tmp, &path).map_err(|e| {
-            DependencyError(format!(
-                "failed to finalize cached metadata for '{}': {}",
-                package, e
+                package, e.to_string()
             ))
         })?;
         Ok(())
@@ -1768,13 +1788,8 @@ fn shared_cache_prune_due(root: &Path) -> bool {
 
 fn write_shared_cache_prune_stamp(root: &Path) -> MgResult<()> {
     let stamp = shared_cache_prune_stamp_path(root);
-    std::fs::write(&stamp, current_unix_secs().to_string()).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to write shared cache prune stamp '{}': {}",
-            stamp.display(),
-            err
-        ))
-    })?;
+    let data = current_unix_secs().to_string();
+    atomic_write(&stamp, data.as_bytes())?;
     Ok(())
 }
 
@@ -2148,21 +2163,7 @@ fn write_extracted_package_marker(root: &Path, marker: &ExtractedPackageMarker) 
             err
         ))
     })?;
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, payload).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to write extracted package marker '{}': {}",
-            tmp.display(),
-            err
-        ))
-    })?;
-    std::fs::rename(&tmp, &path).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to finalize extracted package marker '{}': {}",
-            path.display(),
-            err
-        ))
-    })?;
+    atomic_write(&path, &payload)?;
     Ok(())
 }
 
@@ -2655,13 +2656,12 @@ fn write_web_lockfile_with_state(
 
     let toml = serialization::to_toml(&lockfile)?;
     atomic_write(&lock_path, toml.as_bytes())?;
-    // Write lockfile checksum for tamper detection
+    
     let checksum = mg_crypto::hash(toml.as_bytes(), mg_crypto::HashAlgorithm::Sha256)
         .map_err(|e| mg_types::MgError::Other(format!("checksum failed: {e}")))?;
     let checksum_path = project_root.join("mg.lock.sha256");
-    std::fs::write(&checksum_path, &checksum).map_err(|e| {
-        mg_types::MgError::Other(format!("failed to write lockfile checksum: {e}"))
-    })?;
+    atomic_write(&checksum_path, checksum.as_bytes())?;
+    
     Ok(())
 }
 
