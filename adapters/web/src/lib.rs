@@ -1892,12 +1892,57 @@ fn remove_dir_if_empty(path: &Path) {
     let _ = std::fs::remove_dir(path);
 }
 
+fn is_tarball_url_trusted(tarball_url: &str, registry_url: &str) -> bool {
+    let Ok(tarball_parsed) = url::Url::parse(tarball_url) else {
+        return false;
+    };
+    
+    let Ok(registry_parsed) = url::Url::parse(registry_url) else {
+        return false;
+    };
+    
+    let Some(tarball_host) = tarball_parsed.host_str() else {
+        return false;
+    };
+    
+    let Some(registry_host) = registry_parsed.host_str() else {
+        return false;
+    };
+    
+    if tarball_host == registry_host {
+        return true;
+    }
+    
+    if registry_host == "registry.npmjs.org" {
+        return tarball_host == "registry.npmjs.org" 
+            || tarball_host.ends_with(".npmjs.org")
+            || tarball_host == "registry.yarnpkg.com";
+    }
+    
+    if let Ok(allowed) = std::env::var("MEGAGATE_WEB_ALLOWED_TARBALL_HOSTS") {
+        let allowed_hosts: Vec<&str> = allowed
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        
+        if allowed_hosts.iter().any(|&host| host == tarball_host) {
+            return true;
+        }
+    }
+    
+    false
+}
+
 fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
     if !pkg.tarball_url.is_empty() {
         if !pkg.tarball_url.starts_with("https://")
             && !allow_insecure_loopback_url(&pkg.tarball_url)
         {
-            // tarball URL from registry must be HTTPS
+            eprintln!(
+                "WARNING: Tarball URL for '{}' is not HTTPS, using registry fallback",
+                pkg.id.name_str()
+            );
             let registry = registry_url.trim_end_matches('/');
             let unscoped = pkg.id.name().unscoped();
             return format!(
@@ -1908,6 +1953,23 @@ fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
                 pkg.id.version()
             );
         }
+        
+        if !is_tarball_url_trusted(&pkg.tarball_url, registry_url) {
+            eprintln!(
+                "WARNING: Tarball URL for '{}' domain mismatch with registry, using registry fallback",
+                pkg.id.name_str()
+            );
+            let registry = registry_url.trim_end_matches('/');
+            let unscoped = pkg.id.name().unscoped();
+            return format!(
+                "{}/{}/-/{}-{}.tgz",
+                registry,
+                pkg.id.name_str(),
+                unscoped,
+                pkg.id.version()
+            );
+        }
+        
         return pkg.tarball_url.clone();
     }
 
@@ -2019,19 +2081,63 @@ fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
         }
         return Ok(());
     }
+    
+    let mut has_weak_algorithm = false;
+    let mut has_strong_algorithm = false;
+    
     for entry in pkg.integrity.split_whitespace() {
         let Some((algorithm, expected)) = entry.split_once('-') else {
             continue;
         };
+        
+        if matches!(algorithm, "sha1" | "md5") {
+            has_weak_algorithm = true;
+            if strict_integrity_enforced() {
+                return Err(mg_types::MgError::Other(format!(
+                    "strict integrity: '{}' uses weak hash algorithm '{}' (only sha256/sha512 allowed)",
+                    pkg.id.name_str(),
+                    algorithm
+                )));
+            }
+            eprintln!(
+                "WARNING: Package '{}' uses weak hash algorithm '{}', consider updating",
+                pkg.id.name_str(),
+                algorithm
+            );
+            continue;
+        }
+        
         let actual = match algorithm {
-            "sha256" => compute_sha256_b64(bytes),
-            "sha512" => compute_sha512_b64(bytes),
-            _ => continue,
+            "sha256" => {
+                has_strong_algorithm = true;
+                compute_sha256_b64(bytes)
+            }
+            "sha512" => {
+                has_strong_algorithm = true;
+                compute_sha512_b64(bytes)
+            }
+            _ => {
+                eprintln!(
+                    "WARNING: Package '{}' uses unknown hash algorithm '{}'",
+                    pkg.id.name_str(),
+                    algorithm
+                );
+                continue;
+            }
         };
+        
         if actual == expected {
             return Ok(());
         }
     }
+    
+    if has_weak_algorithm && !has_strong_algorithm {
+        return Err(mg_types::MgError::Other(format!(
+            "integrity check failed for '{}': only weak algorithms present (sha1/md5)",
+            pkg.id.name_str()
+        )));
+    }
+    
     Err(mg_types::MgError::Other(format!(
         "integrity mismatch for '{}': none of the SRI entries matched",
         pkg.id.name_str()
