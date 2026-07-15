@@ -17,3 +17,16 @@ impl Registry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Registry;
+
+    #[test]
+    fn new_sets_name_url_and_default_priority() {
+        let reg = Registry::new("my-reg".into(), "https://example.com".into());
+        assert_eq!(reg.name, "my-reg");
+        assert_eq!(reg.url, "https://example.com");
+        assert_eq!(reg.priority, 0);
+    }
+}

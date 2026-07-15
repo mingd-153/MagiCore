@@ -27,6 +27,7 @@ pub(crate) struct Cli {
 // Single mode:   mg add react, mg remove lodash, ...
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Commands {
     // ── Common commands ────────────────────────────────────────
     #[command(about = "Interactive project wizard")]

@@ -12,6 +12,7 @@ use serde_json::{Map, Value};
 
 use crate::commands::core::scaffold_flags::ScaffoldFlags;
 use crate::commands::core::shared;
+use mg_types::Ecosystem;
 use mg_ui::info;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
@@ -165,6 +166,11 @@ fn project_root() -> Result<std::path::PathBuf> {
     Ok(root)
 }
 
+fn web_adapter() -> Box<dyn PackageAdapter> {
+    crate::factory::create_adapter(&Ecosystem::Web)
+        .expect("web adapter always available in web core build")
+}
+
 /// Add web dependency
 #[allow(clippy::too_many_arguments)]
 pub async fn add(
@@ -178,9 +184,9 @@ pub async fn add(
     global: bool,
 ) -> Result<()> {
     let root = project_root()?;
-    let adapter = mg_web_adapter::WebAdapter::new();
+    let adapter = web_adapter();
     shared::add(
-        &adapter, &root, packages, version, dev, exact, optional, peer, no_save, global,
+        &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, global,
     )
     .await
 }
@@ -188,28 +194,28 @@ pub async fn add(
 /// Remove web dependency
 pub async fn remove(package: String) -> Result<()> {
     let root = project_root()?;
-    let adapter = mg_web_adapter::WebAdapter::new();
-    shared::remove(&adapter, &root, &package).await
+    let adapter = web_adapter();
+    shared::remove(&*adapter, &root, &package).await
 }
 
 /// List web packages
 pub async fn list() -> Result<()> {
     let root = project_root()?;
-    let adapter = mg_web_adapter::WebAdapter::new();
-    shared::list(&adapter, &root).await
+    let adapter = web_adapter();
+    shared::list(&*adapter, &root).await
 }
 
 /// Update web packages
 pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
     let root = project_root()?;
-    let adapter = mg_web_adapter::WebAdapter::new();
-    shared::update(&adapter, &root, packages, install).await
+    let adapter = web_adapter();
+    shared::update(&*adapter, &root, packages, install).await
 }
 
 /// Install web dependencies
 pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
     let root = project_root()?;
-    let adapter = Arc::new(mg_web_adapter::WebAdapter::new());
+    let adapter: Arc<dyn PackageAdapter> = Arc::from(web_adapter());
     let targets = install_targets(&root)?;
 
     for pkg in &packages {
@@ -511,9 +517,9 @@ fn link_monorepo_workspace_packages(project_root: &Path, targets: &[PathBuf]) ->
         for (dep_name, spec) in manifest
             .dependencies
             .into_iter()
-            .chain(manifest.dev_dependencies.into_iter())
-            .chain(manifest.peer_dependencies.into_iter())
-            .chain(manifest.optional_dependencies.into_iter())
+            .chain(manifest.dev_dependencies)
+            .chain(manifest.peer_dependencies)
+            .chain(manifest.optional_dependencies)
         {
             if !spec.trim().starts_with("workspace:") {
                 continue;
@@ -555,7 +561,7 @@ fn read_workspace_package_manifest(project_root: &Path) -> Result<WorkspacePacka
 }
 
 async fn install_monorepo_targets(
-    adapter: &Arc<mg_web_adapter::WebAdapter>,
+    adapter: &Arc<dyn PackageAdapter>,
     targets: &[PathBuf],
     frozen: bool,
 ) -> Result<()> {
@@ -1088,9 +1094,10 @@ fn has_backend_manifest(dir: &Path) -> bool {
 
 fn infer_native_dev_launch(
     project_root: &Path,
-    _host: Option<String>,
+    host: Option<String>,
     port: Option<u16>,
 ) -> Result<DevLaunch> {
+    let host_str = host.as_deref().unwrap_or("0.0.0.0");
     if project_root.join("go.mod").exists() {
         let go_dir = if project_root.join("cmd/server").exists() {
             OsString::from("./cmd/server")
@@ -1100,12 +1107,12 @@ fn infer_native_dev_launch(
         return Ok(DevLaunch {
             program: PathBuf::from("go"),
             args: vec![OsString::from("run"), go_dir],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
     if project_root.join("manage.py").exists() {
-        let bind = format!("0.0.0.0:{}", port.unwrap_or(3000));
+        let bind = format!("{host_str}:{}", port.unwrap_or(3000));
         let python = native_python_program(project_root);
         return Ok(DevLaunch {
             program: python,
@@ -1114,7 +1121,7 @@ fn infer_native_dev_launch(
                 OsString::from("runserver"),
                 OsString::from(bind),
             ],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
@@ -1123,7 +1130,7 @@ fn infer_native_dev_launch(
         return Ok(DevLaunch {
             program: python,
             args: vec![OsString::from("main.py")],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
@@ -1132,7 +1139,7 @@ fn infer_native_dev_launch(
         return Ok(DevLaunch {
             program: python,
             args: vec![OsString::from("-m"), OsString::from("src.main")],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
@@ -1140,7 +1147,7 @@ fn infer_native_dev_launch(
         return Ok(DevLaunch {
             program: PathBuf::from("cargo"),
             args: vec![OsString::from("run")],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
@@ -1150,10 +1157,10 @@ fn infer_native_dev_launch(
             args: vec![
                 OsString::from("artisan"),
                 OsString::from("serve"),
-                OsString::from("--host=0.0.0.0"),
+                OsString::from(format!("--host={host_str}")),
                 OsString::from(format!("--port={}", port.unwrap_or(8000))),
             ],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
@@ -1165,12 +1172,12 @@ fn infer_native_dev_launch(
             program: PathBuf::from("php"),
             args: vec![
                 OsString::from("-S"),
-                OsString::from(format!("0.0.0.0:{}", port.unwrap_or(8000))),
+                OsString::from(format!("{host_str}:{}", port.unwrap_or(8000))),
                 OsString::from("-t"),
                 OsString::from("public"),
                 OsString::from("public/index.php"),
             ],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
@@ -1181,21 +1188,21 @@ fn infer_native_dev_launch(
             program: PathBuf::from("php"),
             args: vec![
                 OsString::from("-S"),
-                OsString::from(format!("0.0.0.0:{}", port.unwrap_or(8000))),
+                OsString::from(format!("{host_str}:{}", port.unwrap_or(8000))),
                 OsString::from("-t"),
                 OsString::from("public"),
                 OsString::from("public/index.php"),
             ],
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
     if project_root.join("pom.xml").exists() {
         let pom = std::fs::read_to_string(project_root.join("pom.xml")).unwrap_or_default();
-        if pom.contains("quarkus.platform") {
+        if pom.contains("quarkus.platform") || pom.contains("io.quarkus") {
             let mut args = vec![
                 OsString::from("quarkus:dev"),
-                OsString::from("-Dquarkus.http.host=0.0.0.0"),
+                OsString::from(format!("-Dquarkus.http.host={host_str}")),
                 OsString::from("-Dquarkus.analytics.disabled=true"),
             ];
             if let Some(port) = port {
@@ -1204,20 +1211,25 @@ fn infer_native_dev_launch(
             return Ok(DevLaunch {
                 program: PathBuf::from("mvn"),
                 args,
-                envs: env_port_pairs(port),
+                envs: env_host_port_pairs(host, port),
             });
         }
 
+        let host_arg = format!("--server.address={host_str}");
         let mut args = vec![OsString::from("spring-boot:run")];
         if let Some(port) = port {
             args.push(OsString::from(format!(
-                "-Dspring-boot.run.arguments=--server.port={port}"
+                "-Dspring-boot.run.arguments=--server.port={port},{host_arg}"
+            )));
+        } else {
+            args.push(OsString::from(format!(
+                "-Dspring-boot.run.arguments={host_arg}"
             )));
         }
         return Ok(DevLaunch {
             program: PathBuf::from("mvn"),
             args,
-            envs: env_port_pairs(port),
+            envs: env_host_port_pairs(host, port),
         });
     }
 
@@ -1228,8 +1240,11 @@ fn infer_native_dev_launch(
     )
 }
 
-fn env_port_pairs(port: Option<u16>) -> Vec<(OsString, OsString)> {
+fn env_host_port_pairs(host: Option<String>, port: Option<u16>) -> Vec<(OsString, OsString)> {
     let mut envs = Vec::new();
+    if let Some(host) = host {
+        envs.push((OsString::from("HOST"), OsString::from(host)));
+    }
     if let Some(port) = port {
         let port = port.to_string();
         envs.push((OsString::from("PORT"), OsString::from(port.clone())));
@@ -1505,11 +1520,6 @@ struct FrameworkRequest {
     version: Option<String>,
 }
 
-#[allow(dead_code)]
-pub async fn run_create(framework: &str, project_name: &str) -> Result<()> {
-    run_create_with_options(framework, project_name, None).await
-}
-
 pub async fn run_create_with_options(
     framework: &str,
     project_name: &str,
@@ -1600,7 +1610,7 @@ fn validate_flags(flags: &ScaffoldFlags, fe_framework: &str) -> Result<()> {
     }
 
     if flags.shadcn && !flags.tailwindcss {
-        // auto-enable tailwindcss, don't error
+        // auto-enable tailwindcss (side-effect: user sees --tailwindcss in flags)
     }
 
     Ok(())
@@ -2543,191 +2553,6 @@ WebFeaturePackage {
         package: "@trpc/server",
     },
     WebFeaturePackage {
-        feature: "trpc",
-        section: "dependencies",
-        package: "@trpc/client",
-    },
-    WebFeaturePackage {
-        feature: "trpc",
-        section: "dependencies",
-        package: "@trpc/next",
-    },
-    WebFeaturePackage {
-        feature: "grpc",
-        section: "dependencies",
-        package: "@grpc/grpc-js",
-    },
-    WebFeaturePackage {
-        feature: "grpc",
-        section: "dependencies",
-        package: "@grpc/proto-loader",
-    },
-    WebFeaturePackage {
-        feature: "lucia",
-        section: "dependencies",
-        package: "lucia",
-    },
-    WebFeaturePackage {
-        feature: "lucia",
-        section: "dependencies",
-        package: "@lucia-auth/adapter-drizzle",
-    },
-    WebFeaturePackage {
-        feature: "jwt",
-        section: "dependencies",
-        package: "jose",
-    },
-    WebFeaturePackage {
-        feature: "oauth",
-        section: "dependencies",
-        package: "next-auth",
-    },
-    WebFeaturePackage {
-        feature: "dotenv",
-        section: "devDependencies",
-        package: "dotenv-cli",
-    },
-    WebFeaturePackage {
-        feature: "i18n",
-        section: "dependencies",
-        package: "next-i18next",
-    },
-    WebFeaturePackage {
-        feature: "pwa",
-        section: "devDependencies",
-        package: "next-pwa",
-    },
-    WebFeaturePackage {
-        feature: "storybook",
-        section: "devDependencies",
-        package: "@storybook/nextjs",
-    },
-    WebFeaturePackage {
-        feature: "storybook",
-        section: "devDependencies",
-        package: "@storybook/react",
-    },
-    WebFeaturePackage {
-        feature: "sentry",
-        section: "devDependencies",
-        package: "@sentry/nextjs",
-    },
-    WebFeaturePackage {
-        feature: "analytics",
-        section: "dependencies",
-        package: "@vercel/analytics",
-    },
-    WebFeaturePackage {
-        feature: "railway",
-        section: "dependencies",
-        package: "@railway/cli",
-    },
-    WebFeaturePackage {
-        feature: "fly",
-        section: "dependencies",
-        package: "flyctl",
-    },
-    WebFeaturePackage {
-        feature: "styled-components",
-        section: "dependencies",
-        package: "styled-components",
-    },
-    WebFeaturePackage {
-        feature: "styled-components",
-        section: "devDependencies",
-        package: "@types/styled-components",
-    },
-    WebFeaturePackage {
-        feature: "commitlint",
-        section: "devDependencies",
-        package: "@commitlint/cli",
-    },
-    WebFeaturePackage {
-        feature: "commitlint",
-        section: "devDependencies",
-        package: "@commitlint/config-conventional",
-    },
-    WebFeaturePackage {
-        feature: "rest",
-        section: "dependencies",
-        package: "express",
-    },
-    WebFeaturePackage {
-        feature: "graphql",
-        section: "dependencies",
-        package: "@apollo/server",
-    },
-    WebFeaturePackage {
-        feature: "graphql",
-        section: "dependencies",
-        package: "graphql",
-    },
-    WebFeaturePackage {
-        feature: "trpc",
-        section: "dependencies",
-        package: "@trpc/server",
-    },
-    WebFeaturePackage {
-        feature: "trpc",
-        section: "dependencies",
-        package: "@trpc/client",
-    },
-    WebFeaturePackage {
-        feature: "trpc",
-        section: "dependencies",
-        package: "@trpc/next",
-    },
-    WebFeaturePackage {
-        feature: "grpc",
-        section: "dependencies",
-        package: "@grpc/grpc-js",
-    },
-    WebFeaturePackage {
-        feature: "grpc",
-        section: "devDependencies",
-        package: "@grpc/proto-loader",
-    },
-    WebFeaturePackage {
-        feature: "lucia",
-        section: "dependencies",
-        package: "lucia",
-    },
-    WebFeaturePackage {
-        feature: "jwt",
-        section: "dependencies",
-        package: "jsonwebtoken",
-    },
-    WebFeaturePackage {
-        feature: "jwt",
-        section: "devDependencies",
-        package: "@types/jsonwebtoken",
-    },
-    WebFeaturePackage {
-        feature: "oauth",
-        section: "dependencies",
-        package: "oauth4webapi",
-    },
-    WebFeaturePackage {
-        feature: "dotenv",
-        section: "dependencies",
-        package: "dotenv",
-    },
-    WebFeaturePackage {
-        feature: "i18n",
-        section: "dependencies",
-        package: "next-i18next",
-    },
-    WebFeaturePackage {
-        feature: "pwa",
-        section: "devDependencies",
-        package: "next-pwa",
-    },
-    WebFeaturePackage {
-        feature: "storybook",
-        section: "devDependencies",
-        package: "@storybook/nextjs",
-    },
-    WebFeaturePackage {
         feature: "storybook",
         section: "devDependencies",
         package: "@storybook/react",
@@ -2736,16 +2561,6 @@ WebFeaturePackage {
         feature: "storybook",
         section: "devDependencies",
         package: "@storybook/addon-essentials",
-    },
-    WebFeaturePackage {
-        feature: "sentry",
-        section: "dependencies",
-        package: "@sentry/nextjs",
-    },
-    WebFeaturePackage {
-        feature: "analytics",
-        section: "dependencies",
-        package: "@vercel/analytics",
     },
 ];
 
@@ -2842,7 +2657,7 @@ fn fullstack_backend_framework(framework: &str) -> Option<&'static str> {
         "vue-nestjs" => Some("nestjs"),
         "svelte-express" => Some("express"),
         "svelte-hono" => Some("hono"),
-        "next" | "nextjs" => Some("express"),
+        "next" | "nextjs" => None, // Next.js has built-in API routes
         "nuxt" | "nuxtjs" => Some("hono"),
         _ => None,
     }

@@ -1,101 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="mingd-153/MegaGate"
-PACKAGE="${MEGAGATE_PACKAGE:-megagate-web}"
-VERSION="${MEGAGATE_VERSION:-latest}"
-INSTALL_DIR="${MEGAGATE_INSTALL_DIR:-$HOME/.local/bin}"
+# MegaGate local install script
+# Usage: ./scripts/install.sh [--prefix /usr/local] [--package megagate-web]
 
-detect_arch() {
-  local arch
-  arch=$(uname -m)
-  case "$arch" in
-    x86_64|amd64) echo "X64" ;;
-    aarch64|arm64) echo "ARM64" ;;
-    *) echo "unknown-$arch" ;;
+PREFIX="${PREFIX:-/usr/local}"
+PKG="${PACKAGE:-megagate-web}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix) PREFIX="$2"; shift 2 ;;
+    --package) PKG="$2"; shift 2 ;;
+    *) echo "Usage: $0 [--prefix <dir>] [--package <name>]"; exit 1 ;;
   esac
-}
+done
 
-detect_os() {
-  local os
-  os=$(uname -s)
-  case "$os" in
-    Linux) echo "Linux" ;;
-    Darwin) echo "macOS" ;;
-    MINGW*|MSYS*|CYGWIN*) echo "Windows" ;;
-    *) echo "unknown-$os" ;;
-  esac
-}
+echo "Building $PKG ..."
+cd "$(dirname "$0")/.."
+cargo run -p mg-dist -- build "$PKG"
 
-fetch_release() {
-  local pkg=$1 ver=$2 os=$3 arch=$4
-  local asset="${pkg}-${os}-${arch}.tar.gz"
+TARGET_DIR="dist/$PKG"
+TARGET_SUBDIR=$(ls "$TARGET_DIR" 2>/dev/null | head -1)
+if [[ -z "$TARGET_SUBDIR" ]]; then
+  echo "Error: no build artifact found in $TARGET_DIR"
+  exit 1
+fi
 
-  if [ "$ver" = "latest" ]; then
-    local url="https://github.com/${REPO}/releases/latest/download/${asset}"
-  else
-    local url="https://github.com/${REPO}/releases/download/${ver}/${asset}"
-  fi
+BINARY="$TARGET_DIR/$TARGET_SUBDIR/mg"
+if [[ ! -f "$BINARY" ]]; then
+  echo "Error: binary not found at $BINARY"
+  exit 1
+fi
 
-  echo "Downloading ${asset}..." >&2
-  if command -v curl &>/dev/null; then
-    curl -fSL "$url" -o "/tmp/${asset}"
-  elif command -v wget &>/dev/null; then
-    wget -q "$url" -O "/tmp/${asset}"
-  else
-    echo "Error: need curl or wget" >&2
-    exit 1
-  fi
-  echo "/tmp/${asset}"
-}
-
-extract_and_install() {
-  local archive=$1 dest=$2
-  mkdir -p "$dest"
-  tar xzf "$archive" -C "$dest"
-  chmod +x "$dest/mg"
-  echo "Installed mg to ${dest}/mg" >&2
-}
-
-add_to_path() {
-  local dest=$1
-  case "$SHELL" in
-    *zsh*) rc="$HOME/.zshrc" ;;
-    *bash*) rc="$HOME/.bashrc" ;;
-    *) rc="" ;;
-  esac
-  if [ -n "$rc" ] && ! grep -q "export PATH=\"\$HOME/.local/bin:\$PATH\"" "$rc" 2>/dev/null; then
-    echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$rc"
-    echo "Added ~/.local/bin to PATH in ${rc}" >&2
-  fi
-}
-
-main() {
-  local os arch archive
-  os=$(detect_os)
-  arch=$(detect_arch)
-
-  echo "MegaGate ${VERSION} installer" >&2
-  echo "  package: ${PACKAGE}" >&2
-  echo "  os:      ${os}" >&2
-  echo "  arch:    ${arch}" >&2
-  echo "  dest:    ${INSTALL_DIR}" >&2
-  echo "" >&2
-
-  if [[ "$os" = unknown-* ]]; then
-    echo "Error: unsupported OS: $(uname -s)" >&2
-    exit 1
-  fi
-
-  archive=$(fetch_release "$PACKAGE" "$VERSION" "$os" "$arch")
-  extract_and_install "$archive" "$INSTALL_DIR"
-  rm -f "$archive"
-
-  add_to_path "$INSTALL_DIR"
-
-  echo "" >&2
-  echo "MegaGate installed. Run:" >&2
-  echo "  mg --help" >&2
-}
-
-main "$@"
+install -d "$PREFIX/bin"
+install "$BINARY" "$PREFIX/bin/mg"
+echo "Installed mg -> $PREFIX/bin/mg"
+echo "Run 'mg --help' to verify."
