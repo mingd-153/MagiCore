@@ -11,36 +11,56 @@ impl PackageName {
     pub fn new(name: impl Into<String>) -> MgResult<Self> {
         let name = name.into();
         let trimmed = name.trim();
+        
         if trimmed.is_empty() {
             return Err(MgError::InvalidPackageName(name));
         }
+        
         if trimmed.len() > MAX_PACKAGE_NAME_LEN {
             return Err(MgError::InvalidPackageName(name));
         }
+        
         if trimmed.contains('\0') || trimmed.contains('\n') || trimmed.contains('\r') {
             return Err(MgError::InvalidPackageName(name));
         }
-        if trimmed.contains("..") || trimmed.starts_with('/') || trimmed.starts_with('.') {
+        
+        if trimmed.contains("..") {
             return Err(MgError::InvalidPackageName(name));
         }
+        
+        if trimmed.starts_with('/') || trimmed.starts_with('.') {
+            return Err(MgError::InvalidPackageName(name));
+        }
+        
         if trimmed.contains('\\') || trimmed.contains('~') {
             return Err(MgError::InvalidPackageName(name));
         }
+        
+        if trimmed.contains("/../") || trimmed.ends_with("/..") {
+            return Err(MgError::InvalidPackageName(name));
+        }
+        
         let slash_count = trimmed.chars().filter(|&c| c == '/').count();
         if slash_count > 1 {
             return Err(MgError::InvalidPackageName(name));
         }
+        
         if slash_count == 1 {
             let parts: Vec<&str> = trimmed.splitn(2, '/').collect();
             if !parts[0].starts_with('@') || parts[0].len() < 2 || parts[1].is_empty() {
                 return Err(MgError::InvalidPackageName(name));
             }
+            if parts[1].contains('/') {
+                return Err(MgError::InvalidPackageName(name));
+            }
         }
+        
         if trimmed.chars().any(|c| {
-            !c.is_ascii_alphanumeric() && !matches!(c, '@' | '/' | '-' | '_' | '.' | '!' | '~')
+            !c.is_ascii_alphanumeric() && !matches!(c, '@' | '/' | '-' | '_' | '.' | '!')
         }) {
             return Err(MgError::InvalidPackageName(name));
         }
+        
         Ok(Self(trimmed.to_string()))
     }
 
@@ -332,6 +352,11 @@ mod tests {
     fn package_name_path_traversal_rejected() {
         assert!(PackageName::new("..").is_err());
         assert!(PackageName::new("foo/..").is_err());
+        assert!(PackageName::new("../").is_err());
+        assert!(PackageName::new("../../etc/evil").is_err());
+        assert!(PackageName::new("foo/../bar").is_err());
+        assert!(PackageName::new("./foo").is_err());
+        assert!(PackageName::new("foo/./bar").is_err());
     }
 
     #[test]
