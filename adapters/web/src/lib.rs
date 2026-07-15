@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use base64::Engine;
 use dashmap::DashMap;
 use mg_adapter_base::BaseAdapter;
-use mg_crypto;
 use mg_fetcher::extract::extract_tarball;
 use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
 use mg_resolver::{
@@ -205,10 +204,10 @@ fn allow_insecure_loopback_url(url: &str) -> bool {
             return false;
         }
 
-        return matches!(
+        matches!(
             parsed.host_str(),
             Some("127.0.0.1") | Some("localhost") | Some("::1")
-        );
+        )
     }
 }
 
@@ -1735,10 +1734,7 @@ fn shared_cache_max_age_secs() -> u64 {
 
 fn strict_integrity_enforced() -> bool {
     let val = std::env::var("MEGAGATE_WEB_STRICT_INTEGRITY");
-    match val.as_deref() {
-        Ok("0" | "false" | "no" | "off") => false,
-        _ => true,
-    }
+    !matches!(val.as_deref(), Ok("0" | "false" | "no" | "off"))
 }
 
 fn next_stale_retry_after() -> u64 {
@@ -2495,7 +2491,7 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
             if !target.exists() {
                 continue;
             }
-            if !target.starts_with(&node_modules) {
+            if !target.starts_with(node_modules) {
                 continue;
             }
             let link = bin_dir.join(bin_name);

@@ -79,7 +79,7 @@ pub async fn run(query: String, json: bool, exact: bool, page: Option<u32>) -> R
         info(&format!(
             "Page {} of ~{}",
             current,
-            (total + size as u64 - 1) / size as u64
+            total.div_ceil(size as u64)
         ));
     }
 

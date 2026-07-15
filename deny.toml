@@ -22,13 +22,11 @@ skip = [
     { name = "thiserror" },
     { name = "thiserror-impl" },
     { name = "core-foundation" },
-    { name = "core-foundation-sys" },
     { name = "getrandom" },
     { name = "linux-raw-sys" },
     { name = "rustix" },
-    { name = "syn", version = "1" },
-    { name = "bitflags", version = "1" },
     { name = "unicode-width", version = "0.1" },
+    { name = "cpufeatures" },
 ]
 
 [sources]
@@ -40,7 +38,6 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSL-1.0",
-    "ISC",
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
@@ -48,5 +45,4 @@ allow = [
     "MPL-2.0",
     "BSD-3-Clause",
     "BSD-2-Clause",
-    "OpenSSL",
 ]
