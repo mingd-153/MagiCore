@@ -279,6 +279,9 @@ impl Resolver {
     /// Resolve all dependencies. Fails with `SolveError` on provider error or
     /// unresolvable constraint.
     pub async fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
+        const MAX_PACKAGES: usize = 10000;
+        const MAX_QUEUE_SIZE: usize = 50000;
+        
         let mut resolutions: Vec<Resolution> = Vec::new();
         let mut resolved: HashMap<String, Version> = HashMap::new();
         let mut queue: VecDeque<(PackageName, String)> =
@@ -295,6 +298,24 @@ impl Resolver {
             })?;
 
         while !queue.is_empty() {
+            if resolutions.len() >= MAX_PACKAGES {
+                return Err(SolveError {
+                    message: format!(
+                        "dependency graph too large: exceeded {} packages (possible circular dependency or dep bomb)",
+                        MAX_PACKAGES
+                    ),
+                });
+            }
+            
+            if queue.len() > MAX_QUEUE_SIZE {
+                return Err(SolveError {
+                    message: format!(
+                        "dependency queue overflow: exceeded {} entries (possible dep bomb attack)",
+                        MAX_QUEUE_SIZE
+                    ),
+                });
+            }
+            
             let batch_size = queue.len().min(50);
             let batch: Vec<(PackageName, String)> = queue.drain(..batch_size).collect();
             let mut selected: Vec<(PackageName, String, Version)> = Vec::new();
