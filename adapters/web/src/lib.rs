@@ -31,9 +31,8 @@ const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let tmp_path = dir.join(format!(".mg-tmp-{}", std::process::id()));
-    std::fs::write(&tmp_path, data).map_err(|e| {
-        mg_types::MgError::Other(format!("failed to write temp file: {e}"))
-    })?;
+    std::fs::write(&tmp_path, data)
+        .map_err(|e| mg_types::MgError::Other(format!("failed to write temp file: {e}")))?;
     std::fs::rename(&tmp_path, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp_path);
         mg_types::MgError::Other(format!("failed to rename temp file: {e}"))
@@ -629,8 +628,16 @@ impl PackageAdapter for WebAdapter {
             let package_dir = node_modules.join(pkg.id.name().as_str());
             let mut visiting = std::collections::HashSet::new();
             materialize_nested_dependencies(
-                &package_dir, pkg, &package_map, &root_package_versions,
-                &layout, store, shared_cache.as_ref(), &cache, &mut visiting, 0,
+                &package_dir,
+                pkg,
+                &package_map,
+                &root_package_versions,
+                &layout,
+                store,
+                shared_cache.as_ref(),
+                &cache,
+                &mut visiting,
+                0,
             )?;
         }
         if staging_root.exists() {
@@ -1550,8 +1557,7 @@ async fn prefetch_tarballs(
         .map(|shared| shared.package_cache())
         .transpose()
         .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-    let download_semaphore =
-        Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
+    let download_semaphore = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
     let mut downloads = tokio::task::JoinSet::new();
 
     for pkg in &graph.packages {
@@ -1600,7 +1606,7 @@ async fn prefetch_tarballs(
             {
                 if verify_tarball_integrity(&pkg_clone, &bytes).is_ok() {
                     return Ok::<_, mg_types::MgError>(PrefetchOutcome::CacheHit(
-                        bytes.len() as u64,
+                        bytes.len() as u64
                     ));
                 }
                 let _ = std::fs::remove_file(local_cache.tarball_path(&pkg_clone.id));
@@ -1616,11 +1622,10 @@ async fn prefetch_tarballs(
                             .cache_tarball(&pkg_clone.id, &bytes)
                             .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
                         return Ok::<_, mg_types::MgError>(PrefetchOutcome::CacheHit(
-                            bytes.len() as u64,
+                            bytes.len() as u64
                         ));
                     }
-                    let _ =
-                        std::fs::remove_file(shared_package_cache.tarball_path(&pkg_clone.id));
+                    let _ = std::fs::remove_file(shared_package_cache.tarball_path(&pkg_clone.id));
                 }
             }
 
@@ -1642,7 +1647,8 @@ async fn prefetch_tarballs(
 
     while let Some(joined) = downloads.join_next().await {
         match joined
-            .map_err(|e| mg_types::MgError::Other(format!("download task failed: {e}")))?? {
+            .map_err(|e| mg_types::MgError::Other(format!("download task failed: {e}")))??
+        {
             PrefetchOutcome::CacheHit(bytes) => {
                 bytes_from_cache += bytes;
             }
@@ -1941,9 +1947,8 @@ fn extracted_package_root_lock(root: &Path) -> Arc<Mutex<()>> {
 }
 
 fn tarball_prefetch_lock(id: &PackageId) -> Arc<tokio::sync::Mutex<()>> {
-    static LOCKS: OnceLock<
-        Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    > = OnceLock::new();
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        OnceLock::new();
     let locks = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     let key = format!("{}@{}", id.name_str(), id.version());
     let mut guard = match locks.lock() {
@@ -2421,8 +2426,16 @@ fn materialize_nested_dependencies(
         }
 
         materialize_nested_dependencies(
-            &nested_dir, dep_pkg, package_map, root_package_versions,
-            layout, store, shared_cache, cache, visiting, depth + 1,
+            &nested_dir,
+            dep_pkg,
+            package_map,
+            root_package_versions,
+            layout,
+            store,
+            shared_cache,
+            cache,
+            visiting,
+            depth + 1,
         )?;
     }
 
@@ -2484,7 +2497,10 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
     for pkg in packages {
         let package_dir = node_modules.join(pkg.id.name().as_str());
         for (bin_name, relative_target) in package_bin_entries(&package_dir)? {
-            if relative_target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            if relative_target
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
                 continue;
             }
             let target = package_dir.join(&relative_target);
@@ -2659,9 +2675,8 @@ fn write_web_lockfile_with_state(
     let checksum = mg_crypto::hash(toml.as_bytes(), mg_crypto::HashAlgorithm::Sha256)
         .map_err(|e| mg_types::MgError::Other(format!("checksum failed: {e}")))?;
     let checksum_path = project_root.join("mg.lock.sha256");
-    std::fs::write(&checksum_path, &checksum).map_err(|e| {
-        mg_types::MgError::Other(format!("failed to write lockfile checksum: {e}"))
-    })?;
+    std::fs::write(&checksum_path, &checksum)
+        .map_err(|e| mg_types::MgError::Other(format!("failed to write lockfile checksum: {e}")))?;
     Ok(())
 }
 
@@ -4396,7 +4411,11 @@ mod tests {
         )
     }
 
-    fn seed_cached_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) -> String {
+    fn seed_cached_tarball_with_files(
+        root: &Path,
+        pkg: &PackageId,
+        files: &[(&str, &[u8])],
+    ) -> String {
         let layout = Layout::new(root.join(".megagate").join("cache").join("web"));
         std::fs::create_dir_all(layout.root()).unwrap();
         let cache = PackageCache::new(layout.cache_dir()).unwrap();
@@ -4409,7 +4428,11 @@ mod tests {
         sri_sha512(&tarball)
     }
 
-    fn seed_shared_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) -> String {
+    fn seed_shared_tarball_with_files(
+        root: &Path,
+        pkg: &PackageId,
+        files: &[(&str, &[u8])],
+    ) -> String {
         let layout = Layout::new(root.to_path_buf());
         std::fs::create_dir_all(layout.root()).unwrap();
         let cache = PackageCache::new(layout.cache_dir()).unwrap();

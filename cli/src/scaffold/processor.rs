@@ -900,19 +900,24 @@ impl Scaffolder {
 
         Ok(())
     }
-
 }
 
 fn render_target_path(target: &str, context: &WebTemplateContext) -> String {
     let mut s = target.to_string();
     if let Some(v) = context.value("project_slug") {
-        s = s.replace("{{ project_slug }}", v).replace("{{project_slug}}", v);
+        s = s
+            .replace("{{ project_slug }}", v)
+            .replace("{{project_slug}}", v);
     }
     if let Some(v) = context.value("project_name") {
-        s = s.replace("{{ project_name }}", v).replace("{{project_name}}", v);
+        s = s
+            .replace("{{ project_name }}", v)
+            .replace("{{project_name}}", v);
     }
     if let Some(v) = context.value("project_package") {
-        s = s.replace("{{ project_package }}", v).replace("{{project_package}}", v);
+        s = s
+            .replace("{{ project_package }}", v)
+            .replace("{{project_package}}", v);
     }
     s
 }

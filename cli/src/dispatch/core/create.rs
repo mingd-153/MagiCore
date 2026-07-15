@@ -34,12 +34,8 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             project_name,
             flags,
         } => {
-            commands::core::web::run_create_with_options(
-                &framework,
-                &project_name,
-                Some(flags),
-            )
-            .await
+            commands::core::web::run_create_with_options(&framework, &project_name, Some(flags))
+                .await
         }
         #[cfg(feature = "game")]
         CoreCommand::CreateGame {

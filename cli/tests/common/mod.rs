@@ -50,17 +50,8 @@ pub fn work_dir() -> PathBuf {
 /// Note: --dir flag is not supported; project is always created in CWD.
 pub fn scaffold(framework: &str, project: &str) -> PathBuf {
     let base = work_dir();
-    let result = mg_in(&base, &[
-        "create-web",
-        framework,
-        project,
-        "--ts",
-    ]);
-    assert!(
-        result.0,
-        "scaffold {framework} failed:\n{}",
-        result.1
-    );
+    let result = mg_in(&base, &["create-web", framework, project, "--ts"]);
+    assert!(result.0, "scaffold {framework} failed:\n{}", result.1);
     base.join(project)
 }
 
@@ -90,12 +81,7 @@ pub fn assert_file_contains(project: &Path, rel_path: &str, expected: &str) {
 pub fn bench_scaffold(framework: &str, project: &str) -> u128 {
     let base = work_dir();
     let start = Instant::now();
-    let result = mg_in(&base, &[
-        "create-web",
-        framework,
-        project,
-        "--ts",
-    ]);
+    let result = mg_in(&base, &["create-web", framework, project, "--ts"]);
     let elapsed = start.elapsed().as_millis();
     assert!(result.0, "bench scaffold {framework} failed: {}", result.1);
     elapsed

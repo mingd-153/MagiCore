@@ -92,7 +92,10 @@ pub enum CoreCommand {
             feature = "lib"
         ))
     ))]
-    Update { packages: Vec<String>, install: bool },
+    Update {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(all(
         feature = "web",
         not(any(
@@ -328,21 +331,45 @@ pub enum CoreCommand {
             feature = "lib"
         )
     ))]
-    UpdateWeb { packages: Vec<String>, install: bool },
+    UpdateWeb {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(feature = "game")]
-    UpdateGame { packages: Vec<String>, install: bool },
+    UpdateGame {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(feature = "ai")]
-    UpdateAi { packages: Vec<String>, install: bool },
+    UpdateAi {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(feature = "clo")]
-    UpdateClo { packages: Vec<String>, install: bool },
+    UpdateClo {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(feature = "cicd")]
-    UpdateCicd { packages: Vec<String>, install: bool },
+    UpdateCicd {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(feature = "iot")]
-    UpdateIot { packages: Vec<String>, install: bool },
+    UpdateIot {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(feature = "app")]
-    UpdateApp { packages: Vec<String>, install: bool },
+    UpdateApp {
+        packages: Vec<String>,
+        install: bool,
+    },
     #[cfg(feature = "lib")]
-    UpdateLib { packages: Vec<String>, install: bool },
+    UpdateLib {
+        packages: Vec<String>,
+        install: bool,
+    },
 }
 
 impl From<Commands> for DispatchCommand {
@@ -353,9 +380,17 @@ impl From<Commands> for DispatchCommand {
             Commands::Init { template } => SomeCommon(CommonCommand::Init { template }),
             Commands::Dev { host, port } => SomeCommon(CommonCommand::Dev { host, port }),
             Commands::Info { package, json } => SomeCommon(CommonCommand::Info { package, json }),
-            Commands::Search { query, json, exact, page } => {
-                SomeCommon(CommonCommand::Search { query, json, exact, page })
-            }
+            Commands::Search {
+                query,
+                json,
+                exact,
+                page,
+            } => SomeCommon(CommonCommand::Search {
+                query,
+                json,
+                exact,
+                page,
+            }),
             Commands::Outdated { json } => SomeCommon(CommonCommand::Outdated { json }),
             Commands::Audit => SomeCommon(CommonCommand::Audit),
             #[cfg(all(
@@ -429,7 +464,9 @@ impl From<Commands> for DispatchCommand {
                     feature = "lib"
                 ))
             ))]
-            Commands::Update { packages, install } => SomeCore(CoreCommand::Update { packages, install }),
+            Commands::Update { packages, install } => {
+                SomeCore(CoreCommand::Update { packages, install })
+            }
             #[cfg(all(
                 feature = "web",
                 not(any(
@@ -969,21 +1006,37 @@ impl From<Commands> for DispatchCommand {
                     feature = "lib"
                 )
             ))]
-            Commands::UpdateWeb { packages, install } => SomeCore(CoreCommand::UpdateWeb { packages, install }),
+            Commands::UpdateWeb { packages, install } => {
+                SomeCore(CoreCommand::UpdateWeb { packages, install })
+            }
             #[cfg(feature = "game")]
-            Commands::UpdateGame { packages, install } => SomeCore(CoreCommand::UpdateGame { packages, install }),
+            Commands::UpdateGame { packages, install } => {
+                SomeCore(CoreCommand::UpdateGame { packages, install })
+            }
             #[cfg(feature = "ai")]
-            Commands::UpdateAi { packages, install } => SomeCore(CoreCommand::UpdateAi { packages, install }),
+            Commands::UpdateAi { packages, install } => {
+                SomeCore(CoreCommand::UpdateAi { packages, install })
+            }
             #[cfg(feature = "clo")]
-            Commands::UpdateClo { packages, install } => SomeCore(CoreCommand::UpdateClo { packages, install }),
+            Commands::UpdateClo { packages, install } => {
+                SomeCore(CoreCommand::UpdateClo { packages, install })
+            }
             #[cfg(feature = "cicd")]
-            Commands::UpdateCicd { packages, install } => SomeCore(CoreCommand::UpdateCicd { packages, install }),
+            Commands::UpdateCicd { packages, install } => {
+                SomeCore(CoreCommand::UpdateCicd { packages, install })
+            }
             #[cfg(feature = "iot")]
-            Commands::UpdateIot { packages, install } => SomeCore(CoreCommand::UpdateIot { packages, install }),
+            Commands::UpdateIot { packages, install } => {
+                SomeCore(CoreCommand::UpdateIot { packages, install })
+            }
             #[cfg(feature = "app")]
-            Commands::UpdateApp { packages, install } => SomeCore(CoreCommand::UpdateApp { packages, install }),
+            Commands::UpdateApp { packages, install } => {
+                SomeCore(CoreCommand::UpdateApp { packages, install })
+            }
             #[cfg(feature = "lib")]
-            Commands::UpdateLib { packages, install } => SomeCore(CoreCommand::UpdateLib { packages, install }),
+            Commands::UpdateLib { packages, install } => {
+                SomeCore(CoreCommand::UpdateLib { packages, install })
+            }
         }
     }
 }

@@ -201,7 +201,8 @@ pub async fn update(
         success("Update complete");
         if install {
             info("Installing updated packages...");
-            install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
+            install_with_adapter(adapter, root, install_command_for_adapter(adapter), false)
+                .await?;
         } else {
             info(&format!(
                 "Run '{}' to install updates",

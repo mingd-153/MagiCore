@@ -45,10 +45,7 @@ pub async fn run(query: String, json: bool, exact: bool, page: Option<u32>) -> R
                     .collect()
             })
             .unwrap_or_default();
-        let output = SearchOutput {
-            total,
-            results,
-        };
+        let output = SearchOutput { total, results };
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
