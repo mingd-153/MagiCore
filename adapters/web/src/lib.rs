@@ -2712,6 +2712,35 @@ fn installed_package_matches(path: &Path, package_id: &PackageId) -> bool {
 pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
     let lock_path = project_root.join("mg.lock");
     let existing = std::fs::read_to_string(lock_path).ok()?;
+    
+    let checksum_path = project_root.join("mg.lock.sha256");
+    if checksum_path.exists() {
+        if let Ok(expected_checksum) = std::fs::read_to_string(&checksum_path) {
+            let actual_checksum = mg_crypto::hash(
+                existing.as_bytes(),
+                mg_crypto::HashAlgorithm::Sha256,
+            )
+            .ok()?;
+            
+            if actual_checksum.trim() != expected_checksum.trim() {
+                if strict_integrity_enforced() {
+                    eprintln!(
+                        "ERROR: Lockfile checksum mismatch - mg.lock may have been tampered with"
+                    );
+                    return None;
+                } else {
+                    eprintln!(
+                        "WARNING: Lockfile checksum mismatch - mg.lock may have been tampered with (proceeding in non-strict mode)"
+                    );
+                }
+            }
+        }
+    } else if strict_integrity_enforced() && std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_err() {
+        eprintln!(
+            "WARNING: Lockfile checksum file (mg.lock.sha256) not found - cannot verify integrity"
+        );
+    }
+    
     serialization::from_toml::<Lockfile>(&existing).ok()
 }
 
