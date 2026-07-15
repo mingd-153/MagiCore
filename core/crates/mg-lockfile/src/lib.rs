@@ -56,6 +56,10 @@ pub struct Lockfile {
     pub workspaces: Vec<WorkspaceLock>,
     #[serde(rename = "package", default)]
     pub packages: Vec<LockPackage>,
+    /// BLAKE3 HMAC signature of canonical lockfile content (optional, controlled by env).
+    /// Format: `blake3:<hex-digest>` (keyed by MEGAGATE_LOCKFILE_KEY env var).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub sig: Option<String>,
 }
 
 impl Lockfile {
@@ -68,6 +72,68 @@ impl Lockfile {
             resolution: ResolutionMeta::default(),
             workspaces: vec![],
             packages: vec![],
+            sig: None,
+        }
+    }
+}
+
+/// BLAKE3-keyed signing for mg.lock files.
+/// Signing is opt-in; set MEGAGATE_LOCKFILE_KEY to a hex-encoded 32-byte secret.
+pub struct LockfileSigner;
+
+impl LockfileSigner {
+    fn key() -> Option<[u8; 32]> {
+        let raw = std::env::var("MEGAGATE_LOCKFILE_KEY").ok()?;
+        let bytes = hex::decode(raw.trim()).ok()?;
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        Some(key)
+    }
+
+    /// Compute a canonical (stable) representation of the lockfile without the `sig` field.
+    fn canonical(lock: &Lockfile) -> anyhow::Result<String> {
+        let mut tmp = lock.clone();
+        tmp.sig = None;
+        // Sort packages deterministically
+        tmp.packages.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
+        Ok(serialization::to_toml(&tmp)?)
+    }
+
+    /// Sign the lockfile in-place. No-op if MEGAGATE_LOCKFILE_KEY is not set.
+    pub fn sign(lock: &mut Lockfile) -> anyhow::Result<()> {
+        let Some(key) = Self::key() else {
+            return Ok(());
+        };
+        let canonical = Self::canonical(lock)?;
+        let digest = blake3::keyed_hash(&key, canonical.as_bytes());
+        lock.sig = Some(format!("blake3:{}", hex::encode(digest.as_bytes())));
+        Ok(())
+    }
+
+    /// Verify the lockfile signature. Returns Ok(true) when signed+valid, Ok(false) when unsigned.
+    /// Returns an error when the signature is present but invalid.
+    pub fn verify(lock: &Lockfile) -> anyhow::Result<bool> {
+        let Some(ref sig_str) = lock.sig else {
+            return Ok(false);
+        };
+        let Some(key) = Self::key() else {
+            // Key not set — treat as unsigned/unverified
+            return Ok(false);
+        };
+        let hex_digest = sig_str
+            .strip_prefix("blake3:")
+            .ok_or_else(|| anyhow::anyhow!("unknown lockfile signature algorithm in '{}'", sig_str))?;
+        let expected = hex::decode(hex_digest)
+            .map_err(|e| anyhow::anyhow!("invalid hex in lockfile signature: {e}"))?;
+        let canonical = Self::canonical(lock)?;
+        let actual = blake3::keyed_hash(&key, canonical.as_bytes());
+        if actual.as_bytes() == expected.as_slice() {
+            Ok(true)
+        } else {
+            Err(anyhow::anyhow!("lockfile signature mismatch — possible tampering detected"))
         }
     }
 }

@@ -13,6 +13,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 mg-types = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
 
 [lints]
 workspace = true

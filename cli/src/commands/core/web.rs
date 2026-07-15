@@ -212,8 +212,7 @@ pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
     shared::update(&*adapter, &root, packages, install).await
 }
 
-/// Install web dependencies
-pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
+pub async fn install(packages: Vec<String>, frozen: bool, ignore_scripts: bool) -> Result<()> {
     let root = project_root()?;
     let adapter: Arc<dyn PackageAdapter> = Arc::from(web_adapter());
     let targets = install_targets(&root)?;
@@ -228,7 +227,7 @@ pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
 
     let project_mode = detect_project_mode(&root)?;
     if matches!(project_mode, WebProjectMode::Monorepo) {
-        install_monorepo_targets(&adapter, &targets, frozen).await?;
+        install_monorepo_targets(&adapter, &targets, frozen, ignore_scripts).await?;
         link_monorepo_workspace_packages(&root, &targets)?;
         write_monorepo_root_lockfile(&root, &targets)?;
     } else {
@@ -564,6 +563,7 @@ async fn install_monorepo_targets(
     adapter: &Arc<dyn PackageAdapter>,
     targets: &[PathBuf],
     frozen: bool,
+    ignore_scripts: bool,
 ) -> Result<()> {
     let mut native_targets = Vec::new();
     let mut package_targets = Vec::new();
@@ -591,7 +591,7 @@ async fn install_monorepo_targets(
                 .acquire_owned()
                 .await
                 .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
-            install_web_target_quiet(adapter.as_ref(), &target, frozen).await?;
+            install_web_target_quiet(adapter.as_ref(), &target, frozen, ignore_scripts).await?;
             Ok::<PathBuf, anyhow::Error>(target)
         });
     }
@@ -611,12 +611,18 @@ async fn install_web_target_quiet(
     adapter: &dyn PackageAdapter,
     target: &Path,
     frozen: bool,
+    ignore_scripts: bool,
 ) -> Result<()> {
     let execution = shared::prepare_install_execution(adapter, target, frozen, None).await?;
     if execution.graph.is_empty() {
         return Ok(());
     }
-    adapter.install(&execution.graph, target).await?;
+    let opts = mg_types::adapter::InstallOptions {
+        ignore_scripts,
+        legacy_flat: false,
+        frozen,
+    };
+    adapter.install(&execution.graph, target, opts).await?;
     Ok(())
 }
 

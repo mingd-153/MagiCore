@@ -15,6 +15,27 @@ pub struct AddOptions {
     pub global: bool,
 }
 
+/// Options controlling install behaviour.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstallOptions {
+    /// Skip running lifecycle scripts (preinstall / install / postinstall).
+    pub ignore_scripts: bool,
+    /// Use flat hoisting layout instead of strict symlink virtual store.
+    pub legacy_flat: bool,
+    /// Fail fast if mg.lock is missing or out-of-sync (CI mode).
+    pub frozen: bool,
+}
+
+impl Default for InstallOptions {
+    fn default() -> Self {
+        Self {
+            ignore_scripts: false,
+            legacy_flat: false,
+            frozen: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct InstallSummary {
     pub added: Vec<PackageId>,
@@ -38,12 +59,69 @@ pub struct UpdatedPackage {
     pub to_version: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VulnerabilitySeverity {
+    Critical,
+    High,
+    Medium,
+    Low,
+    Info,
+}
+
+impl VulnerabilitySeverity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::Info => "info",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "critical" => Self::Critical,
+            "high" => Self::High,
+            "medium" | "moderate" => Self::Medium,
+            "low" => Self::Low,
+            _ => Self::Info,
+        }
+    }
+
+    /// Returns true if this severity is at least as severe as `other`.
+    pub fn is_at_least(&self, other: &Self) -> bool {
+        let rank = |s: &Self| match s {
+            Self::Critical => 4,
+            Self::High => 3,
+            Self::Medium => 2,
+            Self::Low => 1,
+            Self::Info => 0,
+        };
+        rank(self) >= rank(other)
+    }
+}
+
+impl std::fmt::Display for VulnerabilitySeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Vulnerability {
     pub package: PackageId,
     pub title: String,
+    /// Raw severity string (for display / backward compat)
     pub severity: String,
     pub cve: String,
+    /// Structured severity level.
+    pub severity_level: VulnerabilitySeverity,
+    /// Version range(s) that contain a fix, if known.
+    pub patched_versions: Option<String>,
+    /// Link to the advisory.
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -106,8 +184,12 @@ pub trait PackageAdapter: Send + Sync {
     async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()>;
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph>;
     async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()>;
-    async fn install(&self, graph: &ResolvedGraph, project_root: &Path)
-        -> MgResult<InstallSummary>;
+    async fn install(
+        &self,
+        graph: &ResolvedGraph,
+        project_root: &Path,
+        opts: InstallOptions,
+    ) -> MgResult<InstallSummary>;
     async fn add(
         &self,
         project_root: &Path,

@@ -41,6 +41,7 @@ impl From<std::io::Error> for StoreError {
     }
 }
 
+#[derive(Clone)]
 pub struct ContentStore {
     root: PathBuf,
 }
@@ -268,13 +269,21 @@ impl ContentStore {
     }
 
     fn tmp_path(&self, prefix: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
+        let tid = {
+            let tid = std::thread::current().id();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&tid, &mut hasher);
+            std::hash::Hasher::finish(&hasher)
+        };
         self.root
             .join("tmp")
-            .join(format!("{prefix}-{}-{nanos}", std::process::id()))
+            .join(format!("{prefix}-{}-{tid:x}-{nanos}-{count}", std::process::id()))
     }
 }
 

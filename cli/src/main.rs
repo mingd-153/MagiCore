@@ -26,7 +26,7 @@ pub(crate) struct Cli {
 // Global mode:   mg add-web react, mg remove-web lodash, ...
 // Single mode:   mg add react, mg remove lodash, ...
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Commands {
     // ── Common commands ────────────────────────────────────────
@@ -41,6 +41,20 @@ pub(crate) enum Commands {
         host: Option<String>,
         #[arg(long)]
         port: Option<u16>,
+    },
+    #[command(about = "Run a script defined in package.json")]
+    Run {
+        #[arg(required = true)]
+        script: String,
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    #[command(about = "Download and execute a package without permanently installing it")]
+    Dlx {
+        #[arg(required = true)]
+        package: String,
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     #[cfg(all(
         feature = "web",
@@ -59,6 +73,8 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
         frozen: bool,
+        #[arg(long, help = "Skip running lifecycle scripts")]
+        ignore_scripts: bool,
     },
     #[cfg(all(
         feature = "web",
@@ -77,6 +93,8 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
         frozen: bool,
+        #[arg(long, help = "Skip running lifecycle scripts")]
+        ignore_scripts: bool,
     },
     #[cfg(feature = "game")]
     #[command(
@@ -236,6 +254,8 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
         frozen: bool,
+        #[arg(long, help = "Skip running lifecycle scripts")]
+        ignore_scripts: bool,
     },
     #[cfg(all(
         feature = "web",

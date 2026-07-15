@@ -249,7 +249,7 @@ pub async fn install_with_adapter(
     }
 
     let spinner = create_spinner("  Linking packages...");
-    let mut summary = adapter.install(&graph, root).await?;
+    let mut summary = adapter.install(&graph, root, mg_types::adapter::InstallOptions::default()).await?;
     spinner.finish_and_clear();
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
 
