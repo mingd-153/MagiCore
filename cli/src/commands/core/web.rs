@@ -3031,10 +3031,10 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
-fn scaffold_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
+    fn scaffold_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_parse_framework_request_supports_alias_and_version() {
