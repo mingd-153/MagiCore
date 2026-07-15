@@ -1,0 +1,34 @@
+[[files]]
+source = "pom.xml"
+target = "apps/backend/pom.xml"
+required_context = ["project_package"]
+
+[[files]]
+source = "Application.java"
+target = "apps/backend/src/main/java/com/{{ project_package }}/Application.java"
+required_context = ["project_package"]
+
+[[files]]
+source = "HealthController.java"
+target = "apps/backend/src/main/java/com/{{ project_package }}/api/HealthController.java"
+required_context = ["project_package"]
+
+[[files]]
+source = "application.properties"
+target = "apps/backend/src/main/resources/application.properties"
+required_context = ["project_name"]
+
+[[files]]
+source = "WebConfig.java"
+target = "apps/backend/src/main/java/com/{{ project_package }}/WebConfig.java"
+required_context = ["project_package"]
+
+[[files]]
+source = "Dockerfile"
+target = "apps/backend/Dockerfile"
+include_features = ["docker"]
+
+[[files]]
+source = ".dockerignore"
+target = "apps/backend/.dockerignore"
+include_features = ["docker"]

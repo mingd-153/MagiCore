@@ -1,0 +1,25 @@
+[package]
+name = "mg-resolver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Dependency resolver for MegaGate"
+
+[dependencies]
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+mg-types = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+criterion = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "resolver_bench"
+harness = false

@@ -1,0 +1,8 @@
+name = "megagate-app"
+binary = "mg"
+description = "MegaGate single-core app distribution"
+mode = "single-core"
+primary_core = "app"
+no_default_features = true
+features = ["app"]
+install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install.sh | MEGAGATE_PACKAGE=megagate-app sh"

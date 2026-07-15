@@ -1,0 +1,10 @@
+{
+  "name": "@core-web-lab/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@core-web-lab/shared": "workspace:*",
+    "dotenv": "^16.4.5"
+  }
+}

@@ -1,0 +1,31 @@
+[[files]]
+source = "config/runtime.js"
+target = "apps/frontend/src/config/runtime.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "config/runtime.ts"
+target = "apps/frontend/src/config/runtime.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "bridges/engine.js"
+target = "apps/frontend/src/bridges/engine.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "bridges/engine.ts"
+target = "apps/frontend/src/bridges/engine.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "rust/Cargo.toml"
+target = "apps/frontend/crates/engine/Cargo.toml"
+
+[[files]]
+source = "rust/lib.rs"
+target = "apps/frontend/crates/engine/src/lib.rs"
+
+[[files]]
+source = "rust/README.md"
+target = "apps/frontend/crates/engine/README.md"

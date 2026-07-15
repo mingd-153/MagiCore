@@ -1,0 +1,91 @@
+[[files]]
+source = "root/package.json"
+target = "package.json"
+required_context = ["project_package"]
+
+[[files]]
+source = "client/index.ts.html"
+target = "index.html"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "client/index.js.html"
+target = "index.html"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/tsconfig.json"
+target = "tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/jsconfig.json"
+target = "jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/vite-env.d.ts"
+target = "src/vite-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite.config.ts"
+target = "vite.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/vite.config.js"
+target = "vite.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/main.tsx"
+target = "src/main.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "client/main.jsx"
+target = "src/main.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "client/App.tsx"
+target = "src/App.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "client/App.jsx"
+target = "src/App.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "server/pom.xml"
+target = "server/pom.xml"
+required_context = ["project_package"]
+
+[[files]]
+source = "server/App.java"
+target = "server/src/main/java/com/example/App.java"
+
+[[files]]
+source = "server/AppConfig.java"
+target = "server/src/main/java/com/example/config/AppConfig.java"
+required_context = ["project_name"]
+
+[[files]]
+source = "server/HealthController.java"
+target = "server/src/main/java/com/example/controller/HealthController.java"
+required_context = ["project_name"]
+
+[[files]]
+source = "server/application.properties"
+target = "server/src/main/resources/application.properties"
+required_context = ["project_name"]
+
+[[files]]
+source = "favicon.ico"
+target = "public/favicon.ico"

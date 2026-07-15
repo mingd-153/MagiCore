@@ -1,0 +1,1 @@
+../../../../frontend/remix/sources/i18n.config.ts

@@ -1,0 +1,1 @@
+/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/fullstack/split/react-fastify/sources/server/config.js

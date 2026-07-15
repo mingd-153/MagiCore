@@ -1,0 +1,1 @@
+../../../../frontend/sveltekit/sources/i18n.config.ts

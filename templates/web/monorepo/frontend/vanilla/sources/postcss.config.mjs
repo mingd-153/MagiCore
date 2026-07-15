@@ -1,0 +1,1 @@
+../../../../frontend/vanilla/sources/postcss.config.mjs

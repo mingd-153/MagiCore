@@ -1,0 +1,1 @@
+../../../../frontend/angular/sources/vite-env.d.ts

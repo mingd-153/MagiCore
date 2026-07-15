@@ -1,0 +1,9 @@
+version = 1
+core = "web"
+mode = "{{mode}}"
+frameworks = [{{frameworks}}]
+
+[resolution]
+state = "pending"
+store = "megagate"
+package_count = 0

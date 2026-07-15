@@ -1,0 +1,1 @@
+../../../../frontend/solidjs/sources/vite-env.d.ts
