@@ -2486,15 +2486,45 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
         let package_dir = node_modules.join(pkg.id.name().as_str());
         for (bin_name, relative_target) in package_bin_entries(&package_dir)? {
             if relative_target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                eprintln!(
+                    "WARNING: Skipping bin '{}' from package '{}' - path contains '..'",
+                    bin_name,
+                    pkg.id.name_str()
+                );
                 continue;
             }
+            
             let target = package_dir.join(&relative_target);
             if !target.exists() {
                 continue;
             }
-            if !target.starts_with(node_modules) {
+            
+            let canonical_target = match target.canonicalize() {
+                Ok(path) => path,
+                Err(_) => {
+                    eprintln!(
+                        "WARNING: Skipping bin '{}' from package '{}' - cannot resolve path",
+                        bin_name,
+                        pkg.id.name_str()
+                    );
+                    continue;
+                }
+            };
+            
+            let canonical_package_dir = match package_dir.canonicalize() {
+                Ok(path) => path,
+                Err(_) => package_dir.clone(),
+            };
+            
+            if !canonical_target.starts_with(&canonical_package_dir) {
+                eprintln!(
+                    "WARNING: Skipping bin '{}' from package '{}' - target escapes package directory",
+                    bin_name,
+                    pkg.id.name_str()
+                );
                 continue;
             }
+            
             let link = bin_dir.join(bin_name);
             create_bin_link(&link, &target)?;
         }
