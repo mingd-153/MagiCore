@@ -1,0 +1,1 @@
+../../../../frontend/vue-vite/sources/vite.config.js

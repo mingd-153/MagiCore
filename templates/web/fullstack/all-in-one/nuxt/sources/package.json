@@ -1,0 +1,1 @@
+{ "name": "@project/app", "private": true, "scripts": { "dev": "nuxt dev", "build": "nuxt build", "start": "node .output/server/index.mjs" } }

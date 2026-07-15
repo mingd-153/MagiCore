@@ -1,0 +1,1 @@
+../../../../frontend/astro/sources/sentry.client.config.ts

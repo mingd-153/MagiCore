@@ -1,0 +1,1 @@
+../../../../frontend/nuxt/sources/vitest.config.js

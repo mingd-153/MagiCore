@@ -1,0 +1,12 @@
+.DS_Store
+.env
+.env.local
+.megagate/cache
+.megagate/tmp
+node_modules
+dist
+.next
+.nuxt
+.svelte-kit
+coverage
+*.log

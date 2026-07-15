@@ -1,0 +1,12 @@
+{
+  "name": "{{project_slug}}",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "mg --core web dev"
+  }
+}

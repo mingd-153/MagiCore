@@ -1,0 +1,64 @@
+version = 1
+
+[[tools]]
+name = "repograph"
+role = "ai-read-layer"
+repo = "https://github.com/ozyyshr/RepoGraph"
+binary = "repograph"
+install_hint = "git clone + local install"
+
+[[tools]]
+name = "opengrok"
+role = "cross-reference"
+repo = "https://github.com/oracle/opengrok"
+binary = "opengrok"
+install_hint = "download release or package manager"
+
+[[tools]]
+name = "zoekt"
+role = "fast-search"
+repo = "https://github.com/google/zoekt"
+binary = "zoekt-index"
+install_hint = "go install or release binary"
+
+[[tools]]
+name = "hyperfine"
+role = "benchmark"
+repo = "https://github.com/sharkdp/hyperfine"
+binary = "hyperfine"
+install_hint = "package manager or release binary"
+
+[[tools]]
+name = "syft"
+role = "sbom"
+repo = "https://github.com/anchore/syft"
+binary = "syft"
+install_hint = "package manager or release binary"
+
+[[tools]]
+name = "gitleaks"
+role = "secrets"
+repo = "https://github.com/gitleaks/gitleaks"
+binary = "gitleaks"
+install_hint = "package manager or release binary"
+
+[[tools]]
+name = "trivy"
+role = "vulnerability"
+repo = "https://github.com/aquasecurity/trivy"
+binary = "trivy"
+install_hint = "package manager or release binary"
+
+[[tools]]
+name = "pip-audit"
+role = "python-vuln"
+repo = "https://github.com/pypa/pip-audit"
+binary = "pip-audit"
+install_hint = "pipx or python environment"
+
+[[tools]]
+name = "sonar-scanner"
+role = "static-analysis"
+repo = "https://github.com/SonarSource/sonarqube"
+binary = "sonar-scanner"
+install_hint = "official scanner package"

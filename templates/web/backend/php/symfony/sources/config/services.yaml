@@ -1,0 +1,16 @@
+parameters:
+    app.name: '{{project_name}}'
+    app.framework: 'symfony'
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/Kernel.php'
+
+    App\Controller\HealthController:
+        tags: ['controller.service_arguments']

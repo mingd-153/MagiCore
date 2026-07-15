@@ -1,0 +1,16 @@
+[package]
+name = "mg-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Config parsing and project metadata for MegaGate"
+
+[dependencies]
+serde = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+
+[lints]
+workspace = true

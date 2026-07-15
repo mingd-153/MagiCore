@@ -1,0 +1,7 @@
+index:
+    path: /
+    controller: App\Controller\HealthController::index
+
+health:
+    path: /health
+    controller: App\Controller\HealthController::health

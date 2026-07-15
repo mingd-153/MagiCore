@@ -1,0 +1,41 @@
+[[files]]
+source = "theme.css"
+target = "src/styles/theme.css"
+exclude_features = ["tailwindcss"]
+
+[[files]]
+source = "theme.tailwind.css"
+target = "src/styles/theme.css"
+include_features = ["tailwindcss"]
+
+[[files]]
+source = "favicon.ico"
+target = "public/favicon.ico"
+
+[[files]]
+source = "logo-in.svg"
+target = "public/megagate-logo.svg"
+
+[[files]]
+source = "megagate-grid.svg"
+target = "src/assets/megagate-grid.svg"
+
+[[files]]
+source = "config/brand.js"
+target = "src/config/brand.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "config/brand.ts"
+target = "src/config/brand.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "hooks/useProjectLinks.js"
+target = "src/hooks/useProjectLinks.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "hooks/useProjectLinks.ts"
+target = "src/hooks/useProjectLinks.ts"
+include_features = ["typescript"]

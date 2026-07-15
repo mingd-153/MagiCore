@@ -1,0 +1,5 @@
+framework:
+    secret: '%env(APP_SECRET)%'
+    router:
+        resource: '%kernel.project_dir%/config/routes.yaml'
+        utf8: true

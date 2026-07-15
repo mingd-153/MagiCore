@@ -1,0 +1,1 @@
+../../../react-fastify/sources/client/main.tsx
