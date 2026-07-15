@@ -64,3 +64,33 @@ include_features = ["prisma"]
 source = "prisma.ts"
 target = "src/lib/prisma.ts"
 include_features = ["prisma"]
+
+[[files]]
+source = "trpc.ts"
+target = "src/trpc.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "trpc.js"
+target = "src/trpc.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "router.ts"
+target = "src/router.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "router.js"
+target = "src/router.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "context.ts"
+target = "src/context.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "context.js"
+target = "src/context.js"
+exclude_features = ["typescript"]

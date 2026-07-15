@@ -1,5 +1,6 @@
 use crate::Commands;
 
+#[allow(clippy::large_enum_variant)]
 pub enum DispatchCommand {
     Common(CommonCommand),
     Core(CoreCommand),
@@ -29,6 +30,7 @@ pub enum CommonCommand {
     Audit,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum CoreCommand {
     #[cfg(all(
         feature = "web",

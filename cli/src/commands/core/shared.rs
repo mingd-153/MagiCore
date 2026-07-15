@@ -219,39 +219,12 @@ pub async fn install_with_adapter(
     add_cmd: &str,
     frozen: bool,
 ) -> Result<()> {
+    let InstallExecution {
+        graph,
+        summary: _prepared_summary,
+        used_lockfile,
+    } = prepare_install_execution(adapter, root, frozen, Some(add_cmd)).await?;
     let started_at = std::time::Instant::now();
-    let spinner = create_spinner("  Reading project manifest...");
-    let manifest = adapter.parse_manifest(root).await?;
-    spinner.finish_and_clear();
-
-    let all_deps: Vec<_> = manifest.all_dependencies().collect();
-    if all_deps.is_empty() {
-        info("No dependencies to install.");
-        info(&format!(
-            "Use '{} <package>' to add dependencies.",
-            style_cmd(add_cmd)
-        ));
-        return Ok(());
-    }
-
-    let (graph, used_lockfile) = if let Some(graph) =
-        load_locked_graph(root, adapter.name(), &manifest)?
-    {
-        info("Using mg.lock for install state.");
-        (graph, true)
-    } else {
-        if frozen {
-            let cmd = install_command_for_adapter(adapter);
-            anyhow::bail!(
-                "--frozen: mg.lock is missing or does not match package.json.\n\
-                 Run '{cmd}' to generate an up-to-date lockfile."
-            );
-        }
-        let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
-        let graph = adapter.resolve(&manifest).await?;
-        spinner.finish_and_clear();
-        (graph, false)
-    };
 
     let resolve_bar = create_progress_bar(graph.len() as u64, "Resolving...");
     if used_lockfile {
@@ -289,6 +262,67 @@ pub async fn install_with_adapter(
     println!();
     success("All dependencies installed");
     Ok(())
+}
+
+pub(crate) struct InstallExecution {
+    pub graph: ResolvedGraph,
+    pub summary: mg_types::adapter::InstallSummary,
+    pub used_lockfile: bool,
+}
+
+pub(crate) async fn prepare_install_execution(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    frozen: bool,
+    add_cmd: Option<&str>,
+) -> Result<InstallExecution> {
+    let started_at = std::time::Instant::now();
+    let spinner = create_spinner("  Reading project manifest...");
+    let manifest = adapter.parse_manifest(root).await?;
+    spinner.finish_and_clear();
+
+    let all_deps: Vec<_> = manifest.all_dependencies().collect();
+    if all_deps.is_empty() {
+        if let Some(add_cmd) = add_cmd {
+            info("No dependencies to install.");
+            info(&format!(
+                "Use '{} <package>' to add dependencies.",
+                style_cmd(add_cmd)
+            ));
+        }
+        return Ok(InstallExecution {
+            graph: ResolvedGraph::empty(),
+            summary: mg_types::adapter::InstallSummary::default(),
+            used_lockfile: false,
+        });
+    }
+
+    let (graph, used_lockfile) = if let Some(graph) =
+        load_locked_graph(root, adapter.name(), &manifest)?
+    {
+        info("Using mg.lock for install state.");
+        (graph, true)
+    } else {
+        if frozen {
+            let cmd = install_command_for_adapter(adapter);
+            anyhow::bail!(
+                "--frozen: mg.lock is missing or does not match package.json.\n\
+                 Run '{cmd}' to generate an up-to-date lockfile."
+            );
+        }
+        let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
+        let graph = adapter.resolve(&manifest).await?;
+        spinner.finish_and_clear();
+        (graph, false)
+    };
+    Ok(InstallExecution {
+        graph,
+        summary: mg_types::adapter::InstallSummary {
+            duration_ms: started_at.elapsed().as_millis() as u64,
+            ..Default::default()
+        },
+        used_lockfile,
+    })
 }
 
 #[allow(dead_code)]

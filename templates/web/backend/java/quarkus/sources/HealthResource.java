@@ -1,4 +1,4 @@
-package com.example;
+package com.{{ project_package }}.api;
 
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -9,7 +9,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import java.time.Instant;
 import java.util.Map;
 
-@Path("/health")
+@Path("/api/health")
 public class HealthResource {
 
     @ConfigProperty(name = "app.name", defaultValue = "{{project_name}}")

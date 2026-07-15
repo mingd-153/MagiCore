@@ -1,17 +1,32 @@
 [[files]]
 source = "pom.xml"
-required_context = ["project_slug"]
 target = "pom.xml"
+required_context = ["project_package"]
 
 [[files]]
 source = "Application.java"
-required_context = ["project_slug"]
-target = "src/main/java/com/app/Application.java"
+target = "src/main/java/com/{{ project_package }}/Application.java"
+required_context = ["project_package"]
 
 [[files]]
-source = "HealthController.java"
-required_context = ["project_slug"]
-target = "src/main/java/com/app/api/HealthController.java"
+source = "HealthResource.java"
+target = "src/main/java/com/{{ project_package }}/api/HealthResource.java"
+required_context = ["project_package", "project_name"]
+
+[[files]]
+source = "GreetingResource.java"
+target = "src/main/java/com/{{ project_package }}/api/GreetingResource.java"
+required_context = ["project_package", "project_name"]
+
+[[files]]
+source = "application.properties"
+target = "src/main/resources/application.properties"
+required_context = ["project_name"]
+
+[[files]]
+source = "RequestIdFilter.java"
+target = "src/main/java/com/{{ project_package }}/api/RequestIdFilter.java"
+required_context = ["project_package"]
 
 [[files]]
 source = "Dockerfile"

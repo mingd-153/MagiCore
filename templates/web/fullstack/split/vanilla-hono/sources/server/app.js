@@ -1,4 +1,3 @@
-import express from "express";
-export const app = express();
-app.use(express.json());
-app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+import { Hono } from "hono";
+export const app = new Hono();
+app.get("/health", (c) => c.json({ status: "ok" }));
