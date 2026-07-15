@@ -1,0 +1,1 @@
+../../../../frontend/astro/sources/postcss.config.js

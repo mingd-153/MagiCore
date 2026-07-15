@@ -2,6 +2,10 @@
 target/
 Cargo.lock
 
+# Test scaffold artifacts
+/test-fw/
+/cli/test-fastapi/
+
 # Bazel
 bazel-*/
 bazel-out/
@@ -66,4 +70,7 @@ temp/
 
 # Debug symbols
 *.dSYM/
+
+# Markdown docs (not allowed in repo unless explicitly requested)
+*.md
 

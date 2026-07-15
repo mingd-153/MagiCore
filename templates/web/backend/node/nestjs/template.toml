@@ -1,0 +1,71 @@
+[[files]]
+source = "package.ts.json"
+target = "package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "package.js.json"
+target = "package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
+
+[[files]]
+source = "server.ts"
+target = "src/server.ts"
+
+[[files]]
+source = "server.js"
+target = "src/server.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.module.ts"
+target = "src/app.module.ts"
+
+[[files]]
+source = "app.module.js"
+target = "src/app.module.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.controller.ts"
+target = "src/app.controller.ts"
+
+[[files]]
+source = "app.controller.js"
+target = "src/app.controller.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "app.service.ts"
+target = "src/app.service.ts"
+
+[[files]]
+source = "app.service.js"
+target = "src/app.service.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "Dockerfile"
+target = "Dockerfile"
+include_features = ["docker"]
+
+[[files]]
+source = ".dockerignore"
+target = ".dockerignore"
+include_features = ["docker"]
+
+[[files]]
+source = "vitest.config.ts"
+target = "vitest.config.ts"
+include_features = ["vitest"]
+
+[[files]]
+source = "app.spec.ts"
+target = "src/app.spec.ts"
+include_features = ["vitest"]

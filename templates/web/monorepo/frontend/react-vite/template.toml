@@ -1,0 +1,395 @@
+[[files]]
+source = "package.js.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "package.ts.json"
+target = "apps/frontend/package.json"
+required_context = ["project_slug"]
+include_features = ["typescript"]
+
+[[files]]
+source = "index.js.html"
+target = "apps/frontend/index.html"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "index.ts.html"
+target = "apps/frontend/index.html"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "jsconfig.json"
+target = "apps/frontend/jsconfig.json"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tsconfig.json"
+target = "apps/frontend/tsconfig.json"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite-env.d.ts"
+target = "apps/frontend/src/vite-env.d.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "vite.config.js"
+target = "apps/frontend/vite.config.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "vite.config.ts"
+target = "apps/frontend/vite.config.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "main.jsx"
+target = "apps/frontend/src/main.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "main.tsx"
+target = "apps/frontend/src/main.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "App.jsx"
+target = "apps/frontend/src/App.jsx"
+required_context = ["project_name"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "App.tsx"
+target = "apps/frontend/src/App.tsx"
+required_context = ["project_name"]
+include_features = ["typescript"]
+
+[[files]]
+source = "config/framework.js"
+target = "apps/frontend/src/config/framework.js"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "config/framework.ts"
+target = "apps/frontend/src/config/framework.ts"
+include_features = ["typescript"]
+
+[[files]]
+source = "router/AppRouter.jsx"
+target = "apps/frontend/src/router/AppRouter.jsx"
+exclude_features = ["typescript"]
+
+[[files]]
+source = "router/AppRouter.tsx"
+target = "apps/frontend/src/router/AppRouter.tsx"
+include_features = ["typescript"]
+
+[[files]]
+source = "tailwind.config.js"
+target = "apps/frontend/tailwind.config.js"
+include_features = ["tailwindcss", "daisyui"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "tailwind.config.ts"
+target = "apps/frontend/tailwind.config.ts"
+include_features = ["tailwindcss", "daisyui"]
+
+[[files]]
+source = "postcss.config.js"
+target = "apps/frontend/postcss.config.js"
+exclude_features = ["typescript"]
+include_features = ["tailwindcss"]
+
+[[files]]
+source = "postcss.config.mjs"
+target = "apps/frontend/postcss.config.mjs"
+include_features = ["tailwindcss"]
+
+[[files]]
+source = "vite.config.tailwind.js"
+target = "apps/frontend/vite.config.js"
+exclude_features = ["typescript"]
+include_features = ["tailwindcss"]
+
+[[files]]
+source = "vite.config.tailwind.ts"
+target = "apps/frontend/vite.config.ts"
+include_features = ["tailwindcss"]
+
+[[files]]
+source = "eslintrc.json"
+target = "apps/frontend/.eslintrc.json"
+include_features = ["eslint"]
+
+[[files]]
+source = "prettierrc"
+target = "apps/frontend/.prettierrc"
+include_features = ["prettier"]
+
+[[files]]
+source = "biome.json"
+target = "apps/frontend/biome.json"
+include_features = ["biome"]
+
+[[files]]
+source = "vitest.config.js"
+target = "apps/frontend/vitest.config.js"
+exclude_features = ["typescript"]
+include_features = ["vitest"]
+
+[[files]]
+source = "vitest.config.ts"
+target = "apps/frontend/vitest.config.ts"
+include_features = ["vitest"]
+
+[[files]]
+source = "jest.config.js"
+target = "apps/frontend/jest.config.js"
+exclude_features = ["typescript"]
+include_features = ["jest"]
+
+[[files]]
+source = "jest.config.ts"
+target = "apps/frontend/jest.config.ts"
+include_features = ["jest"]
+
+[[files]]
+source = "cypress.config.js"
+target = "apps/frontend/cypress.config.js"
+exclude_features = ["typescript"]
+include_features = ["cypress"]
+
+[[files]]
+source = "cypress.config.ts"
+target = "apps/frontend/cypress.config.ts"
+include_features = ["cypress"]
+
+[[files]]
+source = "playwright.config.js"
+target = "apps/frontend/playwright.config.js"
+exclude_features = ["typescript"]
+include_features = ["playwright"]
+
+[[files]]
+source = "playwright.config.ts"
+target = "apps/frontend/playwright.config.ts"
+include_features = ["playwright"]
+
+[[files]]
+source = "e2e/example.spec.ts"
+target = "apps/frontend/e2e/example.spec.ts"
+include_features = ["playwright"]
+
+[[files]]
+source = "store/zustand.js"
+target = "apps/frontend/src/store/index.js"
+exclude_features = ["typescript"]
+include_features = ["zustand"]
+
+[[files]]
+source = "store/zustand.ts"
+target = "apps/frontend/src/store/index.ts"
+include_features = ["zustand"]
+
+[[files]]
+source = "lib/query-provider.jsx"
+target = "apps/frontend/src/lib/query-provider.jsx"
+include_features = ["tanstack-query"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "lib/query-provider.tsx"
+target = "apps/frontend/src/lib/query-provider.tsx"
+include_features = ["tanstack-query"]
+
+[[files]]
+source = "lib/schemas.js"
+target = "apps/frontend/src/lib/schemas.js"
+include_features = ["zod"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "lib/schemas.ts"
+target = "apps/frontend/src/lib/schemas.ts"
+include_features = ["zod"]
+
+[[files]]
+source = "components.json"
+target = "apps/frontend/components.json"
+include_features = ["shadcn"]
+
+[[files]]
+source = "lib/utils.js"
+target = "apps/frontend/src/lib/utils.js"
+include_features = ["shadcn"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "lib/utils.ts"
+target = "apps/frontend/src/lib/utils.ts"
+include_features = ["shadcn"]
+
+[[files]]
+source = "store/redux/index.js"
+target = "apps/frontend/src/store/redux/index.js"
+include_features = ["redux"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "store/redux/index.ts"
+target = "apps/frontend/src/store/redux/index.ts"
+include_features = ["redux"]
+
+[[files]]
+source = "store/redux/slices/counterSlice.js"
+target = "apps/frontend/src/store/redux/slices/counterSlice.js"
+include_features = ["redux"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "store/redux/slices/counterSlice.ts"
+target = "apps/frontend/src/store/redux/slices/counterSlice.ts"
+include_features = ["redux"]
+
+[[files]]
+source = "drizzle.config.js"
+target = "apps/frontend/drizzle.config.js"
+exclude_features = ["typescript"]
+include_features = ["drizzle"]
+
+[[files]]
+source = "drizzle.config.ts"
+target = "apps/frontend/drizzle.config.ts"
+include_features = ["drizzle"]
+
+[[files]]
+source = "db/schema.js"
+target = "apps/frontend/src/db/schema.js"
+include_features = ["drizzle"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "db/schema.ts"
+target = "apps/frontend/src/db/schema.ts"
+include_features = ["drizzle"]
+
+[[files]]
+source = "prisma/schema.prisma"
+target = "apps/frontend/prisma/schema.prisma"
+include_features = ["prisma"]
+
+[[files]]
+source = "lib/clerk.js"
+target = "apps/frontend/src/lib/clerk.js"
+include_features = ["clerk"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "lib/clerk.ts"
+target = "apps/frontend/src/lib/clerk.ts"
+include_features = ["clerk"]
+
+[[files]]
+source = "vercel.json"
+target = "vercel.json"
+include_features = ["vercel"]
+
+[[files]]
+source = "uno.config.js"
+target = "apps/frontend/uno.config.js"
+exclude_features = ["typescript"]
+include_features = ["unocss"]
+
+[[files]]
+source = "uno.config.ts"
+target = "apps/frontend/uno.config.ts"
+include_features = ["unocss"]
+
+[[files]]
+source = "sentry.client.config.js"
+target = "apps/frontend/sentry.client.config.js"
+include_features = ["sentry"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "sentry.client.config.ts"
+target = "apps/frontend/sentry.client.config.ts"
+include_features = ["sentry"]
+
+[[files]]
+source = "i18n.config.js"
+target = "apps/frontend/i18n.config.js"
+include_features = ["i18n"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "i18n.config.ts"
+target = "apps/frontend/i18n.config.ts"
+include_features = ["i18n"]
+
+[[files]]
+source = "public/manifest.json"
+target = "apps/frontend/public/manifest.json"
+include_features = ["pwa"]
+
+[[files]]
+source = "public/sw.js"
+target = "apps/frontend/public/sw.js"
+include_features = ["pwa"]
+
+[[files]]
+source = "grpc/greeter.proto"
+target = "apps/frontend/grpc/greeter.proto"
+include_features = ["grpc"]
+
+[[files]]
+source = "lib/auth.js"
+target = "apps/frontend/src/lib/auth.js"
+include_features = ["lucia", "jwt", "oauth"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = "lib/auth.ts"
+target = "apps/frontend/src/lib/auth.ts"
+include_features = ["lucia", "jwt", "oauth"]
+
+[[files]]
+source = "babel.config.json"
+target = "apps/frontend/babel.config.json"
+include_features = ["styled-components"]
+
+[[files]]
+source = "styles/globals.css"
+target = "apps/frontend/src/styles/globals.css"
+
+[[files]]
+source = "styles/breakpoints.scss"
+target = "apps/frontend/src/styles/breakpoints.scss"
+include_features = ["sass"]
+
+[[files]]
+source = "trpc/router.ts"
+target = "apps/frontend/src/trpc/router.ts"
+include_features = ["trpc"]
+
+[[files]]
+source = "lib/graphql/schema.ts"
+target = "apps/frontend/src/lib/graphql/schema.ts"
+include_features = ["graphql"]
+
+[[files]]
+source = ".storybook/main.js"
+target = "apps/frontend/.storybook/main.js"
+include_features = ["storybook"]
+exclude_features = ["typescript"]
+
+[[files]]
+source = ".storybook/main.ts"
+target = "apps/frontend/.storybook/main.ts"
+include_features = ["storybook"]

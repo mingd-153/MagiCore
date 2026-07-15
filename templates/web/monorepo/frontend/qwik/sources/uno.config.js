@@ -1,0 +1,1 @@
+../../../../frontend/qwik/sources/uno.config.js

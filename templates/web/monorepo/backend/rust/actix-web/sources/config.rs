@@ -1,0 +1,1 @@
+/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/rust/actix-web/sources/config.rs

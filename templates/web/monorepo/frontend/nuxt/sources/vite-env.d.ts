@@ -1,0 +1,1 @@
+../../../../frontend/nuxt/sources/vite-env.d.ts

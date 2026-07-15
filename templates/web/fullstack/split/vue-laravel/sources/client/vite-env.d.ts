@@ -1,0 +1,1 @@
+/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/fullstack/split/vue-express/sources/client/vite-env.d.ts

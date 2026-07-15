@@ -1,0 +1,53 @@
+[[files]]
+source = "manage.py"
+target = "manage.py"
+
+[[files]]
+source = "main.py"
+target = "src/main.py"
+
+[[files]]
+source = "__init__.py"
+target = "src/__init__.py"
+
+[[files]]
+source = "config.py"
+target = "src/config.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "middleware.py"
+target = "src/middleware.py"
+
+[[files]]
+source = "wsgi.py"
+target = "src/wsgi.py"
+
+[[files]]
+source = "urls.py"
+target = "src/urls.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "health.py"
+target = "src/health.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "status.py"
+target = "src/status.py"
+required_context = ["project_name"]
+
+[[files]]
+source = "requirements.txt"
+target = "requirements.txt"
+
+[[files]]
+source = "Dockerfile"
+target = "Dockerfile"
+include_features = ["docker"]
+
+[[files]]
+source = ".dockerignore"
+target = ".dockerignore"
+include_features = ["docker"]
