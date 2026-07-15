@@ -13,7 +13,11 @@ pub struct ScaffoldFlags {
     pub pm: Option<String>,
     #[arg(long, help = "Init git repo")]
     pub git: bool,
-    #[arg(long, help = "Auto-install dependencies after scaffold", default_value_t = true)]
+    #[arg(
+        long,
+        help = "Auto-install dependencies after scaffold",
+        default_value_t = true
+    )]
     pub install: bool,
     #[arg(short = 'y', long, help = "Skip prompts, use defaults")]
     pub yes: bool,
@@ -21,7 +25,10 @@ pub struct ScaffoldFlags {
     pub preset: Option<String>,
 
     // ── Project type ──────────────────────────────────────────────
-    #[arg(long, help = "Project layout type (frontend|backend|fullstack|monorepo)")]
+    #[arg(
+        long,
+        help = "Project layout type (frontend|backend|fullstack|monorepo)"
+    )]
     pub project_type: Option<String>,
 
     // ── Language ──────────────────────────────────────────────────

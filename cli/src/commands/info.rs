@@ -32,7 +32,11 @@ async fn info_web(package: String, json: bool) -> Result<()> {
             name: meta.name.clone(),
             description: meta.description.clone().unwrap_or_default(),
             version_count: meta.versions.len(),
-            dist_tags: meta.dist_tags.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            dist_tags: meta
+                .dist_tags
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             local_version: local_version.clone(),
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -80,7 +84,12 @@ fn detect_local_version(package: &str) -> Option<String> {
     }
     let content = std::fs::read_to_string(manifest_path).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-    for section in &["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] {
+    for section in &[
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+    ] {
         if let Some(deps) = parsed.get(*section).and_then(|v| v.as_object()) {
             if let Some(ver) = deps.get(package).and_then(|v| v.as_str()) {
                 return Some(ver.to_string());

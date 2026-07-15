@@ -77,63 +77,91 @@ fn create_web_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
 
 #[cfg(feature = "game")]
 fn create_game_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'game' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'game' core is under development. Only the 'web' core is available in this release."
+    )
 }
 #[cfg(not(feature = "game"))]
 fn create_game_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'game' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'game' core is under development. Only the 'web' core is available in this release."
+    )
 }
 
 #[cfg(feature = "ai")]
 fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'ai' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'ai' core is under development. Only the 'web' core is available in this release."
+    )
 }
 #[cfg(not(feature = "ai"))]
 fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'ai' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'ai' core is under development. Only the 'web' core is available in this release."
+    )
 }
 
 #[cfg(feature = "clo")]
 fn create_clo_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'cloud' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'cloud' core is under development. Only the 'web' core is available in this release."
+    )
 }
 #[cfg(not(feature = "clo"))]
 fn create_clo_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'cloud' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'cloud' core is under development. Only the 'web' core is available in this release."
+    )
 }
 
 #[cfg(feature = "cicd")]
 fn create_cicd_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'cicd' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'cicd' core is under development. Only the 'web' core is available in this release."
+    )
 }
 #[cfg(not(feature = "cicd"))]
 fn create_cicd_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'cicd' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'cicd' core is under development. Only the 'web' core is available in this release."
+    )
 }
 
 #[cfg(feature = "iot")]
 fn create_iot_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'iot' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'iot' core is under development. Only the 'web' core is available in this release."
+    )
 }
 #[cfg(not(feature = "iot"))]
 fn create_iot_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'iot' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'iot' core is under development. Only the 'web' core is available in this release."
+    )
 }
 
 #[cfg(feature = "app")]
 fn create_app_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'app' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'app' core is under development. Only the 'web' core is available in this release."
+    )
 }
 #[cfg(not(feature = "app"))]
 fn create_app_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'app' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'app' core is under development. Only the 'web' core is available in this release."
+    )
 }
 
 #[cfg(feature = "lib")]
 fn create_lib_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'lib' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'lib' core is under development. Only the 'web' core is available in this release."
+    )
 }
 #[cfg(not(feature = "lib"))]
 fn create_lib_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("'lib' core is under development. Only the 'web' core is available in this release.")
+    anyhow::bail!(
+        "'lib' core is under development. Only the 'web' core is available in this release."
+    )
 }

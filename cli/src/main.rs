@@ -326,7 +326,11 @@ pub(crate) enum Commands {
         not(feature = "app"),
         not(feature = "lib")
     ))]
-    #[command(name = "create", about = "Scaffold a new web project", alias = "create-web")]
+    #[command(
+        name = "create",
+        about = "Scaffold a new web project",
+        alias = "create-web"
+    )]
     CreateWeb {
         framework: String,
         project_name: String,
@@ -749,16 +753,16 @@ mod tests {
         .unwrap();
 
         match cli.command.unwrap() {
-                Commands::CreateWeb {
-                    framework,
-                    project_name,
-                    flags,
-                } => {
-                    assert_eq!(framework, "react@latest");
-                    assert_eq!(project_name, "demo-app");
-                    assert!(flags.ts);
-                    assert!(flags.tailwindcss);
-                }
+            Commands::CreateWeb {
+                framework,
+                project_name,
+                flags,
+            } => {
+                assert_eq!(framework, "react@latest");
+                assert_eq!(project_name, "demo-app");
+                assert!(flags.ts);
+                assert!(flags.tailwindcss);
+            }
             _ => panic!("expected create-web command"),
         }
     }
@@ -839,7 +843,9 @@ mod tests {
                 _ => panic!("expected create alias to resolve to web scaffold"),
             }
             let cli = Cli::try_parse_from(["mg", "create-web", "react@latest", "demo-app", "--ts"])
-                .expect("web-only build should also accept `mg create-web ...` as compatibility alias");
+                .expect(
+                    "web-only build should also accept `mg create-web ...` as compatibility alias",
+                );
             match cli.command.unwrap() {
                 Commands::CreateWeb {
                     framework,
@@ -1000,15 +1006,9 @@ mod tests {
             _ => panic!("expected dev command"),
         }
 
-        let alias_cli = Cli::try_parse_from([
-            "mg",
-            "dev-web",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "4316",
-        ])
-        .unwrap();
+        let alias_cli =
+            Cli::try_parse_from(["mg", "dev-web", "--host", "127.0.0.1", "--port", "4316"])
+                .unwrap();
 
         match alias_cli.command.unwrap() {
             Commands::Dev { host, port } => {
