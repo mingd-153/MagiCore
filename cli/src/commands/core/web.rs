@@ -2860,7 +2860,14 @@ async fn resolve_primary_version(request: &FrameworkRequest) -> Result<String> {
                     request.normalized
                 )
             })?;
-            fetch_npm_latest_version(&pkg).await
+            // ponytail: override > baseline > network. removes CI network dep
+            match scaffold_version_override(&pkg) {
+                Some(v) => Ok(v),
+                None => match scaffold_baseline_version(&pkg) {
+                    Some(v) => Ok(v.to_string()),
+                    None => fetch_npm_latest_version(&pkg).await,
+                },
+            }
         }
         Some(version) => Ok(version.to_string()),
     }
@@ -3024,10 +3031,10 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
-    fn scaffold_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+fn scaffold_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
     #[test]
     fn test_parse_framework_request_supports_alias_and_version() {
@@ -3038,7 +3045,9 @@ mod tests {
 
     #[test]
     fn test_create_web_with_flags_seeds_package_json() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("cli-react");
         let flags = ScaffoldFlags {
@@ -3079,7 +3088,9 @@ mod tests {
 
     #[test]
     fn test_scaffold_version_override_short_circuits_network_resolution() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var(
             SCAFFOLD_VERSION_OVERRIDES_ENV,
             "vite=^8.1.4,tailwindcss=^4.3.2",
@@ -3108,7 +3119,9 @@ mod tests {
 
     #[test]
     fn test_create_qwik_uses_framework_specific_vite_pin() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
@@ -3137,7 +3150,9 @@ mod tests {
 
     #[test]
     fn test_create_web_without_overrides_uses_curated_baseline_when_registry_is_unavailable() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
@@ -3168,7 +3183,9 @@ mod tests {
 
     #[test]
     fn test_create_vanilla_web_without_primary_dependency_uses_toolchain_seed_only() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
@@ -3195,7 +3212,9 @@ mod tests {
 
     #[test]
     fn test_create_nextjs_uses_baseline_typescript_instead_of_registry_latest() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
@@ -3788,7 +3807,9 @@ packages = ["packages/*"]
 
     #[test]
     fn test_create_web_writes_project_toml_for_monorepo() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();

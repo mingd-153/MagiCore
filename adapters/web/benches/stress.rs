@@ -1,5 +1,7 @@
+use base64::Engine;
 use criterion::{criterion_group, criterion_main, Criterion};
 use mg_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use sha2::Digest;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -87,18 +89,32 @@ fn make_tarball_with_files(dir: &Path, pkg: &PackageId, files: &[(&str, &[u8])])
     encoder.finish().unwrap();
 }
 
-fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
+fn compute_tarball_sri(bytes: &[u8]) -> String {
+    let hash = sha2::Sha512::digest(bytes);
+    format!(
+        "sha512-{}",
+        base64::engine::general_purpose::STANDARD.encode(hash)
+    )
+}
+
+fn make_graph(root: &Path, packages: &[PackageId]) -> ResolvedGraph {
+    let store_root = root.join(".megagate").join("cache").join("web");
+    let cache = mg_store::PackageCache::new(store_root.join("cache")).unwrap();
     ResolvedGraph {
         packages: packages
             .iter()
             .cloned()
-            .map(|id| ResolvedPackage {
-                id,
-                integrity: String::new(),
-                tarball_url: String::new(),
-                deps: vec![],
-                direct: true,
-                dev: false,
+            .map(|id| {
+                let bytes = std::fs::read(cache.tarball_path(&id)).unwrap();
+                let integrity = compute_tarball_sri(&bytes);
+                ResolvedPackage {
+                    id,
+                    integrity,
+                    tarball_url: String::new(),
+                    deps: vec![],
+                    direct: true,
+                    dev: false,
+                }
             })
             .collect(),
     }
@@ -121,7 +137,7 @@ fn bench_large_tree(c: &mut Criterion) {
                 for pkg in &pkgs {
                     make_tarball(dir.path(), pkg, 10);
                 }
-                let graph = make_graph(&pkgs);
+                let graph = make_graph(dir.path(), &pkgs);
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
@@ -146,11 +162,11 @@ fn bench_concurrent_install(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 let pkg = pkg_id("react", "18.2.0");
-                let graph = Arc::new(make_graph(&[pkg.clone()]));
                 let d1 = Arc::new(tempfile::tempdir().unwrap());
                 let d2 = Arc::new(tempfile::tempdir().unwrap());
                 make_tarball(d1.path(), &pkg, 3);
                 make_tarball(d2.path(), &pkg, 3);
+                let graph = Arc::new(make_graph(d1.path(), &[pkg.clone()]));
                 (graph, d1, d2, pkg)
             },
             |(graph, d1, d2, pkg)| {
@@ -196,7 +212,7 @@ fn bench_corrupted_metadata(c: &mut Criterion) {
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
                 let adapter = mg_web_adapter::WebAdapter::new();
-                let graph = make_graph(&[pkg]);
+                let graph = make_graph(dir.path(), &[pkg]);
                 (dir, graph, adapter)
             },
             |(dir, graph, adapter)| {
@@ -227,7 +243,7 @@ fn bench_deep_chain(c: &mut Criterion) {
                 for pkg in &pkgs {
                     make_tarball(dir.path(), pkg, 3);
                 }
-                let graph = make_graph(&pkgs);
+                let graph = make_graph(dir.path(), &pkgs);
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
@@ -263,9 +279,9 @@ fn bench_reinstall_changed(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 let pkg = pkg_id("reinstalled-pkg", "1.0.0");
-                let graph = make_graph(&[pkg.clone()]);
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball_with_files(dir.path(), &pkg, &[("version.txt", b"v1")]);
+                let graph = make_graph(dir.path(), &[pkg.clone()]);
                 let adapter = mg_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path())).unwrap();
@@ -284,7 +300,7 @@ fn bench_reinstall_changed(c: &mut Criterion) {
     });
 }
 
-/// 6. Mixed integrity: some with real integrity, some without
+/// 6. Both packages with valid integrity
 fn bench_mixed_integrity(c: &mut Criterion) {
     c.bench_function("stress_mixed_integrity", |b| {
         b.iter_with_setup(
@@ -294,26 +310,7 @@ fn bench_mixed_integrity(c: &mut Criterion) {
                 for pkg in &pkgs {
                     make_tarball(dir.path(), pkg, 2);
                 }
-                let cache = mg_store::PackageCache::new(
-                    dir.path()
-                        .join(".megagate")
-                        .join("cache")
-                        .join("web")
-                        .join("cache"),
-                )
-                .unwrap();
-                let tarball_data = std::fs::read(cache.tarball_path(&pkgs[0])).unwrap();
-                let actual_integrity = {
-                    use base64::Engine;
-                    use sha2::Digest;
-                    let hash = sha2::Sha512::digest(&tarball_data);
-                    format!(
-                        "sha512-{}",
-                        base64::engine::general_purpose::STANDARD.encode(hash)
-                    )
-                };
-                let mut graph = make_graph(&pkgs);
-                graph.packages[0].integrity = actual_integrity;
+                let graph = make_graph(dir.path(), &pkgs);
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
@@ -344,9 +341,9 @@ fn bench_clean_reinstall(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 let pkg = pkg_id("clean-reinstall", "1.0.0");
-                let graph = make_graph(&[pkg.clone()]);
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
+                let graph = make_graph(dir.path(), &[pkg.clone()]);
                 let adapter = mg_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path())).unwrap();
