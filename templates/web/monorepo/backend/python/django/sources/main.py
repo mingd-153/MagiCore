@@ -1,11 +1,12 @@
-from fastapi import FastAPI
-import uvicorn
+import os
+import sys
 
-app = FastAPI()
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "src.config")
 
-@app.get("/api/health")
-async def health():
-    return {"status": "ok"}
+from django.core.wsgi import get_wsgi_application
+
+app = get_wsgi_application()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "3000")))
+    from django.core.management import execute_from_command_line
+    execute_from_command_line(sys.argv)

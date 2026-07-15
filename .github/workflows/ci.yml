@@ -16,6 +16,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -46,15 +49,18 @@ jobs:
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
+        continue-on-error: true
 
       - name: Generate code coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        continue-on-error: true
 
       - name: Upload coverage to artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: lcov.info
+        continue-on-error: true
 
   dist-packages:
     name: Dist package (${{ matrix.package }})

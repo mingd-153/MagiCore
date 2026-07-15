@@ -2,6 +2,7 @@ use std::env;
 
 pub struct Config {
     pub name: String,
+    #[allow(dead_code)]
     pub framework: String,
     pub port: String,
 }

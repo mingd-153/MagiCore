@@ -104,6 +104,123 @@ mod tests {
     }
 
     #[test]
+    fn new_sets_version_and_fields() {
+        let cfg = ProjectConfig::new("my-proj", "web");
+        assert_eq!(cfg.name, "my-proj");
+        assert_eq!(cfg.version, "0.1.0");
+        assert_eq!(cfg.ecosystem, "web");
+    }
+
+    #[test]
+    fn load_missing_returns_none() {
+        let dir = temp_test_dir("load-missing");
+        assert!(ProjectConfig::load(&dir).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_valid_file() {
+        let dir = temp_test_dir("load-valid");
+        let cfg = ProjectConfig::new("test", "web");
+        cfg.save(&dir).unwrap();
+        let loaded = ProjectConfig::load(&dir).unwrap().unwrap();
+        assert_eq!(loaded.name, "test");
+        assert_eq!(loaded.ecosystem, "web");
+        assert_eq!(loaded.version, "0.1.0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_invalid_toml_returns_err() {
+        let dir = temp_test_dir("load-invalid");
+        let mg = dir.join(".megagate");
+        std::fs::create_dir_all(&mg).unwrap();
+        std::fs::write(mg.join("project.toml"), "[[[invalid").unwrap();
+        assert!(ProjectConfig::load(&dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_creates_directory_and_file() {
+        let dir = temp_test_dir("save-dir");
+        let cfg = ProjectConfig::new("save-test", "lib");
+        cfg.save(&dir).unwrap();
+        let path = dir.join(".megagate").join("project.toml");
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("save-test"));
+        assert!(content.contains("lib"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_roundtrip() {
+        let dir = temp_test_dir("save-roundtrip");
+        let cfg = ProjectConfig::new("roundtrip", "ai");
+        cfg.save(&dir).unwrap();
+        let loaded = ProjectConfig::load(&dir).unwrap().unwrap();
+        assert_eq!(loaded.name, "roundtrip");
+        assert_eq!(loaded.ecosystem, "ai");
+        assert_eq!(loaded.version, "0.1.0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_detect_package_json_returns_web() {
+        let dir = temp_test_dir("auto-web");
+        std::fs::write(dir.join("package.json"), "{}").unwrap();
+        assert_eq!(ProjectConfig::auto_detect(&dir), Some("web".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_detect_cargo_toml_returns_lib() {
+        let dir = temp_test_dir("auto-lib");
+        std::fs::write(dir.join("Cargo.toml"), "").unwrap();
+        assert_eq!(ProjectConfig::auto_detect(&dir), Some("lib".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_detect_pyproject_toml_returns_ai() {
+        let dir = temp_test_dir("auto-ai");
+        std::fs::write(dir.join("pyproject.toml"), "").unwrap();
+        assert_eq!(ProjectConfig::auto_detect(&dir), Some("ai".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_detect_no_manifest_returns_none() {
+        let dir = temp_test_dir("auto-none");
+        assert_eq!(ProjectConfig::auto_detect(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_project_root_dot_megagate_in_cwd() {
+        let dir = temp_test_dir("root-cwd-dot");
+        std::fs::create_dir_all(dir.join(".megagate")).unwrap();
+        std::fs::write(dir.join(".megagate").join("project.toml"), "").unwrap();
+        assert_eq!(ProjectConfig::find_project_root(&dir), Some(dir.clone()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_project_root_package_json_in_cwd() {
+        let dir = temp_test_dir("root-cwd-pkg");
+        std::fs::write(dir.join("package.json"), "{}").unwrap();
+        assert_eq!(ProjectConfig::find_project_root(&dir), Some(dir.clone()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_project_root_no_match_returns_none() {
+        let dir = temp_test_dir("root-none");
+        assert_eq!(ProjectConfig::find_project_root(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn find_project_root_ignores_parent_package_json_without_project_config() {
         let root = temp_test_dir("parent-package-json");
         let child = root.join("apps").join("frontend");

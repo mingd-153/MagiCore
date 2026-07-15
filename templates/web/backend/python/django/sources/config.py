@@ -7,6 +7,10 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "change-me-in-production")
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
 ALLOWED_HOSTS = ["*"]
 
+MIDDLEWARE = [
+    "src.middleware.RequestLoggingMiddleware",
+]
+
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
 ]

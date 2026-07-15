@@ -168,6 +168,7 @@ impl NpmRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::ErrorKind;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -175,10 +176,23 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    async fn bind_test_listener() -> Option<TcpListener> {
+        match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => Some(listener),
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => {
+                eprintln!("skipping socket-backed test in sandbox: {err}");
+                None
+            }
+            Err(err) => panic!("failed to bind socket-backed test listener: {err}"),
+        }
+    }
+
     #[tokio::test]
     async fn test_fetch_metadata_retries_after_transient_failure() {
         let hits = Arc::new(AtomicUsize::new(0));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let Some(listener) = bind_test_listener().await else {
+            return;
+        };
         let addr = listener.local_addr().unwrap();
         let hits_for_server = hits.clone();
 
