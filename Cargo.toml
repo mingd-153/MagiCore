@@ -58,6 +58,7 @@ crossterm = "0.28"
 
 # Crypto
 sha2 = "0.10"
+blake3 = "1.5"
 hex = "0.4"
 base64 = "0.22"
 
