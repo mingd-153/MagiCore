@@ -515,13 +515,21 @@ impl PackageAdapter for WebAdapter {
         let node_modules = project_root.join("node_modules");
         std::fs::create_dir_all(&node_modules)?;
         let mut summary = InstallSummary::default();
+        let thread_id_hash = {
+            let tid = std::thread::current().id();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&tid, &mut hasher);
+            std::hash::Hasher::finish(&hasher)
+        };
+        
         let staging_root = layout.temp_dir().join(format!(
-            "install-stage-{}-{}",
+            "install-stage-{}-{}-{:x}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_millis()
+                .as_nanos(),
+            thread_id_hash
         ));
         let staged_node_modules = staging_root.join("node_modules");
         std::fs::create_dir_all(&staged_node_modules)?;
