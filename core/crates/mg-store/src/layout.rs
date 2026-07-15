@@ -1,6 +1,7 @@
 /// Store directory layout and conventions.
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub struct Layout {
     root: PathBuf,
 }
@@ -42,6 +43,11 @@ impl Layout {
     /// Lockfile directory
     pub fn locks_dir(&self) -> PathBuf {
         self.root.join("locks")
+    }
+
+    /// Virtual store directory (pnpm style)
+    pub fn virtual_store_dir(&self) -> PathBuf {
+        self.root.join("virtual_store")
     }
 }
 

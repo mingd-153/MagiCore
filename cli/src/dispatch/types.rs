@@ -28,6 +28,14 @@ pub enum CommonCommand {
         json: bool,
     },
     Audit,
+    Run {
+        script: String,
+        args: Vec<String>,
+    },
+    Dlx {
+        package: String,
+        args: Vec<String>,
+    },
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -44,7 +52,7 @@ pub enum CoreCommand {
             feature = "lib"
         ))
     ))]
-    Install { packages: Vec<String>, frozen: bool },
+    Install { packages: Vec<String>, frozen: bool, ignore_scripts: bool },
     #[cfg(all(
         feature = "web",
         not(any(
@@ -156,7 +164,7 @@ pub enum CoreCommand {
             feature = "lib"
         )
     ))]
-    InstallWeb { packages: Vec<String>, frozen: bool },
+    InstallWeb { packages: Vec<String>, frozen: bool, ignore_scripts: bool },
     #[cfg(feature = "game")]
     InstallGame { packages: Vec<String> },
     #[cfg(feature = "ai")]
@@ -349,15 +357,23 @@ impl From<Commands> for DispatchCommand {
     fn from(command: Commands) -> Self {
         use DispatchCommand::{Common as SomeCommon, Core as SomeCore};
 
+        let common_cmd = match command.clone() {
+            Commands::Init { template } => Some(CommonCommand::Init { template }),
+            Commands::Dev { host, port } => Some(CommonCommand::Dev { host, port }),
+            Commands::Info { package, json } => Some(CommonCommand::Info { package, json }),
+            Commands::Search { query, json, exact, page } => Some(CommonCommand::Search { query, json, exact, page }),
+            Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
+            Commands::Audit => Some(CommonCommand::Audit),
+            Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
+            Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
+            _ => None,
+        };
+
+        if let Some(cmd) = common_cmd {
+            return SomeCommon(cmd);
+        }
+
         match command {
-            Commands::Init { template } => SomeCommon(CommonCommand::Init { template }),
-            Commands::Dev { host, port } => SomeCommon(CommonCommand::Dev { host, port }),
-            Commands::Info { package, json } => SomeCommon(CommonCommand::Info { package, json }),
-            Commands::Search { query, json, exact, page } => {
-                SomeCommon(CommonCommand::Search { query, json, exact, page })
-            }
-            Commands::Outdated { json } => SomeCommon(CommonCommand::Outdated { json }),
-            Commands::Audit => SomeCommon(CommonCommand::Audit),
             #[cfg(all(
                 feature = "web",
                 not(any(
@@ -371,8 +387,8 @@ impl From<Commands> for DispatchCommand {
                 ))
             ))]
             Commands::Install {
-                packages, frozen, ..
-            } => SomeCore(CoreCommand::Install { packages, frozen }),
+                packages, frozen, ignore_scripts
+            } => SomeCore(CoreCommand::Install { packages, frozen, ignore_scripts }),
             #[cfg(all(
                 feature = "web",
                 not(any(
@@ -457,11 +473,11 @@ impl From<Commands> for DispatchCommand {
                 )
             ))]
             Commands::Install {
-                packages, frozen, ..
+                packages, frozen, ignore_scripts
             } => {
                 let ecosystem = detect_ecosystem();
                 match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::InstallWeb { packages, frozen }),
+                    Some("web") => SomeCore(CoreCommand::InstallWeb { packages, frozen, ignore_scripts }),
                     Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
                     Some("ai") => SomeCore(CoreCommand::InstallAi { packages }),
                     Some("clo") => SomeCore(CoreCommand::InstallClo { packages }),
@@ -469,7 +485,7 @@ impl From<Commands> for DispatchCommand {
                     Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
                     Some("app") => SomeCore(CoreCommand::InstallApp { packages }),
                     Some("lib") => SomeCore(CoreCommand::InstallLib { packages }),
-                    _ => SomeCore(CoreCommand::InstallWeb { packages, frozen }),
+                    _ => SomeCore(CoreCommand::InstallWeb { packages, frozen, ignore_scripts }),
                 }
             }
             #[cfg(all(
@@ -731,8 +747,8 @@ impl From<Commands> for DispatchCommand {
                     feature = "lib"
                 )
             ))]
-            Commands::InstallWeb { packages, frozen } => {
-                SomeCore(CoreCommand::InstallWeb { packages, frozen })
+            Commands::InstallWeb { packages, frozen, ignore_scripts } => {
+                SomeCore(CoreCommand::InstallWeb { packages, frozen, ignore_scripts })
             }
             #[cfg(feature = "game")]
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
@@ -984,6 +1000,7 @@ impl From<Commands> for DispatchCommand {
             Commands::UpdateApp { packages, install } => SomeCore(CoreCommand::UpdateApp { packages, install }),
             #[cfg(feature = "lib")]
             Commands::UpdateLib { packages, install } => SomeCore(CoreCommand::UpdateLib { packages, install }),
+            _ => unreachable!("Common commands should be handled by the first match block"),
         }
     }
 }

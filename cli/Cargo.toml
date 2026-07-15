@@ -48,6 +48,7 @@ url = { workspace = true }
 
 # Utilities
 colored = { workspace = true }
+dirs = "6"
 
 # Tracing
 tracing = { workspace = true }

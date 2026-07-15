@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// mg install — install dependencies for the current project
-pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
+pub async fn run(packages: Vec<String>, core: Option<&str>, ignore_scripts: bool) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
 
@@ -28,7 +28,7 @@ pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
 
         for workspace in workspaces {
             info(&format!("Installing workspace: {}", workspace.display()));
-            install_into_root(adapter, &workspace, &packages).await?;
+            install_into_root(adapter, &workspace, &packages, ignore_scripts).await?;
         }
 
         println!();
@@ -36,13 +36,14 @@ pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
         return Ok(());
     }
 
-    install_into_root(adapter, ctx.root(), &packages).await
+    install_into_root(adapter, ctx.root(), &packages, ignore_scripts).await
 }
 
 async fn install_into_root(
     adapter: &dyn mg_types::adapter::PackageAdapter,
     project_root: &Path,
     packages: &[String],
+    ignore_scripts: bool,
 ) -> Result<()> {
     let started_at = std::time::Instant::now();
     let add_cmd = match adapter.name() {
@@ -111,7 +112,13 @@ async fn install_into_root(
     }
 
     let spinner = create_spinner("  Linking packages...");
-    let mut summary = adapter.install(&graph, project_root).await?;
+    
+    let opts = mg_types::adapter::InstallOptions {
+        ignore_scripts,
+        legacy_flat: false,
+        frozen: false,
+    };
+    let mut summary = adapter.install(&graph, project_root, opts).await?;
     spinner.finish_and_clear();
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
 

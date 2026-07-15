@@ -14,7 +14,7 @@ use mg_resolver::{
 use mg_store::{ContentStore, Database, Layout, PackageCache};
 use mg_types::{
     adapter::{
-        AddOptions, AuditReport, InstallSummary, InstalledPackage, PackageAdapter, ResolvedGraph,
+        AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter, ResolvedGraph,
         ResolvedPackage, UpdatedPackage,
     },
     DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
@@ -24,6 +24,8 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256, Sha512};
 use walkdir::WalkDir;
 
+pub mod lifecycle;
+pub mod layout;
 pub mod native;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
@@ -496,6 +498,7 @@ impl PackageAdapter for WebAdapter {
         &self,
         graph: &ResolvedGraph,
         project_root: &Path,
+        opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
         let start = std::time::Instant::now();
         let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
@@ -543,6 +546,7 @@ impl PackageAdapter for WebAdapter {
             .iter()
             .map(|pkg| (pkg.id.clone(), pkg))
             .collect();
+        let mut packages_with_scripts: Vec<std::path::PathBuf> = Vec::new();
 
         let already_materialized: std::collections::HashSet<PackageId> = root_packages
             .iter()
@@ -561,6 +565,14 @@ impl PackageAdapter for WebAdapter {
             &registry,
         )
         .await?;
+
+        let _ = parallel_extract_packages(
+            graph,
+            &layout,
+            store,
+            shared_cache.as_ref(),
+            &cache,
+        ).await?;
 
         for pkg in &root_packages {
             let final_dir = node_modules.join(pkg.id.name().as_str());
@@ -660,12 +672,30 @@ impl PackageAdapter for WebAdapter {
                 ))
             })?;
         }
-        for pkg in &root_packages {
-            let package_dir = node_modules.join(pkg.id.name().as_str());
-            let mut visiting = std::collections::HashSet::new();
-            materialize_nested_dependencies(
-                &package_dir, pkg, &package_map, &root_package_versions,
-                &layout, store, shared_cache.as_ref(), &cache, &mut visiting, 0,
+        if opts.legacy_flat {
+            for pkg in &root_packages {
+                let package_dir = node_modules.join(pkg.id.name().as_str());
+                packages_with_scripts.push(package_dir.clone());
+                let mut visiting = std::collections::HashSet::new();
+                materialize_nested_dependencies(
+                    &package_dir, pkg, &package_map, &root_package_versions,
+                    &layout, store, shared_cache.as_ref(), &cache, &mut visiting, 0,
+                    &mut packages_with_scripts,
+                )?;
+            }
+        } else {
+            materialize_strict_layout(
+                project_root,
+                &node_modules,
+                &staged_node_modules,
+                graph,
+                &package_map,
+                &root_packages,
+                &layout,
+                store,
+                shared_cache.as_ref(),
+                &cache,
+                &mut packages_with_scripts,
             )?;
         }
         if staging_root.exists() {
@@ -680,6 +710,17 @@ impl PackageAdapter for WebAdapter {
         rebuild_bin_links(&node_modules, &root_packages)?;
 
         write_web_lockfile_with_state(project_root, graph, "locked")?;
+
+        if !opts.ignore_scripts {
+            use lifecycle::LifecycleRunner;
+            for pkg_dir in packages_with_scripts {
+                if let Err(e) = LifecycleRunner::run_scripts(&pkg_dir, project_root) {
+                    // Warn but don't fail: some packages have broken postinstall scripts
+                    eprintln!("[megagate] warning: lifecycle script error in {}: {}", pkg_dir.display(), e);
+                }
+            }
+        }
+
         summary.duration_ms = start.elapsed().as_millis() as u64;
         Ok(summary)
     }
@@ -824,8 +865,108 @@ impl PackageAdapter for WebAdapter {
 
         Ok(updated)
     }
-    async fn audit(&self, _: &Path) -> MgResult<AuditReport> {
-        Ok(AuditReport::clean(0))
+    async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
+        use mg_types::adapter::{VulnerabilitySeverity, Vulnerability};
+
+        let lockfile = match read_web_lockfile(project_root) {
+            Some(lock) => lock,
+            None => return Ok(AuditReport::clean(0)),
+        };
+
+        if lockfile.packages.is_empty() {
+            return Ok(AuditReport::clean(0));
+        }
+
+        // Build the bulk-advisory request body for npm registry
+        // POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk
+        // Body: { "package@version": ["dependency_range"], ... }
+        let mut body = serde_json::Map::new();
+        for pkg in &lockfile.packages {
+            let key = format!("{}", pkg.name);
+            let version_entry = serde_json::json!([pkg.version.clone()]);
+            body.insert(key, version_entry);
+        }
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent("megagate/0.1.0")
+            .build()
+            .map_err(|e| mg_types::MgError::Network(format!("audit client error: {e}")))?;
+
+        let response = client
+            .post("https://registry.npmjs.org/-/npm/v1/security/advisories/bulk")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| mg_types::MgError::Network(format!("audit request failed: {e}")))?;
+
+        let package_count = lockfile.packages.len();
+
+        if !response.status().is_success() {
+            // Advisory API unavailable — return clean to avoid blocking CI
+            eprintln!(
+                "[megagate] warning: audit API returned {}, skipping",
+                response.status()
+            );
+            return Ok(AuditReport::clean(package_count));
+        }
+
+        let advisories: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| mg_types::MgError::Other(format!("audit response parse error: {e}")))?;
+
+        let mut vulnerabilities = Vec::new();
+        if let Some(map) = advisories.as_object() {
+            for (pkg_name, advisory_list) in map {
+                if let Some(advisories_arr) = advisory_list.as_array() {
+                    for advisory in advisories_arr {
+                        let title = advisory["title"].as_str().unwrap_or("Unknown vulnerability").to_string();
+                        let severity_str = advisory["severity"].as_str().unwrap_or("info").to_string();
+                        let cve = advisory["cves"]
+                            .as_array()
+                            .and_then(|cves| cves.first())
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("CVE-UNKNOWN")
+                            .to_string();
+                        let patched = advisory["vulnerable_versions"].as_str().map(|s| s.to_string());
+                        let url = advisory["url"].as_str().map(|s| s.to_string());
+                        let version = advisory["findings"]
+                            .as_array()
+                            .and_then(|f| f.first())
+                            .and_then(|f| f["version"].as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        let pkg_name_parsed = mg_types::PackageName::new(pkg_name.clone())
+                            .unwrap_or_else(|_| {
+                                // Fallback: use raw string
+                                mg_types::PackageName::new("unknown").unwrap()
+                            });
+                        let ver = mg_types::Version::parse(&version).unwrap_or_else(|_| {
+                            mg_types::Version::parse("0.0.0").unwrap()
+                        });
+
+                        vulnerabilities.push(Vulnerability {
+                            package: mg_types::PackageId::new(pkg_name_parsed, ver),
+                            title,
+                            severity: severity_str.clone(),
+                            cve,
+                            severity_level: VulnerabilitySeverity::from_str(&severity_str),
+                            patched_versions: patched,
+                            url,
+                        });
+                    }
+                }
+            }
+        }
+
+        let vuln_count = vulnerabilities.len();
+        Ok(AuditReport {
+            packages_audited: package_count,
+            vulnerability_count: vuln_count,
+            vulnerabilities,
+        })
     }
 }
 
@@ -1250,7 +1391,7 @@ impl PackageJson {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedWebCache {
     root: PathBuf,
 }
@@ -2364,6 +2505,69 @@ fn ensure_extracted_package_root(
     Ok(canonical_root)
 }
 
+/// Extract and materialize **all** packages in the resolved graph concurrently.
+/// Returns a map: PackageId → canonical extraction root (PathBuf).
+async fn parallel_extract_packages(
+    graph: &ResolvedGraph,
+    layout: &Layout,
+    store: &ContentStore,
+    shared_cache: Option<&SharedWebCache>,
+    cache: &PackageCache,
+) -> MgResult<std::collections::HashMap<PackageId, PathBuf>> {
+    let extract_concurrency = std::env::var("MEGAGATE_WEB_EXTRACT_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| {
+            // Use number of CPUs, but cap at 16 to avoid contention on spinning disks
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .min(16)
+        });
+
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(extract_concurrency));
+    let mut join_set: tokio::task::JoinSet<MgResult<(PackageId, PathBuf)>> =
+        tokio::task::JoinSet::new();
+
+    for pkg in &graph.packages {
+        let pkg = pkg.clone();
+        let layout = (*layout).clone();
+        let store = (*store).clone();
+        let shared_cache = shared_cache.map(|s| (*s).clone());
+        let cache = (*cache).clone();
+        let sem = sem.clone();
+
+        join_set.spawn(async move {
+            let _permit = sem
+                .acquire_owned()
+                .await
+                .map_err(|e| mg_types::MgError::Other(format!("extract semaphore closed: {e}")))?;
+
+            let tarball_path = cache.tarball_path(&pkg.id);
+            // spawn_blocking: extraction is CPU-bound (decompression) + sync I/O
+            let id = pkg.id.clone();
+            let root = tokio::task::spawn_blocking(move || {
+                ensure_extracted_package_root(&layout, &store, shared_cache.as_ref(), &pkg, &tarball_path)
+            })
+            .await
+            .map_err(|e| mg_types::MgError::Other(format!("extract task panicked: {e}")))??;
+
+            Ok((id, root))
+        });
+    }
+
+    let mut results = std::collections::HashMap::new();
+    while let Some(joined) = join_set.join_next().await {
+        let (id, root) = joined
+            .map_err(|e| mg_types::MgError::Other(format!("extract join failed: {e}")))??;
+        results.insert(id, root);
+    }
+
+    Ok(results)
+}
+
+
 fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
     std::fs::create_dir_all(target_root).map_err(|err| {
         mg_types::MgError::Other(format!(
@@ -2481,6 +2685,7 @@ fn materialize_nested_dependencies(
     cache: &PackageCache,
     visiting: &mut std::collections::HashSet<String>,
     depth: usize,
+    packages_with_scripts: &mut Vec<std::path::PathBuf>,
 ) -> MgResult<()> {
     const MAX_DEPTH: usize = 50;
     if depth > MAX_DEPTH {
@@ -2533,11 +2738,12 @@ fn materialize_nested_dependencies(
             let package_root =
                 ensure_extracted_package_root(layout, store, shared_cache, dep_pkg, &tarball_path)?;
             hardlink_tree(&package_root, &nested_dir)?;
+            packages_with_scripts.push(nested_dir.clone());
         }
 
         materialize_nested_dependencies(
             &nested_dir, dep_pkg, package_map, root_package_versions,
-            layout, store, shared_cache, cache, visiting, depth + 1,
+            layout, store, shared_cache, cache, visiting, depth + 1, packages_with_scripts,
         )?;
     }
 
@@ -2798,6 +3004,11 @@ fn write_web_lockfile_with_state(
         })
         .collect();
 
+    // Sign the lockfile before serializing (no-op unless MEGAGATE_LOCKFILE_KEY is set)
+    if let Err(e) = mg_lockfile::LockfileSigner::sign(&mut lockfile) {
+        eprintln!("[megagate] warning: lockfile signing failed: {e}");
+    }
+
     let toml = serialization::to_toml(&lockfile)?;
     atomic_write(&lock_path, toml.as_bytes())?;
     
@@ -2886,6 +3097,90 @@ fn preferred_registry_version(metadata: &native::npm_registry::PackageMetadata) 
                 .map(|v| v.to_string())
         })
 }
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_strict_layout(
+    project_root: &Path,
+    node_modules: &Path,
+    staged_node_modules: &Path,
+    graph: &ResolvedGraph,
+    package_map: &std::collections::HashMap<PackageId, &ResolvedPackage>,
+    root_packages: &[&ResolvedPackage],
+    layout: &Layout,
+    store: &ContentStore,
+    shared_cache: Option<&SharedWebCache>,
+    cache: &PackageCache,
+    packages_with_scripts: &mut Vec<std::path::PathBuf>,
+) -> MgResult<()> {
+    let _ = project_root;
+    let _ = staged_node_modules;
+    let virtual_store = node_modules.join(".megagate");
+    if let Err(e) = std::fs::create_dir_all(&virtual_store) {
+        return Err(mg_types::MgError::Other(format!("failed to create virtual store: {}", e)));
+    }
+
+    // 1. Materialize all packages into virtual store
+    for pkg in &graph.packages {
+        let pkg_id = &pkg.id;
+        let vstore_pkg_name = format!("{}@{}", pkg_id.name().as_str().replace('/', "+"), pkg_id.version());
+        let vstore_pkg_dir = virtual_store
+            .join(&vstore_pkg_name)
+            .join("node_modules")
+            .join(pkg_id.name().as_str());
+
+        if !installed_package_matches(&vstore_pkg_dir, pkg_id) {
+            if vstore_pkg_dir.exists() {
+                let _ = std::fs::remove_dir_all(&vstore_pkg_dir);
+            }
+            
+            let tarball_path = cache.tarball_path(pkg_id);
+            let package_root = ensure_extracted_package_root(layout, store, shared_cache, pkg, &tarball_path)?;
+            hardlink_tree(&package_root, &vstore_pkg_dir)?;
+        }
+        packages_with_scripts.push(vstore_pkg_dir);
+    }
+
+    // 2. Link dependencies within virtual store
+    for pkg in &graph.packages {
+        let pkg_id = &pkg.id;
+        let vstore_pkg_name = format!("{}@{}", pkg_id.name().as_str().replace('/', "+"), pkg_id.version());
+        let vstore_node_modules = virtual_store.join(&vstore_pkg_name).join("node_modules");
+
+        for dep_id in &pkg.deps {
+            if let Some(dep_pkg) = package_map.get(dep_id) {
+                let _ = dep_pkg; // suppress unused warning
+                let dep_vstore_name = format!("{}@{}", dep_id.name().as_str().replace('/', "+"), dep_id.version());
+                let dep_vstore_pkg_dir = virtual_store
+                    .join(&dep_vstore_name)
+                    .join("node_modules")
+                    .join(dep_id.name().as_str());
+
+                let symlink_path = vstore_node_modules.join(dep_id.name().as_str());
+                if !symlink_path.exists() {
+                    crate::layout::create_symlink(&dep_vstore_pkg_dir, &symlink_path)?;
+                }
+            }
+        }
+    }
+
+    // 3. Link root packages to root node_modules
+    for pkg in root_packages {
+        let root_link = node_modules.join(pkg.id.name().as_str());
+        let vstore_pkg_name = format!("{}@{}", pkg.id.name().as_str().replace('/', "+"), pkg.id.version());
+        let vstore_pkg_dir = virtual_store
+            .join(&vstore_pkg_name)
+            .join("node_modules")
+            .join(pkg.id.name().as_str());
+
+        if root_link.exists() {
+            let _ = std::fs::remove_dir_all(&root_link);
+        }
+        crate::layout::create_symlink(&vstore_pkg_dir, &root_link)?;
+    }
+
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {

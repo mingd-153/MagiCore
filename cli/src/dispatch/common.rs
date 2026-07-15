@@ -14,5 +14,7 @@ pub async fn dispatch_common(command: CommonCommand, core: Option<&str>) -> Resu
         }
         CommonCommand::Outdated { json } => commands::outdated::run(core, json).await,
         CommonCommand::Audit => commands::audit::run(core).await,
+        CommonCommand::Run { script, args } => commands::run::run(script, args, core).await,
+        CommonCommand::Dlx { package, args } => commands::dlx::run(package, args).await,
     }
 }

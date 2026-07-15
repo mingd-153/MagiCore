@@ -65,8 +65,8 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             ))
         ))]
         CoreCommand::Install {
-            packages, frozen, ..
-        } => commands::core::web::install(packages, frozen).await,
+            packages, frozen, ignore_scripts
+        } => commands::core::web::install(packages, frozen, ignore_scripts).await,
         #[cfg(all(
             feature = "web",
             any(
@@ -79,8 +79,8 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
                 feature = "lib"
             )
         ))]
-        CoreCommand::InstallWeb { packages, frozen } => {
-            commands::core::web::install(packages, frozen).await
+        CoreCommand::InstallWeb { packages, frozen, ignore_scripts } => {
+            commands::core::web::install(packages, frozen, ignore_scripts).await
         }
         #[cfg(feature = "game")]
         CoreCommand::InstallGame { packages } => commands::core::game::install(packages).await,
