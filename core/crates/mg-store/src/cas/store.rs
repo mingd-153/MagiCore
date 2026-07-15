@@ -172,13 +172,6 @@ impl ContentStore {
             check_symlink_ancestors(parent)?;
         }
 
-        if dest.exists() {
-            return Err(StoreError::Io {
-                path: dest.to_path_buf(),
-                msg: "destination already exists".to_string(),
-            });
-        }
-
         let src = hash.cas_path(&self.root);
         if !src.exists() {
             return Err(StoreError::NotFound(hash.hash.clone()));
@@ -190,6 +183,17 @@ impl ContentStore {
             return Err(StoreError::HashMismatch {
                 expected: hash.hash.clone(),
                 actual: actual_hash.hash,
+            });
+        }
+
+        if dest.exists() {
+            let dest_hash = self.verify(dest)?;
+            if dest_hash.hash == hash.hash {
+                return Ok(());
+            }
+            return Err(StoreError::Io {
+                path: dest.to_path_buf(),
+                msg: "destination already exists".to_string(),
             });
         }
 

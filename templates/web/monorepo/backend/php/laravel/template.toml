@@ -1,18 +1,70 @@
 [[files]]
 source = "composer.json"
-required_context = ["project_slug"]
 target = "apps/backend/composer.json"
+required_context = ["project_slug"]
 
 [[files]]
-source = "index.php"
+source = "artisan"
+target = "apps/backend/artisan"
+
+[[files]]
+source = "public/index.php"
 target = "apps/backend/public/index.php"
 
 [[files]]
-source = "Dockerfile"
-target = "apps/backend/Dockerfile"
-include_features = ["docker"]
+source = "bootstrap/app.php"
+target = "apps/backend/bootstrap/app.php"
+
+[[files]]
+source = "bootstrap/cache/.gitkeep"
+target = "apps/backend/bootstrap/cache/.gitkeep"
+
+[[files]]
+source = "config/app.php"
+target = "apps/backend/config/app.php"
+required_context = ["project_name"]
+
+[[files]]
+source = "config/session.php"
+target = "apps/backend/config/session.php"
+required_context = ["project_name"]
+
+[[files]]
+source = "routes/web.php"
+target = "apps/backend/routes/web.php"
+required_context = ["project_name"]
+
+[[files]]
+source = "app/Http/Controllers/Controller.php"
+target = "apps/backend/app/Http/Controllers/Controller.php"
+
+[[files]]
+source = "app/Http/Controllers/HealthController.php"
+target = "apps/backend/app/Http/Controllers/HealthController.php"
+required_context = ["project_name"]
+
+[[files]]
+source = "storage/framework/cache/.gitkeep"
+target = "apps/backend/storage/framework/cache/.gitkeep"
+
+[[files]]
+source = "storage/framework/sessions/.gitkeep"
+target = "apps/backend/storage/framework/sessions/.gitkeep"
+
+[[files]]
+source = "storage/framework/views/.gitkeep"
+target = "apps/backend/storage/framework/views/.gitkeep"
+
+[[files]]
+source = "storage/logs/.gitkeep"
+target = "apps/backend/storage/logs/.gitkeep"
 
 [[files]]
 source = ".dockerignore"
 target = "apps/backend/.dockerignore"
+include_features = ["docker"]
+
+[[files]]
+source = "Dockerfile"
+target = "apps/backend/Dockerfile"
 include_features = ["docker"]

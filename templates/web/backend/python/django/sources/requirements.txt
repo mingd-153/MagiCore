@@ -1,2 +1,2 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
+django>=4.2,<5.1
+gunicorn>=21.2,<23

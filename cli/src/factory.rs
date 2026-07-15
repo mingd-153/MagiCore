@@ -77,65 +77,63 @@ fn create_web_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
 
 #[cfg(feature = "game")]
 fn create_game_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("Game adapter is not yet implemented")
+    anyhow::bail!("'game' core is under development. Only the 'web' core is available in this release.")
 }
 #[cfg(not(feature = "game"))]
 fn create_game_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("Game core not available in this build. Install: brew install megagate (full) or megagate-game")
+    anyhow::bail!("'game' core is under development. Only the 'web' core is available in this release.")
 }
 
 #[cfg(feature = "ai")]
 fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("AI adapter is not yet implemented")
+    anyhow::bail!("'ai' core is under development. Only the 'web' core is available in this release.")
 }
 #[cfg(not(feature = "ai"))]
 fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "AI core not available in this build. Install: brew install megagate (full) or megagate-ai"
-    )
+    anyhow::bail!("'ai' core is under development. Only the 'web' core is available in this release.")
 }
 
 #[cfg(feature = "clo")]
 fn create_clo_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("Cloud adapter is not yet implemented")
+    anyhow::bail!("'cloud' core is under development. Only the 'web' core is available in this release.")
 }
 #[cfg(not(feature = "clo"))]
 fn create_clo_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("Cloud core not available in this build. Install: brew install megagate (full) or megagate-clo")
+    anyhow::bail!("'cloud' core is under development. Only the 'web' core is available in this release.")
 }
 
 #[cfg(feature = "cicd")]
 fn create_cicd_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("CI/CD adapter is not yet implemented")
+    anyhow::bail!("'cicd' core is under development. Only the 'web' core is available in this release.")
 }
 #[cfg(not(feature = "cicd"))]
 fn create_cicd_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("CI/CD core not available in this build. Install: brew install megagate (full) or megagate-cicd")
+    anyhow::bail!("'cicd' core is under development. Only the 'web' core is available in this release.")
 }
 
 #[cfg(feature = "iot")]
 fn create_iot_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("IoT adapter is not yet implemented")
+    anyhow::bail!("'iot' core is under development. Only the 'web' core is available in this release.")
 }
 #[cfg(not(feature = "iot"))]
 fn create_iot_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("IoT core not available in this build. Install: brew install megagate (full) or megagate-iot")
+    anyhow::bail!("'iot' core is under development. Only the 'web' core is available in this release.")
 }
 
 #[cfg(feature = "app")]
 fn create_app_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("App adapter is not yet implemented")
+    anyhow::bail!("'app' core is under development. Only the 'web' core is available in this release.")
 }
 #[cfg(not(feature = "app"))]
 fn create_app_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("App core not available in this build. Install: brew install megagate (full) or megagate-app")
+    anyhow::bail!("'app' core is under development. Only the 'web' core is available in this release.")
 }
 
 #[cfg(feature = "lib")]
 fn create_lib_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("Lib adapter is not yet implemented")
+    anyhow::bail!("'lib' core is under development. Only the 'web' core is available in this release.")
 }
 #[cfg(not(feature = "lib"))]
 fn create_lib_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("Lib core not available in this build. Install: brew install megagate (full) or megagate-lib")
+    anyhow::bail!("'lib' core is under development. Only the 'web' core is available in this release.")
 }

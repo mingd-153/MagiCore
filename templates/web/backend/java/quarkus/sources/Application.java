@@ -1,11 +1,9 @@
-package com.app;
+package com.{{ project_package }};
 
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import io.quarkus.runtime.Quarkus;
 
-@SpringBootApplication
 public class Application {
     public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
+        Quarkus.run(args);
     }
 }

@@ -1,7 +1,7 @@
 [[files]]
 source = "root/package.json"
 target = "package.json"
-required_context = ["project_slug"]
+required_context = ["project_package"]
 
 [[files]]
 source = "client/index.ts.html"
@@ -65,7 +65,7 @@ exclude_features = ["typescript"]
 [[files]]
 source = "server/pom.xml"
 target = "server/pom.xml"
-required_context = ["project_slug"]
+required_context = ["project_package"]
 
 [[files]]
 source = "server/App.java"

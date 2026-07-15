@@ -6,7 +6,11 @@ COPY src ./src
 RUN mvn package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
+RUN addgroup -S app && adduser -S -G app app
 WORKDIR /app
-COPY --from=builder /app/target/*.jar app.jar
+COPY --from=builder /app/target/quarkus-app/ ./quarkus-app/
+USER app
 EXPOSE 3000
-CMD ["java", "-jar", "app.jar"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
+CMD ["java", "-jar", "quarkus-app/quarkus-run.jar"]

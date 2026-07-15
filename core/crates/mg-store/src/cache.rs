@@ -3,6 +3,7 @@ use anyhow::Result;
 use mg_types::PackageId;
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct PackageCache {
     root: PathBuf,
 }

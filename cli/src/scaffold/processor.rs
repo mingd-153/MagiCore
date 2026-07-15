@@ -855,7 +855,8 @@ impl Scaffolder {
 
         let mut seen_targets = HashSet::new();
         for file in &active_files {
-            if !seen_targets.insert(file.target.clone()) {
+            let target_path = render_target_path(&file.target, context);
+            if !seen_targets.insert(target_path.clone()) {
                 anyhow::bail!(
                     "Duplicate template target '{}' in '{}'",
                     file.target,
@@ -874,6 +875,7 @@ impl Scaffolder {
                 );
             }
 
+            let target_path = render_target_path(&file.target, context);
             let bytes = std::fs::read(&source_path)?;
             match std::str::from_utf8(&bytes) {
                 Ok(contents) => {
@@ -882,7 +884,7 @@ impl Scaffolder {
                         &file.required_context,
                         &source_path,
                     )?;
-                    Self::write_file(&target.join(&file.target), &rendered)?;
+                    Self::write_file(&target.join(&target_path), &rendered)?;
                 }
                 Err(_) => {
                     if !file.required_context.is_empty() {
@@ -891,13 +893,28 @@ impl Scaffolder {
                             source_path.display()
                         );
                     }
-                    Self::write_bytes(&target.join(&file.target), &bytes)?;
+                    Self::write_bytes(&target.join(&target_path), &bytes)?;
                 }
             }
         }
 
         Ok(())
     }
+
+}
+
+fn render_target_path(target: &str, context: &WebTemplateContext) -> String {
+    let mut s = target.to_string();
+    if let Some(v) = context.value("project_slug") {
+        s = s.replace("{{ project_slug }}", v).replace("{{project_slug}}", v);
+    }
+    if let Some(v) = context.value("project_name") {
+        s = s.replace("{{ project_name }}", v).replace("{{project_name}}", v);
+    }
+    if let Some(v) = context.value("project_package") {
+        s = s.replace("{{ project_package }}", v).replace("{{project_package}}", v);
+    }
+    s
 }
 
 fn framework_uses_react_shell(framework: &str) -> bool {
@@ -961,6 +978,7 @@ fn fullstack_backend_framework(framework: &str) -> &str {
 struct WebTemplateContext {
     project_name: String,
     project_slug: String,
+    project_package: String,
     mode: String,
     framework: String,
     frameworks: String,
@@ -1026,9 +1044,12 @@ impl WebTemplateContext {
                 .to_string()
         };
 
+        let project_package = project_slug.replace('-', "_");
+
         Self {
             project_name,
             project_slug,
+            project_package,
             mode,
             framework,
             frameworks: quoted_list(&config.frameworks),
@@ -1044,6 +1065,7 @@ impl WebTemplateContext {
         match key {
             "project_name" => Some(self.project_name.as_str()),
             "project_slug" => Some(self.project_slug.as_str()),
+            "project_package" => Some(self.project_package.as_str()),
             "mode" => Some(self.mode.as_str()),
             "framework" => Some(self.framework.as_str()),
             "frameworks" => Some(self.frameworks.as_str()),
@@ -1095,7 +1117,9 @@ impl WebTemplateContext {
         let mut rendered = input.to_string();
         for key in required_context {
             if let Some(value) = self.value(key) {
-                rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
+                rendered = rendered
+                    .replace(&format!("{{{{{key}}}}}"), value)
+                    .replace(&format!("{{{{ {key} }}}}"), value);
             }
         }
 

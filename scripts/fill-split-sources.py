@@ -72,6 +72,126 @@ app.listen(port, () => console.log(`running on :${port}`));
 """,
 }
 
+HONO_NODE_SERVER = {
+    "server/package.ts.json": NODE_SERVER["server/package.ts.json"],
+    "server/package.js.json": NODE_SERVER["server/package.js.json"],
+    "server/tsconfig.json": NODE_SERVER["server/tsconfig.json"],
+    "server/server.ts": """import { serve } from "@hono/node-server";
+import { app } from "./lib/app.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+serve({ fetch: app.fetch, port });
+console.log(`running on :${port}`);
+""",
+    "server/server.js": """import { serve } from "@hono/node-server";
+import { app } from "./lib/app.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+serve({ fetch: app.fetch, port });
+console.log(`running on :${port}`);
+""",
+    "server/app.ts": """import { Hono } from "hono";
+export const app = new Hono();
+app.get("/health", (c) => c.json({ status: "ok" }));
+""",
+    "server/app.js": """import { Hono } from "hono";
+export const app = new Hono();
+app.get("/health", (c) => c.json({ status: "ok" }));
+""",
+}
+
+TRPC_NODE_SERVER = {
+    "server/package.ts.json": NODE_SERVER["server/package.ts.json"],
+    "server/package.js.json": NODE_SERVER["server/package.js.json"],
+    "server/tsconfig.json": NODE_SERVER["server/tsconfig.json"],
+    "server/server.ts": NODE_SERVER["server/server.ts"],
+    "server/server.js": NODE_SERVER["server/server.js"],
+    "server/app.ts": """import express from "express";
+import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { appRouter } from "../router.js";
+import { createContext } from "../context.js";
+export const app = express();
+app.use("/trpc", createExpressMiddleware({ router: appRouter, createContext }));
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
+""",
+    "server/app.js": """import express from "express";
+import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { appRouter } from "../router.js";
+import { createContext } from "../context.js";
+export const app = express();
+app.use("/trpc", createExpressMiddleware({ router: appRouter, createContext }));
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
+""",
+}
+
+NESTJS_NODE_SERVER = {
+    "server/package.ts.json": """{
+  "name": "@project/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}
+""",
+    "server/package.js.json": """{
+  "name": "@project/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  }
+}
+""",
+    "server/tsconfig.json": """{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
+""",
+    "server/server.ts": """import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+const app = await NestFactory.create(AppModule);
+await app.listen(port);
+console.log(`running on :${port}`);
+""",
+    "server/server.js": """import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module.js";
+const port = parseInt(process.env.PORT || "3000", 10);
+const app = await NestFactory.create(AppModule);
+await app.listen(port);
+console.log(`running on :${port}`);
+""",
+    "server/config.ts": """export const appConfig = { framework: "nestjs" };
+""",
+    "server/config.js": """export const appConfig = { framework: "nestjs" };
+""",
+    "server/health.ts": """export const health = { path: "/health" };
+""",
+    "server/health.js": """export const health = { path: "/health" };
+""",
+    "server/status.ts": """export const status = { ok: "ok" };
+""",
+    "server/status.js": """export const status = { ok: "ok" };
+""",
+}
+
 # Fill react-express and react-hono
 for t in ["react-express", "react-hono"]:
     d = f"{BASE}/{t}"
@@ -80,6 +200,12 @@ for t in ["react-express", "react-hono"]:
         for name, content in {**REACT_CLIENT, **NODE_SERVER}.items():
             write_file(f"{d}/sources/{name}", content)
 
+# Ensure react-hono uses Hono runtime sources
+d = f"{BASE}/react-hono"
+if os.path.exists(d):
+    for name, content in {**REACT_CLIENT, **HONO_NODE_SERVER}.items():
+        write_file(f"{d}/sources/{name}", content)
+
 # Also fill node server common files for react-nestjs and react-trpc
 for t in ["react-nestjs", "react-trpc"]:
     d = f"{BASE}/{t}"
@@ -87,6 +213,17 @@ for t in ["react-nestjs", "react-trpc"]:
     if needs_client:
         print(f"  Filling {t} client...")
         for name, content in REACT_CLIENT.items():
+            write_file(f"{d}/sources/{name}", content)
+
+react_trpc = f"{BASE}/react-trpc"
+if os.path.exists(react_trpc):
+    for name, content in TRPC_NODE_SERVER.items():
+        write_file(f"{react_trpc}/sources/{name}", content)
+
+for t in ["react-nestjs", "vue-nestjs"]:
+    d = f"{BASE}/{t}"
+    if os.path.exists(d):
+        for name, content in NESTJS_NODE_SERVER.items():
             write_file(f"{d}/sources/{name}", content)
 
 print("Done")

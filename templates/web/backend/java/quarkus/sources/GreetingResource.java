@@ -1,4 +1,4 @@
-package com.example;
+package com.{{ project_package }}.api;
 
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;

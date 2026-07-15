@@ -1,12 +1,30 @@
 [[files]]
 source = "go.mod"
-required_context = ["project_slug"]
 target = "apps/backend/go.mod"
+required_context = ["project_slug"]
 
 [[files]]
 source = "main.go"
-required_context = ["project_name"]
 target = "apps/backend/cmd/server/main.go"
+
+[[files]]
+source = "health.go"
+target = "apps/backend/cmd/server/health.go"
+required_context = ["project_name"]
+
+[[files]]
+source = "middleware.go"
+target = "cmd/server/middleware.go"
+
+[[files]]
+source = "config.go"
+target = "apps/backend/cmd/server/config.go"
+required_context = ["project_name"]
+
+[[files]]
+source = "status.go"
+target = "apps/backend/cmd/server/status.go"
+required_context = ["project_name"]
 
 [[files]]
 source = "Dockerfile"
