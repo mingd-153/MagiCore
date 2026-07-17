@@ -1,55 +1,89 @@
 use anyhow::Result;
-use std::process::Command;
+use mg_ui::info;
 
-/// mg run <script> [args...] — runs a script defined in package.json
+/// mg run <script> [args...] — MegaGate Native Task Runner.
+/// Priority:
+///   1. mg.toml [scripts] section
+///   2. package.json scripts (Web core only)
 pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Result<()> {
     let ctx = crate::context::ProjectContext::load_with_core(core)?;
     let project_root = ctx.root();
 
+    // 1. Try mg.toml first (native MegaGate task definition)
+    let mg_toml_path = project_root.join("mg.toml");
+    if mg_toml_path.exists() {
+        if let Some(cmd) = resolve_mg_toml_script(&mg_toml_path, &script)? {
+            return execute_task_with_bin(&cmd, &args, project_root, &script, None);
+        }
+    }
+
+    // 2. Fall back to package.json (web ecosystem compatibility)
     let package_json_path = project_root.join("package.json");
-    if !package_json_path.exists() {
-        anyhow::bail!("No package.json found in {}", project_root.display());
+    if package_json_path.exists() {
+        if let Some(cmd) = resolve_package_json_script(&package_json_path, &script)? {
+            let bin = project_root.join("node_modules").join(".bin");
+            return execute_task_with_bin(&cmd, &args, project_root, &script, Some(bin));
+        }
     }
 
-    let content = std::fs::read_to_string(&package_json_path)?;
-    let manifest: serde_json::Value = serde_json::from_str(&content)?;
+    anyhow::bail!(
+        "Script '{}' not found. Define it in 'mg.toml' under [scripts] or in 'package.json'.",
+        script
+    )
+}
 
-    let script_cmd = manifest
+fn resolve_mg_toml_script(path: &std::path::Path, script: &str) -> Result<Option<String>> {
+    let content = std::fs::read_to_string(path)?;
+    let toml: toml::Value = toml::from_str(&content)?;
+    Ok(toml
         .get("scripts")
-        .and_then(|s| s.get(&script))
+        .and_then(|s| s.get(script))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Script '{}' not found in package.json", script))?
-        .to_string();
+        .map(|s| s.to_string()))
+}
 
-    // Build PATH with node_modules/.bin prepended
-    let node_modules_bin = project_root.join("node_modules").join(".bin");
-    let mut path_env = std::env::var("PATH").unwrap_or_default();
-    if node_modules_bin.exists() {
-        path_env = format!("{}:{}", node_modules_bin.display(), path_env);
-    }
+fn resolve_package_json_script(path: &std::path::Path, script: &str) -> Result<Option<String>> {
+    let content = std::fs::read_to_string(path)?;
+    let manifest: serde_json::Value = serde_json::from_str(&content)?;
+    Ok(manifest
+        .get("scripts")
+        .and_then(|s| s.get(script))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
 
-    // Run the script through shell
+fn execute_task_with_bin(
+    cmd: &str,
+    args: &[String],
+    cwd: &std::path::Path,
+    script_name: &str,
+    bin_path: Option<std::path::PathBuf>,
+) -> Result<()> {
     let full_cmd = if args.is_empty() {
-        script_cmd
+        cmd.to_string()
     } else {
-        format!("{} {}", script_cmd, args.join(" "))
+        format!("{} {}", cmd, args.join(" "))
     };
 
-    mg_ui::info(&format!("$ {}", full_cmd));
+    info(&format!("$ {}", full_cmd));
 
-    let status = Command::new("sh")
+    let mut path_env = std::env::var("PATH").unwrap_or_default();
+    if let Some(bin) = bin_path {
+        if bin.exists() {
+            path_env = format!("{}:{}", bin.display(), path_env);
+        }
+    }
+
+    let status = std::process::Command::new("sh")
         .arg("-c")
         .arg(&full_cmd)
-        .current_dir(project_root)
+        .current_dir(cwd)
         .env("PATH", &path_env)
-        .env("INIT_CWD", project_root.display().to_string())
-        .env("npm_lifecycle_event", &script)
+        .env("MG_LIFECYCLE_EVENT", script_name)
         .status()?;
 
     if !status.success() {
-        let code = status.code().unwrap_or(1);
-        std::process::exit(code);
+        std::process::exit(status.code().unwrap_or(1));
     }
-
     Ok(())
 }

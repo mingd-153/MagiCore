@@ -30,8 +30,7 @@ mod tests {
     use super::*;
 
     const HELLO: &[u8] = b"hello";
-    const HELLO_SHA256: &str =
-        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 
     #[test]
     fn test_hash_sha256_known_vector() {

@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use mg_types::{PackageAdapter, PackageId, PackageName, Version};
+use mg_types::{adapter::InstallOptions, PackageAdapter, PackageId, PackageName, Version};
 use mg_web_adapter::WebAdapter;
 use std::path::Path;
 use tar::{Builder, Header};
@@ -90,7 +90,10 @@ fn bench_cached_install_single(c: &mut Criterion) {
 
             let graph = make_graph(std::slice::from_ref(&pkg));
             let adapter = WebAdapter::new();
-            adapter.install(&graph, dir.path()).await.unwrap();
+            adapter
+                .install(&graph, dir.path(), InstallOptions::default())
+                .await
+                .unwrap();
         })
     });
 }
@@ -121,7 +124,7 @@ fn bench_cached_install_multi(c: &mut Criterion) {
 
             let graph = make_graph(&packages);
             let adapter = WebAdapter::new();
-            adapter.install(&graph, dir.path()).await.unwrap();
+            adapter.install(&graph, dir.path(), InstallOptions::default()).await.unwrap();
         })
     });
 }
@@ -161,7 +164,10 @@ fn bench_cached_install_stress(c: &mut Criterion) {
 
             let graph = make_graph(&packages);
             let adapter = WebAdapter::new();
-            adapter.install(&graph, dir.path()).await.unwrap();
+            adapter
+                .install(&graph, dir.path(), InstallOptions::default())
+                .await
+                .unwrap();
         })
     });
 }

@@ -20,7 +20,7 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
     } else if let Some(parent) = link.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    
+
     // Attempt symlink, fallback to copy if failed (Windows fallback)
     if let Err(e) = symlink_dir(target, link) {
         #[cfg(not(unix))]
@@ -36,7 +36,9 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
         {
             return Err(mg_types::MgError::Other(format!(
                 "failed to create symlink from {} to {}: {}",
-                target.display(), link.display(), e
+                target.display(),
+                link.display(),
+                e
             )));
         }
     }

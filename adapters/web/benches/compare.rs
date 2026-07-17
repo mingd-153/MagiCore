@@ -1,4 +1,4 @@
-use mg_types::PackageAdapter;
+use mg_types::{adapter::InstallOptions, PackageAdapter};
 /// Compare MegaGate vs npm / pnpm / bun on the same packages.
 /// Usage: cargo bench -p mg-web-adapter --bench compare
 use std::time::{Duration, Instant};
@@ -16,11 +16,13 @@ fn run_mg(_label: &str, dir: &std::path::Path) -> (Duration, Duration, Duration)
     let resolve = t0.elapsed();
 
     let t1 = Instant::now();
-    rt.block_on(adapter.install(&graph, dir)).unwrap();
+    rt.block_on(adapter.install(&graph, dir, InstallOptions::default()))
+        .unwrap();
     let cold = t1.elapsed();
 
     let t2 = Instant::now();
-    rt.block_on(adapter.install(&graph, dir)).unwrap();
+    rt.block_on(adapter.install(&graph, dir, InstallOptions::default()))
+        .unwrap();
     let warm = t2.elapsed();
 
     (resolve, cold, warm)

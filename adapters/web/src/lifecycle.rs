@@ -29,9 +29,10 @@ impl LifecycleRunner {
             MgError::Other(format!("failed to read package.json for lifecycle: {e}"))
         })?;
 
-        let manifest: PackageManifest = serde_json::from_str(&contents).unwrap_or_else(|_| PackageManifest {
-            scripts: PackageScripts::default(),
-        });
+        let manifest: PackageManifest =
+            serde_json::from_str(&contents).unwrap_or_else(|_| PackageManifest {
+                scripts: PackageScripts::default(),
+            });
 
         if let Some(script) = manifest.scripts.preinstall {
             Self::run_script(pkg_dir, project_root, "preinstall", &script)?;
@@ -69,9 +70,9 @@ impl LifecycleRunner {
             .env("INIT_CWD", project_root.display().to_string())
             .env("npm_config_node_gyp", "node-gyp"); // Mock npm env vars some native addons require
 
-        let status = cmd.status().map_err(|e| {
-            MgError::Other(format!("failed to spawn {} script: {e}", name))
-        })?;
+        let status = cmd
+            .status()
+            .map_err(|e| MgError::Other(format!("failed to spawn {} script: {e}", name)))?;
 
         if !status.success() {
             return Err(MgError::Other(format!(

@@ -218,10 +218,7 @@ mod tests {
         let dest = temp_dir.path().join("out");
         extract_tarball(&tarball, &dest).unwrap();
         assert!(dest.join("mydir").is_dir());
-        assert_eq!(
-            std::fs::read(dest.join("mydir/file.txt")).unwrap(),
-            b"data"
-        );
+        assert_eq!(std::fs::read(dest.join("mydir/file.txt")).unwrap(), b"data");
     }
 
     #[test]
@@ -259,10 +256,7 @@ mod tests {
         assert!(dest.join("a").is_dir());
         assert!(dest.join("a/b").is_dir());
         assert!(dest.join("a/b/c").is_dir());
-        assert_eq!(
-            std::fs::read(dest.join("a/b/c/file.txt")).unwrap(),
-            b"data"
-        );
+        assert_eq!(std::fs::read(dest.join("a/b/c/file.txt")).unwrap(), b"data");
     }
 
     #[test]

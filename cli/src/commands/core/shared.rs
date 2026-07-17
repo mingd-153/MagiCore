@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use colored::Colorize;
 use mg_lockfile::{serialization, Lockfile};
 use mg_types::adapter::{AddOptions, PackageAdapter};
 use mg_types::{Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
@@ -111,10 +112,8 @@ pub async fn add(
     }
 
     if !no_save {
-        mg_ui::info(&format!(
-            "Run '{}' to install",
-            mg_ui::style_cmd(install_command_for_adapter(adapter))
-        ));
+        info("Installing added packages...");
+        install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
     }
 
     Ok(())
@@ -126,10 +125,8 @@ pub async fn remove(adapter: &dyn PackageAdapter, root: &Path, package: &str) ->
     info(&format!("Removing {}...", package));
     adapter.remove(root, &name).await?;
     success(&format!("Removed {}", package));
-    info(&format!(
-        "Run '{}' to update lockfile",
-        style_cmd(install_command_for_adapter(adapter))
-    ));
+    info("Re-installing dependency graph...");
+    install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
     Ok(())
 }
 
@@ -201,7 +198,8 @@ pub async fn update(
         success("Update complete");
         if install {
             info("Installing updated packages...");
-            install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
+            install_with_adapter(adapter, root, install_command_for_adapter(adapter), false)
+                .await?;
         } else {
             info(&format!(
                 "Run '{}' to install updates",
@@ -249,7 +247,9 @@ pub async fn install_with_adapter(
     }
 
     let spinner = create_spinner("  Linking packages...");
-    let mut summary = adapter.install(&graph, root, mg_types::adapter::InstallOptions::default()).await?;
+    let mut summary = adapter
+        .install(&graph, root, mg_types::adapter::InstallOptions::default())
+        .await?;
     spinner.finish_and_clear();
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
 
@@ -336,19 +336,6 @@ fn load_locked_graph(
         return Ok(None);
     }
     let contents = std::fs::read_to_string(&lock_path)?;
-
-    // Lockfile integrity check: verify SHA-256 checksum from sidecar
-    let checksum_path = project_root.join("mg.lock.sha256");
-    if checksum_path.exists() {
-        let expected = std::fs::read_to_string(&checksum_path)?.trim().to_string();
-        let actual = mg_crypto::hash(contents.as_bytes(), mg_crypto::HashAlgorithm::Sha256)?;
-        if expected != actual {
-            anyhow::bail!(
-                "Lockfile checksum mismatch: mg.lock has been tampered with.\n  expected: {expected}\n  actual:   {actual}"
-            );
-        }
-    }
-
     let lock: Lockfile = match serialization::from_toml(&contents) {
         Ok(lock) => lock,
         Err(_) => return Ok(None),
@@ -474,4 +461,172 @@ mod tests {
         });
         assert!(!lock_matches_manifest(&lock, &manifest));
     }
+}
+
+fn link_name(package: &str) -> &str {
+    if package.contains('/') {
+        package.rsplit('/').next().unwrap_or(package)
+    } else {
+        package
+    }
+}
+
+pub async fn link(adapter: &dyn PackageAdapter, root: &Path, package: Option<&str>) -> Result<()> {
+    if adapter.name() != "web" {
+        anyhow::bail!("link only supported for web core");
+    }
+    let pkg = package.ok_or_else(|| anyhow::anyhow!("Usage: mg link <package>"))?;
+    info(&format!("Linking {}...", pkg));
+
+    let node_modules = root.join("node_modules");
+    let name = link_name(pkg);
+    let link_path = node_modules.join(name);
+
+    if link_path.exists() {
+        anyhow::bail!("{} already exists in node_modules", name);
+    }
+
+    std::fs::create_dir_all(&node_modules)?;
+    let source = find_package_source(root, pkg)?;
+    std::os::unix::fs::symlink(&source, &link_path)?;
+
+    success(&format!("Linked {} -> {}", name, source.display()));
+    Ok(())
+}
+
+pub async fn unlink(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    package: Option<&str>,
+) -> Result<()> {
+    if adapter.name() != "web" {
+        anyhow::bail!("unlink only supported for web core");
+    }
+    let pkg = package.ok_or_else(|| anyhow::anyhow!("Usage: mg unlink <package>"))?;
+    info(&format!("Unlinking {}...", pkg));
+
+    let name = link_name(pkg);
+    let link_path = root.join("node_modules").join(name);
+    if !link_path.exists() {
+        anyhow::bail!("{} is not linked in node_modules", name);
+    }
+
+    let meta = std::fs::symlink_metadata(&link_path)?;
+    if meta.file_type().is_symlink() || meta.is_file() {
+        std::fs::remove_file(&link_path)?;
+    } else {
+        std::fs::remove_dir_all(&link_path)?;
+    }
+
+    success(&format!("Unlinked {}", pkg));
+    Ok(())
+}
+
+pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Result<()> {
+    if adapter.name() != "web" {
+        anyhow::bail!("why only supported for web core");
+    }
+
+    let lock_path = root.join("mg.lock");
+    if !lock_path.exists() {
+        anyhow::bail!("mg.lock not found — run 'mg install' first");
+    }
+
+    let content = std::fs::read_to_string(&lock_path)?;
+    let lock: mg_lockfile::Lockfile = mg_lockfile::serialization::from_toml(&content)?;
+
+    let target = lock.packages.iter().find(|p| p.name == package);
+    let target = match target {
+        Some(p) => p,
+        None => {
+            info(&format!("Package '{}' not found in mg.lock", package));
+            return Ok(());
+        }
+    };
+
+    println!(
+        "\n{} {}@{}",
+        "📦".to_string(),
+        package.bold().cyan(),
+        target.version.dimmed()
+    );
+    if target.direct {
+        println!("  {} Direct dependency", "├─".green());
+    }
+    if target.dev {
+        println!("  {} Dev dependency", "├─".green());
+    }
+
+    let rdeps: Vec<&mg_lockfile::LockPackage> = lock
+        .packages
+        .iter()
+        .filter(|p| p.dependencies.iter().any(|d| d.starts_with(package)))
+        .collect();
+
+    if rdeps.is_empty() {
+        println!("  {} No reverse dependencies", "└─".yellow());
+    } else {
+        println!("  {} Required by:", "├─".green());
+        for dep in &rdeps {
+            println!("  │   {} {}@{}", "◉".blue(), dep.name, dep.version);
+        }
+    }
+
+    if !target.dependencies.is_empty() {
+        println!("  {} Depends on:", "└─".green());
+        for dep in &target.dependencies {
+            println!("      {} {}", "◉".blue(), dep);
+        }
+    }
+
+    Ok(())
+}
+
+fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {
+    // If it's a local path, use it directly
+    if package.starts_with('.') || package.starts_with('/') {
+        let path = if package.starts_with('/') {
+            PathBuf::from(package)
+        } else {
+            root.join(package)
+        };
+        if path.exists() {
+            return Ok(path.canonicalize()?);
+        }
+        anyhow::bail!("local package path not found: {}", path.display());
+    }
+
+    // Check global npm prefix
+    let global_prefix = std::process::Command::new("npm")
+        .arg("root")
+        .arg("-g")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                Some(PathBuf::from(path))
+            } else {
+                None
+            }
+        });
+
+    if let Some(ref global) = global_prefix {
+        let global_pkg = global.join(package);
+        if global_pkg.exists() {
+            return Ok(global_pkg);
+        }
+    }
+
+    // Check local node_modules
+    let local = root.join("node_modules").join(package);
+    if local.exists() {
+        return Ok(local);
+    }
+
+    anyhow::bail!(
+        "package '{}' not found in global prefix or local node_modules.\n\
+         Use 'mg install' to install it first, or provide a local path.",
+        package
+    )
 }

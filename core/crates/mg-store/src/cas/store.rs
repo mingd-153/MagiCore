@@ -281,9 +281,10 @@ impl ContentStore {
             std::hash::Hash::hash(&tid, &mut hasher);
             std::hash::Hasher::finish(&hasher)
         };
-        self.root
-            .join("tmp")
-            .join(format!("{prefix}-{}-{tid:x}-{nanos}-{count}", std::process::id()))
+        self.root.join("tmp").join(format!(
+            "{prefix}-{}-{tid:x}-{nanos}-{count}",
+            std::process::id()
+        ))
     }
 }
 

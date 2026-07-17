@@ -900,19 +900,24 @@ impl Scaffolder {
 
         Ok(())
     }
-
 }
 
 fn render_target_path(target: &str, context: &WebTemplateContext) -> String {
     let mut s = target.to_string();
     if let Some(v) = context.value("project_slug") {
-        s = s.replace("{{ project_slug }}", v).replace("{{project_slug}}", v);
+        s = s
+            .replace("{{ project_slug }}", v)
+            .replace("{{project_slug}}", v);
     }
     if let Some(v) = context.value("project_name") {
-        s = s.replace("{{ project_name }}", v).replace("{{project_name}}", v);
+        s = s
+            .replace("{{ project_name }}", v)
+            .replace("{{project_name}}", v);
     }
     if let Some(v) = context.value("project_package") {
-        s = s.replace("{{ project_package }}", v).replace("{{project_package}}", v);
+        s = s
+            .replace("{{ project_package }}", v)
+            .replace("{{project_package}}", v);
     }
     s
 }
@@ -1353,10 +1358,7 @@ mod tests {
             assert!(out.join("README.md").exists(), "{} README", core);
             if core == "web" {
                 assert!(out.join("mg.lock").exists(), "web mg.lock");
-                assert!(
-                    out.join(".megagate").join("web.toml").exists(),
-                    "web manifest"
-                );
+                assert!(out.join("mg.toml").exists(), "web mg.toml");
             }
         }
     }
@@ -1382,7 +1384,7 @@ mod tests {
 
         let out = Scaffolder::scaffold(&config).unwrap();
         assert!(out.join("mg.lock").exists());
-        assert!(out.join(".megagate").join("web.toml").exists());
+        assert!(out.join("mg.toml").exists());
         assert!(out.join("megagate.workspace.toml").exists());
         let root_package = std::fs::read_to_string(out.join("package.json")).unwrap();
         assert!(root_package.contains("\"dev\": \"mg --core web dev\""));

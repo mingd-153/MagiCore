@@ -1,3 +1,6 @@
+name = "{{project_name}}"
+version = "0.1.0"
+ecosystem = "web"
 mode = "{{mode}}"
 frameworks = [{{frameworks}}]
 template = "{{template}}"

@@ -1,19 +1,35 @@
-/// Project-level configuration (.megagate/project.toml)
+/// Project-level configuration (mg.toml)
 ///
-/// Stores which ecosystem/core this project belongs to,
-/// along with optional per-core settings.
+/// Stores ecosystem/core, scaffold settings, and per-core configuration.
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Project config saved by `mg init` and read by all other commands.
+/// Project config saved by `mg init` and read by all commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
     /// Project name
     pub name: String,
     /// Project version
+    #[serde(default = "default_version")]
     pub version: String,
     /// Ecosystem / core type (web, game, ai, cloud, iot, app, lib)
     pub ecosystem: String,
+    /// Mode (frontend, backend, fullstack, monorepo) — web core only
+    #[serde(default)]
+    pub mode: String,
+    /// Frameworks used (e.g. ["react-vite"] or ["node", "express"])
+    #[serde(default)]
+    pub frameworks: Vec<String>,
+    /// Template path used during scaffold
+    #[serde(default)]
+    pub template: String,
+    /// Features selected (e.g. ["ts", "tailwind"])
+    #[serde(default)]
+    pub features: Vec<String>,
+}
+
+fn default_version() -> String {
+    "0.1.0".to_string()
 }
 
 impl ProjectConfig {
@@ -22,12 +38,35 @@ impl ProjectConfig {
             name: name.into(),
             version: "0.1.0".to_string(),
             ecosystem: ecosystem.into(),
+            mode: String::new(),
+            frameworks: vec![],
+            template: String::new(),
+            features: vec![],
         }
     }
 
-    /// Load from project root (.megagate/project.toml)
+    pub fn from_scaffold(
+        name: impl Into<String>,
+        ecosystem: impl Into<String>,
+        mode: impl Into<String>,
+        frameworks: Vec<String>,
+        template: impl Into<String>,
+        features: Vec<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            version: "0.1.0".to_string(),
+            ecosystem: ecosystem.into(),
+            mode: mode.into(),
+            frameworks,
+            template: template.into(),
+            features,
+        }
+    }
+
+    /// Load from project root (mg.toml)
     pub fn load(project_root: &Path) -> Result<Option<Self>, anyhow::Error> {
-        let path = project_root.join(".megagate").join("project.toml");
+        let path = project_root.join("mg.toml");
         if !path.exists() {
             return Ok(None);
         }
@@ -35,17 +74,15 @@ impl ProjectConfig {
         Ok(Some(toml::from_str(&content)?))
     }
 
-    /// Save to project root (.megagate/project.toml)
+    /// Save to project root (mg.toml)
     pub fn save(&self, project_root: &Path) -> Result<(), anyhow::Error> {
-        let dir = project_root.join(".megagate");
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join("project.toml");
+        let path = project_root.join("mg.toml");
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
 
-    /// Detect ecosystem from project files (fallback if no config)
+    /// Detect ecosystem from project files (fallback if no mg.toml)
     pub fn auto_detect(project_root: &Path) -> Option<String> {
         if project_root.join("package.json").exists() {
             return Some("web".to_string());
@@ -59,24 +96,21 @@ impl ProjectConfig {
         None
     }
 
-    /// Get the project root by looking for .megagate/ or package.json.
+    /// Find project root by looking for mg.toml, package.json, or Cargo.toml.
     ///
-    /// - `.megagate/project.toml` is checked in CWD and ALL parent directories
-    ///   (monorepo support).
-    /// - `package.json` is checked in CWD ONLY (no parent walking — prevents detecting
-    ///   unrelated parent projects).
+    /// - `mg.toml` checked in CWD and ALL parent directories (monorepo support).
+    /// - `package.json` / `Cargo.toml` checked in CWD ONLY.
     pub fn find_project_root(from: &Path) -> Option<PathBuf> {
-        // CWD: check both .megagate/ and package.json
-        if from.join(".megagate").join("project.toml").exists()
+        if from.join("mg.toml").exists()
             || from.join("package.json").exists()
+            || from.join("Cargo.toml").exists()
         {
             return Some(from.to_path_buf());
         }
 
-        // Parent dirs: only .megagate/project.toml (user may be in a subdirectory)
         let mut current = from.parent();
         while let Some(dir) = current {
-            if dir.join(".megagate").join("project.toml").exists() {
+            if dir.join("mg.toml").exists() {
                 return Some(dir.to_path_buf());
             }
             current = dir.parent();
@@ -109,6 +143,26 @@ mod tests {
         assert_eq!(cfg.name, "my-proj");
         assert_eq!(cfg.version, "0.1.0");
         assert_eq!(cfg.ecosystem, "web");
+        assert!(cfg.mode.is_empty());
+        assert!(cfg.frameworks.is_empty());
+    }
+
+    #[test]
+    fn from_scaffold_sets_all_fields() {
+        let cfg = ProjectConfig::from_scaffold(
+            "my-app",
+            "web",
+            "frontend",
+            vec!["react-vite".to_string()],
+            "templates/web/frontend/react-vite",
+            vec!["ts".to_string(), "tailwind".to_string()],
+        );
+        assert_eq!(cfg.name, "my-app");
+        assert_eq!(cfg.ecosystem, "web");
+        assert_eq!(cfg.mode, "frontend");
+        assert_eq!(cfg.frameworks, vec!["react-vite"]);
+        assert_eq!(cfg.template, "templates/web/frontend/react-vite");
+        assert_eq!(cfg.features, vec!["ts", "tailwind"]);
     }
 
     #[test]
@@ -133,19 +187,17 @@ mod tests {
     #[test]
     fn load_invalid_toml_returns_err() {
         let dir = temp_test_dir("load-invalid");
-        let mg = dir.join(".megagate");
-        std::fs::create_dir_all(&mg).unwrap();
-        std::fs::write(mg.join("project.toml"), "[[[invalid").unwrap();
+        std::fs::write(dir.join("mg.toml"), "[[[invalid").unwrap();
         assert!(ProjectConfig::load(&dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn save_creates_directory_and_file() {
+    fn save_creates_file_at_root() {
         let dir = temp_test_dir("save-dir");
         let cfg = ProjectConfig::new("save-test", "lib");
         cfg.save(&dir).unwrap();
-        let path = dir.join(".megagate").join("project.toml");
+        let path = dir.join("mg.toml");
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("save-test"));
@@ -162,6 +214,28 @@ mod tests {
         assert_eq!(loaded.name, "roundtrip");
         assert_eq!(loaded.ecosystem, "ai");
         assert_eq!(loaded.version, "0.1.0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_roundtrip_with_scaffold_fields() {
+        let dir = temp_test_dir("save-scaffold");
+        let cfg = ProjectConfig::from_scaffold(
+            "roundtrip",
+            "web",
+            "frontend",
+            vec!["react-vite".to_string()],
+            "templates/web/frontend/react-vite",
+            vec!["ts".to_string()],
+        );
+        cfg.save(&dir).unwrap();
+        let loaded = ProjectConfig::load(&dir).unwrap().unwrap();
+        assert_eq!(loaded.name, "roundtrip");
+        assert_eq!(loaded.ecosystem, "web");
+        assert_eq!(loaded.mode, "frontend");
+        assert_eq!(loaded.frameworks, vec!["react-vite"]);
+        assert_eq!(loaded.template, "templates/web/frontend/react-vite");
+        assert_eq!(loaded.features, vec!["ts"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -197,10 +271,9 @@ mod tests {
     }
 
     #[test]
-    fn find_project_root_dot_megagate_in_cwd() {
-        let dir = temp_test_dir("root-cwd-dot");
-        std::fs::create_dir_all(dir.join(".megagate")).unwrap();
-        std::fs::write(dir.join(".megagate").join("project.toml"), "").unwrap();
+    fn find_project_root_mg_toml_in_cwd() {
+        let dir = temp_test_dir("root-cwd-mg");
+        std::fs::write(dir.join("mg.toml"), "").unwrap();
         assert_eq!(ProjectConfig::find_project_root(&dir), Some(dir.clone()));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -221,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn find_project_root_ignores_parent_package_json_without_project_config() {
+    fn find_project_root_ignores_parent_package_json_without_mg_toml() {
         let root = temp_test_dir("parent-package-json");
         let child = root.join("apps").join("frontend");
         std::fs::create_dir_all(&child).unwrap();
@@ -232,12 +305,11 @@ mod tests {
     }
 
     #[test]
-    fn find_project_root_accepts_parent_project_toml() {
-        let root = temp_test_dir("parent-project-toml");
+    fn find_project_root_accepts_parent_mg_toml() {
+        let root = temp_test_dir("parent-mg-toml");
         let child = root.join("apps").join("frontend");
         std::fs::create_dir_all(&child).unwrap();
-        std::fs::create_dir_all(root.join(".megagate")).unwrap();
-        std::fs::write(root.join(".megagate").join("project.toml"), "").unwrap();
+        std::fs::write(root.join("mg.toml"), "").unwrap();
 
         assert_eq!(ProjectConfig::find_project_root(&child), Some(root.clone()));
         let _ = std::fs::remove_dir_all(root);
