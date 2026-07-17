@@ -46,6 +46,9 @@ flate2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
 
+# Parallelism
+rayon = { workspace = true }
+
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 criterion = { workspace = true }
