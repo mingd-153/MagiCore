@@ -5,8 +5,9 @@ use crate::wizard::web::WebWizard;
 use anyhow::Result;
 use mg_config::project::ProjectConfig;
 use mg_ui::{print_banner, print_next_steps, section};
+use std::path::Path;
 
-/// mg init — interactive project wizard
+/// mg init — create a new project with mg.toml
 pub async fn run(template: Option<String>) -> Result<()> {
     print_banner();
 
@@ -35,22 +36,17 @@ pub async fn run(template: Option<String>) -> Result<()> {
             }
         }
         let project_dir = Scaffolder::scaffold(&config)?;
-        let proj_config = ProjectConfig::new(Scaffolder::display_name(&project_dir), &config.core);
-        proj_config.save(&project_dir)?;
+        write_mg_toml(&project_dir, &config)?;
         return Ok(());
     }
 
-    // Step 1: Select core (auto-skip if single-core build)
     section("Choose your project type", 1, 4);
     let core = pick_core();
 
-    // Step 2: Run core-specific wizard
     section("Configure your project", 2, 4);
 
-    // Each core has its own decision tree
     let (mut config, features) = run_core_wizard(&core);
 
-    // Step 3: Features (if the wizard returned any)
     section("Additional features", 3, 4);
     if !features.is_empty() {
         let feats = WizardEngine::run_question(&Question {
@@ -60,29 +56,36 @@ pub async fn run(template: Option<String>) -> Result<()> {
         config.features = feats;
     }
 
-    // Step 4: Scaffold + save .megagate config
     section("Creating project...", 4, 4);
     let project_dir = Scaffolder::scaffold(&config)?;
 
-    let proj_config = ProjectConfig::new(Scaffolder::display_name(&project_dir), &config.core);
-    proj_config.save(&project_dir)?;
+    write_mg_toml(&project_dir, &config)?;
 
     print_next_steps(&config.project_name);
     Ok(())
 }
 
-/// Pick a core from whatever is available in this build.
+fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
+    let name = Scaffolder::display_name(project_dir);
+    let template = config.template_dir.to_str().unwrap_or("").to_string();
+    let proj_config = ProjectConfig::from_scaffold(
+        name,
+        &config.core,
+        &config.sub_type,
+        config.frameworks.clone(),
+        template,
+        config.features.clone(),
+    );
+    proj_config.save(project_dir)?;
+    Ok(())
+}
+
 fn pick_core() -> String {
     let avail = factory::available_cores();
     if avail.is_empty() {
         eprintln!("error: no cores available in this build");
         std::process::exit(1);
     }
-    // Single-core build: auto-select, skip menu
-    if avail.len() == 1 {
-        return avail[0].0.to_string();
-    }
-
     let options: Vec<Answer> = avail
         .iter()
         .map(|(short, label)| Answer::new(label, short))
@@ -98,9 +101,6 @@ fn pick_core() -> String {
         .unwrap_or_else(|| avail[0].0.to_string())
 }
 
-/// Dispatch to the right core wizard.
-/// Each core defines its own decision tree independently.
-/// Non-web cores use a generic stub (just ask project name) until their wizard is built.
 fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>) {
     match core {
         "web" => {
@@ -109,8 +109,6 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>) {
             let features = ask_web_features(&cfg);
             (cfg, features)
         }
-        // Future cores will have their own wizards here:
-        // "game" => game::GameWizard::run() + game_features(),
         _ => {
             let name = ask_project_name();
             (

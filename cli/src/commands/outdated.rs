@@ -1,25 +1,14 @@
 use anyhow::Result;
-
-#[cfg(feature = "web")]
 use serde::Serialize;
 
-#[cfg(feature = "web")]
 use crate::context::ProjectContext;
-#[cfg(feature = "web")]
 use mg_ui::{info, success};
 
 /// mg outdated — check for outdated packages
 pub async fn run(core: Option<&str>, json: bool) -> Result<()> {
-    #[cfg(feature = "web")]
-    return outdated_web(core, json).await;
-    #[cfg(not(feature = "web"))]
-    {
-        let _ = (core, json);
-        anyhow::bail!("'mg outdated' is not available in this build (requires web core)")
-    }
+    outdated_web(core, json).await
 }
 
-#[cfg(feature = "web")]
 async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
@@ -92,7 +81,6 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "web")]
 fn severity_label(current: &str, latest_major: u64) -> &'static str {
     let cur_major = current
         .trim_start_matches('^')
@@ -110,7 +98,6 @@ fn severity_label(current: &str, latest_major: u64) -> &'static str {
     }
 }
 
-#[cfg(feature = "web")]
 #[derive(Debug, Serialize)]
 struct OutdatedPkg {
     name: String,

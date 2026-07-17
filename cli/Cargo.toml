@@ -45,10 +45,22 @@ toml = { workspace = true }
 # HTTP
 reqwest = { workspace = true }
 url = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
+notify = { workspace = true }
+
+# Bundler
+esbuild-rs = { workspace = true }
+glob = { workspace = true }
+mime_guess = { workspace = true }
+lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
+futures-util = { workspace = true }
+walkdir = { workspace = true }
 
 # Utilities
 colored = { workspace = true }
 dirs = "6"
+crossterm = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }

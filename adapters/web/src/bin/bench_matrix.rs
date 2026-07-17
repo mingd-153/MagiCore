@@ -188,7 +188,11 @@ fn run_fixture_matrix(
         with_isolated_shared_cache(rt, None, || {
             let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
             let started = Instant::now();
-            let summary = rt.block_on(adapter.install(&fixture.graph, dir.path(), mg_types::adapter::InstallOptions::default()))?;
+            let summary = rt.block_on(adapter.install(
+                &fixture.graph,
+                dir.path(),
+                mg_types::adapter::InstallOptions::default(),
+            ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
             Ok((elapsed, summary.bytes_from_cache, stats))
@@ -205,9 +209,17 @@ fn run_fixture_matrix(
         )?;
         with_isolated_shared_cache(rt, None, || {
             let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
-            rt.block_on(adapter.install(&fixture.graph, dir.path(), mg_types::adapter::InstallOptions::default()))?;
+            rt.block_on(adapter.install(
+                &fixture.graph,
+                dir.path(),
+                mg_types::adapter::InstallOptions::default(),
+            ))?;
             let started = Instant::now();
-            let summary = rt.block_on(adapter.install(&fixture.graph, dir.path(), mg_types::adapter::InstallOptions::default()))?;
+            let summary = rt.block_on(adapter.install(
+                &fixture.graph,
+                dir.path(),
+                mg_types::adapter::InstallOptions::default(),
+            ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
             Ok((elapsed, summary.bytes_from_cache, stats))
@@ -226,7 +238,11 @@ fn run_fixture_matrix(
             let started = Instant::now();
             let manifest = rt.block_on(adapter.parse_manifest(dir.path()))?;
             let graph = rt.block_on(adapter.resolve(&manifest))?;
-            let summary = rt.block_on(adapter.install(&graph, dir.path(), mg_types::adapter::InstallOptions::default()))?;
+            let summary = rt.block_on(adapter.install(
+                &graph,
+                dir.path(),
+                mg_types::adapter::InstallOptions::default(),
+            ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
             Ok((elapsed, summary.bytes_from_cache, stats))
@@ -246,7 +262,11 @@ fn run_fixture_matrix(
             with_isolated_shared_cache(rt, Some(shared.path()), || {
                 let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
                 let started = Instant::now();
-                let summary = rt.block_on(adapter.install(&fixture.graph, dir.path(), mg_types::adapter::InstallOptions::default()))?;
+                let summary = rt.block_on(adapter.install(
+                    &fixture.graph,
+                    dir.path(),
+                    mg_types::adapter::InstallOptions::default(),
+                ))?;
                 let elapsed = started.elapsed().as_secs_f64() * 1000.0;
                 let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
                 Ok((elapsed, summary.bytes_from_cache, stats))
@@ -263,10 +283,18 @@ fn run_fixture_matrix(
         )?;
         with_isolated_shared_cache(rt, None, || {
             let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
-            rt.block_on(adapter.install(&fixture.graph, dir.path(), mg_types::adapter::InstallOptions::default()))?;
+            rt.block_on(adapter.install(
+                &fixture.graph,
+                dir.path(),
+                mg_types::adapter::InstallOptions::default(),
+            ))?;
             std::fs::remove_dir_all(dir.path().join("node_modules"))?;
             let started = Instant::now();
-            let summary = rt.block_on(adapter.install(&fixture.graph, dir.path(), mg_types::adapter::InstallOptions::default()))?;
+            let summary = rt.block_on(adapter.install(
+                &fixture.graph,
+                dir.path(),
+                mg_types::adapter::InstallOptions::default(),
+            ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
             Ok((elapsed, summary.bytes_from_cache, stats))

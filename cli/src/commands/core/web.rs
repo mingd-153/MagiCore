@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -553,10 +555,18 @@ fn link_monorepo_workspace_packages(project_root: &Path, targets: &[PathBuf]) ->
 
 fn read_workspace_package_manifest(project_root: &Path) -> Result<WorkspacePackageJson> {
     let path = project_root.join("package.json");
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read workspace package manifest '{}'", path.display()))?;
-    serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse workspace package manifest '{}'", path.display()))
+    let contents = std::fs::read_to_string(&path).with_context(|| {
+        format!(
+            "failed to read workspace package manifest '{}'",
+            path.display()
+        )
+    })?;
+    serde_json::from_str(&contents).with_context(|| {
+        format!(
+            "failed to parse workspace package manifest '{}'",
+            path.display()
+        )
+    })
 }
 
 async fn install_monorepo_targets(
@@ -619,11 +629,19 @@ async fn install_web_target_quiet(
     }
     let opts = mg_types::adapter::InstallOptions {
         ignore_scripts,
-        legacy_flat: false,
+        legacy_flat: should_use_legacy_flat_layout(),
         frozen,
     };
     adapter.install(&execution.graph, target, opts).await?;
     Ok(())
+}
+
+fn should_use_legacy_flat_layout() -> bool {
+    std::env::var("MEGAGATE_WEB_STRICT_LAYOUT")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| !matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(true)
 }
 
 fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Result<()> {
@@ -1103,7 +1121,7 @@ fn infer_native_dev_launch(
     host: Option<String>,
     port: Option<u16>,
 ) -> Result<DevLaunch> {
-    let host_str = host.as_deref().unwrap_or("0.0.0.0");
+    let host_str = host.as_deref().unwrap_or("127.0.0.1");
     if project_root.join("go.mod").exists() {
         let go_dir = if project_root.join("cmd/server").exists() {
             OsString::from("./cmd/server")
@@ -1187,8 +1205,7 @@ fn infer_native_dev_launch(
         });
     }
 
-    if project_root.join("composer.json").exists()
-        && project_root.join("public/index.php").exists()
+    if project_root.join("composer.json").exists() && project_root.join("public/index.php").exists()
     {
         return Ok(DevLaunch {
             program: PathBuf::from("php"),
@@ -1549,9 +1566,13 @@ pub async fn run_create_with_options(
     let config = build_web_config(&fe_framework, project_name, &flags)?;
     let project_dir = crate::scaffold::Scaffolder::scaffold(&config)?;
 
-    let proj_config = mg_config::project::ProjectConfig::new(
+    let proj_config = mg_config::project::ProjectConfig::from_scaffold(
         crate::scaffold::Scaffolder::display_name(&project_dir),
         "web",
+        &config.sub_type,
+        config.frameworks.clone(),
+        config.template_dir.to_string_lossy(),
+        config.features.clone(),
     );
     proj_config.save(&project_dir)?;
 
@@ -1577,35 +1598,62 @@ fn resolve_framework(pos: Option<&str>, flags: &ScaffoldFlags) -> Result<String>
     if let Some(fw) = pos {
         return Ok(fw.to_string());
     }
-    if flags.react { Ok("react".into()) }
-    else if flags.next { Ok("next".into()) }
-    else if flags.vue { Ok("vue".into()) }
-    else if flags.nuxt { Ok("nuxt".into()) }
-    else if flags.svelte { Ok("svelte".into()) }
-    else if flags.sveltekit { Ok("sveltekit".into()) }
-    else if flags.solid { Ok("solid".into()) }
-    else if flags.astro { Ok("astro".into()) }
-    else if flags.remix { Ok("remix".into()) }
-    else {
+    if flags.react {
+        Ok("react".into())
+    } else if flags.next {
+        Ok("next".into())
+    } else if flags.vue {
+        Ok("vue".into())
+    } else if flags.nuxt {
+        Ok("nuxt".into())
+    } else if flags.svelte {
+        Ok("svelte".into())
+    } else if flags.sveltekit {
+        Ok("sveltekit".into())
+    } else if flags.solid {
+        Ok("solid".into())
+    } else if flags.astro {
+        Ok("astro".into())
+    } else if flags.remix {
+        Ok("remix".into())
+    } else {
         anyhow::bail!("No framework specified. Use a flag like --react, --next, --vue, or pass a framework name as the first argument.")
     }
 }
 
 fn detect_backend_framework(flags: &ScaffoldFlags) -> Option<String> {
-    if flags.express { Some("express".into()) }
-    else if flags.fastify { Some("fastify".into()) }
-    else if flags.nestjs { Some("nestjs".into()) }
-    else if flags.hono { Some("hono".into()) }
-    else if flags.koa { Some("koa".into()) }
-    else if flags.trpc { Some("trpc".into()) }
-    else { None }
+    if flags.express {
+        Some("express".into())
+    } else if flags.fastify {
+        Some("fastify".into())
+    } else if flags.nestjs {
+        Some("nestjs".into())
+    } else if flags.hono {
+        Some("hono".into())
+    } else if flags.koa {
+        Some("koa".into())
+    } else if flags.trpc {
+        Some("trpc".into())
+    } else {
+        None
+    }
 }
 
 fn validate_flags(flags: &ScaffoldFlags, fe_framework: &str) -> Result<()> {
     let fe_count = [
-        flags.react, flags.next, flags.vue, flags.nuxt,
-        flags.svelte, flags.sveltekit, flags.solid, flags.astro, flags.remix,
-    ].iter().filter(|&&b| b).count();
+        flags.react,
+        flags.next,
+        flags.vue,
+        flags.nuxt,
+        flags.svelte,
+        flags.sveltekit,
+        flags.solid,
+        flags.astro,
+        flags.remix,
+    ]
+    .iter()
+    .filter(|&&b| b)
+    .count();
 
     if fe_count > 1 {
         anyhow::bail!("Multiple frontend frameworks specified. Choose only one (--react, --next, --vue, etc.).");
@@ -1728,99 +1776,237 @@ fn web_features(flags: &ScaffoldFlags) -> Vec<String> {
     let mut features = Vec::new();
 
     // Language
-    if flags.ts { features.push("typescript".into()); }
-    if flags.js { features.push("javascript".into()); }
+    if flags.ts {
+        features.push("typescript".into());
+    }
+    if flags.js {
+        features.push("javascript".into());
+    }
 
     // Styling
-    if flags.tailwindcss || flags.shadcn || flags.daisyui { features.push("tailwindcss".into()); }
-    if flags.css_modules { features.push("css-modules".into()); }
-    if flags.styled_components { features.push("styled-components".into()); }
-    if flags.sass { features.push("sass".into()); }
-    if flags.unocss { features.push("unocss".into()); }
-    if flags.shadcn { features.push("shadcn".into()); }
-    if flags.daisyui { features.push("daisyui".into()); }
+    if flags.tailwindcss || flags.shadcn || flags.daisyui {
+        features.push("tailwindcss".into());
+    }
+    if flags.css_modules {
+        features.push("css-modules".into());
+    }
+    if flags.styled_components {
+        features.push("styled-components".into());
+    }
+    if flags.sass {
+        features.push("sass".into());
+    }
+    if flags.unocss {
+        features.push("unocss".into());
+    }
+    if flags.shadcn {
+        features.push("shadcn".into());
+    }
+    if flags.daisyui {
+        features.push("daisyui".into());
+    }
 
     // State
-    if flags.zustand { features.push("zustand".into()); }
-    if flags.redux { features.push("redux".into()); }
-    if flags.jotai { features.push("jotai".into()); }
-    if flags.recoil { features.push("recoil".into()); }
-    if flags.pinia { features.push("pinia".into()); }
-    if flags.tanstack_query { features.push("tanstack-query".into()); }
+    if flags.zustand {
+        features.push("zustand".into());
+    }
+    if flags.redux {
+        features.push("redux".into());
+    }
+    if flags.jotai {
+        features.push("jotai".into());
+    }
+    if flags.recoil {
+        features.push("recoil".into());
+    }
+    if flags.pinia {
+        features.push("pinia".into());
+    }
+    if flags.tanstack_query {
+        features.push("tanstack-query".into());
+    }
 
     // Backend
-    if flags.express { features.push("express".into()); }
-    if flags.fastify { features.push("fastify".into()); }
-    if flags.nestjs { features.push("nestjs".into()); }
-    if flags.hono { features.push("hono".into()); }
-    if flags.koa { features.push("koa".into()); }
-    if flags.trpc { features.push("trpc".into()); }
+    if flags.express {
+        features.push("express".into());
+    }
+    if flags.fastify {
+        features.push("fastify".into());
+    }
+    if flags.nestjs {
+        features.push("nestjs".into());
+    }
+    if flags.hono {
+        features.push("hono".into());
+    }
+    if flags.koa {
+        features.push("koa".into());
+    }
+    if flags.trpc {
+        features.push("trpc".into());
+    }
 
     // Database / ORM
-    if flags.prisma { features.push("prisma".into()); }
-    if flags.drizzle { features.push("drizzle".into()); }
-    if flags.typeorm { features.push("typeorm".into()); }
-    if flags.mongoose { features.push("mongoose".into()); }
-    if flags.postgres { features.push("postgres".into()); }
-    if flags.mysql { features.push("mysql".into()); }
-    if flags.sqlite { features.push("sqlite".into()); }
-    if flags.mongodb { features.push("mongodb".into()); }
+    if flags.prisma {
+        features.push("prisma".into());
+    }
+    if flags.drizzle {
+        features.push("drizzle".into());
+    }
+    if flags.typeorm {
+        features.push("typeorm".into());
+    }
+    if flags.mongoose {
+        features.push("mongoose".into());
+    }
+    if flags.postgres {
+        features.push("postgres".into());
+    }
+    if flags.mysql {
+        features.push("mysql".into());
+    }
+    if flags.sqlite {
+        features.push("sqlite".into());
+    }
+    if flags.mongodb {
+        features.push("mongodb".into());
+    }
 
     // Validation
-    if flags.zod { features.push("zod".into()); }
-    if flags.yup { features.push("yup".into()); }
-    if flags.joi { features.push("joi".into()); }
-    if flags.valibot { features.push("valibot".into()); }
+    if flags.zod {
+        features.push("zod".into());
+    }
+    if flags.yup {
+        features.push("yup".into());
+    }
+    if flags.joi {
+        features.push("joi".into());
+    }
+    if flags.valibot {
+        features.push("valibot".into());
+    }
 
     // Auth
-    if flags.nextauth { features.push("nextauth".into()); }
-    if flags.clerk { features.push("clerk".into()); }
-    if flags.lucia { features.push("lucia".into()); }
-    if flags.jwt { features.push("jwt".into()); }
-    if flags.oauth { features.push("oauth".into()); }
+    if flags.nextauth {
+        features.push("nextauth".into());
+    }
+    if flags.clerk {
+        features.push("clerk".into());
+    }
+    if flags.lucia {
+        features.push("lucia".into());
+    }
+    if flags.jwt {
+        features.push("jwt".into());
+    }
+    if flags.oauth {
+        features.push("oauth".into());
+    }
 
     // Testing
-    if flags.vitest { features.push("vitest".into()); }
-    if flags.jest { features.push("jest".into()); }
-    if flags.playwright { features.push("playwright".into()); }
-    if flags.cypress { features.push("cypress".into()); }
-    if flags.testing_library { features.push("testing-library".into()); }
+    if flags.vitest {
+        features.push("vitest".into());
+    }
+    if flags.jest {
+        features.push("jest".into());
+    }
+    if flags.playwright {
+        features.push("playwright".into());
+    }
+    if flags.cypress {
+        features.push("cypress".into());
+    }
+    if flags.testing_library {
+        features.push("testing-library".into());
+    }
 
     // Linting
-    if flags.eslint { features.push("eslint".into()); }
-    if flags.prettier { features.push("prettier".into()); }
-    if flags.biome { features.push("biome".into()); }
-    if flags.husky { features.push("husky".into()); }
-    if flags.lint_staged { features.push("lint-staged".into()); }
-    if flags.commitlint { features.push("commitlint".into()); }
+    if flags.eslint {
+        features.push("eslint".into());
+    }
+    if flags.prettier {
+        features.push("prettier".into());
+    }
+    if flags.biome {
+        features.push("biome".into());
+    }
+    if flags.husky {
+        features.push("husky".into());
+    }
+    if flags.lint_staged {
+        features.push("lint-staged".into());
+    }
+    if flags.commitlint {
+        features.push("commitlint".into());
+    }
 
     // Monorepo
-    if flags.monorepo { features.push("monorepo".into()); }
-    if flags.turborepo { features.push("turborepo".into()); }
-    if flags.nx { features.push("nx".into()); }
-    if flags.workspaces { features.push("workspaces".into()); }
-    if flags.changesets { features.push("changesets".into()); }
+    if flags.monorepo {
+        features.push("monorepo".into());
+    }
+    if flags.turborepo {
+        features.push("turborepo".into());
+    }
+    if flags.nx {
+        features.push("nx".into());
+    }
+    if flags.workspaces {
+        features.push("workspaces".into());
+    }
+    if flags.changesets {
+        features.push("changesets".into());
+    }
 
     // API
-    if flags.rest { features.push("rest".into()); }
-    if flags.graphql { features.push("graphql".into()); }
-    if flags.trpc_api { features.push("trpc-api".into()); }
-    if flags.grpc { features.push("grpc".into()); }
+    if flags.rest {
+        features.push("rest".into());
+    }
+    if flags.graphql {
+        features.push("graphql".into());
+    }
+    if flags.trpc_api {
+        features.push("trpc-api".into());
+    }
+    if flags.grpc {
+        features.push("grpc".into());
+    }
 
     // Deployment
-    if flags.docker { features.push("docker".into()); }
-    if flags.github_actions { features.push("github-actions".into()); }
-    if flags.vercel { features.push("vercel".into()); }
-    if flags.railway { features.push("railway".into()); }
-    if flags.fly { features.push("fly".into()); }
+    if flags.docker {
+        features.push("docker".into());
+    }
+    if flags.github_actions {
+        features.push("github-actions".into());
+    }
+    if flags.vercel {
+        features.push("vercel".into());
+    }
+    if flags.railway {
+        features.push("railway".into());
+    }
+    if flags.fly {
+        features.push("fly".into());
+    }
 
     // Misc
-    if flags.dotenv { features.push("dotenv".into()); }
-    if flags.i18n { features.push("i18n".into()); }
-    if flags.pwa { features.push("pwa".into()); }
-    if flags.storybook { features.push("storybook".into()); }
-    if flags.sentry { features.push("sentry".into()); }
-    if flags.analytics { features.push("analytics".into()); }
+    if flags.dotenv {
+        features.push("dotenv".into());
+    }
+    if flags.i18n {
+        features.push("i18n".into());
+    }
+    if flags.pwa {
+        features.push("pwa".into());
+    }
+    if flags.storybook {
+        features.push("storybook".into());
+    }
+    if flags.sentry {
+        features.push("sentry".into());
+    }
+    if flags.analytics {
+        features.push("analytics".into());
+    }
 
     // Extra
     for feature in &flags.features {
@@ -2438,7 +2624,7 @@ const FEATURE_PACKAGES: &[WebFeaturePackage] = &[
         section: "devDependencies",
         package: "drizzle-kit",
     },
-WebFeaturePackage {
+    WebFeaturePackage {
         feature: "biome",
         section: "devDependencies",
         package: "@biomejs/biome",
@@ -2863,6 +3049,10 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    fn lock_scaffold_env() -> std::sync::MutexGuard<'static, ()> {
+        scaffold_env_lock().lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_parse_framework_request_supports_alias_and_version() {
         let request = parse_framework_request("react@latest");
@@ -2872,7 +3062,7 @@ mod tests {
 
     #[test]
     fn test_create_web_with_flags_seeds_package_json() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("cli-react");
         let flags = ScaffoldFlags {
@@ -2913,7 +3103,7 @@ mod tests {
 
     #[test]
     fn test_scaffold_version_override_short_circuits_network_resolution() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::set_var(
             SCAFFOLD_VERSION_OVERRIDES_ENV,
             "vite=^8.1.4,tailwindcss=^4.3.2",
@@ -2942,12 +3132,15 @@ mod tests {
 
     #[test]
     fn test_create_qwik_uses_framework_specific_vite_pin() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-qwik");
-        let flags = ScaffoldFlags { ts: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -2968,12 +3161,19 @@ mod tests {
 
     #[test]
     fn test_create_web_without_overrides_uses_curated_baseline_when_registry_is_unavailable() {
-        let _guard = scaffold_env_lock().lock().unwrap();
-        std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
+        let _guard = lock_scaffold_env();
+        std::env::set_var(
+            SCAFFOLD_VERSION_OVERRIDES_ENV,
+            "vite=^8.1.4,@vitejs/plugin-react=^6.0.3,typescript=^5.9.2,tailwindcss=^4.3.2",
+        );
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-react");
-        let flags = ScaffoldFlags { ts: true, tailwindcss: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            tailwindcss: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -2995,12 +3195,15 @@ mod tests {
 
     #[test]
     fn test_create_vanilla_web_without_primary_dependency_uses_toolchain_seed_only() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-vanilla");
-        let flags = ScaffoldFlags { ts: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -3019,12 +3222,15 @@ mod tests {
 
     #[test]
     fn test_create_nextjs_uses_baseline_typescript_instead_of_registry_latest() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-next");
-        let flags = ScaffoldFlags { ts: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -3252,7 +3458,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "-S".to_string(),
-                "0.0.0.0:4404".to_string(),
+                "127.0.0.1:4404".to_string(),
                 "-t".to_string(),
                 "public".to_string(),
                 "public/index.php".to_string(),
@@ -3275,7 +3481,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "quarkus:dev".to_string(),
-                "-Dquarkus.http.host=0.0.0.0".to_string(),
+                "-Dquarkus.http.host=127.0.0.1".to_string(),
                 "-Dquarkus.analytics.disabled=true".to_string(),
                 "-Dquarkus.http.port=4405".to_string(),
             ]
@@ -3609,7 +3815,7 @@ packages = ["packages/*"]
 
     #[test]
     fn test_create_web_writes_project_toml_for_monorepo() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
@@ -3630,9 +3836,9 @@ packages = ["packages/*"]
             ))
             .unwrap();
 
-        let project_toml = project.join(".megagate").join("project.toml");
-        assert!(project_toml.exists());
-        let contents = std::fs::read_to_string(project_toml).unwrap();
+        let mg_toml = project.join("mg.toml");
+        assert!(mg_toml.exists());
+        let contents = std::fs::read_to_string(mg_toml).unwrap();
         assert!(contents.contains("ecosystem = \"web\""));
     }
 

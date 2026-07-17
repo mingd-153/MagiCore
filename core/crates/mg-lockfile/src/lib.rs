@@ -98,7 +98,8 @@ impl LockfileSigner {
         let mut tmp = lock.clone();
         tmp.sig = None;
         // Sort packages deterministically
-        tmp.packages.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
+        tmp.packages
+            .sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
         Ok(serialization::to_toml(&tmp)?)
     }
 
@@ -123,9 +124,9 @@ impl LockfileSigner {
             // Key not set — treat as unsigned/unverified
             return Ok(false);
         };
-        let hex_digest = sig_str
-            .strip_prefix("blake3:")
-            .ok_or_else(|| anyhow::anyhow!("unknown lockfile signature algorithm in '{}'", sig_str))?;
+        let hex_digest = sig_str.strip_prefix("blake3:").ok_or_else(|| {
+            anyhow::anyhow!("unknown lockfile signature algorithm in '{}'", sig_str)
+        })?;
         let expected = hex::decode(hex_digest)
             .map_err(|e| anyhow::anyhow!("invalid hex in lockfile signature: {e}"))?;
         let canonical = Self::canonical(lock)?;
@@ -133,7 +134,9 @@ impl LockfileSigner {
         if actual.as_bytes() == expected.as_slice() {
             Ok(true)
         } else {
-            Err(anyhow::anyhow!("lockfile signature mismatch — possible tampering detected"))
+            Err(anyhow::anyhow!(
+                "lockfile signature mismatch — possible tampering detected"
+            ))
         }
     }
 }

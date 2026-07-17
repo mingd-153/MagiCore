@@ -227,6 +227,9 @@ mod tests {
                 title: "vuln".to_string(),
                 severity: "high".to_string(),
                 cve: "CVE-123".to_string(),
+                severity_level: VulnerabilitySeverity::High,
+                patched_versions: None,
+                url: None,
             }],
         };
         assert!(!report.is_clean());
@@ -239,6 +242,7 @@ mod tests {
     }
 
     #[test]
+
     fn resolved_graph_empty_creates_empty() {
         let g = ResolvedGraph::empty();
         assert_eq!(g.len(), 0);

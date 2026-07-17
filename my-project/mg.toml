@@ -1,0 +1,7 @@
+name = "my-project"
+version = "0.1.0"
+ecosystem = "web"
+mode = "frontend"
+frameworks = ["nextjs"]
+template = ""
+features = []

@@ -71,6 +71,16 @@ temp/
 # Debug symbols
 *.dSYM/
 
-# Markdown docs (not allowed in repo unless explicitly requested)
-*.md
+# Benchmark artifacts
+benchmark_brutal_results_*.md
+benchmark_brutal_results_*.json
+benchmark_brutal_results_*.status.tsv
+megagate-bench-*
+mg-brutal-*
+mg-test-*
+mg-bench-*
+
+# Internal docs (benchmark audit logs, lab reports)
+templates/web/.docs/WEB_BENCHMARK_CLI_AUDIT_LOG_*.md
+tools/core-web-lab/
 

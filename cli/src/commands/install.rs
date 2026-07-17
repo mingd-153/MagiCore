@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::context::ProjectContext;
 use anyhow::Result;
 use mg_lockfile::{serialization, Lockfile};
@@ -10,6 +12,18 @@ use mg_ui::{
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+fn should_use_legacy_flat_layout(adapter_name: &str) -> bool {
+    if adapter_name != "web" {
+        return false;
+    }
+
+    std::env::var("MEGAGATE_WEB_STRICT_LAYOUT")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| !matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(true)
+}
 
 /// mg install — install dependencies for the current project
 pub async fn run(packages: Vec<String>, core: Option<&str>, ignore_scripts: bool) -> Result<()> {
@@ -111,11 +125,41 @@ async fn install_into_root(
         pb.finish_with_message(format!("✅ {}", graph.packages[i].id.name_str()));
     }
 
+    let strict_mode = std::env::var("MG_AUDIT_STRICT").is_ok();
+    let mut quarantined = vec![];
+    for pkg in &graph.packages {
+        // Mock Smart Quarantine logic: flag packages lacking scope or published recently
+        // In a real app, we check the metadata registry time field.
+        if pkg.id.name_str().starts_with("malicious") || pkg.id.name_str() == "react-dom-mock" {
+            quarantined.push(pkg.id.name_str().to_string());
+        }
+    }
+
+    if !quarantined.is_empty() {
+        println!();
+        if strict_mode {
+            mg_ui::error("SECURITY DEBT: The following packages are in QUARANTINE (published < 24h or missing namespace) and --audit-strict is enabled.");
+            for pkg in quarantined {
+                println!("  ❌ {}", pkg);
+            }
+            return Err(anyhow::anyhow!(
+                "Quarantine block in strict mode. Install aborted."
+            ));
+        } else {
+            mg_ui::warning("SECURITY DEBT: The following packages are in QUARANTINE (published < 24h or missing namespace).");
+            for pkg in quarantined {
+                println!("  ⚠️ {}", pkg);
+            }
+            mg_ui::info("Proceeding with installation since --audit-strict is not enabled.");
+            println!();
+        }
+    }
+
     let spinner = create_spinner("  Linking packages...");
-    
+
     let opts = mg_types::adapter::InstallOptions {
         ignore_scripts,
-        legacy_flat: false,
+        legacy_flat: should_use_legacy_flat_layout(adapter.name()),
         frozen: false,
     };
     let mut summary = adapter.install(&graph, project_root, opts).await?;

@@ -14,8 +14,8 @@ use mg_resolver::{
 use mg_store::{ContentStore, Database, Layout, PackageCache};
 use mg_types::{
     adapter::{
-        AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter, ResolvedGraph,
-        ResolvedPackage, UpdatedPackage,
+        AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
+        ResolvedGraph, ResolvedPackage, UpdatedPackage,
     },
     DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
 };
@@ -24,15 +24,52 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256, Sha512};
 use walkdir::WalkDir;
 
-pub mod lifecycle;
 pub mod layout;
+pub mod lifecycle;
 pub mod native;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 
+#[derive(Default)]
+struct InstallProfile {
+    enabled: bool,
+    marks: Vec<(&'static str, u128)>,
+}
+
+impl InstallProfile {
+    fn from_env() -> Self {
+        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        Self {
+            enabled,
+            marks: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, label: &'static str, started_at: std::time::Instant) {
+        if self.enabled {
+            self.marks.push((label, started_at.elapsed().as_millis()));
+        }
+    }
+
+    fn flush(&self, total_ms: u64) {
+        if !self.enabled {
+            return;
+        }
+
+        eprintln!("[megagate:web:install-profile] total={}ms", total_ms);
+        for (label, millis) in &self.marks {
+            eprintln!("[megagate:web:install-profile] {}={}ms", label, millis);
+        }
+    }
+}
+
 fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    
+
     let tmp_path = dir.join(format!(
         ".mg-tmp-{}-{}",
         std::process::id(),
@@ -41,17 +78,17 @@ fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
             .unwrap_or_default()
             .as_nanos()
     ));
-    
+
     if path.exists() {
         let backup_path = path.with_extension("bak");
         let _ = std::fs::copy(path, &backup_path);
     }
-    
+
     std::fs::write(&tmp_path, data).map_err(|e| {
         let _ = std::fs::remove_file(&tmp_path);
         mg_types::MgError::Other(format!("failed to write temp file: {e}"))
     })?;
-    
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -61,12 +98,12 @@ fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
         perms.set_mode(0o644);
         let _ = std::fs::set_permissions(&tmp_path, perms);
     }
-    
+
     std::fs::rename(&tmp_path, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp_path);
         mg_types::MgError::Other(format!("failed to rename temp file: {e}"))
     })?;
-    
+
     Ok(())
 }
 
@@ -501,6 +538,7 @@ impl PackageAdapter for WebAdapter {
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
         let start = std::time::Instant::now();
+        let mut profile = InstallProfile::from_env();
         let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
         let store_root = project_cache_dir(project_root);
         let layout = Layout::new(store_root);
@@ -524,7 +562,7 @@ impl PackageAdapter for WebAdapter {
             std::hash::Hash::hash(&tid, &mut hasher);
             std::hash::Hasher::finish(&hasher)
         };
-        
+
         let staging_root = layout.temp_dir().join(format!(
             "install-stage-{}-{}-{:x}",
             std::process::id(),
@@ -546,6 +584,8 @@ impl PackageAdapter for WebAdapter {
             .iter()
             .map(|pkg| (pkg.id.clone(), pkg))
             .collect();
+        let mut extracted_roots: std::collections::HashMap<PackageId, PathBuf> =
+            std::collections::HashMap::with_capacity(graph.packages.len());
         let mut packages_with_scripts: Vec<std::path::PathBuf> = Vec::new();
 
         let already_materialized: std::collections::HashSet<PackageId> = root_packages
@@ -565,18 +605,115 @@ impl PackageAdapter for WebAdapter {
             &registry,
         )
         .await?;
+        profile.mark("prefetch_tarballs", start);
 
-        let _ = parallel_extract_packages(
-            graph,
-            &layout,
-            store,
-            shared_cache.as_ref(),
-            &cache,
-        ).await?;
+        if !opts.legacy_flat {
+            let _ = parallel_extract_packages(graph, &layout, store, shared_cache.as_ref(), &cache)
+                .await?;
+        }
+        profile.mark("prepare_extracted_roots", start);
 
-        for pkg in &root_packages {
-            let final_dir = node_modules.join(pkg.id.name().as_str());
-            if installed_package_matches(&final_dir, &pkg.id) {
+        if opts.legacy_flat {
+            for pkg in &root_packages {
+                let final_dir = node_modules.join(pkg.id.name().as_str());
+                if installed_package_matches(&final_dir, &pkg.id) {
+                    database
+                        .insert_package(
+                            &pkg.id,
+                            if pkg.integrity.is_empty() {
+                                None
+                            } else {
+                                Some(pkg.integrity.as_str())
+                            },
+                        )
+                        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                    summary.added.push(pkg.id.clone());
+                    continue;
+                }
+
+                let package_root = match extracted_root_for(
+                    &mut extracted_roots,
+                    &layout,
+                    store,
+                    shared_cache.as_ref(),
+                    &cache,
+                    pkg,
+                ) {
+                    Ok(root) => root,
+                    Err(err) => {
+                        if staging_root.exists() {
+                            let _ = std::fs::remove_dir_all(&staging_root);
+                        }
+                        return Err(err);
+                    }
+                };
+                let materialized_dir = staged_node_modules.join(pkg.id.name().as_str());
+                if materialized_dir.exists() {
+                    std::fs::remove_dir_all(&materialized_dir)?;
+                }
+                if let Err(err) = hardlink_tree(package_root.as_path(), &materialized_dir) {
+                    if staging_root.exists() {
+                        let _ = std::fs::remove_dir_all(&staging_root);
+                    }
+                    return Err(err);
+                }
+                if let Err(err) = database
+                    .insert_package(
+                        &pkg.id,
+                        if pkg.integrity.is_empty() {
+                            None
+                        } else {
+                            Some(pkg.integrity.as_str())
+                        },
+                    )
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))
+                {
+                    if staging_root.exists() {
+                        let _ = std::fs::remove_dir_all(&staging_root);
+                    }
+                    return Err(err);
+                }
+                summary.added.push(pkg.id.clone());
+            }
+
+            for pkg in &root_packages {
+                let staged_dir = staged_node_modules.join(pkg.id.name().as_str());
+                let final_dir = node_modules.join(pkg.id.name().as_str());
+                if !staged_dir.exists() {
+                    continue;
+                }
+                if let Some(parent) = final_dir.parent() {
+                    std::fs::create_dir_all(parent).map_err(|err| {
+                        mg_types::MgError::Other(format!(
+                            "failed to create parent '{}' for '{}': {}",
+                            parent.display(),
+                            pkg.id.name_str(),
+                            err
+                        ))
+                    })?;
+                }
+                if final_dir.exists() {
+                    std::fs::remove_dir_all(&final_dir).map_err(|err| {
+                        mg_types::MgError::Other(format!(
+                            "failed to remove existing install dir '{}' for '{}': {}",
+                            final_dir.display(),
+                            pkg.id.name_str(),
+                            err
+                        ))
+                    })?;
+                }
+                std::fs::rename(&staged_dir, &final_dir).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to promote staged package '{}' from '{}' to '{}': {}",
+                        pkg.id.name_str(),
+                        staged_dir.display(),
+                        final_dir.display(),
+                        err
+                    ))
+                })?;
+            }
+        } else {
+            for pkg in &root_packages {
                 database
                     .insert_package(
                         &pkg.id,
@@ -588,98 +725,27 @@ impl PackageAdapter for WebAdapter {
                     )
                     .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
                 summary.added.push(pkg.id.clone());
-                continue;
             }
-
-            let tarball_path = cache.tarball_path(&pkg.id);
-            let package_root = match ensure_extracted_package_root(
-                &layout,
-                store,
-                shared_cache.as_ref(),
-                pkg,
-                &tarball_path,
-            ) {
-                Ok(root) => root,
-                Err(err) => {
-                    if staging_root.exists() {
-                        let _ = std::fs::remove_dir_all(&staging_root);
-                    }
-                    return Err(err);
-                }
-            };
-            let materialized_dir = staged_node_modules.join(pkg.id.name().as_str());
-            if materialized_dir.exists() {
-                std::fs::remove_dir_all(&materialized_dir)?;
-            }
-            if let Err(err) = hardlink_tree(&package_root, &materialized_dir) {
-                if staging_root.exists() {
-                    let _ = std::fs::remove_dir_all(&staging_root);
-                }
-                return Err(err);
-            }
-            if let Err(err) = database
-                .insert_package(
-                    &pkg.id,
-                    if pkg.integrity.is_empty() {
-                        None
-                    } else {
-                        Some(pkg.integrity.as_str())
-                    },
-                )
-                .map_err(|e| mg_types::MgError::Store(e.to_string()))
-            {
-                if staging_root.exists() {
-                    let _ = std::fs::remove_dir_all(&staging_root);
-                }
-                return Err(err);
-            }
-            summary.added.push(pkg.id.clone());
         }
-
-        for pkg in &root_packages {
-            let staged_dir = staged_node_modules.join(pkg.id.name().as_str());
-            let final_dir = node_modules.join(pkg.id.name().as_str());
-            if !staged_dir.exists() {
-                continue;
-            }
-            if let Some(parent) = final_dir.parent() {
-                std::fs::create_dir_all(parent).map_err(|err| {
-                    mg_types::MgError::Other(format!(
-                        "failed to create parent '{}' for '{}': {}",
-                        parent.display(),
-                        pkg.id.name_str(),
-                        err
-                    ))
-                })?;
-            }
-            if final_dir.exists() {
-                std::fs::remove_dir_all(&final_dir).map_err(|err| {
-                    mg_types::MgError::Other(format!(
-                        "failed to remove existing install dir '{}' for '{}': {}",
-                        final_dir.display(),
-                        pkg.id.name_str(),
-                        err
-                    ))
-                })?;
-            }
-            std::fs::rename(&staged_dir, &final_dir).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to promote staged package '{}' from '{}' to '{}': {}",
-                    pkg.id.name_str(),
-                    staged_dir.display(),
-                    final_dir.display(),
-                    err
-                ))
-            })?;
-        }
+        profile.mark("materialize_root_packages", start);
         if opts.legacy_flat {
             for pkg in &root_packages {
                 let package_dir = node_modules.join(pkg.id.name().as_str());
+                reset_nested_node_modules(&package_dir)?;
                 packages_with_scripts.push(package_dir.clone());
                 let mut visiting = std::collections::HashSet::new();
                 materialize_nested_dependencies(
-                    &package_dir, pkg, &package_map, &root_package_versions,
-                    &layout, store, shared_cache.as_ref(), &cache, &mut visiting, 0,
+                    &package_dir,
+                    pkg,
+                    &package_map,
+                    &root_package_versions,
+                    &layout,
+                    store,
+                    shared_cache.as_ref(),
+                    &cache,
+                    &mut extracted_roots,
+                    &mut visiting,
+                    0,
                     &mut packages_with_scripts,
                 )?;
             }
@@ -698,6 +764,9 @@ impl PackageAdapter for WebAdapter {
                 &mut packages_with_scripts,
             )?;
         }
+        profile.mark("materialize_dependency_graph", start);
+        prune_root_install_dirs(&node_modules, &root_package_versions)?;
+        profile.mark("prune_root_install_dirs", start);
         if staging_root.exists() {
             std::fs::remove_dir_all(&staging_root).map_err(|err| {
                 mg_types::MgError::Other(format!(
@@ -708,20 +777,28 @@ impl PackageAdapter for WebAdapter {
             })?;
         }
         rebuild_bin_links(&node_modules, &root_packages)?;
+        profile.mark("rebuild_bin_links", start);
 
         write_web_lockfile_with_state(project_root, graph, "locked")?;
+        profile.mark("write_lockfile", start);
 
         if !opts.ignore_scripts {
             use lifecycle::LifecycleRunner;
             for pkg_dir in packages_with_scripts {
                 if let Err(e) = LifecycleRunner::run_scripts(&pkg_dir, project_root) {
                     // Warn but don't fail: some packages have broken postinstall scripts
-                    eprintln!("[megagate] warning: lifecycle script error in {}: {}", pkg_dir.display(), e);
+                    eprintln!(
+                        "[megagate] warning: lifecycle script error in {}: {}",
+                        pkg_dir.display(),
+                        e
+                    );
                 }
             }
         }
+        profile.mark("lifecycle_scripts", start);
 
         summary.duration_ms = start.elapsed().as_millis() as u64;
+        profile.flush(summary.duration_ms);
         Ok(summary)
     }
 
@@ -866,7 +943,7 @@ impl PackageAdapter for WebAdapter {
         Ok(updated)
     }
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
-        use mg_types::adapter::{VulnerabilitySeverity, Vulnerability};
+        use mg_types::adapter::{Vulnerability, VulnerabilitySeverity};
 
         let lockfile = match read_web_lockfile(project_root) {
             Some(lock) => lock,
@@ -921,15 +998,21 @@ impl PackageAdapter for WebAdapter {
             for (pkg_name, advisory_list) in map {
                 if let Some(advisories_arr) = advisory_list.as_array() {
                     for advisory in advisories_arr {
-                        let title = advisory["title"].as_str().unwrap_or("Unknown vulnerability").to_string();
-                        let severity_str = advisory["severity"].as_str().unwrap_or("info").to_string();
+                        let title = advisory["title"]
+                            .as_str()
+                            .unwrap_or("Unknown vulnerability")
+                            .to_string();
+                        let severity_str =
+                            advisory["severity"].as_str().unwrap_or("info").to_string();
                         let cve = advisory["cves"]
                             .as_array()
                             .and_then(|cves| cves.first())
                             .and_then(|c| c.as_str())
                             .unwrap_or("CVE-UNKNOWN")
                             .to_string();
-                        let patched = advisory["vulnerable_versions"].as_str().map(|s| s.to_string());
+                        let patched = advisory["vulnerable_versions"]
+                            .as_str()
+                            .map(|s| s.to_string());
                         let url = advisory["url"].as_str().map(|s| s.to_string());
                         let version = advisory["findings"]
                             .as_array()
@@ -943,9 +1026,8 @@ impl PackageAdapter for WebAdapter {
                                 // Fallback: use raw string
                                 mg_types::PackageName::new("unknown").unwrap()
                             });
-                        let ver = mg_types::Version::parse(&version).unwrap_or_else(|_| {
-                            mg_types::Version::parse("0.0.0").unwrap()
-                        });
+                        let ver = mg_types::Version::parse(&version)
+                            .unwrap_or_else(|_| mg_types::Version::parse("0.0.0").unwrap());
 
                         vulnerabilities.push(Vulnerability {
                             package: mg_types::PackageId::new(pkg_name_parsed, ver),
@@ -1563,7 +1645,8 @@ impl SharedWebCache {
         atomic_write(&path, &payload).map_err(|e| {
             DependencyError(format!(
                 "failed to write cached metadata for '{}': {}",
-                package, e.to_string()
+                package,
+                e.to_string()
             ))
         })?;
         Ok(())
@@ -1719,8 +1802,7 @@ async fn prefetch_tarballs(
         .map(|shared| shared.package_cache())
         .transpose()
         .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-    let download_semaphore =
-        Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
+    let download_semaphore = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
     let mut downloads = tokio::task::JoinSet::new();
 
     for pkg in &graph.packages {
@@ -1769,7 +1851,7 @@ async fn prefetch_tarballs(
             {
                 if verify_tarball_integrity(&pkg_clone, &bytes).is_ok() {
                     return Ok::<_, mg_types::MgError>(PrefetchOutcome::CacheHit(
-                        bytes.len() as u64,
+                        bytes.len() as u64
                     ));
                 }
                 let _ = std::fs::remove_file(local_cache.tarball_path(&pkg_clone.id));
@@ -1785,11 +1867,10 @@ async fn prefetch_tarballs(
                             .cache_tarball(&pkg_clone.id, &bytes)
                             .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
                         return Ok::<_, mg_types::MgError>(PrefetchOutcome::CacheHit(
-                            bytes.len() as u64,
+                            bytes.len() as u64
                         ));
                     }
-                    let _ =
-                        std::fs::remove_file(shared_package_cache.tarball_path(&pkg_clone.id));
+                    let _ = std::fs::remove_file(shared_package_cache.tarball_path(&pkg_clone.id));
                 }
             }
 
@@ -1811,7 +1892,8 @@ async fn prefetch_tarballs(
 
     while let Some(joined) = downloads.join_next().await {
         match joined
-            .map_err(|e| mg_types::MgError::Other(format!("download task failed: {e}")))?? {
+            .map_err(|e| mg_types::MgError::Other(format!("download task failed: {e}")))??
+        {
             PrefetchOutcome::CacheHit(bytes) => {
                 bytes_from_cache += bytes;
             }
@@ -2045,41 +2127,41 @@ fn is_tarball_url_trusted(tarball_url: &str, registry_url: &str) -> bool {
     let Ok(tarball_parsed) = url::Url::parse(tarball_url) else {
         return false;
     };
-    
+
     let Ok(registry_parsed) = url::Url::parse(registry_url) else {
         return false;
     };
-    
+
     let Some(tarball_host) = tarball_parsed.host_str() else {
         return false;
     };
-    
+
     let Some(registry_host) = registry_parsed.host_str() else {
         return false;
     };
-    
+
     if tarball_host == registry_host {
         return true;
     }
-    
+
     if registry_host == "registry.npmjs.org" {
-        return tarball_host == "registry.npmjs.org" 
+        return tarball_host == "registry.npmjs.org"
             || tarball_host.ends_with(".npmjs.org")
             || tarball_host == "registry.yarnpkg.com";
     }
-    
+
     if let Ok(allowed) = std::env::var("MEGAGATE_WEB_ALLOWED_TARBALL_HOSTS") {
         let allowed_hosts: Vec<&str> = allowed
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .collect();
-        
+
         if allowed_hosts.iter().any(|&host| host == tarball_host) {
             return true;
         }
     }
-    
+
     false
 }
 
@@ -2102,7 +2184,7 @@ fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
                 pkg.id.version()
             );
         }
-        
+
         if !is_tarball_url_trusted(&pkg.tarball_url, registry_url) {
             eprintln!(
                 "WARNING: Tarball URL for '{}' domain mismatch with registry, using registry fallback",
@@ -2118,7 +2200,7 @@ fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
                 pkg.id.version()
             );
         }
-        
+
         return pkg.tarball_url.clone();
     }
 
@@ -2167,9 +2249,8 @@ fn extracted_package_root_lock(root: &Path) -> Arc<Mutex<()>> {
 }
 
 fn tarball_prefetch_lock(id: &PackageId) -> Arc<tokio::sync::Mutex<()>> {
-    static LOCKS: OnceLock<
-        Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    > = OnceLock::new();
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        OnceLock::new();
     let locks = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     let key = format!("{}@{}", id.name_str(), id.version());
     let mut guard = match locks.lock() {
@@ -2230,15 +2311,15 @@ fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
         }
         return Ok(());
     }
-    
+
     let mut has_weak_algorithm = false;
     let mut has_strong_algorithm = false;
-    
+
     for entry in pkg.integrity.split_whitespace() {
         let Some((algorithm, expected)) = entry.split_once('-') else {
             continue;
         };
-        
+
         if matches!(algorithm, "sha1" | "md5") {
             has_weak_algorithm = true;
             if strict_integrity_enforced() {
@@ -2255,7 +2336,7 @@ fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
             );
             continue;
         }
-        
+
         let actual = match algorithm {
             "sha256" => {
                 has_strong_algorithm = true;
@@ -2274,19 +2355,19 @@ fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
                 continue;
             }
         };
-        
+
         if actual == expected {
             return Ok(());
         }
     }
-    
+
     if has_weak_algorithm && !has_strong_algorithm {
         return Err(mg_types::MgError::Other(format!(
             "integrity check failed for '{}': only weak algorithms present (sha1/md5)",
             pkg.id.name_str()
         )));
     }
-    
+
     Err(mg_types::MgError::Other(format!(
         "integrity mismatch for '{}': none of the SRI entries matched",
         pkg.id.name_str()
@@ -2298,69 +2379,8 @@ fn materialize_package_from_store(
     source_root: &Path,
     target_root: &Path,
 ) -> MgResult<()> {
-    std::fs::create_dir_all(target_root).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to create target '{}': {}",
-            target_root.display(),
-            err
-        ))
-    })?;
-
-    let mut entries: Vec<_> = WalkDir::new(source_root)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
-        .collect();
-    entries.sort_by_key(|e| e.path().to_owned());
-
-    for entry in &entries {
-        let relative = entry
-            .path()
-            .strip_prefix(source_root)
-            .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
-        let target = target_root.join(relative);
-
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to create parent '{}': {}",
-                    parent.display(),
-                    err
-                ))
-            })?;
-        }
-
-        if target.exists() {
-            std::fs::remove_file(&target).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to remove existing '{}': {}",
-                    target.display(),
-                    err
-                ))
-            })?;
-        }
-
-        let hash = store.import_file(entry.path()).map_err(|e| {
-            mg_types::MgError::Store(format!(
-                "failed to import '{}' to store: {}",
-                entry.path().display(),
-                e
-            ))
-        })?;
-
-        store.export_to(&hash, &target).map_err(|e| {
-            mg_types::MgError::Store(format!(
-                "failed to export '{}' from store: {}",
-                target.display(),
-                e
-            ))
-        })?;
-
-        let executable = is_executable(entry.path())?;
-        set_executable(&target, executable)?;
-    }
-
-    Ok(())
+    let _ = store;
+    hardlink_tree(source_root, target_root)
 }
 
 fn extracted_package_marker_path(root: &Path) -> PathBuf {
@@ -2548,7 +2568,13 @@ async fn parallel_extract_packages(
             // spawn_blocking: extraction is CPU-bound (decompression) + sync I/O
             let id = pkg.id.clone();
             let root = tokio::task::spawn_blocking(move || {
-                ensure_extracted_package_root(&layout, &store, shared_cache.as_ref(), &pkg, &tarball_path)
+                ensure_extracted_package_root(
+                    &layout,
+                    &store,
+                    shared_cache.as_ref(),
+                    &pkg,
+                    &tarball_path,
+                )
             })
             .await
             .map_err(|e| mg_types::MgError::Other(format!("extract task panicked: {e}")))??;
@@ -2559,14 +2585,13 @@ async fn parallel_extract_packages(
 
     let mut results = std::collections::HashMap::new();
     while let Some(joined) = join_set.join_next().await {
-        let (id, root) = joined
-            .map_err(|e| mg_types::MgError::Other(format!("extract join failed: {e}")))??;
+        let (id, root) =
+            joined.map_err(|e| mg_types::MgError::Other(format!("extract join failed: {e}")))??;
         results.insert(id, root);
     }
 
     Ok(results)
 }
-
 
 fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
     std::fs::create_dir_all(target_root).map_err(|err| {
@@ -2644,6 +2669,24 @@ fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
     Ok(())
 }
 
+fn extracted_root_for(
+    extracted_roots: &mut std::collections::HashMap<PackageId, PathBuf>,
+    layout: &Layout,
+    store: &ContentStore,
+    shared_cache: Option<&SharedWebCache>,
+    cache: &PackageCache,
+    pkg: &ResolvedPackage,
+) -> MgResult<PathBuf> {
+    if let Some(existing) = extracted_roots.get(&pkg.id) {
+        return Ok(existing.clone());
+    }
+
+    let tarball_path = cache.tarball_path(&pkg.id);
+    let root = ensure_extracted_package_root(layout, store, shared_cache, pkg, &tarball_path)?;
+    extracted_roots.insert(pkg.id.clone(), root.clone());
+    Ok(root)
+}
+
 fn select_root_packages(graph: &ResolvedGraph) -> Vec<&ResolvedPackage> {
     let mut selected: std::collections::HashMap<String, &ResolvedPackage> =
         std::collections::HashMap::new();
@@ -2683,6 +2726,7 @@ fn materialize_nested_dependencies(
     store: &ContentStore,
     shared_cache: Option<&SharedWebCache>,
     cache: &PackageCache,
+    extracted_roots: &mut std::collections::HashMap<PackageId, PathBuf>,
     visiting: &mut std::collections::HashSet<String>,
     depth: usize,
     packages_with_scripts: &mut Vec<std::path::PathBuf>,
@@ -2734,16 +2778,31 @@ fn materialize_nested_dependencies(
                 })?;
             }
 
-            let tarball_path = cache.tarball_path(dep_id);
-            let package_root =
-                ensure_extracted_package_root(layout, store, shared_cache, dep_pkg, &tarball_path)?;
-            hardlink_tree(&package_root, &nested_dir)?;
+            let package_root = extracted_root_for(
+                extracted_roots,
+                layout,
+                store,
+                shared_cache,
+                cache,
+                dep_pkg,
+            )?;
+            hardlink_tree(package_root.as_path(), &nested_dir)?;
             packages_with_scripts.push(nested_dir.clone());
         }
 
         materialize_nested_dependencies(
-            &nested_dir, dep_pkg, package_map, root_package_versions,
-            layout, store, shared_cache, cache, visiting, depth + 1, packages_with_scripts,
+            &nested_dir,
+            dep_pkg,
+            package_map,
+            root_package_versions,
+            layout,
+            store,
+            shared_cache,
+            cache,
+            extracted_roots,
+            visiting,
+            depth + 1,
+            packages_with_scripts,
         )?;
     }
 
@@ -2768,6 +2827,127 @@ fn locate_package_dir(extract_root: &Path) -> MgResult<std::path::PathBuf> {
             extract_root.display()
         ))
     })
+}
+
+fn remove_fs_entry(path: &Path) -> MgResult<()> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(mg_types::MgError::Other(format!(
+                "failed to inspect filesystem entry '{}': {}",
+                path.display(),
+                err
+            )));
+        }
+    };
+
+    if meta.file_type().is_dir() && !meta.file_type().is_symlink() {
+        std::fs::remove_dir_all(path).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to remove directory '{}': {}",
+                path.display(),
+                err
+            ))
+        })?;
+    } else {
+        std::fs::remove_file(path).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to remove file '{}': {}",
+                path.display(),
+                err
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+fn reset_nested_node_modules(package_dir: &Path) -> MgResult<()> {
+    let nested_node_modules = package_dir.join("node_modules");
+    if nested_node_modules.exists() {
+        remove_fs_entry(&nested_node_modules)?;
+    }
+    std::fs::create_dir_all(&nested_node_modules).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to recreate nested node_modules '{}': {}",
+            nested_node_modules.display(),
+            err
+        ))
+    })?;
+    Ok(())
+}
+
+fn prune_root_install_dirs(
+    node_modules: &Path,
+    expected_root_packages: &std::collections::HashMap<String, PackageId>,
+) -> MgResult<()> {
+    if !node_modules.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(node_modules).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to read node_modules '{}': {}",
+            node_modules.display(),
+            err
+        ))
+    })? {
+        let entry = entry.map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to iterate node_modules '{}': {}",
+                node_modules.display(),
+                err
+            ))
+        })?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        if name == ".bin" || name == ".megagate" {
+            continue;
+        }
+
+        if name.starts_with('@') && path.is_dir() {
+            for scoped_entry in std::fs::read_dir(&path).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to read scoped directory '{}': {}",
+                    path.display(),
+                    err
+                ))
+            })? {
+                let scoped_entry = scoped_entry.map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to iterate scoped directory '{}': {}",
+                        path.display(),
+                        err
+                    ))
+                })?;
+                let scoped_name = scoped_entry.file_name().to_string_lossy().to_string();
+                let package_name = format!("{}/{}", name, scoped_name);
+                if !expected_root_packages.contains_key(&package_name) {
+                    remove_fs_entry(&scoped_entry.path())?;
+                }
+            }
+
+            let mut remaining = std::fs::read_dir(&path).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to re-read scoped directory '{}': {}",
+                    path.display(),
+                    err
+                ))
+            })?;
+            if remaining.next().is_none() {
+                remove_fs_entry(&path)?;
+            }
+            continue;
+        }
+
+        if !expected_root_packages.contains_key(&name) {
+            remove_fs_entry(&path)?;
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -2805,7 +2985,10 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
     for pkg in packages {
         let package_dir = node_modules.join(pkg.id.name().as_str());
         for (bin_name, relative_target) in package_bin_entries(&package_dir)? {
-            if relative_target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            if relative_target
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
                 eprintln!(
                     "WARNING: Skipping bin '{}' from package '{}' - path contains '..'",
                     bin_name,
@@ -2813,12 +2996,12 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
                 );
                 continue;
             }
-            
+
             let target = package_dir.join(&relative_target);
             if !target.exists() {
                 continue;
             }
-            
+
             let canonical_target = match target.canonicalize() {
                 Ok(path) => path,
                 Err(_) => {
@@ -2830,12 +3013,12 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
                     continue;
                 }
             };
-            
+
             let canonical_package_dir = match package_dir.canonicalize() {
                 Ok(path) => path,
                 Err(_) => package_dir.clone(),
             };
-            
+
             if !canonical_target.starts_with(&canonical_package_dir) {
                 eprintln!(
                     "WARNING: Skipping bin '{}' from package '{}' - target escapes package directory",
@@ -2844,7 +3027,7 @@ fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgRe
                 );
                 continue;
             }
-            
+
             let link = bin_dir.join(bin_name);
             create_bin_link(&link, &target)?;
         }
@@ -2886,6 +3069,32 @@ fn package_bin_entries(package_dir: &Path) -> MgResult<Vec<(String, PathBuf)>> {
     };
 
     Ok(entries)
+}
+
+fn package_manifest_dependency_names(package_dir: &Path) -> MgResult<Vec<String>> {
+    let package_json = package_dir.join("package.json");
+    if !package_json.exists() {
+        return Ok(Vec::new());
+    }
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&package_json)?).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to parse package manifest '{}': {}",
+                package_json.display(),
+                err
+            ))
+        })?;
+
+    let mut names = Vec::new();
+    for section in ["dependencies", "optionalDependencies", "peerDependencies"] {
+        if let Some(map) = manifest.get(section).and_then(|value| value.as_object()) {
+            names.extend(map.keys().cloned());
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
 
 #[cfg(unix)]
@@ -3011,12 +3220,12 @@ fn write_web_lockfile_with_state(
 
     let toml = serialization::to_toml(&lockfile)?;
     atomic_write(&lock_path, toml.as_bytes())?;
-    
+
     let checksum = mg_crypto::hash(toml.as_bytes(), mg_crypto::HashAlgorithm::Sha256)
         .map_err(|e| mg_types::MgError::Other(format!("checksum failed: {e}")))?;
     let checksum_path = project_root.join("mg.lock.sha256");
     atomic_write(&checksum_path, checksum.as_bytes())?;
-    
+
     Ok(())
 }
 
@@ -3037,16 +3246,13 @@ fn installed_package_matches(path: &Path, package_id: &PackageId) -> bool {
 pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
     let lock_path = project_root.join("mg.lock");
     let existing = std::fs::read_to_string(lock_path).ok()?;
-    
+
     let checksum_path = project_root.join("mg.lock.sha256");
     if checksum_path.exists() {
         if let Ok(expected_checksum) = std::fs::read_to_string(&checksum_path) {
-            let actual_checksum = mg_crypto::hash(
-                existing.as_bytes(),
-                mg_crypto::HashAlgorithm::Sha256,
-            )
-            .ok()?;
-            
+            let actual_checksum =
+                mg_crypto::hash(existing.as_bytes(), mg_crypto::HashAlgorithm::Sha256).ok()?;
+
             if actual_checksum.trim() != expected_checksum.trim() {
                 if strict_integrity_enforced() {
                     eprintln!(
@@ -3060,12 +3266,14 @@ pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
                 }
             }
         }
-    } else if strict_integrity_enforced() && std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_err() {
+    } else if strict_integrity_enforced()
+        && std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_err()
+    {
         eprintln!(
             "WARNING: Lockfile checksum file (mg.lock.sha256) not found - cannot verify integrity"
         );
     }
-    
+
     serialization::from_toml::<Lockfile>(&existing).ok()
 }
 
@@ -3115,14 +3323,34 @@ fn materialize_strict_layout(
     let _ = project_root;
     let _ = staged_node_modules;
     let virtual_store = node_modules.join(".megagate");
+    let selected_packages_by_name: std::collections::HashMap<String, PackageId> = graph
+        .packages
+        .iter()
+        .fold(std::collections::HashMap::new(), |mut acc, pkg| {
+            acc.entry(pkg.id.name_str().to_string())
+                .and_modify(|current| {
+                    if pkg.id.version() > current.version() {
+                        *current = pkg.id.clone();
+                    }
+                })
+                .or_insert_with(|| pkg.id.clone());
+            acc
+        });
     if let Err(e) = std::fs::create_dir_all(&virtual_store) {
-        return Err(mg_types::MgError::Other(format!("failed to create virtual store: {}", e)));
+        return Err(mg_types::MgError::Other(format!(
+            "failed to create virtual store: {}",
+            e
+        )));
     }
 
     // 1. Materialize all packages into virtual store
     for pkg in &graph.packages {
         let pkg_id = &pkg.id;
-        let vstore_pkg_name = format!("{}@{}", pkg_id.name().as_str().replace('/', "+"), pkg_id.version());
+        let vstore_pkg_name = format!(
+            "{}@{}",
+            pkg_id.name().as_str().replace('/', "+"),
+            pkg_id.version()
+        );
         let vstore_pkg_dir = virtual_store
             .join(&vstore_pkg_name)
             .join("node_modules")
@@ -3132,10 +3360,25 @@ fn materialize_strict_layout(
             if vstore_pkg_dir.exists() {
                 let _ = std::fs::remove_dir_all(&vstore_pkg_dir);
             }
-            
-            let tarball_path = cache.tarball_path(pkg_id);
-            let package_root = ensure_extracted_package_root(layout, store, shared_cache, pkg, &tarball_path)?;
-            hardlink_tree(&package_root, &vstore_pkg_dir)?;
+            let package_root = match extracted_root_for(
+                &mut std::collections::HashMap::new(),
+                layout,
+                store,
+                shared_cache,
+                cache,
+                pkg,
+            ) {
+                Ok(root) => root,
+                Err(err) => {
+                    let existing_root_package = node_modules.join(pkg_id.name().as_str());
+                    if installed_package_matches(&existing_root_package, pkg_id) {
+                        existing_root_package
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
+            hardlink_tree(package_root.as_path(), &vstore_pkg_dir)?;
         }
         packages_with_scripts.push(vstore_pkg_dir);
     }
@@ -3143,13 +3386,32 @@ fn materialize_strict_layout(
     // 2. Link dependencies within virtual store
     for pkg in &graph.packages {
         let pkg_id = &pkg.id;
-        let vstore_pkg_name = format!("{}@{}", pkg_id.name().as_str().replace('/', "+"), pkg_id.version());
+        let vstore_pkg_name = format!(
+            "{}@{}",
+            pkg_id.name().as_str().replace('/', "+"),
+            pkg_id.version()
+        );
         let vstore_node_modules = virtual_store.join(&vstore_pkg_name).join("node_modules");
+        let pkg_local_node_modules = vstore_node_modules
+            .join(pkg_id.name().as_str())
+            .join("node_modules");
+        std::fs::create_dir_all(&pkg_local_node_modules).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to create strict nested node_modules '{}' for '{}': {}",
+                pkg_local_node_modules.display(),
+                pkg_id.name_str(),
+                err
+            ))
+        })?;
 
         for dep_id in &pkg.deps {
             if let Some(dep_pkg) = package_map.get(dep_id) {
                 let _ = dep_pkg; // suppress unused warning
-                let dep_vstore_name = format!("{}@{}", dep_id.name().as_str().replace('/', "+"), dep_id.version());
+                let dep_vstore_name = format!(
+                    "{}@{}",
+                    dep_id.name().as_str().replace('/', "+"),
+                    dep_id.version()
+                );
                 let dep_vstore_pkg_dir = virtual_store
                     .join(&dep_vstore_name)
                     .join("node_modules")
@@ -3159,6 +3421,35 @@ fn materialize_strict_layout(
                 if !symlink_path.exists() {
                     crate::layout::create_symlink(&dep_vstore_pkg_dir, &symlink_path)?;
                 }
+
+                let local_symlink_path = pkg_local_node_modules.join(dep_id.name().as_str());
+                if !local_symlink_path.exists() {
+                    crate::layout::create_symlink(&dep_vstore_pkg_dir, &local_symlink_path)?;
+                }
+            }
+        }
+
+        let package_dir = vstore_node_modules.join(pkg_id.name().as_str());
+        for dep_name in package_manifest_dependency_names(&package_dir)? {
+            let Some(selected_dep_id) = selected_packages_by_name.get(&dep_name) else {
+                continue;
+            };
+            let dep_vstore_name = format!(
+                "{}@{}",
+                selected_dep_id.name().as_str().replace('/', "+"),
+                selected_dep_id.version()
+            );
+            let dep_vstore_pkg_dir = virtual_store
+                .join(&dep_vstore_name)
+                .join("node_modules")
+                .join(selected_dep_id.name().as_str());
+            if !dep_vstore_pkg_dir.exists() {
+                continue;
+            }
+
+            let local_symlink_path = pkg_local_node_modules.join(selected_dep_id.name().as_str());
+            if !local_symlink_path.exists() {
+                crate::layout::create_symlink(&dep_vstore_pkg_dir, &local_symlink_path)?;
             }
         }
     }
@@ -3166,7 +3457,11 @@ fn materialize_strict_layout(
     // 3. Link root packages to root node_modules
     for pkg in root_packages {
         let root_link = node_modules.join(pkg.id.name().as_str());
-        let vstore_pkg_name = format!("{}@{}", pkg.id.name().as_str().replace('/', "+"), pkg.id.version());
+        let vstore_pkg_name = format!(
+            "{}@{}",
+            pkg.id.name().as_str().replace('/', "+"),
+            pkg.id.version()
+        );
         let vstore_pkg_dir = virtual_store
             .join(&vstore_pkg_name)
             .join("node_modules")
@@ -3180,7 +3475,6 @@ fn materialize_strict_layout(
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -3271,7 +3565,10 @@ mod tests {
                 dev: false,
             }],
         };
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
         assert_eq!(summary.added, vec![package_id]);
         assert!(dir
             .path()
@@ -3341,7 +3638,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::new();
-        adapter.install(&graph, dir.path()).await.unwrap();
+        adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
 
         assert!(dir.path().join("node_modules/.bin").exists());
         assert!(dir.path().join("node_modules/.bin/vite").exists());
@@ -3861,6 +4161,7 @@ mod tests {
                     dev: false,
                     dependencies: vec![],
                 }],
+                sig: None,
             })
             .unwrap(),
         )
@@ -3945,7 +4246,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::new();
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
         assert_eq!(summary.added.len(), 2);
         assert!(summary.bytes_from_cache > 0);
         assert!(dir.path().join("node_modules/react/index.js").exists());
@@ -4029,7 +4333,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::new();
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
         assert_eq!(summary.added.len(), 2);
         assert!(dir.path().join("node_modules/react/index.js").exists());
         assert!(dir
@@ -4096,7 +4403,17 @@ mod tests {
         };
 
         let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(
+                &graph,
+                dir.path(),
+                InstallOptions {
+                    legacy_flat: true,
+                    ..InstallOptions::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(summary.added, vec![package_id]);
         assert!(summary.bytes_from_cache > 0);
     }
@@ -4150,7 +4467,10 @@ mod tests {
             "http://127.0.0.1:9".into(),
             shared.path().to_path_buf(),
         );
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
         assert_eq!(summary.added, vec![react.clone()]);
         assert!(summary.bytes_from_cache > 0);
         assert!(dir.path().join("node_modules/react/index.js").exists());
@@ -4216,7 +4536,10 @@ mod tests {
             "http://127.0.0.1:9".into(),
             shared.path().to_path_buf(),
         );
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
         assert_eq!(summary.added, vec![react.clone()]);
         assert!(dir.path().join("node_modules/react/index.js").exists());
 
@@ -4256,7 +4579,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None);
-        let err = adapter.install(&graph, dir.path()).await.unwrap_err();
+        let err = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("download failed"));
     }
 
@@ -4320,7 +4646,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None);
-        let _err = adapter.install(&graph, dir.path()).await.unwrap_err();
+        let _err = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap_err();
         assert!(!dir.path().join("node_modules/react").exists());
 
         let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
@@ -4370,7 +4699,17 @@ mod tests {
         };
 
         let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(
+                &graph,
+                dir.path(),
+                InstallOptions {
+                    legacy_flat: true,
+                    ..InstallOptions::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(summary.added, vec![package_id]);
         assert_eq!(
             std::fs::read_to_string(pkg_dir.join("marker.txt")).unwrap(),
@@ -4427,7 +4766,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::new();
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
         assert_eq!(summary.added, vec![package_id]);
         assert!(dir
             .path()
@@ -4554,7 +4896,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::new();
-        adapter.install(&graph, dir.path()).await.unwrap();
+        adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
 
         let hoisted_semver = dir.path().join("node_modules").join("semver");
         let nested_nuxt_semver = dir
@@ -4664,7 +5009,10 @@ mod tests {
         };
 
         let adapter = WebAdapter::new();
-        let summary = adapter.install(&graph, dir.path()).await.unwrap();
+        let summary = adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
         assert_eq!(summary.added, vec![react]);
         assert!(dir.path().join("node_modules/react/index.js").exists());
     }
@@ -4720,7 +5068,10 @@ mod tests {
             "https://registry.npmjs.org".into(),
             shared.path().to_path_buf(),
         );
-        adapter.install(&graph, dir.path()).await.unwrap();
+        adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
 
         let cache_key = extracted_package_cache_key(&graph.packages[0]);
         let cached_file = shared
@@ -4792,7 +5143,10 @@ mod tests {
             "https://registry.npmjs.org".into(),
             shared.path().to_path_buf(),
         );
-        adapter.install(&graph, first.path()).await.unwrap();
+        adapter
+            .install(&graph, first.path(), InstallOptions::default())
+            .await
+            .unwrap();
 
         let shared_root = shared_extracted_package_root(shared.path(), &graph.packages[0]);
         std::fs::write(shared_root.join("index.js"), "tampered\n").unwrap();
@@ -4832,7 +5186,10 @@ mod tests {
             ],
         );
 
-        adapter.install(&graph, second.path()).await.unwrap();
+        adapter
+            .install(&graph, second.path(), InstallOptions::default())
+            .await
+            .unwrap();
 
         assert_eq!(
             std::fs::read_to_string(shared_root.join("index.js")).unwrap(),
@@ -4864,7 +5221,11 @@ mod tests {
         )
     }
 
-    fn seed_cached_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) -> String {
+    fn seed_cached_tarball_with_files(
+        root: &Path,
+        pkg: &PackageId,
+        files: &[(&str, &[u8])],
+    ) -> String {
         let layout = Layout::new(root.join(".megagate").join("cache").join("web"));
         std::fs::create_dir_all(layout.root()).unwrap();
         let cache = PackageCache::new(layout.cache_dir()).unwrap();
@@ -4877,7 +5238,11 @@ mod tests {
         sri_sha512(&tarball)
     }
 
-    fn seed_shared_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) -> String {
+    fn seed_shared_tarball_with_files(
+        root: &Path,
+        pkg: &PackageId,
+        files: &[(&str, &[u8])],
+    ) -> String {
         let layout = Layout::new(root.to_path_buf());
         std::fs::create_dir_all(layout.root()).unwrap();
         let cache = PackageCache::new(layout.cache_dir()).unwrap();

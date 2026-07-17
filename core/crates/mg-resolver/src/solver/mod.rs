@@ -134,15 +134,56 @@ pub fn check_dependency_confusion(
 
     // Top 50 most depended-upon npm packages (for typosquat detection)
     const TOP_NPM: &[&str] = &[
-        "lodash", "chalk", "react", "express", "axios", "moment", "uuid",
-        "tslib", "commander", "prettier", "typescript", "eslint", "webpack",
-        "babel", "jest", "mocha", "sinon", "async", "request", "body-parser",
-        "cors", "debug", "dotenv", "glob", "http-errors", "iconv-lite",
-        "isarray", "js-yaml", "json5", "jsonwebtoken", "ms", "node-fetch",
-        "once", "path-to-regexp", "qs", "raw-body", "readable-stream",
-        "safe-buffer", "semver", "send", "serve-static", "setprototypeof",
-        "statuses", "supports-color", "through2", "underscore", "yargs",
-        "vue", "next", "nuxt",
+        "lodash",
+        "chalk",
+        "react",
+        "express",
+        "axios",
+        "moment",
+        "uuid",
+        "tslib",
+        "commander",
+        "prettier",
+        "typescript",
+        "eslint",
+        "webpack",
+        "babel",
+        "jest",
+        "mocha",
+        "sinon",
+        "async",
+        "request",
+        "body-parser",
+        "cors",
+        "debug",
+        "dotenv",
+        "glob",
+        "http-errors",
+        "iconv-lite",
+        "isarray",
+        "js-yaml",
+        "json5",
+        "jsonwebtoken",
+        "ms",
+        "node-fetch",
+        "once",
+        "path-to-regexp",
+        "qs",
+        "raw-body",
+        "readable-stream",
+        "safe-buffer",
+        "semver",
+        "send",
+        "serve-static",
+        "setprototypeof",
+        "statuses",
+        "supports-color",
+        "through2",
+        "underscore",
+        "yargs",
+        "vue",
+        "next",
+        "nuxt",
     ];
 
     for dep in dependencies {
@@ -197,18 +238,20 @@ pub fn check_dependency_confusion(
 fn levenshtein_distance(a: &str, b: &str) -> usize {
     let a_len = a.len();
     let b_len = b.len();
-    if a_len == 0 { return b_len; }
-    if b_len == 0 { return a_len; }
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
     let mut prev: Vec<usize> = (0..=b_len).collect();
     let mut curr = vec![0; b_len + 1];
     for (i, ca) in a.chars().enumerate() {
         curr[0] = i + 1;
         for (j, cb) in b.chars().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            curr[j + 1] = std::cmp::min(
-                std::cmp::min(curr[j] + 1, prev[j + 1] + 1),
-                prev[j] + cost,
-            );
+            curr[j + 1] =
+                std::cmp::min(std::cmp::min(curr[j] + 1, prev[j + 1] + 1), prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -281,7 +324,7 @@ impl Resolver {
     pub async fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
         const MAX_PACKAGES: usize = 10000;
         const MAX_QUEUE_SIZE: usize = 50000;
-        
+
         let mut resolutions: Vec<Resolution> = Vec::new();
         let mut resolved: HashMap<String, Version> = HashMap::new();
         let mut queue: VecDeque<(PackageName, String)> =
@@ -306,7 +349,7 @@ impl Resolver {
                     ),
                 });
             }
-            
+
             if queue.len() > MAX_QUEUE_SIZE {
                 return Err(SolveError {
                     message: format!(
@@ -315,7 +358,7 @@ impl Resolver {
                     ),
                 });
             }
-            
+
             let batch_size = queue.len().min(50);
             let batch: Vec<(PackageName, String)> = queue.drain(..batch_size).collect();
             let mut selected: Vec<(PackageName, String, Version)> = Vec::new();
