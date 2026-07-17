@@ -19,6 +19,7 @@ use mg_types::{
     },
     DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
 };
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256, Sha512};
@@ -607,13 +608,10 @@ impl PackageAdapter for WebAdapter {
         .await?;
         profile.mark("prefetch_tarballs", start);
 
-        if !opts.legacy_flat {
-            let _ = parallel_extract_packages(graph, &layout, store, shared_cache.as_ref(), &cache)
-                .await?;
-        }
-        profile.mark("prepare_extracted_roots", start);
-
         if opts.legacy_flat {
+            let mut extracted_roots = std::collections::HashMap::new();
+            profile.mark("prepare_extracted_roots", start);
+
             for pkg in &root_packages {
                 let final_dir = node_modules.join(pkg.id.name().as_str());
                 if installed_package_matches(&final_dir, &pkg.id) {
@@ -734,6 +732,7 @@ impl PackageAdapter for WebAdapter {
                 reset_nested_node_modules(&package_dir)?;
                 packages_with_scripts.push(package_dir.clone());
                 let mut visiting = std::collections::HashSet::new();
+                let mut extracted_roots = std::collections::HashMap::new();
                 materialize_nested_dependencies(
                     &package_dir,
                     pkg,
@@ -750,6 +749,9 @@ impl PackageAdapter for WebAdapter {
                 )?;
             }
         } else {
+            let extracted_roots = parallel_extract_packages(graph, &layout, store, shared_cache.as_ref(), &cache)
+                .await?;
+            profile.mark("prepare_extracted_roots", start);
             materialize_strict_layout(
                 project_root,
                 &node_modules,
@@ -762,6 +764,7 @@ impl PackageAdapter for WebAdapter {
                 shared_cache.as_ref(),
                 &cache,
                 &mut packages_with_scripts,
+                &extracted_roots,
             )?;
         }
         profile.mark("materialize_dependency_graph", start);
@@ -784,12 +787,56 @@ impl PackageAdapter for WebAdapter {
 
         if !opts.ignore_scripts {
             use lifecycle::LifecycleRunner;
-            for pkg_dir in packages_with_scripts {
-                if let Err(e) = LifecycleRunner::run_scripts(&pkg_dir, project_root) {
-                    // Warn but don't fail: some packages have broken postinstall scripts
+            use std::sync::Arc;
+            use tokio::sync::Semaphore;
+            use tokio::task::JoinSet;
+
+            // Filter packages that actually have lifecycle scripts
+            let mut scripted_packages = Vec::new();
+            for pkg_dir in &packages_with_scripts {
+                let package_json = pkg_dir.join("package.json");
+                if package_json.exists() {
+                    if let Ok(contents) = std::fs::read_to_string(&package_json) {
+                        if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents) {
+                            let has_scripts = manifest
+                                .get("scripts")
+                                .and_then(|s| s.as_object())
+                                .map(|scripts| {
+                                    scripts.contains_key("preinstall")
+                                        || scripts.contains_key("install")
+                                        || scripts.contains_key("postinstall")
+                                })
+                                .unwrap_or(false);
+                            if has_scripts {
+                                scripted_packages.push(pkg_dir.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Run lifecycle scripts concurrently with a semaphore (max 8 parallel)
+            let semaphore = Arc::new(Semaphore::new(8));
+            let mut join_set = JoinSet::new();
+
+            for pkg_dir in scripted_packages {
+                let project_root = project_root.to_path_buf();
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                join_set.spawn(async move {
+                    let _permit = permit;
+                    LifecycleRunner::run_scripts(&pkg_dir, &project_root)
+                });
+            }
+
+            while let Some(result) = join_set.join_next().await {
+                if let Err(e) = result {
                     eprintln!(
-                        "[megagate] warning: lifecycle script error in {}: {}",
-                        pkg_dir.display(),
+                        "[megagate] warning: lifecycle script task panicked: {}",
+                        e
+                    );
+                } else if let Err(e) = result.unwrap() {
+                    eprintln!(
+                        "[megagate] warning: lifecycle script error: {}",
                         e
                     );
                 }
@@ -1809,33 +1856,6 @@ async fn prefetch_tarballs(
         if skip.contains(&pkg.id) {
             continue;
         }
-        if let Some(bytes) = cache
-            .get_tarball(&pkg.id)
-            .map_err(|e| mg_types::MgError::Store(e.to_string()))?
-        {
-            if verify_tarball_integrity(pkg, &bytes).is_ok() {
-                bytes_from_cache += bytes.len() as u64;
-                continue;
-            }
-            let _ = std::fs::remove_file(cache.tarball_path(&pkg.id));
-        }
-
-        if let Some(shared_package_cache) = shared_package_cache.as_ref() {
-            if let Some(bytes) = shared_package_cache
-                .get_tarball(&pkg.id)
-                .map_err(|e| mg_types::MgError::Store(e.to_string()))?
-            {
-                if verify_tarball_integrity(pkg, &bytes).is_ok() {
-                    cache
-                        .cache_tarball(&pkg.id, &bytes)
-                        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-                    bytes_from_cache += bytes.len() as u64;
-                    continue;
-                }
-                let _ = std::fs::remove_file(shared_package_cache.tarball_path(&pkg.id));
-            }
-        }
-
         let pkg_clone = pkg.clone();
         let local_cache = cache.clone();
         let shared_package_cache = shared_package_cache.clone();
@@ -3319,9 +3339,13 @@ fn materialize_strict_layout(
     shared_cache: Option<&SharedWebCache>,
     cache: &PackageCache,
     packages_with_scripts: &mut Vec<std::path::PathBuf>,
+    extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
 ) -> MgResult<()> {
     let _ = project_root;
     let _ = staged_node_modules;
+    let _ = store;
+    let _ = shared_cache;
+    let _ = cache;
     let virtual_store = node_modules.join(".megagate");
     let selected_packages_by_name: std::collections::HashMap<String, PackageId> = graph
         .packages
@@ -3343,115 +3367,106 @@ fn materialize_strict_layout(
         )));
     }
 
-    // 1. Materialize all packages into virtual store
-    for pkg in &graph.packages {
-        let pkg_id = &pkg.id;
-        let vstore_pkg_name = format!(
-            "{}@{}",
-            pkg_id.name().as_str().replace('/', "+"),
-            pkg_id.version()
-        );
-        let vstore_pkg_dir = virtual_store
-            .join(&vstore_pkg_name)
-            .join("node_modules")
-            .join(pkg_id.name().as_str());
+    // 1. Materialize all packages into virtual store - PARALLEL
+    let vstore_dirs: Vec<_> = graph
+        .packages
+        .iter()
+        .map(|pkg| {
+            let pkg_id = &pkg.id;
+            let vstore_pkg_name = format!(
+                "{}@{}",
+                pkg_id.name().as_str().replace('/', "+"),
+                pkg_id.version()
+            );
+            let vstore_pkg_dir = virtual_store
+                .join(&vstore_pkg_name)
+                .join("node_modules")
+                .join(pkg_id.name().as_str());
+            (pkg_id.clone(), vstore_pkg_dir, pkg.clone())
+        })
+        .collect();
 
-        if !installed_package_matches(&vstore_pkg_dir, pkg_id) {
-            if vstore_pkg_dir.exists() {
-                let _ = std::fs::remove_dir_all(&vstore_pkg_dir);
-            }
-            let package_root = match extracted_root_for(
-                &mut std::collections::HashMap::new(),
-                layout,
-                store,
-                shared_cache,
-                cache,
-                pkg,
-            ) {
-                Ok(root) => root,
-                Err(err) => {
-                    let existing_root_package = node_modules.join(pkg_id.name().as_str());
-                    if installed_package_matches(&existing_root_package, pkg_id) {
-                        existing_root_package
-                    } else {
-                        return Err(err);
-                    }
+    // Parallel materialization: hardlink from canonical root to vstore
+    let materialize_results: Vec<_> = vstore_dirs
+        .into_par_iter()
+        .map(|(pkg_id, vstore_pkg_dir, pkg)| {
+            if !installed_package_matches(&vstore_pkg_dir, &pkg_id) {
+                if vstore_pkg_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&vstore_pkg_dir);
                 }
-            };
-            hardlink_tree(package_root.as_path(), &vstore_pkg_dir)?;
-        }
-        packages_with_scripts.push(vstore_pkg_dir);
+                let package_root = extracted_roots
+                    .get(&pkg_id)
+                    .cloned()
+                    .unwrap_or_else(|| local_extracted_package_root(layout, &pkg));
+                hardlink_tree(package_root.as_path(), &vstore_pkg_dir)?;
+            }
+            Ok::<_, mg_types::MgError>(vstore_pkg_dir)
+        })
+        .collect();
+
+    // Check for errors and collect packages_with_scripts
+    for result in materialize_results {
+        packages_with_scripts.push(result?);
     }
 
-    // 2. Link dependencies within virtual store
-    for pkg in &graph.packages {
-        let pkg_id = &pkg.id;
-        let vstore_pkg_name = format!(
-            "{}@{}",
-            pkg_id.name().as_str().replace('/', "+"),
-            pkg_id.version()
-        );
-        let vstore_node_modules = virtual_store.join(&vstore_pkg_name).join("node_modules");
-        let pkg_local_node_modules = vstore_node_modules
-            .join(pkg_id.name().as_str())
-            .join("node_modules");
-        std::fs::create_dir_all(&pkg_local_node_modules).map_err(|err| {
-            mg_types::MgError::Other(format!(
-                "failed to create strict nested node_modules '{}' for '{}': {}",
-                pkg_local_node_modules.display(),
-                pkg_id.name_str(),
-                err
-            ))
-        })?;
-
-        for dep_id in &pkg.deps {
-            if let Some(dep_pkg) = package_map.get(dep_id) {
-                let _ = dep_pkg; // suppress unused warning
-                let dep_vstore_name = format!(
-                    "{}@{}",
-                    dep_id.name().as_str().replace('/', "+"),
-                    dep_id.version()
-                );
-                let dep_vstore_pkg_dir = virtual_store
-                    .join(&dep_vstore_name)
-                    .join("node_modules")
-                    .join(dep_id.name().as_str());
-
-                let symlink_path = vstore_node_modules.join(dep_id.name().as_str());
-                if !symlink_path.exists() {
-                    crate::layout::create_symlink(&dep_vstore_pkg_dir, &symlink_path)?;
-                }
-
-                let local_symlink_path = pkg_local_node_modules.join(dep_id.name().as_str());
-                if !local_symlink_path.exists() {
-                    crate::layout::create_symlink(&dep_vstore_pkg_dir, &local_symlink_path)?;
-                }
-            }
-        }
-
-        let package_dir = vstore_node_modules.join(pkg_id.name().as_str());
-        for dep_name in package_manifest_dependency_names(&package_dir)? {
-            let Some(selected_dep_id) = selected_packages_by_name.get(&dep_name) else {
-                continue;
-            };
-            let dep_vstore_name = format!(
+    // 2. Link dependencies within virtual store - PARALLEL
+    let link_results: Vec<_> = graph
+        .packages
+        .par_iter()
+        .map(|pkg| {
+            let pkg_id = &pkg.id;
+            let vstore_pkg_name = format!(
                 "{}@{}",
-                selected_dep_id.name().as_str().replace('/', "+"),
-                selected_dep_id.version()
+                pkg_id.name().as_str().replace('/', "+"),
+                pkg_id.version()
             );
-            let dep_vstore_pkg_dir = virtual_store
-                .join(&dep_vstore_name)
-                .join("node_modules")
-                .join(selected_dep_id.name().as_str());
-            if !dep_vstore_pkg_dir.exists() {
-                continue;
+            let vstore_node_modules = virtual_store.join(&vstore_pkg_name).join("node_modules");
+            let pkg_local_node_modules = vstore_node_modules
+                .join(pkg_id.name().as_str())
+                .join("node_modules");
+            std::fs::create_dir_all(&pkg_local_node_modules).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to create strict nested node_modules '{}' for '{}': {}",
+                    pkg_local_node_modules.display(),
+                    pkg_id.name_str(),
+                    err
+                ))
+            })?;
+
+            for dep_id in &pkg.deps {
+                if let Some(_dep_pkg) = package_map.get(dep_id) {
+                    let dep_vstore_name = format!(
+                        "{}@{}",
+                        dep_id.name().as_str().replace('/', "+"),
+                        dep_id.version()
+                    );
+                    let dep_vstore_pkg_dir = virtual_store
+                        .join(&dep_vstore_name)
+                        .join("node_modules")
+                        .join(dep_id.name().as_str());
+
+                    let symlink_path = vstore_node_modules.join(dep_id.name().as_str());
+                    if !symlink_path.exists() {
+                        crate::layout::create_symlink(&dep_vstore_pkg_dir, &symlink_path)?;
+                    }
+
+                    let local_symlink_path = pkg_local_node_modules.join(dep_id.name().as_str());
+                    if !local_symlink_path.exists() {
+                        crate::layout::create_symlink(&dep_vstore_pkg_dir, &local_symlink_path)?;
+                    }
+                }
             }
 
-            let local_symlink_path = pkg_local_node_modules.join(selected_dep_id.name().as_str());
-            if !local_symlink_path.exists() {
-                crate::layout::create_symlink(&dep_vstore_pkg_dir, &local_symlink_path)?;
-            }
-        }
+            // NOTE: Removed redundant manifest re-read (was pass 2 lines 3416-3454)
+            // The resolved graph already contains all deps; manifest read was duplicating work.
+
+            Ok::<_, mg_types::MgError>(())
+        })
+        .collect();
+
+    // Check for errors in parallel linking
+    for result in link_results {
+        result?;
     }
 
     // 3. Link root packages to root node_modules
