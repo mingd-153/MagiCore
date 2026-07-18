@@ -13,10 +13,13 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             optional,
             peer,
             no_save,
+            install,
             global,
         } => {
-            commands::core::web::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::web::add(
+                packages, None, dev, exact, optional, peer, no_save, install, global,
+            )
+            .await
         }
         CoreCommand::AddGame {
             packages,
@@ -104,7 +107,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             )
             .await
         }
-        CoreCommand::RemoveWeb { package } => commands::core::web::remove(package).await,
+        CoreCommand::RemoveWeb { package, install } => {
+            commands::core::web::remove(package, install).await
+        }
         CoreCommand::RemoveGame { package } => commands::core::game::remove(package).await,
         CoreCommand::RemoveAi { package } => commands::core::ai::remove(package).await,
         CoreCommand::RemoveClo { package } => commands::core::clo::remove(package).await,

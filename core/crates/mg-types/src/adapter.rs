@@ -132,10 +132,10 @@ pub struct AuditReport {
 }
 
 impl AuditReport {
-    pub fn clean(vulnerability_count: usize) -> Self {
+    pub fn clean(packages_audited: usize) -> Self {
         Self {
-            packages_audited: 0,
-            vulnerability_count,
+            packages_audited,
+            vulnerability_count: 0,
             vulnerabilities: vec![],
         }
     }
@@ -218,6 +218,14 @@ mod tests {
     }
 
     #[test]
+    fn audit_report_clean_tracks_packages_audited_without_vulns() {
+        let report = AuditReport::clean(3);
+        assert_eq!(report.packages_audited, 3);
+        assert_eq!(report.vulnerability_count, 0);
+        assert!(report.is_clean());
+    }
+
+    #[test]
     fn audit_report_not_clean_with_vulnerabilities_vec() {
         let report = AuditReport {
             packages_audited: 1,
@@ -237,7 +245,11 @@ mod tests {
 
     #[test]
     fn audit_report_not_clean_with_nonzero_count() {
-        let report = AuditReport::clean(3);
+        let report = AuditReport {
+            packages_audited: 3,
+            vulnerability_count: 3,
+            vulnerabilities: vec![],
+        };
         assert!(!report.is_clean());
     }
 

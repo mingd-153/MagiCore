@@ -2,7 +2,7 @@
 
 use crate::context::ProjectContext;
 use anyhow::Result;
-use mg_lockfile::{serialization, Lockfile};
+use mg_lockfile::Lockfile;
 use mg_types::adapter::AddOptions;
 use mg_types::{Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
 use mg_ui::{
@@ -125,36 +125,6 @@ async fn install_into_root(
         pb.finish_with_message(format!("✅ {}", graph.packages[i].id.name_str()));
     }
 
-    let strict_mode = std::env::var("MG_AUDIT_STRICT").is_ok();
-    let mut quarantined = vec![];
-    for pkg in &graph.packages {
-        // Mock Smart Quarantine logic: flag packages lacking scope or published recently
-        // In a real app, we check the metadata registry time field.
-        if pkg.id.name_str().starts_with("malicious") || pkg.id.name_str() == "react-dom-mock" {
-            quarantined.push(pkg.id.name_str().to_string());
-        }
-    }
-
-    if !quarantined.is_empty() {
-        println!();
-        if strict_mode {
-            mg_ui::error("SECURITY DEBT: The following packages are in QUARANTINE (published < 24h or missing namespace) and --audit-strict is enabled.");
-            for pkg in quarantined {
-                println!("  ❌ {}", pkg);
-            }
-            return Err(anyhow::anyhow!(
-                "Quarantine block in strict mode. Install aborted."
-            ));
-        } else {
-            mg_ui::warning("SECURITY DEBT: The following packages are in QUARANTINE (published < 24h or missing namespace).");
-            for pkg in quarantined {
-                println!("  ⚠️ {}", pkg);
-            }
-            mg_ui::info("Proceeding with installation since --audit-strict is not enabled.");
-            println!();
-        }
-    }
-
     let spinner = create_spinner("  Linking packages...");
 
     let opts = mg_types::adapter::InstallOptions {
@@ -250,19 +220,16 @@ fn load_locked_graph(
     adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
-    let lock_path = project_root.join("mg.lock");
-    if !lock_path.exists() {
+    let Some(lock) = read_checked_lockfile(project_root)? else {
         return Ok(None);
-    }
-
-    let contents = std::fs::read_to_string(&lock_path)?;
-    let lock: Lockfile = match serialization::from_toml(&contents) {
-        Ok(lock) => lock,
-        Err(_) => return Ok(None),
     };
 
     let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
-    if lock.core != adapter_name || !state_ok || lock.packages.is_empty() {
+    if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
+        return Ok(None);
+    }
+
+    if lock.packages.iter().any(|pkg| pkg.name.is_empty()) {
         return Ok(None);
     }
 
@@ -271,6 +238,10 @@ fn load_locked_graph(
     }
 
     Ok(Some(graph_from_lockfile(&lock)?))
+}
+
+fn read_checked_lockfile(project_root: &std::path::Path) -> Result<Option<Lockfile>> {
+    mg_lockfile::read_lockfile_checked(project_root)
 }
 
 fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
@@ -300,8 +271,18 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
             let deps = pkg
                 .dependencies
                 .iter()
-                .filter_map(|dep| PackageId::parse(dep).ok())
-                .collect();
+                .map(|dep| {
+                    PackageId::parse(dep).map_err(|err| {
+                        anyhow::anyhow!(
+                            "invalid dependency id '{}' in lockfile package '{}@{}': {}",
+                            dep,
+                            pkg.name,
+                            pkg.version,
+                            err
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
 
             Ok(ResolvedPackage {
                 id: PackageId::new(name, version),
@@ -320,7 +301,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_lockfile::{LockPackage, ResolutionMeta};
+    use mg_lockfile::{serialization, LockPackage, ResolutionMeta};
     use mg_types::{DependencySpec, Ecosystem, VersionRange};
     use tempfile::tempdir;
 
@@ -384,6 +365,86 @@ mod tests {
         });
 
         assert!(!lock_matches_manifest(&lock, &manifest));
+    }
+
+    #[test]
+    fn test_load_locked_graph_rejects_unsupported_lock_version() {
+        let dir = tempdir().unwrap();
+        let mut manifest = Manifest::new("demo", Ecosystem::Web);
+        manifest.add_dep(
+            DependencySpec::new(
+                PackageName::new("tailwindcss").unwrap(),
+                VersionRange::parse("^4.3.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.version = 0;
+        lock.resolution = ResolutionMeta {
+            state: "locked".into(),
+            store: "megagate".into(),
+            package_count: 1,
+        };
+        lock.packages.push(LockPackage {
+            name: "tailwindcss".into(),
+            version: "4.3.2".into(),
+            integrity: None,
+            direct: true,
+            dev: false,
+            dependencies: vec![],
+        });
+        std::fs::write(
+            dir.path().join("mg.lock"),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+
+        assert!(load_locked_graph(dir.path(), "web", &manifest)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_load_locked_graph_errors_on_checksum_mismatch() {
+        let dir = tempdir().unwrap();
+        let manifest = Manifest::new("demo", Ecosystem::Web);
+        let lock = Lockfile::new("web", "frontend");
+        std::fs::write(
+            dir.path().join("mg.lock"),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mg.lock.sha256"), "bad").unwrap();
+
+        let err = load_locked_graph(dir.path(), "web", &manifest).unwrap_err();
+
+        assert!(
+            err.to_string().contains("lockfile checksum mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_graph_from_lockfile_rejects_invalid_dependency_id() {
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.packages.push(LockPackage {
+            name: "react".into(),
+            version: "18.2.0".into(),
+            integrity: None,
+            direct: true,
+            dev: false,
+            dependencies: vec!["not-a-package-id".into()],
+        });
+
+        let err = graph_from_lockfile(&lock).unwrap_err();
+
+        assert!(
+            err.to_string().contains("invalid dependency id"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

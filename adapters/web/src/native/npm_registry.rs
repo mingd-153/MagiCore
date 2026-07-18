@@ -41,7 +41,7 @@ fn global_http_client() -> &'static reqwest::Client {
             .pool_idle_timeout(Duration::from_secs(120))
             .tcp_keepalive(Duration::from_secs(30))
             .timeout(Duration::from_secs(60))
-            .user_agent("MegaGate/0.1.0")
+            .user_agent(format!("MegaGate/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("failed to build HTTP client")
     })
@@ -76,7 +76,11 @@ impl NpmRegistry {
         self.with_retry(move || {
             let resp_future = client.get(&url);
             let metadata_future = async move {
-                let resp = resp_future.send().await?.error_for_status()?;
+                let resp = resp_future
+                    .header("Accept", "application/vnd.npm.install-v1+json")
+                    .send()
+                    .await?
+                    .error_for_status()?;
                 let etag = resp
                     .headers()
                     .get("etag")
@@ -99,7 +103,9 @@ impl NpmRegistry {
         let etag_owned = etag.map(|s| s.to_string());
 
         self.with_retry(move || {
-            let mut req = global_http_client().get(&url);
+            let mut req = global_http_client()
+                .get(&url)
+                .header("Accept", "application/vnd.npm.install-v1+json");
             if let Some(ref etag_val) = etag_owned {
                 req = req.header("If-None-Match", etag_val);
             }

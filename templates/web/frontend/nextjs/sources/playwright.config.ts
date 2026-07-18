@@ -15,7 +15,7 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
   ],
   webServer: {
-    command: "npm run dev",
+    command: "mg dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
   },

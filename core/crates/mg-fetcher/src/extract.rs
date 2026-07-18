@@ -2,6 +2,7 @@
 use anyhow::{bail, Result};
 use flate2::read::GzDecoder;
 use std::fs::File;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use tar::Archive;
 
@@ -11,7 +12,12 @@ use tar::Archive;
 /// outside `dest` or create links/special files.
 pub fn extract_tarball(tarball_path: &Path, dest: &Path) -> Result<()> {
     let file = File::open(tarball_path)?;
-    let decoder = GzDecoder::new(file);
+    extract_tarball_from_reader(file, dest)
+}
+
+/// Extract a gzip-compressed tarball from an arbitrary reader.
+pub fn extract_tarball_from_reader<R: Read>(reader: R, dest: &Path) -> Result<()> {
+    let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
 
     std::fs::create_dir_all(dest)?;

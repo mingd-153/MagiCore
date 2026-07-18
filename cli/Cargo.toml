@@ -21,7 +21,6 @@ mg-store = { workspace = true }
 mg-lockfile = { workspace = true }
 mg-fetcher = { workspace = true }
 mg-http = { workspace = true }
-mg-crypto = { workspace = true }
 mg-ui = { workspace = true }
 
 # Adapters (optional — per-core feature flags)

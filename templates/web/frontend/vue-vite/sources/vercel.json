@@ -1,8 +1,8 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "mg build",
   "outputDirectory": "dist",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
+  "devCommand": "mg dev",
+  "installCommand": "mg install",
   "framework": "vite",
   "regions": ["iad1"]
 }

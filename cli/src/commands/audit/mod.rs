@@ -14,6 +14,9 @@ pub mod web;
 
 pub async fn run(core: Option<&str>) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
+    if ctx.adapter().name() == "web" {
+        return web::audit(ctx.adapter(), ctx.root()).await;
+    }
 
     // Convert adapter name to Ecosystem
     let ecosystem = match ctx.adapter().name() {
@@ -33,7 +36,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
 
 pub async fn execute_audit(ecosystem: &Ecosystem) -> Result<()> {
     match ecosystem {
-        Ecosystem::Web => web::audit().await,
+        Ecosystem::Web => anyhow::bail!("web audit requires project adapter context"),
         Ecosystem::Game => game::audit().await,
         Ecosystem::Ai => ai::audit().await,
         Ecosystem::Cloud => clo::audit().await,

@@ -1,5 +1,11 @@
 pub mod serialization;
 
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+
+pub const LOCKFILE_NAME: &str = "mg.lock";
+pub const LOCKFILE_CHECKSUM_NAME: &str = "mg.lock.sha256";
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResolutionMeta {
     pub state: String,
@@ -77,20 +83,87 @@ impl Lockfile {
     }
 }
 
+pub fn lockfile_path(project_root: &Path) -> PathBuf {
+    project_root.join(LOCKFILE_NAME)
+}
+
+pub fn lockfile_checksum_path(project_root: &Path) -> PathBuf {
+    project_root.join(LOCKFILE_CHECKSUM_NAME)
+}
+
+pub fn lockfile_checksum(contents: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(contents);
+    hex::encode(hasher.finalize())
+}
+
+pub fn write_lockfile_checksum(project_root: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    atomic_write(
+        &lockfile_checksum_path(project_root),
+        lockfile_checksum(contents).as_bytes(),
+    )?;
+    Ok(())
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(err.into())
+        }
+    }
+}
+
+pub fn read_lockfile_checked(project_root: &Path) -> anyhow::Result<Option<Lockfile>> {
+    let path = lockfile_path(project_root);
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+
+    let checksum_path = lockfile_checksum_path(project_root);
+    if checksum_path.exists() {
+        let expected = std::fs::read_to_string(&checksum_path)?;
+        let actual = lockfile_checksum(contents.as_bytes());
+        if actual.trim() != expected.trim() {
+            anyhow::bail!("lockfile checksum mismatch - mg.lock may have been tampered with");
+        }
+    }
+
+    let lock = serialization::from_toml::<Lockfile>(&contents)
+        .map_err(|err| anyhow::anyhow!("failed to parse lockfile '{}': {}", path.display(), err))?;
+    LockfileSigner::verify(&lock)?;
+    Ok(Some(lock))
+}
+
 /// BLAKE3-keyed signing for mg.lock files.
 /// Signing is opt-in; set MEGAGATE_LOCKFILE_KEY to a hex-encoded 32-byte secret.
 pub struct LockfileSigner;
 
 impl LockfileSigner {
-    fn key() -> Option<[u8; 32]> {
-        let raw = std::env::var("MEGAGATE_LOCKFILE_KEY").ok()?;
-        let bytes = hex::decode(raw.trim()).ok()?;
+    fn key() -> anyhow::Result<Option<[u8; 32]>> {
+        let raw = match std::env::var("MEGAGATE_LOCKFILE_KEY") {
+            Ok(raw) => raw,
+            Err(std::env::VarError::NotPresent) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        let bytes = hex::decode(raw.trim())
+            .map_err(|err| anyhow::anyhow!("invalid MEGAGATE_LOCKFILE_KEY hex: {err}"))?;
         if bytes.len() != 32 {
-            return None;
+            anyhow::bail!(
+                "invalid MEGAGATE_LOCKFILE_KEY length: expected 32 bytes, got {}",
+                bytes.len()
+            );
         }
         let mut key = [0u8; 32];
         key.copy_from_slice(&bytes);
-        Some(key)
+        Ok(Some(key))
     }
 
     /// Compute a canonical (stable) representation of the lockfile without the `sig` field.
@@ -105,7 +178,7 @@ impl LockfileSigner {
 
     /// Sign the lockfile in-place. No-op if MEGAGATE_LOCKFILE_KEY is not set.
     pub fn sign(lock: &mut Lockfile) -> anyhow::Result<()> {
-        let Some(key) = Self::key() else {
+        let Some(key) = Self::key()? else {
             return Ok(());
         };
         let canonical = Self::canonical(lock)?;
@@ -117,12 +190,12 @@ impl LockfileSigner {
     /// Verify the lockfile signature. Returns Ok(true) when signed+valid, Ok(false) when unsigned.
     /// Returns an error when the signature is present but invalid.
     pub fn verify(lock: &Lockfile) -> anyhow::Result<bool> {
+        let key = Self::key()?;
         let Some(ref sig_str) = lock.sig else {
             return Ok(false);
         };
-        let Some(key) = Self::key() else {
-            // Key not set — treat as unsigned/unverified
-            return Ok(false);
+        let Some(key) = key else {
+            anyhow::bail!("lockfile is signed but MEGAGATE_LOCKFILE_KEY is not set");
         };
         let hex_digest = sig_str.strip_prefix("blake3:").ok_or_else(|| {
             anyhow::anyhow!("unknown lockfile signature algorithm in '{}'", sig_str)
@@ -145,6 +218,12 @@ impl LockfileSigner {
 mod tests {
     use super::*;
     use crate::serialization;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     #[test]
     fn test_resolution_meta_default() {
@@ -164,6 +243,79 @@ mod tests {
         assert_eq!(lock.resolution.state, "pending");
         assert!(lock.workspaces.is_empty());
         assert!(lock.packages.is_empty());
+    }
+
+    #[test]
+    fn test_lockfile_checksum_is_sha256_hex() {
+        assert_eq!(
+            lockfile_checksum(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn test_read_lockfile_checked_rejects_checksum_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = Lockfile::new("web", "frontend");
+        std::fs::write(
+            lockfile_path(dir.path()),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(lockfile_checksum_path(dir.path()), "bad").unwrap();
+
+        let err = read_lockfile_checked(dir.path()).unwrap_err();
+
+        assert!(
+            err.to_string().contains("lockfile checksum mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sign_rejects_invalid_lockfile_key() {
+        let _guard = env_lock();
+        std::env::set_var("MEGAGATE_LOCKFILE_KEY", "not-hex");
+        let mut lock = Lockfile::new("web", "frontend");
+
+        let err = LockfileSigner::sign(&mut lock).unwrap_err();
+
+        std::env::remove_var("MEGAGATE_LOCKFILE_KEY");
+        assert!(
+            err.to_string().contains("invalid MEGAGATE_LOCKFILE_KEY"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_verify_rejects_signed_lock_without_key() {
+        let _guard = env_lock();
+        std::env::remove_var("MEGAGATE_LOCKFILE_KEY");
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.sig = Some("blake3:00".into());
+
+        let err = LockfileSigner::verify(&lock).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("lockfile is signed but MEGAGATE_LOCKFILE_KEY is not set"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sign_and_verify_with_valid_key() {
+        let _guard = env_lock();
+        std::env::set_var(
+            "MEGAGATE_LOCKFILE_KEY",
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        );
+        let mut lock = Lockfile::new("web", "frontend");
+
+        LockfileSigner::sign(&mut lock).unwrap();
+        assert!(LockfileSigner::verify(&lock).unwrap());
+
+        std::env::remove_var("MEGAGATE_LOCKFILE_KEY");
     }
 
     #[test]

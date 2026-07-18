@@ -1,6 +1,7 @@
 /// CLI command implementations
 pub mod audit;
 pub mod build;
+pub mod cache;
 pub mod core;
 pub mod dev;
 pub mod dlx;

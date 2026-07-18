@@ -26,6 +26,11 @@ pub async fn dispatch_common(command: CommonCommand, core: Option<&str>) -> Resu
         CommonCommand::SelfUpdate => commands::self_update::run().await,
         CommonCommand::Run { script, args } => commands::run::run(script, args, core).await,
         CommonCommand::Dlx { package, args } => commands::dlx::run(package, args).await,
+        CommonCommand::Cache {
+            action,
+            target,
+            yes,
+        } => commands::cache::run(action, target, yes, core).await,
         CommonCommand::Link { package } => {
             let ctx = ProjectContext::load_with_core(core)?;
             commands::core::shared::link(ctx.adapter(), ctx.root(), package.as_deref()).await

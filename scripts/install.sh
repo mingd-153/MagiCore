@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: ./scripts/install.sh [--prefix /usr/local] [--package megagate-web]
 
 PREFIX="${PREFIX:-/usr/local}"
-PKG="${PACKAGE:-megagate-web}"
+PKG="${PACKAGE:-${MEGAGATE_PACKAGE:-megagate-web}}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

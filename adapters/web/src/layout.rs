@@ -15,8 +15,8 @@ fn symlink_dir(original: &Path, link: &Path) -> std::io::Result<()> {
 }
 
 pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
-    if link.exists() {
-        let _ = std::fs::remove_dir_all(link);
+    if link.exists() || link.symlink_metadata().is_ok() {
+        let _ = std::fs::remove_file(link);
     } else if let Some(parent) = link.parent() {
         std::fs::create_dir_all(parent)?;
     }

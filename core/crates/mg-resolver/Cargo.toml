@@ -10,6 +10,7 @@ description = "Dependency resolver for MegaGate"
 [dependencies]
 async-trait = { workspace = true }
 dashmap = { workspace = true }
+futures-util = { workspace = true }
 mg-types = { workspace = true }
 thiserror = { workspace = true }
 

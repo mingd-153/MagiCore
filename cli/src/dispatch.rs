@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::{Cli, Commands};
 
@@ -6,12 +6,15 @@ mod common;
 mod core;
 mod types;
 
-use types::{CommonCommand, CoreCommand, DispatchCommand, detect_ecosystem};
+use types::{detect_ecosystem, CommonCommand, CoreCommand, DispatchCommand};
 
 pub async fn run(cli: Cli) -> Result<()> {
     let core = cli.core.as_deref();
 
     if cli.audit_strict {
+        if let Some(command) = cli.command.as_ref() {
+            reject_unsupported_audit_strict(command)?;
+        }
         std::env::set_var("MG_AUDIT_STRICT", "1");
     }
 
@@ -23,6 +26,30 @@ pub async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
+    if matches!(command, Commands::Audit) {
+        return Ok(());
+    }
+
+    let strict_matters = match command {
+        Commands::Install { .. } | Commands::InstallWeb { .. } => true,
+        Commands::Add { no_install, .. } | Commands::AddWeb { no_install, .. } => !*no_install,
+        Commands::Remove { no_install, .. } | Commands::RemoveWeb { no_install, .. } => {
+            !*no_install
+        }
+        Commands::Update { install, .. } | Commands::UpdateWeb { install, .. } => *install,
+        _ => false,
+    };
+
+    if strict_matters {
+        bail!(
+            "--audit-strict is not supported for this command yet because production strict audit policy is not wired. Run `mg audit --core web` explicitly, or retry without --audit-strict."
+        );
+    }
+
+    Ok(())
 }
 
 async fn dispatch_command(command: Commands, core: Option<&str>) -> Result<()> {
@@ -59,6 +86,15 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::Start => Some(CommonCommand::Start),
         Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
         Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
+        Commands::Cache {
+            action,
+            target,
+            yes,
+        } => Some(CommonCommand::Cache {
+            action,
+            target,
+            yes,
+        }),
         Commands::Link { package } => Some(CommonCommand::Link { package }),
         Commands::Unlink { package } => Some(CommonCommand::Unlink { package }),
         Commands::Why { package } => Some(CommonCommand::Why { package }),
@@ -145,6 +181,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             optional,
             peer,
             no_save,
+            no_install,
             global,
         } => Some(CoreCommand::AddWeb {
             packages,
@@ -153,6 +190,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             optional,
             peer,
             no_save,
+            install: !no_install,
             global,
         }),
         Commands::AddGame {
@@ -274,7 +312,13 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             no_save,
             global,
         }),
-        Commands::RemoveWeb { package } => Some(CoreCommand::RemoveWeb { package }),
+        Commands::RemoveWeb {
+            package,
+            no_install,
+        } => Some(CoreCommand::RemoveWeb {
+            package,
+            install: !no_install,
+        }),
         Commands::RemoveGame { package } => Some(CoreCommand::RemoveGame { package }),
         Commands::RemoveAi { package } => Some(CoreCommand::RemoveAi { package }),
         Commands::RemoveClo { package } => Some(CoreCommand::RemoveClo { package }),
@@ -296,7 +340,9 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::UpdateGame { packages, install } => {
             Some(CoreCommand::UpdateGame { packages, install })
         }
-        Commands::UpdateAi { packages, install } => Some(CoreCommand::UpdateAi { packages, install }),
+        Commands::UpdateAi { packages, install } => {
+            Some(CoreCommand::UpdateAi { packages, install })
+        }
         Commands::UpdateClo { packages, install } => {
             Some(CoreCommand::UpdateClo { packages, install })
         }
@@ -320,7 +366,9 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
     }
 
     // Bare commands - use --core if provided, else auto-detect
-    let ecosystem = core.map(|s| s.to_string()).or_else(|| detect_ecosystem().ok().flatten());
+    let ecosystem = core
+        .map(|s| s.to_string())
+        .or_else(|| detect_ecosystem().ok().flatten());
 
     match command {
         Commands::Install {
@@ -354,6 +402,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             optional,
             peer,
             no_save,
+            no_install,
             ..
         } => SomeCore(match ecosystem.as_deref() {
             Some("web") => CoreCommand::AddWeb {
@@ -363,6 +412,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
                 optional,
                 peer,
                 no_save,
+                install: !no_install,
                 global,
             },
             Some("game") => CoreCommand::AddGame {
@@ -435,11 +485,18 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
                 optional,
                 peer,
                 no_save,
+                install: !no_install,
                 global,
             },
         }),
-        Commands::Remove { package } => SomeCore(match ecosystem.as_deref() {
-            Some("web") => CoreCommand::RemoveWeb { package },
+        Commands::Remove {
+            package,
+            no_install,
+        } => SomeCore(match ecosystem.as_deref() {
+            Some("web") => CoreCommand::RemoveWeb {
+                package,
+                install: !no_install,
+            },
             Some("game") => CoreCommand::RemoveGame { package },
             Some("ai") => CoreCommand::RemoveAi { package },
             Some("clo") => CoreCommand::RemoveClo { package },
@@ -447,12 +504,12 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             Some("iot") => CoreCommand::RemoveIot { package },
             Some("app") => CoreCommand::RemoveApp { package },
             Some("lib") => CoreCommand::RemoveLib { package },
-            _ => CoreCommand::RemoveWeb { package },
+            _ => CoreCommand::RemoveWeb {
+                package,
+                install: !no_install,
+            },
         }),
-        Commands::Update {
-            packages,
-            install,
-        } => SomeCore(match ecosystem.as_deref() {
+        Commands::Update { packages, install } => SomeCore(match ecosystem.as_deref() {
             Some("web") => CoreCommand::UpdateWeb { packages, install },
             Some("game") => CoreCommand::UpdateGame { packages, install },
             Some("ai") => CoreCommand::UpdateAi { packages, install },
@@ -475,5 +532,49 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             _ => CoreCommand::ListWeb,
         }),
         _ => unreachable!("Unhandled command"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audit_strict_rejects_materializing_install_commands() {
+        let install = Commands::Install {
+            packages: vec![],
+            frozen: false,
+            ignore_scripts: false,
+        };
+        assert!(reject_unsupported_audit_strict(&install).is_err());
+
+        let add = Commands::AddWeb {
+            packages: vec!["zod".into()],
+            dev: false,
+            exact: false,
+            optional: false,
+            peer: false,
+            no_save: false,
+            no_install: false,
+            global: false,
+        };
+        assert!(reject_unsupported_audit_strict(&add).is_err());
+    }
+
+    #[test]
+    fn audit_strict_allows_audit_and_manifest_only_mutation() {
+        assert!(reject_unsupported_audit_strict(&Commands::Audit).is_ok());
+
+        let add = Commands::AddWeb {
+            packages: vec!["zod".into()],
+            dev: false,
+            exact: false,
+            optional: false,
+            peer: false,
+            no_save: false,
+            no_install: true,
+            global: false,
+        };
+        assert!(reject_unsupported_audit_strict(&add).is_ok());
     }
 }
