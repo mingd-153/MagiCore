@@ -1,8 +1,8 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "mg build",
   "outputDirectory": ".next",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
+  "devCommand": "mg dev",
+  "installCommand": "mg install",
   "framework": "nextjs",
   "regions": ["iad1"],
   "functions": {

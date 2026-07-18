@@ -1,60 +1,59 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use colored::*;
-use mg_ui::{info, warning};
-use std::time::Duration;
-use tokio::time::sleep;
+use mg_types::adapter::AuditReport;
+use mg_ui::{info, success, warning};
+use std::path::Path;
 
-pub async fn audit() -> Result<()> {
+pub async fn audit(
+    adapter: &dyn mg_types::adapter::PackageAdapter,
+    project_root: &Path,
+) -> Result<()> {
     println!(
         "\n🛡️  {}",
         "MegaGate Security Audit (Web Core)".bold().cyan()
     );
 
-    info("Fetching lockfile and dependency tree...");
-    sleep(Duration::from_millis(300)).await;
+    info("Auditing lockfile through the native web adapter...");
+    let report = adapter.audit(project_root).await?;
+    print_report(&report);
 
-    info("Submitting payload to NPM Security API (https://registry.npmjs.org/-/npm/v1/security/audits)...");
-    // Simulate network delay for API request
-    sleep(Duration::from_millis(800)).await;
+    if report.vulnerability_count > 0 {
+        bail!(
+            "audit found {} vulnerabilities across {} packages",
+            report.vulnerability_count,
+            report.packages_audited
+        );
+    }
 
-    // Simulate API response
-    println!("\n{}", "Audit Report".bold().underline());
-
-    // Simulate vulnerabilities found
-    println!(
-        "{}    {} in {}",
-        "High".red().bold(),
-        "Prototype Pollution".bold(),
-        "lodash (< 4.17.21)"
-    );
-    println!(
-        "        {} Run `mg update web lodash` to fix.",
-        "↳".dimmed()
-    );
-
-    println!(
-        "{}     {} in {}",
-        "Low".yellow().bold(),
-        "Regular Expression Denial of Service".bold(),
-        "minimist (< 1.2.6)"
-    );
-    println!(
-        "        {} Run `mg update web minimist` to fix.",
-        "↳".dimmed()
-    );
-
-    println!("\n{}", "Summary:".bold());
-    println!("  Scanned {} packages", "1,245".cyan());
-    println!(
-        "  Found {} vulnerabilities ({} high, {} low)",
-        "2".red(),
-        "1".red(),
-        "1".yellow()
-    );
-
-    println!("\n{}", "Recommendation:".bold());
-    warning("Run `mg update web` to automatically patch these vulnerabilities.");
-    println!();
-
+    success("No vulnerabilities reported by the configured provider");
     Ok(())
+}
+
+fn print_report(report: &AuditReport) {
+    println!("\n{}", "Audit Report".bold().underline());
+    println!("  Packages audited: {}", report.packages_audited);
+    println!("  Vulnerabilities: {}", report.vulnerability_count);
+
+    for vuln in &report.vulnerabilities {
+        let severity = match vuln.severity_level {
+            mg_types::adapter::VulnerabilitySeverity::Critical
+            | mg_types::adapter::VulnerabilitySeverity::High => vuln.severity.red().bold(),
+            mg_types::adapter::VulnerabilitySeverity::Medium => vuln.severity.yellow().bold(),
+            _ => vuln.severity.normal(),
+        };
+        println!("\n{} {} in {}", severity, vuln.title.bold(), vuln.package);
+        if !vuln.cve.is_empty() {
+            println!("  CVE: {}", vuln.cve);
+        }
+        if let Some(patched) = &vuln.patched_versions {
+            println!("  Patched versions: {}", patched);
+        }
+        if let Some(url) = &vuln.url {
+            println!("  Advisory: {}", url);
+        }
+    }
+
+    if report.vulnerability_count > 0 {
+        warning("Audit failed. Review the advisories above before shipping.");
+    }
 }

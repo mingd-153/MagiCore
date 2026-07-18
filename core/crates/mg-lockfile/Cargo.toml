@@ -15,6 +15,10 @@ toml = { workspace = true }
 mg-types = { workspace = true }
 blake3 = { workspace = true }
 hex = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

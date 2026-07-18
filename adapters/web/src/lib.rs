@@ -5,8 +5,9 @@ use std::sync::{Mutex, OnceLock};
 use async_trait::async_trait;
 use base64::Engine;
 use dashmap::DashMap;
+use futures_util::future::join_all;
 use mg_adapter_base::BaseAdapter;
-use mg_fetcher::extract::extract_tarball;
+use mg_fetcher::extract::extract_tarball_from_reader;
 use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
 use mg_resolver::{
     DependencyError, DependencyProvider, RegistryCache, ResolvedDep, Resolver as CoreResolver,
@@ -302,6 +303,35 @@ fn validate_registry_allowed(url: &str) {
         url, allowed
     );
 }
+
+fn manifest_resolution_cache_key(manifest: &Manifest, registry_url: &str) -> String {
+    let mut entries = Vec::new();
+    for (group, deps) in manifest.dep_groups() {
+        for dep in deps {
+            entries.push(format!(
+                "{}\0{}\0{}\0{}\0{}\0{}",
+                group,
+                dep.name.as_str(),
+                dep.range.as_str(),
+                dep.dev,
+                dep.optional,
+                dep.peer
+            ));
+        }
+    }
+    entries.sort_unstable();
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"megagate-web-resolution-v1\0");
+    hasher.update(registry_url.trim_end_matches('/').as_bytes());
+    hasher.update(b"\0");
+    for entry in entries {
+        hasher.update(entry.as_bytes());
+        hasher.update(b"\0");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 impl Default for WebAdapter {
     fn default() -> Self {
         Self::new()
@@ -429,6 +459,18 @@ impl PackageAdapter for WebAdapter {
         if wanted.is_empty() {
             return Ok(ResolvedGraph::empty());
         }
+        let resolution_cache_key = self
+            .shared_cache
+            .as_ref()
+            .map(|_| manifest_resolution_cache_key(manifest, &self.registry_url));
+        if let (Some(shared_cache), Some(key)) =
+            (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
+        {
+            if let Some(graph) = shared_cache.read_resolution(key, &self.registry_url)? {
+                return Ok(graph);
+            }
+        }
+
         let result = self
             .resolver
             .solve(&wanted)
@@ -502,7 +544,13 @@ impl PackageAdapter for WebAdapter {
                 }
             })
             .collect();
-        Ok(ResolvedGraph { packages })
+        let graph = ResolvedGraph { packages };
+        if let (Some(shared_cache), Some(key)) =
+            (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
+        {
+            let _ = shared_cache.write_resolution(key, &self.registry_url, &graph);
+        }
+        Ok(graph)
     }
 
     async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
@@ -585,8 +633,6 @@ impl PackageAdapter for WebAdapter {
             .iter()
             .map(|pkg| (pkg.id.clone(), pkg))
             .collect();
-        let mut extracted_roots: std::collections::HashMap<PackageId, PathBuf> =
-            std::collections::HashMap::with_capacity(graph.packages.len());
         let mut packages_with_scripts: Vec<std::path::PathBuf> = Vec::new();
 
         let already_materialized: std::collections::HashSet<PackageId> = root_packages
@@ -596,13 +642,34 @@ impl PackageAdapter for WebAdapter {
             })
             .map(|pkg| pkg.id.clone())
             .collect();
+        let shared_package_cache_for_install = shared_cache
+            .as_ref()
+            .and_then(|shared| shared.package_cache().ok());
+        let local_has_seeded_tarballs = graph
+            .packages
+            .iter()
+            .any(|pkg| cache.contains_tarball(&pkg.id));
+        let use_shared_primary =
+            !local_has_seeded_tarballs && shared_package_cache_for_install.is_some();
+        let active_package_cache = if use_shared_primary {
+            shared_package_cache_for_install
+                .as_ref()
+                .expect("shared package cache checked above")
+        } else {
+            &cache
+        };
+        let secondary_shared_cache = if use_shared_primary {
+            None
+        } else {
+            shared_cache.as_ref()
+        };
 
         write_web_lockfile_with_state(project_root, graph, "installing")?;
         summary.bytes_from_cache += prefetch_tarballs(
             graph,
             &already_materialized,
-            &cache,
-            shared_cache.as_ref(),
+            active_package_cache,
+            secondary_shared_cache,
             &registry,
         )
         .await?;
@@ -634,7 +701,7 @@ impl PackageAdapter for WebAdapter {
                     &layout,
                     store,
                     shared_cache.as_ref(),
-                    &cache,
+                    active_package_cache,
                     pkg,
                 ) {
                     Ok(root) => root,
@@ -741,7 +808,7 @@ impl PackageAdapter for WebAdapter {
                     &layout,
                     store,
                     shared_cache.as_ref(),
-                    &cache,
+                    active_package_cache,
                     &mut extracted_roots,
                     &mut visiting,
                     0,
@@ -749,8 +816,14 @@ impl PackageAdapter for WebAdapter {
                 )?;
             }
         } else {
-            let extracted_roots = parallel_extract_packages(graph, &layout, store, shared_cache.as_ref(), &cache)
-                .await?;
+            let extracted_roots = parallel_extract_packages(
+                graph,
+                &layout,
+                store,
+                shared_cache.as_ref(),
+                active_package_cache,
+            )
+            .await?;
             profile.mark("prepare_extracted_roots", start);
             materialize_strict_layout(
                 project_root,
@@ -762,7 +835,7 @@ impl PackageAdapter for WebAdapter {
                 &layout,
                 store,
                 shared_cache.as_ref(),
-                &cache,
+                active_package_cache,
                 &mut packages_with_scripts,
                 &extracted_roots,
             )?;
@@ -830,15 +903,9 @@ impl PackageAdapter for WebAdapter {
 
             while let Some(result) = join_set.join_next().await {
                 if let Err(e) = result {
-                    eprintln!(
-                        "[megagate] warning: lifecycle script task panicked: {}",
-                        e
-                    );
+                    eprintln!("[megagate] warning: lifecycle script task panicked: {}", e);
                 } else if let Err(e) = result.unwrap() {
-                    eprintln!(
-                        "[megagate] warning: lifecycle script error: {}",
-                        e
-                    );
+                    eprintln!("[megagate] warning: lifecycle script error: {}", e);
                 }
             }
         }
@@ -879,7 +946,7 @@ impl PackageAdapter for WebAdapter {
     }
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
         let manifest = self.parse_manifest(project_root).await?;
-        let lockfile = read_web_lockfile(project_root);
+        let lockfile = read_web_lockfile_checked(project_root)?;
         let node_modules = project_root.join("node_modules");
         let mut packages = Vec::new();
 
@@ -942,7 +1009,7 @@ impl PackageAdapter for WebAdapter {
     ) -> MgResult<Vec<UpdatedPackage>> {
         let mut manifest = self.parse_manifest(project_root).await?;
         let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
-        let lockfile = read_web_lockfile(project_root);
+        let lockfile = read_web_lockfile_checked(project_root)?;
         let mut updated = Vec::new();
 
         for deps in [
@@ -992,7 +1059,7 @@ impl PackageAdapter for WebAdapter {
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
         use mg_types::adapter::{Vulnerability, VulnerabilitySeverity};
 
-        let lockfile = match read_web_lockfile(project_root) {
+        let lockfile = match read_web_lockfile_checked(project_root)? {
             Some(lock) => lock,
             None => return Ok(AuditReport::clean(0)),
         };
@@ -1013,7 +1080,7 @@ impl PackageAdapter for WebAdapter {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .user_agent("megagate/0.1.0")
+            .user_agent(format!("megagate/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| mg_types::MgError::Network(format!("audit client error: {e}")))?;
 
@@ -1027,12 +1094,10 @@ impl PackageAdapter for WebAdapter {
         let package_count = lockfile.packages.len();
 
         if !response.status().is_success() {
-            // Advisory API unavailable — return clean to avoid blocking CI
-            eprintln!(
-                "[megagate] warning: audit API returned {}, skipping",
+            return Err(mg_types::MgError::Network(format!(
+                "audit API returned {}",
                 response.status()
-            );
-            return Ok(AuditReport::clean(package_count));
+            )));
         }
 
         let advisories: serde_json::Value = response
@@ -1106,6 +1171,7 @@ fn is_workspace_protocol_range(range: &str) -> bool {
 struct NpmDependencyProvider {
     registry: native::npm_registry::NpmRegistry,
     metadata_cache: DashMap<String, native::npm_registry::PackageMetadata>,
+    metadata_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     registry_cache: RegistryCache,
     shared_cache: Option<SharedWebCache>,
     alias_targets: DashMap<String, PackageName>,
@@ -1115,6 +1181,7 @@ impl NpmDependencyProvider {
         Self {
             registry: native::npm_registry::NpmRegistry::new(url),
             metadata_cache: DashMap::new(),
+            metadata_locks: DashMap::new(),
             registry_cache: RegistryCache::new(),
             shared_cache,
             alias_targets: DashMap::new(),
@@ -1126,6 +1193,15 @@ impl NpmDependencyProvider {
         package: &PackageName,
     ) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
         let source_package = self.source_package_name(package);
+        if let Some(cached) = self.metadata_cache.get(source_package.as_str()) {
+            return Ok(cached.clone());
+        }
+        let lock = self
+            .metadata_locks
+            .entry(source_package.as_str().to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
         if let Some(cached) = self.metadata_cache.get(source_package.as_str()) {
             return Ok(cached.clone());
         }
@@ -1204,8 +1280,8 @@ impl NpmDependencyProvider {
         DependencyError,
     > {
         let mut results = std::collections::HashMap::new();
-        let mut join_set = tokio::task::JoinSet::new();
         let mut seen = std::collections::HashSet::new();
+        let mut futures = Vec::new();
 
         for alias_name in names {
             if !seen.insert(alias_name.as_str().to_string()) {
@@ -1213,19 +1289,18 @@ impl NpmDependencyProvider {
             }
             let alias_name = alias_name.clone();
             let source_name = self.source_package_name(&alias_name);
-            let registry = native::npm_registry::NpmRegistry::new(self.registry.registry_url());
-            let shared_cache = self.shared_cache.clone();
-            join_set.spawn(async move {
-                let metadata =
-                    load_metadata_with_fallback(&source_name, &registry, shared_cache.as_ref())
-                        .await?;
+            if let Some(metadata) = self.metadata_cache.get(source_name.as_str()) {
+                results.insert(alias_name.as_str().to_string(), metadata.clone());
+                continue;
+            }
+            futures.push(async move {
+                let metadata = self.metadata(&alias_name).await?;
                 Ok::<_, DependencyError>((alias_name.as_str().to_string(), metadata))
             });
         }
 
-        while let Some(joined) = join_set.join_next().await {
-            let (name, metadata) = joined
-                .map_err(|e| DependencyError(format!("metadata prefetch task failed: {e}")))??;
+        for fetched in join_all(futures).await {
+            let (name, metadata) = fetched?;
             results.insert(name, metadata);
         }
 
@@ -1286,6 +1361,23 @@ impl NpmDependencyProvider {
     fn version_supported(info: &native::npm_registry::VersionInfo) -> bool {
         Self::platform_matches(info.os.as_deref(), Self::current_npm_os())
             && Self::platform_matches(info.cpu.as_deref(), Self::current_npm_cpu())
+    }
+
+    fn known_optional_native_binary_supported(package: &PackageName) -> Option<bool> {
+        let name = package.as_str();
+        let os = Self::current_npm_os();
+        let cpu = Self::current_npm_cpu();
+        let expected = format!("{os}-{cpu}");
+
+        let target = name
+            .strip_prefix("@esbuild/")
+            .or_else(|| name.strip_prefix("@swc/core-"))
+            .or_else(|| name.strip_prefix("@rollup/rollup-"))
+            .or_else(|| name.strip_prefix("@tailwindcss/oxide-"))
+            .or_else(|| name.strip_prefix("lightningcss-"))
+            .or_else(|| name.strip_prefix("@parcel/watcher-"))?;
+
+        Some(target.starts_with(&expected))
     }
 
     fn select_best_version(
@@ -1356,6 +1448,14 @@ impl DependencyProvider for NpmDependencyProvider {
     }
 
     async fn should_enqueue(&self, dep: &ResolvedDep) -> Result<bool, DependencyError> {
+        if !dep.optional {
+            return Ok(true);
+        }
+
+        if let Some(supported) = Self::known_optional_native_binary_supported(&dep.package) {
+            return Ok(supported);
+        }
+
         let versions = self.get_versions(&dep.package).await?;
         let Some(selected) = Self::select_best_version(&versions, &dep.spec)? else {
             return Ok(!dep.optional);
@@ -1373,7 +1473,7 @@ impl DependencyProvider for NpmDependencyProvider {
         packages: &[PackageName],
     ) -> Result<Vec<(PackageName, Vec<Version>)>, DependencyError> {
         let mut results = Vec::with_capacity(packages.len());
-        let mut join_set = tokio::task::JoinSet::new();
+        let mut futures = Vec::new();
 
         for package in packages {
             if let Some(cached) = self.registry_cache.get_versions(package.as_str()) {
@@ -1381,26 +1481,30 @@ impl DependencyProvider for NpmDependencyProvider {
                 continue;
             }
 
-            let package_name = package.clone();
             let package_key = self.source_package_name(package).as_str().to_string();
-            let registry = native::npm_registry::NpmRegistry::new(self.registry.registry_url());
-            let shared_cache = self.shared_cache.clone();
-            join_set.spawn(async move {
-                let metadata = load_metadata_by_name_with_fallback(
-                    &package_key,
-                    &registry,
-                    shared_cache.as_ref(),
-                )
-                .await?;
+            if let Some(metadata) = self.metadata_cache.get(&package_key) {
+                let mut versions: Vec<Version> = metadata
+                    .versions
+                    .keys()
+                    .filter_map(|k| Version::parse(k).ok())
+                    .collect();
+                versions.sort();
+                self.registry_cache
+                    .insert_versions(package.as_str().to_string(), versions.clone());
+                results.push((package.clone(), versions));
+                continue;
+            }
+            let package_name = package.clone();
+            futures.push(async move {
+                let metadata = self.metadata(&package_name).await?;
                 Ok::<_, DependencyError>((package_name, metadata))
             });
         }
 
-        while let Some(joined) = join_set.join_next().await {
-            let (package, metadata) =
-                joined.map_err(|e| DependencyError(format!("prefetch task failed: {e}")))??;
-            self.metadata_cache
-                .insert(package.as_str().to_string(), metadata.clone());
+        for fetched in join_all(futures).await {
+            let (package, metadata) = fetched?;
+            let source_key = self.source_package_name(&package).as_str().to_string();
+            self.metadata_cache.insert(source_key, metadata.clone());
             let mut versions: Vec<Version> = metadata
                 .versions
                 .keys()
@@ -1426,6 +1530,24 @@ impl DependencyProvider for NpmDependencyProvider {
             let cache_key = Self::version_key(id);
             if let Some(cached) = self.registry_cache.get_deps(&cache_key) {
                 results.push((id.clone(), cached));
+            } else if let Some(meta) = self
+                .metadata_cache
+                .get(self.source_package_name(id.name()).as_str())
+            {
+                let deps = meta
+                    .versions
+                    .get(&id.version().to_string())
+                    .map(|v| {
+                        let mut collected =
+                            self.collect_resolved_deps(v.dependencies.as_ref(), false);
+                        collected.extend(
+                            self.collect_resolved_deps(v.optional_dependencies.as_ref(), true),
+                        );
+                        collected
+                    })
+                    .unwrap_or_default();
+                self.registry_cache.insert_deps(cache_key, deps.clone());
+                results.push((id.clone(), deps));
             } else {
                 preloaded.push(id.clone());
             }
@@ -1435,29 +1557,18 @@ impl DependencyProvider for NpmDependencyProvider {
             return Ok(results);
         }
 
-        let mut join_set = tokio::task::JoinSet::new();
+        let mut futures = Vec::new();
 
         for id in preloaded {
             let package_id = id.clone();
-            let registry_url = self.registry.registry_url().to_string();
-            let shared_cache = self.shared_cache.clone();
-            let source_package = self.source_package_name(package_id.name());
-
-            join_set.spawn(async move {
-                let reg = native::npm_registry::NpmRegistry::new(&registry_url);
-                let meta =
-                    load_metadata_with_fallback(&source_package, &reg, shared_cache.as_ref())
-                        .await?;
+            futures.push(async move {
+                let meta = self.metadata(package_id.name()).await?;
                 Ok::<_, DependencyError>((package_id, meta))
             });
         }
 
-        while let Some(joined) = join_set.join_next().await {
-            let result: Result<
-                (PackageId, native::npm_registry::PackageMetadata),
-                DependencyError,
-            > = joined.map_err(|e| DependencyError(format!("prefetch task failed: {e}")))?;
-            let (package_id, meta) = result?;
+        for fetched in join_all(futures).await {
+            let (package_id, meta) = fetched?;
             let deps = meta
                 .versions
                 .get(&package_id.version().to_string())
@@ -1533,6 +1644,13 @@ struct CachedMetadataEnvelope {
     #[serde(default)]
     stale_retry_after: Option<u64>,
     metadata: native::npm_registry::PackageMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedResolutionEnvelope {
+    cache_version: u32,
+    registry_url: String,
+    graph: ResolvedGraph,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1611,6 +1729,51 @@ impl SharedWebCache {
             .join("metadata")
             .join(package)
             .join("metadata.json")
+    }
+
+    fn resolution_path(&self, key: &str) -> PathBuf {
+        self.root.join("resolutions").join(format!("{key}.json"))
+    }
+
+    fn read_resolution(&self, key: &str, registry_url: &str) -> MgResult<Option<ResolvedGraph>> {
+        let path = self.resolution_path(key);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(_) => return Ok(None),
+        };
+        let envelope = match serde_json::from_str::<CachedResolutionEnvelope>(&contents) {
+            Ok(envelope) => envelope,
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+                return Ok(None);
+            }
+        };
+        if envelope.cache_version != 1 || envelope.registry_url != registry_url {
+            return Ok(None);
+        }
+        Ok(Some(envelope.graph))
+    }
+
+    fn write_resolution(
+        &self,
+        key: &str,
+        registry_url: &str,
+        graph: &ResolvedGraph,
+    ) -> MgResult<()> {
+        let path = self.resolution_path(key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let payload = serde_json::to_vec(&CachedResolutionEnvelope {
+            cache_version: 1,
+            registry_url: registry_url.to_string(),
+            graph: graph.clone(),
+        })?;
+        atomic_write(&path, &payload)
     }
 
     fn read_metadata(
@@ -1700,14 +1863,18 @@ impl SharedWebCache {
     }
 
     fn maybe_prune(&self) {
+        let _ = prune_shared_cache_to_quota(&self.root, shared_cache_max_bytes());
+
         if !shared_cache_prune_due(&self.root) {
             return;
         }
 
         let max_age = std::time::Duration::from_secs(shared_cache_max_age_secs());
         let _ = prune_old_files_under(&self.root.join("cache"), max_age);
+        let _ = prune_old_files_under(&self.root.join("resolutions"), max_age);
         let _ = prune_old_package_dirs_under(&self.root.join("packages"), max_age);
         let _ = prune_old_metadata_dirs_under(&self.root.join("metadata"), max_age);
+        let _ = prune_shared_cache_to_quota(&self.root, shared_cache_max_bytes());
         let _ = write_shared_cache_prune_stamp(&self.root);
     }
 
@@ -1884,7 +2051,10 @@ async fn prefetch_tarballs(
                 {
                     if verify_tarball_integrity(&pkg_clone, &bytes).is_ok() {
                         local_cache
-                            .cache_tarball(&pkg_clone.id, &bytes)
+                            .cache_tarball_from_path(
+                                &pkg_clone.id,
+                                &shared_package_cache.tarball_path(&pkg_clone.id),
+                            )
                             .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
                         return Ok::<_, mg_types::MgError>(PrefetchOutcome::CacheHit(
                             bytes.len() as u64
@@ -1926,7 +2096,8 @@ async fn prefetch_tarballs(
                     .cache_tarball(&pkg.id, &bytes)
                     .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
                 if let Some(shared_package_cache) = shared_package_cache.as_ref() {
-                    let _ = shared_package_cache.cache_tarball(&pkg.id, &bytes);
+                    let _ = shared_package_cache
+                        .cache_tarball_from_path(&pkg.id, &cache.tarball_path(&pkg.id));
                 }
             }
         }
@@ -1959,8 +2130,7 @@ fn metadata_ttl_secs() -> u64 {
     std::env::var("MEGAGATE_WEB_METADATA_TTL_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|ttl| *ttl > 0)
-        .unwrap_or(300)
+        .unwrap_or(6 * 60 * 60)
 }
 
 fn metadata_max_stale_fallback_secs() -> u64 {
@@ -2001,6 +2171,13 @@ fn shared_cache_max_age_secs() -> u64 {
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
         .unwrap_or(7 * 24 * 60 * 60)
+}
+
+fn shared_cache_max_bytes() -> u64 {
+    std::env::var("MEGAGATE_WEB_CACHE_MAX_BYTES")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(2 * 1024 * 1024 * 1024)
 }
 
 fn strict_integrity_enforced() -> bool {
@@ -2129,6 +2306,137 @@ fn prune_old_metadata_dirs_under(root: &Path, max_age: std::time::Duration) -> M
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CachePruneEntryKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug)]
+struct CachePruneEntry {
+    path: PathBuf,
+    bytes: u64,
+    modified: std::time::SystemTime,
+    kind: CachePruneEntryKind,
+}
+
+fn prune_shared_cache_to_quota(root: &Path, max_bytes: u64) -> MgResult<()> {
+    if max_bytes == 0 || !root.exists() {
+        return Ok(());
+    }
+
+    let mut entries = Vec::new();
+    collect_prunable_files(&root.join("cache"), &mut entries);
+    collect_prunable_files(&root.join("metadata"), &mut entries);
+    collect_prunable_files(&root.join("resolutions"), &mut entries);
+    collect_prunable_package_dirs(&root.join("packages"), &mut entries);
+
+    let mut total: u64 = entries.iter().map(|entry| entry.bytes).sum();
+    if total <= max_bytes {
+        return Ok(());
+    }
+
+    entries.sort_by_key(|entry| entry.modified);
+    for entry in entries {
+        if total <= max_bytes {
+            break;
+        }
+        let removed = match entry.kind {
+            CachePruneEntryKind::File => std::fs::remove_file(&entry.path).is_ok(),
+            CachePruneEntryKind::Directory => std::fs::remove_dir_all(&entry.path).is_ok(),
+        };
+        if removed {
+            total = total.saturating_sub(entry.bytes);
+        }
+    }
+
+    cleanup_empty_dirs(&root.join("cache"));
+    cleanup_empty_dirs(&root.join("metadata"));
+    cleanup_empty_dirs(&root.join("resolutions"));
+    cleanup_empty_dirs(&root.join("packages"));
+    Ok(())
+}
+
+fn collect_prunable_files(root: &Path, entries: &mut Vec<CachePruneEntry>) {
+    if !root.exists() {
+        return;
+    }
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        entries.push(CachePruneEntry {
+            path: entry.path().to_path_buf(),
+            bytes: metadata.len(),
+            modified: metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+            kind: CachePruneEntryKind::File,
+        });
+    }
+}
+
+fn collect_prunable_package_dirs(root: &Path, entries: &mut Vec<CachePruneEntry>) {
+    if !root.exists() {
+        return;
+    }
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        let marker = path.join(".megagate-package-root.json");
+        if !marker.exists() {
+            continue;
+        }
+        let modified = std::fs::metadata(&marker)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        entries.push(CachePruneEntry {
+            path: path.to_path_buf(),
+            bytes: directory_size(path),
+            modified,
+            kind: CachePruneEntryKind::Directory,
+        });
+    }
+}
+
+fn directory_size(path: &Path) -> u64 {
+    WalkDir::new(path)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.metadata().ok())
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| metadata.len())
+        .sum()
+}
+
+fn cleanup_empty_dirs(root: &Path) {
+    if !root.exists() {
+        return;
+    }
+    let mut directories: Vec<PathBuf> = WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_dir())
+        .map(|entry| entry.path().to_path_buf())
+        .collect();
+    directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for dir in directories {
+        remove_dir_if_empty(&dir);
+    }
 }
 
 fn path_is_older_than(path: &Path, max_age: std::time::Duration) -> bool {
@@ -2407,23 +2715,20 @@ fn extracted_package_marker_path(root: &Path) -> PathBuf {
     root.join(".megagate-package-root.json")
 }
 
-fn expected_extracted_package_marker(
+fn expected_extracted_package_marker_from_bytes(
     pkg: &ResolvedPackage,
-    tarball_path: &Path,
+    tarball_bytes: &[u8],
 ) -> MgResult<ExtractedPackageMarker> {
-    let tarball = std::fs::read(tarball_path).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to read tarball '{}' for '{}': {}",
-            tarball_path.display(),
-            pkg.id.name_str(),
-            err
-        ))
-    })?;
+    let tarball_fingerprint = if pkg.integrity.is_empty() {
+        compute_sha256_hex(tarball_bytes)
+    } else {
+        format!("integrity:{}", pkg.integrity)
+    };
     Ok(ExtractedPackageMarker {
         name: pkg.id.name_str().to_string(),
         version: pkg.id.version().to_string(),
         integrity: (!pkg.integrity.is_empty()).then(|| pkg.integrity.clone()),
-        tarball_sha256: compute_sha256_hex(&tarball),
+        tarball_sha256: tarball_fingerprint,
     })
 }
 
@@ -2469,7 +2774,25 @@ fn ensure_extracted_package_root(
     pkg: &ResolvedPackage,
     tarball_path: &Path,
 ) -> MgResult<PathBuf> {
-    let expected_marker = expected_extracted_package_marker(pkg, tarball_path)?;
+    let tarball = std::fs::read(tarball_path).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to read tarball '{}' for '{}': {}",
+            tarball_path.display(),
+            pkg.id.name_str(),
+            err
+        ))
+    })?;
+    ensure_extracted_package_root_from_bytes(layout, store, shared_cache, pkg, &tarball)
+}
+
+fn ensure_extracted_package_root_from_bytes(
+    layout: &Layout,
+    store: &ContentStore,
+    shared_cache: Option<&SharedWebCache>,
+    pkg: &ResolvedPackage,
+    tarball_bytes: &[u8],
+) -> MgResult<PathBuf> {
+    let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
     let canonical_root = shared_cache
         .map(|shared| shared.extracted_package_root(pkg))
         .unwrap_or_else(|| local_extracted_package_root(layout, pkg));
@@ -2484,17 +2807,7 @@ fn ensure_extracted_package_root(
             .map(|marker| marker == &expected_marker)
             .unwrap_or(false)
     {
-        // Re-verify local tarball integrity when present before trusting cache.
-        // Missing local tarballs should not invalidate a valid shared extracted root.
-        if tarball_path.exists()
-            && verify_tarball_integrity(pkg, &std::fs::read(tarball_path)?).is_err()
-        {
-            // local tarball was tampered, remove and re-fetch will happen at caller
-            let _ = std::fs::remove_file(tarball_path);
-            let _ = std::fs::remove_dir_all(&canonical_root);
-        } else {
-            return Ok(canonical_root);
-        }
+        return Ok(canonical_root);
     }
 
     let extract_root = extracted_package_root(layout, pkg);
@@ -2516,7 +2829,7 @@ fn ensure_extracted_package_root(
             err
         ))
     })?;
-    extract_tarball(tarball_path, &extract_root)
+    extract_tarball_from_reader(std::io::Cursor::new(tarball_bytes), &extract_root)
         .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
     let package_root = locate_package_dir(&extract_root)?;
 
@@ -2559,11 +2872,11 @@ async fn parallel_extract_packages(
         .and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or_else(|| {
-            // Use number of CPUs, but cap at 16 to avoid contention on spinning disks
+            // Use number of CPUs, but cap at 32 for extraction
             std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(4)
-                .min(16)
+                .min(32)
         });
 
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(extract_concurrency));
@@ -2588,12 +2901,21 @@ async fn parallel_extract_packages(
             // spawn_blocking: extraction is CPU-bound (decompression) + sync I/O
             let id = pkg.id.clone();
             let root = tokio::task::spawn_blocking(move || {
-                ensure_extracted_package_root(
+                // Read tarball bytes once from cache (already in memory from prefetch or quick disk read)
+                let tarball_bytes = std::fs::read(&tarball_path).map_err(|e| {
+                    mg_types::MgError::Other(format!(
+                        "failed to read tarball '{}' for '{}': {}",
+                        tarball_path.display(),
+                        pkg.id.name_str(),
+                        e
+                    ))
+                })?;
+                ensure_extracted_package_root_from_bytes(
                     &layout,
                     &store,
                     shared_cache.as_ref(),
                     &pkg,
-                    &tarball_path,
+                    &tarball_bytes,
                 )
             })
             .await
@@ -2798,14 +3120,8 @@ fn materialize_nested_dependencies(
                 })?;
             }
 
-            let package_root = extracted_root_for(
-                extracted_roots,
-                layout,
-                store,
-                shared_cache,
-                cache,
-                dep_pkg,
-            )?;
+            let package_root =
+                extracted_root_for(extracted_roots, layout, store, shared_cache, cache, dep_pkg)?;
             hardlink_tree(package_root.as_path(), &nested_dir)?;
             packages_with_scripts.push(nested_dir.clone());
         }
@@ -3091,32 +3407,6 @@ fn package_bin_entries(package_dir: &Path) -> MgResult<Vec<(String, PathBuf)>> {
     Ok(entries)
 }
 
-fn package_manifest_dependency_names(package_dir: &Path) -> MgResult<Vec<String>> {
-    let package_json = package_dir.join("package.json");
-    if !package_json.exists() {
-        return Ok(Vec::new());
-    }
-
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&package_json)?).map_err(|err| {
-            mg_types::MgError::Other(format!(
-                "failed to parse package manifest '{}': {}",
-                package_json.display(),
-                err
-            ))
-        })?;
-
-    let mut names = Vec::new();
-    for section in ["dependencies", "optionalDependencies", "peerDependencies"] {
-        if let Some(map) = manifest.get(section).and_then(|value| value.as_object()) {
-            names.extend(map.keys().cloned());
-        }
-    }
-    names.sort();
-    names.dedup();
-    Ok(names)
-}
-
 #[cfg(unix)]
 fn create_bin_link(link: &Path, target: &Path) -> MgResult<()> {
     use std::os::unix::fs::symlink;
@@ -3190,8 +3480,8 @@ fn write_web_lockfile_with_state(
     state: &str,
 ) -> MgResult<()> {
     let lock_path = project_root.join("mg.lock");
-    let mut lockfile =
-        read_web_lockfile(project_root).unwrap_or_else(|| Lockfile::new("web", "frontend"));
+    let mut lockfile = read_web_lockfile_checked(project_root)?
+        .unwrap_or_else(|| Lockfile::new("web", "frontend"));
 
     let local_layout = Layout::new(project_cache_dir(project_root));
     let cache = PackageCache::new(local_layout.cache_dir())
@@ -3233,18 +3523,14 @@ fn write_web_lockfile_with_state(
         })
         .collect();
 
-    // Sign the lockfile before serializing (no-op unless MEGAGATE_LOCKFILE_KEY is set)
-    if let Err(e) = mg_lockfile::LockfileSigner::sign(&mut lockfile) {
-        eprintln!("[megagate] warning: lockfile signing failed: {e}");
-    }
+    mg_lockfile::LockfileSigner::sign(&mut lockfile)
+        .map_err(|e| mg_types::MgError::Other(format!("lockfile signing failed: {e}")))?;
 
     let toml = serialization::to_toml(&lockfile)?;
     atomic_write(&lock_path, toml.as_bytes())?;
 
-    let checksum = mg_crypto::hash(toml.as_bytes(), mg_crypto::HashAlgorithm::Sha256)
+    mg_lockfile::write_lockfile_checksum(project_root, toml.as_bytes())
         .map_err(|e| mg_types::MgError::Other(format!("checksum failed: {e}")))?;
-    let checksum_path = project_root.join("mg.lock.sha256");
-    atomic_write(&checksum_path, checksum.as_bytes())?;
 
     Ok(())
 }
@@ -3264,37 +3550,22 @@ fn installed_package_matches(path: &Path, package_id: &PackageId) -> bool {
 }
 
 pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
-    let lock_path = project_root.join("mg.lock");
-    let existing = std::fs::read_to_string(lock_path).ok()?;
+    read_web_lockfile_checked(project_root).ok().flatten()
+}
 
-    let checksum_path = project_root.join("mg.lock.sha256");
-    if checksum_path.exists() {
-        if let Ok(expected_checksum) = std::fs::read_to_string(&checksum_path) {
-            let actual_checksum =
-                mg_crypto::hash(existing.as_bytes(), mg_crypto::HashAlgorithm::Sha256).ok()?;
-
-            if actual_checksum.trim() != expected_checksum.trim() {
-                if strict_integrity_enforced() {
-                    eprintln!(
-                        "ERROR: Lockfile checksum mismatch - mg.lock may have been tampered with"
-                    );
-                    return None;
-                } else {
-                    eprintln!(
-                        "WARNING: Lockfile checksum mismatch - mg.lock may have been tampered with (proceeding in non-strict mode)"
-                    );
-                }
-            }
-        }
-    } else if strict_integrity_enforced()
+pub fn read_web_lockfile_checked(project_root: &Path) -> MgResult<Option<Lockfile>> {
+    if strict_integrity_enforced()
         && std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_err()
+        && mg_lockfile::lockfile_path(project_root).exists()
+        && !mg_lockfile::lockfile_checksum_path(project_root).exists()
     {
         eprintln!(
             "WARNING: Lockfile checksum file (mg.lock.sha256) not found - cannot verify integrity"
         );
     }
 
-    serialization::from_toml::<Lockfile>(&existing).ok()
+    mg_lockfile::read_lockfile_checked(project_root)
+        .map_err(|err| mg_types::MgError::Other(err.to_string()))
 }
 
 fn preferred_registry_version(metadata: &native::npm_registry::PackageMetadata) -> Option<String> {
@@ -3347,19 +3618,6 @@ fn materialize_strict_layout(
     let _ = shared_cache;
     let _ = cache;
     let virtual_store = node_modules.join(".megagate");
-    let selected_packages_by_name: std::collections::HashMap<String, PackageId> = graph
-        .packages
-        .iter()
-        .fold(std::collections::HashMap::new(), |mut acc, pkg| {
-            acc.entry(pkg.id.name_str().to_string())
-                .and_modify(|current| {
-                    if pkg.id.version() > current.version() {
-                        *current = pkg.id.clone();
-                    }
-                })
-                .or_insert_with(|| pkg.id.clone());
-            acc
-        });
     if let Err(e) = std::fs::create_dir_all(&virtual_store) {
         return Err(mg_types::MgError::Other(format!(
             "failed to create virtual store: {}",
@@ -3367,7 +3625,9 @@ fn materialize_strict_layout(
         )));
     }
 
-    // 1. Materialize all packages into virtual store - PARALLEL
+    // 1. Materialize all packages into virtual store - PARALLEL.
+    // Keep project installs independent from shared-cache GC: hardlinks survive even
+    // when the shared extracted root is later pruned.
     let vstore_dirs: Vec<_> = graph
         .packages
         .iter()
@@ -3386,19 +3646,26 @@ fn materialize_strict_layout(
         })
         .collect();
 
-    // Parallel materialization: hardlink from canonical root to vstore
+    // Parallel materialization: hardlink from canonical root to vstore.
     let materialize_results: Vec<_> = vstore_dirs
         .into_par_iter()
         .map(|(pkg_id, vstore_pkg_dir, pkg)| {
             if !installed_package_matches(&vstore_pkg_dir, &pkg_id) {
-                if vstore_pkg_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&vstore_pkg_dir);
+                remove_fs_entry(&vstore_pkg_dir)?;
+                if let Some(parent) = vstore_pkg_dir.parent() {
+                    std::fs::create_dir_all(parent).map_err(|err| {
+                        mg_types::MgError::Other(format!(
+                            "failed to create vstore parent '{}': {}",
+                            parent.display(),
+                            err
+                        ))
+                    })?;
                 }
                 let package_root = extracted_roots
                     .get(&pkg_id)
                     .cloned()
                     .unwrap_or_else(|| local_extracted_package_root(layout, &pkg));
-                hardlink_tree(package_root.as_path(), &vstore_pkg_dir)?;
+                hardlink_tree(&package_root, &vstore_pkg_dir)?;
             }
             Ok::<_, mg_types::MgError>(vstore_pkg_dir)
         })
@@ -3713,6 +3980,166 @@ mod tests {
             "https://registry.example.test/react-18.2.0.tgz"
         );
         assert_eq!(graph.packages[0].integrity, "sha512-c2hhcmVk");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable() {
+        let shared = tempfile::tempdir().unwrap();
+        let registry_url = "http://127.0.0.1:9";
+        let cache = SharedWebCache {
+            root: shared.path().to_path_buf(),
+        };
+        let mut manifest = Manifest::new("demo-a", mg_types::ecosystem::Ecosystem::Web);
+        manifest.add_dep(
+            DependencySpec::new(
+                PackageName::new("react").unwrap(),
+                VersionRange::parse("^18.2.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: PackageId::new(
+                    PackageName::new("react").unwrap(),
+                    Version::parse("18.2.0").unwrap(),
+                ),
+                integrity: "sha512-react".to_string(),
+                tarball_url: "https://registry.example.test/react-18.2.0.tgz".to_string(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+        let key = manifest_resolution_cache_key(&manifest, registry_url);
+        cache.write_resolution(&key, registry_url, &graph).unwrap();
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            registry_url.to_string(),
+            shared.path().to_path_buf(),
+        );
+        let resolved = adapter.resolve(&manifest).await.unwrap();
+
+        assert_eq!(resolved.packages.len(), 1);
+        assert_eq!(resolved.packages[0].id.to_string(), "react@18.2.0");
+        assert_eq!(resolved.packages[0].integrity, "sha512-react");
+    }
+
+    #[test]
+    fn test_read_web_lockfile_checked_rejects_checksum_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.resolution.state = "locked".into();
+        let toml = serialization::to_toml(&lock).unwrap();
+        std::fs::write(dir.path().join("mg.lock"), toml).unwrap();
+        std::fs::write(dir.path().join("mg.lock.sha256"), "not-the-checksum").unwrap();
+
+        let err = read_web_lockfile_checked(dir.path()).unwrap_err();
+
+        assert!(
+            err.to_string().contains("lockfile checksum mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_read_web_lockfile_checked_rejects_malformed_lockfile() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("mg.lock"), "not = [valid").unwrap();
+
+        let err = read_web_lockfile_checked(dir.path()).unwrap_err();
+
+        assert!(
+            err.to_string().contains("failed to parse lockfile"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_manifest_resolution_cache_key_ignores_dep_order_and_app_name() {
+        let registry_url = "https://registry.npmjs.org";
+        let mut left = Manifest::new("demo-a", mg_types::ecosystem::Ecosystem::Web);
+        left.add_dep(
+            DependencySpec::new(
+                PackageName::new("react").unwrap(),
+                VersionRange::parse("^18.2.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+        left.add_dep(
+            DependencySpec::new(
+                PackageName::new("zod").unwrap(),
+                VersionRange::parse("^3.22.4").unwrap(),
+            ),
+            true,
+            false,
+            false,
+        );
+
+        let mut right = Manifest::new("demo-b", mg_types::ecosystem::Ecosystem::Web);
+        right.add_dep(
+            DependencySpec::new(
+                PackageName::new("zod").unwrap(),
+                VersionRange::parse("^3.22.4").unwrap(),
+            ),
+            true,
+            false,
+            false,
+        );
+        right.add_dep(
+            DependencySpec::new(
+                PackageName::new("react").unwrap(),
+                VersionRange::parse("^18.2.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            manifest_resolution_cache_key(&left, registry_url),
+            manifest_resolution_cache_key(&right, registry_url)
+        );
+    }
+
+    #[test]
+    fn test_prune_shared_cache_to_quota_removes_prunable_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache").join("react");
+        let resolution_dir = dir.path().join("resolutions");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::create_dir_all(&resolution_dir).unwrap();
+        std::fs::write(cache_dir.join("18.2.0.tgz"), vec![b'a'; 1024]).unwrap();
+        std::fs::write(resolution_dir.join("graph.json"), vec![b'b'; 1024]).unwrap();
+
+        prune_shared_cache_to_quota(dir.path(), 512).unwrap();
+
+        let remaining = directory_size(dir.path());
+        assert!(
+            remaining <= 512,
+            "expected quota prune to reduce cache to <= 512 bytes, got {remaining}"
+        );
+    }
+
+    #[test]
+    fn test_prune_shared_cache_to_quota_does_not_delete_unmarked_package_json_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("packages").join("manual").join("nested");
+        let cache_dir = dir.path().join("cache").join("react");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::write(nested.join("package.json"), "{}").unwrap();
+        std::fs::write(cache_dir.join("old.tgz"), vec![b'a'; 1024]).unwrap();
+
+        prune_shared_cache_to_quota(dir.path(), 1).unwrap();
+
+        assert!(
+            nested.join("package.json").exists(),
+            "quota pruning should only delete MegaGate-marked package cache roots"
+        );
     }
 
     #[tokio::test]
@@ -4489,11 +4916,8 @@ mod tests {
         assert_eq!(summary.added, vec![react.clone()]);
         assert!(summary.bytes_from_cache > 0);
         assert!(dir.path().join("node_modules/react/index.js").exists());
-        assert!(dir
+        assert!(shared
             .path()
-            .join(".megagate")
-            .join("cache")
-            .join("web")
             .join("cache")
             .join("react")
             .join("18.2.0.tgz")
@@ -5107,6 +5531,12 @@ mod tests {
             panic!("installed file not found at: {}", installed_file.display())
         });
         assert_eq!(cached_meta.ino(), installed_meta.ino());
+
+        std::fs::remove_dir_all(shared.path().join("packages")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&installed_file).unwrap(),
+            "export default 'react';"
+        );
     }
 
     #[tokio::test]
@@ -5405,6 +5835,31 @@ mod tests {
         assert_eq!(
             installed_package_version(&pkg_dir).unwrap().to_string(),
             "4.4.3"
+        );
+    }
+
+    #[test]
+    fn test_known_optional_native_binary_supported_only_matches_current_target() {
+        let supported = PackageName::new(format!(
+            "@esbuild/{}-{}",
+            NpmDependencyProvider::current_npm_os(),
+            NpmDependencyProvider::current_npm_cpu()
+        ))
+        .unwrap();
+        let unsupported = PackageName::new("@esbuild/linux-s390x").unwrap();
+        let unknown = PackageName::new("optional-but-not-native").unwrap();
+
+        assert_eq!(
+            NpmDependencyProvider::known_optional_native_binary_supported(&supported),
+            Some(true)
+        );
+        assert_eq!(
+            NpmDependencyProvider::known_optional_native_binary_supported(&unsupported),
+            Some(false)
+        );
+        assert_eq!(
+            NpmDependencyProvider::known_optional_native_binary_supported(&unknown),
+            None
         );
     }
 

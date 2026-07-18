@@ -238,8 +238,13 @@ fn should_skip_project_path(relative: &Path) -> bool {
 }
 
 pub async fn process_assets(config: &BundlerConfig) -> Result<(), anyhow::Error> {
-    let root = detect_working_dir(&config.entry)
-        .unwrap_or_else(|| config.entry.parent().unwrap_or(Path::new(".")).to_path_buf());
+    let root = detect_working_dir(&config.entry).unwrap_or_else(|| {
+        config
+            .entry
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
+    });
     materialize_index_html(&root, config)?;
 
     let public_dir = config.entry.parent().unwrap().join("public");
@@ -318,7 +323,11 @@ mod tests {
         std::fs::create_dir_all(root.join("node_modules")).unwrap();
         std::fs::create_dir_all(root.join("node_modules/.megagate")).unwrap();
         std::fs::create_dir_all(root.join(".megagate")).unwrap();
-        std::fs::write(root.join("package.json"), r#"{"name":"demo","version":"1.0.0"}"#).unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"demo","version":"1.0.0"}"#,
+        )
+        .unwrap();
         std::fs::write(root.join("src/main.tsx"), "export const ok = true;").unwrap();
 
         let prepared = prepare_workspace(&root.join("src/main.tsx")).unwrap();

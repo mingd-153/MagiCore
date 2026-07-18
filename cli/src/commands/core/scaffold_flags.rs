@@ -9,7 +9,11 @@ pub struct ScaffoldFlags {
     pub name: Option<String>,
     #[arg(long, help = "Target directory")]
     pub dir: Option<String>,
-    #[arg(long, help = "Package manager (npm|pnpm|yarn|bun)")]
+    #[arg(
+        long,
+        hide = true,
+        help = "Deprecated compatibility hint; MegaGate web uses its native installer"
+    )]
     pub pm: Option<String>,
     #[arg(long, help = "Init git repo")]
     pub git: bool,
@@ -176,7 +180,10 @@ pub struct ScaffoldFlags {
     pub turborepo: bool,
     #[arg(long, help = "Nx")]
     pub nx: bool,
-    #[arg(long, help = "Native npm/pnpm/yarn workspaces")]
+    #[arg(
+        long,
+        help = "MegaGate workspace layout with ecosystem-compatible package manifests"
+    )]
     pub workspaces: bool,
     #[arg(long, help = "Changesets for version/publish management")]
     pub changesets: bool,

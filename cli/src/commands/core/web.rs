@@ -6,11 +6,13 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use mg_crypto::HashAlgorithm;
-use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta, WorkspaceLock};
+use mg_lockfile::{
+    serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
+};
 use mg_types::adapter::PackageAdapter;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 
 use crate::commands::core::scaffold_flags::ScaffoldFlags;
 use crate::commands::core::shared;
@@ -19,108 +21,8 @@ use mg_ui::info;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 const SCAFFOLD_VERSION_OVERRIDES_ENV: &str = "MEGAGATE_WEB_SCAFFOLD_VERSION_OVERRIDES";
-const SCAFFOLD_BASELINE_VERSIONS: &[(&str, &str)] = &[
-    ("vue", "^3.5.39"),
-    ("react", "^19.2.7"),
-    ("react-dom", "^19.2.7"),
-    ("vite", "^8.1.4"),
-    ("@vitejs/plugin-react", "^6.0.3"),
-    ("@vitejs/plugin-vue", "^6.0.7"),
-    ("solid-js", "^1.9.14"),
-    ("vite-plugin-solid", "^2.11.12"),
-    ("typescript", "^5.9.2"),
-    ("@types/react", "^19.2.17"),
-    ("@types/react-dom", "^19.2.3"),
-    ("@types/node", "^26.1.1"),
-    ("tailwindcss", "^4.3.2"),
-    ("@sveltejs/kit", "^2.69.2"),
-    ("@sveltejs/vite-plugin-svelte", "^7.2.0"),
-    ("@sveltejs/adapter-auto", "^7.0.1"),
-    ("svelte", "^5.56.4"),
-    ("next", "^16.2.10"),
-    ("nuxt", "^4.4.8"),
-    ("@angular/core", "^22.0.6"),
-    ("@angular/platform-browser", "^22.0.6"),
-    ("@angular/platform-browser-dynamic", "^22.0.6"),
-    ("@angular/router", "^22.0.6"),
-    ("@angular/compiler", "^22.0.6"),
-    ("@angular/common", "^22.0.6"),
-    ("rxjs", "^7.8.2"),
-    ("zone.js", "^0.16.2"),
-    ("tslib", "^2.8.1"),
-    ("@angular/cli", "^22.0.6"),
-    ("@angular/compiler-cli", "^22.0.6"),
-    ("@angular-devkit/build-angular", "^22.0.6"),
-    ("@builder.io/qwik", "^1.20.0"),
-    ("@builder.io/qwik-city", "^1.20.0"),
-    ("astro", "^7.0.7"),
-    ("express", "^5.2.1"),
-    ("@types/express", "^5.0.6"),
-    ("hono", "^4.12.30"),
-    ("@hono/node-server", "^1.19.6"),
-    ("@nestjs/core", "^11.1.28"),
-    ("@nestjs/common", "^11.1.28"),
-    ("@nestjs/platform-express", "^11.1.28"),
-    ("reflect-metadata", "^0.2.2"),
-    ("zod", "^4.4.3"),
-    ("@trpc/server", "^11.18.0"),
-    ("fastify", "^5.10.0"),
-    ("tsx", "^4.23.0"),
-    ("@prisma/client", "^6.6.0"),
-    ("prisma", "^6.6.0"),
-    ("vitest", "^3.2.0"),
-    ("eslint", "^9.28.0"),
-    ("eslint-config-next", "^16.2.10"),
-    ("prettier", "^3.6.0"),
-    ("@tailwindcss/postcss", "^4.3.2"),
-    ("pg", "^8.15.0"),
-    ("zustand", "^5.0.3"),
-    ("@tanstack/react-query", "^5.62.0"),
-    ("next-auth", "^5.0.0"),
-    ("@playwright/test", "^1.52.0"),
-    ("husky", "^9.2.0"),
-    ("lint-staged", "^15.5.0"),
-    ("@biomejs/biome", "^1.9.0"),
-    ("clsx", "^2.1.0"),
-    ("tailwind-merge", "^3.2.0"),
-    ("class-variance-authority", "^0.7.0"),
-    ("sass", "^1.83.0"),
-    ("unocss", "^65.5.0"),
-    ("daisyui", "^4.12.0"),
-    ("@reduxjs/toolkit", "^2.6.0"),
-    ("react-redux", "^9.2.0"),
-    ("jest", "^29.7.0"),
-    ("@testing-library/react", "^16.0.0"),
-    ("@testing-library/jest-dom", "^6.6.0"),
-    ("jest-environment-jsdom", "^29.7.0"),
-    ("cypress", "^14.2.0"),
-    ("drizzle-orm", "^0.38.0"),
-    ("drizzle-kit", "^0.30.0"),
-    ("@clerk/nextjs", "^6.12.0"),
-    ("styled-components", "^6.1.0"),
-    ("@types/styled-components", "^5.1.0"),
-    ("@commitlint/cli", "^19.5.0"),
-    ("@commitlint/config-conventional", "^19.5.0"),
-    ("@apollo/server", "^4.11.0"),
-    ("@as-integrations/next", "^3.2.0"),
-    ("@trpc/server", "^11.0.0"),
-    ("@trpc/client", "^11.0.0"),
-    ("@trpc/next", "^11.0.0"),
-    ("@grpc/grpc-js", "^1.11.0"),
-    ("@grpc/proto-loader", "^0.7.0"),
-    ("lucia", "^3.2.0"),
-    ("@lucia-auth/adapter-drizzle", "^1.1.0"),
-    ("jose", "^5.7.0"),
-    ("dotenv-cli", "^7.4.0"),
-    ("next-i18next", "^15.3.0"),
-    ("next-pwa", "^5.6.0"),
-    ("@storybook/nextjs", "^8.2.0"),
-    ("@storybook/react", "^8.2.0"),
-    ("@sentry/nextjs", "^8.21.0"),
-    ("@vercel/analytics", "^1.3.0"),
-    ("@railway/cli", "^4.2.0"),
-    ("flyctl", "^0.2.0"),
-];
+const SCAFFOLD_BASELINE_VERSIONS_TOML: &str =
+    include_str!("../../../../templates/web/versions/scaffold-baseline.toml");
 
 fn install_hint_command() -> &'static str {
     #[cfg(all(
@@ -183,21 +85,22 @@ pub async fn add(
     optional: bool,
     peer: bool,
     no_save: bool,
+    install: bool,
     global: bool,
 ) -> Result<()> {
     let root = project_root()?;
     let adapter = web_adapter();
     shared::add(
-        &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, global,
+        &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, install, global,
     )
     .await
 }
 
 /// Remove web dependency
-pub async fn remove(package: String) -> Result<()> {
+pub async fn remove(package: String, install: bool) -> Result<()> {
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::remove(&*adapter, &root, &package).await
+    shared::remove(&*adapter, &root, &package, install).await
 }
 
 /// List web packages
@@ -659,7 +562,10 @@ fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Res
     let mut total_packages = 0usize;
 
     for target in package_targets {
-        let Some(lock) = mg_web_adapter::read_web_lockfile(target) else {
+        let Some(lock) = mg_lockfile::read_lockfile_checked(target).with_context(|| {
+            format!("failed to verify child lockfile at '{}'", target.display())
+        })?
+        else {
             continue;
         };
 
@@ -719,10 +625,10 @@ fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Res
     lockfile.workspaces = workspaces;
     lockfile.packages = packages.into_values().collect();
 
+    LockfileSigner::sign(&mut lockfile)?;
     let lock_toml = serialization::to_toml(&lockfile)?;
     atomic_write(&project_root.join("mg.lock"), lock_toml.as_bytes())?;
-    let checksum = mg_crypto::hash(lock_toml.as_bytes(), HashAlgorithm::Sha256)?;
-    atomic_write(&project_root.join("mg.lock.sha256"), checksum.as_bytes())?;
+    mg_lockfile::write_lockfile_checksum(project_root, lock_toml.as_bytes())?;
     Ok(())
 }
 
@@ -845,6 +751,31 @@ fn read_dev_script(project_root: &Path) -> Result<Option<String>> {
     read_script(project_root, "dev")
 }
 
+fn has_arg(args: &[OsString], flag: &str) -> bool {
+    args.iter().any(|arg| arg == flag)
+}
+
+fn append_dev_endpoint_args(
+    args: &mut Vec<OsString>,
+    host_flag: &str,
+    port_flag: &str,
+    host: Option<String>,
+    port: Option<u16>,
+) {
+    if let Some(host) = host {
+        if !has_arg(args, host_flag) {
+            args.push(OsString::from(host_flag));
+            args.push(OsString::from(host));
+        }
+    }
+    if let Some(port) = port {
+        if !has_arg(args, port_flag) {
+            args.push(OsString::from(port_flag));
+            args.push(OsString::from(port.to_string()));
+        }
+    }
+}
+
 fn build_dev_launch(
     project_root: &Path,
     script_name: &str,
@@ -867,14 +798,7 @@ fn build_dev_launch(
     match tokens.as_slice() {
         ["vite"] | ["vite", "dev"] => {
             let mut args = Vec::new();
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
@@ -883,14 +807,7 @@ fn build_dev_launch(
         }
         ["vite", rest @ ..] => {
             let mut args: Vec<OsString> = rest.iter().map(OsString::from).collect();
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
@@ -899,14 +816,7 @@ fn build_dev_launch(
         }
         ["next", "dev"] => {
             let mut args = vec![OsString::from("dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("-H"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("-p"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "-H", "-p", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
@@ -916,14 +826,7 @@ fn build_dev_launch(
         ["next", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("-H"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("-p"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "-H", "-p", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
@@ -932,14 +835,7 @@ fn build_dev_launch(
         }
         ["nuxt", "dev"] | ["nuxt", "dev", "--host"] => {
             let mut args = vec![OsString::from("dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
@@ -958,14 +854,7 @@ fn build_dev_launch(
         ["nuxt", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
@@ -983,14 +872,7 @@ fn build_dev_launch(
         }
         ["astro", "dev"] => {
             let mut args = vec![OsString::from("dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
@@ -1000,14 +882,7 @@ fn build_dev_launch(
         ["astro", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
@@ -1016,14 +891,7 @@ fn build_dev_launch(
         }
         ["remix", "vite:dev"] => {
             let mut args = vec![OsString::from("vite:dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
@@ -1033,14 +901,7 @@ fn build_dev_launch(
         ["remix", "vite:dev", rest @ ..] => {
             let mut args = vec![OsString::from("vite:dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
@@ -1049,14 +910,7 @@ fn build_dev_launch(
         }
         ["ng", "serve"] => {
             let mut args = vec![OsString::from("serve")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
@@ -1069,14 +923,7 @@ fn build_dev_launch(
         ["ng", "serve", rest @ ..] => {
             let mut args = vec![OsString::from("serve")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
@@ -1242,7 +1089,7 @@ fn infer_native_dev_launch(
         let mut args = vec![OsString::from("spring-boot:run")];
         if let Some(port) = port {
             args.push(OsString::from(format!(
-                "-Dspring-boot.run.arguments=--server.port={port},{host_arg}"
+                "-Dspring-boot.run.arguments=--server.port={port} {host_arg}"
             )));
         } else {
             args.push(OsString::from(format!(
@@ -1640,6 +1487,16 @@ fn detect_backend_framework(flags: &ScaffoldFlags) -> Option<String> {
 }
 
 fn validate_flags(flags: &ScaffoldFlags, fe_framework: &str) -> Result<()> {
+    if let Some(pm) = flags.pm.as_deref() {
+        anyhow::bail!(
+            "--pm {pm} is not supported by core-web. MegaGate web uses the native mg installer, not npm/pnpm/yarn/bun."
+        );
+    }
+
+    if flags.ts && flags.js {
+        anyhow::bail!("--ts and --js are mutually exclusive");
+    }
+
     let fe_count = [
         flags.react,
         flags.next,
@@ -2789,7 +2646,7 @@ fn global_cli_http_client() -> &'static reqwest::Client {
             .pool_idle_timeout(std::time::Duration::from_secs(120))
             .tcp_keepalive(std::time::Duration::from_secs(30))
             .timeout(std::time::Duration::from_secs(60))
-            .user_agent("MegaGate/0.1.0")
+            .user_agent(format!("MegaGate/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("failed to build HTTP client")
     })
@@ -2865,10 +2722,24 @@ fn resolve_seed_name(framework: &str) -> &str {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ScaffoldBaselineVersions {
+    versions: HashMap<String, String>,
+}
+
+fn scaffold_baseline_versions() -> &'static HashMap<String, String> {
+    static VERSIONS: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+    VERSIONS.get_or_init(|| {
+        toml::from_str::<ScaffoldBaselineVersions>(SCAFFOLD_BASELINE_VERSIONS_TOML)
+            .expect("templates/web/versions/scaffold-baseline.toml must be valid")
+            .versions
+    })
+}
+
 fn scaffold_baseline_version(package: &str) -> Option<&'static str> {
-    SCAFFOLD_BASELINE_VERSIONS
-        .iter()
-        .find_map(|(name, version)| (*name == package).then_some(*version))
+    scaffold_baseline_versions()
+        .get(package)
+        .map(String::as_str)
 }
 
 async fn resolve_primary_version(request: &FrameworkRequest) -> Result<String> {
@@ -3050,7 +2921,9 @@ mod tests {
     }
 
     fn lock_scaffold_env() -> std::sync::MutexGuard<'static, ()> {
-        scaffold_env_lock().lock().unwrap_or_else(|e| e.into_inner())
+        scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     #[test]
@@ -3128,6 +3001,33 @@ mod tests {
             Some("^22.0.6")
         );
         assert_eq!(scaffold_baseline_version("unknown-package"), None);
+    }
+
+    #[test]
+    fn test_validate_flags_rejects_external_package_manager() {
+        let flags = ScaffoldFlags {
+            pm: Some("pnpm".to_string()),
+            ..Default::default()
+        };
+        let err = validate_flags(&flags, "react-vite").unwrap_err();
+        assert!(
+            err.to_string().contains("native mg installer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_flags_rejects_ts_and_js_together() {
+        let flags = ScaffoldFlags {
+            ts: true,
+            js: true,
+            ..Default::default()
+        };
+        let err = validate_flags(&flags, "react-vite").unwrap_err();
+        assert!(
+            err.to_string().contains("mutually exclusive"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -3267,6 +3167,35 @@ mod tests {
             build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
 
         assert!(launch.program.ends_with("vite"));
+        assert_eq!(
+            launch
+                .args
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec!["--host", "127.0.0.1", "--port", "4315"]
+        );
+    }
+
+    #[test]
+    fn test_build_dev_launch_for_vite_does_not_duplicate_host_and_port() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("node_modules/.bin")).unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "scripts": { "dev": "vite --host 127.0.0.1 --port 4315" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("node_modules/.bin/vite"), "").unwrap();
+
+        let launch =
+            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+
         assert_eq!(
             launch
                 .args
@@ -3484,6 +3413,29 @@ mod tests {
                 "-Dquarkus.http.host=127.0.0.1".to_string(),
                 "-Dquarkus.analytics.disabled=true".to_string(),
                 "-Dquarkus.http.port=4405".to_string(),
+            ]
+        );
+
+        let spring_dir = tempfile::tempdir().unwrap();
+        std::fs::write(spring_dir.path().join("pom.xml"), "<project></project>").unwrap();
+        let spring_launch = build_dev_launch(
+            spring_dir.path(),
+            "dev",
+            Some("127.0.0.1".into()),
+            Some(4406),
+        )
+        .unwrap();
+        assert_eq!(spring_launch.program, PathBuf::from("mvn"));
+        assert_eq!(
+            spring_launch
+                .args
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "spring-boot:run".to_string(),
+                "-Dspring-boot.run.arguments=--server.port=4406 --server.address=127.0.0.1"
+                    .to_string(),
             ]
         );
     }
@@ -3745,11 +3697,9 @@ packages = ["packages/*"]
                 dependencies: vec![],
             },
         ];
-        std::fs::write(
-            frontend.join("mg.lock"),
-            serialization::to_toml(&frontend_lock).unwrap(),
-        )
-        .unwrap();
+        let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
+        std::fs::write(frontend.join("mg.lock"), &frontend_lock_toml).unwrap();
+        mg_lockfile::write_lockfile_checksum(&frontend, frontend_lock_toml.as_bytes()).unwrap();
 
         let mut shared_lock = Lockfile::new("web", "package");
         shared_lock.frameworks = vec!["library".to_string()];
@@ -3766,11 +3716,9 @@ packages = ["packages/*"]
             dev: false,
             dependencies: vec![],
         }];
-        std::fs::write(
-            shared.join("mg.lock"),
-            serialization::to_toml(&shared_lock).unwrap(),
-        )
-        .unwrap();
+        let shared_lock_toml = serialization::to_toml(&shared_lock).unwrap();
+        std::fs::write(shared.join("mg.lock"), &shared_lock_toml).unwrap();
+        mg_lockfile::write_lockfile_checksum(&shared, shared_lock_toml.as_bytes()).unwrap();
 
         write_monorepo_root_lockfile(monorepo.path(), &[frontend.clone(), shared.clone()]).unwrap();
 
@@ -3785,6 +3733,42 @@ packages = ["packages/*"]
         assert!(parsed.frameworks.contains(&"library".to_string()));
         assert_eq!(parsed.packages.len(), 3);
         assert!(monorepo.path().join("mg.lock.sha256").exists());
+    }
+
+    #[test]
+    fn test_write_monorepo_root_lockfile_rejects_tampered_child_lock() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        std::fs::create_dir_all(&frontend).unwrap();
+        std::fs::write(
+            frontend.join("package.json"),
+            serde_json::json!({
+                "name": "@core/frontend",
+                "version": "0.1.0"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut frontend_lock = Lockfile::new("web", "frontend");
+        frontend_lock.packages = vec![LockPackage {
+            name: "react".to_string(),
+            version: "19.2.0".to_string(),
+            integrity: Some("sha512-react".to_string()),
+            direct: true,
+            dev: false,
+            dependencies: vec![],
+        }];
+        let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
+        std::fs::write(frontend.join("mg.lock"), &frontend_lock_toml).unwrap();
+        std::fs::write(frontend.join("mg.lock.sha256"), "not-the-real-checksum").unwrap();
+
+        let err = write_monorepo_root_lockfile(monorepo.path(), &[frontend])
+            .expect_err("tampered child lockfile must fail monorepo aggregation");
+        assert!(
+            err.to_string().contains("failed to verify child lockfile"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

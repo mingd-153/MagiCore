@@ -16,6 +16,7 @@
 pub mod pubgrub;
 
 use async_trait::async_trait;
+use futures_util::future::join_all;
 use mg_types::{PackageId, PackageName, Version, VersionRange};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -359,7 +360,12 @@ impl Resolver {
                 });
             }
 
-            let batch_size = queue.len().min(50);
+            let batch_limit = std::env::var("MEGAGATE_RESOLVER_BATCH_SIZE")
+                .ok()
+                .and_then(|raw| raw.trim().parse::<usize>().ok())
+                .filter(|limit| *limit > 0)
+                .unwrap_or(64);
+            let batch_size = queue.len().min(batch_limit);
             let batch: Vec<(PackageName, String)> = queue.drain(..batch_size).collect();
             let mut selected: Vec<(PackageName, String, Version)> = Vec::new();
 
@@ -460,20 +466,35 @@ impl Resolver {
                     .iter()
                     .map(|(name, _, version)| PackageId::new(name.clone(), version.clone()))
                     .collect();
-                self.provider
-                    .prefetch_dependencies(&ids)
-                    .await
-                    .map_err(|e| SolveError {
-                        message: format!("dependency prefetch failed: {e}"),
-                    })?;
+                let dependency_results =
+                    self.provider
+                        .prefetch_dependencies(&ids)
+                        .await
+                        .map_err(|e| SolveError {
+                            message: format!("dependency prefetch failed: {e}"),
+                        })?;
+                let prefetched_dependencies: HashMap<PackageId, Vec<ResolvedDep>> =
+                    dependency_results.into_iter().collect();
 
                 for (name, name_str, version) in selected {
+                    let pid = PackageId::new(name.clone(), version.clone());
+                    let deps =
+                        prefetched_dependencies
+                            .get(&pid)
+                            .cloned()
+                            .ok_or_else(|| SolveError {
+                                message: format!(
+                                    "dependency prefetch missing result for '{}'",
+                                    pid
+                                ),
+                            })?;
                     Self::add_resolution(
                         &mut resolutions,
                         &name,
                         &name_str,
                         version,
-                        &self.provider,
+                        deps,
+                        self.provider.as_ref(),
                         &mut queue,
                     )
                     .await?;
@@ -490,17 +511,11 @@ impl Resolver {
         name: &PackageName,
         _name_str: &str,
         version: Version,
-        provider: &std::sync::Arc<dyn DependencyProvider>,
+        deps: Vec<ResolvedDep>,
+        provider: &dyn DependencyProvider,
         queue: &mut VecDeque<(PackageName, String)>,
     ) -> Result<(), SolveError> {
         let pid = PackageId::new(name.clone(), version.clone());
-
-        let deps = provider
-            .get_dependencies(&pid)
-            .await
-            .map_err(|e| SolveError {
-                message: format!("dependencies fetch failed for '{}': {}", pid, e),
-            })?;
         let dep_names: Vec<String> = deps
             .iter()
             .map(|d| d.package.as_str().to_string())
@@ -510,8 +525,9 @@ impl Resolver {
             .map(|d| (d.package.as_str().to_string(), d.spec.clone()))
             .collect();
 
-        for dep in &deps {
-            if provider.should_enqueue(dep).await.map_err(|e| SolveError {
+        let enqueue_results = join_all(deps.iter().map(|dep| provider.should_enqueue(dep))).await;
+        for (dep, should_enqueue) in deps.iter().zip(enqueue_results) {
+            if should_enqueue.map_err(|e| SolveError {
                 message: format!(
                     "dependency enqueue check failed for '{}@{}': {}",
                     dep.package.as_str(),

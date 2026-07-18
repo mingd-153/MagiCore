@@ -44,6 +44,11 @@ pub enum CommonCommand {
         package: String,
         args: Vec<String>,
     },
+    Cache {
+        action: String,
+        target: String,
+        yes: bool,
+    },
     Link {
         package: Option<String>,
     },
@@ -122,6 +127,7 @@ pub enum CoreCommand {
         optional: bool,
         peer: bool,
         no_save: bool,
+        install: bool,
         global: bool,
     },
     AddGame {
@@ -189,6 +195,7 @@ pub enum CoreCommand {
     },
     RemoveWeb {
         package: String,
+        install: bool,
     },
     RemoveGame {
         package: String,
@@ -282,6 +289,15 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Start => Some(CommonCommand::Start),
             Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
             Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
+            Commands::Cache {
+                action,
+                target,
+                yes,
+            } => Some(CommonCommand::Cache {
+                action,
+                target,
+                yes,
+            }),
             Commands::Link { package } => Some(CommonCommand::Link { package }),
             Commands::Unlink { package } => Some(CommonCommand::Unlink { package }),
             Commands::Why { package } => Some(CommonCommand::Why { package }),
@@ -328,6 +344,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 optional,
                 peer,
                 no_save,
+                no_install,
                 ..
             } => {
                 let ecosystem = detect_ecosystem()?;
@@ -339,6 +356,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         optional,
                         peer,
                         no_save,
+                        install: !no_install,
                         global,
                     }),
                     Some("game") => SomeCore(CoreCommand::AddGame {
@@ -411,14 +429,21 @@ impl TryFrom<Commands> for DispatchCommand {
                         optional,
                         peer,
                         no_save,
+                        install: !no_install,
                         global,
                     }),
                 }
             }
-            Commands::Remove { package } => {
+            Commands::Remove {
+                package,
+                no_install,
+            } => {
                 let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::RemoveWeb { package }),
+                    Some("web") => SomeCore(CoreCommand::RemoveWeb {
+                        package,
+                        install: !no_install,
+                    }),
                     Some("game") => SomeCore(CoreCommand::RemoveGame { package }),
                     Some("ai") => SomeCore(CoreCommand::RemoveAi { package }),
                     Some("clo") => SomeCore(CoreCommand::RemoveClo { package }),
@@ -426,7 +451,10 @@ impl TryFrom<Commands> for DispatchCommand {
                     Some("iot") => SomeCore(CoreCommand::RemoveIot { package }),
                     Some("app") => SomeCore(CoreCommand::RemoveApp { package }),
                     Some("lib") => SomeCore(CoreCommand::RemoveLib { package }),
-                    _ => SomeCore(CoreCommand::RemoveWeb { package }),
+                    _ => SomeCore(CoreCommand::RemoveWeb {
+                        package,
+                        install: !no_install,
+                    }),
                 }
             }
             Commands::List => {
@@ -534,6 +562,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 optional,
                 peer,
                 no_save,
+                no_install,
                 global,
             } => SomeCore(CoreCommand::AddWeb {
                 packages,
@@ -542,6 +571,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 optional,
                 peer,
                 no_save,
+                install: !no_install,
                 global,
             }),
             Commands::AddGame {
@@ -663,7 +693,13 @@ impl TryFrom<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            Commands::RemoveWeb { package } => SomeCore(CoreCommand::RemoveWeb { package }),
+            Commands::RemoveWeb {
+                package,
+                no_install,
+            } => SomeCore(CoreCommand::RemoveWeb {
+                package,
+                install: !no_install,
+            }),
             Commands::RemoveGame { package } => SomeCore(CoreCommand::RemoveGame { package }),
             Commands::RemoveAi { package } => SomeCore(CoreCommand::RemoveAi { package }),
             Commands::RemoveClo { package } => SomeCore(CoreCommand::RemoveClo { package }),
