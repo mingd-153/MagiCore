@@ -62,7 +62,7 @@ pub async fn run(package: String, args: Vec<String>) -> Result<()> {
 
     // Find the binary
     let bin_dir = pkg_dir.join("node_modules").join(".bin");
-    let bin_name = pkg_name.split('/').last().unwrap_or(pkg_name);
+    let bin_name = pkg_name.split('/').next_back().unwrap_or(pkg_name);
     let bin_path = bin_dir.join(bin_name);
 
     if !bin_path.exists() {

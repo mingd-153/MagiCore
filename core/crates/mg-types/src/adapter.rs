@@ -17,6 +17,7 @@ pub struct AddOptions {
 
 /// Options controlling install behaviour.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct InstallOptions {
     /// Skip running lifecycle scripts (preinstall / install / postinstall).
     pub ignore_scripts: bool,
@@ -26,15 +27,6 @@ pub struct InstallOptions {
     pub frozen: bool,
 }
 
-impl Default for InstallOptions {
-    fn default() -> Self {
-        Self {
-            ignore_scripts: false,
-            legacy_flat: false,
-            frozen: false,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct InstallSummary {

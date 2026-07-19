@@ -11,14 +11,11 @@ pub fn run(core: Option<&str>, command: String, args: Vec<String>) -> Result<()>
 
     // Build environment PATH depending on core
     let mut path_env = std::env::var("PATH").unwrap_or_default();
-    match ctx.adapter().name() {
-        "web" => {
-            let bin = project_root.join("node_modules").join(".bin");
-            if bin.exists() {
-                path_env = format!("{}:{}", bin.display(), path_env);
-            }
+    if ctx.adapter().name() == "web" {
+        let bin = project_root.join("node_modules").join(".bin");
+        if bin.exists() {
+            path_env = format!("{}:{}", bin.display(), path_env);
         }
-        _ => {}
     }
 
     let full_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
