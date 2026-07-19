@@ -830,7 +830,7 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
         let items = crate::factory::available_cores();
         let display_items: Vec<&str> = items.iter().map(|(_, label)| *label).collect();
 
-        println!("");
+        println!();
         mg_ui::info("MegaGate detected a project without a bound core.");
         let selected_idx = mg_ui::prompt::select(
             "Which ecosystem does this project belong to?",

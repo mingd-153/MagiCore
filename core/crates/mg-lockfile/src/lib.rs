@@ -173,7 +173,7 @@ impl LockfileSigner {
         // Sort packages deterministically
         tmp.packages
             .sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
-        Ok(serialization::to_toml(&tmp)?)
+        serialization::to_toml(&tmp)
     }
 
     /// Sign the lockfile in-place. No-op if MEGAGATE_LOCKFILE_KEY is not set.

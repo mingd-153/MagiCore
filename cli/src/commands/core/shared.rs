@@ -785,7 +785,7 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Re
 
     println!(
         "\n{} {}@{}",
-        "📦".to_string(),
+        "📦",
         package.bold().cyan(),
         target.version.dimmed()
     );
