@@ -26,6 +26,12 @@ pub struct InstallOptions {
     pub legacy_flat: bool,
     /// Fail fast if mg.lock is missing or out-of-sync (CI mode).
     pub frozen: bool,
+    /// Skip checking already-installed root packages. Only materialize what differs.
+    /// Safe after add/remove when graph changed by exactly one leaf package.
+    pub incremental: bool,
+    /// Packages to force-install even when incremental mode is active.
+    /// Only used when `incremental` is true.
+    pub force_install: Vec<PackageId>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

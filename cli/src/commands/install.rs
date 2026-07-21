@@ -152,6 +152,7 @@ async fn install_into_root(
         allow_scripts,
         legacy_flat: should_use_legacy_flat_layout(adapter.name()),
         frozen: false,
+        ..Default::default()
     };
     let mut summary = adapter.install(&graph, project_root, opts).await?;
     spinner.finish_and_clear();
