@@ -30,6 +30,7 @@ pub async fn dispatch_common(command: CommonCommand, core: Option<&str>) -> Resu
             action,
             target,
             yes,
+            ..
         } => commands::cache::run(action, target, yes, core).await,
         CommonCommand::Link { package } => {
             let ctx = ProjectContext::load_with_core(core)?;

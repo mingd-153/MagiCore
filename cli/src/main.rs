@@ -103,12 +103,14 @@ pub(crate) enum Commands {
     },
     #[command(about = "Inspect or clean MegaGate caches")]
     Cache {
-        #[arg(value_parser = ["status", "clean"])]
+        #[arg(value_parser = ["status", "clean", "prune"])]
         action: String,
         #[arg(long, default_value = "all", value_parser = ["all", "shared", "project", "build"])]
         target: String,
         #[arg(long, help = "Required for cache clean")]
         yes: bool,
+        #[arg(long, help = "Preview cache prune without deleting files")]
+        dry_run: bool,
     },
 
     // ── Bare Commands (In-project, auto-detect core from signature) ──
@@ -119,6 +121,8 @@ pub(crate) enum Commands {
         frozen: bool,
         #[arg(long, help = "Skip running lifecycle scripts")]
         ignore_scripts: bool,
+        #[arg(long, help = "Allow dependency lifecycle scripts")]
+        allow_scripts: bool,
     },
     #[command(about = "Add a dependency (auto-detect core)")]
     Add {
@@ -220,6 +224,8 @@ pub(crate) enum Commands {
         frozen: bool,
         #[arg(long, help = "Skip running lifecycle scripts")]
         ignore_scripts: bool,
+        #[arg(long, help = "Allow dependency lifecycle scripts")]
+        allow_scripts: bool,
     },
     #[cfg_attr(not(feature = "game"), command(hide = true))]
     #[command(name = "install-game", about = "Install game dependencies")]
@@ -574,6 +580,37 @@ mod tests {
     }
 
     #[test]
+    fn test_install_accepts_script_policy_flags() {
+        let install = Cli::try_parse_from(["mg", "install", "--allow-scripts"]).unwrap();
+        match install.command.unwrap() {
+            Commands::Install {
+                ignore_scripts,
+                allow_scripts,
+                ..
+            } => {
+                assert!(!ignore_scripts);
+                assert!(allow_scripts);
+            }
+            _ => panic!("expected install command"),
+        }
+
+        let install_web =
+            Cli::try_parse_from(["mg", "install-web", "--ignore-scripts", "--allow-scripts"])
+                .unwrap();
+        match install_web.command.unwrap() {
+            Commands::InstallWeb {
+                ignore_scripts,
+                allow_scripts,
+                ..
+            } => {
+                assert!(ignore_scripts);
+                assert!(allow_scripts);
+            }
+            _ => panic!("expected install-web command"),
+        }
+    }
+
+    #[test]
     fn test_cache_command_accepts_status_and_clean_targets() {
         let status = Cli::try_parse_from(["mg", "cache", "status", "--target", "shared"]).unwrap();
         match status.command.unwrap() {
@@ -581,6 +618,7 @@ mod tests {
                 action,
                 target,
                 yes,
+                ..
             } => {
                 assert_eq!(action, "status");
                 assert_eq!(target, "shared");
@@ -596,9 +634,26 @@ mod tests {
                 action,
                 target,
                 yes,
+                ..
             } => {
                 assert_eq!(action, "clean");
                 assert_eq!(target, "build");
+                assert!(yes);
+            }
+            _ => panic!("expected cache command"),
+        }
+
+        let prune =
+            Cli::try_parse_from(["mg", "cache", "prune", "--target", "shared", "--yes"]).unwrap();
+        match prune.command.unwrap() {
+            Commands::Cache {
+                action,
+                target,
+                yes,
+                ..
+            } => {
+                assert_eq!(action, "prune");
+                assert_eq!(target, "shared");
                 assert!(yes);
             }
             _ => panic!("expected cache command"),

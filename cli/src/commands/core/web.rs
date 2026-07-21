@@ -117,7 +117,12 @@ pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
     shared::update(&*adapter, &root, packages, install).await
 }
 
-pub async fn install(packages: Vec<String>, frozen: bool, ignore_scripts: bool) -> Result<()> {
+pub async fn install(
+    packages: Vec<String>,
+    frozen: bool,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+) -> Result<()> {
     let root = project_root()?;
     let adapter: Arc<dyn PackageAdapter> = Arc::from(web_adapter());
     let targets = install_targets(&root)?;
@@ -132,13 +137,20 @@ pub async fn install(packages: Vec<String>, frozen: bool, ignore_scripts: bool) 
 
     let project_mode = detect_project_mode(&root)?;
     if matches!(project_mode, WebProjectMode::Monorepo) {
-        install_monorepo_targets(&adapter, &targets, frozen, ignore_scripts).await?;
+        install_monorepo_targets(&adapter, &targets, frozen, ignore_scripts, allow_scripts).await?;
         link_monorepo_workspace_packages(&root, &targets)?;
         write_monorepo_root_lockfile(&root, &targets)?;
     } else {
         for target in &targets {
             if target.join("package.json").exists() {
-                shared::install_with_adapter(adapter.as_ref(), target, "mg add", frozen).await?;
+                shared::install_with_adapter(
+                    adapter.as_ref(),
+                    target,
+                    "mg add",
+                    frozen,
+                    allow_scripts,
+                )
+                .await?;
             } else {
                 native_install_target(target)?;
             }
@@ -477,6 +489,7 @@ async fn install_monorepo_targets(
     targets: &[PathBuf],
     frozen: bool,
     ignore_scripts: bool,
+    allow_scripts: bool,
 ) -> Result<()> {
     let mut native_targets = Vec::new();
     let mut package_targets = Vec::new();
@@ -504,7 +517,14 @@ async fn install_monorepo_targets(
                 .acquire_owned()
                 .await
                 .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
-            install_web_target_quiet(adapter.as_ref(), &target, frozen, ignore_scripts).await?;
+            install_web_target_quiet(
+                adapter.as_ref(),
+                &target,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+            )
+            .await?;
             Ok::<PathBuf, anyhow::Error>(target)
         });
     }
@@ -525,6 +545,7 @@ async fn install_web_target_quiet(
     target: &Path,
     frozen: bool,
     ignore_scripts: bool,
+    allow_scripts: bool,
 ) -> Result<()> {
     let execution = shared::prepare_install_execution(adapter, target, frozen, None).await?;
     if execution.graph.is_empty() {
@@ -532,6 +553,7 @@ async fn install_web_target_quiet(
     }
     let opts = mg_types::adapter::InstallOptions {
         ignore_scripts,
+        allow_scripts,
         legacy_flat: should_use_legacy_flat_layout(),
         frozen,
     };
@@ -2610,6 +2632,181 @@ const FEATURE_PACKAGES: &[WebFeaturePackage] = &[
         feature: "storybook",
         section: "devDependencies",
         package: "@storybook/addon-essentials",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "i18next",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "react-i18next",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "i18next-browser-languagedetector",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "i18next-http-backend",
+    },
+    WebFeaturePackage {
+        feature: "fastify",
+        section: "dependencies",
+        package: "fastify",
+    },
+    WebFeaturePackage {
+        feature: "nestjs",
+        section: "dependencies",
+        package: "@nestjs/core",
+    },
+    WebFeaturePackage {
+        feature: "nestjs",
+        section: "dependencies",
+        package: "@nestjs/common",
+    },
+    WebFeaturePackage {
+        feature: "nestjs",
+        section: "dependencies",
+        package: "@nestjs/platform-express",
+    },
+    WebFeaturePackage {
+        feature: "hono",
+        section: "dependencies",
+        package: "hono",
+    },
+    WebFeaturePackage {
+        feature: "koa",
+        section: "dependencies",
+        package: "koa",
+    },
+    WebFeaturePackage {
+        feature: "koa",
+        section: "dependencies",
+        package: "@koa/router",
+    },
+    WebFeaturePackage {
+        feature: "typeorm",
+        section: "dependencies",
+        package: "typeorm",
+    },
+    WebFeaturePackage {
+        feature: "typeorm",
+        section: "devDependencies",
+        package: "@types/typeorm",
+    },
+    WebFeaturePackage {
+        feature: "mongoose",
+        section: "dependencies",
+        package: "mongoose",
+    },
+    WebFeaturePackage {
+        feature: "mysql",
+        section: "dependencies",
+        package: "mysql2",
+    },
+    WebFeaturePackage {
+        feature: "sqlite",
+        section: "dependencies",
+        package: "better-sqlite3",
+    },
+    WebFeaturePackage {
+        feature: "mongodb",
+        section: "dependencies",
+        package: "mongodb",
+    },
+    WebFeaturePackage {
+        feature: "yup",
+        section: "dependencies",
+        package: "yup",
+    },
+    WebFeaturePackage {
+        feature: "joi",
+        section: "dependencies",
+        package: "joi",
+    },
+    WebFeaturePackage {
+        feature: "valibot",
+        section: "dependencies",
+        package: "valibot",
+    },
+    WebFeaturePackage {
+        feature: "lucia",
+        section: "dependencies",
+        package: "lucia",
+    },
+    WebFeaturePackage {
+        feature: "jwt",
+        section: "dependencies",
+        package: "jsonwebtoken",
+    },
+    WebFeaturePackage {
+        feature: "jwt",
+        section: "devDependencies",
+        package: "@types/jsonwebtoken",
+    },
+    WebFeaturePackage {
+        feature: "oauth",
+        section: "dependencies",
+        package: "oauth",
+    },
+    WebFeaturePackage {
+        feature: "testing-library",
+        section: "devDependencies",
+        package: "@testing-library/react",
+    },
+    WebFeaturePackage {
+        feature: "testing-library",
+        section: "devDependencies",
+        package: "@testing-library/jest-dom",
+    },
+    WebFeaturePackage {
+        feature: "turborepo",
+        section: "devDependencies",
+        package: "turbo",
+    },
+    WebFeaturePackage {
+        feature: "nx",
+        section: "devDependencies",
+        package: "nx",
+    },
+    WebFeaturePackage {
+        feature: "changesets",
+        section: "devDependencies",
+        package: "@changesets/cli",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "dependencies",
+        package: "@grpc/grpc-js",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "dependencies",
+        package: "@grpc/proto-loader",
+    },
+    WebFeaturePackage {
+        feature: "pwa",
+        section: "devDependencies",
+        package: "workbox-webpack-plugin",
+    },
+    WebFeaturePackage {
+        feature: "sentry",
+        section: "dependencies",
+        package: "@sentry/node",
+    },
+    WebFeaturePackage {
+        feature: "sentry",
+        section: "dependencies",
+        package: "@sentry/react",
+    },
+    WebFeaturePackage {
+        feature: "analytics",
+        section: "dependencies",
+        package: "@vercel/analytics",
     },
 ];
 

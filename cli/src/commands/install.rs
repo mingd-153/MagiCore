@@ -26,7 +26,12 @@ fn should_use_legacy_flat_layout(adapter_name: &str) -> bool {
 }
 
 /// mg install — install dependencies for the current project
-pub async fn run(packages: Vec<String>, core: Option<&str>, ignore_scripts: bool) -> Result<()> {
+pub async fn run(
+    packages: Vec<String>,
+    core: Option<&str>,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
 
@@ -42,7 +47,14 @@ pub async fn run(packages: Vec<String>, core: Option<&str>, ignore_scripts: bool
 
         for workspace in workspaces {
             info(&format!("Installing workspace: {}", workspace.display()));
-            install_into_root(adapter, &workspace, &packages, ignore_scripts).await?;
+            install_into_root(
+                adapter,
+                &workspace,
+                &packages,
+                ignore_scripts,
+                allow_scripts,
+            )
+            .await?;
         }
 
         println!();
@@ -50,7 +62,14 @@ pub async fn run(packages: Vec<String>, core: Option<&str>, ignore_scripts: bool
         return Ok(());
     }
 
-    install_into_root(adapter, ctx.root(), &packages, ignore_scripts).await
+    install_into_root(
+        adapter,
+        ctx.root(),
+        &packages,
+        ignore_scripts,
+        allow_scripts,
+    )
+    .await
 }
 
 async fn install_into_root(
@@ -58,6 +77,7 @@ async fn install_into_root(
     project_root: &Path,
     packages: &[String],
     ignore_scripts: bool,
+    allow_scripts: bool,
 ) -> Result<()> {
     let started_at = std::time::Instant::now();
     let add_cmd = match adapter.name() {
@@ -129,6 +149,7 @@ async fn install_into_root(
 
     let opts = mg_types::adapter::InstallOptions {
         ignore_scripts,
+        allow_scripts,
         legacy_flat: should_use_legacy_flat_layout(adapter.name()),
         frozen: false,
     };

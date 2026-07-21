@@ -16,17 +16,17 @@ pub struct AddOptions {
 }
 
 /// Options controlling install behaviour.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct InstallOptions {
     /// Skip running lifecycle scripts (preinstall / install / postinstall).
     pub ignore_scripts: bool,
+    /// Explicitly allow lifecycle scripts. Defaults to false for secure installs.
+    pub allow_scripts: bool,
     /// Use flat hoisting layout instead of strict symlink virtual store.
     pub legacy_flat: bool,
     /// Fail fast if mg.lock is missing or out-of-sync (CI mode).
     pub frozen: bool,
 }
-
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct InstallSummary {

@@ -851,6 +851,15 @@ impl PackageAdapter for WebAdapter {
             )?;
         }
         profile.mark("materialize_dependency_graph", start);
+        if let Some(shared_cache) = shared_cache.as_ref() {
+            let _ = shared_cache.write_project_ref(
+                project_root,
+                graph
+                    .packages
+                    .iter()
+                    .map(|pkg| shared_cache.extracted_package_root(pkg)),
+            );
+        }
         prune_root_install_dirs(&node_modules, &root_package_versions)?;
         profile.mark("prune_root_install_dirs", start);
         if staging_root.exists() {
@@ -868,7 +877,7 @@ impl PackageAdapter for WebAdapter {
         write_web_lockfile_with_state(project_root, graph, "locked")?;
         profile.mark("write_lockfile", start);
 
-        if !opts.ignore_scripts {
+        if should_run_lifecycle_scripts(opts.ignore_scripts, opts.allow_scripts) {
             use lifecycle::LifecycleRunner;
             use std::sync::Arc;
             use tokio::sync::Semaphore;
@@ -1665,11 +1674,34 @@ struct CachedResolutionEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct ExtractedPackageMarker {
+    #[serde(default)]
+    schema_version: u32,
     name: String,
     version: String,
     #[serde(default)]
     integrity: Option<String>,
     tarball_sha256: String,
+    #[serde(default)]
+    file_count: u64,
+    #[serde(default)]
+    unpacked_size: u64,
+    #[serde(default)]
+    file_tree_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TarballContentSignature {
+    file_count: u64,
+    unpacked_size: u64,
+    file_tree_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SharedCacheProjectRef {
+    schema_version: u32,
+    project_root: String,
+    updated_at: u64,
+    package_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1732,6 +1764,40 @@ impl SharedWebCache {
 
     fn extracted_package_root(&self, pkg: &ResolvedPackage) -> PathBuf {
         shared_extracted_package_root(&self.root, pkg)
+    }
+
+    fn project_ref_path(&self, project_root: &Path) -> PathBuf {
+        let mut hasher = Sha256::new();
+        hasher.update(path_to_cache_ref_string(project_root).as_bytes());
+        let key = hex::encode(hasher.finalize());
+        self.root
+            .join("refs")
+            .join("projects")
+            .join(format!("{key}.json"))
+    }
+
+    fn write_project_ref(
+        &self,
+        project_root: &Path,
+        package_roots: impl IntoIterator<Item = PathBuf>,
+    ) -> MgResult<()> {
+        let path = self.project_ref_path(project_root);
+        let mut roots = package_roots
+            .into_iter()
+            .map(|path| path_to_cache_ref_string(&path))
+            .collect::<Vec<_>>();
+        roots.sort();
+        roots.dedup();
+        let payload = serde_json::to_vec_pretty(&SharedCacheProjectRef {
+            schema_version: 1,
+            project_root: path_to_cache_ref_string(project_root),
+            updated_at: current_unix_secs(),
+            package_roots: roots,
+        })?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, &payload)
     }
 
     fn metadata_path(&self, package: &str) -> PathBuf {
@@ -1865,15 +1931,15 @@ impl SharedWebCache {
         atomic_write(&path, &payload).map_err(|e| {
             DependencyError(format!(
                 "failed to write cached metadata for '{}': {}",
-                package,
-                e
+                package, e
             ))
         })?;
         Ok(())
     }
 
     fn maybe_prune(&self) {
-        let _ = prune_shared_cache_to_quota(&self.root, shared_cache_max_bytes());
+        let pinned_roots = read_shared_cache_pinned_package_roots(&self.root);
+        let _ = prune_shared_cache_to_quota(&self.root, shared_cache_max_bytes(), &pinned_roots);
 
         if !shared_cache_prune_due(&self.root) {
             return;
@@ -1882,9 +1948,9 @@ impl SharedWebCache {
         let max_age = std::time::Duration::from_secs(shared_cache_max_age_secs());
         let _ = prune_old_files_under(&self.root.join("cache"), max_age);
         let _ = prune_old_files_under(&self.root.join("resolutions"), max_age);
-        let _ = prune_old_package_dirs_under(&self.root.join("packages"), max_age);
+        let _ = prune_old_package_dirs_under(&self.root.join("packages"), max_age, &pinned_roots);
         let _ = prune_old_metadata_dirs_under(&self.root.join("metadata"), max_age);
-        let _ = prune_shared_cache_to_quota(&self.root, shared_cache_max_bytes());
+        let _ = prune_shared_cache_to_quota(&self.root, shared_cache_max_bytes(), &pinned_roots);
         let _ = write_shared_cache_prune_stamp(&self.root);
     }
 
@@ -2195,6 +2261,24 @@ fn strict_integrity_enforced() -> bool {
     !matches!(val.as_deref(), Ok("0" | "false" | "no" | "off"))
 }
 
+fn lifecycle_scripts_allowed() -> bool {
+    std::env::var("MEGAGATE_WEB_ALLOW_SCRIPTS")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+fn should_run_lifecycle_scripts(ignore_scripts: bool, allow_scripts: bool) -> bool {
+    !ignore_scripts && (allow_scripts || lifecycle_scripts_allowed())
+}
+
+fn extracted_cache_full_validation_enabled() -> bool {
+    std::env::var("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
 fn next_stale_retry_after() -> u64 {
     current_unix_secs().saturating_add(metadata_stale_retry_ttl_secs())
 }
@@ -2259,7 +2343,11 @@ fn prune_old_files_under(root: &Path, max_age: std::time::Duration) -> MgResult<
     Ok(())
 }
 
-fn prune_old_package_dirs_under(root: &Path, max_age: std::time::Duration) -> MgResult<()> {
+fn prune_old_package_dirs_under(
+    root: &Path,
+    max_age: std::time::Duration,
+    pinned_package_roots: &std::collections::HashSet<PathBuf>,
+) -> MgResult<()> {
     if !root.exists() {
         return Ok(());
     }
@@ -2275,6 +2363,9 @@ fn prune_old_package_dirs_under(root: &Path, max_age: std::time::Duration) -> Mg
     }
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for dir in directories {
+        if pinned_package_roots.contains(&canonical_or_original(&dir)) {
+            continue;
+        }
         let marker = dir.join(".megagate-package-root.json");
         let package_json = dir.join("package.json");
         if marker.exists() || package_json.exists() {
@@ -2293,6 +2384,43 @@ fn prune_old_package_dirs_under(root: &Path, max_age: std::time::Duration) -> Mg
         }
     }
     Ok(())
+}
+
+fn read_shared_cache_pinned_package_roots(root: &Path) -> std::collections::HashSet<PathBuf> {
+    let refs_root = root.join("refs").join("projects");
+    let mut pinned = std::collections::HashSet::new();
+    if !refs_root.exists() {
+        return pinned;
+    }
+
+    let Ok(entries) = std::fs::read_dir(&refs_root) else {
+        return pinned;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(reference) = serde_json::from_str::<SharedCacheProjectRef>(&contents) else {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        };
+        if reference.schema_version != 1 {
+            continue;
+        }
+        let project_root = PathBuf::from(&reference.project_root);
+        if !project_root.exists() {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        for package_root in reference.package_roots {
+            pinned.insert(PathBuf::from(package_root));
+        }
+    }
+    pinned
 }
 
 fn prune_old_metadata_dirs_under(root: &Path, max_age: std::time::Duration) -> MgResult<()> {
@@ -2332,7 +2460,11 @@ struct CachePruneEntry {
     kind: CachePruneEntryKind,
 }
 
-fn prune_shared_cache_to_quota(root: &Path, max_bytes: u64) -> MgResult<()> {
+fn prune_shared_cache_to_quota(
+    root: &Path,
+    max_bytes: u64,
+    pinned_package_roots: &std::collections::HashSet<PathBuf>,
+) -> MgResult<()> {
     if max_bytes == 0 || !root.exists() {
         return Ok(());
     }
@@ -2341,7 +2473,7 @@ fn prune_shared_cache_to_quota(root: &Path, max_bytes: u64) -> MgResult<()> {
     collect_prunable_files(&root.join("cache"), &mut entries);
     collect_prunable_files(&root.join("metadata"), &mut entries);
     collect_prunable_files(&root.join("resolutions"), &mut entries);
-    collect_prunable_package_dirs(&root.join("packages"), &mut entries);
+    collect_prunable_package_dirs(&root.join("packages"), &mut entries, pinned_package_roots);
 
     let mut total: u64 = entries.iter().map(|entry| entry.bytes).sum();
     if total <= max_bytes {
@@ -2393,7 +2525,11 @@ fn collect_prunable_files(root: &Path, entries: &mut Vec<CachePruneEntry>) {
     }
 }
 
-fn collect_prunable_package_dirs(root: &Path, entries: &mut Vec<CachePruneEntry>) {
+fn collect_prunable_package_dirs(
+    root: &Path,
+    entries: &mut Vec<CachePruneEntry>,
+    pinned_package_roots: &std::collections::HashSet<PathBuf>,
+) {
     if !root.exists() {
         return;
     }
@@ -2406,6 +2542,9 @@ fn collect_prunable_package_dirs(root: &Path, entries: &mut Vec<CachePruneEntry>
             continue;
         }
         let path = entry.path();
+        if pinned_package_roots.contains(&canonical_or_original(path)) {
+            continue;
+        }
         let marker = path.join(".megagate-package-root.json");
         if !marker.exists() {
             continue;
@@ -2478,9 +2617,7 @@ fn is_tarball_url_trusted(tarball_url: &str, registry_url: &str) -> bool {
         return false;
     };
 
-    // Always allow loopback hosts for local test servers
     if tarball_host == "127.0.0.1" || tarball_host == "localhost" || tarball_host == "::1" {
-        eprintln!("DEBUG: returning true for loopback host {}", tarball_host);
         return true;
     }
 
@@ -2727,6 +2864,20 @@ fn materialize_package_from_store(
     hardlink_tree(source_root, target_root)
 }
 
+fn link_package_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
+    if let Some(parent) = target_root.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to create package link parent '{}': {}",
+                parent.display(),
+                err
+            ))
+        })?;
+    }
+    remove_fs_entry(target_root)?;
+    crate::layout::create_symlink(source_root, target_root)
+}
+
 fn extracted_package_marker_path(root: &Path) -> PathBuf {
     root.join(".megagate-package-root.json")
 }
@@ -2735,17 +2886,238 @@ fn expected_extracted_package_marker_from_bytes(
     pkg: &ResolvedPackage,
     tarball_bytes: &[u8],
 ) -> MgResult<ExtractedPackageMarker> {
+    let mut marker = expected_extracted_package_marker_fast(pkg, tarball_bytes);
+    let content = tarball_content_signature(tarball_bytes)?;
+    marker.file_count = content.file_count;
+    marker.unpacked_size = content.unpacked_size;
+    marker.file_tree_sha256 = content.file_tree_sha256;
+    Ok(marker)
+}
+
+fn expected_extracted_package_marker_fast(
+    pkg: &ResolvedPackage,
+    tarball_bytes: &[u8],
+) -> ExtractedPackageMarker {
     let tarball_fingerprint = if pkg.integrity.is_empty() {
         compute_sha256_hex(tarball_bytes)
     } else {
         format!("integrity:{}", pkg.integrity)
     };
-    Ok(ExtractedPackageMarker {
+    ExtractedPackageMarker {
+        schema_version: 2,
         name: pkg.id.name_str().to_string(),
         version: pkg.id.version().to_string(),
         integrity: (!pkg.integrity.is_empty()).then(|| pkg.integrity.clone()),
         tarball_sha256: tarball_fingerprint,
+        file_count: 0,
+        unpacked_size: 0,
+        file_tree_sha256: String::new(),
+    }
+}
+
+fn extracted_marker_matches_fast(
+    marker: &ExtractedPackageMarker,
+    expected: &ExtractedPackageMarker,
+) -> bool {
+    marker.schema_version == 2
+        && marker.name == expected.name
+        && marker.version == expected.version
+        && marker.integrity == expected.integrity
+        && marker.tarball_sha256 == expected.tarball_sha256
+}
+
+fn tarball_content_signature(tarball_bytes: &[u8]) -> MgResult<TarballContentSignature> {
+    let decoder = flate2::read::GzDecoder::new(std::io::Cursor::new(tarball_bytes));
+    let mut archive = tar::Archive::new(decoder);
+    let mut files = Vec::<(String, u64)>::new();
+
+    for entry in archive
+        .entries()
+        .map_err(|err| mg_types::MgError::Other(format!("failed to read tarball entries: {err}")))?
+    {
+        let entry = entry.map_err(|err| {
+            mg_types::MgError::Other(format!("failed to read tarball entry: {err}"))
+        })?;
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() || matches!(entry_type.as_byte(), b'g' | b'x') {
+            continue;
+        }
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            return Err(mg_types::MgError::Other(format!(
+                "tar links are not allowed in cached package signature: {}",
+                entry
+                    .path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            )));
+        }
+        if !entry_type.is_file() {
+            return Err(mg_types::MgError::Other(format!(
+                "unsupported tar entry type in cached package signature: {}",
+                entry
+                    .path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            )));
+        }
+
+        let path = sanitize_tarball_signature_path(
+            entry
+                .path()
+                .map_err(|err| {
+                    mg_types::MgError::Other(format!("failed to read tarball entry path: {err}"))
+                })?
+                .as_ref(),
+        )?;
+        let size = entry.header().size().map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to read tarball entry size '{}': {err}",
+                path.display()
+            ))
+        })?;
+        files.push((path_to_signature_string(&path), size));
+    }
+
+    let root_prefix = common_tarball_root_prefix(&files);
+    let mut normalized = files
+        .into_iter()
+        .filter_map(|(path, size)| {
+            let stripped = root_prefix
+                .as_ref()
+                .and_then(|prefix| path.strip_prefix(prefix).and_then(|p| p.strip_prefix('/')))
+                .unwrap_or(path.as_str());
+            if stripped.is_empty() {
+                None
+            } else {
+                Some((stripped.to_string(), size))
+            }
+        })
+        .collect::<Vec<_>>();
+    normalized.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hasher = Sha256::new();
+    let mut unpacked_size = 0u64;
+    for (path, size) in &normalized {
+        hasher.update(path.as_bytes());
+        hasher.update([0]);
+        hasher.update(size.to_string().as_bytes());
+        hasher.update([b'\n']);
+        unpacked_size = unpacked_size.saturating_add(*size);
+    }
+
+    Ok(TarballContentSignature {
+        file_count: normalized.len() as u64,
+        unpacked_size,
+        file_tree_sha256: hex::encode(hasher.finalize()),
     })
+}
+
+fn extracted_content_matches(root: &Path, expected: &ExtractedPackageMarker) -> MgResult<bool> {
+    if expected.file_tree_sha256.is_empty() {
+        return Ok(false);
+    }
+
+    let mut files = Vec::<(String, u64)>::new();
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if entry.path() == extracted_package_marker_path(root) {
+            continue;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = entry.path().strip_prefix(root).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to inspect extracted package path '{}': {}",
+                entry.path().display(),
+                err
+            ))
+        })?;
+        let size = entry
+            .metadata()
+            .map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to inspect extracted package file '{}': {}",
+                    entry.path().display(),
+                    err
+                ))
+            })?
+            .len();
+        files.push((path_to_signature_string(rel), size));
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hasher = Sha256::new();
+    let mut unpacked_size = 0u64;
+    for (path, size) in &files {
+        hasher.update(path.as_bytes());
+        hasher.update([0]);
+        hasher.update(size.to_string().as_bytes());
+        hasher.update([b'\n']);
+        unpacked_size = unpacked_size.saturating_add(*size);
+    }
+
+    Ok(expected.file_count == files.len() as u64
+        && expected.unpacked_size == unpacked_size
+        && expected.file_tree_sha256 == hex::encode(hasher.finalize()))
+}
+
+fn sanitize_tarball_signature_path(path: &Path) -> MgResult<PathBuf> {
+    let mut clean = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => clean.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                return Err(mg_types::MgError::Other(format!(
+                    "unsafe tar entry path in cached package signature: {}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    if clean.as_os_str().is_empty() {
+        return Err(mg_types::MgError::Other(
+            "empty tar entry path in cached package signature".to_string(),
+        ));
+    }
+    Ok(clean)
+}
+
+fn path_to_signature_string(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn path_to_cache_ref_string(path: &Path) -> String {
+    canonical_or_original(path).to_string_lossy().into_owned()
+}
+
+fn canonical_or_original(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn common_tarball_root_prefix(files: &[(String, u64)]) -> Option<String> {
+    let mut iter = files.iter().filter_map(|(path, _)| path.split('/').next());
+    let first = iter.next()?.to_string();
+    if first.is_empty() {
+        return None;
+    }
+    if iter.all(|part| part == first) {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 fn read_extracted_package_marker(root: &Path) -> MgResult<Option<ExtractedPackageMarker>> {
@@ -2808,7 +3180,7 @@ fn ensure_extracted_package_root_from_bytes(
     pkg: &ResolvedPackage,
     tarball_bytes: &[u8],
 ) -> MgResult<PathBuf> {
-    let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
+    let fast_marker = expected_extracted_package_marker_fast(pkg, tarball_bytes);
     let canonical_root = shared_cache
         .map(|shared| shared.extracted_package_root(pkg))
         .unwrap_or_else(|| local_extracted_package_root(layout, pkg));
@@ -2817,13 +3189,17 @@ fn ensure_extracted_package_root_from_bytes(
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    if canonical_root.join("package.json").exists()
-        && read_extracted_package_marker(&canonical_root)?
-            .as_ref()
-            .map(|marker| marker == &expected_marker)
-            .unwrap_or(false)
-    {
-        return Ok(canonical_root);
+    if canonical_root.join("package.json").exists() {
+        let marker = read_extracted_package_marker(&canonical_root)?;
+        if let Some(marker) = marker.as_ref() {
+            if extracted_marker_matches_fast(marker, &fast_marker) {
+                if !extracted_cache_full_validation_enabled()
+                    || extracted_content_matches(&canonical_root, marker)?
+                {
+                    return Ok(canonical_root);
+                }
+            }
+        }
     }
 
     let extract_root = extracted_package_root(layout, pkg);
@@ -2848,6 +3224,7 @@ fn ensure_extracted_package_root_from_bytes(
     extract_tarball_from_reader(std::io::Cursor::new(tarball_bytes), &extract_root)
         .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
     let package_root = locate_package_dir(&extract_root)?;
+    let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
 
     if canonical_root.exists() {
         std::fs::remove_dir_all(&canonical_root).map_err(|err| {
@@ -3570,18 +3947,41 @@ pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
 }
 
 pub fn read_web_lockfile_checked(project_root: &Path) -> MgResult<Option<Lockfile>> {
-    if strict_integrity_enforced()
-        && std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_err()
-        && mg_lockfile::lockfile_path(project_root).exists()
-        && !mg_lockfile::lockfile_checksum_path(project_root).exists()
+    let lock = mg_lockfile::read_lockfile_checked(project_root)
+        .map_err(|err| mg_types::MgError::Other(err.to_string()))?;
+    if let Some(lockfile) = &lock {
+        maybe_warn_missing_lockfile_checksum(project_root, lockfile);
+    }
+    Ok(lock)
+}
+
+fn maybe_warn_missing_lockfile_checksum(project_root: &Path, lockfile: &Lockfile) {
+    if !strict_integrity_enforced()
+        || std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_ok()
+        || mg_lockfile::lockfile_checksum_path(project_root).exists()
     {
+        return;
+    }
+
+    let has_locked_content = lockfile.resolution.state == "locked"
+        || lockfile.resolution.package_count > 0
+        || !lockfile.packages.is_empty();
+    if !has_locked_content {
+        return;
+    }
+
+    static WARNED: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+    let warned = WARNED.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
+    let path = mg_lockfile::lockfile_path(project_root);
+    let mut guard = match warned.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if guard.insert(path) {
         eprintln!(
             "WARNING: Lockfile checksum file (mg.lock.sha256) not found - cannot verify integrity"
         );
     }
-
-    mg_lockfile::read_lockfile_checked(project_root)
-        .map_err(|err| mg_types::MgError::Other(err.to_string()))
 }
 
 fn preferred_registry_version(metadata: &native::npm_registry::PackageMetadata) -> Option<String> {
@@ -3641,9 +4041,9 @@ fn materialize_strict_layout(
         )));
     }
 
-    // 1. Materialize all packages into virtual store - PARALLEL.
-    // Keep project installs independent from shared-cache GC: hardlinks survive even
-    // when the shared extracted root is later pruned.
+    // 1. Link all packages into virtual store - PARALLEL.
+    // Strict layout is store-linked so repeat installs do not re-hardlink every
+    // cached package file into each project.
     let vstore_dirs: Vec<_> = graph
         .packages
         .iter()
@@ -3662,7 +4062,7 @@ fn materialize_strict_layout(
         })
         .collect();
 
-    // Parallel materialization: hardlink from canonical root to vstore.
+    // Parallel materialization: symlink from canonical root to vstore.
     let materialize_results: Vec<_> = vstore_dirs
         .into_par_iter()
         .map(|(pkg_id, vstore_pkg_dir, pkg)| {
@@ -3681,7 +4081,7 @@ fn materialize_strict_layout(
                     .get(&pkg_id)
                     .cloned()
                     .unwrap_or_else(|| local_extracted_package_root(layout, &pkg));
-                hardlink_tree(&package_root, &vstore_pkg_dir)?;
+                link_package_tree(&package_root, &vstore_pkg_dir)?;
             }
             Ok::<_, mg_types::MgError>(vstore_pkg_dir)
         })
@@ -4073,6 +4473,42 @@ mod tests {
     }
 
     #[test]
+    fn test_pending_scaffold_lockfile_without_checksum_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("mg.lock"),
+            r#"version = 1
+core = "web"
+mode = "frontend"
+frameworks = ["react"]
+
+[resolution]
+state = "pending"
+store = "megagate"
+package_count = 0
+"#,
+        )
+        .unwrap();
+
+        let lock = read_web_lockfile_checked(dir.path()).unwrap().unwrap();
+        assert_eq!(lock.resolution.state, "pending");
+        assert_eq!(lock.resolution.package_count, 0);
+    }
+
+    #[test]
+    fn test_lifecycle_scripts_are_opt_in() {
+        let old = std::env::var_os("MEGAGATE_WEB_ALLOW_SCRIPTS");
+        std::env::remove_var("MEGAGATE_WEB_ALLOW_SCRIPTS");
+        assert!(!should_run_lifecycle_scripts(false, false));
+        assert!(should_run_lifecycle_scripts(false, true));
+
+        std::env::set_var("MEGAGATE_WEB_ALLOW_SCRIPTS", "1");
+        assert!(should_run_lifecycle_scripts(false, false));
+        assert!(!should_run_lifecycle_scripts(true, true));
+        restore_env_var("MEGAGATE_WEB_ALLOW_SCRIPTS", old);
+    }
+
+    #[test]
     fn test_manifest_resolution_cache_key_ignores_dep_order_and_app_name() {
         let registry_url = "https://registry.npmjs.org";
         let mut left = Manifest::new("demo-a", mg_types::ecosystem::Ecosystem::Web);
@@ -4131,7 +4567,7 @@ mod tests {
         std::fs::write(cache_dir.join("18.2.0.tgz"), vec![b'a'; 1024]).unwrap();
         std::fs::write(resolution_dir.join("graph.json"), vec![b'b'; 1024]).unwrap();
 
-        prune_shared_cache_to_quota(dir.path(), 512).unwrap();
+        prune_shared_cache_to_quota(dir.path(), 512, &std::collections::HashSet::new()).unwrap();
 
         let remaining = directory_size(dir.path());
         assert!(
@@ -4150,11 +4586,45 @@ mod tests {
         std::fs::write(nested.join("package.json"), "{}").unwrap();
         std::fs::write(cache_dir.join("old.tgz"), vec![b'a'; 1024]).unwrap();
 
-        prune_shared_cache_to_quota(dir.path(), 1).unwrap();
+        prune_shared_cache_to_quota(dir.path(), 1, &std::collections::HashSet::new()).unwrap();
 
         assert!(
             nested.join("package.json").exists(),
             "quota pruning should only delete MegaGate-marked package cache roots"
+        );
+    }
+
+    #[test]
+    fn test_prune_shared_cache_to_quota_keeps_pinned_package_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let package_root = dir
+            .path()
+            .join("packages")
+            .join("react")
+            .join("18.2.0-sha512-demo")
+            .join("package");
+        let cache_dir = dir.path().join("cache").join("old");
+        std::fs::create_dir_all(&package_root).unwrap();
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::write(package_root.join("package.json"), br#"{"name":"react"}"#).unwrap();
+        std::fs::write(package_root.join(".megagate-package-root.json"), b"{}").unwrap();
+        std::fs::write(package_root.join("index.js"), vec![b'a'; 1024]).unwrap();
+        std::fs::write(cache_dir.join("old.tgz"), vec![b'b'; 1024]).unwrap();
+
+        let shared = SharedWebCache {
+            root: dir.path().to_path_buf(),
+        };
+        shared
+            .write_project_ref(project.path(), [package_root.clone()])
+            .unwrap();
+        let pinned = read_shared_cache_pinned_package_roots(dir.path());
+
+        prune_shared_cache_to_quota(dir.path(), 1, &pinned).unwrap();
+
+        assert!(
+            package_root.join("index.js").exists(),
+            "quota pruning must not remove package roots pinned by project refs"
         );
     }
 
@@ -5474,9 +5944,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_install_materialization_uses_hardlinks_from_cached_extract_root() {
-        use std::os::unix::fs::MetadataExt;
-
+    async fn test_install_materialization_uses_store_links_from_cached_extract_root() {
         let dir = tempfile::tempdir().unwrap();
         let shared = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -5529,26 +5997,107 @@ mod tests {
             .unwrap();
 
         let cache_key = extracted_package_cache_key(&graph.packages[0]);
-        let cached_file = shared
+        let cached_root = shared
             .path()
             .join("packages")
             .join("react")
             .join(cache_key)
-            .join("package")
-            .join("index.js");
+            .join("package");
         let installed_file = dir
             .path()
             .join("node_modules")
             .join("react")
             .join("index.js");
-        let cached_meta = std::fs::metadata(&cached_file)
-            .unwrap_or_else(|_| panic!("cached file not found at: {}", cached_file.display()));
-        let installed_meta = std::fs::metadata(&installed_file).unwrap_or_else(|_| {
-            panic!("installed file not found at: {}", installed_file.display())
-        });
-        assert_eq!(cached_meta.ino(), installed_meta.ino());
+        let vstore_link = dir
+            .path()
+            .join("node_modules")
+            .join(".megagate")
+            .join(format!("react@{}", react.version()))
+            .join("node_modules")
+            .join("react");
 
+        let link_meta = std::fs::symlink_metadata(&vstore_link)
+            .unwrap_or_else(|_| panic!("vstore link not found at: {}", vstore_link.display()));
+        assert!(link_meta.file_type().is_symlink());
+        assert_eq!(std::fs::read_link(&vstore_link).unwrap(), cached_root);
+        let refs = read_shared_cache_pinned_package_roots(shared.path());
+        assert!(
+            refs.contains(&canonical_or_original(&cached_root)),
+            "install should pin store-linked package root in shared cache refs"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&installed_file).unwrap(),
+            "export default 'react';"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_install_repairs_broken_store_links_when_shared_packages_are_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "dependencies": {
+                    "react": "^18.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let react = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        let integrity = seed_cached_tarball_with_files(
+            dir.path(),
+            &react,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"react","version":"18.2.0"}"#.as_slice(),
+                ),
+                ("package/index.js", b"export default 'react';"),
+            ],
+        );
+
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: react.clone(),
+                integrity,
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "https://registry.npmjs.org".into(),
+            shared.path().to_path_buf(),
+        );
+        adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
+
+        let installed_file = dir.path().join("node_modules/react/index.js");
+        assert!(installed_file.exists());
         std::fs::remove_dir_all(shared.path().join("packages")).unwrap();
+        assert!(
+            !installed_file.exists(),
+            "store-linked install should expose a broken link after manual shared package deletion"
+        );
+
+        adapter
+            .install(&graph, dir.path(), InstallOptions::default())
+            .await
+            .unwrap();
+
         assert_eq!(
             std::fs::read_to_string(&installed_file).unwrap(),
             "export default 'react';"
@@ -5614,10 +6163,14 @@ mod tests {
         write_extracted_package_marker(
             &shared_root,
             &ExtractedPackageMarker {
+                schema_version: 0,
                 name: "react".into(),
                 version: "18.2.0".into(),
                 integrity: Some(integrity),
                 tarball_sha256: "bad-digest".into(),
+                file_count: 0,
+                unpacked_size: 0,
+                file_tree_sha256: "bad-tree".into(),
             },
         )
         .unwrap();
@@ -5664,6 +6217,152 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_ne!(marker.tarball_sha256, "bad-digest");
+    }
+
+    #[tokio::test]
+    async fn test_install_rebuilds_cached_root_when_file_tree_is_incomplete() {
+        let shared = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let rollup = PackageId::new(
+            PackageName::new("rollup").unwrap(),
+            Version::parse("4.62.2").unwrap(),
+        );
+        let integrity = seed_shared_tarball_with_files(
+            shared.path(),
+            &rollup,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"rollup","version":"4.62.2","exports":{"./parseAst":{"import":"./dist/es/parseAst.js","require":"./dist/parseAst.js"}}}"#.as_slice(),
+                ),
+                ("package/dist/parseAst.js", b"module.exports = {};\n"),
+                (
+                    "package/dist/es/parseAst.js",
+                    b"export const parseAst = () => null;\n",
+                ),
+            ],
+        );
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: rollup.clone(),
+                integrity: integrity.clone(),
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+        let shared_root = shared_extracted_package_root(shared.path(), &graph.packages[0]);
+        std::fs::create_dir_all(shared_root.join("dist")).unwrap();
+        std::fs::write(
+            shared_root.join("package.json"),
+            br#"{"name":"rollup","version":"4.62.2"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            shared_root.join("dist/parseAst.js"),
+            b"module.exports = {};\n",
+        )
+        .unwrap();
+        let tarball = PackageCache::new(shared.path().join("cache"))
+            .unwrap()
+            .get_tarball(&rollup)
+            .unwrap()
+            .unwrap();
+        let mut marker =
+            expected_extracted_package_marker_from_bytes(&graph.packages[0], &tarball).unwrap();
+        marker.schema_version = 0;
+        marker.file_count = 0;
+        marker.unpacked_size = 0;
+        marker.file_tree_sha256.clear();
+        write_extracted_package_marker(&shared_root, &marker).unwrap();
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "https://registry.npmjs.org".into(),
+            shared.path().to_path_buf(),
+        );
+        adapter
+            .install(&graph, project.path(), InstallOptions::default())
+            .await
+            .unwrap();
+
+        assert!(project
+            .path()
+            .join("node_modules/rollup/dist/es/parseAst.js")
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplete() {
+        let old = std::env::var_os("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE");
+        std::env::set_var("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE", "1");
+
+        let shared = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let rollup = PackageId::new(
+            PackageName::new("rollup").unwrap(),
+            Version::parse("4.62.2").unwrap(),
+        );
+        let integrity = seed_shared_tarball_with_files(
+            shared.path(),
+            &rollup,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"rollup","version":"4.62.2"}"#.as_slice(),
+                ),
+                ("package/dist/parseAst.js", b"module.exports = {};\n"),
+                (
+                    "package/dist/es/parseAst.js",
+                    b"export const parseAst = () => null;\n",
+                ),
+            ],
+        );
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: rollup.clone(),
+                integrity: integrity.clone(),
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+        let shared_root = shared_extracted_package_root(shared.path(), &graph.packages[0]);
+        std::fs::create_dir_all(shared_root.join("dist")).unwrap();
+        std::fs::write(
+            shared_root.join("package.json"),
+            br#"{"name":"rollup","version":"4.62.2"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            shared_root.join("dist/parseAst.js"),
+            b"module.exports = {};\n",
+        )
+        .unwrap();
+        let tarball = PackageCache::new(shared.path().join("cache"))
+            .unwrap()
+            .get_tarball(&rollup)
+            .unwrap()
+            .unwrap();
+        let marker =
+            expected_extracted_package_marker_from_bytes(&graph.packages[0], &tarball).unwrap();
+        write_extracted_package_marker(&shared_root, &marker).unwrap();
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "https://registry.npmjs.org".into(),
+            shared.path().to_path_buf(),
+        );
+        adapter
+            .install(&graph, project.path(), InstallOptions::default())
+            .await
+            .unwrap();
+
+        assert!(project
+            .path()
+            .join("node_modules/rollup/dist/es/parseAst.js")
+            .exists());
+        restore_env_var("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE", old);
     }
 
     fn seed_cached_tarball(root: &Path, pkg: &PackageId) -> String {
@@ -5899,10 +6598,16 @@ mod tests {
 
 fn lockfile_satisfies_manifest(lockfile: &Lockfile, manifest: &Manifest) -> bool {
     for dep in manifest.all_dependencies() {
-        let Some(lp) = lockfile.packages.iter().find(|lp| lp.name == dep.name.as_str()) else {
+        let Some(lp) = lockfile
+            .packages
+            .iter()
+            .find(|lp| lp.name == dep.name.as_str())
+        else {
             return false;
         };
-        let Ok(ver) = Version::parse(&lp.version) else { return false; };
+        let Ok(ver) = Version::parse(&lp.version) else {
+            return false;
+        };
         if !dep.range.matches(&ver) {
             return false;
         }
@@ -5910,13 +6615,21 @@ fn lockfile_satisfies_manifest(lockfile: &Lockfile, manifest: &Manifest) -> bool
     true
 }
 
-fn build_graph_from_lockfile(lockfile: &Lockfile, manifest: &Manifest) -> MgResult<Option<ResolvedGraph>> {
+fn build_graph_from_lockfile(
+    lockfile: &Lockfile,
+    manifest: &Manifest,
+) -> MgResult<Option<ResolvedGraph>> {
     let mut packages = Vec::new();
     for dep in manifest.all_dependencies() {
-        let Some(lp) = lockfile.packages.iter().find(|lp| lp.name == dep.name.as_str()) else {
+        let Some(lp) = lockfile
+            .packages
+            .iter()
+            .find(|lp| lp.name == dep.name.as_str())
+        else {
             return Ok(None);
         };
-        let version = Version::parse(&lp.version).map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+        let version =
+            Version::parse(&lp.version).map_err(|e| mg_types::MgError::Other(e.to_string()))?;
         let deps: Vec<PackageId> = lp
             .dependencies
             .iter()
