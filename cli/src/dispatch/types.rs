@@ -48,6 +48,7 @@ pub enum CommonCommand {
         action: String,
         target: String,
         yes: bool,
+        dry_run: bool,
     },
     Link {
         package: Option<String>,
@@ -98,6 +99,7 @@ pub enum CoreCommand {
         packages: Vec<String>,
         frozen: bool,
         ignore_scripts: bool,
+        allow_scripts: bool,
     },
     InstallGame {
         packages: Vec<String>,
@@ -293,10 +295,12 @@ impl TryFrom<Commands> for DispatchCommand {
                 action,
                 target,
                 yes,
+                dry_run,
             } => Some(CommonCommand::Cache {
                 action,
                 target,
                 yes,
+                dry_run,
             }),
             Commands::Link { package } => Some(CommonCommand::Link { package }),
             Commands::Unlink { package } => Some(CommonCommand::Unlink { package }),
@@ -314,6 +318,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 packages,
                 frozen,
                 ignore_scripts,
+                allow_scripts,
             } => {
                 let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
@@ -321,6 +326,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         packages,
                         frozen,
                         ignore_scripts,
+                        allow_scripts,
                     }),
                     Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
                     Some("ai") => SomeCore(CoreCommand::InstallAi { packages }),
@@ -333,6 +339,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         packages,
                         frozen,
                         ignore_scripts,
+                        allow_scripts,
                     }),
                 }
             }
@@ -543,10 +550,12 @@ impl TryFrom<Commands> for DispatchCommand {
                 packages,
                 frozen,
                 ignore_scripts,
+                allow_scripts,
             } => SomeCore(CoreCommand::InstallWeb {
                 packages,
                 frozen,
                 ignore_scripts,
+                allow_scripts,
             }),
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
             Commands::InstallAi { packages } => SomeCore(CoreCommand::InstallAi { packages }),

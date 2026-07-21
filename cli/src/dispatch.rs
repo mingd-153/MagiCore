@@ -90,10 +90,12 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             action,
             target,
             yes,
+            dry_run,
         } => Some(CommonCommand::Cache {
             action,
             target,
             yes,
+            dry_run,
         }),
         Commands::Link { package } => Some(CommonCommand::Link { package }),
         Commands::Unlink { package } => Some(CommonCommand::Unlink { package }),
@@ -162,10 +164,12 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             packages,
             frozen,
             ignore_scripts,
+            allow_scripts,
         } => Some(CoreCommand::InstallWeb {
             packages,
             frozen,
             ignore_scripts,
+            allow_scripts,
         }),
         Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
         Commands::InstallAi { packages } => Some(CoreCommand::InstallAi { packages }),
@@ -375,11 +379,13 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             packages,
             frozen,
             ignore_scripts,
+            allow_scripts,
         } => SomeCore(match ecosystem.as_deref() {
             Some("web") => CoreCommand::InstallWeb {
                 packages,
                 frozen,
                 ignore_scripts,
+                allow_scripts,
             },
             Some("game") => CoreCommand::InstallGame { packages },
             Some("ai") => CoreCommand::InstallAi { packages },
@@ -392,6 +398,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
                 packages,
                 frozen,
                 ignore_scripts,
+                allow_scripts,
             },
         }),
         Commands::Add {
@@ -545,6 +552,7 @@ mod tests {
             packages: vec![],
             frozen: false,
             ignore_scripts: false,
+            allow_scripts: false,
         };
         assert!(reject_unsupported_audit_strict(&install).is_err());
 

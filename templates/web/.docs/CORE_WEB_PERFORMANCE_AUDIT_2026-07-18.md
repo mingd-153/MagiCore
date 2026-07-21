@@ -1265,3 +1265,383 @@ Next fix target:
 - optimize materialization path before running another full benchmark
 - specifically reduce package linking/copying/hardlink filesystem churn
 - measure materialization separately from resolve/fetch so the bottleneck is not hidden inside total install time
+
+## Update 22 - 2026-07-21 01:19 +07 - fixed stale extracted package cache breaking Vite/Rollup dev
+
+Trigger:
+
+- Full benchmark `benchmark_brutal_results_20260721_002027.md` had 27/29 lanes passing.
+- `dev-startup` and `heavy-dev-startup` failed because Vite could not import Rollup:
+  - missing path: `node_modules/.megagate/vite@7.3.6/node_modules/vite/node_modules/rollup/dist/es/parseAst.js`
+
+Root cause:
+
+- The Rollup tarball did contain `package/dist/es/parseAst.js`.
+- The shared extracted package cache for `rollup@4.62.2` did not contain that file.
+- The extracted package marker only tracked package name, version, integrity, and tarball fingerprint.
+- A stale/corrupt extracted root could therefore pass marker validation and keep being reused.
+- This made `mg install` report success while `mg dev` failed at real runtime resolution.
+
+Fix:
+
+- File: `adapters/web/src/lib.rs`
+- `ExtractedPackageMarker` now includes:
+  - `file_count`
+  - `unpacked_size`
+  - `file_tree_sha256`
+- The expected marker is computed from the tarball file tree after stripping the archive package root.
+- Reusing an extracted root now requires both:
+  - marker equality
+  - extracted file tree matching the tarball signature
+- Old markers default these new fields to empty/zero, so old cache roots are treated as stale and rebuilt.
+- Added regression test:
+  - `test_install_rebuilds_cached_root_when_file_tree_is_incomplete`
+  - reproduces a Rollup-like tarball with `dist/es/parseAst.js`
+  - pre-seeds an incomplete extracted root with an otherwise matching marker
+  - verifies install rebuilds the root and materializes the missing file
+
+Verification:
+
+- `cargo fmt -p mg-web-adapter` - pass
+- `cargo test -p mg-web-adapter` - pass, 42/42 tests
+- `cargo build -p mg` - pass
+- `cargo check -p mg` - pass
+- Repro fixture:
+  - created `/private/tmp/mg-vite-repro` with `vite@^7.3.6`
+  - `mg install --core web --ignore-scripts` - pass
+  - verified `node_modules/.megagate/rollup@4.62.2/node_modules/rollup/dist/es/parseAst.js` exists
+  - verified `import('rollup/parseAst')` works
+- Real React scaffold:
+  - `mg create-web react@latest app --ts` - pass
+  - `mg install --core web --ignore-scripts` - pass
+  - `mg dev --core web --host 127.0.0.1 --port 4315` - Vite ready in `232 ms`
+  - `curl -I http://127.0.0.1:4315/` - HTTP 200
+
+Remaining notes:
+
+- Fresh React install still prints duplicate warnings about missing `mg.lock.sha256` before the first lockfile is written. This is noisy but not runtime-breaking.
+- The fix intentionally adds a file-tree validation step when checking extracted roots. It improves correctness and self-heals dirty cache, but can add overhead when many package roots are validated.
+- A follow-up benchmark should rerun at least:
+  - `dev-startup`
+  - `heavy-dev-startup`
+  - `cold-install`
+  - `heavy-empty-cache-install`
+  - `heavy-warm-install`
+- Product status after this fix:
+  - runtime correctness for the observed Vite/Rollup failure is fixed
+  - overall install/materialization speed is still behind Bun and pnpm based on the latest full benchmark
+
+Follow-up benchmark subset:
+
+- Command:
+  - `BENCH_LANES=dev-startup,heavy-dev-startup BENCH_PMS=mg BENCH_RUNS=1 BENCH_WARMUP=0 CONTINUE_ON_FAILURE=1 bash benchmark.sh`
+- Report:
+  - `benchmark_brutal_results_20260721_012119.md`
+  - `benchmark_brutal_results_20260721_012119.json`
+  - `benchmark_brutal_results_20260721_012119.status.tsv`
+- Result:
+  - `dev-startup`: PASS, `7.583s`
+  - `heavy-dev-startup`: PASS, `11.091s`
+  - failures: `0`
+
+Important follow-up finding:
+
+- The heavy dev lane printed a `core-js` lifecycle message, so lifecycle scripts are still allowed in that path unless `--ignore-scripts` is passed.
+- This is a separate security/product-policy issue:
+  - either benchmark should explicitly pass `--ignore-scripts` for security mode
+  - or MegaGate should introduce a stricter default/package policy before product
+  - current fix only resolves stale extracted cache/runtime compatibility, not lifecycle trust policy
+
+## Update 23 - 2026-07-21 01:26 +07 - lifecycle scripts default to opt-in and fresh scaffold lock warning cleaned
+
+Changes:
+
+- File: `adapters/web/src/lib.rs`
+- Lifecycle scripts now run only when both conditions are true:
+  - command did not pass `--ignore-scripts`
+  - `MEGAGATE_WEB_ALLOW_SCRIPTS` is explicitly enabled with `1`, `true`, `yes`, or `on`
+- This makes core-web secure-by-default for package lifecycle scripts.
+- The existing `--ignore-scripts` flag remains honored and always disables scripts.
+- `read_web_lockfile_checked` no longer warns on scaffold placeholder locks:
+  - `resolution.state = "pending"`
+  - `package_count = 0`
+  - no packages
+- Missing `mg.lock.sha256` now warns only for lockfiles that contain real locked state/packages, and only once per process.
+
+Tests:
+
+- Added:
+  - `test_lifecycle_scripts_are_opt_in`
+  - `test_pending_scaffold_lockfile_without_checksum_is_allowed`
+- `cargo test -p mg-web-adapter` - pass, 44/44 tests
+- `cargo build -p mg` - pass
+- `cargo check -p mg` - pass
+
+Runtime verification:
+
+- Fresh React scaffold:
+  - `mg create-web react@latest warning-app --ts` - pass
+  - `mg install --core web --ignore-scripts` - pass
+  - no duplicate `mg.lock.sha256` warning
+- Heavy dev benchmark subset:
+  - command: `BENCH_LANES=heavy-dev-startup BENCH_PMS=mg BENCH_RUNS=1 BENCH_WARMUP=0 CONTINUE_ON_FAILURE=1 bash benchmark.sh`
+  - report: `benchmark_brutal_results_20260721_012641.md`
+  - status: PASS
+  - time: `6.508s`
+  - no `core-js` lifecycle output
+
+Impact:
+
+- Security improves because dependency lifecycle scripts no longer run by default.
+- Heavy dev startup improved in the measured subset because postinstall noise was removed from the default path.
+- Follow-up needed:
+  - add a proper user-facing `--allow-scripts` flag instead of env-only opt-in
+  - document script policy in CLI help and core-web README
+  - rerun full benchmark against Bun/pnpm after this policy change
+
+## Update 24 - 2026-07-21 01:31 +07 - added user-facing `--allow-scripts`
+
+Changes:
+
+- Added `allow_scripts` to `mg-types::adapter::InstallOptions`.
+- Added CLI flags:
+  - `mg install --allow-scripts`
+  - `mg install-web --allow-scripts`
+- `--ignore-scripts` still wins and disables lifecycle scripts even if `--allow-scripts` is also present.
+- Internal/shared install paths keep `allow_scripts = false` by default, so add/remove/update reinstall paths do not accidentally execute package scripts.
+- Web adapter lifecycle policy is now:
+  - run scripts only when `!ignore_scripts && (allow_scripts || MEGAGATE_WEB_ALLOW_SCRIPTS=1)`
+
+Tests:
+
+- `cargo check -p mg` - pass
+- `cargo test -p mg-web-adapter` - pass, 44/44 tests
+- `cargo test -p mg --test web_cli_surface` - pass, 5/5 tests
+- `cargo test -p mg test_install_accepts_script_policy_flags` - pass
+- Help verification:
+  - `mg install --help` includes `--ignore-scripts` and `--allow-scripts`
+  - `mg install-web --help` includes `--ignore-scripts` and `--allow-scripts`
+
+Runtime verification:
+
+- Fresh React install still has no duplicate scaffold `mg.lock.sha256` warning.
+- Release benchmark subset:
+  - command: `BENCH_LANES=heavy-dev-startup BENCH_PMS=mg BENCH_RUNS=1 BENCH_WARMUP=0 CONTINUE_ON_FAILURE=1 bash benchmark.sh`
+  - report: `benchmark_brutal_results_20260721_013108.md`
+  - status: PASS
+  - time: `11.337s`
+  - no lifecycle/postinstall output
+
+Product note:
+
+- Security policy is now explicit enough for CLI users.
+- Speed is still not product-competitive; the current bottleneck remains install/materialization/cache validation churn.
+
+## Update 25 - 2026-07-21 01:44 +07 - extracted-cache fast path and store-linked strict layout
+
+Why:
+
+- After Update 24, `heavy-dev-startup` still measured `16.006s`.
+- Adapter install alone reported `13.872s` even though all `104275314` bytes came from cache.
+- Root cause: strict layout still hardlinked every package file from extracted cache into each project's `.megagate` virtual store. With 583 packages this caused large filesystem syscall churn.
+
+Changes:
+
+- File: `adapters/web/src/lib.rs`
+- Added extracted package marker schema v2.
+- Default cache reuse now uses a fast marker check:
+  - package name
+  - version
+  - integrity
+  - tarball fingerprint
+- Full extracted file-tree validation is still available, but opt-in:
+  - `MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE=1`
+- Old/incomplete marker schemas self-heal by rebuilding the extracted package root.
+- Strict `node_modules/.megagate` materialization now store-links package roots instead of hardlinking every file into every project.
+- Removed a leftover `DEBUG` print in tarball host trust checks.
+- File: `adapters/web/src/layout.rs`
+- `create_symlink` now removes stale real directories, files, or old symlinks correctly before creating the new link.
+
+Tests:
+
+- `cargo fmt` - pass
+- `cargo test -p mg-web-adapter` - pass, 45/45 tests
+- `cargo check -p mg` - pass
+- `cargo build --release -p mg` - pass
+- `cargo test -p mg --test web_cli_surface` - pass, 5/5 tests
+- `cargo test -p mg test_install_accepts_script_policy_flags` - pass
+
+New/updated tests:
+
+- `test_install_materialization_uses_store_links_from_cached_extract_root`
+- `test_install_rebuilds_cached_root_when_file_tree_is_incomplete`
+- `test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplete`
+
+Benchmark before/after:
+
+| Lane | Before | After | Read |
+| --- | ---: | ---: | --- |
+| `heavy-dev-startup` MG-only | `16.006s` wall / `13.872s` adapter install | `2.681s` wall / `444ms` adapter install | Materialization bottleneck fixed for this lane |
+
+Comparison benchmark:
+
+- Command:
+  - `BENCH_LANES=heavy-cold-install,heavy-dev-startup BENCH_PMS=mg,bun,pnpm BENCH_RUNS=1 BENCH_WARMUP=0 CONTINUE_ON_FAILURE=1 bash benchmark.sh`
+- Report:
+  - `benchmark_brutal_results_20260721_014423.md`
+
+| Lane | MG | Bun | pnpm | Current read |
+| --- | ---: | ---: | ---: | --- |
+| `heavy-cold-install` | `962.2ms` | `3.012s` | `4.455s` | MG fastest in this cached heavy install run |
+| `heavy-dev-startup` | `3.676s` | `1.634s` | `4.794s` | Bun still faster; MG beats pnpm |
+
+Impact:
+
+- Good:
+  - Repeat/fresh project installs against a warm shared cache are much lighter.
+  - Project-local `node_modules` no longer duplicates large package trees into `.megagate`.
+  - Cache correctness remains available through explicit full validation.
+- Risk:
+  - Store-linked projects depend on the shared extracted package root staying available.
+  - Shared cache GC must become reference-aware before product release.
+  - If a user manually deletes shared cache, existing projects can get broken symlinks and should run `mg install --core web` to repair.
+- Product status:
+  - This fixes the most severe cached materialization regression found in the `16s` lane.
+  - Core-web is still not product-ready because dev-server startup is still slower than Bun in the heavy lane and shared-cache GC is not yet reference-aware.
+  - Next required fix: add cache reference tracking or a pinned-project manifest before aggressive cache pruning is allowed.
+
+## Update 26 - 2026-07-21 01:49 +07 - shared-cache project refs for store-linked installs
+
+Why:
+
+- Update 25 made strict `node_modules` lightweight by symlinking project virtual-store entries to the shared extracted cache.
+- That created a real product risk: shared-cache GC could delete an extracted package root still referenced by an installed project.
+
+Changes:
+
+- File: `adapters/web/src/lib.rs`
+- Added shared-cache project reference records:
+  - path: `<shared-web-cache>/refs/projects/<project-hash>.json`
+  - schema: project root, updated timestamp, and pinned package root paths
+- Every successful install writes/refreshes the current project's pinned package roots.
+- Shared-cache pruning now reads project refs before deleting extracted package roots.
+- Quota pruning skips pinned package roots.
+- Age pruning skips pinned package roots.
+- Stale project refs are ignored/removed when their project root no longer exists.
+- Ref path comparisons canonicalize paths to handle macOS `/var` vs `/private/var` differences.
+
+Tests:
+
+- Added/updated:
+  - `test_install_materialization_uses_store_links_from_cached_extract_root`
+    - now also asserts install writes a shared-cache ref for the linked package root
+  - `test_prune_shared_cache_to_quota_keeps_pinned_package_roots`
+- `cargo fmt` - pass
+- `cargo test -p mg-web-adapter` - pass, 46/46 tests
+- `cargo check -p mg` - pass
+- `cargo build --release -p mg` - pass
+- `cargo test -p mg --test web_cli_surface` - pass, 5/5 tests
+
+Benchmark:
+
+- Command:
+  - `BENCH_LANES=heavy-dev-startup BENCH_PMS=mg BENCH_RUNS=1 BENCH_WARMUP=0 CONTINUE_ON_FAILURE=1 bash benchmark.sh`
+- Report:
+  - `benchmark_brutal_results_20260721_014916.md`
+
+| Lane | Result |
+| --- | ---: |
+| `heavy-dev-startup` | `3.121s` wall |
+| adapter install inside lane | `478ms` |
+
+Read:
+
+- Ref tracking did not reintroduce the previous materialization regression.
+- The lane is slightly slower than the best post-store-link run (`2.681s`), but still far below the pre-fix `16.006s`.
+
+Remaining product notes:
+
+- This is now safer for store-linked `node_modules`, but not the final GC model.
+- Still needed before product:
+  - explicit `mg cache prune` policy that reports pinned/unpinned bytes separately
+  - repair command/path for broken store links after manual cache deletion
+  - optional project-local hardlink mode for fully portable installs
+  - more benchmark passes with multiple runs/warmups, not only single-run smoke
+
+## Update 27 - 2026-07-21 02:16 +07 - cache status/prune visibility and broken store-link repair coverage
+
+Why:
+
+- Update 26 wrote project refs, but users still could not see pinned vs unpinned cache weight from CLI.
+- Store-linked installs also needed an explicit regression test for manual shared-cache deletion.
+
+Changes:
+
+- File: `cli/src/main.rs`
+  - `mg cache` now accepts a new `prune` action:
+    - `mg cache prune --target shared --core web --yes`
+- File: `cli/src/commands/cache.rs`
+  - `mg cache status --target shared --core web` now reports:
+    - total shared cache size
+    - pinned web package bytes/root count/live ref count
+    - unpinned web package bytes/root count
+  - stale project refs are not counted as live refs.
+  - `mg cache prune --target shared --core web --yes` removes only unpinned extracted web package roots.
+  - `mg cache prune` without `--yes` refuses and prints status.
+- File: `adapters/web/src/lib.rs`
+  - Added regression coverage proving `mg install` repairs broken store links after manual deletion of shared extracted package roots.
+
+Tests:
+
+- `cargo fmt` - pass
+- `cargo check -p mg` - pass
+- `cargo test -p mg cache -- --nocapture` - pass, 5/5 cache/parser tests
+- `cargo test -p mg-web-adapter` - pass, 47/47 tests
+- `cargo build --release -p mg` - pass
+
+Runtime CLI check:
+
+```bash
+target/release/mg cache status --target shared --core web
+```
+
+Observed output on this machine:
+
+```text
+shared  992.8 MiB  exists  /Users/doanmihh/Library/Caches/megagate/web
+shared:web:pinned  0 B  0 roots  0 refs
+shared:web:unpinned  671.9 MiB  931 roots
+```
+
+```bash
+target/release/mg cache prune --target shared --core web
+```
+
+Observed output:
+
+```text
+Refusing to prune cache without --yes.
+shared  992.8 MiB  exists  /Users/doanmihh/Library/Caches/megagate/web
+shared:web:pinned  0 B  0 roots  0 refs
+shared:web:unpinned  671.9 MiB  931 roots
+```
+
+Benchmark:
+
+- Command:
+  - `BENCH_LANES=heavy-dev-startup BENCH_PMS=mg BENCH_RUNS=1 BENCH_WARMUP=0 CONTINUE_ON_FAILURE=1 bash benchmark.sh`
+- Report:
+  - `benchmark_brutal_results_20260721_021631.md`
+
+| Lane | Result |
+| --- | ---: |
+| `heavy-dev-startup` | `2.279s` wall |
+| adapter install inside lane | `445ms` |
+
+Read:
+
+- Cache visibility/prune support did not slow the heavy install/dev path.
+- Store-link repair is now covered by test rather than assumption.
+- Remaining product gap:
+  - `mg cache prune --yes` has not been run against the user's real shared cache because it would delete 931 unpinned package roots on this machine.
+  - Need a dry-run/preview flag before using prune aggressively in production workflows.

@@ -114,7 +114,14 @@ pub async fn add(
 
     if !no_save && install {
         info("Installing added packages...");
-        install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
+        install_with_adapter(
+            adapter,
+            root,
+            install_command_for_adapter(adapter),
+            false,
+            false,
+        )
+        .await?;
     } else if !no_save {
         info(&format!(
             "Run '{}' to update lockfile and node_modules",
@@ -164,7 +171,14 @@ pub async fn remove(
         success("All dependencies installed");
         return Ok(());
     }
-    install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
+    install_with_adapter(
+        adapter,
+        root,
+        install_command_for_adapter(adapter),
+        false,
+        false,
+    )
+    .await?;
     Ok(())
 }
 
@@ -211,8 +225,14 @@ pub async fn update(
             success(&format!("Updated {} package(s)", updated.len()));
             if install {
                 info("Installing updated packages...");
-                install_with_adapter(adapter, root, install_command_for_adapter(adapter), false)
-                    .await?;
+                install_with_adapter(
+                    adapter,
+                    root,
+                    install_command_for_adapter(adapter),
+                    false,
+                    false,
+                )
+                .await?;
             } else {
                 info(&format!(
                     "Run '{}' to install updates",
@@ -236,8 +256,14 @@ pub async fn update(
         success("Update complete");
         if install {
             info("Installing updated packages...");
-            install_with_adapter(adapter, root, install_command_for_adapter(adapter), false)
-                .await?;
+            install_with_adapter(
+                adapter,
+                root,
+                install_command_for_adapter(adapter),
+                false,
+                false,
+            )
+            .await?;
         } else {
             info(&format!(
                 "Run '{}' to install updates",
@@ -254,6 +280,7 @@ pub async fn install_with_adapter(
     root: &Path,
     add_cmd: &str,
     frozen: bool,
+    allow_scripts: bool,
 ) -> Result<()> {
     let command_started_at = std::time::Instant::now();
     let InstallExecution {
@@ -288,7 +315,14 @@ pub async fn install_with_adapter(
 
     let spinner = create_spinner("  Linking packages...");
     let mut summary = adapter
-        .install(&graph, root, mg_types::adapter::InstallOptions::default())
+        .install(
+            &graph,
+            root,
+            mg_types::adapter::InstallOptions {
+                allow_scripts,
+                ..mg_types::adapter::InstallOptions::default()
+            },
+        )
         .await?;
     spinner.finish_and_clear();
     profile_install_mark("adapter_install", started_at);
