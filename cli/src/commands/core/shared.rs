@@ -119,7 +119,10 @@ pub async fn add(
             root,
             install_command_for_adapter(adapter),
             false,
-            false,
+            mg_types::adapter::InstallOptions {
+                incremental: true,
+                ..Default::default()
+            },
         )
         .await?;
     } else if !no_save {
@@ -176,7 +179,10 @@ pub async fn remove(
         root,
         install_command_for_adapter(adapter),
         false,
-        false,
+        mg_types::adapter::InstallOptions {
+            incremental: true,
+            ..Default::default()
+        },
     )
     .await?;
     Ok(())
@@ -230,7 +236,10 @@ pub async fn update(
                     root,
                     install_command_for_adapter(adapter),
                     false,
-                    false,
+                    mg_types::adapter::InstallOptions {
+                        incremental: true,
+                        ..Default::default()
+                    },
                 )
                 .await?;
             } else {
@@ -261,7 +270,10 @@ pub async fn update(
                 root,
                 install_command_for_adapter(adapter),
                 false,
-                false,
+                mg_types::adapter::InstallOptions {
+                    incremental: true,
+                    ..Default::default()
+                },
             )
             .await?;
         } else {
@@ -280,7 +292,7 @@ pub async fn install_with_adapter(
     root: &Path,
     add_cmd: &str,
     frozen: bool,
-    allow_scripts: bool,
+    opts: mg_types::adapter::InstallOptions,
 ) -> Result<()> {
     let command_started_at = std::time::Instant::now();
     let InstallExecution {
@@ -315,14 +327,7 @@ pub async fn install_with_adapter(
 
     let spinner = create_spinner("  Linking packages...");
     let mut summary = adapter
-        .install(
-            &graph,
-            root,
-            mg_types::adapter::InstallOptions {
-                allow_scripts,
-                ..mg_types::adapter::InstallOptions::default()
-            },
-        )
+        .install(&graph, root, opts)
         .await?;
     spinner.finish_and_clear();
     profile_install_mark("adapter_install", started_at);

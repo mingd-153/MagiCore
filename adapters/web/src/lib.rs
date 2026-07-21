@@ -645,13 +645,21 @@ impl PackageAdapter for WebAdapter {
             .collect();
         let mut packages_with_scripts: Vec<std::path::PathBuf> = Vec::new();
 
-        let already_materialized: std::collections::HashSet<PackageId> = root_packages
-            .iter()
-            .filter(|pkg| {
-                installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id)
-            })
-            .map(|pkg| pkg.id.clone())
-            .collect();
+        let already_materialized: std::collections::HashSet<PackageId> = if opts.incremental {
+            root_packages
+                .iter()
+                .filter(|pkg| !opts.force_install.contains(&pkg.id))
+                .map(|pkg| pkg.id.clone())
+                .collect()
+        } else {
+            root_packages
+                .iter()
+                .filter(|pkg| {
+                    installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id)
+                })
+                .map(|pkg| pkg.id.clone())
+                .collect()
+        };
         let shared_package_cache_for_install = shared_cache
             .as_ref()
             .and_then(|shared| shared.package_cache().ok());

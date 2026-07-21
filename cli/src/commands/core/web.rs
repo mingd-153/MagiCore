@@ -148,7 +148,10 @@ pub async fn install(
                     target,
                     "mg add",
                     frozen,
-                    allow_scripts,
+                    mg_types::adapter::InstallOptions {
+                        allow_scripts,
+                        ..Default::default()
+                    },
                 )
                 .await?;
             } else {
@@ -556,6 +559,7 @@ async fn install_web_target_quiet(
         allow_scripts,
         legacy_flat: should_use_legacy_flat_layout(),
         frozen,
+        ..Default::default()
     };
     adapter.install(&execution.graph, target, opts).await?;
     Ok(())
