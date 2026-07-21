@@ -30,8 +30,8 @@ pub async fn dispatch_common(command: CommonCommand, core: Option<&str>) -> Resu
             action,
             target,
             yes,
-            ..
-        } => commands::cache::run(action, target, yes, core).await,
+            dry_run,
+        } => commands::cache::run(action, target, yes, dry_run, core).await,
         CommonCommand::Link { package } => {
             let ctx = ProjectContext::load_with_core(core)?;
             commands::core::shared::link(ctx.adapter(), ctx.root(), package.as_deref()).await
