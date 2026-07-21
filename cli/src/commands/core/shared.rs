@@ -58,6 +58,7 @@ pub async fn add(
     };
     mg_ui::info(&format!("Adding {} package(s) to {}...", total, group));
 
+    let mut added_ids = Vec::new();
     for package in packages {
         let spec = mg_types::DependencySpec::parse(&package)?;
         let name = spec.name;
@@ -87,6 +88,7 @@ pub async fn add(
         let resolved_version = pkg_id.version().to_string();
 
         if !no_save {
+            added_ids.push(pkg_id.clone());
             if resolved_version == "0.0.0" {
                 mg_ui::info(&format!(
                     "  {}@{} saved to {}",
@@ -121,6 +123,7 @@ pub async fn add(
             false,
             mg_types::adapter::InstallOptions {
                 incremental: true,
+                force_install: added_ids,
                 ..Default::default()
             },
         )
