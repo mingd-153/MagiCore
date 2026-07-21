@@ -51,7 +51,7 @@ struct WebSharedCacheStats {
     project_refs: usize,
 }
 
-pub async fn run(action: String, target: String, yes: bool, core: Option<&str>) -> Result<()> {
+pub async fn run(action: String, target: String, yes: bool, dry_run: bool, core: Option<&str>) -> Result<()> {
     let action = CacheAction::parse(&action)?;
     let target = CacheTarget::parse(&target)?;
     let entries = cache_entries(target, core, action.includes_build_target(target))?;
@@ -59,7 +59,7 @@ pub async fn run(action: String, target: String, yes: bool, core: Option<&str>) 
     match action {
         CacheAction::Status => print_status(&entries),
         CacheAction::Clean => clean(&entries, yes),
-        CacheAction::Prune => prune(&entries, yes, core),
+        CacheAction::Prune => prune(&entries, yes, dry_run, core),
     }
 }
 
@@ -223,7 +223,7 @@ fn clean(entries: &[CacheEntry], yes: bool) -> Result<()> {
     Ok(())
 }
 
-fn prune(entries: &[CacheEntry], yes: bool, core: Option<&str>) -> Result<()> {
+fn prune(entries: &[CacheEntry], yes: bool, dry_run: bool, core: Option<&str>) -> Result<()> {
     if !yes {
         println!("Refusing to prune cache without --yes.");
         print_status(entries)?;
@@ -232,13 +232,23 @@ fn prune(entries: &[CacheEntry], yes: bool, core: Option<&str>) -> Result<()> {
 
     for entry in entries {
         if entry.label == "shared" && core == Some("web") {
-            let removed = prune_web_shared_unpinned_package_roots(&entry.path)?;
-            println!(
-                "pruned\t{}\t{} unpinned package roots\t{}",
-                entry.label,
-                removed,
-                entry.path.display()
-            );
+            if dry_run {
+                let count = count_web_shared_unpinned_package_roots(&entry.path)?;
+                println!(
+                    "would prune\t{}\t{} unpinned package roots\t{}",
+                    entry.label,
+                    count,
+                    entry.path.display()
+                );
+            } else {
+                let removed = prune_web_shared_unpinned_package_roots(&entry.path)?;
+                println!(
+                    "pruned\t{}\t{} unpinned package roots\t{}",
+                    entry.label,
+                    removed,
+                    entry.path.display()
+                );
+            }
         } else {
             println!(
                 "skip\t{}\t{}",
@@ -247,6 +257,15 @@ fn prune(entries: &[CacheEntry], yes: bool, core: Option<&str>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn count_web_shared_unpinned_package_roots(root: &Path) -> Result<usize> {
+    let pinned = read_web_shared_pinned_package_roots(root);
+    let count = web_shared_package_roots(root)
+        .into_iter()
+        .filter(|path| !pinned.contains(path))
+        .count();
+    Ok(count)
 }
 
 fn prune_web_shared_unpinned_package_roots(root: &Path) -> Result<usize> {
