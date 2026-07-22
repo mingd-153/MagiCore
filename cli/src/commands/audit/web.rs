@@ -8,10 +8,10 @@ pub async fn audit(
     adapter: &dyn mg_types::adapter::PackageAdapter,
     project_root: &Path,
 ) -> Result<()> {
-    println!(
-        "\n🛡️  {}",
-        "MegaGate Security Audit (Web Core)".bold().cyan()
-    );
+    if !mg_ui::is_quiet() {
+        mg_ui::blank_line();
+        println!("🛡️  {}", "MegaGate Security Audit (Web Core)".bold().cyan());
+    }
 
     info("Auditing lockfile through the native web adapter...");
     let report = adapter.audit(project_root).await?;
@@ -30,7 +30,8 @@ pub async fn audit(
 }
 
 fn print_report(report: &AuditReport) {
-    println!("\n{}", "Audit Report".bold().underline());
+    mg_ui::blank_line();
+    println!("{}", "Audit Report".bold().underline());
     println!("  Packages audited: {}", report.packages_audited);
     println!("  Vulnerabilities: {}", report.vulnerability_count);
 
@@ -41,7 +42,8 @@ fn print_report(report: &AuditReport) {
             mg_types::adapter::VulnerabilitySeverity::Medium => vuln.severity.yellow().bold(),
             _ => vuln.severity.normal(),
         };
-        println!("\n{} {} in {}", severity, vuln.title.bold(), vuln.package);
+        mg_ui::blank_line();
+        println!("{} {} in {}", severity, vuln.title.bold(), vuln.package);
         if !vuln.cve.is_empty() {
             println!("  CVE: {}", vuln.cve);
         }

@@ -9,6 +9,7 @@ mod types;
 use types::{detect_ecosystem, CommonCommand, CoreCommand, DispatchCommand};
 
 pub async fn run(cli: Cli) -> Result<()> {
+    mg_ui::set_quiet(cli.quiet);
     let core = cli.core.as_deref();
 
     if cli.audit_strict {
@@ -317,19 +318,19 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             global,
         }),
         Commands::RemoveWeb {
-            package,
+            packages,
             no_install,
         } => Some(CoreCommand::RemoveWeb {
-            package,
+            packages,
             install: !no_install,
         }),
-        Commands::RemoveGame { package } => Some(CoreCommand::RemoveGame { package }),
-        Commands::RemoveAi { package } => Some(CoreCommand::RemoveAi { package }),
-        Commands::RemoveClo { package } => Some(CoreCommand::RemoveClo { package }),
-        Commands::RemoveCicd { package } => Some(CoreCommand::RemoveCicd { package }),
-        Commands::RemoveIot { package } => Some(CoreCommand::RemoveIot { package }),
-        Commands::RemoveApp { package } => Some(CoreCommand::RemoveApp { package }),
-        Commands::RemoveLib { package } => Some(CoreCommand::RemoveLib { package }),
+        Commands::RemoveGame { packages } => Some(CoreCommand::RemoveGame { packages }),
+        Commands::RemoveAi { packages } => Some(CoreCommand::RemoveAi { packages }),
+        Commands::RemoveClo { packages } => Some(CoreCommand::RemoveClo { packages }),
+        Commands::RemoveCicd { packages } => Some(CoreCommand::RemoveCicd { packages }),
+        Commands::RemoveIot { packages } => Some(CoreCommand::RemoveIot { packages }),
+        Commands::RemoveApp { packages } => Some(CoreCommand::RemoveApp { packages }),
+        Commands::RemoveLib { packages } => Some(CoreCommand::RemoveLib { packages }),
         Commands::ListWeb => Some(CoreCommand::ListWeb),
         Commands::ListGame => Some(CoreCommand::ListGame),
         Commands::ListAi => Some(CoreCommand::ListAi),
@@ -497,22 +498,22 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             },
         }),
         Commands::Remove {
-            package,
+            packages,
             no_install,
         } => SomeCore(match ecosystem.as_deref() {
             Some("web") => CoreCommand::RemoveWeb {
-                package,
+                packages,
                 install: !no_install,
             },
-            Some("game") => CoreCommand::RemoveGame { package },
-            Some("ai") => CoreCommand::RemoveAi { package },
-            Some("clo") => CoreCommand::RemoveClo { package },
-            Some("cicd") => CoreCommand::RemoveCicd { package },
-            Some("iot") => CoreCommand::RemoveIot { package },
-            Some("app") => CoreCommand::RemoveApp { package },
-            Some("lib") => CoreCommand::RemoveLib { package },
+            Some("game") => CoreCommand::RemoveGame { packages },
+            Some("ai") => CoreCommand::RemoveAi { packages },
+            Some("clo") => CoreCommand::RemoveClo { packages },
+            Some("cicd") => CoreCommand::RemoveCicd { packages },
+            Some("iot") => CoreCommand::RemoveIot { packages },
+            Some("app") => CoreCommand::RemoveApp { packages },
+            Some("lib") => CoreCommand::RemoveLib { packages },
             _ => CoreCommand::RemoveWeb {
-                package,
+                packages,
                 install: !no_install,
             },
         }),

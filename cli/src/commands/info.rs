@@ -46,7 +46,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
             return Ok(());
         }
 
-        println!();
+        mg_ui::blank_line();
         info(&format!("Package:      {}", meta.name));
         info(&format!("Core Support: {}", core_label));
         if let Some(desc) = &meta.description {
@@ -58,7 +58,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
         info(&format!("Versions:     {}", meta.versions.len()));
 
         if !meta.dist_tags.is_empty() {
-            println!();
+            mg_ui::blank_line();
             for (tag, ver) in &meta.dist_tags {
                 info(&format!("  {}: {}", tag, ver));
             }
@@ -68,7 +68,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
         sorted.sort();
         let recent: Vec<_> = sorted.iter().rev().take(5).collect();
         if !recent.is_empty() {
-            println!();
+            mg_ui::blank_line();
             info("Recent versions:");
             for v in recent {
                 info(&format!("  {}", v));

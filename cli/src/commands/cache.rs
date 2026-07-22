@@ -51,7 +51,13 @@ struct WebSharedCacheStats {
     project_refs: usize,
 }
 
-pub async fn run(action: String, target: String, yes: bool, dry_run: bool, core: Option<&str>) -> Result<()> {
+pub async fn run(
+    action: String,
+    target: String,
+    yes: bool,
+    dry_run: bool,
+    core: Option<&str>,
+) -> Result<()> {
     let action = CacheAction::parse(&action)?;
     let target = CacheTarget::parse(&target)?;
     let entries = cache_entries(target, core, action.includes_build_target(target))?;
@@ -224,7 +230,7 @@ fn clean(entries: &[CacheEntry], yes: bool) -> Result<()> {
 }
 
 fn prune(entries: &[CacheEntry], yes: bool, dry_run: bool, core: Option<&str>) -> Result<()> {
-    if !yes {
+    if !yes && !dry_run {
         println!("Refusing to prune cache without --yes.");
         print_status(entries)?;
         return Ok(());
@@ -263,7 +269,7 @@ fn count_web_shared_unpinned_package_roots(root: &Path) -> Result<usize> {
     let pinned = read_web_shared_pinned_package_roots(root);
     let count = web_shared_package_roots(root)
         .into_iter()
-        .filter(|path| !pinned.contains(path))
+        .filter(|path| !pinned.contains(&canonical_or_original(path)))
         .count();
     Ok(count)
 }

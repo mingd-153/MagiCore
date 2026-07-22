@@ -27,6 +27,10 @@ pub(crate) struct Cli {
     #[arg(global = true, short = 'r', long)]
     recursive: bool,
 
+    /// Reduce non-essential output for CI and benchmarks
+    #[arg(global = true, short = 'q', long)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -124,7 +128,7 @@ pub(crate) enum Commands {
         #[arg(long, help = "Allow dependency lifecycle scripts")]
         allow_scripts: bool,
     },
-    #[command(about = "Add a dependency (auto-detect core)")]
+    #[command(about = "Add dependencies (auto-detect core)")]
     Add {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -145,9 +149,10 @@ pub(crate) enum Commands {
         #[arg(long, help = "Only update manifest, do not install dependencies")]
         no_install: bool,
     },
-    #[command(about = "Remove a dependency (auto-detect core)", alias = "rm")]
+    #[command(about = "Remove dependencies (auto-detect core)", alias = "rm")]
     Remove {
-        package: String,
+        #[arg(required = true)]
+        packages: Vec<String>,
         #[arg(long, help = "Only update manifest, do not reinstall dependencies")]
         no_install: bool,
     },
@@ -251,7 +256,7 @@ pub(crate) enum Commands {
 
     // ── Per-core: add-<core> ───────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
-    #[command(name = "add-web", about = "Add web dependency")]
+    #[command(name = "add-web", about = "Add web dependencies")]
     AddWeb {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -271,7 +276,7 @@ pub(crate) enum Commands {
         global: bool,
     },
     #[cfg_attr(not(feature = "game"), command(hide = true))]
-    #[command(name = "add-game", about = "Add game dependency")]
+    #[command(name = "add-game", about = "Add game dependencies")]
     AddGame {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -289,7 +294,7 @@ pub(crate) enum Commands {
         global: bool,
     },
     #[cfg_attr(not(feature = "ai"), command(hide = true))]
-    #[command(name = "add-ai", about = "Add AI dependency")]
+    #[command(name = "add-ai", about = "Add AI dependencies")]
     AddAi {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -307,7 +312,7 @@ pub(crate) enum Commands {
         global: bool,
     },
     #[cfg_attr(not(feature = "clo"), command(hide = true))]
-    #[command(name = "add-clo", about = "Add cloud dependency")]
+    #[command(name = "add-clo", about = "Add cloud dependencies")]
     AddClo {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -325,7 +330,7 @@ pub(crate) enum Commands {
         global: bool,
     },
     #[cfg_attr(not(feature = "cicd"), command(hide = true))]
-    #[command(name = "add-cicd", about = "Add CI/CD dependency")]
+    #[command(name = "add-cicd", about = "Add CI/CD dependencies")]
     AddCicd {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -343,7 +348,7 @@ pub(crate) enum Commands {
         global: bool,
     },
     #[cfg_attr(not(feature = "iot"), command(hide = true))]
-    #[command(name = "add-iot", about = "Add IoT dependency")]
+    #[command(name = "add-iot", about = "Add IoT dependencies")]
     AddIot {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -361,7 +366,7 @@ pub(crate) enum Commands {
         global: bool,
     },
     #[cfg_attr(not(feature = "app"), command(hide = true))]
-    #[command(name = "add-app", about = "Add app dependency")]
+    #[command(name = "add-app", about = "Add app dependencies")]
     AddApp {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -379,7 +384,7 @@ pub(crate) enum Commands {
         global: bool,
     },
     #[cfg_attr(not(feature = "lib"), command(hide = true))]
-    #[command(name = "add-lib", about = "Add library dependency")]
+    #[command(name = "add-lib", about = "Add library dependencies")]
     AddLib {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -399,33 +404,34 @@ pub(crate) enum Commands {
 
     // ── Per-core: remove-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
-    #[command(name = "remove-web", about = "Remove web dependency")]
+    #[command(name = "remove-web", about = "Remove web dependencies")]
     RemoveWeb {
-        package: String,
+        #[arg(required = true)]
+        packages: Vec<String>,
         #[arg(long, help = "Only update manifest, do not reinstall dependencies")]
         no_install: bool,
     },
     #[cfg_attr(not(feature = "game"), command(hide = true))]
-    #[command(name = "remove-game", about = "Remove game dependency")]
-    RemoveGame { package: String },
+    #[command(name = "remove-game", about = "Remove game dependencies")]
+    RemoveGame { packages: Vec<String> },
     #[cfg_attr(not(feature = "ai"), command(hide = true))]
-    #[command(name = "remove-ai", about = "Remove AI dependency")]
-    RemoveAi { package: String },
+    #[command(name = "remove-ai", about = "Remove AI dependencies")]
+    RemoveAi { packages: Vec<String> },
     #[cfg_attr(not(feature = "clo"), command(hide = true))]
-    #[command(name = "remove-clo", about = "Remove cloud dependency")]
-    RemoveClo { package: String },
+    #[command(name = "remove-clo", about = "Remove cloud dependencies")]
+    RemoveClo { packages: Vec<String> },
     #[cfg_attr(not(feature = "cicd"), command(hide = true))]
-    #[command(name = "remove-cicd", about = "Remove CI/CD dependency")]
-    RemoveCicd { package: String },
+    #[command(name = "remove-cicd", about = "Remove CI/CD dependencies")]
+    RemoveCicd { packages: Vec<String> },
     #[cfg_attr(not(feature = "iot"), command(hide = true))]
-    #[command(name = "remove-iot", about = "Remove IoT dependency")]
-    RemoveIot { package: String },
+    #[command(name = "remove-iot", about = "Remove IoT dependencies")]
+    RemoveIot { packages: Vec<String> },
     #[cfg_attr(not(feature = "app"), command(hide = true))]
-    #[command(name = "remove-app", about = "Remove app dependency")]
-    RemoveApp { package: String },
+    #[command(name = "remove-app", about = "Remove app dependencies")]
+    RemoveApp { packages: Vec<String> },
     #[cfg_attr(not(feature = "lib"), command(hide = true))]
-    #[command(name = "remove-lib", about = "Remove library dependency")]
-    RemoveLib { package: String },
+    #[command(name = "remove-lib", about = "Remove library dependencies")]
+    RemoveLib { packages: Vec<String> },
 
     // ── Per-core: list-<core> ──────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -565,6 +571,16 @@ mod tests {
     }
 
     #[test]
+    fn test_global_quiet_flag_parses() {
+        let cli = Cli::try_parse_from(["mg", "--quiet", "add-web", "zod"]).unwrap();
+        assert!(cli.quiet);
+        match cli.command.unwrap() {
+            Commands::AddWeb { packages, .. } => assert_eq!(packages, vec!["zod"]),
+            _ => panic!("expected add-web command"),
+        }
+    }
+
+    #[test]
     fn test_add_and_remove_accept_no_install() {
         let add = Cli::try_parse_from(["mg", "add-web", "dayjs", "--no-install"]).unwrap();
         match add.command.unwrap() {
@@ -572,9 +588,16 @@ mod tests {
             _ => panic!("expected add-web command"),
         }
 
-        let remove = Cli::try_parse_from(["mg", "remove-web", "zod", "--no-install"]).unwrap();
+        let remove =
+            Cli::try_parse_from(["mg", "remove-web", "zod", "lodash", "--no-install"]).unwrap();
         match remove.command.unwrap() {
-            Commands::RemoveWeb { no_install, .. } => assert!(no_install),
+            Commands::RemoveWeb {
+                packages,
+                no_install,
+            } => {
+                assert_eq!(packages, vec!["zod", "lodash"]);
+                assert!(no_install);
+            }
             _ => panic!("expected remove-web command"),
         }
     }
@@ -609,6 +632,31 @@ mod tests {
             _ => panic!("expected install-web command"),
         }
     }
+
+    #[test]
+    fn test_install_accepts_package_specs() {
+        let install = Cli::try_parse_from([
+            "mg",
+            "install",
+            "react@latest",
+            "zod@^3.22.4",
+            "--allow-scripts",
+        ])
+        .unwrap();
+
+        match install.command.unwrap() {
+            Commands::Install {
+                packages,
+                allow_scripts,
+                ..
+            } => {
+                assert_eq!(packages, vec!["react@latest", "zod@^3.22.4"]);
+                assert!(allow_scripts);
+            }
+            _ => panic!("expected install command"),
+        }
+    }
+
 
     #[test]
     fn test_cache_command_accepts_status_and_clean_targets() {
@@ -650,11 +698,31 @@ mod tests {
                 action,
                 target,
                 yes,
+                dry_run,
                 ..
             } => {
                 assert_eq!(action, "prune");
                 assert_eq!(target, "shared");
                 assert!(yes);
+                assert!(!dry_run);
+            }
+            _ => panic!("expected cache command"),
+        }
+
+        let dry_run =
+            Cli::try_parse_from(["mg", "cache", "prune", "--target", "shared", "--dry-run"])
+                .unwrap();
+        match dry_run.command.unwrap() {
+            Commands::Cache {
+                action,
+                target,
+                yes,
+                dry_run,
+            } => {
+                assert_eq!(action, "prune");
+                assert_eq!(target, "shared");
+                assert!(!yes);
+                assert!(dry_run);
             }
             _ => panic!("expected cache command"),
         }

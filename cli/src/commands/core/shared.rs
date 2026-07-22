@@ -3,8 +3,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use colored::Colorize;
 use mg_lockfile::{LockPackage, Lockfile};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::{Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mg_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
+use mg_types::{
+    adapter::PreparedAdd, DependencySpec, Manifest, PackageId, PackageName, ResolvedGraph,
+    ResolvedPackage, Version,
+};
 use mg_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
@@ -58,7 +61,18 @@ pub async fn add(
     };
     mg_ui::info(&format!("Adding {} package(s) to {}...", total, group));
 
+    let manifest_before_add = if !no_save {
+        let started_at = std::time::Instant::now();
+        let manifest = adapter.parse_manifest(root).await.ok();
+        profile_install_mark("add_parse_manifest_before", started_at);
+        manifest
+    } else {
+        None
+    };
+    let mut manifest_after_add = manifest_before_add.clone();
     let mut added_ids = Vec::new();
+    let mut added_packages = Vec::new();
+    let mut changed_any = false;
     for package in packages {
         let spec = mg_types::DependencySpec::parse(&package)?;
         let name = spec.name;
@@ -79,7 +93,14 @@ pub async fn add(
             no_save,
             global,
         };
-        let pkg_id = adapter.add(root, &name, range.as_ref(), opts).await?;
+        let add_started_at = std::time::Instant::now();
+        let PreparedAdd {
+            id: pkg_id,
+            range: saved_range,
+        } = adapter
+            .prepare_add(root, &name, range.as_ref(), opts)
+            .await?;
+        profile_install_mark("adapter_prepare_add", add_started_at);
         spinner.finish_and_clear();
         let requested_range = range
             .as_ref()
@@ -88,23 +109,45 @@ pub async fn add(
         let resolved_version = pkg_id.version().to_string();
 
         if !no_save {
-            added_ids.push(pkg_id.clone());
-            if resolved_version == "0.0.0" {
-                mg_ui::info(&format!(
-                    "  {}@{} saved to {}",
-                    pkg_id.name_str(),
-                    requested_range,
-                    group
-                ));
-            } else {
-                mg_ui::info(&format!(
-                    "  {}@{} added to {}",
-                    pkg_id.name_str(),
-                    resolved_version,
-                    group
-                ));
+            if let Some(manifest) = manifest_after_add.as_mut() {
+                let mut saved_spec = DependencySpec::new(name.clone(), saved_range.clone());
+                saved_spec.dev = dev;
+                saved_spec.optional = optional;
+                saved_spec.peer = peer;
+                let changed = manifest.add_dep(saved_spec, dev, optional, peer);
+                if changed {
+                    changed_any = true;
+                    added_ids.push(pkg_id.clone());
+                    added_packages.push(AddedPackage {
+                        id: pkg_id.clone(),
+                        dev,
+                        optional,
+                        peer,
+                    });
+                    if resolved_version == "0.0.0" {
+                        mg_ui::info(&format!(
+                            "  {}@{} saved to {}",
+                            pkg_id.name_str(),
+                            requested_range,
+                            group
+                        ));
+                    } else {
+                        mg_ui::info(&format!(
+                            "  {}@{} added to {}",
+                            pkg_id.name_str(),
+                            resolved_version,
+                            group
+                        ));
+                    }
+                    mg_ui::success(&format!("Added {}", package));
+                } else {
+                    mg_ui::info(&format!(
+                        "  {} already present in {}, skipping",
+                        pkg_id.name_str(),
+                        group
+                    ));
+                }
             }
-            mg_ui::success(&format!("Added {}", package));
         } else {
             mg_ui::info(&format!(
                 "  {}@{} checked (--no-save, manifest unchanged)",
@@ -114,20 +157,46 @@ pub async fn add(
         }
     }
 
+    if !no_save {
+        if changed_any {
+            if let Some(manifest) = manifest_after_add.as_ref() {
+                let write_started_at = std::time::Instant::now();
+                adapter.write_manifest(root, manifest).await?;
+                profile_install_mark("add_write_manifest", write_started_at);
+            }
+        } else {
+            info("Manifest unchanged.");
+        }
+    }
+
+    if !no_save && !changed_any {
+        info("Skipping install because dependencies were already present.");
+        return Ok(());
+    }
+
     if !no_save && install {
         info("Installing added packages...");
-        install_with_adapter(
+        if !try_install_added_packages_from_lock(
             adapter,
             root,
-            install_command_for_adapter(adapter),
-            false,
-            mg_types::adapter::InstallOptions {
-                incremental: true,
-                force_install: added_ids,
-                ..Default::default()
-            },
+            manifest_before_add.as_ref(),
+            &added_packages,
         )
-        .await?;
+        .await?
+        {
+            install_with_adapter(
+                adapter,
+                root,
+                install_command_for_adapter(adapter),
+                false,
+                InstallOptions {
+                    incremental: true,
+                    force_install: added_ids,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
     } else if !no_save {
         info(&format!(
             "Run '{}' to update lockfile and node_modules",
@@ -142,13 +211,41 @@ pub async fn add(
 pub async fn remove(
     adapter: &dyn PackageAdapter,
     root: &Path,
-    package: &str,
+    packages: Vec<String>,
     install: bool,
 ) -> Result<()> {
-    let name = PackageName::new(package)?;
-    info(&format!("Removing {}...", package));
-    adapter.remove(root, &name).await?;
-    success(&format!("Removed {}", package));
+    const MAX_PACKAGES: usize = 50;
+    if packages.len() > MAX_PACKAGES {
+        anyhow::bail!(
+            "Too many packages ({}). Maximum per remove command is {}.",
+            packages.len(),
+            MAX_PACKAGES
+        );
+    }
+    info(&format!("Removing {} package(s)...", packages.len()));
+    let parse_started_at = std::time::Instant::now();
+    let mut manifest = adapter.parse_manifest(root).await?;
+    profile_install_mark("remove_parse_manifest", parse_started_at);
+    let mut removed_any = false;
+    for package in &packages {
+        let _ = PackageName::new(package)?;
+        if manifest.remove_dep(package) {
+            removed_any = true;
+            success(&format!("Removed {}", package));
+        } else {
+            info(&format!("  {} not found in manifest, skipping", package));
+        }
+    }
+    if !removed_any {
+        info("Manifest unchanged.");
+        if install {
+            info("Skipping reinstall because no dependencies were removed.");
+        }
+        return Ok(());
+    }
+    let write_started_at = std::time::Instant::now();
+    adapter.write_manifest(root, &manifest).await?;
+    profile_install_mark("remove_write_manifest", write_started_at);
     if !install {
         info(&format!(
             "Run '{}' to update lockfile and node_modules",
@@ -157,13 +254,19 @@ pub async fn remove(
         return Ok(());
     }
     info("Re-installing dependency graph...");
-    let manifest = adapter.parse_manifest(root).await?;
     if let Some(graph) = load_pruned_locked_graph(root, adapter.name(), &manifest)? {
         info("Using mg.lock for remaining dependency graph.");
         let started_at = std::time::Instant::now();
         let spinner = create_spinner("  Linking packages...");
         let mut summary = adapter
-            .install(&graph, root, mg_types::adapter::InstallOptions::default())
+            .install(
+                &graph,
+                root,
+                InstallOptions {
+                    incremental: true,
+                    ..Default::default()
+                },
+            )
             .await?;
         spinner.finish_and_clear();
         summary.duration_ms = started_at.elapsed().as_millis() as u64;
@@ -173,7 +276,7 @@ pub async fn remove(
             summary.duration_ms,
             "0 B",
         );
-        println!();
+        mg_ui::blank_line();
         success("All dependencies installed");
         return Ok(());
     }
@@ -189,6 +292,14 @@ pub async fn remove(
     )
     .await?;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct AddedPackage {
+    id: PackageId,
+    dev: bool,
+    optional: bool,
+    peer: bool,
 }
 
 #[allow(dead_code)]
@@ -329,9 +440,7 @@ pub async fn install_with_adapter(
     }
 
     let spinner = create_spinner("  Linking packages...");
-    let mut summary = adapter
-        .install(&graph, root, opts)
-        .await?;
+    let mut summary = adapter.install(&graph, root, opts).await?;
     spinner.finish_and_clear();
     profile_install_mark("adapter_install", started_at);
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
@@ -342,7 +451,7 @@ pub async fn install_with_adapter(
         summary.duration_ms,
         "0 B",
     );
-    println!();
+    mg_ui::blank_line();
     success("All dependencies installed");
     profile_install_mark("install_with_adapter_total", command_started_at);
     Ok(())
@@ -412,6 +521,109 @@ pub(crate) async fn prepare_install_execution(
         },
         used_lockfile,
     })
+}
+
+async fn try_install_added_packages_from_lock(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    manifest_before_add: Option<&Manifest>,
+    added_packages: &[AddedPackage],
+) -> Result<bool> {
+    if added_packages.is_empty() {
+        return Ok(false);
+    }
+    let Some(previous_manifest) = manifest_before_add else {
+        return Ok(false);
+    };
+    let Some(locked_graph) = load_locked_graph(root, adapter.name(), previous_manifest)? else {
+        return Ok(false);
+    };
+
+    let delta_manifest = build_delta_manifest(previous_manifest, added_packages)?;
+
+    let resolve_started_at = std::time::Instant::now();
+    let spinner = create_spinner(&format!(
+        "  Resolving {} new package(s)...",
+        added_packages.len()
+    ));
+    let delta_graph = adapter.resolve(&delta_manifest).await?;
+    spinner.finish_and_clear();
+    profile_install_mark("resolve_delta_graph", resolve_started_at);
+
+    let graph = merge_graphs(locked_graph, delta_graph);
+    let added_ids = added_packages
+        .iter()
+        .map(|pkg| pkg.id.clone())
+        .collect::<Vec<_>>();
+    let started_at = std::time::Instant::now();
+    let spinner = create_spinner("  Linking changed packages...");
+    let mut summary = adapter
+        .install(
+            &graph,
+            root,
+            InstallOptions {
+                incremental: true,
+                force_install: added_ids.to_vec(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    spinner.finish_and_clear();
+    summary.duration_ms = started_at.elapsed().as_millis() as u64;
+    print_install_summary(
+        summary.added.len(),
+        summary.bytes_from_cache as usize,
+        summary.duration_ms,
+        "0 B",
+    );
+    mg_ui::blank_line();
+    success("All dependencies installed");
+    profile_install_mark("install_delta_with_lock_total", started_at);
+    Ok(true)
+}
+
+fn build_delta_manifest(manifest: &Manifest, added_packages: &[AddedPackage]) -> Result<Manifest> {
+    let mut delta = Manifest::new(&manifest.name, manifest.ecosystem.clone());
+    for package in added_packages {
+        let mut spec = DependencySpec::new(
+            package.id.name().clone(),
+            mg_types::VersionRange::parse(&format!("={}", package.id.version()))?,
+        );
+        spec.dev = package.dev;
+        spec.optional = package.optional;
+        spec.peer = package.peer;
+        delta.add_dep(spec, package.dev, package.optional, package.peer);
+    }
+    Ok(delta)
+}
+
+fn merge_graphs(mut base: ResolvedGraph, delta: ResolvedGraph) -> ResolvedGraph {
+    let mut positions = std::collections::HashMap::new();
+    for (idx, pkg) in base.packages.iter().enumerate() {
+        positions.insert(pkg.id.clone(), idx);
+    }
+    for pkg in delta.packages {
+        if let Some(idx) = positions.get(&pkg.id).copied() {
+            let existing = &mut base.packages[idx];
+            existing.direct |= pkg.direct;
+            existing.dev |= pkg.dev;
+            if existing.integrity.is_empty() && !pkg.integrity.is_empty() {
+                existing.integrity = pkg.integrity;
+            }
+            if existing.tarball_url.is_empty() && !pkg.tarball_url.is_empty() {
+                existing.tarball_url = pkg.tarball_url;
+            }
+            for dep in pkg.deps {
+                if !existing.deps.contains(&dep) {
+                    existing.deps.push(dep);
+                }
+            }
+        } else {
+            positions.insert(pkg.id.clone(), base.packages.len());
+            base.packages.push(pkg);
+        }
+    }
+    base
 }
 
 fn profile_install_mark(label: &str, started_at: std::time::Instant) {
@@ -742,6 +954,56 @@ mod tests {
         assert!(!names.contains("zod"));
         assert!(!names.contains("orphan"));
     }
+
+    #[test]
+    fn test_build_delta_manifest_keeps_dependency_group() {
+        let manifest = Manifest::new("demo", Ecosystem::Web);
+        let added = vec![AddedPackage {
+            id: PackageId::parse("vitest@3.2.1").unwrap(),
+            dev: true,
+            optional: false,
+            peer: false,
+        }];
+
+        let delta = build_delta_manifest(&manifest, &added).unwrap();
+
+        assert!(delta.dependencies.is_empty());
+        assert_eq!(delta.dev_dependencies.len(), 1);
+        assert_eq!(delta.dev_dependencies[0].name.as_str(), "vitest");
+        assert_eq!(delta.dev_dependencies[0].range.as_str(), "=3.2.1");
+    }
+
+    #[test]
+    fn test_merge_graphs_promotes_existing_transitive_to_direct() {
+        let dep_id = PackageId::parse("zod@4.4.3").unwrap();
+        let base = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: dep_id.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: false,
+                dev: false,
+            }],
+        };
+        let delta = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: dep_id,
+                integrity: "sha512-test".into(),
+                tarball_url: "https://registry.example/zod.tgz".into(),
+                deps: vec![],
+                direct: true,
+                dev: true,
+            }],
+        };
+
+        let merged = merge_graphs(base, delta);
+
+        assert_eq!(merged.packages.len(), 1);
+        assert!(merged.packages[0].direct);
+        assert!(merged.packages[0].dev);
+        assert_eq!(merged.packages[0].integrity, "sha512-test");
+    }
 }
 
 fn link_name(package: &str) -> &str {
@@ -825,12 +1087,8 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Re
         }
     };
 
-    println!(
-        "\n{} {}@{}",
-        "📦",
-        package.bold().cyan(),
-        target.version.dimmed()
-    );
+    mg_ui::blank_line();
+    println!("{} {}@{}", "📦", package.bold().cyan(), target.version.dimmed());
     if target.direct {
         println!("  {} Direct dependency", "├─".green());
     }

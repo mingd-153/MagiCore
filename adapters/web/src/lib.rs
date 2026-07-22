@@ -109,6 +109,17 @@ fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
     Ok(())
 }
 
+fn atomic_write_if_changed(path: &Path, data: &[u8]) -> MgResult<bool> {
+    if let Ok(existing) = std::fs::read(path) {
+        if existing == data {
+            return Ok(false);
+        }
+    }
+
+    atomic_write(path, data)?;
+    Ok(true)
+}
+
 fn project_cache_dir(project_root: &Path) -> PathBuf {
     project_root.join(".megagate").join("cache").join("web")
 }
@@ -647,18 +658,40 @@ impl PackageAdapter for WebAdapter {
 
         let already_materialized: std::collections::HashSet<PackageId> = if opts.incremental {
             root_packages
-                .iter()
-                .filter(|pkg| !opts.force_install.contains(&pkg.id))
+                .par_iter()
+                .filter(|pkg| {
+                    !opts.force_install.contains(&pkg.id)
+                        && installed_package_matches(
+                            &node_modules.join(pkg.id.name().as_str()),
+                            &pkg.id,
+                        )
+                })
                 .map(|pkg| pkg.id.clone())
                 .collect()
         } else {
             root_packages
-                .iter()
+                .par_iter()
                 .filter(|pkg| {
                     installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id)
                 })
                 .map(|pkg| pkg.id.clone())
                 .collect()
+        };
+        let already_in_virtual_store: std::collections::HashSet<PackageId> = if opts.incremental {
+            graph
+                .packages
+                .par_iter()
+                .filter(|pkg| {
+                    !opts.force_install.contains(&pkg.id)
+                        && installed_package_matches(
+                            &strict_vstore_package_dir(&node_modules, &pkg.id),
+                            &pkg.id,
+                        )
+                })
+                .map(|pkg| pkg.id.clone())
+                .collect()
+        } else {
+            std::collections::HashSet::new()
         };
         let shared_package_cache_for_install = shared_cache
             .as_ref()
@@ -682,9 +715,16 @@ impl PackageAdapter for WebAdapter {
             shared_cache.as_ref()
         };
 
-        write_web_lockfile_with_state(project_root, graph, "installing")?;
+        let fetch_graph = if opts.incremental && !already_in_virtual_store.is_empty() {
+            graph_without_packages(graph, &already_in_virtual_store)
+        } else {
+            graph.clone()
+        };
+        if !fetch_graph.is_empty() {
+            write_web_lockfile_with_state(project_root, graph, "installing")?;
+        }
         summary.bytes_from_cache += prefetch_tarballs(
-            graph,
+            &fetch_graph,
             &already_materialized,
             active_package_cache,
             secondary_shared_cache,
@@ -710,7 +750,9 @@ impl PackageAdapter for WebAdapter {
                             },
                         )
                         .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-                    summary.added.push(pkg.id.clone());
+                    if !opts.incremental || !already_materialized.contains(&pkg.id) {
+                        summary.added.push(pkg.id.clone());
+                    }
                     continue;
                 }
 
@@ -756,7 +798,9 @@ impl PackageAdapter for WebAdapter {
                     }
                     return Err(err);
                 }
-                summary.added.push(pkg.id.clone());
+                if !opts.incremental || !already_materialized.contains(&pkg.id) {
+                    summary.added.push(pkg.id.clone());
+                }
             }
 
             for pkg in &root_packages {
@@ -807,7 +851,9 @@ impl PackageAdapter for WebAdapter {
                         },
                     )
                     .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-                summary.added.push(pkg.id.clone());
+                if !opts.incremental || !already_materialized.contains(&pkg.id) {
+                    summary.added.push(pkg.id.clone());
+                }
             }
         }
         profile.mark("materialize_root_packages", start);
@@ -834,29 +880,33 @@ impl PackageAdapter for WebAdapter {
                 )?;
             }
         } else {
-            let extracted_roots = parallel_extract_packages(
-                graph,
-                &layout,
-                store,
-                shared_cache.as_ref(),
-                active_package_cache,
-            )
-            .await?;
-            profile.mark("prepare_extracted_roots", start);
-            materialize_strict_layout(
-                project_root,
-                &node_modules,
-                &staged_node_modules,
-                graph,
-                &package_map,
-                &root_packages,
-                &layout,
-                store,
-                shared_cache.as_ref(),
-                active_package_cache,
-                &mut packages_with_scripts,
-                &extracted_roots,
-            )?;
+            if fetch_graph.is_empty() {
+                profile.mark("prepare_extracted_roots", start);
+            } else {
+                let extracted_roots = parallel_extract_packages(
+                    &fetch_graph,
+                    &layout,
+                    store,
+                    shared_cache.as_ref(),
+                    active_package_cache,
+                )
+                .await?;
+                profile.mark("prepare_extracted_roots", start);
+                materialize_strict_layout(
+                    project_root,
+                    &node_modules,
+                    &staged_node_modules,
+                    graph,
+                    &package_map,
+                    &root_packages,
+                    &layout,
+                    store,
+                    shared_cache.as_ref(),
+                    active_package_cache,
+                    &mut packages_with_scripts,
+                    &extracted_roots,
+                )?;
+            }
         }
         profile.mark("materialize_dependency_graph", start);
         if let Some(shared_cache) = shared_cache.as_ref() {
@@ -967,6 +1017,22 @@ impl PackageAdapter for WebAdapter {
             .satisfying_version()
             .unwrap_or_else(|| Version::new(0, 0, 0));
         Ok(PackageId::new(name.clone(), version))
+    }
+    async fn prepare_add(
+        &self,
+        _project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<mg_types::adapter::PreparedAdd> {
+        let inferred = self.infer_add_range(name, range, opts.exact).await?;
+        let version = inferred
+            .satisfying_version()
+            .unwrap_or_else(|| Version::new(0, 0, 0));
+        Ok(mg_types::adapter::PreparedAdd {
+            id: PackageId::new(name.clone(), version),
+            range: inferred,
+        })
     }
     async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
         self.base_remove(project_root, name).await
@@ -1653,7 +1719,7 @@ impl PackageJson {
     }
     pub fn save(&self, path: &Path) -> Result<(), anyhow::Error> {
         let content = serde_json::to_string_pretty(self)?;
-        atomic_write(path, content.as_bytes())?;
+        atomic_write_if_changed(path, content.as_bytes())?;
         Ok(())
     }
 }
@@ -1946,13 +2012,11 @@ impl SharedWebCache {
     }
 
     fn maybe_prune(&self) {
-        let pinned_roots = read_shared_cache_pinned_package_roots(&self.root);
-        let _ = prune_shared_cache_to_quota(&self.root, shared_cache_max_bytes(), &pinned_roots);
-
         if !shared_cache_prune_due(&self.root) {
             return;
         }
 
+        let pinned_roots = read_shared_cache_pinned_package_roots(&self.root);
         let max_age = std::time::Duration::from_secs(shared_cache_max_age_secs());
         let _ = prune_old_files_under(&self.root.join("cache"), max_age);
         let _ = prune_old_files_under(&self.root.join("resolutions"), max_age);
@@ -3431,6 +3495,15 @@ fn extracted_root_for(
 }
 
 fn select_root_packages(graph: &ResolvedGraph) -> Vec<&ResolvedPackage> {
+    let direct_packages = graph
+        .packages
+        .iter()
+        .filter(|pkg| pkg.direct)
+        .collect::<Vec<_>>();
+    if !direct_packages.is_empty() {
+        return direct_packages;
+    }
+
     let mut selected: std::collections::HashMap<String, &ResolvedPackage> =
         std::collections::HashMap::new();
 
@@ -3884,6 +3957,13 @@ fn write_web_lockfile_with_state(
     let mut lockfile = read_web_lockfile_checked(project_root)?
         .unwrap_or_else(|| Lockfile::new("web", "frontend"));
 
+    if web_lockfile_matches_graph(&lockfile, graph, state) {
+        let checksum_path = mg_lockfile::lockfile_checksum_path(project_root);
+        if checksum_path.exists() {
+            return Ok(());
+        }
+    }
+
     let local_layout = Layout::new(project_cache_dir(project_root));
     let cache = PackageCache::new(local_layout.cache_dir())
         .map_err(|e| mg_types::MgError::Store(e.to_string()))
@@ -3928,12 +4008,48 @@ fn write_web_lockfile_with_state(
         .map_err(|e| mg_types::MgError::Other(format!("lockfile signing failed: {e}")))?;
 
     let toml = serialization::to_toml(&lockfile)?;
-    atomic_write(&lock_path, toml.as_bytes())?;
-
-    mg_lockfile::write_lockfile_checksum(project_root, toml.as_bytes())
-        .map_err(|e| mg_types::MgError::Other(format!("checksum failed: {e}")))?;
+    let lockfile_changed = atomic_write_if_changed(&lock_path, toml.as_bytes())?;
+    let checksum = mg_lockfile::lockfile_checksum(toml.as_bytes());
+    let checksum_path = mg_lockfile::lockfile_checksum_path(project_root);
+    let checksum_changed = std::fs::read_to_string(&checksum_path)
+        .map(|existing| existing.trim() != checksum)
+        .unwrap_or(true);
+    if lockfile_changed || checksum_changed {
+        atomic_write(&checksum_path, checksum.as_bytes())?;
+    }
 
     Ok(())
+}
+
+fn web_lockfile_matches_graph(lockfile: &Lockfile, graph: &ResolvedGraph, state: &str) -> bool {
+    if lockfile.version != 1
+        || lockfile.core != "web"
+        || lockfile.resolution.state != state
+        || lockfile.resolution.store != "megagate"
+        || lockfile.resolution.package_count != graph.packages.len()
+        || lockfile.packages.len() != graph.packages.len()
+    {
+        return false;
+    }
+
+    lockfile
+        .packages
+        .iter()
+        .zip(graph.packages.iter())
+        .all(|(locked, resolved)| {
+            locked.name == resolved.id.name_str()
+                && locked.version == resolved.id.version().to_string()
+                && locked.direct == resolved.direct
+                && locked.dev == resolved.dev
+                && locked.dependencies.len() == resolved.deps.len()
+                && locked
+                    .dependencies
+                    .iter()
+                    .zip(resolved.deps.iter())
+                    .all(|(left, right)| left == &right.to_string())
+                && (resolved.integrity.is_empty()
+                    || locked.integrity.as_deref() == Some(resolved.integrity.as_str()))
+        })
 }
 
 fn installed_package_version(path: &Path) -> Option<Version> {
@@ -4021,6 +4137,33 @@ fn preferred_registry_version(metadata: &native::npm_registry::PackageMetadata) 
         })
 }
 
+fn strict_vstore_package_dir(node_modules: &Path, package_id: &PackageId) -> PathBuf {
+    let vstore_pkg_name = format!(
+        "{}@{}",
+        package_id.name().as_str().replace('/', "+"),
+        package_id.version()
+    );
+    node_modules
+        .join(".megagate")
+        .join(vstore_pkg_name)
+        .join("node_modules")
+        .join(package_id.name().as_str())
+}
+
+fn graph_without_packages(
+    graph: &ResolvedGraph,
+    excluded: &std::collections::HashSet<PackageId>,
+) -> ResolvedGraph {
+    ResolvedGraph {
+        packages: graph
+            .packages
+            .iter()
+            .filter(|pkg| !excluded.contains(&pkg.id))
+            .cloned()
+            .collect(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn materialize_strict_layout(
     project_root: &Path,
@@ -4057,15 +4200,7 @@ fn materialize_strict_layout(
         .iter()
         .map(|pkg| {
             let pkg_id = &pkg.id;
-            let vstore_pkg_name = format!(
-                "{}@{}",
-                pkg_id.name().as_str().replace('/', "+"),
-                pkg_id.version()
-            );
-            let vstore_pkg_dir = virtual_store
-                .join(&vstore_pkg_name)
-                .join("node_modules")
-                .join(pkg_id.name().as_str());
+            let vstore_pkg_dir = strict_vstore_package_dir(node_modules, pkg_id);
             (pkg_id.clone(), vstore_pkg_dir, pkg.clone())
         })
         .collect();
@@ -4163,15 +4298,7 @@ fn materialize_strict_layout(
     // 3. Link root packages to root node_modules
     for pkg in root_packages {
         let root_link = node_modules.join(pkg.id.name().as_str());
-        let vstore_pkg_name = format!(
-            "{}@{}",
-            pkg.id.name().as_str().replace('/', "+"),
-            pkg.id.version()
-        );
-        let vstore_pkg_dir = virtual_store
-            .join(&vstore_pkg_name)
-            .join("node_modules")
-            .join(pkg.id.name().as_str());
+        let vstore_pkg_dir = strict_vstore_package_dir(node_modules, &pkg.id);
 
         if root_link.exists() {
             let _ = std::fs::remove_dir_all(&root_link);
@@ -4295,6 +4422,46 @@ mod tests {
         assert_eq!(parsed.packages.len(), 1);
         assert_eq!(parsed.packages[0].name, "tailwindcss");
         assert_eq!(parsed.packages[0].version, "3.4.0");
+    }
+
+    #[test]
+    fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let package_id = PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        );
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: package_id,
+                integrity: "sha512-demo".into(),
+                tarball_url: String::new(),
+                deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+
+        write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
+        let lock_path = dir.path().join("mg.lock");
+        let checksum_path = dir.path().join("mg.lock.sha256");
+        let first_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
+        let first_checksum_modified = std::fs::metadata(&checksum_path)
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
+        let second_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
+        let second_checksum_modified = std::fs::metadata(&checksum_path)
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        assert_eq!(first_lock_modified, second_lock_modified);
+        assert_eq!(first_checksum_modified, second_checksum_modified);
     }
 
     #[tokio::test]
@@ -4633,6 +4800,27 @@ package_count = 0
         assert!(
             package_root.join("index.js").exists(),
             "quota pruning must not remove package roots pinned by project refs"
+        );
+    }
+
+    #[test]
+    fn test_maybe_prune_skips_quota_scan_when_gc_not_due() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache").join("react");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        let tarball_path = cache_dir.join("18.2.0.tgz");
+        std::fs::write(&tarball_path, vec![b'a'; 1024]).unwrap();
+
+        write_shared_cache_prune_stamp(dir.path()).unwrap();
+
+        let shared = SharedWebCache {
+            root: dir.path().to_path_buf(),
+        };
+        shared.maybe_prune();
+
+        assert!(
+            tarball_path.exists(),
+            "fresh gc stamp should skip quota pruning on adapter startup"
         );
     }
 
@@ -5834,7 +6022,6 @@ package_count = 0
             .await
             .unwrap();
 
-        let hoisted_semver = dir.path().join("node_modules").join("semver");
         let nested_nuxt_semver = dir
             .path()
             .join("node_modules")
@@ -5842,17 +6029,14 @@ package_count = 0
             .join("kit")
             .join("node_modules")
             .join("semver");
-        let nuxt_semver_dir = if nested_nuxt_semver.exists() {
-            nested_nuxt_semver
-        } else {
-            hoisted_semver
-        };
-        assert!(nuxt_semver_dir
+        assert!(!dir.path().join("node_modules").join("semver").exists());
+        assert!(nested_nuxt_semver.exists());
+        assert!(nested_nuxt_semver
             .join("functions")
             .join("satisfies.js")
             .exists());
         assert_eq!(
-            installed_package_version(&nuxt_semver_dir)
+            installed_package_version(&nested_nuxt_semver)
                 .unwrap()
                 .to_string(),
             "7.8.5"

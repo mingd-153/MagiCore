@@ -4,14 +4,28 @@ use console::style;
 /// Provides progress bars, spinners, interactive prompts, and styled output.
 /// Uses indicatif + console for rich terminal experience.
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod help;
 pub mod progress;
 pub mod prompt;
 pub mod table;
 
+static QUIET: AtomicBool = AtomicBool::new(false);
+
+pub fn set_quiet(quiet: bool) {
+    QUIET.store(quiet, Ordering::Relaxed);
+}
+
+pub fn is_quiet() -> bool {
+    QUIET.load(Ordering::Relaxed)
+}
+
 /// MegaGate banner shown at wizard start
 pub fn print_banner() {
+    if is_quiet() {
+        return;
+    }
     let banner = style(
         r#"
     ╔══════════════════════════════════════════╗
@@ -27,6 +41,9 @@ pub fn print_banner() {
 
 /// Print a section header
 pub fn section(title: &str, current: usize, total: usize) {
+    if is_quiet() {
+        return;
+    }
     println!();
     println!(
         "  {} {}",
@@ -39,6 +56,9 @@ pub fn section(title: &str, current: usize, total: usize) {
 
 /// Create a styled progress bar
 pub fn create_progress_bar(len: u64, msg: &str) -> ProgressBar {
+    if is_quiet() {
+        return ProgressBar::hidden();
+    }
     let pb = ProgressBar::new(len);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -57,6 +77,9 @@ pub fn create_multi_progress() -> MultiProgress {
 
 /// Add a progress bar to a multi progress group
 pub fn add_multi_bar(multi: &MultiProgress, len: u64, msg: &str) -> ProgressBar {
+    if is_quiet() {
+        return ProgressBar::hidden();
+    }
     let pb = multi.add(ProgressBar::new(len));
     pb.set_style(
         ProgressStyle::default_bar()
@@ -70,6 +93,9 @@ pub fn add_multi_bar(multi: &MultiProgress, len: u64, msg: &str) -> ProgressBar 
 
 /// Create a spinner
 pub fn create_spinner(msg: &str) -> ProgressBar {
+    if is_quiet() {
+        return ProgressBar::hidden();
+    }
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
@@ -83,6 +109,9 @@ pub fn create_spinner(msg: &str) -> ProgressBar {
 
 /// Print a success message with checkmark
 pub fn success(msg: &str) {
+    if is_quiet() {
+        return;
+    }
     println!("  {} {}", style("✔").green().bold(), msg);
 }
 
@@ -93,17 +122,33 @@ pub fn error(msg: &str) {
 
 /// Print a warning message
 pub fn warning(msg: &str) {
+    if is_quiet() {
+        return;
+    }
     println!("  {} {}", style("⚠").yellow().bold(), msg);
 }
 
 /// Print an info message
 pub fn info(msg: &str) {
+    if is_quiet() {
+        return;
+    }
     println!("  {} {}", style("ℹ").blue(), msg);
 }
 
 /// Print a dimmed hint
 pub fn hint(msg: &str) {
+    if is_quiet() {
+        return;
+    }
     println!("  {}", style(msg).dim());
+}
+
+pub fn blank_line() {
+    if is_quiet() {
+        return;
+    }
+    println!();
 }
 
 /// Style a command name for display (e.g., `mg init` in cyan)
@@ -113,6 +158,9 @@ pub fn style_cmd(cmd: &str) -> String {
 
 /// Print next steps after project creation
 pub fn print_next_steps(project_name: &str) {
+    if is_quiet() {
+        return;
+    }
     println!();
     println!(
         "  {}",
@@ -138,6 +186,9 @@ pub fn print_next_steps(project_name: &str) {
 
 /// Print a summary table after install
 pub fn print_install_summary(added: usize, cached: usize, duration_ms: u64, disk_saved: &str) {
+    if is_quiet() {
+        return;
+    }
     println!();
     println!(
         "  {}",

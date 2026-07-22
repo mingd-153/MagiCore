@@ -196,29 +196,29 @@ pub enum CoreCommand {
         global: bool,
     },
     RemoveWeb {
-        package: String,
+        packages: Vec<String>,
         install: bool,
     },
     RemoveGame {
-        package: String,
+        packages: Vec<String>,
     },
     RemoveAi {
-        package: String,
+        packages: Vec<String>,
     },
     RemoveClo {
-        package: String,
+        packages: Vec<String>,
     },
     RemoveCicd {
-        package: String,
+        packages: Vec<String>,
     },
     RemoveIot {
-        package: String,
+        packages: Vec<String>,
     },
     RemoveApp {
-        package: String,
+        packages: Vec<String>,
     },
     RemoveLib {
-        package: String,
+        packages: Vec<String>,
     },
     ListWeb,
     ListGame,
@@ -442,24 +442,24 @@ impl TryFrom<Commands> for DispatchCommand {
                 }
             }
             Commands::Remove {
-                package,
+                packages,
                 no_install,
             } => {
                 let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
                     Some("web") => SomeCore(CoreCommand::RemoveWeb {
-                        package,
+                        packages,
                         install: !no_install,
                     }),
-                    Some("game") => SomeCore(CoreCommand::RemoveGame { package }),
-                    Some("ai") => SomeCore(CoreCommand::RemoveAi { package }),
-                    Some("clo") => SomeCore(CoreCommand::RemoveClo { package }),
-                    Some("cicd") => SomeCore(CoreCommand::RemoveCicd { package }),
-                    Some("iot") => SomeCore(CoreCommand::RemoveIot { package }),
-                    Some("app") => SomeCore(CoreCommand::RemoveApp { package }),
-                    Some("lib") => SomeCore(CoreCommand::RemoveLib { package }),
+                    Some("game") => SomeCore(CoreCommand::RemoveGame { packages }),
+                    Some("ai") => SomeCore(CoreCommand::RemoveAi { packages }),
+                    Some("clo") => SomeCore(CoreCommand::RemoveClo { packages }),
+                    Some("cicd") => SomeCore(CoreCommand::RemoveCicd { packages }),
+                    Some("iot") => SomeCore(CoreCommand::RemoveIot { packages }),
+                    Some("app") => SomeCore(CoreCommand::RemoveApp { packages }),
+                    Some("lib") => SomeCore(CoreCommand::RemoveLib { packages }),
                     _ => SomeCore(CoreCommand::RemoveWeb {
-                        package,
+                        packages,
                         install: !no_install,
                     }),
                 }
@@ -703,19 +703,19 @@ impl TryFrom<Commands> for DispatchCommand {
                 global,
             }),
             Commands::RemoveWeb {
-                package,
+                packages,
                 no_install,
             } => SomeCore(CoreCommand::RemoveWeb {
-                package,
+                packages,
                 install: !no_install,
             }),
-            Commands::RemoveGame { package } => SomeCore(CoreCommand::RemoveGame { package }),
-            Commands::RemoveAi { package } => SomeCore(CoreCommand::RemoveAi { package }),
-            Commands::RemoveClo { package } => SomeCore(CoreCommand::RemoveClo { package }),
-            Commands::RemoveCicd { package } => SomeCore(CoreCommand::RemoveCicd { package }),
-            Commands::RemoveIot { package } => SomeCore(CoreCommand::RemoveIot { package }),
-            Commands::RemoveApp { package } => SomeCore(CoreCommand::RemoveApp { package }),
-            Commands::RemoveLib { package } => SomeCore(CoreCommand::RemoveLib { package }),
+            Commands::RemoveGame { packages } => SomeCore(CoreCommand::RemoveGame { packages }),
+            Commands::RemoveAi { packages } => SomeCore(CoreCommand::RemoveAi { packages }),
+            Commands::RemoveClo { packages } => SomeCore(CoreCommand::RemoveClo { packages }),
+            Commands::RemoveCicd { packages } => SomeCore(CoreCommand::RemoveCicd { packages }),
+            Commands::RemoveIot { packages } => SomeCore(CoreCommand::RemoveIot { packages }),
+            Commands::RemoveApp { packages } => SomeCore(CoreCommand::RemoveApp { packages }),
+            Commands::RemoveLib { packages } => SomeCore(CoreCommand::RemoveLib { packages }),
             Commands::ListWeb => SomeCore(CoreCommand::ListWeb),
             Commands::ListGame => SomeCore(CoreCommand::ListGame),
             Commands::ListAi => SomeCore(CoreCommand::ListAi),
@@ -839,7 +839,7 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
         let items = crate::factory::available_cores();
         let display_items: Vec<&str> = items.iter().map(|(_, label)| *label).collect();
 
-        println!();
+        mg_ui::blank_line();
         mg_ui::info("MegaGate detected a project without a bound core.");
         let selected_idx = mg_ui::prompt::select(
             "Which ecosystem does this project belong to?",

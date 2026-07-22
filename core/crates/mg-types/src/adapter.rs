@@ -15,6 +15,12 @@ pub struct AddOptions {
     pub global: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PreparedAdd {
+    pub id: PackageId,
+    pub range: VersionRange,
+}
+
 /// Options controlling install behaviour.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct InstallOptions {
@@ -195,6 +201,33 @@ pub trait PackageAdapter: Send + Sync {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PackageId>;
+    async fn prepare_add(
+        &self,
+        project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<PreparedAdd> {
+        let exact = opts.exact;
+        let mut dry_opts = opts;
+        dry_opts.no_save = true;
+        let id = self.add(project_root, name, range, dry_opts).await?;
+        let saved_range = match range {
+            Some(range) if exact => {
+                let raw = range
+                    .as_str()
+                    .trim_start_matches('^')
+                    .trim_start_matches('~');
+                VersionRange::parse(raw)?
+            }
+            Some(range) => range.clone(),
+            None => VersionRange::star(),
+        };
+        Ok(PreparedAdd {
+            id,
+            range: saved_range,
+        })
+    }
     async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()>;
     async fn update(
         &self,

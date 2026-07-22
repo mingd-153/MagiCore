@@ -3,8 +3,10 @@
 use crate::context::ProjectContext;
 use anyhow::Result;
 use mg_lockfile::Lockfile;
-use mg_types::adapter::AddOptions;
-use mg_types::{Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mg_types::adapter::{AddOptions, PreparedAdd};
+use mg_types::{
+    DependencySpec, Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
+};
 use mg_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
@@ -57,7 +59,7 @@ pub async fn run(
             .await?;
         }
 
-        println!();
+        mg_ui::blank_line();
         success("Workspace dependencies installed");
         return Ok(());
     }
@@ -79,26 +81,50 @@ async fn install_into_root(
     ignore_scripts: bool,
     allow_scripts: bool,
 ) -> Result<()> {
+    const MAX_PACKAGES: usize = 50;
+    if packages.len() > MAX_PACKAGES {
+        anyhow::bail!(
+            "Too many packages ({}). Maximum per install command is {}.",
+            packages.len(),
+            MAX_PACKAGES
+        );
+    }
+
     let started_at = std::time::Instant::now();
     let add_cmd = match adapter.name() {
         "web" => "mg add".to_string(),
         other => format!("mg add-{other}"),
     };
 
-    if !packages.is_empty() {
-        for pkg in packages {
-            let spinner = create_spinner(&format!("  Adding {}...", pkg));
-
-            let name = mg_types::PackageName::new(pkg)?;
-            let opts = AddOptions::default();
-            adapter.add(project_root, &name, None, opts).await?;
-            spinner.finish_and_clear();
-        }
-    }
-
     let spinner = create_spinner("  Reading project manifest...");
-    let manifest = adapter.parse_manifest(project_root).await?;
+    let mut manifest = adapter.parse_manifest(project_root).await?;
     spinner.finish_and_clear();
+
+    if !packages.is_empty() {
+        for package in packages {
+            let spec = DependencySpec::parse(package)?;
+            let name = spec.name;
+            let range = if spec.range.is_star() {
+                None
+            } else {
+                Some(spec.range)
+            };
+
+            let spinner = create_spinner(&format!("  Adding {}...", package));
+            let PreparedAdd {
+                id: _pkg_id,
+                range: saved_range,
+            } = adapter
+                .prepare_add(project_root, &name, range.as_ref(), AddOptions::default())
+                .await?;
+            spinner.finish_and_clear();
+
+            let saved_spec = DependencySpec::new(name, saved_range);
+            manifest.add_dep(saved_spec, false, false, false);
+        }
+
+        adapter.write_manifest(project_root, &manifest).await?;
+    }
 
     let all_deps: Vec<_> = manifest.all_dependencies().collect();
     if all_deps.is_empty() {
@@ -165,7 +191,7 @@ async fn install_into_root(
         "0 B",
     );
 
-    println!();
+    mg_ui::blank_line();
     success("All dependencies installed");
     Ok(())
 }
