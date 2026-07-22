@@ -611,6 +611,7 @@ DEV_TIMEOUT_SECONDS="$DEV_TIMEOUT_SECONDS"
 START_TIMEOUT_SECONDS="$START_TIMEOUT_SECONDS"
 BACKEND_TIMEOUT_SECONDS="$BACKEND_TIMEOUT_SECONDS"
 MG_BENCH_QUIET="$MG_BENCH_QUIET"
+export MEGAGATE_WEB_PROFILE_INSTALL="${MEGAGATE_WEB_PROFILE_INSTALL:-1}"
 
 mg_cmd() {
     if [[ "\$MG_BENCH_QUIET" == "1" ]]; then
@@ -711,7 +712,7 @@ run_mg_native_backend() {
     mg_cmd create-web "\$framework" app --yes
     cd app
     mg_cmd install-web
-    run_bg_and_probe "mg_cmd dev --core web --host 127.0.0.1 --port \$port" "http://127.0.0.1:\$port/api/health" "\$BACKEND_TIMEOUT_SECONDS" "\$workdir/dev.log"
+    run_bg_and_probe "\$MG_BIN dev --core web --host 127.0.0.1 --port \$port" "http://127.0.0.1:\$port/api/health" "\$BACKEND_TIMEOUT_SECONDS" "\$workdir/dev.log"
 }
 
 run_mg_with_empty_shared_cache() {
@@ -1007,7 +1008,7 @@ empty-cache-install)
     case "\$pm" in
       mg)
         mg_cmd install --core web --ignore-scripts
-        run_bg_and_probe "mg_cmd dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
+        run_bg_and_probe "\$MG_BIN dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
         ;;
       bun)
         bun install
@@ -1034,7 +1035,7 @@ empty-cache-install)
       mg)
         mg_cmd install --core web --ignore-scripts
         mg_cmd build --core web
-        run_bg_and_probe "mg_cmd start --core web" "http://127.0.0.1:4315/" "\$START_TIMEOUT_SECONDS" "\$workdir/start.log"
+        run_bg_and_probe "\$MG_BIN start --core web" "http://127.0.0.1:4315/" "\$START_TIMEOUT_SECONDS" "\$workdir/start.log"
         ;;
       bun)
         bun install
@@ -1149,7 +1150,7 @@ empty-cache-install)
     case "\$pm" in
       mg)
         mg_cmd install --core web --ignore-scripts
-        run_bg_and_probe "mg_cmd dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
+        run_bg_and_probe "\$MG_BIN dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
         ;;
       bun)
         bun install
