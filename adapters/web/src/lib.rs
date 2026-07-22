@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use base64::Engine;
 use dashmap::DashMap;
 use futures_util::future::join_all;
+use lru::LruCache;
 use mg_adapter_base::BaseAdapter;
 use mg_fetcher::extract::extract_tarball_from_reader;
 use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
@@ -31,6 +33,54 @@ pub mod lifecycle;
 pub mod native;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
+
+/// Max entries in metadata LRU cache (adjustable via env)
+const MAX_METADATA_CACHE_ENTRIES: usize = 2048;
+/// Default TTL for metadata cache entries
+const METADATA_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
+
+/// Bounded LRU cache with TTL for package metadata
+struct MetadataCache {
+    cache: Mutex<LruCache<String, (native::npm_registry::PackageMetadata, Instant)>>,
+    ttl: Duration,
+}
+
+impl MetadataCache {
+    fn new() -> Self {
+        let max_entries = std::env::var("MEGAGATE_WEB_METADATA_CACHE_MAX_ENTRIES")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(MAX_METADATA_CACHE_ENTRIES);
+        let ttl_secs = std::env::var("MEGAGATE_WEB_METADATA_CACHE_TTL_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(METADATA_CACHE_TTL_SECS);
+        Self {
+            cache: Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(max_entries).unwrap(),
+            )),
+            ttl: Duration::from_secs(ttl_secs),
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<native::npm_registry::PackageMetadata> {
+        let mut cache = self.cache.lock().unwrap();
+        if let Some((meta, instant)) = cache.get(key) {
+            if instant.elapsed() < self.ttl {
+                return Some(meta.clone());
+            } else {
+                // Expired, remove it
+                cache.pop(key);
+            }
+        }
+        None
+    }
+
+    fn insert(&self, key: String, meta: native::npm_registry::PackageMetadata) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.put(key, (meta, Instant::now()));
+    }
+}
 
 #[derive(Default)]
 struct InstallProfile {
@@ -1263,7 +1313,7 @@ fn is_workspace_protocol_range(range: &str) -> bool {
 
 struct NpmDependencyProvider {
     registry: native::npm_registry::NpmRegistry,
-    metadata_cache: DashMap<String, native::npm_registry::PackageMetadata>,
+    metadata_cache: MetadataCache,
     metadata_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     registry_cache: RegistryCache,
     shared_cache: Option<SharedWebCache>,
@@ -1273,7 +1323,7 @@ impl NpmDependencyProvider {
     fn new(url: &str, shared_cache: Option<SharedWebCache>) -> Self {
         Self {
             registry: native::npm_registry::NpmRegistry::new(url),
-            metadata_cache: DashMap::new(),
+            metadata_cache: MetadataCache::new(),
             metadata_locks: DashMap::new(),
             registry_cache: RegistryCache::new(),
             shared_cache,
@@ -1286,17 +1336,18 @@ impl NpmDependencyProvider {
         package: &PackageName,
     ) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
         let source_package = self.source_package_name(package);
-        if let Some(cached) = self.metadata_cache.get(source_package.as_str()) {
-            return Ok(cached.clone());
+        let key = source_package.as_str().to_string();
+        if let Some(cached) = self.metadata_cache.get(&key) {
+            return Ok(cached);
         }
         let lock = self
             .metadata_locks
-            .entry(source_package.as_str().to_string())
+            .entry(key.clone())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone();
         let _guard = lock.lock().await;
-        if let Some(cached) = self.metadata_cache.get(source_package.as_str()) {
-            return Ok(cached.clone());
+        if let Some(cached) = self.metadata_cache.get(&key) {
+            return Ok(cached);
         }
         let meta = load_metadata_with_fallback(
             &source_package,
@@ -1304,8 +1355,7 @@ impl NpmDependencyProvider {
             self.shared_cache.as_ref(),
         )
         .await?;
-        self.metadata_cache
-            .insert(source_package.as_str().to_string(), meta.clone());
+        self.metadata_cache.insert(key, meta.clone());
         Ok(meta)
     }
 
@@ -2286,7 +2336,7 @@ fn metadata_max_stale_fallback_secs() -> u64 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
-        .unwrap_or(7 * 24 * 60 * 60)
+        .unwrap_or(24 * 60 * 60)
 }
 
 fn metadata_stale_retry_ttl_secs() -> u64 {

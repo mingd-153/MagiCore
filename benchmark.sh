@@ -30,6 +30,7 @@ ALL_PMS=(mg bun pnpm npm yarn)
 ALL_LANES=(
   cold-install
   empty-cache-install
+  cold-online-registry
   warm-install
   add-single
   add-single-steady
@@ -153,6 +154,7 @@ lane_title() {
     case "$1" in
         cold-install) echo "COLD INSTALL" ;;
         empty-cache-install) echo "EMPTY CACHE INSTALL" ;;
+        cold-online-registry) echo "COLD ONLINE REGISTRY" ;;
         warm-install) echo "WARM INSTALL" ;;
         add-single) echo "ADD SINGLE" ;;
         add-single-steady) echo "ADD SINGLE STEADY" ;;
@@ -722,6 +724,18 @@ run_mg_with_empty_shared_cache() {
     MEGAGATE_SHARED_CACHE_DIR="\$isolated_cache" mg_cmd install --core web --ignore-scripts
 }
 
+run_mg_with_empty_caches() {
+    local fixture="\$1"
+    copy_fixture "\$fixture" "\$workdir"
+    cd "\$workdir"
+    # Clear both local project cache and shared cache
+    rm -rf .megagate
+    local isolated_cache="\$workdir/.empty-shared-cache"
+    rm -rf "\$isolated_cache"
+    mkdir -p "\$isolated_cache"
+    MEGAGATE_SHARED_CACHE_DIR="\$isolated_cache" mg_cmd install --core web --ignore-scripts
+}
+
 run_native_backend_baseline() {
     local framework="\$1"
     local port="\$2"
@@ -791,10 +805,38 @@ case "\$lane" in
       yarn) assert_file "\$workdir/yarn.lock" ;;
     esac
     ;;
-  empty-cache-install)
+empty-cache-install)
     case "\$pm" in
       mg)
         run_mg_with_empty_shared_cache "base-web"
+        ;;
+      bun)
+        copy_fixture "base-web" "\$workdir"
+        cd "\$workdir"
+        BUN_INSTALL_CACHE_DIR="\$workdir/.bun-cache" bun install
+        ;;
+      pnpm)
+        copy_fixture "base-web" "\$workdir"
+        cd "\$workdir"
+        pnpm install --ignore-scripts --store-dir "\$workdir/.pnpm-store"
+        ;;
+      npm)
+        copy_fixture "base-web" "\$workdir"
+        cd "\$workdir"
+        npm install --cache "\$workdir/.npm-cache"
+        ;;
+      yarn)
+        copy_fixture "base-web" "\$workdir"
+        cd "\$workdir"
+        YARN_CACHE_FOLDER="\$workdir/.yarn-cache" yarn install
+        ;;
+    esac
+    assert_dir "\$workdir/node_modules"
+    ;;
+  cold-online-registry)
+    case "\$pm" in
+      mg)
+        run_mg_with_empty_caches "base-web"
         ;;
       bun)
         copy_fixture "base-web" "\$workdir"
