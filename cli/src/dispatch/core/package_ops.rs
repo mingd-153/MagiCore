@@ -107,16 +107,16 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             )
             .await
         }
-        CoreCommand::RemoveWeb { package, install } => {
-            commands::core::web::remove(package, install).await
+        CoreCommand::RemoveWeb { packages, install } => {
+            commands::core::web::remove(packages, install).await
         }
-        CoreCommand::RemoveGame { package } => commands::core::game::remove(package).await,
-        CoreCommand::RemoveAi { package } => commands::core::ai::remove(package).await,
-        CoreCommand::RemoveClo { package } => commands::core::clo::remove(package).await,
-        CoreCommand::RemoveCicd { package } => commands::core::cicd::remove(package).await,
-        CoreCommand::RemoveIot { package } => commands::core::iot::remove(package).await,
-        CoreCommand::RemoveApp { package } => commands::core::app::remove(package).await,
-        CoreCommand::RemoveLib { package } => commands::core::library::remove(package).await,
+        CoreCommand::RemoveGame { packages } => commands::core::game::remove(packages).await,
+        CoreCommand::RemoveAi { packages } => commands::core::ai::remove(packages).await,
+        CoreCommand::RemoveClo { packages } => commands::core::clo::remove(packages).await,
+        CoreCommand::RemoveCicd { packages } => commands::core::cicd::remove(packages).await,
+        CoreCommand::RemoveIot { packages } => commands::core::iot::remove(packages).await,
+        CoreCommand::RemoveApp { packages } => commands::core::app::remove(packages).await,
+        CoreCommand::RemoveLib { packages } => commands::core::library::remove(packages).await,
         CoreCommand::ListWeb => commands::core::web::list().await,
         CoreCommand::ListGame => commands::core::game::list().await,
         CoreCommand::ListAi => commands::core::ai::list().await,

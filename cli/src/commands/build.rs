@@ -10,7 +10,10 @@ use crate::context::ProjectContext;
 pub async fn run(core: Option<&str>) -> Result<()> {
     let root = find_root()?;
 
-    println!("\n📦 {}", "MegaGate Build".bold().cyan());
+    if !mg_ui::is_quiet() {
+        mg_ui::blank_line();
+        println!("📦 {}", "MegaGate Build".bold().cyan());
+    }
     info(&format!("Project root: {}", root.display()));
 
     if root.join("Cargo.toml").exists() {
@@ -70,7 +73,7 @@ async fn build_web(root: &Path) -> Result<()> {
     let result = bundler.bundle().await?;
 
     let elapsed = start_time.elapsed();
-    println!();
+    mg_ui::blank_line();
     mg_ui::success(&format!(
         "Bundle created: {:.2} KB in {:?}",
         result.size as f64 / 1024.0,

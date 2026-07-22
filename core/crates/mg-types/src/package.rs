@@ -158,7 +158,7 @@ impl fmt::Display for PackageId {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DependencySpec {
     pub name: PackageName,
     pub range: VersionRange,

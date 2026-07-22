@@ -90,7 +90,7 @@ pub async fn run_with_core(
             .map(|f| format!(" [filter: --core {}]", f))
             .unwrap_or_default()
     ));
-    println!();
+    mg_ui::blank_line();
 
     for r in &results {
         info(&format!("  {} {}@{}", r.core_label, r.name, r.version));

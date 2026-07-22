@@ -24,6 +24,20 @@ const SCAFFOLD_VERSION_OVERRIDES_ENV: &str = "MEGAGATE_WEB_SCAFFOLD_VERSION_OVER
 const SCAFFOLD_BASELINE_VERSIONS_TOML: &str =
     include_str!("../../../../templates/web/versions/scaffold-baseline.toml");
 
+fn web_command_profile_enabled() -> bool {
+    std::env::var_os("MEGAGATE_WEB_PROFILE_COMMAND").is_some()
+}
+
+fn web_command_profile_mark(label: &str, started_at: std::time::Instant) {
+    if web_command_profile_enabled() {
+        eprintln!(
+            "[megagate:web:web-command-profile] {}={}ms",
+            label,
+            started_at.elapsed().as_millis()
+        );
+    }
+}
+
 fn install_hint_command() -> &'static str {
     #[cfg(all(
         feature = "web",
@@ -63,16 +77,22 @@ fn install_hint_command() -> &'static str {
 
 /// Find project root for web commands
 fn project_root() -> Result<std::path::PathBuf> {
+    let started_at = std::time::Instant::now();
     let cwd = std::env::current_dir()?;
     let root = shared::find_project_root(&cwd)?.ok_or_else(|| {
         anyhow::anyhow!("No MegaGate project found (missing .megagate/project.toml or package.json in the current project)")
     })?;
+    web_command_profile_mark("project_root", started_at);
     Ok(root)
 }
 
 fn web_adapter() -> Box<dyn PackageAdapter> {
-    crate::factory::create_adapter(&Ecosystem::Web)
+    let started_at = std::time::Instant::now();
+    let adapter = crate::factory::create_adapter(&Ecosystem::Web)
         .expect("web adapter always available in web core build")
+    ;
+    web_command_profile_mark("web_adapter", started_at);
+    adapter
 }
 
 /// Add web dependency
@@ -88,33 +108,45 @@ pub async fn add(
     install: bool,
     global: bool,
 ) -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::add(
+    let result = shared::add(
         &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, install, global,
     )
-    .await
+    .await;
+    web_command_profile_mark("web_add_total", started_at);
+    result
 }
 
-/// Remove web dependency
-pub async fn remove(package: String, install: bool) -> Result<()> {
+/// Remove web dependencies
+pub async fn remove(packages: Vec<String>, install: bool) -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::remove(&*adapter, &root, &package, install).await
+    let result = shared::remove(&*adapter, &root, packages, install).await;
+    web_command_profile_mark("web_remove_total", started_at);
+    result
 }
 
 /// List web packages
 pub async fn list() -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::list(&*adapter, &root).await
+    let result = shared::list(&*adapter, &root).await;
+    web_command_profile_mark("web_list_total", started_at);
+    result
 }
 
 /// Update web packages
 pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::update(&*adapter, &root, packages, install).await
+    let result = shared::update(&*adapter, &root, packages, install).await;
+    web_command_profile_mark("web_update_total", started_at);
+    result
 }
 
 pub async fn install(

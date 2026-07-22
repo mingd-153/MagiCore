@@ -15,7 +15,10 @@ pub async fn run(core: Option<&str>) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let root = ctx.root();
 
-    println!("\n🚀 {}", "MegaGate Production Server".bold().magenta());
+    if !mg_ui::is_quiet() {
+        mg_ui::blank_line();
+        println!("🚀 {}", "MegaGate Production Server".bold().magenta());
+    }
     info(&format!("Project root: {}", root.display()));
 
     match ctx.adapter().name() {

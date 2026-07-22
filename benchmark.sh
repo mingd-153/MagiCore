@@ -15,6 +15,8 @@ BENCH_LANES="${BENCH_LANES:-}"
 BENCH_PMS="${BENCH_PMS:-mg,bun,pnpm,npm,yarn}"
 BENCH_RUNS="${BENCH_RUNS:-5}"
 BENCH_WARMUP="${BENCH_WARMUP:-1}"
+BENCH_SHOW_OUTPUT="${BENCH_SHOW_OUTPUT:-0}"
+MG_BENCH_QUIET="${MG_BENCH_QUIET:-0}"
 DEV_TIMEOUT_SECONDS="${DEV_TIMEOUT_SECONDS:-12}"
 START_TIMEOUT_SECONDS="${START_TIMEOUT_SECONDS:-12}"
 BACKEND_TIMEOUT_SECONDS="${BACKEND_TIMEOUT_SECONDS:-90}"
@@ -30,9 +32,11 @@ ALL_LANES=(
   empty-cache-install
   warm-install
   add-single
+  add-single-steady
   add-single-mutate-only
   add-multiple
   remove-single
+  remove-single-steady
   remove-single-mutate-only
   list
   why
@@ -151,9 +155,11 @@ lane_title() {
         empty-cache-install) echo "EMPTY CACHE INSTALL" ;;
         warm-install) echo "WARM INSTALL" ;;
         add-single) echo "ADD SINGLE" ;;
+        add-single-steady) echo "ADD SINGLE STEADY" ;;
         add-single-mutate-only) echo "ADD SINGLE MUTATE ONLY" ;;
         add-multiple) echo "ADD MULTIPLE" ;;
         remove-single) echo "REMOVE SINGLE" ;;
+        remove-single-steady) echo "REMOVE SINGLE STEADY" ;;
         remove-single-mutate-only) echo "REMOVE SINGLE MUTATE ONLY" ;;
         list) echo "LIST" ;;
         why) echo "WHY" ;;
@@ -206,6 +212,8 @@ preflight() {
     green "Mode:      $BENCH_MODE"
     green "PMs:       ${SELECTED_PMS[*]}"
     green "Lanes:     ${SELECTED_LANES[*]}"
+    green "Show output: $BENCH_SHOW_OUTPUT"
+    green "MG quiet:  $MG_BENCH_QUIET"
 }
 
 assert_help_contains() {
@@ -236,7 +244,7 @@ verify_cli_surface() {
     assert_help_contains "add-web" "--no-save"
     assert_help_contains "add-web" "--no-install"
     assert_help_contains "add-web" "--peer"
-    assert_help_contains "remove-web" "Remove web dependency"
+    assert_help_contains "remove-web" "Remove web dependencies"
     assert_help_contains "remove-web" "--no-install"
     assert_help_contains "update-web" "--install"
     assert_help_contains "dev" "--host"
@@ -600,6 +608,15 @@ TMP_ROOT="$TMP_ROOT"
 DEV_TIMEOUT_SECONDS="$DEV_TIMEOUT_SECONDS"
 START_TIMEOUT_SECONDS="$START_TIMEOUT_SECONDS"
 BACKEND_TIMEOUT_SECONDS="$BACKEND_TIMEOUT_SECONDS"
+MG_BENCH_QUIET="$MG_BENCH_QUIET"
+
+mg_cmd() {
+    if [[ "\$MG_BENCH_QUIET" == "1" ]]; then
+        "\$MG_BIN" --quiet "\$@"
+    else
+        "\$MG_BIN" "\$@"
+    fi
+}
 
 copy_fixture() {
     local fixture="\$1"
@@ -689,10 +706,10 @@ run_mg_native_backend() {
     rm -rf "\$workdir"
     mkdir -p "\$workdir"
     cd "\$workdir"
-    "\$MG_BIN" create-web "\$framework" app --yes
+    mg_cmd create-web "\$framework" app --yes
     cd app
-    "\$MG_BIN" install-web
-    run_bg_and_probe "\$MG_BIN dev --core web --host 127.0.0.1 --port \$port" "http://127.0.0.1:\$port/api/health" "\$BACKEND_TIMEOUT_SECONDS" "\$workdir/dev.log"
+    mg_cmd install-web
+    run_bg_and_probe "mg_cmd dev --core web --host 127.0.0.1 --port \$port" "http://127.0.0.1:\$port/api/health" "\$BACKEND_TIMEOUT_SECONDS" "\$workdir/dev.log"
 }
 
 run_mg_with_empty_shared_cache() {
@@ -702,7 +719,7 @@ run_mg_with_empty_shared_cache() {
     local isolated_cache="\$workdir/.empty-shared-cache"
     rm -rf "\$isolated_cache"
     mkdir -p "\$isolated_cache"
-    MEGAGATE_SHARED_CACHE_DIR="\$isolated_cache" "\$MG_BIN" install --core web --ignore-scripts
+    MEGAGATE_SHARED_CACHE_DIR="\$isolated_cache" mg_cmd install --core web --ignore-scripts
 }
 
 run_native_backend_baseline() {
@@ -711,7 +728,7 @@ run_native_backend_baseline() {
     rm -rf "\$workdir"
     mkdir -p "\$workdir"
     cd "\$workdir"
-    "\$MG_BIN" create-web "\$framework" app --yes
+    mg_cmd create-web "\$framework" app --yes
     cd app
     case "\$framework" in
       echo)
@@ -740,14 +757,26 @@ run_native_backend_baseline() {
 
 pm="\$1"
 lane="\$2"
-workdir="\$TMP_ROOT/work/\$pm/\$lane"
+base_lane="\${lane#prepare-}"
+workdir="\$TMP_ROOT/work/\$pm/\$base_lane"
 
 case "\$lane" in
+  prepare-add-single-steady|prepare-remove-single-steady)
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd install --core web --ignore-scripts >/dev/null ;;
+      bun) bun install >/dev/null ;;
+      pnpm) pnpm install --ignore-scripts >/dev/null ;;
+      npm) npm install >/dev/null ;;
+      yarn) yarn install >/dev/null ;;
+    esac
+    ;;
   cold-install)
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts ;;
+      mg) mg_cmd install --core web --ignore-scripts ;;
       bun) bun install ;;
       pnpm) pnpm install --ignore-scripts ;;
       npm) npm install ;;
@@ -794,7 +823,7 @@ case "\$lane" in
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts ;;
+      mg) mg_cmd install --core web --ignore-scripts ;;
       bun) bun install ;;
       pnpm) pnpm install --ignore-scripts ;;
       npm) npm install ;;
@@ -802,7 +831,7 @@ case "\$lane" in
     esac
     rm -rf node_modules
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts ;;
+      mg) mg_cmd install --core web --ignore-scripts ;;
       bun) bun install ;;
       pnpm) pnpm install --ignore-scripts ;;
       npm) npm install ;;
@@ -814,7 +843,7 @@ case "\$lane" in
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts && "\$MG_BIN" add dayjs --core web ;;
+      mg) mg_cmd install --core web --ignore-scripts && mg_cmd add dayjs --core web ;;
       bun) bun install && bun add dayjs ;;
       pnpm) pnpm install --ignore-scripts && pnpm add dayjs --ignore-scripts ;;
       npm) npm install && npm install dayjs ;;
@@ -822,11 +851,22 @@ case "\$lane" in
     esac
     grep -q '"dayjs"' package.json
     ;;
+  add-single-steady)
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd add dayjs --core web ;;
+      bun) bun add dayjs ;;
+      pnpm) pnpm add dayjs --ignore-scripts ;;
+      npm) npm install dayjs ;;
+      yarn) yarn add dayjs ;;
+    esac
+    grep -q '"dayjs"' package.json
+    ;;
   add-single-mutate-only)
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" add dayjs --core web --no-install ;;
+      mg) mg_cmd add dayjs --core web --no-install ;;
       bun) bun add dayjs --dry-run ;;
       pnpm) pnpm add dayjs --lockfile-only --ignore-scripts ;;
       npm) npm install dayjs --package-lock-only --ignore-scripts ;;
@@ -838,7 +878,7 @@ case "\$lane" in
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts && "\$MG_BIN" add zustand jotai valibot sonner --core web ;;
+      mg) mg_cmd install --core web --ignore-scripts && mg_cmd add zustand jotai valibot sonner --core web ;;
       bun) bun install && bun add zustand jotai valibot sonner ;;
       pnpm) pnpm install --ignore-scripts && pnpm add zustand jotai valibot sonner --ignore-scripts ;;
       npm) npm install && npm install zustand jotai valibot sonner ;;
@@ -853,7 +893,7 @@ case "\$lane" in
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts && "\$MG_BIN" remove zod --core web ;;
+      mg) mg_cmd install --core web --ignore-scripts && mg_cmd remove zod --core web ;;
       bun) bun install && bun remove zod ;;
       pnpm) pnpm install --ignore-scripts && pnpm remove zod ;;
       npm) npm install && npm uninstall zod ;;
@@ -861,11 +901,22 @@ case "\$lane" in
     esac
     ! grep -q '"zod"' package.json
     ;;
+  remove-single-steady)
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd remove zod --core web ;;
+      bun) bun remove zod ;;
+      pnpm) pnpm remove zod ;;
+      npm) npm uninstall zod ;;
+      yarn) yarn remove zod ;;
+    esac
+    ! grep -q '"zod"' package.json
+    ;;
   remove-single-mutate-only)
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" remove zod --core web --no-install ;;
+      mg) mg_cmd remove zod --core web --no-install ;;
       bun) bun remove zod --dry-run ;;
       pnpm) pnpm remove zod --lockfile-only ;;
       npm) npm uninstall zod --package-lock-only --ignore-scripts ;;
@@ -877,7 +928,7 @@ case "\$lane" in
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts && "\$MG_BIN" list --core web >/dev/null ;;
+      mg) mg_cmd install --core web --ignore-scripts && mg_cmd list --core web >/dev/null ;;
       bun) bun install && bun pm ls >/dev/null ;;
       pnpm) pnpm install --ignore-scripts && pnpm list >/dev/null ;;
       npm) npm install && npm list --depth=0 >/dev/null ;;
@@ -888,7 +939,7 @@ case "\$lane" in
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts && "\$MG_BIN" why react --core web >/dev/null ;;
+      mg) mg_cmd install --core web --ignore-scripts && mg_cmd why react --core web >/dev/null ;;
       bun) bun install && bun why react >/dev/null ;;
       pnpm) pnpm install --ignore-scripts && pnpm why react >/dev/null ;;
       npm) npm install && npm why react >/dev/null ;;
@@ -899,7 +950,7 @@ case "\$lane" in
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts && "\$MG_BIN" build --core web ;;
+      mg) mg_cmd install --core web --ignore-scripts && mg_cmd build --core web ;;
       bun) bun install && bunx vite build ;;
       pnpm) pnpm install --ignore-scripts && pnpm exec vite build ;;
       npm) npm install && npx vite build ;;
@@ -913,8 +964,8 @@ case "\$lane" in
     cd "\$workdir"
     case "\$pm" in
       mg)
-        "\$MG_BIN" install --core web --ignore-scripts
-        run_bg_and_probe "\$MG_BIN dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
+        mg_cmd install --core web --ignore-scripts
+        run_bg_and_probe "mg_cmd dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
         ;;
       bun)
         bun install
@@ -939,9 +990,9 @@ case "\$lane" in
     cd "\$workdir"
     case "\$pm" in
       mg)
-        "\$MG_BIN" install --core web --ignore-scripts
-        "\$MG_BIN" build --core web
-        run_bg_and_probe "\$MG_BIN start --core web" "http://127.0.0.1:4315/" "\$START_TIMEOUT_SECONDS" "\$workdir/start.log"
+        mg_cmd install --core web --ignore-scripts
+        mg_cmd build --core web
+        run_bg_and_probe "mg_cmd start --core web" "http://127.0.0.1:4315/" "\$START_TIMEOUT_SECONDS" "\$workdir/start.log"
         ;;
       bun)
         bun install
@@ -969,7 +1020,7 @@ case "\$lane" in
     copy_fixture "base-mono" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts ;;
+      mg) mg_cmd install --core web --ignore-scripts ;;
       bun) bun install ;;
       pnpm) pnpm install --ignore-scripts ;;
       npm) npm install ;;
@@ -981,7 +1032,7 @@ case "\$lane" in
     copy_fixture "heavy-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts ;;
+      mg) mg_cmd install --core web --ignore-scripts ;;
       bun) bun install ;;
       pnpm) pnpm install --ignore-scripts ;;
       npm) npm install ;;
@@ -1021,7 +1072,7 @@ case "\$lane" in
     copy_fixture "heavy-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts ;;
+      mg) mg_cmd install --core web --ignore-scripts ;;
       bun) bun install ;;
       pnpm) pnpm install --ignore-scripts ;;
       npm) npm install ;;
@@ -1029,7 +1080,7 @@ case "\$lane" in
     esac
     rm -rf node_modules
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts ;;
+      mg) mg_cmd install --core web --ignore-scripts ;;
       bun) bun install ;;
       pnpm) pnpm install --ignore-scripts ;;
       npm) npm install ;;
@@ -1041,7 +1092,7 @@ case "\$lane" in
     copy_fixture "heavy-web" "\$workdir"
     cd "\$workdir"
     case "\$pm" in
-      mg) "\$MG_BIN" install --core web --ignore-scripts && "\$MG_BIN" build --core web ;;
+      mg) mg_cmd install --core web --ignore-scripts && mg_cmd build --core web ;;
       bun) bun install && bunx vite build ;;
       pnpm) pnpm install --ignore-scripts && pnpm exec vite build ;;
       npm) npm install && npx vite build ;;
@@ -1055,8 +1106,8 @@ case "\$lane" in
     cd "\$workdir"
     case "\$pm" in
       mg)
-        "\$MG_BIN" install --core web --ignore-scripts
-        run_bg_and_probe "\$MG_BIN dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
+        mg_cmd install --core web --ignore-scripts
+        run_bg_and_probe "mg_cmd dev --core web --host 127.0.0.1 --port 4315" "http://127.0.0.1:4315/" "\$DEV_TIMEOUT_SECONDS" "\$workdir/dev.log"
         ;;
       bun)
         bun install
@@ -1080,7 +1131,7 @@ case "\$lane" in
     rm -rf "\$workdir"
     mkdir -p "\$workdir"
     cd "\$workdir"
-    "\$MG_BIN" create-web react-vite app --ts --yes
+    mg_cmd create-web react-vite app --ts --yes
     assert_dir "\$workdir/app"
     assert_file "\$workdir/app/package.json"
     ;;
@@ -1088,7 +1139,7 @@ case "\$lane" in
     rm -rf "\$workdir"
     mkdir -p "\$workdir"
     cd "\$workdir"
-    "\$MG_BIN" create-web react-vite app --ts --tailwindcss --yes
+    mg_cmd create-web react-vite app --ts --tailwindcss --yes
     assert_dir "\$workdir/app"
     assert_file "\$workdir/app/package.json"
     assert_file "\$workdir/app/mg.toml"
@@ -1216,9 +1267,20 @@ run_lane() {
     local hf_args=(
         --warmup "$BENCH_WARMUP"
         --runs "$BENCH_RUNS"
-        --show-output
         --export-json "$TMP_ROOT/${lane}.json"
     )
+    if [[ "$BENCH_SHOW_OUTPUT" == "1" ]]; then
+        hf_args+=(--show-output)
+    fi
+    if [[ "$lane" == add-single-steady || "$lane" == remove-single-steady ]]; then
+        local prepare_cmd=""
+        local pm_name
+        for pm_name in "${names[@]}"; do
+            prepare_cmd+="bash $TMP_ROOT/runner.sh $pm_name prepare-$lane && "
+        done
+        prepare_cmd="${prepare_cmd% && }"
+        hf_args+=(--prepare "$prepare_cmd")
+    fi
     local i
     for i in "${!names[@]}"; do
         hf_args+=(-n "${names[$i]}" "${commands[$i]}")
@@ -1304,9 +1366,9 @@ EOF
 - If a lane is missing timing data but appears in the lane-status section, trust the lane-status section.
 - \`mg-create-web\` is currently measured as an MG-only lane because package-manager create flows are not semantically equivalent enough for a fair baseline.
 - \`backend-*\` lanes are MG-only native runtime checks and use \`mg create-web -> mg install-web -> mg dev\` with real HTTP health probes.
-- Re-run smoke mode with \`BENCH_MODE=smoke bash benchmark.sh\`.
-- Re-run a subset with \`BENCH_LANES=cold-install,build BENCH_PMS=mg,bun bash benchmark.sh\`.
-- Re-run full mode with \`BENCH_MODE=full BENCH_RUNS=10 BENCH_WARMUP=2 bash benchmark.sh\`.
+- Re-run smoke mode with \`BENCH_MODE=smoke ./benchmark.sh\`.
+- Re-run a subset with \`BENCH_LANES=cold-install,build BENCH_PMS=mg,bun ./benchmark.sh\`.
+- Re-run full mode with \`BENCH_MODE=full BENCH_RUNS=10 BENCH_WARMUP=2 ./benchmark.sh\`.
 
 ## Output Files
 
