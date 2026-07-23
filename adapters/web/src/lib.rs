@@ -549,6 +549,63 @@ impl PackageAdapter for WebAdapter {
             .solve(&wanted)
             .await
             .map_err(|e| mg_types::MgError::DependencyConflict(e.message))?;
+
+        // Early tarball prefetch: download during metadata fetch + graph build
+        if let Some(shared_cache) = self.shared_cache.clone() {
+            let early_pkgs: Vec<PackageId> = result
+                .resolutions
+                .iter()
+                .map(|r| r.package_id.clone())
+                .collect();
+            let registry_url = self.registry_url.clone();
+            *self.prefetch_handle.lock().unwrap() = Some(tokio::spawn(async move {
+                let cache = shared_cache
+                    .package_cache()
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                let download_sem =
+                    Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
+                let mut set: tokio::task::JoinSet<MgResult<u64>> = tokio::task::JoinSet::new();
+                for id in early_pkgs {
+                    let cache = cache.clone();
+                    let reg = native::npm_registry::NpmRegistry::new(registry_url.as_str());
+                    let download_sem = Arc::clone(&download_sem);
+                    set.spawn(async move {
+                        let lock = tarball_prefetch_lock(&id);
+                        let _guard = lock.lock().await;
+                        if let Some(bytes) = cache
+                            .get_tarball(&id)
+                            .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+                        {
+                            return Ok(bytes.len() as u64);
+                        }
+                        let _permit = download_sem.acquire_owned().await.map_err(|e| {
+                            mg_types::MgError::Other(format!("download semaphore closed: {e}"))
+                        })?;
+                        let url = format!(
+                            "{}/{}/-/{}-{}.tgz",
+                            reg.registry_url(),
+                            id.name_str(),
+                            id.name().unscoped(),
+                            id.version()
+                        );
+                        let bytes = reg.download_tarball(&url).await.map_err(|e| {
+                            mg_types::MgError::Network(format!("prefetch dl failed: {e}"))
+                        })?;
+                        cache
+                            .cache_tarball(&id, &bytes)
+                            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                        Ok(bytes.len() as u64)
+                    });
+                }
+                let mut total = 0u64;
+                while let Some(r) = set.join_next().await {
+                    total += r
+                        .map_err(|e| mg_types::MgError::Other(format!("prefetch task failed: {e}")))??;
+                }
+                Ok::<_, mg_types::MgError>(total)
+            }));
+        }
+
         let metadata = self
             .provider
             .prefetch_resolution_metadata(
@@ -623,27 +680,7 @@ impl PackageAdapter for WebAdapter {
         {
             let _ = shared_cache.write_resolution(key, &self.registry_url, &graph);
         }
-        // Background prefetch: start downloading tarballs while graph is still in use by caller.
-        // Gives download ~200ms head start (graph building + cache write) without competing
-        // with resolver's metadata fetches.
-        if let Some(shared_cache) = self.shared_cache.clone() {
-            let graph_clone = graph.clone();
-            let registry_url = self.registry_url.clone();
-            *self.prefetch_handle.lock().unwrap() = Some(tokio::spawn(async move {
-                let cache = shared_cache
-                    .package_cache()
-                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-                let registry = native::npm_registry::NpmRegistry::new(&registry_url);
-                prefetch_tarballs(
-                    &graph_clone,
-                    &std::collections::HashSet::new(),
-                    &cache,
-                    None::<&SharedWebCache>,
-                    &registry,
-                )
-                .await
-            }));
-        }
+        // Note: early tarball prefetch started before metadata fetch (above), no duplicate needed.
         Ok(graph)
     }
 
