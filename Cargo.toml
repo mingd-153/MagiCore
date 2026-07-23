@@ -97,7 +97,7 @@ lru = "0.12"
 
 # Compression
 tar = "0.4"
-flate2 = "1.0"
+flate2 = { version = "1.0", features = ["zlib"] }
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 
 # Utilities

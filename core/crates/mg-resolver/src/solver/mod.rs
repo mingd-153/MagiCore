@@ -364,7 +364,7 @@ impl Resolver {
                 .ok()
                 .and_then(|raw| raw.trim().parse::<usize>().ok())
                 .filter(|limit| *limit > 0)
-                .unwrap_or(64);
+                .unwrap_or(1024);
             let batch_size = queue.len().min(batch_limit);
             let batch: Vec<(PackageName, String)> = queue.drain(..batch_size).collect();
             let mut selected: Vec<(PackageName, String, Version)> = Vec::new();
