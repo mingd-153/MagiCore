@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use mg_config::project::ProjectConfig;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
@@ -19,7 +20,8 @@ impl ProjectContext {
     ///   2. `mg.toml` (saved by `mg init`)
     ///   3. auto_detect (package.json → web, Cargo.toml → lib, pyproject.toml → ai)
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
-        let cwd = std::env::current_dir()?;
+        let cwd = std::env::current_dir()
+            .context("failed to resolve current working directory")?;
         let project_root = ProjectConfig::find_project_root(&cwd);
 
         let (root, config) = Self::resolve_config(&cwd, project_root.as_ref(), core_override)?;

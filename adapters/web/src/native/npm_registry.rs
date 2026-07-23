@@ -37,6 +37,7 @@ fn global_http_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
+            .http1_only()
             .pool_max_idle_per_host(50)
             .pool_idle_timeout(Duration::from_secs(120))
             .tcp_keepalive(Duration::from_secs(30))

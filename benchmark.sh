@@ -660,11 +660,6 @@ for _ in range(attempts):
     try:
         with urllib.request.urlopen(url, timeout=0.5) as r:
             if 200 <= r.status < 500:
-                length = r.headers.get("Content-Length")
-                if length and int(length) <= 65536:
-                    body = r.read(int(length)).decode("utf-8", errors="ignore")
-                    if "MegaGate Native Dev Server is running" in body:
-                        sys.exit(2)
                 sys.exit(0)
     except Exception:
         time.sleep(0.2)

@@ -78,7 +78,8 @@ fn install_hint_command() -> &'static str {
 /// Find project root for web commands
 fn project_root() -> Result<std::path::PathBuf> {
     let started_at = std::time::Instant::now();
-    let cwd = std::env::current_dir()?;
+    let cwd = std::env::current_dir()
+        .context("failed to resolve current working directory — has it been deleted?")?;
     let root = shared::find_project_root(&cwd)?.ok_or_else(|| {
         anyhow::anyhow!("No MegaGate project found (missing .megagate/project.toml or package.json in the current project)")
     })?;
@@ -602,7 +603,7 @@ fn should_use_legacy_flat_layout() -> bool {
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .map(|value| !matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Result<()> {

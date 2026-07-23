@@ -180,6 +180,7 @@ pub struct WebAdapter {
     resolver: Arc<CoreResolver>,
     store: Option<ContentStore>,
     shared_cache: Option<SharedWebCache>,
+    prefetch_handle: Mutex<Option<tokio::task::JoinHandle<MgResult<u64>>>>,
 }
 
 impl WebAdapter {
@@ -205,6 +206,7 @@ impl WebAdapter {
             resolver: Arc::new(CoreResolver::new(provider)),
             store: None,
             shared_cache,
+            prefetch_handle: Mutex::new(None),
         }
     }
 
@@ -621,6 +623,27 @@ impl PackageAdapter for WebAdapter {
         {
             let _ = shared_cache.write_resolution(key, &self.registry_url, &graph);
         }
+        // Background prefetch: start downloading tarballs while graph is still in use by caller.
+        // Gives download ~200ms head start (graph building + cache write) without competing
+        // with resolver's metadata fetches.
+        if let Some(shared_cache) = self.shared_cache.clone() {
+            let graph_clone = graph.clone();
+            let registry_url = self.registry_url.clone();
+            *self.prefetch_handle.lock().unwrap() = Some(tokio::spawn(async move {
+                let cache = shared_cache
+                    .package_cache()
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                let registry = native::npm_registry::NpmRegistry::new(&registry_url);
+                prefetch_tarballs(
+                    &graph_clone,
+                    &std::collections::HashSet::new(),
+                    &cache,
+                    None::<&SharedWebCache>,
+                    &registry,
+                )
+                .await
+            }));
+        }
         Ok(graph)
     }
 
@@ -773,14 +796,24 @@ impl PackageAdapter for WebAdapter {
         if !fetch_graph.is_empty() {
             write_web_lockfile_with_state(project_root, graph, "installing")?;
         }
-        summary.bytes_from_cache += prefetch_tarballs(
-            &fetch_graph,
-            &already_materialized,
-            active_package_cache,
-            secondary_shared_cache,
-            &registry,
-        )
-        .await?;
+        let prefetch_handle = self.prefetch_handle.lock().unwrap().take();
+        if let Some(handle) = prefetch_handle {
+            match handle.await {
+                Ok(Ok(bytes)) => { summary.bytes_from_cache += bytes; }
+                Ok(Err(e)) => return Err(e),
+                Err(e) => return Err(mg_types::MgError::Other(format!("prefetch panicked: {e}"))),
+            }
+        }
+        if opts.legacy_flat && !fetch_graph.is_empty() {
+            summary.bytes_from_cache += prefetch_tarballs(
+                &fetch_graph,
+                &already_materialized,
+                active_package_cache,
+                secondary_shared_cache,
+                &registry,
+            )
+            .await?;
+        }
         profile.mark("prefetch_tarballs", start);
 
         if opts.legacy_flat {
@@ -933,14 +966,17 @@ impl PackageAdapter for WebAdapter {
             if fetch_graph.is_empty() {
                 profile.mark("prepare_extracted_roots", start);
             } else {
-                let extracted_roots = parallel_extract_packages(
+                let (pipeline_bytes, extracted_roots) = pipeline_download_and_extract(
                     &fetch_graph,
+                    &already_materialized,
+                    active_package_cache,
+                    shared_cache.as_ref(),
+                    Some(&registry),
                     &layout,
                     store,
-                    shared_cache.as_ref(),
-                    active_package_cache,
                 )
                 .await?;
+                summary.bytes_from_cache += pipeline_bytes;
                 profile.mark("prepare_extracted_roots", start);
                 materialize_strict_layout(
                     project_root,
@@ -2817,13 +2853,6 @@ fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
     )
 }
 
-fn extracted_package_root(layout: &Layout, pkg: &ResolvedPackage) -> std::path::PathBuf {
-    let safe_name = pkg.id.name_str().replace('/', "__").replace('@', "");
-    layout
-        .temp_dir()
-        .join(format!("{}-{}", safe_name, pkg.id.version()))
-}
-
 fn local_extracted_package_root(layout: &Layout, pkg: &ResolvedPackage) -> PathBuf {
     shared_extracted_package_root(layout.root(), pkg)
 }
@@ -2975,15 +3004,6 @@ fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
         "integrity mismatch for '{}': none of the SRI entries matched",
         pkg.id.name_str()
     )))
-}
-
-fn materialize_package_from_store(
-    store: &ContentStore,
-    source_root: &Path,
-    target_root: &Path,
-) -> MgResult<()> {
-    let _ = store;
-    hardlink_tree(source_root, target_root)
 }
 
 fn link_package_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
@@ -3297,7 +3317,7 @@ fn ensure_extracted_package_root(
 
 fn ensure_extracted_package_root_from_bytes(
     layout: &Layout,
-    store: &ContentStore,
+    _store: &ContentStore,
     shared_cache: Option<&SharedWebCache>,
     pkg: &ResolvedPackage,
     tarball_bytes: &[u8],
@@ -3324,30 +3344,45 @@ fn ensure_extracted_package_root_from_bytes(
         }
     }
 
-    let extract_root = extracted_package_root(layout, pkg);
-    if extract_root.exists() {
-        std::fs::remove_dir_all(&extract_root).map_err(|err| {
+    let expected_marker = if extracted_cache_full_validation_enabled() {
+        expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?
+    } else {
+        fast_marker
+    };
+
+    // Extract directly to a temp dir next to canonical_root, then rename.
+    // This avoids the hardlink_tree (15k+ file walks) that dominated cold extraction.
+    let temp_root = {
+        let parent = canonical_root.parent().unwrap_or(Path::new("."));
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        parent.join(format!(".mg-extract-{}-{}", pkg.id.name_str(), ts))
+    };
+    if temp_root.exists() {
+        std::fs::remove_dir_all(&temp_root).map_err(|err| {
             mg_types::MgError::Other(format!(
-                "failed to remove stale extract root '{}' for '{}': {}",
-                extract_root.display(),
+                "failed to remove stale temp root '{}' for '{}': {}",
+                temp_root.display(),
                 pkg.id.name_str(),
                 err
             ))
         })?;
     }
-    std::fs::create_dir_all(&extract_root).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to create extract root '{}' for '{}': {}",
-            extract_root.display(),
-            pkg.id.name_str(),
-            err
-        ))
-    })?;
-    extract_tarball_from_reader(std::io::Cursor::new(tarball_bytes), &extract_root)
+    extract_tarball_from_reader(std::io::Cursor::new(tarball_bytes), &temp_root)
         .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
-    let package_root = locate_package_dir(&extract_root)?;
-    let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
-
+    let package_root = locate_package_dir(&temp_root)?;
+    if let Some(parent) = canonical_root.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to create canonical parent '{}' for '{}': {}",
+                parent.display(),
+                pkg.id.name_str(),
+                err
+            ))
+        })?;
+    }
     if canonical_root.exists() {
         std::fs::remove_dir_all(&canonical_root).map_err(|err| {
             mg_types::MgError::Other(format!(
@@ -3358,96 +3393,164 @@ fn ensure_extracted_package_root_from_bytes(
             ))
         })?;
     }
-    materialize_package_from_store(store, &package_root, &canonical_root)?;
-    write_extracted_package_marker(&canonical_root, &expected_marker)?;
-    if extract_root.exists() {
-        std::fs::remove_dir_all(&extract_root).map_err(|err| {
+    std::fs::rename(&package_root, &canonical_root).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to rename extracted '{}' to canonical '{}' for '{}': {}",
+            package_root.display(),
+            canonical_root.display(),
+            pkg.id.name_str(),
+            err
+        ))
+    })?;
+    if temp_root.exists() {
+        std::fs::remove_dir_all(&temp_root).map_err(|err| {
             mg_types::MgError::Other(format!(
-                "failed to clean extract root '{}' for '{}': {}",
-                extract_root.display(),
+                "failed to clean temp root '{}' for '{}': {}",
+                temp_root.display(),
                 pkg.id.name_str(),
                 err
             ))
         })?;
     }
+    write_extracted_package_marker(&canonical_root, &expected_marker)?;
     Ok(canonical_root)
 }
 
 /// Extract and materialize **all** packages in the resolved graph concurrently.
 /// Returns a map: PackageId → canonical extraction root (PathBuf).
-async fn parallel_extract_packages(
+async fn pipeline_download_and_extract(
     graph: &ResolvedGraph,
+    skip: &std::collections::HashSet<PackageId>,
+    cache: &PackageCache,
+    shared_cache: Option<&SharedWebCache>,
+    registry: Option<&native::npm_registry::NpmRegistry>,
     layout: &Layout,
     store: &ContentStore,
-    shared_cache: Option<&SharedWebCache>,
-    cache: &PackageCache,
-) -> MgResult<std::collections::HashMap<PackageId, PathBuf>> {
+) -> MgResult<(u64, std::collections::HashMap<PackageId, PathBuf>)> {
+    let download_sem = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
     let extract_concurrency = std::env::var("MEGAGATE_WEB_EXTRACT_CONCURRENCY")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or_else(|| {
-            // Use number of CPUs, but cap at 32 for extraction
             std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(4)
                 .min(32)
         });
-
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(extract_concurrency));
-    let mut join_set: tokio::task::JoinSet<MgResult<(PackageId, PathBuf)>> =
+    let extract_sem = Arc::new(tokio::sync::Semaphore::new(extract_concurrency));
+    let mut join_set: tokio::task::JoinSet<MgResult<(u64, PackageId, PathBuf)>> =
         tokio::task::JoinSet::new();
 
     for pkg in &graph.packages {
+        if skip.contains(&pkg.id) {
+            continue;
+        }
         let pkg = pkg.clone();
-        let layout = (*layout).clone();
-        let store = (*store).clone();
+        let cache = cache.clone();
         let shared_cache = shared_cache.map(|s| (*s).clone());
-        let cache = (*cache).clone();
-        let sem = sem.clone();
+        let registry_url = registry.map(|r| r.registry_url().to_string());
+        let layout = layout.clone();
+        let store = store.clone();
+        let download_sem = download_sem.clone();
+        let extract_sem = extract_sem.clone();
 
         join_set.spawn(async move {
-            let _permit = sem
-                .acquire_owned()
-                .await
-                .map_err(|e| mg_types::MgError::Other(format!("extract semaphore closed: {e}")))?;
+            let lock = tarball_prefetch_lock(&pkg.id);
+            let _guard = lock.lock().await;
 
-            let tarball_path = cache.tarball_path(&pkg.id);
-            // spawn_blocking: extraction is CPU-bound (decompression) + sync I/O
+            let bytes = get_tarball_bytes(
+                &pkg, &cache, shared_cache.as_ref(), registry_url.as_deref(), &download_sem,
+            ).await?;
+
+            let _permit = extract_sem.acquire_owned().await.map_err(|e| {
+                mg_types::MgError::Other(format!("extract semaphore closed: {e}"))
+            })?;
             let id = pkg.id.clone();
+            let tarball_len = bytes.len() as u64;
             let root = tokio::task::spawn_blocking(move || {
-                // Read tarball bytes once from cache (already in memory from prefetch or quick disk read)
-                let tarball_bytes = std::fs::read(&tarball_path).map_err(|e| {
-                    mg_types::MgError::Other(format!(
-                        "failed to read tarball '{}' for '{}': {}",
-                        tarball_path.display(),
-                        pkg.id.name_str(),
-                        e
-                    ))
-                })?;
                 ensure_extracted_package_root_from_bytes(
-                    &layout,
-                    &store,
-                    shared_cache.as_ref(),
-                    &pkg,
-                    &tarball_bytes,
+                    &layout, &store, shared_cache.as_ref(), &pkg, &bytes,
                 )
             })
             .await
             .map_err(|e| mg_types::MgError::Other(format!("extract task panicked: {e}")))??;
 
-            Ok((id, root))
+            Ok((tarball_len, id, root))
         });
     }
 
+    let mut total_bytes = 0u64;
     let mut results = std::collections::HashMap::new();
     while let Some(joined) = join_set.join_next().await {
-        let (id, root) =
-            joined.map_err(|e| mg_types::MgError::Other(format!("extract join failed: {e}")))??;
+        let (bytes, id, root) = joined
+            .map_err(|e| mg_types::MgError::Other(format!("pipeline join failed: {e}")))?
+            .map_err(|e| e)?;
+        total_bytes += bytes;
         results.insert(id, root);
     }
 
-    Ok(results)
+    Ok((total_bytes, results))
+}
+
+async fn get_tarball_bytes(
+    pkg: &ResolvedPackage,
+    cache: &PackageCache,
+    shared_cache: Option<&SharedWebCache>,
+    registry_url: Option<&str>,
+    download_sem: &tokio::sync::Semaphore,
+) -> MgResult<Vec<u8>> {
+    if let Some(bytes) = cache.get_tarball(&pkg.id)
+        .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+    {
+        if verify_tarball_integrity(pkg, &bytes).is_ok() {
+            return Ok(bytes);
+        }
+        let _ = std::fs::remove_file(cache.tarball_path(&pkg.id));
+    }
+
+    if let Some(sc) = shared_cache {
+        if let Ok(pc) = sc.package_cache() {
+            if let Some(bytes) = pc.get_tarball(&pkg.id)
+                .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+            {
+                if verify_tarball_integrity(pkg, &bytes).is_ok() {
+                    let _ = cache.cache_tarball_from_path(&pkg.id, &pc.tarball_path(&pkg.id));
+                    return Ok(bytes);
+                }
+                let _ = std::fs::remove_file(pc.tarball_path(&pkg.id));
+            }
+        }
+    }
+
+    let Some(url) = registry_url else {
+        return Err(mg_types::MgError::Other(format!(
+            "tarball '{}' not in cache and no registry available",
+            pkg.id
+        )));
+    };
+
+    let _permit = download_sem.acquire().await.map_err(|e| {
+        mg_types::MgError::Other(format!("download semaphore closed: {e}"))
+    })?;
+    let tarball_url = package_tarball_url(url, pkg);
+    let registry = native::npm_registry::NpmRegistry::new(url);
+    let mut pkg = pkg.clone();
+    let bytes = registry.download_tarball(&tarball_url).await.map_err(|e| {
+        mg_types::MgError::Network(format!("download failed for '{}': {}", pkg.id.name_str(), e))
+    })?;
+    if pkg.integrity.is_empty() {
+        pkg.integrity = compute_tarball_integrity(&bytes);
+    }
+    verify_tarball_integrity(&pkg, &bytes)?;
+    cache.cache_tarball(&pkg.id, &bytes)
+        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+    if let Some(sc) = shared_cache {
+        if let Ok(pc) = sc.package_cache() {
+            let _ = pc.cache_tarball_from_path(&pkg.id, &cache.tarball_path(&pkg.id));
+        }
+    }
+    Ok(bytes)
 }
 
 fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
