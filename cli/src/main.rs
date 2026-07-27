@@ -173,6 +173,21 @@ pub(crate) enum Commands {
 
     // ── Per-core: create-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
+    #[cfg_attr(
+        all(
+            feature = "web",
+            not(any(
+                feature = "game",
+                feature = "ai",
+                feature = "clo",
+                feature = "cicd",
+                feature = "iot",
+                feature = "app",
+                feature = "lib"
+            ))
+        ),
+        command(visible_alias = "create")
+    )]
     #[command(name = "create-web", about = "Scaffold a new web project")]
     CreateWeb {
         framework: String,
@@ -657,7 +672,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_cache_command_accepts_status_and_clean_targets() {
         let status = Cli::try_parse_from(["mg", "cache", "status", "--target", "shared"]).unwrap();
@@ -759,9 +773,17 @@ mod tests {
         let help = Cli::command().render_long_help().to_string();
 
         assert!(help.contains("dev"));
-        assert!(help.contains("install-web"));
-        assert!(help.contains("create-web"));
-        assert!(help.contains("add-web"));
+        #[cfg(all(feature = "web", not(feature = "all")))]
+        {
+            assert!(help.contains("create"));
+            assert!(help.contains("create-web"));
+        }
+        #[cfg(any(not(feature = "web"), feature = "all"))]
+        {
+            assert!(help.contains("install-web"));
+            assert!(help.contains("create-web"));
+            assert!(help.contains("add-web"));
+        }
 
         #[cfg(feature = "game")]
         assert!(help.contains("create-game"));
@@ -772,8 +794,39 @@ mod tests {
         #[cfg(not(feature = "game"))]
         assert!(!help.contains("add-game"));
 
-        // Bare aliases for single-core no longer exist, ensure they're missing or handled gracefully
+        #[cfg(any(not(feature = "web"), feature = "all"))]
         assert!(!help.contains("create   "));
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "web",
+        not(any(
+            feature = "game",
+            feature = "ai",
+            feature = "clo",
+            feature = "cicd",
+            feature = "iot",
+            feature = "app",
+            feature = "lib"
+        ))
+    ))]
+    fn test_single_core_create_alias_parses() {
+        let cli =
+            Cli::try_parse_from(["mg", "create", "react@latest", "demo-app", "--ts"]).unwrap();
+
+        match cli.command.unwrap() {
+            Commands::CreateWeb {
+                framework,
+                project_name,
+                flags,
+            } => {
+                assert_eq!(framework, "react@latest");
+                assert_eq!(project_name, "demo-app");
+                assert!(flags.ts);
+            }
+            _ => panic!("expected create-web command through single-core alias"),
+        }
     }
 
     #[test]

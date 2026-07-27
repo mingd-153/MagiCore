@@ -9,6 +9,8 @@ pub struct PackageMetadata {
     pub versions: std::collections::HashMap<String, VersionInfo>,
     #[serde(rename = "dist-tags")]
     pub dist_tags: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub time: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,11 +35,27 @@ pub struct NpmRegistry {
     registry_url: String,
 }
 
+fn network_profile_enabled() -> bool {
+    std::env::var("MEGAGATE_WEB_PROFILE_NETWORK")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+fn network_profile_log(kind: &str, target: &str, message: &str) {
+    if network_profile_enabled() {
+        eprintln!(
+            "[megagate:web:network-profile] kind={} target={} {}",
+            kind, target, message
+        );
+    }
+}
+
 fn global_http_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .http1_only()
             .pool_max_idle_per_host(50)
             .pool_idle_timeout(Duration::from_secs(120))
             .tcp_keepalive(Duration::from_secs(30))
@@ -74,7 +92,7 @@ impl NpmRegistry {
         let url = format!("{}/{}", self.registry_url, package);
         let client = global_http_client();
 
-        self.with_retry(move || {
+        self.with_retry("metadata", package, move || {
             let resp_future = client.get(&url);
             let metadata_future = async move {
                 let resp = resp_future
@@ -103,7 +121,7 @@ impl NpmRegistry {
         let url = format!("{}/{}", self.registry_url, package);
         let etag_owned = etag.map(|s| s.to_string());
 
-        self.with_retry(move || {
+        self.with_retry("metadata-conditional", package, move || {
             let mut req = global_http_client()
                 .get(&url)
                 .header("Accept", "application/vnd.npm.install-v1+json");
@@ -133,7 +151,7 @@ impl NpmRegistry {
     }
 
     pub async fn download_tarball(&self, url: &str) -> Result<Vec<u8>> {
-        self.with_retry(|| async {
+        self.with_retry("tarball", url, || async {
             let resp = global_http_client()
                 .get(url)
                 .send()
@@ -149,7 +167,7 @@ impl NpmRegistry {
         &self.registry_url
     }
 
-    async fn with_retry<F, Fut, T>(&self, mut f: F) -> Result<T>
+    async fn with_retry<F, Fut, T>(&self, kind: &str, target: &str, mut f: F) -> Result<T>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
@@ -157,8 +175,22 @@ impl NpmRegistry {
         let mut last_error = None;
         for attempt in 0..4u32 {
             match f().await {
-                Ok(value) => return Ok(value),
+                Ok(value) => {
+                    if attempt > 0 {
+                        network_profile_log(
+                            kind,
+                            target,
+                            &format!("success_after_retry attempt={}", attempt + 1),
+                        );
+                    }
+                    return Ok(value);
+                }
                 Err(err) => {
+                    network_profile_log(
+                        kind,
+                        target,
+                        &format!("retry attempt={} error={}", attempt + 1, err),
+                    );
                     last_error = Some(err);
                     if attempt < 3 {
                         let base_ms = 50u64 * (2u64.pow(attempt));

@@ -21,6 +21,7 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
     let package_json_path = project_root.join("package.json");
     if package_json_path.exists() {
         if let Some(cmd) = resolve_package_json_script(&package_json_path, &script)? {
+            reject_external_package_manager_script(&cmd, &package_json_path)?;
             let bin = project_root.join("node_modules").join(".bin");
             return execute_task_with_bin(&cmd, &args, project_root, &script, Some(bin));
         }
@@ -30,6 +31,33 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
         "Script '{}' not found. Define it in 'mg.toml' under [scripts] or in 'package.json'.",
         script
     )
+}
+
+fn reject_external_package_manager_script(
+    cmd: &str,
+    manifest_path: &std::path::Path,
+) -> Result<()> {
+    let first = cmd.split_whitespace().next().unwrap_or_default();
+    let delegated_pm = match first {
+        "npm" => Some("npm"),
+        "pnpm" => Some("pnpm"),
+        "bun" => Some("bun"),
+        "yarn" => Some("yarn"),
+        "npx" => Some("npx"),
+        "bunx" => Some("bunx"),
+        _ => None,
+    };
+
+    if let Some(pm) = delegated_pm {
+        anyhow::bail!(
+            "Script '{}' in '{}' delegates to '{}'. Core-web task execution must not bounce through another package manager.",
+            cmd,
+            manifest_path.display(),
+            pm
+        );
+    }
+
+    Ok(())
 }
 
 fn resolve_mg_toml_script(path: &std::path::Path, script: &str) -> Result<Option<String>> {

@@ -51,6 +51,7 @@ impl LifecycleRunner {
     }
 
     fn run_script(pkg_dir: &Path, project_root: &Path, name: &str, script: &str) -> MgResult<()> {
+        reject_external_package_manager_script(script, &pkg_dir.join("package.json"))?;
         let path_env = lifecycle_path_env(project_root)?;
 
         // On Windows we should probably use cmd.exe, on Unix sh
@@ -82,6 +83,29 @@ impl LifecycleRunner {
 
         Ok(())
     }
+}
+
+fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> MgResult<()> {
+    let first = script.split_whitespace().next().unwrap_or_default();
+    let delegated_pm = match first {
+        "npm" => Some("npm"),
+        "pnpm" => Some("pnpm"),
+        "bun" => Some("bun"),
+        "yarn" => Some("yarn"),
+        "npx" => Some("npx"),
+        "bunx" => Some("bunx"),
+        _ => None,
+    };
+
+    if let Some(pm) = delegated_pm {
+        return Err(MgError::Other(format!(
+            "lifecycle script in '{}' delegates to '{}'; core-web refuses package-manager wrappers inside lifecycle execution",
+            manifest_path.display(),
+            pm
+        )));
+    }
+
+    Ok(())
 }
 
 fn lifecycle_path_env(project_root: &Path) -> MgResult<OsString> {
@@ -131,5 +155,19 @@ mod tests {
                 .contains("failed to parse package.json for lifecycle"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn lifecycle_rejects_external_package_manager_wrappers() {
+        let project = tempfile::tempdir().unwrap();
+        let package = tempfile::tempdir().unwrap();
+        std::fs::write(
+            package.path().join("package.json"),
+            r#"{"scripts":{"postinstall":"npm run postinstall:inner"}}"#,
+        )
+        .unwrap();
+
+        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
+        assert!(err.to_string().contains("delegates to 'npm'"));
     }
 }

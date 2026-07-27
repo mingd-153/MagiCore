@@ -90,8 +90,7 @@ fn project_root() -> Result<std::path::PathBuf> {
 fn web_adapter() -> Box<dyn PackageAdapter> {
     let started_at = std::time::Instant::now();
     let adapter = crate::factory::create_adapter(&Ecosystem::Web)
-        .expect("web adapter always available in web core build")
-    ;
+        .expect("web adapter always available in web core build");
     web_command_profile_mark("web_adapter", started_at);
     adapter
 }
@@ -538,10 +537,7 @@ async fn install_monorepo_targets(
         }
     }
 
-    let concurrency = std::thread::available_parallelism()
-        .map(|count| count.get().min(4))
-        .unwrap_or(2)
-        .max(1);
+    let concurrency = monorepo_install_concurrency(&package_targets);
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
     let mut join_set = tokio::task::JoinSet::new();
 
@@ -574,6 +570,43 @@ async fn install_monorepo_targets(
     }
 
     Ok(())
+}
+
+fn monorepo_install_concurrency(package_targets: &[PathBuf]) -> usize {
+    if package_targets.is_empty() {
+        return 1;
+    }
+
+    if let Some(override_value) = std::env::var("MEGAGATE_WEB_MONOREPO_INSTALL_CONCURRENCY")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+    {
+        return override_value;
+    }
+
+    let default = std::thread::available_parallelism()
+        .map(|count| count.get().min(4))
+        .unwrap_or(2)
+        .max(1);
+
+    if looks_like_cold_monorepo_install(package_targets) {
+        return 1;
+    }
+
+    default
+}
+
+fn looks_like_cold_monorepo_install(package_targets: &[PathBuf]) -> bool {
+    if package_targets.len() <= 1 {
+        return false;
+    }
+
+    package_targets.iter().all(|target| {
+        !target.join("node_modules").exists()
+            && !target.join("mg.lock").exists()
+            && !target.join(".megagate").join("cache").join("web").exists()
+    })
 }
 
 async fn install_web_target_quiet(
@@ -846,6 +879,8 @@ fn build_dev_launch(
         None => return infer_native_dev_launch(project_root, host, port),
     };
 
+    reject_external_package_manager_script(&script, &project_root.join("package.json"))?;
+
     let tokens: Vec<&str> = script.split_whitespace().collect();
     if tokens.is_empty() {
         bail!(
@@ -1008,6 +1043,31 @@ fn build_dev_launch(
             project_root.join("package.json").display()
         ),
     }
+}
+
+fn script_uses_external_package_manager(script: &str) -> Option<&'static str> {
+    let first = script.split_whitespace().next()?.trim();
+    match first {
+        "npm" => Some("npm"),
+        "pnpm" => Some("pnpm"),
+        "bun" => Some("bun"),
+        "yarn" => Some("yarn"),
+        "npx" => Some("npx"),
+        "bunx" => Some("bunx"),
+        _ => None,
+    }
+}
+
+fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
+    if let Some(pm) = script_uses_external_package_manager(script) {
+        bail!(
+            "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MegaGate or framework-local binaries, not through another package manager.",
+            script,
+            manifest_path.display(),
+            pm
+        );
+    }
+    Ok(())
 }
 
 fn has_backend_manifest(dir: &Path) -> bool {
@@ -3441,6 +3501,25 @@ mod tests {
     }
 
     #[test]
+    fn test_build_dev_launch_rejects_external_package_manager_wrappers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "scripts": { "dev": "npm run dev:inner" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let err =
+            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap_err();
+        assert!(err.to_string().contains("delegates to 'npm'"));
+    }
+
+    #[test]
     fn test_build_dev_launch_falls_back_to_start_for_angular() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("node_modules/.bin")).unwrap();
@@ -3839,6 +3918,36 @@ packages = ["packages/*"]
                 monorepo.path().join("packages/shared"),
             ]
         );
+    }
+
+    #[test]
+    fn test_monorepo_install_concurrency_is_serial_for_cold_multi_target_install() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        let backend = monorepo.path().join("apps/backend");
+        std::fs::create_dir_all(&frontend).unwrap();
+        std::fs::create_dir_all(&backend).unwrap();
+        std::fs::write(frontend.join("package.json"), "{}").unwrap();
+        std::fs::write(backend.join("package.json"), "{}").unwrap();
+
+        let targets = vec![frontend, backend];
+        assert!(looks_like_cold_monorepo_install(&targets));
+        assert_eq!(monorepo_install_concurrency(&targets), 1);
+    }
+
+    #[test]
+    fn test_monorepo_install_concurrency_reopens_parallelism_after_warmup() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        let backend = monorepo.path().join("apps/backend");
+        std::fs::create_dir_all(frontend.join("node_modules")).unwrap();
+        std::fs::create_dir_all(&backend).unwrap();
+        std::fs::write(frontend.join("package.json"), "{}").unwrap();
+        std::fs::write(backend.join("package.json"), "{}").unwrap();
+
+        let targets = vec![frontend, backend];
+        assert!(!looks_like_cold_monorepo_install(&targets));
+        assert!(monorepo_install_concurrency(&targets) >= 1);
     }
 
     #[test]

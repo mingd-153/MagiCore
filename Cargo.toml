@@ -102,6 +102,7 @@ async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 
 # Utilities
 semver = "1.0"
+time = { version = "0.3", features = ["parsing", "formatting"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

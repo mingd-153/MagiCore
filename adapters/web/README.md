@@ -11,7 +11,7 @@ NPM/Node.js package manager adapter for MegaGate.
 | `mg install [packages...]` | Single-core install |
 | `mg create-web <framework> <project> [--ts] [--tailwindcss] [--monorepo] [--backend <fw>]` | Multi-core web scaffold |
 | `mg add-web <packages...> [-D] [-E] [-O] [-P] [--no-save] [-g]` | Multi-core add |
-| `mg remove-web <package>` | Multi-core remove |
+| `mg remove-web <packages...>` | Multi-core remove |
 | `mg list-web` | Multi-core list |
 | `mg update-web [packages]` | Multi-core update |
 | `mg install-web [packages]` | Multi-core install |
@@ -79,5 +79,9 @@ Shared cache hygiene:
 
 Each command routes through `cli/src/commands/core/web.rs` which creates a `WebAdapter` and delegates to `shared.rs` for common logic (add, remove, list, update, install).
 
-Single-core builds expose bare web commands (`mg create`, `mg add`, `mg install`).
+Single-core web builds expose the bare web surface:
+
+- `mg create <framework> <project> ...` as an alias to the web scaffold entrypoint
+- `mg add`, `mg remove`, `mg update`, `mg list`, `mg install` through the auto-detected bare command path
+
 Multi-core builds expose per-core web commands (`mg create-web`, `mg add-web`, `mg install-web`).

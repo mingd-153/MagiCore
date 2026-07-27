@@ -12,6 +12,8 @@ use mg_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
 };
+#[cfg(feature = "web")]
+use time::{format_description::well_known::Rfc3339, Duration as TimeDuration, OffsetDateTime};
 
 #[allow(dead_code)]
 pub fn find_project_root(cwd: &Path) -> Result<Option<PathBuf>> {
@@ -512,6 +514,7 @@ pub(crate) async fn prepare_install_execution(
         profile_install_mark("resolve_graph", resolve_started_at);
         (graph, false)
     };
+    enforce_audit_strict_policy(adapter, &graph).await?;
     profile_install_mark("prepare_install_execution_total", started_at);
     Ok(InstallExecution {
         graph,
@@ -521,6 +524,109 @@ pub(crate) async fn prepare_install_execution(
         },
         used_lockfile,
     })
+}
+
+async fn enforce_audit_strict_policy(
+    adapter: &dyn PackageAdapter,
+    graph: &ResolvedGraph,
+) -> Result<()> {
+    if std::env::var_os("MG_AUDIT_STRICT").is_none() || graph.packages.is_empty() {
+        return Ok(());
+    }
+
+    if adapter.name() != "web" {
+        anyhow::bail!(
+            "--audit-strict is only implemented for the web core right now; refusing to claim policy parity for '{}'",
+            adapter.name()
+        );
+    }
+
+    #[cfg(not(feature = "web"))]
+    {
+        anyhow::bail!("--audit-strict requires the web core registry adapter, which is not included in this build");
+    }
+
+    #[cfg(feature = "web")]
+    {
+        enforce_web_audit_strict_policy(graph).await
+    }
+}
+
+#[cfg(feature = "web")]
+async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
+    use mg_types::adapter::VulnerabilitySeverity;
+
+    let registry =
+        mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
+    let now = OffsetDateTime::now_utc();
+    let quarantine_cutoff = now - TimeDuration::hours(24);
+
+    for pkg in &graph.packages {
+        let metadata = registry.fetch_metadata(pkg.id.name_str()).await?;
+        if let Some(published_at) = metadata.time.get(&pkg.id.version().to_string()) {
+            let published = OffsetDateTime::parse(published_at, &Rfc3339).map_err(|err| {
+                anyhow::anyhow!(
+                    "failed to parse published time for '{}@{}': {}",
+                    pkg.id.name_str(),
+                    pkg.id.version(),
+                    err
+                )
+            })?;
+            if published > quarantine_cutoff {
+                anyhow::bail!(
+                    "--audit-strict blocked '{}@{}' because it was published within the last 24 hours ({published_at})",
+                    pkg.id.name_str(),
+                    pkg.id.version(),
+                );
+            }
+        }
+    }
+
+    let mut body = serde_json::Map::new();
+    for pkg in &graph.packages {
+        body.insert(
+            pkg.id.name_str().to_string(),
+            serde_json::json!([pkg.id.version().to_string()]),
+        );
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent(format!("megagate/{}", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let response = client
+        .post("https://registry.npmjs.org/-/npm/v1/security/advisories/bulk")
+        .json(&body)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        anyhow::bail!("--audit-strict advisory API returned {}", response.status());
+    }
+    let advisories: serde_json::Value = response.json().await?;
+    if let Some(map) = advisories.as_object() {
+        for (pkg_name, advisory_list) in map {
+            if let Some(advisories_arr) = advisory_list.as_array() {
+                for advisory in advisories_arr {
+                    let severity = VulnerabilitySeverity::from_str(
+                        advisory["severity"].as_str().unwrap_or("info"),
+                    );
+                    if severity.is_at_least(&VulnerabilitySeverity::Medium) {
+                        let title = advisory["title"]
+                            .as_str()
+                            .unwrap_or("unknown vulnerability");
+                        anyhow::bail!(
+                            "--audit-strict blocked '{}' due to {} advisory: {}",
+                            pkg_name,
+                            severity.as_str(),
+                            title
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn try_install_added_packages_from_lock(
@@ -1088,7 +1194,12 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Re
     };
 
     mg_ui::blank_line();
-    println!("{} {}@{}", "📦", package.bold().cyan(), target.version.dimmed());
+    println!(
+        "{} {}@{}",
+        "📦",
+        package.bold().cyan(),
+        target.version.dimmed()
+    );
     if target.direct {
         println!("  {} Direct dependency", "├─".green());
     }

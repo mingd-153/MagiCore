@@ -55,6 +55,7 @@ mime_guess = { workspace = true }
 lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
 futures-util = { workspace = true }
 walkdir = { workspace = true }
+time = { workspace = true }
 
 # Utilities
 colored = { workspace = true }

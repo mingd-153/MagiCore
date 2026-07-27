@@ -40,7 +40,10 @@ fn test_install_web_accepts_flags() {
 fn test_add_web_accepts_flags() {
     let (ok, out) = common::mg(&["add-web", "--help"]);
     assert!(ok, "add-web --help failed\n{out}");
-    assert!(out.contains("Add web dependencies"), "should mention plural dependencies");
+    assert!(
+        out.contains("Add web dependencies"),
+        "should mention plural dependencies"
+    );
     assert!(out.contains("--dev"), "should mention --dev");
     assert!(out.contains("--global"), "should mention --global");
 }
@@ -49,6 +52,9 @@ fn test_add_web_accepts_flags() {
 fn test_remove_web_accepts_multiple_packages() {
     let (ok, out) = common::mg(&["remove-web", "--help"]);
     assert!(ok, "remove-web --help failed\n{out}");
-    assert!(out.contains("[PACKAGES]...") || out.contains("<PACKAGES>..."), "should mention repeated packages\n{out}");
+    assert!(
+        out.contains("[PACKAGES]...") || out.contains("<PACKAGES>..."),
+        "should mention repeated packages\n{out}"
+    );
     assert!(out.contains("--no-install"), "should mention --no-install");
 }
