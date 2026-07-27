@@ -1900,6 +1900,49 @@ impl DependencyProvider for NpmDependencyProvider {
 
         Ok(results)
     }
+
+    async fn on_batch_resolved(&self, ids: &[PackageId]) -> Result<(), DependencyError> {
+        let Some(sc) = &self.shared_cache else {
+            return Ok(());
+        };
+
+        let registry_url = self.registry.registry_url().to_string();
+        let sem = Arc::new(tokio::sync::Semaphore::new(8));
+
+        for id in ids {
+            let key = self.source_package_name(id.name()).as_str().to_string();
+            let Some(metadata) = self.metadata_cache.get(&key) else {
+                continue;
+            };
+            let Some(version_info) = metadata.versions.get(&id.version().to_string()) else {
+                continue;
+            };
+            let Some(dist) = &version_info.dist else {
+                continue;
+            };
+
+            let tarball_url = dist.tarball.clone();
+            let pid = id.clone();
+            let sem = sem.clone();
+            let sc = sc.clone();
+            let ru = registry_url.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await;
+                let registry = native::npm_registry::NpmRegistry::new(&ru);
+                match registry.download_tarball(&tarball_url).await {
+                    Ok(bytes) => {
+                        if let Ok(pc) = sc.package_cache() {
+                            let _ = pc.cache_tarball(&pid, &bytes);
+                        }
+                    }
+                    Err(_) => {}
+                }
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

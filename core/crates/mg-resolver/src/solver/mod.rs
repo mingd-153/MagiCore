@@ -111,6 +111,13 @@ pub trait DependencyProvider: Send + Sync {
         }
         Ok(results)
     }
+
+    /// Called by solver after each batch resolves exact package versions.
+    /// Provider can use this to start background work (e.g. tarball download).
+    async fn on_batch_resolved(&self, packages: &[PackageId]) -> Result<(), DependencyError> {
+        let _ = packages;
+        Ok(())
+    }
 }
 
 /// Info about a dependency, used by `check_dependency_confusion`.
@@ -534,6 +541,12 @@ impl Resolver {
                             message: format!("dependency prefetch failed: {e}"),
                         })?;
                 profile.mark("prefetch_dependencies", deps_prefetch_started_at);
+                self.provider
+                    .on_batch_resolved(&ids)
+                    .await
+                    .map_err(|e| SolveError {
+                        message: format!("on_batch_resolved hook failed: {e}"),
+                    })?;
                 let prefetched_dependencies: HashMap<PackageId, Vec<ResolvedDep>> =
                     dependency_results.into_iter().collect();
 
