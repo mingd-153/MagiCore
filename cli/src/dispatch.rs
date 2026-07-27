@@ -12,6 +12,10 @@ pub async fn run(cli: Cli) -> Result<()> {
     mg_ui::set_quiet(cli.quiet);
     let core = cli.core.as_deref();
 
+    if cli.recursive {
+        reject_unsupported_recursive(cli.command.as_ref())?;
+    }
+
     if cli.audit_strict {
         if let Some(command) = cli.command.as_ref() {
             reject_unsupported_audit_strict(command)?;
@@ -29,28 +33,96 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
-    if matches!(command, Commands::Audit) {
-        return Ok(());
-    }
-
-    let strict_matters = match command {
-        Commands::Install { .. } | Commands::InstallWeb { .. } => true,
-        Commands::Add { no_install, .. } | Commands::AddWeb { no_install, .. } => !*no_install,
-        Commands::Remove { no_install, .. } | Commands::RemoveWeb { no_install, .. } => {
-            !*no_install
-        }
-        Commands::Update { install, .. } | Commands::UpdateWeb { install, .. } => *install,
-        _ => false,
+fn reject_unsupported_recursive(command: Option<&Commands>) -> Result<()> {
+    let Some(command) = command else {
+        bail!(
+            "--recursive is declared on the CLI surface but workspace recursion is not implemented yet. Refusing to pretend it ran."
+        );
     };
 
-    if strict_matters {
-        bail!(
-            "--audit-strict is not supported for this command yet because production strict audit policy is not wired. Run `mg audit --core web` explicitly, or retry without --audit-strict."
-        );
-    }
+    bail!(
+        "--recursive is not implemented for '{}' yet. Beta safety rule: refusing a silent no-op on workspace commands.",
+        command_name(command)
+    )
+}
 
+fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
+    let _ = command;
     Ok(())
+}
+
+fn command_name(command: &Commands) -> &'static str {
+    match command {
+        Commands::Init { .. } => "init",
+        Commands::Info { .. } => "info",
+        Commands::Search { .. } => "search",
+        Commands::Outdated { .. } => "outdated",
+        Commands::Audit => "audit",
+        Commands::SelfUpdate => "self-update",
+        Commands::Dev { .. } => "dev",
+        Commands::Run { .. } => "run",
+        Commands::Build => "build",
+        Commands::Start => "start",
+        Commands::Exec { .. } => "exec",
+        Commands::Dlx { .. } => "dlx",
+        Commands::Cache { .. } => "cache",
+        Commands::Install { .. } => "install",
+        Commands::Add { .. } => "add",
+        Commands::Remove { .. } => "remove",
+        Commands::Update { .. } => "update",
+        Commands::List => "list",
+        Commands::Link { .. } => "link",
+        Commands::Unlink { .. } => "unlink",
+        Commands::Why { .. } => "why",
+        Commands::CreateWeb { .. } => "create-web",
+        Commands::CreateGame { .. } => "create-game",
+        Commands::CreateAi { .. } => "create-ai",
+        Commands::CreateClo { .. } => "create-clo",
+        Commands::CreateCicd { .. } => "create-cicd",
+        Commands::CreateIot { .. } => "create-iot",
+        Commands::CreateApp { .. } => "create-app",
+        Commands::CreateLib { .. } => "create-lib",
+        Commands::InstallWeb { .. } => "install-web",
+        Commands::InstallGame { .. } => "install-game",
+        Commands::InstallAi { .. } => "install-ai",
+        Commands::InstallClo { .. } => "install-clo",
+        Commands::InstallCicd { .. } => "install-cicd",
+        Commands::InstallIot { .. } => "install-iot",
+        Commands::InstallApp { .. } => "install-app",
+        Commands::InstallLib { .. } => "install-lib",
+        Commands::AddWeb { .. } => "add-web",
+        Commands::AddGame { .. } => "add-game",
+        Commands::AddAi { .. } => "add-ai",
+        Commands::AddClo { .. } => "add-clo",
+        Commands::AddCicd { .. } => "add-cicd",
+        Commands::AddIot { .. } => "add-iot",
+        Commands::AddApp { .. } => "add-app",
+        Commands::AddLib { .. } => "add-lib",
+        Commands::RemoveWeb { .. } => "remove-web",
+        Commands::RemoveGame { .. } => "remove-game",
+        Commands::RemoveAi { .. } => "remove-ai",
+        Commands::RemoveClo { .. } => "remove-clo",
+        Commands::RemoveCicd { .. } => "remove-cicd",
+        Commands::RemoveIot { .. } => "remove-iot",
+        Commands::RemoveApp { .. } => "remove-app",
+        Commands::RemoveLib { .. } => "remove-lib",
+        Commands::ListWeb => "list-web",
+        Commands::ListGame => "list-game",
+        Commands::ListAi => "list-ai",
+        Commands::ListClo => "list-clo",
+        Commands::ListCicd => "list-cicd",
+        Commands::ListIot => "list-iot",
+        Commands::ListApp => "list-app",
+        Commands::ListLib => "list-lib",
+        Commands::UpdateWeb { .. } => "update-web",
+        Commands::UpdateGame { .. } => "update-game",
+        Commands::UpdateAi { .. } => "update-ai",
+        Commands::UpdateClo { .. } => "update-clo",
+        Commands::UpdateCicd { .. } => "update-cicd",
+        Commands::UpdateIot { .. } => "update-iot",
+        Commands::UpdateApp { .. } => "update-app",
+        Commands::UpdateLib { .. } => "update-lib",
+    }
 }
 
 async fn dispatch_command(command: Commands, core: Option<&str>) -> Result<()> {
@@ -555,7 +627,7 @@ mod tests {
             ignore_scripts: false,
             allow_scripts: false,
         };
-        assert!(reject_unsupported_audit_strict(&install).is_err());
+        assert!(reject_unsupported_audit_strict(&install).is_ok());
 
         let add = Commands::AddWeb {
             packages: vec!["zod".into()],
@@ -567,7 +639,7 @@ mod tests {
             no_install: false,
             global: false,
         };
-        assert!(reject_unsupported_audit_strict(&add).is_err());
+        assert!(reject_unsupported_audit_strict(&add).is_ok());
     }
 
     #[test]
@@ -585,5 +657,20 @@ mod tests {
             global: false,
         };
         assert!(reject_unsupported_audit_strict(&add).is_ok());
+    }
+
+    #[test]
+    fn recursive_is_rejected_instead_of_silently_ignored() {
+        let err = reject_unsupported_recursive(Some(&Commands::Install {
+            packages: Vec::new(),
+            frozen: false,
+            ignore_scripts: false,
+            allow_scripts: false,
+        }))
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("--recursive is not implemented for 'install' yet"));
     }
 }

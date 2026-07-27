@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use futures_util::future::join_all;
 use mg_types::{PackageId, PackageName, Version, VersionRange};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 
 pub use pubgrub::{Cause, Incompatibility, PubGrubSolver, SolveError as PubGrubSolveError, Term};
 
@@ -278,6 +279,32 @@ pub struct Resolver {
     overrides: HashMap<String, String>,
 }
 
+#[derive(Default)]
+struct ResolverProfile {
+    enabled: bool,
+}
+
+impl ResolverProfile {
+    fn from_env() -> Self {
+        let enabled = std::env::var("MEGAGATE_RESOLVER_PROFILE")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        Self { enabled }
+    }
+
+    fn mark(&self, label: &str, started_at: Instant) {
+        if self.enabled {
+            eprintln!(
+                "[megagate:resolver-profile] {}={}ms",
+                label,
+                started_at.elapsed().as_millis()
+            );
+        }
+    }
+}
+
 impl Resolver {
     pub fn new(provider: std::sync::Arc<dyn DependencyProvider>) -> Self {
         Self {
@@ -320,12 +347,21 @@ impl Resolver {
         matches.into_iter().max()
     }
 
+    fn versions_to_map(entries: Vec<(PackageName, Vec<Version>)>) -> HashMap<String, Vec<Version>> {
+        entries
+            .into_iter()
+            .map(|(name, versions)| (name.as_str().to_string(), versions))
+            .collect()
+    }
+
     /// Resolve all dependencies. Fails with `SolveError` on provider error or
     /// unresolvable constraint.
     pub async fn solve(&self, wanted: &[(PackageName, String)]) -> Result<SolveResult, SolveError> {
         const MAX_PACKAGES: usize = 10000;
         const MAX_QUEUE_SIZE: usize = 50000;
 
+        let solve_started_at = Instant::now();
+        let profile = ResolverProfile::from_env();
         let mut resolutions: Vec<Resolution> = Vec::new();
         let mut resolved: HashMap<String, Version> = HashMap::new();
         let mut queue: VecDeque<(PackageName, String)> =
@@ -334,12 +370,16 @@ impl Resolver {
 
         // Pre-fetch initial batch
         let initial_names: Vec<PackageName> = wanted.iter().map(|(n, _)| n.clone()).collect();
-        self.provider
+        let initial_prefetch_started_at = Instant::now();
+        let initial_versions = self
+            .provider
             .prefetch_versions(&initial_names)
             .await
             .map_err(|e| SolveError {
                 message: format!("initial prefetch failed: {e}"),
             })?;
+        profile.mark("initial_prefetch_versions", initial_prefetch_started_at);
+        let mut prefetched_versions = Self::versions_to_map(initial_versions);
 
         while !queue.is_empty() {
             if resolutions.len() >= MAX_PACKAGES {
@@ -368,23 +408,32 @@ impl Resolver {
             let batch_size = queue.len().min(batch_limit);
             let batch: Vec<(PackageName, String)> = queue.drain(..batch_size).collect();
             let mut selected: Vec<(PackageName, String, Version)> = Vec::new();
+            let batch_started_at = Instant::now();
 
             // Deduplicate and prefetch batch versions
             let mut seen = HashSet::new();
             let batch_names: Vec<PackageName> = batch
                 .iter()
-                .filter(|(n, _)| seen.insert(n.as_str().to_string()))
+                .filter(|(n, _)| {
+                    let name = n.as_str().to_string();
+                    seen.insert(name.clone()) && !prefetched_versions.contains_key(&name)
+                })
                 .map(|(n, _)| n.clone())
                 .collect();
             if !batch_names.is_empty() {
-                self.provider
-                    .prefetch_versions(&batch_names)
-                    .await
-                    .map_err(|e| SolveError {
-                        message: format!("batch prefetch failed: {e}"),
-                    })?;
+                let batch_prefetch_started_at = Instant::now();
+                prefetched_versions.extend(Self::versions_to_map(
+                    self.provider
+                        .prefetch_versions(&batch_names)
+                        .await
+                        .map_err(|e| SolveError {
+                            message: format!("batch prefetch failed: {e}"),
+                        })?,
+                ));
+                profile.mark("batch_prefetch_versions", batch_prefetch_started_at);
             }
 
+            let select_started_at = Instant::now();
             for (name, spec) in batch {
                 let name_str = name.as_str().to_string();
                 let constraint = VersionRange::parse(&spec).map_err(|e| SolveError {
@@ -396,13 +445,16 @@ impl Resolver {
                     let oc = VersionRange::parse(override_spec).map_err(|e| SolveError {
                         message: format!("invalid override '{}': {}", override_spec, e),
                     })?;
-                    let versions =
+                    let versions = if let Some(prefetched) = prefetched_versions.get(&name_str) {
+                        prefetched.clone()
+                    } else {
                         self.provider
                             .get_versions(&name)
                             .await
                             .map_err(|e| SolveError {
                                 message: format!("versions fetch failed for '{}': {}", name_str, e),
-                            })?;
+                            })?
+                    };
                     if let Some(v) = Self::select_best_version(&versions, &oc, override_spec)
                         .or_else(|| versions.iter().filter(|v| v.pre.is_none()).cloned().max())
                         .or_else(|| versions.iter().cloned().max())
@@ -419,13 +471,16 @@ impl Resolver {
                     if constraint.matches(&existing) {
                         continue;
                     }
-                    let versions =
+                    let versions = if let Some(prefetched) = prefetched_versions.get(&name_str) {
+                        prefetched.clone()
+                    } else {
                         self.provider
                             .get_versions(&name)
                             .await
                             .map_err(|e| SolveError {
                                 message: format!("cannot fetch versions for '{}': {}", name_str, e),
-                            })?;
+                            })?
+                    };
 
                     if let Some(other) = Self::select_best_version(&versions, &constraint, &spec) {
                         let key = (name_str.clone(), other.clone());
@@ -438,13 +493,16 @@ impl Resolver {
                 }
 
                 // Phase 3: fresh resolve
-                let versions = self
-                    .provider
-                    .get_versions(&name)
-                    .await
-                    .map_err(|e| SolveError {
-                        message: format!("cannot fetch versions for '{}': {}", name_str, e),
-                    })?;
+                let versions = if let Some(prefetched) = prefetched_versions.get(&name_str) {
+                    prefetched.clone()
+                } else {
+                    self.provider
+                        .get_versions(&name)
+                        .await
+                        .map_err(|e| SolveError {
+                            message: format!("cannot fetch versions for '{}': {}", name_str, e),
+                        })?
+                };
                 let version = Self::select_best_version(&versions, &constraint, &spec);
 
                 match version {
@@ -460,8 +518,10 @@ impl Resolver {
                     }
                 }
             }
+            profile.mark("select_versions", select_started_at);
 
             if !selected.is_empty() {
+                let deps_prefetch_started_at = Instant::now();
                 let ids: Vec<PackageId> = selected
                     .iter()
                     .map(|(name, _, version)| PackageId::new(name.clone(), version.clone()))
@@ -473,9 +533,11 @@ impl Resolver {
                         .map_err(|e| SolveError {
                             message: format!("dependency prefetch failed: {e}"),
                         })?;
+                profile.mark("prefetch_dependencies", deps_prefetch_started_at);
                 let prefetched_dependencies: HashMap<PackageId, Vec<ResolvedDep>> =
                     dependency_results.into_iter().collect();
 
+                let add_resolution_started_at = Instant::now();
                 for (name, name_str, version) in selected {
                     let pid = PackageId::new(name.clone(), version.clone());
                     let deps =
@@ -499,9 +561,12 @@ impl Resolver {
                     )
                     .await?;
                 }
+                profile.mark("add_resolution", add_resolution_started_at);
             }
+            profile.mark("batch_total", batch_started_at);
         }
 
+        profile.mark("solve_total", solve_started_at);
         Ok(SolveResult { resolutions })
     }
 

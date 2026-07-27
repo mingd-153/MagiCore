@@ -61,4 +61,4 @@ app.register_blueprint(health_bp)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=config.port, debug=config.debug)
+    app.run(host="127.0.0.1", port=config.port, debug=config.debug)

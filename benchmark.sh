@@ -49,6 +49,7 @@ ALL_LANES=(
   mg-create-web-rich
   heavy-cold-install
   heavy-empty-cache-install
+  heavy-empty-cache-install-direct
   heavy-warm-install
   heavy-build
   heavy-dev-startup
@@ -71,9 +72,10 @@ SMOKE_LANES=(
   mg-create-web
   mg-create-web-rich
   heavy-cold-install
+  heavy-empty-cache-install-direct
   backend-go-echo
 )
-MG_ONLY_LANES=(mg-create-web mg-create-web-rich backend-go-echo backend-rust-axum backend-python-fastapi backend-java-spring native-go-echo-baseline native-rust-axum-baseline native-python-fastapi-baseline native-java-spring-baseline)
+MG_ONLY_LANES=(mg-create-web mg-create-web-rich heavy-empty-cache-install-direct backend-go-echo backend-rust-axum backend-python-fastapi backend-java-spring native-go-echo-baseline native-rust-axum-baseline native-python-fastapi-baseline native-java-spring-baseline)
 
 cleanup() {
     if [[ "$KEEP_TMP_ROOT" == "1" || "$INTERRUPTED" == "1" ]]; then
@@ -173,6 +175,7 @@ lane_title() {
         mg-create-web-rich) echo "MG CREATE WEB RICH" ;;
         heavy-cold-install) echo "HEAVY COLD INSTALL" ;;
         heavy-empty-cache-install) echo "HEAVY EMPTY CACHE INSTALL" ;;
+        heavy-empty-cache-install-direct) echo "HEAVY EMPTY CACHE INSTALL DIRECT" ;;
         heavy-warm-install) echo "HEAVY WARM INSTALL" ;;
         heavy-build) echo "HEAVY BUILD" ;;
         heavy-dev-startup) echo "HEAVY DEV STARTUP" ;;
@@ -369,168 +372,7 @@ EOF
 
 create_heavy_fixture() {
     local dir="$TMP_ROOT/fixtures/heavy-web"
-    mkdir -p "$dir/src"
-    cat >"$dir/package.json" <<'EOF'
-{
-  "name": "bench-heavy",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "main": "src/index.js",
-  "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 4315",
-    "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4415"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "next": "^14.1.0",
-    "vue": "^3.4.0",
-    "vue-router": "^4.2.0",
-    "express": "^4.18.2",
-    "axios": "^1.6.0",
-    "lodash": "^4.17.21",
-    "chalk": "^5.3.0",
-    "moment": "^2.29.4",
-    "uuid": "^9.0.0",
-    "tslib": "^2.6.2",
-    "commander": "^11.1.0",
-    "prettier": "^3.1.0",
-    "eslint": "^8.56.0",
-    "webpack": "^5.89.0",
-    "babel-core": "^6.26.3",
-    "jest": "^29.7.0",
-    "sinon": "^17.0.1",
-    "async": "^3.2.5",
-    "body-parser": "^1.20.2",
-    "cors": "^2.8.5",
-    "debug": "^4.3.4",
-    "dotenv": "^16.3.1",
-    "glob": "^10.3.10",
-    "http-errors": "^2.0.0",
-    "iconv-lite": "^0.6.3",
-    "isarray": "^2.0.5",
-    "js-yaml": "^4.1.0",
-    "json5": "^2.2.3",
-    "jsonwebtoken": "^9.0.2",
-    "ms": "^2.1.3",
-    "node-fetch": "^3.3.2",
-    "once": "^1.4.0",
-    "path-to-regexp": "^6.2.1",
-    "qs": "^6.11.2",
-    "raw-body": "^2.5.2",
-    "readable-stream": "^4.5.2",
-    "safe-buffer": "^5.2.1",
-    "semver": "^7.5.4",
-    "send": "^0.18.0",
-    "serve-static": "^1.15.0",
-    "statuses": "^2.0.1",
-    "supports-color": "^9.4.0",
-    "through2": "^4.0.2",
-    "yargs": "^17.7.2",
-    "zod": "^3.22.4",
-    "helmet": "^7.1.0",
-    "compression": "^1.7.4",
-    "morgan": "^1.10.0",
-    "cookie-parser": "^1.4.6",
-    "date-fns": "^4.1.0",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^3.3.1",
-    "lucide-react": "^0.539.0",
-    "react-hook-form": "^7.62.0",
-    "react-router-dom": "^7.8.0",
-    "nanoid": "^5.1.5",
-    "zustand": "^5.0.7",
-    "jotai": "^2.12.5",
-    "valibot": "^1.1.0",
-    "sonner": "^2.0.7",
-    "framer-motion": "^12.23.12"
-  },
-  "devDependencies": {
-    "typescript": "^5.3.3",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.7.0",
-    "vite": "^7.0.6"
-  }
-}
-EOF
-    cat >"$dir/mg.toml" <<'EOF'
-name = "bench-heavy"
-version = "0.1.0"
-ecosystem = "web"
-EOF
-    cat >"$dir/tsconfig.json" <<'EOF'
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "Bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "strict": true
-  },
-  "include": ["src"]
-}
-EOF
-    cat >"$dir/index.html" <<'EOF'
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MegaGate Heavy Bench</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-EOF
-    cat >"$dir/src/index.js" <<'EOF'
-console.log("bench-heavy");
-export default {};
-EOF
-    cat >"$dir/src/main.tsx" <<'EOF'
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { z } from "zod";
-import { clsx } from "clsx";
-
-const schema = z.object({ name: z.string(), mode: z.literal("heavy") });
-const data = schema.parse({ name: "MegaGate", mode: "heavy" });
-
-function App() {
-  return (
-    <main className={clsx("bench-heavy")} style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontFamily: "Inter, sans-serif" }}>
-      <section>
-        <h1>{data.name} heavy benchmark</h1>
-        <p>Resolver, cache, materialization, CLI surface.</p>
-      </section>
-    </main>
-  );
-}
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-EOF
-    cat >"$dir/vite.config.ts" <<'EOF'
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()]
-});
-EOF
+    cp -R "$ROOT_DIR/tools/core-web-lab/fixtures/heavy-web" "$dir"
 }
 
 create_monorepo_fixture() {
@@ -1104,6 +946,14 @@ empty-cache-install)
         YARN_CACHE_FOLDER="\$workdir/.yarn-cache" yarn install
         ;;
     esac
+    assert_dir "\$workdir/node_modules"
+    ;;
+  heavy-empty-cache-install-direct)
+    copy_fixture "heavy-web" "\$workdir"
+    cd "\$workdir"
+    rm -rf .megagate node_modules .empty-shared-cache
+    mkdir -p .empty-shared-cache
+    MEGAGATE_SHARED_CACHE_DIR="\$workdir/.empty-shared-cache" mg_cmd install --core web --ignore-scripts
     assert_dir "\$workdir/node_modules"
     ;;
   heavy-warm-install)

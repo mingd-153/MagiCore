@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -6,7 +7,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use base64::Engine;
 use dashmap::DashMap;
-use futures_util::future::join_all;
+use futures_util::stream::{self, StreamExt};
 use lru::LruCache;
 use mg_adapter_base::BaseAdapter;
 use mg_fetcher::extract::extract_tarball_from_reader;
@@ -115,6 +116,121 @@ impl InstallProfile {
         eprintln!("[megagate:web:install-profile] total={}ms", total_ms);
         for (label, millis) in &self.marks {
             eprintln!("[megagate:web:install-profile] {}={}ms", label, millis);
+        }
+    }
+}
+
+#[derive(Default)]
+struct PipelineProfile {
+    enabled: bool,
+    package_count: AtomicU64,
+    tarball_bytes: AtomicU64,
+    download_ms_total: AtomicU64,
+    extract_ms_total: AtomicU64,
+    download_ms_max: AtomicU64,
+    extract_ms_max: AtomicU64,
+    slowest_downloads: Mutex<Vec<(u64, String, u64)>>,
+    slowest_extracts: Mutex<Vec<(u64, String)>>,
+}
+
+struct TarballFetchResult {
+    bytes: Vec<u8>,
+    queue_wait_ms: u64,
+    io_ms: u64,
+}
+
+impl PipelineProfile {
+    fn from_env() -> Self {
+        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        Self {
+            enabled,
+            ..Default::default()
+        }
+    }
+
+    fn record_download(
+        &self,
+        package: &PackageId,
+        bytes: u64,
+        elapsed_ms: u64,
+        queue_wait_ms: u64,
+        io_ms: u64,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        self.package_count.fetch_add(1, Ordering::Relaxed);
+        self.tarball_bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.download_ms_total
+            .fetch_add(elapsed_ms, Ordering::Relaxed);
+        self.download_ms_max
+            .fetch_max(elapsed_ms, Ordering::Relaxed);
+        self.record_slowest_download(package, bytes, elapsed_ms, queue_wait_ms, io_ms);
+    }
+
+    fn record_extract(&self, package: &PackageId, elapsed_ms: u64) {
+        if !self.enabled {
+            return;
+        }
+        self.extract_ms_total
+            .fetch_add(elapsed_ms, Ordering::Relaxed);
+        self.extract_ms_max.fetch_max(elapsed_ms, Ordering::Relaxed);
+        self.record_slowest_extract(package, elapsed_ms);
+    }
+
+    fn record_slowest_download(
+        &self,
+        package: &PackageId,
+        bytes: u64,
+        elapsed_ms: u64,
+        queue_wait_ms: u64,
+        io_ms: u64,
+    ) {
+        let mut guard = self.slowest_downloads.lock().unwrap();
+        guard.push((
+            elapsed_ms,
+            format!("{} queue_wait={}ms io={}ms", package, queue_wait_ms, io_ms),
+            bytes,
+        ));
+        guard.sort_by(|a, b| b.0.cmp(&a.0));
+        guard.truncate(5);
+    }
+
+    fn record_slowest_extract(&self, package: &PackageId, elapsed_ms: u64) {
+        let mut guard = self.slowest_extracts.lock().unwrap();
+        guard.push((elapsed_ms, package.to_string()));
+        guard.sort_by(|a, b| b.0.cmp(&a.0));
+        guard.truncate(5);
+    }
+
+    fn flush(&self) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!(
+            "[megagate:web:pipeline-profile] packages={} bytes={} download_ms_total={} download_ms_max={} extract_ms_total={} extract_ms_max={}",
+            self.package_count.load(Ordering::Relaxed),
+            self.tarball_bytes.load(Ordering::Relaxed),
+            self.download_ms_total.load(Ordering::Relaxed),
+            self.download_ms_max.load(Ordering::Relaxed),
+            self.extract_ms_total.load(Ordering::Relaxed),
+            self.extract_ms_max.load(Ordering::Relaxed),
+        );
+        for (elapsed_ms, package, bytes) in self.slowest_downloads.lock().unwrap().iter() {
+            eprintln!(
+                "[megagate:web:pipeline-profile] slow_download package={} elapsed={}ms bytes={}",
+                package, elapsed_ms, bytes
+            );
+        }
+        for (elapsed_ms, package) in self.slowest_extracts.lock().unwrap().iter() {
+            eprintln!(
+                "[megagate:web:pipeline-profile] slow_extract package={} elapsed={}ms",
+                package, elapsed_ms
+            );
         }
     }
 }
@@ -550,62 +666,6 @@ impl PackageAdapter for WebAdapter {
             .await
             .map_err(|e| mg_types::MgError::DependencyConflict(e.message))?;
 
-        // Early tarball prefetch: download during metadata fetch + graph build
-        if let Some(shared_cache) = self.shared_cache.clone() {
-            let early_pkgs: Vec<PackageId> = result
-                .resolutions
-                .iter()
-                .map(|r| r.package_id.clone())
-                .collect();
-            let registry_url = self.registry_url.clone();
-            *self.prefetch_handle.lock().unwrap() = Some(tokio::spawn(async move {
-                let cache = shared_cache
-                    .package_cache()
-                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-                let download_sem =
-                    Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
-                let mut set: tokio::task::JoinSet<MgResult<u64>> = tokio::task::JoinSet::new();
-                for id in early_pkgs {
-                    let cache = cache.clone();
-                    let reg = native::npm_registry::NpmRegistry::new(registry_url.as_str());
-                    let download_sem = Arc::clone(&download_sem);
-                    set.spawn(async move {
-                        let lock = tarball_prefetch_lock(&id);
-                        let _guard = lock.lock().await;
-                        if let Some(bytes) = cache
-                            .get_tarball(&id)
-                            .map_err(|e| mg_types::MgError::Store(e.to_string()))?
-                        {
-                            return Ok(bytes.len() as u64);
-                        }
-                        let _permit = download_sem.acquire_owned().await.map_err(|e| {
-                            mg_types::MgError::Other(format!("download semaphore closed: {e}"))
-                        })?;
-                        let url = format!(
-                            "{}/{}/-/{}-{}.tgz",
-                            reg.registry_url(),
-                            id.name_str(),
-                            id.name().unscoped(),
-                            id.version()
-                        );
-                        let bytes = reg.download_tarball(&url).await.map_err(|e| {
-                            mg_types::MgError::Network(format!("prefetch dl failed: {e}"))
-                        })?;
-                        cache
-                            .cache_tarball(&id, &bytes)
-                            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-                        Ok(bytes.len() as u64)
-                    });
-                }
-                let mut total = 0u64;
-                while let Some(r) = set.join_next().await {
-                    total += r
-                        .map_err(|e| mg_types::MgError::Other(format!("prefetch task failed: {e}")))??;
-                }
-                Ok::<_, mg_types::MgError>(total)
-            }));
-        }
-
         let metadata = self
             .provider
             .prefetch_resolution_metadata(
@@ -629,7 +689,7 @@ impl PackageAdapter for WebAdapter {
                 acc
             },
         );
-        let packages = result
+        let packages: Vec<ResolvedPackage> = result
             .resolutions
             .iter()
             .map(|r| {
@@ -674,6 +734,16 @@ impl PackageAdapter for WebAdapter {
                 }
             })
             .collect();
+        if resolve_prefetch_enabled() {
+            if let Some(shared_cache) = self.shared_cache.clone() {
+                let registry_url = self.registry_url.clone();
+                *self.prefetch_handle.lock().unwrap() = Some(spawn_tarball_download(
+                    shared_cache,
+                    packages.clone(),
+                    registry_url,
+                ));
+            }
+        }
         let graph = ResolvedGraph { packages };
         if let (Some(shared_cache), Some(key)) =
             (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
@@ -834,12 +904,24 @@ impl PackageAdapter for WebAdapter {
             write_web_lockfile_with_state(project_root, graph, "installing")?;
         }
         let prefetch_handle = self.prefetch_handle.lock().unwrap().take();
-        if let Some(handle) = prefetch_handle {
-            match handle.await {
-                Ok(Ok(bytes)) => { summary.bytes_from_cache += bytes; }
-                Ok(Err(e)) => return Err(e),
-                Err(e) => return Err(mg_types::MgError::Other(format!("prefetch panicked: {e}"))),
+        if opts.legacy_flat {
+            if let Some(handle) = prefetch_handle {
+                match handle.await {
+                    Ok(Ok(bytes)) => {
+                        summary.bytes_from_cache += bytes;
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(e) => {
+                        return Err(mg_types::MgError::Other(format!("prefetch panicked: {e}")));
+                    }
+                }
             }
+        } else if let Some(handle) = prefetch_handle {
+            // Strict layout already owns a streamed download+extract pipeline below.
+            // Waiting for the whole prefetch batch here turns cold installs into
+            // "download everything, then extract", which lengthens the critical path.
+            // Abort the speculative prefetch and let the pipeline fetch/extract on demand.
+            handle.abort();
         }
         if opts.legacy_flat && !fetch_graph.is_empty() {
             summary.bytes_from_cache += prefetch_tarballs(
@@ -1016,9 +1098,7 @@ impl PackageAdapter for WebAdapter {
                 summary.bytes_from_cache += pipeline_bytes;
                 profile.mark("prepare_extracted_roots", start);
                 materialize_strict_layout(
-                    project_root,
                     &node_modules,
-                    &staged_node_modules,
                     graph,
                     &package_map,
                     &root_packages,
@@ -1515,7 +1595,12 @@ impl NpmDependencyProvider {
             });
         }
 
-        for fetched in join_all(futures).await {
+        let concurrency = metadata_concurrency_limit();
+        for fetched in stream::iter(futures)
+            .buffer_unordered(concurrency)
+            .collect::<Vec<_>>()
+            .await
+        {
             let (name, metadata) = fetched?;
             results.insert(name, metadata);
         }
@@ -1717,7 +1802,14 @@ impl DependencyProvider for NpmDependencyProvider {
             });
         }
 
-        for fetched in join_all(futures).await {
+        let mut fetched_metadata: Vec<(PackageName, native::npm_registry::PackageMetadata)> =
+            Vec::new();
+        let concurrency = metadata_concurrency_limit();
+        for fetched in stream::iter(futures)
+            .buffer_unordered(concurrency)
+            .collect::<Vec<_>>()
+            .await
+        {
             let (package, metadata) = fetched?;
             let source_key = self.source_package_name(&package).as_str().to_string();
             self.metadata_cache.insert(source_key, metadata.clone());
@@ -1729,7 +1821,8 @@ impl DependencyProvider for NpmDependencyProvider {
             versions.sort();
             self.registry_cache
                 .insert_versions(package.as_str().to_string(), versions.clone());
-            results.push((package, versions));
+            results.push((package.clone(), versions));
+            fetched_metadata.push((package, metadata));
         }
 
         Ok(results)
@@ -1783,7 +1876,12 @@ impl DependencyProvider for NpmDependencyProvider {
             });
         }
 
-        for fetched in join_all(futures).await {
+        let concurrency = metadata_concurrency_limit();
+        for fetched in stream::iter(futures)
+            .buffer_unordered(concurrency)
+            .collect::<Vec<_>>()
+            .await
+        {
             let (package_id, meta) = fetched?;
             let deps = meta
                 .versions
@@ -2434,6 +2532,69 @@ fn download_concurrency_limit() -> usize {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|limit| *limit > 0)
         .unwrap_or(24)
+}
+
+fn resolve_prefetch_enabled() -> bool {
+    std::env::var("MEGAGATE_WEB_RESOLVE_PREFETCH")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+fn metadata_concurrency_limit() -> usize {
+    std::env::var("MEGAGATE_WEB_METADATA_CONCURRENCY")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(24)
+}
+
+fn spawn_tarball_download(
+    shared_cache: SharedWebCache,
+    packages: Vec<ResolvedPackage>,
+    registry_url: String,
+) -> tokio::task::JoinHandle<MgResult<u64>> {
+    tokio::spawn(async move {
+        let cache = shared_cache
+            .package_cache()
+            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+        let download_sem = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
+        let mut set: tokio::task::JoinSet<MgResult<u64>> = tokio::task::JoinSet::new();
+        for pkg in packages {
+            let cache = cache.clone();
+            let reg = native::npm_registry::NpmRegistry::new(registry_url.as_str());
+            let download_sem = Arc::clone(&download_sem);
+            set.spawn(async move {
+                let id = pkg.id.clone();
+                let lock = tarball_prefetch_lock(&id);
+                let _guard = lock.lock().await;
+                if let Some(bytes) = cache
+                    .get_tarball(&id)
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+                {
+                    return Ok(bytes.len() as u64);
+                }
+                let _permit = download_sem.acquire_owned().await.map_err(|e| {
+                    mg_types::MgError::Other(format!("download semaphore closed: {e}"))
+                })?;
+                let url = package_tarball_url(reg.registry_url(), &pkg);
+                let bytes = reg
+                    .download_tarball(&url)
+                    .await
+                    .map_err(|e| mg_types::MgError::Network(format!("prefetch dl failed: {e}")))?;
+                cache
+                    .cache_tarball(&id, &bytes)
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                Ok(bytes.len() as u64)
+            });
+        }
+        let mut total = 0u64;
+        while let Some(r) = set.join_next().await {
+            total +=
+                r.map_err(|e| mg_types::MgError::Other(format!("prefetch task failed: {e}")))??;
+        }
+        Ok::<_, mg_types::MgError>(total)
+    })
 }
 
 fn shared_cache_max_age_secs() -> u64 {
@@ -3465,6 +3626,7 @@ async fn pipeline_download_and_extract(
     store: &ContentStore,
 ) -> MgResult<(u64, std::collections::HashMap<PackageId, PathBuf>)> {
     let download_sem = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
+    let pipeline_profile = Arc::new(PipelineProfile::from_env());
     let extract_concurrency = std::env::var("MEGAGATE_WEB_EXTRACT_CONCURRENCY")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
@@ -3476,56 +3638,81 @@ async fn pipeline_download_and_extract(
                 .min(32)
         });
     let extract_sem = Arc::new(tokio::sync::Semaphore::new(extract_concurrency));
-    let mut join_set: tokio::task::JoinSet<MgResult<(u64, PackageId, PathBuf)>> =
-        tokio::task::JoinSet::new();
-
-    for pkg in &graph.packages {
-        if skip.contains(&pkg.id) {
-            continue;
-        }
-        let pkg = pkg.clone();
+    let task_concurrency = (download_concurrency_limit() + extract_concurrency).max(1);
+    let scheduled_packages: Vec<ResolvedPackage> = graph
+        .packages
+        .iter()
+        .filter(|pkg| !skip.contains(&pkg.id))
+        .cloned()
+        .collect();
+    let tasks = scheduled_packages.into_iter().map(|pkg| {
         let cache = cache.clone();
         let shared_cache = shared_cache.map(|s| (*s).clone());
         let registry_url = registry.map(|r| r.registry_url().to_string());
         let layout = layout.clone();
         let store = store.clone();
-        let download_sem = download_sem.clone();
-        let extract_sem = extract_sem.clone();
+        let download_sem = Arc::clone(&download_sem);
+        let extract_sem = Arc::clone(&extract_sem);
+        let pipeline_profile = Arc::clone(&pipeline_profile);
 
-        join_set.spawn(async move {
+        async move {
             let lock = tarball_prefetch_lock(&pkg.id);
             let _guard = lock.lock().await;
 
-            let bytes = get_tarball_bytes(
-                &pkg, &cache, shared_cache.as_ref(), registry_url.as_deref(), &download_sem,
-            ).await?;
+            let download_started_at = std::time::Instant::now();
+            let fetch = get_tarball_bytes(
+                &pkg,
+                &cache,
+                shared_cache.as_ref(),
+                registry_url.as_deref(),
+                &download_sem,
+            )
+            .await?;
+            pipeline_profile.record_download(
+                &pkg.id,
+                fetch.bytes.len() as u64,
+                download_started_at.elapsed().as_millis() as u64,
+                fetch.queue_wait_ms,
+                fetch.io_ms,
+            );
 
-            let _permit = extract_sem.acquire_owned().await.map_err(|e| {
-                mg_types::MgError::Other(format!("extract semaphore closed: {e}"))
-            })?;
+            let _permit = extract_sem
+                .acquire_owned()
+                .await
+                .map_err(|e| mg_types::MgError::Other(format!("extract semaphore closed: {e}")))?;
             let id = pkg.id.clone();
-            let tarball_len = bytes.len() as u64;
+            let tarball_len = fetch.bytes.len() as u64;
+            let extract_started_at = std::time::Instant::now();
             let root = tokio::task::spawn_blocking(move || {
                 ensure_extracted_package_root_from_bytes(
-                    &layout, &store, shared_cache.as_ref(), &pkg, &bytes,
+                    &layout,
+                    &store,
+                    shared_cache.as_ref(),
+                    &pkg,
+                    &fetch.bytes,
                 )
             })
             .await
             .map_err(|e| mg_types::MgError::Other(format!("extract task panicked: {e}")))??;
+            pipeline_profile.record_extract(&id, extract_started_at.elapsed().as_millis() as u64);
 
-            Ok((tarball_len, id, root))
-        });
-    }
+            Ok::<_, mg_types::MgError>((tarball_len, id, root))
+        }
+    });
 
+    let finished = stream::iter(tasks)
+        .buffer_unordered(task_concurrency)
+        .collect::<Vec<_>>()
+        .await;
     let mut total_bytes = 0u64;
     let mut results = std::collections::HashMap::new();
-    while let Some(joined) = join_set.join_next().await {
-        let (bytes, id, root) = joined
-            .map_err(|e| mg_types::MgError::Other(format!("pipeline join failed: {e}")))?
-            .map_err(|e| e)?;
+    for joined in finished {
+        let (bytes, id, root) = joined?;
         total_bytes += bytes;
         results.insert(id, root);
     }
+
+    pipeline_profile.flush();
 
     Ok((total_bytes, results))
 }
@@ -3536,24 +3723,34 @@ async fn get_tarball_bytes(
     shared_cache: Option<&SharedWebCache>,
     registry_url: Option<&str>,
     download_sem: &tokio::sync::Semaphore,
-) -> MgResult<Vec<u8>> {
-    if let Some(bytes) = cache.get_tarball(&pkg.id)
+) -> MgResult<TarballFetchResult> {
+    if let Some(bytes) = cache
+        .get_tarball(&pkg.id)
         .map_err(|e| mg_types::MgError::Store(e.to_string()))?
     {
         if verify_tarball_integrity(pkg, &bytes).is_ok() {
-            return Ok(bytes);
+            return Ok(TarballFetchResult {
+                bytes,
+                queue_wait_ms: 0,
+                io_ms: 0,
+            });
         }
         let _ = std::fs::remove_file(cache.tarball_path(&pkg.id));
     }
 
     if let Some(sc) = shared_cache {
         if let Ok(pc) = sc.package_cache() {
-            if let Some(bytes) = pc.get_tarball(&pkg.id)
+            if let Some(bytes) = pc
+                .get_tarball(&pkg.id)
                 .map_err(|e| mg_types::MgError::Store(e.to_string()))?
             {
                 if verify_tarball_integrity(pkg, &bytes).is_ok() {
                     let _ = cache.cache_tarball_from_path(&pkg.id, &pc.tarball_path(&pkg.id));
-                    return Ok(bytes);
+                    return Ok(TarballFetchResult {
+                        bytes,
+                        queue_wait_ms: 0,
+                        io_ms: 0,
+                    });
                 }
                 let _ = std::fs::remove_file(pc.tarball_path(&pkg.id));
             }
@@ -3567,27 +3764,41 @@ async fn get_tarball_bytes(
         )));
     };
 
-    let _permit = download_sem.acquire().await.map_err(|e| {
-        mg_types::MgError::Other(format!("download semaphore closed: {e}"))
-    })?;
+    let queue_started_at = std::time::Instant::now();
+    let _permit = download_sem
+        .acquire()
+        .await
+        .map_err(|e| mg_types::MgError::Other(format!("download semaphore closed: {e}")))?;
+    let queue_wait_ms = queue_started_at.elapsed().as_millis() as u64;
     let tarball_url = package_tarball_url(url, pkg);
     let registry = native::npm_registry::NpmRegistry::new(url);
     let mut pkg = pkg.clone();
+    let io_started_at = std::time::Instant::now();
     let bytes = registry.download_tarball(&tarball_url).await.map_err(|e| {
-        mg_types::MgError::Network(format!("download failed for '{}': {}", pkg.id.name_str(), e))
+        mg_types::MgError::Network(format!(
+            "download failed for '{}': {}",
+            pkg.id.name_str(),
+            e
+        ))
     })?;
+    let io_ms = io_started_at.elapsed().as_millis() as u64;
     if pkg.integrity.is_empty() {
         pkg.integrity = compute_tarball_integrity(&bytes);
     }
     verify_tarball_integrity(&pkg, &bytes)?;
-    cache.cache_tarball(&pkg.id, &bytes)
+    cache
+        .cache_tarball(&pkg.id, &bytes)
         .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
     if let Some(sc) = shared_cache {
         if let Ok(pc) = sc.package_cache() {
             let _ = pc.cache_tarball_from_path(&pkg.id, &cache.tarball_path(&pkg.id));
         }
     }
-    Ok(bytes)
+    Ok(TarballFetchResult {
+        bytes,
+        queue_wait_ms,
+        io_ms,
+    })
 }
 
 fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
@@ -4356,9 +4567,7 @@ fn graph_without_packages(
 
 #[allow(clippy::too_many_arguments)]
 fn materialize_strict_layout(
-    project_root: &Path,
     node_modules: &Path,
-    staged_node_modules: &Path,
     graph: &ResolvedGraph,
     package_map: &std::collections::HashMap<PackageId, &ResolvedPackage>,
     root_packages: &[&ResolvedPackage],
@@ -4369,8 +4578,6 @@ fn materialize_strict_layout(
     packages_with_scripts: &mut Vec<std::path::PathBuf>,
     extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
 ) -> MgResult<()> {
-    let _ = project_root;
-    let _ = staged_node_modules;
     let _ = store;
     let _ = shared_cache;
     let _ = cache;
@@ -6910,6 +7117,7 @@ package_count = 0
                 "latest".into(),
                 "4.5.0-canary.20260504T180558".into(),
             )]),
+            time: std::collections::HashMap::new(),
         };
 
         assert_eq!(

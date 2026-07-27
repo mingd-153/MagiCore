@@ -25,7 +25,7 @@ async fn main() {
         .layer(CorsLayer::permissive())
         .with_state(Arc::clone(&cfg));
 
-    let addr: std::net::SocketAddr = format!("0.0.0.0:{}", cfg.port).parse().unwrap();
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{}", cfg.port).parse().unwrap();
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
     tracing::info!("listening on {}", listener.local_addr().unwrap());
