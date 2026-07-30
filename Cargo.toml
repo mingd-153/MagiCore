@@ -35,7 +35,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2"] }
 url = "2.5"
 axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compression-full"] }
@@ -69,6 +69,7 @@ base64 = "0.22"
 thiserror = "2.0"
 anyhow = "1.0"
 futures-util = "0.3"
+regex = "1.11"
 
 # Bundler (native Rust)
 esbuild-rs = "0.13"
@@ -103,6 +104,7 @@ async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 # Utilities
 semver = "1.0"
 time = { version = "0.3", features = ["parsing", "formatting"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

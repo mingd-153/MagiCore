@@ -700,6 +700,7 @@ fn resolved_pkg(
         integrity: sri_sha512(&bytes),
         tarball_url: String::new(),
         deps,
+        peer_deps: vec![],
         direct,
         dev: false,
     }

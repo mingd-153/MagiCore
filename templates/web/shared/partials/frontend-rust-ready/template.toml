@@ -27,5 +27,9 @@ source = "rust/lib.rs"
 target = "crates/engine/src/lib.rs"
 
 [[files]]
+source = "rust/main.rs"
+target = "crates/engine/src/main.rs"
+
+[[files]]
 source = "rust/README.md"
 target = "crates/engine/README.md"

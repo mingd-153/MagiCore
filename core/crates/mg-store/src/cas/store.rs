@@ -58,6 +58,10 @@ impl ContentStore {
         &self.root
     }
 
+    pub fn compiled_cache(&self) -> crate::cas::CompiledCache {
+        crate::cas::CompiledCache::new(self.root.clone())
+    }
+
     pub fn import_file(&self, src: &Path) -> Result<IntegrityHash, StoreError> {
         if src.is_symlink() {
             return Err(StoreError::Io {
@@ -145,23 +149,38 @@ impl ContentStore {
         }
 
         fs::create_dir_all(dest.parent().expect("dest path has parent"))?;
-        let writer = fs::File::create_new(&dest)?;
+        let tmp = self.tmp_path("write-bytes");
+        fs::create_dir_all(tmp.parent().expect("tmp path has parent"))?;
+        let writer = fs::File::create(&tmp)?;
 
         let actual = if data.len() >= STREAM_THRESHOLD {
             let cursor = std::io::Cursor::new(data);
             let reader = BufReader::new(cursor);
-            stream_write_verify_and_set_perms(writer, &dest, reader, executable)
+            stream_write_verify_and_set_perms(writer, &tmp, reader, executable)
         } else {
-            write_all_verify_and_set_perms(writer, &dest, data, executable)
+            write_all_verify_and_set_perms(writer, &tmp, data, executable)
         }?;
 
         if actual.hash != hash.hash {
-            let _ = fs::remove_file(&dest);
+            let _ = fs::remove_file(&tmp);
             return Err(StoreError::HashMismatch {
                 expected: hash.hash.clone(),
                 actual: actual.hash,
             });
         }
+
+        if !dest.exists() {
+            if let Err(e) = fs::rename(&tmp, &dest) {
+                if !dest.exists() {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(StoreError::Io {
+                        path: dest.clone(),
+                        msg: format!("move tmp file into CAS failed: {e}"),
+                    });
+                }
+            }
+        }
+        let _ = fs::remove_file(&tmp);
 
         Ok(hash.clone())
     }
@@ -178,15 +197,6 @@ impl ContentStore {
             return Err(StoreError::NotFound(hash.hash.clone()));
         }
 
-        // Verify source integrity before export
-        let actual_hash = self.verify(&src)?;
-        if actual_hash.hash != hash.hash {
-            return Err(StoreError::HashMismatch {
-                expected: hash.hash.clone(),
-                actual: actual_hash.hash,
-            });
-        }
-
         if dest.exists() {
             let dest_hash = self.verify(dest)?;
             if dest_hash.hash == hash.hash {
@@ -199,18 +209,26 @@ impl ContentStore {
         }
 
         if let Err(e) = fs::hard_link(&src, dest) {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                let dest_hash = self.verify(dest)?;
+                if dest_hash.hash == hash.hash {
+                    return Ok(());
+                }
+                return Err(StoreError::Io {
+                    path: dest.to_path_buf(),
+                    msg: "destination already exists and hash mismatch".to_string(),
+                });
+            }
             tracing::debug!("hardlink failed (cross-device?), falling back to copy: {e}");
             fs::copy(&src, dest)?;
-        }
-
-        // Verify destination matches source
-        let dest_hash = self.verify(dest)?;
-        if dest_hash.hash != hash.hash {
-            let _ = fs::remove_file(dest);
-            return Err(StoreError::HashMismatch {
-                expected: hash.hash.clone(),
-                actual: dest_hash.hash,
-            });
+            let dest_hash = self.verify(dest)?;
+            if dest_hash.hash != hash.hash {
+                let _ = fs::remove_file(dest);
+                return Err(StoreError::HashMismatch {
+                    expected: hash.hash.clone(),
+                    actual: dest_hash.hash,
+                });
+            }
         }
 
         Ok(())

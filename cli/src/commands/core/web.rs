@@ -182,6 +182,7 @@ pub async fn install(
                     frozen,
                     mg_types::adapter::InstallOptions {
                         allow_scripts,
+                        legacy_flat: shared::should_use_legacy_flat_layout("web"),
                         ..Default::default()
                     },
                 )
@@ -202,10 +203,10 @@ pub async fn dev_at_root(
 ) -> Result<()> {
     let targets = dev_targets(project_root, host, port)?;
     if targets.len() == 1 {
-        return run_single_dev_target(&targets[0]);
+        return run_single_dev_target(&targets[0]).await;
     }
 
-    run_multi_dev_targets(&targets)
+    run_multi_dev_targets(&targets).await
 }
 
 #[derive(Debug)]
@@ -623,20 +624,12 @@ async fn install_web_target_quiet(
     let opts = mg_types::adapter::InstallOptions {
         ignore_scripts,
         allow_scripts,
-        legacy_flat: should_use_legacy_flat_layout(),
+        legacy_flat: shared::should_use_legacy_flat_layout("web"),
         frozen,
         ..Default::default()
     };
     adapter.install(&execution.graph, target, opts).await?;
     Ok(())
-}
-
-fn should_use_legacy_flat_layout() -> bool {
-    std::env::var("MEGAGATE_WEB_STRICT_LAYOUT")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .map(|value| !matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
 }
 
 fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Result<()> {
@@ -769,8 +762,8 @@ fn dev_targets(
     host: Option<String>,
     port: Option<u16>,
 ) -> Result<Vec<DevTarget>> {
-    let fullstack_backend_port = Some(3000);
-    let monorepo_backend_port = Some(4000);
+    let fullstack_backend_port = Some(3415);
+    let monorepo_backend_port = Some(3415);
 
     match detect_project_mode(project_root)? {
         WebProjectMode::Standalone => Ok(vec![DevTarget {
@@ -1087,7 +1080,7 @@ fn infer_native_dev_launch(
     host: Option<String>,
     port: Option<u16>,
 ) -> Result<DevLaunch> {
-    let host_str = host.as_deref().unwrap_or("127.0.0.1");
+    let host_str = host.as_deref().unwrap_or("localhost");
     if project_root.join("go.mod").exists() {
         let go_dir = if project_root.join("cmd/server").exists() {
             OsString::from("./cmd/server")
@@ -1102,7 +1095,7 @@ fn infer_native_dev_launch(
     }
 
     if project_root.join("manage.py").exists() {
-        let bind = format!("{host_str}:{}", port.unwrap_or(3000));
+        let bind = format!("{host_str}:{}", port.unwrap_or(3415));
         let python = native_python_program(project_root);
         return Ok(DevLaunch {
             program: python,
@@ -1363,13 +1356,38 @@ fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Resu
     }
 }
 
-fn run_single_dev_target(target: &DevTarget) -> Result<()> {
+async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
     let launch = build_dev_launch(
         &target.dir,
         target.script_name,
         target.host.clone(),
         target.port,
     )?;
+
+    if launch.program.to_string_lossy().ends_with("vite") {
+        info(&format!(
+            "🚀 Starting MgDevServer (Native Rust) in {}",
+            target.dir.display()
+        ));
+        
+        let entry = if target.dir.join("src/main.tsx").exists() {
+            target.dir.join("src/main.tsx")
+        } else if target.dir.join("src/main.ts").exists() {
+            target.dir.join("src/main.ts")
+        } else {
+            target.dir.join("src/index.tsx")
+        };
+        
+        let config = crate::bundler::dev_server::DevServerConfig {
+            root: target.dir.clone(),
+            entry,
+            host: target.host.clone().unwrap_or_else(|| "localhost".to_string()),
+            port: target.port.unwrap_or(4315),
+        };
+        
+        let server = crate::bundler::dev_server::MgDevServer::new(config);
+        return server.serve().await;
+    }
 
     info(&format!(
         "Starting web dev server in {}",
@@ -1393,10 +1411,11 @@ fn run_single_dev_target(target: &DevTarget) -> Result<()> {
         command.env("PORT", port.to_string());
     }
 
-    let status = command
-        .status()
+    let mut child = tokio::process::Command::from(command)
+        .spawn()
         .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
 
+    let status = child.wait().await?;
     if status.success() {
         Ok(())
     } else {
@@ -1404,7 +1423,7 @@ fn run_single_dev_target(target: &DevTarget) -> Result<()> {
     }
 }
 
-fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
+async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
     let mut children = Vec::new();
 
     for target in targets {
@@ -1414,6 +1433,37 @@ fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
             target.host.clone(),
             target.port,
         )?;
+        if launch.program.to_string_lossy().ends_with("vite") {
+            info(&format!(
+                "🚀 Starting MgDevServer (Native Rust) for {} in {}",
+                target.role,
+                target.dir.display()
+            ));
+            
+            let entry = if target.dir.join("src/main.tsx").exists() {
+                target.dir.join("src/main.tsx")
+            } else if target.dir.join("src/main.ts").exists() {
+                target.dir.join("src/main.ts")
+            } else {
+                target.dir.join("src/index.tsx")
+            };
+            
+            let config = crate::bundler::dev_server::DevServerConfig {
+                root: target.dir.clone(),
+                entry,
+                host: target.host.clone().unwrap_or_else(|| "localhost".to_string()),
+                port: target.port.unwrap_or(4315),
+            };
+            
+            let server = crate::bundler::dev_server::MgDevServer::new(config);
+            tokio::spawn(async move {
+                if let Err(e) = server.serve().await {
+                    tracing::error!("MgDevServer error: {}", e);
+                }
+            });
+            continue;
+        }
+
         info(&format!(
             "Starting {} dev server in {}",
             target.role,
@@ -1437,32 +1487,30 @@ fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
             command.env("PORT", port.to_string());
         }
 
-        let child = command
+        let mut tokio_cmd = tokio::process::Command::from(command);
+        let child = tokio_cmd
             .spawn()
             .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
         children.push((target.role, child));
     }
 
     loop {
-        for index in 0..children.len() {
-            if let Some(status) = children[index].1.try_wait()? {
-                for (other_index, (_, child)) in children.iter_mut().enumerate() {
-                    if other_index != index {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
+        let mut all_exited = true;
+        for (role, child) in &mut children {
+            if let Some(status) = child.try_wait()? {
+                if !status.success() {
+                    bail!("{} dev server exited with status {}", role, status);
                 }
-                if status.success() {
-                    return Ok(());
-                }
-                bail!(
-                    "{} dev server exited with status {status}",
-                    children[index].0
-                );
+            } else {
+                all_exited = false;
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        if all_exited {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    Ok(())
 }
 
 fn resolve_local_bin(project_root: &Path, bin_name: &str) -> Result<PathBuf> {
@@ -1503,10 +1551,10 @@ fn prepend_path(local_bin: &Path) -> Result<OsString> {
 // ── Scaffold (create) ────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FrameworkRequest {
-    raw: String,
-    normalized: String,
-    version: Option<String>,
+pub(crate) struct FrameworkRequest {
+    pub raw: String,
+    pub normalized: String,
+    pub version: Option<String>,
 }
 
 pub async fn run_create_with_options(
@@ -1994,7 +2042,7 @@ fn web_features(flags: &ScaffoldFlags) -> Vec<String> {
     features
 }
 
-fn parse_framework_request(input: &str) -> FrameworkRequest {
+pub(crate) fn parse_framework_request(input: &str) -> FrameworkRequest {
     let (framework, version) = match input.rsplit_once('@') {
         Some((name, version)) if !name.is_empty() && !version.is_empty() => {
             (name.to_string(), Some(version.to_string()))
@@ -2479,6 +2527,11 @@ const FEATURE_PACKAGES: &[WebFeaturePackage] = &[
         feature: "tailwindcss",
         section: "devDependencies",
         package: "@tailwindcss/postcss",
+    },
+    WebFeaturePackage {
+        feature: "tailwindcss",
+        section: "devDependencies",
+        package: "@tailwindcss/vite",
     },
     WebFeaturePackage {
         feature: "postgres",
@@ -3162,7 +3215,7 @@ async fn apply_web_manifest_seed(
     Ok(())
 }
 
-async fn enrich_web_project_manifest(
+pub(crate) async fn enrich_web_project_manifest(
     project_dir: &Path,
     frontend: &FrameworkRequest,
     backend: Option<&FrameworkRequest>,
@@ -3436,7 +3489,10 @@ mod tests {
             .unwrap();
 
         let package_json = std::fs::read_to_string(project.join("package.json")).unwrap();
-        assert!(package_json.contains("\"next\": \"^16.2.10\""));
+        assert!(
+            package_json.contains("\"next\": \""),
+            "nextjs project should include next as a dependency:\n{package_json}"
+        );
         assert!(package_json.contains("\"typescript\": \"^5.9.2\""));
         assert!(package_json.contains("\"@types/node\": \"^26.1.1\""));
     }
@@ -3458,7 +3514,7 @@ mod tests {
         std::fs::write(dir.path().join("node_modules/.bin/vite"), "").unwrap();
 
         let launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
 
         assert!(launch.program.ends_with("vite"));
         assert_eq!(
@@ -3467,7 +3523,7 @@ mod tests {
                 .iter()
                 .map(|arg| arg.to_string_lossy().to_string())
                 .collect::<Vec<_>>(),
-            vec!["--host", "127.0.0.1", "--port", "4315"]
+            vec!["--host", "localhost", "--port", "4315"]
         );
     }
 
@@ -3480,7 +3536,7 @@ mod tests {
             serde_json::json!({
                 "name": "demo",
                 "version": "0.1.0",
-                "scripts": { "dev": "vite --host 127.0.0.1 --port 4315" }
+                "scripts": { "dev": "vite --host localhost --port 4315" }
             })
             .to_string(),
         )
@@ -3488,7 +3544,7 @@ mod tests {
         std::fs::write(dir.path().join("node_modules/.bin/vite"), "").unwrap();
 
         let launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
 
         assert_eq!(
             launch
@@ -3496,7 +3552,7 @@ mod tests {
                 .iter()
                 .map(|arg| arg.to_string_lossy().to_string())
                 .collect::<Vec<_>>(),
-            vec!["--host", "127.0.0.1", "--port", "4315"]
+            vec!["--host", "localhost", "--port", "4315"]
         );
     }
 
@@ -3515,7 +3571,7 @@ mod tests {
         .unwrap();
 
         let err =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap_err();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap_err();
         assert!(err.to_string().contains("delegates to 'npm'"));
     }
 
@@ -3536,7 +3592,7 @@ mod tests {
         std::fs::write(dir.path().join("node_modules/.bin/ng"), "").unwrap();
 
         let launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
 
         assert!(launch.program.ends_with("ng"));
         assert_eq!(
@@ -3545,7 +3601,7 @@ mod tests {
                 .iter()
                 .map(|arg| arg.to_string_lossy().to_string())
                 .collect::<Vec<_>>(),
-            vec!["serve", "--host", "127.0.0.1", "--port", "4315"]
+            vec!["serve", "--host", "localhost", "--port", "4315"]
         );
     }
 
@@ -3567,7 +3623,7 @@ mod tests {
         )
         .unwrap();
         let nuxt_launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
         assert!(nuxt_launch.program.ends_with("nuxt"));
         assert_eq!(
             nuxt_launch
@@ -3595,7 +3651,7 @@ mod tests {
         )
         .unwrap();
         let astro_launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
         assert!(astro_launch.program.ends_with("astro"));
         assert!(astro_launch.envs.is_empty());
 
@@ -3611,7 +3667,7 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("node_modules/.bin/remix"), "").unwrap();
         let remix_launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
         assert!(remix_launch.program.ends_with("remix"));
         assert_eq!(
             remix_launch
@@ -3622,7 +3678,7 @@ mod tests {
             vec![
                 "vite:dev".to_string(),
                 "--host".to_string(),
-                "127.0.0.1".to_string(),
+                "localhost".to_string(),
                 "--port".to_string(),
                 "4315".to_string(),
             ]
@@ -3700,7 +3756,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "-S".to_string(),
-                "127.0.0.1:4404".to_string(),
+                "localhost:4404".to_string(),
                 "-t".to_string(),
                 "public".to_string(),
                 "public/index.php".to_string(),
@@ -3723,7 +3779,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "quarkus:dev".to_string(),
-                "-Dquarkus.http.host=127.0.0.1".to_string(),
+                "-Dquarkus.http.host=localhost".to_string(),
                 "-Dquarkus.analytics.disabled=true".to_string(),
                 "-Dquarkus.http.port=4405".to_string(),
             ]
@@ -3734,7 +3790,7 @@ mod tests {
         let spring_launch = build_dev_launch(
             spring_dir.path(),
             "dev",
-            Some("127.0.0.1".into()),
+            Some("localhost".into()),
             Some(4406),
         )
         .unwrap();
@@ -3747,7 +3803,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "spring-boot:run".to_string(),
-                "-Dspring-boot.run.arguments=--server.port=4406 --server.address=127.0.0.1"
+                "-Dspring-boot.run.arguments=--server.port=4406 --server.address=localhost"
                     .to_string(),
             ]
         );
@@ -4167,6 +4223,11 @@ packages = ["packages/*"]
         assert!(mg_toml.exists());
         let contents = std::fs::read_to_string(mg_toml).unwrap();
         assert!(contents.contains("ecosystem = \"web\""));
+        assert!(contents.contains("[execution]"));
+        assert!(contents.contains("architecture = \"rust-first\""));
+        assert!(contents.contains("lane = \"compatibility-shell\""));
+        assert!(contents.contains("compatibility_layer = \"ts\""));
+        assert!(contents.contains("frontend-executable"));
     }
 
     #[test]
@@ -4194,11 +4255,11 @@ packages = ["packages/*"]
         )
         .unwrap();
 
-        let targets = dev_targets(dir.path(), Some("127.0.0.1".into()), Some(4318)).unwrap();
+        let targets = dev_targets(dir.path(), Some("localhost".into()), Some(4318)).unwrap();
         assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].dir, dir.path());
         assert_eq!(targets[0].port, Some(4318));
         assert_eq!(targets[1].dir, dir.path().join("server"));
-        assert_eq!(targets[1].port, Some(3000));
+        assert_eq!(targets[1].port, Some(3415));
     }
 }

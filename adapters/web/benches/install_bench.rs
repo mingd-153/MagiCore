@@ -23,6 +23,7 @@ fn make_graph(packages: &[PackageId]) -> mg_types::ResolvedGraph {
                 integrity: String::new(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             })

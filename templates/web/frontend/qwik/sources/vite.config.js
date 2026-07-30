@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { qwikCity } from "@builder.io/qwik-city/vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [qwikCity()],
 });

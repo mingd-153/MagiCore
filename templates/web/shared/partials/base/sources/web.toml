@@ -5,3 +5,9 @@ mode = "{{mode}}"
 frameworks = [{{frameworks}}]
 template = "{{template}}"
 features = [{{features}}]
+
+[execution]
+architecture = "{{execution_architecture}}"
+lane = "{{execution_lane}}"
+compatibility_layer = "{{execution_compatibility_layer}}"
+native_targets = [{{execution_native_targets}}]

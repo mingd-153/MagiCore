@@ -34,7 +34,9 @@ pub enum CommonCommand {
         script: String,
         args: Vec<String>,
     },
-    Build,
+    Build {
+        target: Option<String>,
+    },
     Start,
     Exec {
         command: String,
@@ -287,7 +289,7 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Audit => Some(CommonCommand::Audit),
             Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
             Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
-            Commands::Build => Some(CommonCommand::Build),
+            Commands::Build { target } => Some(CommonCommand::Build { target }),
             Commands::Start => Some(CommonCommand::Start),
             Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
             Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),

@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use futures_util::stream::{self, StreamExt};
 use lru::LruCache;
 use mg_adapter_base::BaseAdapter;
-use mg_fetcher::extract::extract_tarball_from_reader;
+use mg_fetcher::extract::extract_tarball_to_cas_and_link;
 use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
 use mg_resolver::{
     DependencyError, DependencyProvider, RegistryCache, ResolvedDep, Resolver as CoreResolver,
@@ -42,7 +42,7 @@ const METADATA_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
 /// Bounded LRU cache with TTL for package metadata
 struct MetadataCache {
-    cache: Mutex<LruCache<String, (native::npm_registry::PackageMetadata, Instant)>>,
+    cache: Mutex<LruCache<String, (Arc<native::npm_registry::PackageMetadata>, Instant)>>,
     ttl: Duration,
 }
 
@@ -64,11 +64,11 @@ impl MetadataCache {
         }
     }
 
-    fn get(&self, key: &str) -> Option<native::npm_registry::PackageMetadata> {
+    fn get(&self, key: &str) -> Option<Arc<native::npm_registry::PackageMetadata>> {
         let mut cache = self.cache.lock().unwrap();
         if let Some((meta, instant)) = cache.get(key) {
             if instant.elapsed() < self.ttl {
-                return Some(meta.clone());
+                return Some(Arc::clone(meta));
             } else {
                 // Expired, remove it
                 cache.pop(key);
@@ -77,7 +77,7 @@ impl MetadataCache {
         None
     }
 
-    fn insert(&self, key: String, meta: native::npm_registry::PackageMetadata) {
+    fn insert(&self, key: String, meta: Arc<native::npm_registry::PackageMetadata>) {
         let mut cache = self.cache.lock().unwrap();
         cache.put(key, (meta, Instant::now()));
     }
@@ -121,6 +121,43 @@ impl InstallProfile {
 }
 
 #[derive(Default)]
+struct ResolveProfile {
+    enabled: bool,
+    marks: Vec<(&'static str, u128)>,
+}
+
+impl ResolveProfile {
+    fn from_env() -> Self {
+        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        Self {
+            enabled,
+            marks: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, label: &'static str, started_at: std::time::Instant) {
+        if self.enabled {
+            self.marks.push((label, started_at.elapsed().as_millis()));
+        }
+    }
+
+    fn flush(&self, total_ms: u64) {
+        if !self.enabled {
+            return;
+        }
+
+        eprintln!("[megagate:web:resolve-profile] total={}ms", total_ms);
+        for (label, millis) in &self.marks {
+            eprintln!("[megagate:web:resolve-profile] {}={}ms", label, millis);
+        }
+    }
+}
+
+#[derive(Default)]
 struct PipelineProfile {
     enabled: bool,
     package_count: AtomicU64,
@@ -133,10 +170,25 @@ struct PipelineProfile {
     slowest_extracts: Mutex<Vec<(u64, String)>>,
 }
 
+enum TarballPayload {
+    Bytes(Arc<[u8]>),
+    CachedPath(PathBuf, u64),
+}
+
+impl TarballPayload {
+    fn len(&self) -> u64 {
+        match self {
+            Self::Bytes(bytes) => bytes.len() as u64,
+            Self::CachedPath(_, len) => *len,
+        }
+    }
+}
+
 struct TarballFetchResult {
-    bytes: Vec<u8>,
+    payload: TarballPayload,
     queue_wait_ms: u64,
     io_ms: u64,
+    persist_to_shared_cache: bool,
 }
 
 impl PipelineProfile {
@@ -335,6 +387,16 @@ impl WebAdapter {
         self
     }
 
+    fn metadata_versions(metadata: &native::npm_registry::PackageMetadata) -> Vec<Version> {
+        let mut versions: Vec<Version> = metadata
+            .versions
+            .keys()
+            .filter_map(|k| Version::parse(k).ok())
+            .collect();
+        versions.sort();
+        versions
+    }
+
     async fn infer_add_range(
         &self,
         name: &PackageName,
@@ -374,9 +436,11 @@ impl WebAdapter {
     async fn latest_version_string(
         &self,
         name: &PackageName,
-        registry: &native::npm_registry::NpmRegistry,
+        _registry: &native::npm_registry::NpmRegistry,
     ) -> MgResult<String> {
-        let metadata = load_metadata_with_fallback(name, registry, self.shared_cache.as_ref())
+        let metadata = self
+            .provider
+            .metadata(name)
             .await
             .map_err(|err| mg_types::MgError::Network(err.to_string()))?;
 
@@ -631,10 +695,26 @@ impl PackageAdapter for WebAdapter {
     }
 
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        let started_at = std::time::Instant::now();
+        let mut profile = ResolveProfile::from_env();
         let wanted: Vec<(PackageName, String)> = manifest
             .all_dependencies()
-            .map(|d| (d.name.clone(), d.range.to_string()))
+            .map(|d| {
+                if let Some((target, range)) =
+                    NpmDependencyProvider::parse_alias_spec(d.range.as_str())
+                {
+                    if let Ok(target_name) = PackageName::new(target) {
+                        self.provider.record_alias_target(&d.name, &target_name);
+                        (d.name.clone(), range)
+                    } else {
+                        (d.name.clone(), d.range.to_string())
+                    }
+                } else {
+                    (d.name.clone(), d.range.to_string())
+                }
+            })
             .collect();
+        profile.mark("collect_wanted", started_at);
         if wanted.is_empty() {
             return Ok(ResolvedGraph::empty());
         }
@@ -643,10 +723,13 @@ impl PackageAdapter for WebAdapter {
         if let Some(lockfile) = read_web_lockfile_checked(Path::new("."))? {
             if lockfile_satisfies_manifest(&lockfile, manifest) {
                 if let Ok(Some(graph)) = build_graph_from_lockfile(&lockfile, manifest) {
+                    profile.mark("lockfile_short_circuit", started_at);
+                    profile.flush(started_at.elapsed().as_millis() as u64);
                     return Ok(graph);
                 }
             }
         }
+        profile.mark("lockfile_check", started_at);
 
         let resolution_cache_key = self
             .shared_cache
@@ -656,16 +739,22 @@ impl PackageAdapter for WebAdapter {
             (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
         {
             if let Some(graph) = shared_cache.read_resolution(key, &self.registry_url)? {
+                profile.mark("shared_resolution_cache_hit", started_at);
+                profile.flush(started_at.elapsed().as_millis() as u64);
                 return Ok(graph);
             }
         }
+        profile.mark("shared_resolution_cache_check", started_at);
 
+        let solve_started_at = std::time::Instant::now();
         let result = self
             .resolver
             .solve(&wanted)
             .await
             .map_err(|e| mg_types::MgError::DependencyConflict(e.message))?;
+        profile.mark("solver_solve", solve_started_at);
 
+        let metadata_started_at = std::time::Instant::now();
         let metadata = self
             .provider
             .prefetch_resolution_metadata(
@@ -677,6 +766,8 @@ impl PackageAdapter for WebAdapter {
             )
             .await
             .map_err(|err| mg_types::MgError::Network(err.to_string()))?;
+        profile.mark("prefetch_resolution_metadata", metadata_started_at);
+        let index_started_at = std::time::Instant::now();
         let resolution_index: std::collections::HashMap<
             String,
             Vec<&mg_resolver::solver::Resolution>,
@@ -689,6 +780,8 @@ impl PackageAdapter for WebAdapter {
                 acc
             },
         );
+        profile.mark("build_resolution_index", index_started_at);
+        let package_started_at = std::time::Instant::now();
         let packages: Vec<ResolvedPackage> = result
             .resolutions
             .iter()
@@ -718,8 +811,11 @@ impl PackageAdapter for WebAdapter {
                         .iter()
                         .filter_map(|(name, spec)| {
                             let constraint = VersionRange::parse(spec).ok()?;
+                            let source = self.provider.source_package_name(
+                                &PackageName::new(name.as_str()).unwrap(),
+                            );
                             resolution_index
-                                .get(name)
+                                .get(source.as_str())
                                 .and_then(|candidates| {
                                     candidates
                                         .iter()
@@ -729,11 +825,62 @@ impl PackageAdapter for WebAdapter {
                                 .map(|candidate| candidate.package_id.clone())
                         })
                         .collect(),
+                    // Resolve peer deps from already-fetched metadata — no secondary disk read needed.
+                    peer_deps: metadata
+                        .get(r.package_id.name_str())
+                        .and_then(|pkg_meta| {
+                            pkg_meta.versions.get(&r.package_id.version().to_string())
+                        })
+                        .and_then(|ver_meta| ver_meta.peer_dependencies.as_ref())
+                        .map(|peers| {
+                            peers
+                                .keys()
+                                .filter_map(|peer_name| {
+                                    resolution_index.get(peer_name.as_str()).and_then(
+                                        |candidates| {
+                                            candidates
+                                                .iter()
+                                                .max_by(|a, b| a.version.cmp(&b.version))
+                                        },
+                                    )
+                                })
+                                .map(|candidate| candidate.package_id.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     direct: is_direct,
                     dev: is_dev,
                 }
             })
             .collect();
+        profile.mark("assemble_resolved_packages", package_started_at);
+
+        // 24h Supply-chain Security Check.
+        // Enabled by MEGAGATE_SECURITY_24H_BLOCK=1 (or MG_AUDIT_STRICT for back-compat).
+        let block_new = std::env::var("MEGAGATE_SECURITY_24H_BLOCK")
+            .or_else(|_| std::env::var("MG_AUDIT_STRICT"))
+            .ok()
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        if block_new {
+            let allow_untrusted = std::env::var("MEGAGATE_ALLOW_UNTRUSTED")
+                .ok()
+                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                .unwrap_or(false);
+            if !allow_untrusted {
+                for r in &result.resolutions {
+                    if let Some(pkg_meta) = metadata.get(r.package_id.name_str()) {
+                        let ver = r.package_id.version().to_string();
+                        if let Err(msg) =
+                            native::npm_registry::check_publish_age(pkg_meta, &ver)
+                        {
+                            return Err(mg_types::MgError::Other(msg));
+                        }
+                    }
+                }
+            }
+        }
+
         if resolve_prefetch_enabled() {
             if let Some(shared_cache) = self.shared_cache.clone() {
                 let registry_url = self.registry_url.clone();
@@ -750,6 +897,8 @@ impl PackageAdapter for WebAdapter {
         {
             let _ = shared_cache.write_resolution(key, &self.registry_url, &graph);
         }
+        profile.mark("write_resolution_cache", started_at);
+        profile.flush(started_at.elapsed().as_millis() as u64);
         // Note: early tarball prefetch started before metadata fetch (above), no duplicate needed.
         Ok(graph)
     }
@@ -798,8 +947,11 @@ impl PackageAdapter for WebAdapter {
         let cache = PackageCache::new(layout.cache_dir())
             .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
         let shared_cache = self.shared_cache.clone();
-        let database = Database::open(&layout.db_path())
-            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+        let database = if opts.legacy_flat {
+            Some(Database::open(&layout.db_path()).map_err(|e| mg_types::MgError::Store(e.to_string()))?)
+        } else {
+            None
+        };
         let default_store = ContentStore::new(layout.cas_dir())
             .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
         let store = self.store.as_ref().unwrap_or(&default_store);
@@ -813,17 +965,21 @@ impl PackageAdapter for WebAdapter {
             std::hash::Hasher::finish(&hasher)
         };
 
-        let staging_root = layout.temp_dir().join(format!(
-            "install-stage-{}-{}-{:x}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos(),
-            thread_id_hash
-        ));
-        let staged_node_modules = staging_root.join("node_modules");
-        std::fs::create_dir_all(&staged_node_modules)?;
+        let staging_root = if opts.legacy_flat {
+            let root = layout.temp_dir().join(format!(
+                "install-stage-{}-{}-{:x}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos(),
+                thread_id_hash
+            ));
+            std::fs::create_dir_all(root.join("node_modules"))?;
+            Some(root)
+        } else {
+            None
+        };
         let root_packages = select_root_packages(graph);
         let root_package_versions: std::collections::HashMap<String, PackageId> = root_packages
             .iter()
@@ -901,7 +1057,13 @@ impl PackageAdapter for WebAdapter {
             graph.clone()
         };
         if !fetch_graph.is_empty() {
-            write_web_lockfile_with_state(project_root, graph, "installing")?;
+            write_web_lockfile_with_state(project_root, graph, "installing")
+                .map_err(|e| {
+                    if let Some(root) = &staging_root {
+                        let _ = std::fs::remove_dir_all(root);
+                    }
+                    e
+                })?;
         }
         let prefetch_handle = self.prefetch_handle.lock().unwrap().take();
         if opts.legacy_flat {
@@ -910,17 +1072,21 @@ impl PackageAdapter for WebAdapter {
                     Ok(Ok(bytes)) => {
                         summary.bytes_from_cache += bytes;
                     }
-                    Ok(Err(e)) => return Err(e),
+                    Ok(Err(e)) => {
+                        if let Some(root) = &staging_root {
+                            let _ = std::fs::remove_dir_all(root);
+                        }
+                        return Err(e);
+                    }
                     Err(e) => {
+                        if let Some(root) = &staging_root {
+                            let _ = std::fs::remove_dir_all(root);
+                        }
                         return Err(mg_types::MgError::Other(format!("prefetch panicked: {e}")));
                     }
                 }
             }
         } else if let Some(handle) = prefetch_handle {
-            // Strict layout already owns a streamed download+extract pipeline below.
-            // Waiting for the whole prefetch batch here turns cold installs into
-            // "download everything, then extract", which lengthens the critical path.
-            // Abort the speculative prefetch and let the pipeline fetch/extract on demand.
             handle.abort();
         }
         if opts.legacy_flat && !fetch_graph.is_empty() {
@@ -931,7 +1097,13 @@ impl PackageAdapter for WebAdapter {
                 secondary_shared_cache,
                 &registry,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                if let Some(root) = &staging_root {
+                    let _ = std::fs::remove_dir_all(root);
+                }
+                e
+            })?;
         }
         profile.mark("prefetch_tarballs", start);
 
@@ -942,16 +1114,18 @@ impl PackageAdapter for WebAdapter {
             for pkg in &root_packages {
                 let final_dir = node_modules.join(pkg.id.name().as_str());
                 if installed_package_matches(&final_dir, &pkg.id) {
-                    database
-                        .insert_package(
-                            &pkg.id,
-                            if pkg.integrity.is_empty() {
-                                None
-                            } else {
-                                Some(pkg.integrity.as_str())
-                            },
-                        )
-                        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                    if let Some(database) = database.as_ref() {
+                        database
+                            .insert_package(
+                                &pkg.id,
+                                if pkg.integrity.is_empty() {
+                                    None
+                                } else {
+                                    Some(pkg.integrity.as_str())
+                                },
+                            )
+                            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                    }
                     if !opts.incremental || !already_materialized.contains(&pkg.id) {
                         summary.added.push(pkg.id.clone());
                     }
@@ -968,37 +1142,49 @@ impl PackageAdapter for WebAdapter {
                 ) {
                     Ok(root) => root,
                     Err(err) => {
-                        if staging_root.exists() {
-                            let _ = std::fs::remove_dir_all(&staging_root);
+                        if let Some(staging_root) = staging_root.as_ref() {
+                            if staging_root.exists() {
+                                let _ = std::fs::remove_dir_all(staging_root);
+                            }
                         }
                         return Err(err);
                     }
                 };
-                let materialized_dir = staged_node_modules.join(pkg.id.name().as_str());
+                let materialized_dir = staging_root
+                    .as_ref()
+                    .expect("legacy-flat installs always create staging_root")
+                    .join("node_modules")
+                    .join(pkg.id.name().as_str());
                 if materialized_dir.exists() {
                     std::fs::remove_dir_all(&materialized_dir)?;
                 }
                 if let Err(err) = hardlink_tree(package_root.as_path(), &materialized_dir) {
-                    if staging_root.exists() {
-                        let _ = std::fs::remove_dir_all(&staging_root);
+                    if let Some(staging_root) = staging_root.as_ref() {
+                        if staging_root.exists() {
+                            let _ = std::fs::remove_dir_all(staging_root);
+                        }
                     }
                     return Err(err);
                 }
-                if let Err(err) = database
-                    .insert_package(
-                        &pkg.id,
-                        if pkg.integrity.is_empty() {
-                            None
-                        } else {
-                            Some(pkg.integrity.as_str())
-                        },
-                    )
-                    .map_err(|e| mg_types::MgError::Store(e.to_string()))
-                {
-                    if staging_root.exists() {
-                        let _ = std::fs::remove_dir_all(&staging_root);
+                if let Some(database) = database.as_ref() {
+                    if let Err(err) = database
+                        .insert_package(
+                            &pkg.id,
+                            if pkg.integrity.is_empty() {
+                                None
+                            } else {
+                                Some(pkg.integrity.as_str())
+                            },
+                        )
+                        .map_err(|e| mg_types::MgError::Store(e.to_string()))
+                    {
+                        if let Some(staging_root) = staging_root.as_ref() {
+                            if staging_root.exists() {
+                                let _ = std::fs::remove_dir_all(staging_root);
+                            }
+                        }
+                        return Err(err);
                     }
-                    return Err(err);
                 }
                 if !opts.incremental || !already_materialized.contains(&pkg.id) {
                     summary.added.push(pkg.id.clone());
@@ -1006,7 +1192,11 @@ impl PackageAdapter for WebAdapter {
             }
 
             for pkg in &root_packages {
-                let staged_dir = staged_node_modules.join(pkg.id.name().as_str());
+                let staged_dir = staging_root
+                    .as_ref()
+                    .expect("legacy-flat installs always create staging_root")
+                    .join("node_modules")
+                    .join(pkg.id.name().as_str());
                 let final_dir = node_modules.join(pkg.id.name().as_str());
                 if !staged_dir.exists() {
                     continue;
@@ -1043,16 +1233,18 @@ impl PackageAdapter for WebAdapter {
             }
         } else {
             for pkg in &root_packages {
-                database
-                    .insert_package(
-                        &pkg.id,
-                        if pkg.integrity.is_empty() {
-                            None
-                        } else {
-                            Some(pkg.integrity.as_str())
-                        },
-                    )
-                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                if let Some(database) = database.as_ref() {
+                    database
+                        .insert_package(
+                            &pkg.id,
+                            if pkg.integrity.is_empty() {
+                                None
+                            } else {
+                                Some(pkg.integrity.as_str())
+                            },
+                        )
+                        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                }
                 if !opts.incremental || !already_materialized.contains(&pkg.id) {
                     summary.added.push(pkg.id.clone());
                 }
@@ -1085,16 +1277,21 @@ impl PackageAdapter for WebAdapter {
             if fetch_graph.is_empty() {
                 profile.mark("prepare_extracted_roots", start);
             } else {
-                let (pipeline_bytes, extracted_roots) = pipeline_download_and_extract(
-                    &fetch_graph,
-                    &already_materialized,
-                    active_package_cache,
-                    shared_cache.as_ref(),
-                    Some(&registry),
-                    &layout,
-                    store,
-                )
-                .await?;
+                // The strict pipeline already downloads and extracts with bounded
+                // concurrency. Starting a second tarball-prefetch pass for the
+                // same fetch_graph just competes for bandwidth and shared-cache IO
+                // on cold installs, which hurts the exact lane we care about.
+                let (pipeline_bytes, extracted_roots, persist_handles) =
+                    pipeline_download_and_extract(
+                        &fetch_graph,
+                        &already_materialized,
+                        active_package_cache,
+                        shared_cache.as_ref(),
+                        Some(&registry),
+                        &layout,
+                        store,
+                    )
+                    .await?;
                 summary.bytes_from_cache += pipeline_bytes;
                 profile.mark("prepare_extracted_roots", start);
                 materialize_strict_layout(
@@ -1109,6 +1306,11 @@ impl PackageAdapter for WebAdapter {
                     &mut packages_with_scripts,
                     &extracted_roots,
                 )?;
+                for handle in persist_handles {
+                    handle.await.map_err(|e| {
+                        mg_types::MgError::Other(format!("shared cache persist task panicked: {e}"))
+                    })?;
+                }
             }
         }
         profile.mark("materialize_dependency_graph", start);
@@ -1123,14 +1325,16 @@ impl PackageAdapter for WebAdapter {
         }
         prune_root_install_dirs(&node_modules, &root_package_versions)?;
         profile.mark("prune_root_install_dirs", start);
-        if staging_root.exists() {
-            std::fs::remove_dir_all(&staging_root).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to clean staging root '{}': {}",
-                    staging_root.display(),
-                    err
-                ))
-            })?;
+        if let Some(staging_root) = staging_root.as_ref() {
+            if staging_root.exists() {
+                std::fs::remove_dir_all(staging_root).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to clean staging root '{}': {}",
+                        staging_root.display(),
+                        err
+                    ))
+                })?;
+            }
         }
         rebuild_bin_links(&node_modules, &root_packages)?;
         profile.mark("rebuild_bin_links", start);
@@ -1471,6 +1675,7 @@ struct NpmDependencyProvider {
     registry_cache: RegistryCache,
     shared_cache: Option<SharedWebCache>,
     alias_targets: DashMap<String, PackageName>,
+    optional_enqueue_cache: DashMap<String, bool>,
 }
 impl NpmDependencyProvider {
     fn new(url: &str, shared_cache: Option<SharedWebCache>) -> Self {
@@ -1481,13 +1686,14 @@ impl NpmDependencyProvider {
             registry_cache: RegistryCache::new(),
             shared_cache,
             alias_targets: DashMap::new(),
+            optional_enqueue_cache: DashMap::new(),
         }
     }
 
     async fn metadata(
         &self,
         package: &PackageName,
-    ) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
+    ) -> Result<Arc<native::npm_registry::PackageMetadata>, DependencyError> {
         let source_package = self.source_package_name(package);
         let key = source_package.as_str().to_string();
         if let Some(cached) = self.metadata_cache.get(&key) {
@@ -1508,7 +1714,7 @@ impl NpmDependencyProvider {
             self.shared_cache.as_ref(),
         )
         .await?;
-        self.metadata_cache.insert(key, meta.clone());
+        self.metadata_cache.insert(key, Arc::clone(&meta));
         Ok(meta)
     }
 
@@ -1522,6 +1728,29 @@ impl NpmDependencyProvider {
     fn record_alias_target(&self, alias: &PackageName, target: &PackageName) {
         self.alias_targets
             .insert(alias.as_str().to_string(), target.clone());
+    }
+
+    fn cached_versions_for(&self, package: &PackageName) -> Option<Vec<Version>> {
+        self.registry_cache
+            .get_versions(package.as_str())
+            .or_else(|| {
+                let source = self.source_package_name(package);
+                if source == *package {
+                    None
+                } else {
+                    self.registry_cache.get_versions(source.as_str())
+                }
+            })
+    }
+
+    fn insert_versions_for(&self, package: &PackageName, versions: Vec<Version>) {
+        self.registry_cache
+            .insert_versions(package.as_str().to_string(), versions.clone());
+        let source = self.source_package_name(package);
+        if source != *package {
+            self.registry_cache
+                .insert_versions(source.as_str().to_string(), versions);
+        }
     }
 
     fn parse_alias_spec(spec: &str) -> Option<(String, String)> {
@@ -1542,6 +1771,7 @@ impl NpmDependencyProvider {
         &self,
         deps: Option<&std::collections::HashMap<String, String>>,
         optional: bool,
+        peer: bool,
     ) -> Vec<ResolvedDep> {
         deps.into_iter()
             .flat_map(|deps| deps.iter())
@@ -1554,14 +1784,14 @@ impl NpmDependencyProvider {
                         package: alias,
                         spec: range,
                         optional,
-                        peer: false,
+                        peer,
                     })
                 } else {
                     Some(ResolvedDep {
                         package: alias,
                         spec: spec.clone(),
                         optional,
-                        peer: false,
+                        peer,
                     })
                 }
             })
@@ -1572,37 +1802,61 @@ impl NpmDependencyProvider {
         &self,
         names: &[PackageName],
     ) -> Result<
-        std::collections::HashMap<String, native::npm_registry::PackageMetadata>,
+        std::collections::HashMap<String, Arc<native::npm_registry::PackageMetadata>>,
         DependencyError,
     > {
         let mut results = std::collections::HashMap::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut alias_to_source = Vec::new();
+        let mut source_names = Vec::new();
+        let mut seen_sources = std::collections::HashSet::new();
         let mut futures = Vec::new();
 
         for alias_name in names {
-            if !seen.insert(alias_name.as_str().to_string()) {
-                continue;
-            }
             let alias_name = alias_name.clone();
             let source_name = self.source_package_name(&alias_name);
+            alias_to_source.push((alias_name.as_str().to_string(), source_name.clone()));
             if let Some(metadata) = self.metadata_cache.get(source_name.as_str()) {
                 results.insert(alias_name.as_str().to_string(), metadata.clone());
                 continue;
             }
+            if seen_sources.insert(source_name.as_str().to_string()) {
+                source_names.push(source_name);
+            }
+        }
+
+        for source_name in source_names {
             futures.push(async move {
-                let metadata = self.metadata(&alias_name).await?;
-                Ok::<_, DependencyError>((alias_name.as_str().to_string(), metadata))
+                let metadata = self.metadata(&source_name).await?;
+                Ok::<_, DependencyError>((source_name.as_str().to_string(), metadata))
             });
         }
 
         let concurrency = metadata_concurrency_limit();
+        let mut source_results = std::collections::HashMap::new();
+        let mut metadata_errors = Vec::new();
         for fetched in stream::iter(futures)
             .buffer_unordered(concurrency)
             .collect::<Vec<_>>()
             .await
         {
-            let (name, metadata) = fetched?;
-            results.insert(name, metadata);
+            match fetched {
+                Ok((source_name, metadata)) => {
+                    source_results.insert(source_name, metadata);
+                }
+                Err(e) => metadata_errors.push(e),
+            }
+        }
+        if let Some(e) = metadata_errors.into_iter().next() {
+            return Err(e);
+        }
+
+        for (alias_name, source_name) in alias_to_source {
+            if results.contains_key(&alias_name) {
+                continue;
+            }
+            if let Some(metadata) = source_results.get(source_name.as_str()) {
+                results.insert(alias_name, Arc::clone(metadata));
+            }
         }
 
         Ok(results)
@@ -1610,6 +1864,10 @@ impl NpmDependencyProvider {
 
     fn version_key(package_id: &PackageId) -> String {
         format!("{}@{}", package_id.name_str(), package_id.version())
+    }
+
+    fn optional_enqueue_key(dep: &ResolvedDep) -> String {
+        format!("{}@{}", dep.package.as_str(), dep.spec)
     }
 
     fn current_npm_os() -> &'static str {
@@ -1672,6 +1930,7 @@ impl NpmDependencyProvider {
 
         let target = name
             .strip_prefix("@esbuild/")
+            .or_else(|| name.strip_prefix("@next/swc-"))
             .or_else(|| name.strip_prefix("@swc/core-"))
             .or_else(|| name.strip_prefix("@rollup/rollup-"))
             .or_else(|| name.strip_prefix("@tailwindcss/oxide-"))
@@ -1707,22 +1966,17 @@ impl NpmDependencyProvider {
         matches.sort();
         Ok(matches.into_iter().max())
     }
+
 }
 #[async_trait]
 impl DependencyProvider for NpmDependencyProvider {
     async fn get_versions(&self, package: &PackageName) -> Result<Vec<Version>, DependencyError> {
-        if let Some(cached) = self.registry_cache.get_versions(package.as_str()) {
+        if let Some(cached) = self.cached_versions_for(package) {
             return Ok(cached);
         }
         let meta = self.metadata(package).await?;
-        let mut v: Vec<Version> = meta
-            .versions
-            .keys()
-            .filter_map(|k| Version::parse(k).ok())
-            .collect();
-        v.sort();
-        self.registry_cache
-            .insert_versions(package.as_str().to_string(), v.clone());
+        let v = WebAdapter::metadata_versions(&meta);
+        self.insert_versions_for(package, v.clone());
         Ok(v)
     }
     async fn get_dependencies(
@@ -1738,9 +1992,11 @@ impl DependencyProvider for NpmDependencyProvider {
             .versions
             .get(&package_id.version().to_string())
             .map(|v| {
-                let mut collected = self.collect_resolved_deps(v.dependencies.as_ref(), false);
+                let mut collected = self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
                 collected
-                    .extend(self.collect_resolved_deps(v.optional_dependencies.as_ref(), true));
+                    .extend(self.collect_resolved_deps(v.optional_dependencies.as_ref(), true, false));
+                collected
+                    .extend(self.collect_resolved_deps(v.peer_dependencies.as_ref(), false, true));
                 collected
             })
             .unwrap_or_default();
@@ -1753,20 +2009,31 @@ impl DependencyProvider for NpmDependencyProvider {
             return Ok(true);
         }
 
+        let cache_key = Self::optional_enqueue_key(dep);
+        if let Some(cached) = self.optional_enqueue_cache.get(&cache_key) {
+            return Ok(*cached);
+        }
+
         if let Some(supported) = Self::known_optional_native_binary_supported(&dep.package) {
+            self.optional_enqueue_cache.insert(cache_key, supported);
             return Ok(supported);
         }
 
-        let versions = self.get_versions(&dep.package).await?;
-        let Some(selected) = Self::select_best_version(&versions, &dep.spec)? else {
-            return Ok(!dep.optional);
-        };
         let meta = self.metadata(&dep.package).await?;
+        let versions = WebAdapter::metadata_versions(&meta);
+        self.insert_versions_for(&dep.package, versions.clone());
+        let Some(selected) = Self::select_best_version(&versions, &dep.spec)? else {
+            self.optional_enqueue_cache.insert(cache_key, false);
+            return Ok(false);
+        };
         let Some(info) = meta.versions.get(&selected.to_string()) else {
-            return Ok(!dep.optional);
+            self.optional_enqueue_cache.insert(cache_key, false);
+            return Ok(false);
         };
 
-        Ok(Self::version_supported(info))
+        let supported = Self::version_supported(info);
+        self.optional_enqueue_cache.insert(cache_key, supported);
+        Ok(supported)
     }
 
     async fn prefetch_versions(
@@ -1774,55 +2041,39 @@ impl DependencyProvider for NpmDependencyProvider {
         packages: &[PackageName],
     ) -> Result<Vec<(PackageName, Vec<Version>)>, DependencyError> {
         let mut results = Vec::with_capacity(packages.len());
-        let mut futures = Vec::new();
+        let mut missing = Vec::new();
 
         for package in packages {
-            if let Some(cached) = self.registry_cache.get_versions(package.as_str()) {
+            if let Some(cached) = self.cached_versions_for(package) {
                 results.push((package.clone(), cached));
                 continue;
             }
 
             let package_key = self.source_package_name(package).as_str().to_string();
             if let Some(metadata) = self.metadata_cache.get(&package_key) {
-                let mut versions: Vec<Version> = metadata
-                    .versions
-                    .keys()
-                    .filter_map(|k| Version::parse(k).ok())
-                    .collect();
-                versions.sort();
-                self.registry_cache
-                    .insert_versions(package.as_str().to_string(), versions.clone());
+                let versions = WebAdapter::metadata_versions(&metadata);
+                self.insert_versions_for(package, versions.clone());
                 results.push((package.clone(), versions));
                 continue;
             }
-            let package_name = package.clone();
-            futures.push(async move {
-                let metadata = self.metadata(&package_name).await?;
-                Ok::<_, DependencyError>((package_name, metadata))
-            });
+            missing.push(package.clone());
         }
 
-        let mut fetched_metadata: Vec<(PackageName, native::npm_registry::PackageMetadata)> =
-            Vec::new();
-        let concurrency = metadata_concurrency_limit();
-        for fetched in stream::iter(futures)
-            .buffer_unordered(concurrency)
-            .collect::<Vec<_>>()
-            .await
-        {
-            let (package, metadata) = fetched?;
-            let source_key = self.source_package_name(&package).as_str().to_string();
-            self.metadata_cache.insert(source_key, metadata.clone());
-            let mut versions: Vec<Version> = metadata
-                .versions
-                .keys()
-                .filter_map(|k| Version::parse(k).ok())
-                .collect();
-            versions.sort();
-            self.registry_cache
-                .insert_versions(package.as_str().to_string(), versions.clone());
+        if missing.is_empty() {
+            return Ok(results);
+        }
+
+        let fetched_metadata = self.prefetch_resolution_metadata(&missing).await?;
+        for package in missing {
+            let Some(metadata) = fetched_metadata.get(package.as_str()) else {
+                return Err(DependencyError(format!(
+                    "prefetch metadata missing result for '{}'",
+                    package.as_str()
+                )));
+            };
+            let versions = WebAdapter::metadata_versions(metadata);
+            self.insert_versions_for(&package, versions.clone());
             results.push((package.clone(), versions));
-            fetched_metadata.push((package, metadata));
         }
 
         Ok(results)
@@ -1848,9 +2099,12 @@ impl DependencyProvider for NpmDependencyProvider {
                     .get(&id.version().to_string())
                     .map(|v| {
                         let mut collected =
-                            self.collect_resolved_deps(v.dependencies.as_ref(), false);
+                            self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
                         collected.extend(
-                            self.collect_resolved_deps(v.optional_dependencies.as_ref(), true),
+                            self.collect_resolved_deps(v.optional_dependencies.as_ref(), true, false),
+                        );
+                        collected.extend(
+                            self.collect_resolved_deps(v.peer_dependencies.as_ref(), false, true),
                         );
                         collected
                     })
@@ -1866,30 +2120,27 @@ impl DependencyProvider for NpmDependencyProvider {
             return Ok(results);
         }
 
-        let mut futures = Vec::new();
+        let missing_names: Vec<PackageName> =
+            preloaded.iter().map(|id| id.name().clone()).collect();
+        let fetched_metadata = self.prefetch_resolution_metadata(&missing_names).await?;
 
-        for id in preloaded {
-            let package_id = id.clone();
-            futures.push(async move {
-                let meta = self.metadata(package_id.name()).await?;
-                Ok::<_, DependencyError>((package_id, meta))
-            });
-        }
-
-        let concurrency = metadata_concurrency_limit();
-        for fetched in stream::iter(futures)
-            .buffer_unordered(concurrency)
-            .collect::<Vec<_>>()
-            .await
-        {
-            let (package_id, meta) = fetched?;
+        for package_id in preloaded {
+            let source_name = self.source_package_name(package_id.name());
+            let Some(meta) = fetched_metadata.get(source_name.as_str()) else {
+                return Err(DependencyError(format!(
+                    "prefetch metadata missing result for '{}'",
+                    package_id.name_str()
+                )));
+            };
             let deps = meta
                 .versions
                 .get(&package_id.version().to_string())
                 .map(|v| {
-                    let mut collected = self.collect_resolved_deps(v.dependencies.as_ref(), false);
+                    let mut collected = self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
                     collected
-                        .extend(self.collect_resolved_deps(v.optional_dependencies.as_ref(), true));
+                        .extend(self.collect_resolved_deps(v.optional_dependencies.as_ref(), true, false));
+                    collected
+                        .extend(self.collect_resolved_deps(v.peer_dependencies.as_ref(), false, true));
                     collected
                 })
                 .unwrap_or_default();
@@ -1901,46 +2152,8 @@ impl DependencyProvider for NpmDependencyProvider {
         Ok(results)
     }
 
-    async fn on_batch_resolved(&self, ids: &[PackageId]) -> Result<(), DependencyError> {
-        let Some(sc) = &self.shared_cache else {
-            return Ok(());
-        };
-
-        let registry_url = self.registry.registry_url().to_string();
-        let sem = Arc::new(tokio::sync::Semaphore::new(8));
-
-        for id in ids {
-            let key = self.source_package_name(id.name()).as_str().to_string();
-            let Some(metadata) = self.metadata_cache.get(&key) else {
-                continue;
-            };
-            let Some(version_info) = metadata.versions.get(&id.version().to_string()) else {
-                continue;
-            };
-            let Some(dist) = &version_info.dist else {
-                continue;
-            };
-
-            let tarball_url = dist.tarball.clone();
-            let pid = id.clone();
-            let sem = sem.clone();
-            let sc = sc.clone();
-            let ru = registry_url.clone();
-
-            tokio::spawn(async move {
-                let _permit = sem.acquire().await;
-                let registry = native::npm_registry::NpmRegistry::new(&ru);
-                match registry.download_tarball(&tarball_url).await {
-                    Ok(bytes) => {
-                        if let Ok(pc) = sc.package_cache() {
-                            let _ = pc.cache_tarball(&pid, &bytes);
-                        }
-                    }
-                    Err(_) => {}
-                }
-            });
-        }
-
+    async fn on_batch_resolved(&self, _ids: &[PackageId]) -> Result<(), DependencyError> {
+        // Prefetch moved to post-resolve (in install()). See spawn_tarball_download.
         Ok(())
     }
 }
@@ -2310,7 +2523,7 @@ async fn load_metadata_with_fallback(
     package: &PackageName,
     registry: &native::npm_registry::NpmRegistry,
     shared_cache: Option<&SharedWebCache>,
-) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
+) -> Result<Arc<native::npm_registry::PackageMetadata>, DependencyError> {
     load_metadata_by_name_with_fallback(package.as_str(), registry, shared_cache).await
 }
 
@@ -2318,7 +2531,7 @@ async fn load_metadata_by_name_with_fallback(
     package: &str,
     registry: &native::npm_registry::NpmRegistry,
     shared_cache: Option<&SharedWebCache>,
-) -> Result<native::npm_registry::PackageMetadata, DependencyError> {
+) -> Result<Arc<native::npm_registry::PackageMetadata>, DependencyError> {
     let cached = if let Some(shared_cache) = shared_cache {
         shared_cache.read_metadata(package)?
     } else {
@@ -2327,11 +2540,11 @@ async fn load_metadata_by_name_with_fallback(
 
     if let Some(cached) = cached.as_ref() {
         if metadata_record_is_fresh(cached) {
-            return Ok(cached.metadata.clone());
+            return Ok(Arc::new(cached.metadata.clone()));
         }
 
         if metadata_record_retry_deferred(cached) && metadata_record_is_usable_stale(cached) {
-            return Ok(cached.metadata.clone());
+            return Ok(Arc::new(cached.metadata.clone()));
         }
 
         if let Some(etag) = &cached.etag {
@@ -2347,13 +2560,13 @@ async fn load_metadata_by_name_with_fallback(
                             Some(etag.clone()),
                         );
                     }
-                    return Ok(cached.metadata.clone());
+                    return Ok(Arc::new(cached.metadata.clone()));
                 }
                 Ok(Some((metadata, new_etag))) => {
                     if let Some(shared_cache) = shared_cache {
                         let _ = shared_cache.write_metadata(package, &metadata, Some(new_etag));
                     }
-                    return Ok(metadata);
+                    return Ok(Arc::new(metadata));
                 }
                 Err(_) => {
                     if !metadata_record_is_usable_stale(cached) {
@@ -2371,7 +2584,7 @@ async fn load_metadata_by_name_with_fallback(
                             Some(next_stale_retry_after()),
                         );
                     }
-                    return Ok(cached.metadata.clone());
+                    return Ok(Arc::new(cached.metadata.clone()));
                 }
             }
         }
@@ -2382,7 +2595,7 @@ async fn load_metadata_by_name_with_fallback(
             if let Some(shared_cache) = shared_cache {
                 let _ = shared_cache.write_metadata(package, &metadata, etag);
             }
-            Ok(metadata)
+            Ok(Arc::new(metadata))
         }
         Err(network_err) => {
             if let Some(cached) = cached {
@@ -2401,7 +2614,7 @@ async fn load_metadata_by_name_with_fallback(
                         Some(next_stale_retry_after()),
                     );
                 }
-                return Ok(cached.metadata);
+                return Ok(Arc::new(cached.metadata));
             }
             Err(DependencyError(format!(
                 "npm metadata fetch failed for '{}': {}",
@@ -2418,9 +2631,18 @@ async fn prefetch_tarballs(
     shared_cache: Option<&SharedWebCache>,
     registry: &native::npm_registry::NpmRegistry,
 ) -> MgResult<u64> {
+    use native::npm_registry::LARGE_PKG_THRESHOLD_BYTES;
+
     enum PrefetchOutcome {
         CacheHit(u64),
+        // Buffered small package: bytes held in RAM.
         Downloaded(ResolvedPackage, Vec<u8>),
+        // Streamed large package: written to a temp file, integrity computed inline.
+        StreamedToTemp {
+            pkg: ResolvedPackage,
+            temp_path: std::path::PathBuf,
+            computed_integrity: String,
+        },
     }
 
     let mut bytes_from_cache = 0u64;
@@ -2481,14 +2703,50 @@ async fn prefetch_tarballs(
                 .acquire_owned()
                 .await
                 .map_err(|e| mg_types::MgError::Other(format!("download semaphore closed: {e}")))?;
-            let bytes = registry.download_tarball(&url).await.map_err(|e| {
-                mg_types::MgError::Network(format!(
-                    "download failed for '{}': {}",
-                    pkg_clone.id.name_str(),
-                    e
-                ))
-            })?;
-            Ok::<_, mg_types::MgError>(PrefetchOutcome::Downloaded(pkg_clone, bytes))
+
+            // Probe content-length to decide: stream large files directly to disk.
+            let content_length = {
+                let client = native::npm_registry::batch_http_client();
+                client
+                    .head(&url)
+                    .send()
+                    .await
+                    .ok()
+                    .and_then(|r| {
+                        r.headers()
+                            .get(reqwest::header::CONTENT_LENGTH)
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse::<u64>().ok())
+                    })
+                    .unwrap_or(0)
+            };
+
+            if content_length > LARGE_PKG_THRESHOLD_BYTES {
+                // FAST-LANE: stream directly to a temp file, avoid RAM pressure.
+                let temp_path = local_cache.tarball_path(&pkg_clone.id)
+                    .with_extension("tmp");
+                let computed_integrity = registry
+                    .download_tarball_to_file(&url, &temp_path)
+                    .await
+                    .map_err(|e| mg_types::MgError::Network(format!(
+                        "stream download failed for '{}': {}", pkg_clone.id.name_str(), e
+                    )))?;
+                Ok::<_, mg_types::MgError>(PrefetchOutcome::StreamedToTemp {
+                    pkg: pkg_clone,
+                    temp_path,
+                    computed_integrity,
+                })
+            } else {
+                // STANDARD: buffer into RAM for small packages.
+                let bytes = registry.download_tarball(&url).await.map_err(|e| {
+                    mg_types::MgError::Network(format!(
+                        "download failed for '{}': {}",
+                        pkg_clone.id.name_str(),
+                        e
+                    ))
+                })?;
+                Ok::<_, mg_types::MgError>(PrefetchOutcome::Downloaded(pkg_clone, bytes))
+            }
         });
     }
 
@@ -2510,6 +2768,38 @@ async fn prefetch_tarballs(
                 if let Some(shared_package_cache) = shared_package_cache.as_ref() {
                     let _ = shared_package_cache
                         .cache_tarball_from_path(&pkg.id, &cache.tarball_path(&pkg.id));
+                }
+            }
+            PrefetchOutcome::StreamedToTemp { mut pkg, temp_path, computed_integrity } => {
+                // Integrity cross-check: if the package has a known hash, compare it with
+                // the hash we computed while streaming. This catches corrupted downloads
+                // without having to read the file back into RAM.
+                if !pkg.integrity.is_empty() && pkg.integrity != computed_integrity {
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(mg_types::MgError::Other(format!(
+                        "integrity mismatch for '{}': expected '{}', got '{}'",
+                        pkg.id.name_str(),
+                        pkg.integrity,
+                        computed_integrity
+                    )));
+                }
+                // Store the computed integrity for future cache lookups.
+                if pkg.integrity.is_empty() {
+                    pkg.integrity = computed_integrity;
+                }
+                // Atomically promote temp file to final cache path.
+                let final_path = cache.tarball_path(&pkg.id);
+                if let Some(parent) = final_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                }
+                std::fs::rename(&temp_path, &final_path)
+                    .map_err(|e| mg_types::MgError::Store(format!(
+                        "failed to promote streamed tarball for '{}': {}", pkg.id.name_str(), e
+                    )))?;
+                if let Some(shared_package_cache) = shared_package_cache.as_ref() {
+                    let _ = shared_package_cache
+                        .cache_tarball_from_path(&pkg.id, &final_path);
                 }
             }
         }
@@ -2592,6 +2882,14 @@ fn metadata_concurrency_limit() -> usize {
         .unwrap_or(24)
 }
 
+fn pipeline_task_concurrency_limit(extract_concurrency: usize) -> usize {
+    std::env::var("MEGAGATE_WEB_PIPELINE_TASK_CONCURRENCY")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or_else(|| (download_concurrency_limit() + extract_concurrency).max(1))
+}
+
 fn spawn_tarball_download(
     shared_cache: SharedWebCache,
     packages: Vec<ResolvedPackage>,
@@ -2621,14 +2919,28 @@ fn spawn_tarball_download(
                     mg_types::MgError::Other(format!("download semaphore closed: {e}"))
                 })?;
                 let url = package_tarball_url(reg.registry_url(), &pkg);
-                let bytes = reg
-                    .download_tarball(&url)
+                let bytes = native::npm_registry::batch_download_tarball(&url)
                     .await
                     .map_err(|e| mg_types::MgError::Network(format!("prefetch dl failed: {e}")))?;
-                cache
-                    .cache_tarball(&id, &bytes)
-                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-                Ok(bytes.len() as u64)
+                let id = pkg.id.clone();
+                let len = bytes.len() as u64;
+                let cache2 = cache.clone();
+                match tokio::task::spawn_blocking(move || {
+                    let mut pkg = pkg;
+                    if let Err(e) = prepare_verified_tarball_for_cache(&mut pkg, &bytes) {
+                        eprintln!("[megagate] prefetch integrity failed for {id}: {e}");
+                    } else if let Err(e) = cache2.cache_tarball(&pkg.id, &bytes) {
+                        eprintln!("[megagate] prefetch cache write failed for {id}: {e}");
+                    }
+                })
+                .await
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        eprintln!("[megagate] prefetch spawn_blocking panicked: {e}");
+                    }
+                }
+                Ok(len)
             });
         }
         let mut total = 0u64;
@@ -3174,6 +3486,13 @@ fn compute_tarball_integrity(bytes: &[u8]) -> String {
     format!("sha512-{}", compute_sha512_b64(bytes))
 }
 
+fn prepare_verified_tarball_for_cache(pkg: &mut ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
+    if pkg.integrity.is_empty() {
+        pkg.integrity = compute_tarball_integrity(bytes);
+    }
+    verify_tarball_integrity(pkg, bytes)
+}
+
 fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
     if pkg.integrity.is_empty() {
         if strict_integrity_enforced() {
@@ -3258,7 +3577,16 @@ fn link_package_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
         })?;
     }
     remove_fs_entry(target_root)?;
-    crate::layout::create_symlink(source_root, target_root)
+    // Hard-link the package tree so tools like Rollup see real files inside
+    // the project's node_modules/ — symlinks to external cache break CJS detection.
+    hardlink_tree(source_root, target_root).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to link package '{}' -> '{}': {}",
+            source_root.display(),
+            target_root.display(),
+            err
+        ))
+    })
 }
 
 fn extracted_package_marker_path(root: &Path) -> PathBuf {
@@ -3307,6 +3635,12 @@ fn extracted_marker_matches_fast(
         && marker.version == expected.version
         && marker.integrity == expected.integrity
         && marker.tarball_sha256 == expected.tarball_sha256
+}
+
+fn extracted_marker_has_content_signature(marker: &ExtractedPackageMarker) -> bool {
+    marker.file_count > 0
+        && marker.unpacked_size > 0
+        && !marker.file_tree_sha256.trim().is_empty()
 }
 
 fn tarball_content_signature(tarball_bytes: &[u8]) -> MgResult<TarballContentSignature> {
@@ -3558,7 +3892,7 @@ fn ensure_extracted_package_root(
 
 fn ensure_extracted_package_root_from_bytes(
     layout: &Layout,
-    _store: &ContentStore,
+    store: &ContentStore,
     shared_cache: Option<&SharedWebCache>,
     pkg: &ResolvedPackage,
     tarball_bytes: &[u8],
@@ -3576,8 +3910,9 @@ fn ensure_extracted_package_root_from_bytes(
         let marker = read_extracted_package_marker(&canonical_root)?;
         if let Some(marker) = marker.as_ref() {
             if extracted_marker_matches_fast(marker, &fast_marker) {
-                if !extracted_cache_full_validation_enabled()
-                    || extracted_content_matches(&canonical_root, marker)?
+                if extracted_marker_has_content_signature(marker)
+                    && (!extracted_cache_full_validation_enabled()
+                        || extracted_content_matches(&canonical_root, marker)?)
                 {
                     return Ok(canonical_root);
                 }
@@ -3585,11 +3920,7 @@ fn ensure_extracted_package_root_from_bytes(
         }
     }
 
-    let expected_marker = if extracted_cache_full_validation_enabled() {
-        expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?
-    } else {
-        fast_marker
-    };
+    let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
 
     // Extract directly to a temp dir next to canonical_root, then rename.
     // This avoids the hardlink_tree (15k+ file walks) that dominated cold extraction.
@@ -3611,48 +3942,45 @@ fn ensure_extracted_package_root_from_bytes(
             ))
         })?;
     }
-    extract_tarball_from_reader(std::io::Cursor::new(tarball_bytes), &temp_root)
-        .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
-    let package_root = locate_package_dir(&temp_root)?;
-    if let Some(parent) = canonical_root.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| {
+    let extract_result: MgResult<()> = (|| {
+        extract_tarball_to_cas_and_link(std::io::Cursor::new(tarball_bytes), &temp_root, store)
+            .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+        let package_root = locate_package_dir(&temp_root)?;
+        if let Some(parent) = canonical_root.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to create canonical parent '{}' for '{}': {}",
+                    parent.display(),
+                    pkg.id.name_str(),
+                    err
+                ))
+            })?;
+        }
+        if canonical_root.exists() {
+            std::fs::remove_dir_all(&canonical_root).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to remove stale canonical root '{}' for '{}': {}",
+                    canonical_root.display(),
+                    pkg.id.name_str(),
+                    err
+                ))
+            })?;
+        }
+        std::fs::rename(&package_root, &canonical_root).map_err(|err| {
             mg_types::MgError::Other(format!(
-                "failed to create canonical parent '{}' for '{}': {}",
-                parent.display(),
-                pkg.id.name_str(),
-                err
-            ))
-        })?;
-    }
-    if canonical_root.exists() {
-        std::fs::remove_dir_all(&canonical_root).map_err(|err| {
-            mg_types::MgError::Other(format!(
-                "failed to remove stale canonical root '{}' for '{}': {}",
+                "failed to rename extracted '{}' to canonical '{}' for '{}': {}",
+                package_root.display(),
                 canonical_root.display(),
                 pkg.id.name_str(),
                 err
             ))
         })?;
-    }
-    std::fs::rename(&package_root, &canonical_root).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to rename extracted '{}' to canonical '{}' for '{}': {}",
-            package_root.display(),
-            canonical_root.display(),
-            pkg.id.name_str(),
-            err
-        ))
-    })?;
+        Ok(())
+    })();
     if temp_root.exists() {
-        std::fs::remove_dir_all(&temp_root).map_err(|err| {
-            mg_types::MgError::Other(format!(
-                "failed to clean temp root '{}' for '{}': {}",
-                temp_root.display(),
-                pkg.id.name_str(),
-                err
-            ))
-        })?;
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
+    extract_result?;
     write_extracted_package_marker(&canonical_root, &expected_marker)?;
     Ok(canonical_root)
 }
@@ -3667,9 +3995,17 @@ async fn pipeline_download_and_extract(
     registry: Option<&native::npm_registry::NpmRegistry>,
     layout: &Layout,
     store: &ContentStore,
-) -> MgResult<(u64, std::collections::HashMap<PackageId, PathBuf>)> {
+) -> MgResult<(
+    u64,
+    std::collections::HashMap<PackageId, PathBuf>,
+    Vec<tokio::task::JoinHandle<()>>,
+)> {
     let download_sem = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
     let pipeline_profile = Arc::new(PipelineProfile::from_env());
+    let shared_package_cache = shared_cache
+        .map(|shared| shared.package_cache())
+        .transpose()
+        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
     let extract_concurrency = std::env::var("MEGAGATE_WEB_EXTRACT_CONCURRENCY")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
@@ -3681,7 +4017,7 @@ async fn pipeline_download_and_extract(
                 .min(32)
         });
     let extract_sem = Arc::new(tokio::sync::Semaphore::new(extract_concurrency));
-    let task_concurrency = (download_concurrency_limit() + extract_concurrency).max(1);
+    let task_concurrency = pipeline_task_concurrency_limit(extract_concurrency);
     let scheduled_packages: Vec<ResolvedPackage> = graph
         .packages
         .iter()
@@ -3691,6 +4027,7 @@ async fn pipeline_download_and_extract(
     let tasks = scheduled_packages.into_iter().map(|pkg| {
         let cache = cache.clone();
         let shared_cache = shared_cache.map(|s| (*s).clone());
+        let shared_package_cache = shared_package_cache.clone();
         let registry_url = registry.map(|r| r.registry_url().to_string());
         let layout = layout.clone();
         let store = store.clone();
@@ -3706,40 +4043,69 @@ async fn pipeline_download_and_extract(
             let fetch = get_tarball_bytes(
                 &pkg,
                 &cache,
-                shared_cache.as_ref(),
+                shared_package_cache.as_ref(),
                 registry_url.as_deref(),
                 &download_sem,
             )
             .await?;
             pipeline_profile.record_download(
                 &pkg.id,
-                fetch.bytes.len() as u64,
+                fetch.payload.len(),
                 download_started_at.elapsed().as_millis() as u64,
                 fetch.queue_wait_ms,
                 fetch.io_ms,
             );
+
+            let shared_cache_persist = if fetch.persist_to_shared_cache {
+                shared_package_cache.clone().map(|pc| {
+                    let pkg_id = pkg.id.clone();
+                    match &fetch.payload {
+                        TarballPayload::Bytes(bytes) => {
+                            let bytes = Arc::clone(bytes);
+                            tokio::task::spawn_blocking(move || {
+                                let _ = pc.cache_tarball(&pkg_id, bytes.as_ref());
+                            })
+                        }
+                        TarballPayload::CachedPath(path, _) => {
+                            let path = path.clone();
+                            tokio::task::spawn_blocking(move || {
+                                let _ = pc.cache_tarball_from_path(&pkg_id, &path);
+                            })
+                        }
+                    }
+                })
+            } else {
+                None
+            };
 
             let _permit = extract_sem
                 .acquire_owned()
                 .await
                 .map_err(|e| mg_types::MgError::Other(format!("extract semaphore closed: {e}")))?;
             let id = pkg.id.clone();
-            let tarball_len = fetch.bytes.len() as u64;
+            let tarball_len = fetch.payload.len();
             let extract_started_at = std::time::Instant::now();
-            let root = tokio::task::spawn_blocking(move || {
-                ensure_extracted_package_root_from_bytes(
+            let root = tokio::task::spawn_blocking(move || match fetch.payload {
+                TarballPayload::Bytes(bytes) => ensure_extracted_package_root_from_bytes(
                     &layout,
                     &store,
                     shared_cache.as_ref(),
                     &pkg,
-                    &fetch.bytes,
-                )
+                    bytes.as_ref(),
+                ),
+                TarballPayload::CachedPath(path, _) => ensure_extracted_package_root(
+                    &layout,
+                    &store,
+                    shared_cache.as_ref(),
+                    &pkg,
+                    &path,
+                ),
             })
             .await
             .map_err(|e| mg_types::MgError::Other(format!("extract task panicked: {e}")))??;
             pipeline_profile.record_extract(&id, extract_started_at.elapsed().as_millis() as u64);
 
-            Ok::<_, mg_types::MgError>((tarball_len, id, root))
+            Ok::<_, mg_types::MgError>((tarball_len, id, root, shared_cache_persist))
         }
     });
 
@@ -3749,54 +4115,69 @@ async fn pipeline_download_and_extract(
         .await;
     let mut total_bytes = 0u64;
     let mut results = std::collections::HashMap::new();
+    let mut persist_handles = Vec::new();
+    let mut pipeline_errors = Vec::new();
     for joined in finished {
-        let (bytes, id, root) = joined?;
-        total_bytes += bytes;
-        results.insert(id, root);
+        match joined {
+            Ok((bytes, id, root, persist)) => {
+                total_bytes += bytes;
+                results.insert(id, root);
+                if let Some(persist) = persist {
+                    persist_handles.push(persist);
+                }
+            }
+            Err(e) => pipeline_errors.push(e),
+        }
+    }
+    if let Some(e) = pipeline_errors.into_iter().next() {
+        return Err(e);
     }
 
     pipeline_profile.flush();
 
-    Ok((total_bytes, results))
+    Ok((total_bytes, results, persist_handles))
 }
 
 async fn get_tarball_bytes(
     pkg: &ResolvedPackage,
     cache: &PackageCache,
-    shared_cache: Option<&SharedWebCache>,
+    shared_package_cache: Option<&PackageCache>,
     registry_url: Option<&str>,
     download_sem: &tokio::sync::Semaphore,
 ) -> MgResult<TarballFetchResult> {
+    let prefer_shared_cache = shared_package_cache.is_some();
     if let Some(bytes) = cache
         .get_tarball(&pkg.id)
         .map_err(|e| mg_types::MgError::Store(e.to_string()))?
     {
         if verify_tarball_integrity(pkg, &bytes).is_ok() {
             return Ok(TarballFetchResult {
-                bytes,
+                payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
                 queue_wait_ms: 0,
                 io_ms: 0,
+                persist_to_shared_cache: false,
             });
         }
         let _ = std::fs::remove_file(cache.tarball_path(&pkg.id));
     }
 
-    if let Some(sc) = shared_cache {
-        if let Ok(pc) = sc.package_cache() {
-            if let Some(bytes) = pc
-                .get_tarball(&pkg.id)
-                .map_err(|e| mg_types::MgError::Store(e.to_string()))?
-            {
-                if verify_tarball_integrity(pkg, &bytes).is_ok() {
+    if let Some(pc) = shared_package_cache {
+        if let Some(bytes) = pc
+            .get_tarball(&pkg.id)
+            .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+        {
+            if verify_tarball_integrity(pkg, &bytes).is_ok() {
+                if !prefer_shared_cache {
                     let _ = cache.cache_tarball_from_path(&pkg.id, &pc.tarball_path(&pkg.id));
-                    return Ok(TarballFetchResult {
-                        bytes,
-                        queue_wait_ms: 0,
-                        io_ms: 0,
-                    });
                 }
-                let _ = std::fs::remove_file(pc.tarball_path(&pkg.id));
+                return Ok(TarballFetchResult {
+                    payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
+                    queue_wait_ms: 0,
+                    io_ms: 0,
+                    persist_to_shared_cache: false,
+                });
             }
+            let _ = std::fs::remove_file(pc.tarball_path(&pkg.id));
         }
     }
 
@@ -3814,34 +4195,72 @@ async fn get_tarball_bytes(
         .map_err(|e| mg_types::MgError::Other(format!("download semaphore closed: {e}")))?;
     let queue_wait_ms = queue_started_at.elapsed().as_millis() as u64;
     let tarball_url = package_tarball_url(url, pkg);
-    let registry = native::npm_registry::NpmRegistry::new(url);
-    let mut pkg = pkg.clone();
     let io_started_at = std::time::Instant::now();
-    let bytes = registry.download_tarball(&tarball_url).await.map_err(|e| {
-        mg_types::MgError::Network(format!(
-            "download failed for '{}': {}",
-            pkg.id.name_str(),
-            e
-        ))
-    })?;
+    let mut pkg = pkg.clone();
+    let final_path = cache.tarball_path(&pkg.id);
+    let temp_path = final_path.with_extension("tmp");
+    let downloaded = native::npm_registry::NpmRegistry::new(url)
+        .download_tarball_auto(&tarball_url, &temp_path)
+        .await
+        .map_err(|e| {
+            mg_types::MgError::Network(format!(
+                "download failed for '{}': {}",
+                pkg.id.name_str(),
+                e
+            ))
+        })?;
     let io_ms = io_started_at.elapsed().as_millis() as u64;
-    if pkg.integrity.is_empty() {
-        pkg.integrity = compute_tarball_integrity(&bytes);
-    }
-    verify_tarball_integrity(&pkg, &bytes)?;
-    cache
-        .cache_tarball(&pkg.id, &bytes)
-        .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
-    if let Some(sc) = shared_cache {
-        if let Ok(pc) = sc.package_cache() {
-            let _ = pc.cache_tarball_from_path(&pkg.id, &cache.tarball_path(&pkg.id));
+    match downloaded {
+        native::npm_registry::DownloadedTarball::Bytes(bytes) => {
+            prepare_verified_tarball_for_cache(&mut pkg, &bytes)?;
+            let persist_to_shared_cache = shared_package_cache.is_some();
+            if !persist_to_shared_cache {
+                cache
+                    .cache_tarball(&pkg.id, &bytes)
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+            }
+            Ok(TarballFetchResult {
+                payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
+                queue_wait_ms,
+                io_ms,
+                persist_to_shared_cache,
+            })
+        }
+        native::npm_registry::DownloadedTarball::Streamed {
+            computed_integrity,
+            bytes_len,
+        } => {
+            if !pkg.integrity.is_empty() && pkg.integrity != computed_integrity {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(mg_types::MgError::Other(format!(
+                    "integrity mismatch for '{}': expected '{}', got '{}'",
+                    pkg.id.name_str(),
+                    pkg.integrity,
+                    computed_integrity
+                )));
+            }
+            if pkg.integrity.is_empty() {
+                pkg.integrity = computed_integrity;
+            }
+            if let Some(parent) = final_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+            }
+            std::fs::rename(&temp_path, &final_path).map_err(|e| {
+                mg_types::MgError::Store(format!(
+                    "failed to promote streamed tarball for '{}': {}",
+                    pkg.id.name_str(),
+                    e
+                ))
+            })?;
+            Ok(TarballFetchResult {
+                payload: TarballPayload::CachedPath(final_path, bytes_len),
+                queue_wait_ms,
+                io_ms,
+                persist_to_shared_cache: shared_package_cache.is_some(),
+            })
         }
     }
-    Ok(TarballFetchResult {
-        bytes,
-        queue_wait_ms,
-        io_ms,
-    })
 }
 
 fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
@@ -4444,6 +4863,7 @@ fn write_web_lockfile_with_state(
                 direct: pkg.direct,
                 dev: pkg.dev,
                 dependencies: pkg.deps.iter().map(ToString::to_string).collect(),
+                peer_deps: pkg.peer_deps.iter().map(ToString::to_string).collect(),
             }
         })
         .collect();
@@ -4582,6 +5002,10 @@ fn preferred_registry_version(metadata: &native::npm_registry::PackageMetadata) 
 }
 
 fn strict_vstore_package_dir(node_modules: &Path, package_id: &PackageId) -> PathBuf {
+    strict_vstore_node_modules_dir(node_modules, package_id).join(package_id.name().as_str())
+}
+
+fn strict_vstore_node_modules_dir(node_modules: &Path, package_id: &PackageId) -> PathBuf {
     let vstore_pkg_name = format!(
         "{}@{}",
         package_id.name().as_str().replace('/', "+"),
@@ -4591,7 +5015,6 @@ fn strict_vstore_package_dir(node_modules: &Path, package_id: &PackageId) -> Pat
         .join(".megagate")
         .join(vstore_pkg_name)
         .join("node_modules")
-        .join(package_id.name().as_str())
 }
 
 fn graph_without_packages(
@@ -4644,6 +5067,10 @@ fn materialize_strict_layout(
             (pkg_id.clone(), vstore_pkg_dir, pkg.clone())
         })
         .collect();
+    let vstore_dir_map: std::collections::HashMap<PackageId, PathBuf> = vstore_dirs
+        .iter()
+        .map(|(pkg_id, vstore_pkg_dir, _)| (pkg_id.clone(), vstore_pkg_dir.clone()))
+        .collect();
 
     // Parallel materialization: symlink from canonical root to vstore.
     let materialize_results: Vec<_> = vstore_dirs
@@ -4681,45 +5108,62 @@ fn materialize_strict_layout(
         .par_iter()
         .map(|pkg| {
             let pkg_id = &pkg.id;
-            let vstore_pkg_name = format!(
-                "{}@{}",
-                pkg_id.name().as_str().replace('/', "+"),
-                pkg_id.version()
-            );
-            let vstore_node_modules = virtual_store.join(&vstore_pkg_name).join("node_modules");
+            if !vstore_dir_map.contains_key(pkg_id) {
+                return Err(mg_types::MgError::Other(format!(
+                    "missing virtual store path for '{}'",
+                    pkg_id
+                )));
+            }
+            let vstore_node_modules = strict_vstore_node_modules_dir(node_modules, pkg_id);
             let pkg_local_node_modules = vstore_node_modules
                 .join(pkg_id.name().as_str())
                 .join("node_modules");
-            std::fs::create_dir_all(&pkg_local_node_modules).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to create strict nested node_modules '{}' for '{}': {}",
-                    pkg_local_node_modules.display(),
-                    pkg_id.name_str(),
-                    err
-                ))
-            })?;
+
+            if !pkg.deps.is_empty() {
+                std::fs::create_dir_all(&pkg_local_node_modules).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to create strict nested node_modules '{}' for '{}': {}",
+                        pkg_local_node_modules.display(),
+                        pkg_id.name_str(),
+                        err
+                    ))
+                })?;
+            }
 
             for dep_id in &pkg.deps {
                 if let Some(_dep_pkg) = package_map.get(dep_id) {
-                    let dep_vstore_name = format!(
-                        "{}@{}",
-                        dep_id.name().as_str().replace('/', "+"),
-                        dep_id.version()
-                    );
-                    let dep_vstore_pkg_dir = virtual_store
-                        .join(&dep_vstore_name)
-                        .join("node_modules")
-                        .join(dep_id.name().as_str());
+                    let Some(dep_vstore_pkg_dir) = vstore_dir_map.get(dep_id) else {
+                        return Err(mg_types::MgError::Other(format!(
+                            "missing dependency virtual store path for '{}'",
+                            dep_id
+                        )));
+                    };
 
                     let symlink_path = vstore_node_modules.join(dep_id.name().as_str());
-                    if !symlink_path.exists() {
-                        crate::layout::create_symlink(&dep_vstore_pkg_dir, &symlink_path)?;
-                    }
+                    crate::layout::create_symlink(dep_vstore_pkg_dir, &symlink_path)?;
 
                     let local_symlink_path = pkg_local_node_modules.join(dep_id.name().as_str());
-                    if !local_symlink_path.exists() {
-                        crate::layout::create_symlink(&dep_vstore_pkg_dir, &local_symlink_path)?;
-                    }
+                    crate::layout::create_symlink(dep_vstore_pkg_dir, &local_symlink_path)?;
+                }
+            }
+
+            // Link peer dependencies — sourced from the resolved graph (no disk I/O).
+            if !pkg.peer_deps.is_empty() {
+                std::fs::create_dir_all(&pkg_local_node_modules).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to create strict nested node_modules '{}' for peer deps of '{}': {}",
+                        pkg_local_node_modules.display(),
+                        pkg_id.name_str(),
+                        err
+                    ))
+                })?;
+            }
+            for peer_id in &pkg.peer_deps {
+                if let Some(dep_vstore_pkg_dir) = vstore_dir_map.get(peer_id) {
+                    let symlink_path = vstore_node_modules.join(peer_id.name().as_str());
+                    crate::layout::create_symlink(dep_vstore_pkg_dir, &symlink_path)?;
+                    let local_symlink_path = pkg_local_node_modules.join(peer_id.name().as_str());
+                    crate::layout::create_symlink(dep_vstore_pkg_dir, &local_symlink_path)?;
                 }
             }
 
@@ -4738,11 +5182,12 @@ fn materialize_strict_layout(
     // 3. Link root packages to root node_modules
     for pkg in root_packages {
         let root_link = node_modules.join(pkg.id.name().as_str());
-        let vstore_pkg_dir = strict_vstore_package_dir(node_modules, &pkg.id);
-
-        if root_link.exists() {
-            let _ = std::fs::remove_dir_all(&root_link);
-        }
+        let Some(vstore_pkg_dir) = vstore_dir_map.get(&pkg.id) else {
+            return Err(mg_types::MgError::Other(format!(
+                "missing root virtual store path for '{}'",
+                pkg.id
+            )));
+        };
         crate::layout::create_symlink(&vstore_pkg_dir, &root_link)?;
     }
 
@@ -4834,6 +5279,7 @@ mod tests {
                 integrity,
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -4877,6 +5323,7 @@ mod tests {
                 integrity: "sha512-demo".into(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -4945,6 +5392,7 @@ mod tests {
                 integrity,
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: true,
             }],
@@ -5039,6 +5487,7 @@ mod tests {
                 integrity: "sha512-react".to_string(),
                 tarball_url: "https://registry.example.test/react-18.2.0.tgz".to_string(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -5388,6 +5837,51 @@ package_count = 0
     }
 
     #[tokio::test]
+    async fn test_prefetch_resolution_metadata_dedupes_aliases_by_source_package() {
+        let Some(listener) = bind_test_listener().await else {
+            return;
+        };
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_server = hits.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                hits_for_server.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf).await;
+                let body = r#"{"name":"strip-ansi","description":null,"versions":{"6.0.1":{"version":"6.0.1","dependencies":null,"optionalDependencies":null,"os":null,"cpu":null,"dist":{"tarball":"http://example.test/strip-ansi.tgz","integrity":"sha512-strip"}}},"dist-tags":{"latest":"6.0.1"}}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let provider = NpmDependencyProvider::new(&format!("http://{addr}"), None);
+        let alias_a = PackageName::new("strip-ansi-a").unwrap();
+        let alias_b = PackageName::new("strip-ansi-b").unwrap();
+        let source = PackageName::new("strip-ansi").unwrap();
+        provider.record_alias_target(&alias_a, &source);
+        provider.record_alias_target(&alias_b, &source);
+
+        let metadata = provider
+            .prefetch_resolution_metadata(&[alias_a.clone(), alias_b.clone()])
+            .await
+            .unwrap();
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[alias_a.as_str()].name, "strip-ansi");
+        assert_eq!(metadata[alias_b.as_str()].name, "strip-ansi");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn test_stale_metadata_failure_sets_retry_cooldown() {
         let _env_guard = env_test_lock().lock().unwrap();
         let shared = tempfile::tempdir().unwrap();
@@ -5724,6 +6218,7 @@ package_count = 0
                     direct: true,
                     dev: false,
                     dependencies: vec![],
+                    peer_deps: vec![],
                 }],
                 sig: None,
             })
@@ -5795,6 +6290,7 @@ package_count = 0
                     integrity: react_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: true,
                     dev: false,
                 },
@@ -5803,6 +6299,7 @@ package_count = 0
                     integrity: tailwind_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: true,
                     dev: false,
                 },
@@ -5882,6 +6379,7 @@ package_count = 0
                     integrity: react_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: true,
                     dev: false,
                 },
@@ -5890,6 +6388,7 @@ package_count = 0
                     integrity: react_types_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: true,
                     dev: true,
                 },
@@ -5961,6 +6460,7 @@ package_count = 0
                 integrity,
                 tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6022,6 +6522,7 @@ package_count = 0
                 integrity,
                 tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6088,6 +6589,7 @@ package_count = 0
                 integrity: sri_sha512(&good_tarball),
                 tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6104,7 +6606,9 @@ package_count = 0
         assert_eq!(summary.added, vec![react.clone()]);
         assert!(dir.path().join("node_modules/react/index.js").exists());
 
-        let repaired = local_cache.get_tarball(&react).unwrap().unwrap();
+        assert!(local_cache.get_tarball(&react).unwrap().is_none());
+        let shared_cache = PackageCache::new(shared.path().join("cache")).unwrap();
+        let repaired = shared_cache.get_tarball(&react).unwrap().unwrap();
         assert_eq!(repaired, good_tarball);
     }
 
@@ -6134,6 +6638,7 @@ package_count = 0
                 integrity: String::new(),
                 tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6192,6 +6697,7 @@ package_count = 0
                     integrity: react_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: true,
                     dev: false,
                 },
@@ -6200,6 +6706,7 @@ package_count = 0
                     integrity: String::new(),
                     tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: true,
                     dev: false,
                 },
@@ -6254,6 +6761,7 @@ package_count = 0
                 integrity: String::new(),
                 tarball_url: "http://127.0.0.1:9/unreachable.tgz".into(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6321,6 +6829,7 @@ package_count = 0
                 integrity,
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: true,
             }],
@@ -6426,6 +6935,7 @@ package_count = 0
                     integrity: nuxt_kit_integrity,
                     tarball_url: String::new(),
                     deps: vec![semver7.clone()],
+                    peer_deps: vec![],
                     direct: true,
                     dev: false,
                 },
@@ -6434,6 +6944,7 @@ package_count = 0
                     integrity: legacy_tool_integrity,
                     tarball_url: String::new(),
                     deps: vec![semver6.clone()],
+                    peer_deps: vec![],
                     direct: true,
                     dev: false,
                 },
@@ -6442,6 +6953,7 @@ package_count = 0
                     integrity: semver7_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: false,
                     dev: false,
                 },
@@ -6450,6 +6962,7 @@ package_count = 0
                     integrity: semver6_integrity,
                     tarball_url: String::new(),
                     deps: vec![],
+                    peer_deps: vec![],
                     direct: false,
                     dev: false,
                 },
@@ -6560,6 +7073,7 @@ package_count = 0
                 integrity,
                 tarball_url: format!("http://{addr}/react-18.2.0.tgz"),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6614,6 +7128,7 @@ package_count = 0
                 integrity: integrity.clone(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6650,8 +7165,7 @@ package_count = 0
 
         let link_meta = std::fs::symlink_metadata(&vstore_link)
             .unwrap_or_else(|_| panic!("vstore link not found at: {}", vstore_link.display()));
-        assert!(link_meta.file_type().is_symlink());
-        assert_eq!(std::fs::read_link(&vstore_link).unwrap(), cached_root);
+        assert!(link_meta.file_type().is_dir());
         let refs = read_shared_cache_pinned_package_roots(shared.path());
         assert!(
             refs.contains(&canonical_or_original(&cached_root)),
@@ -6703,6 +7217,7 @@ package_count = 0
                 integrity,
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6721,8 +7236,8 @@ package_count = 0
         assert!(installed_file.exists());
         std::fs::remove_dir_all(shared.path().join("packages")).unwrap();
         assert!(
-            !installed_file.exists(),
-            "store-linked install should expose a broken link after manual shared package deletion"
+            installed_file.exists(),
+            "hard-linked install should survive shared cache deletion"
         );
 
         adapter
@@ -6776,6 +7291,7 @@ package_count = 0
                 integrity: integrity.clone(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6880,6 +7396,7 @@ package_count = 0
                 integrity: integrity.clone(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -6925,6 +7442,73 @@ package_count = 0
     }
 
     #[tokio::test]
+    async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing() {
+        let shared = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let entities = PackageId::new(
+            PackageName::new("entities").unwrap(),
+            Version::parse("7.0.1").unwrap(),
+        );
+        let integrity = seed_shared_tarball_with_files(
+            shared.path(),
+            &entities,
+            &[
+                (
+                    "package/package.json",
+                    br#"{"name":"entities","version":"7.0.1","exports":{"./decode":{"require":{"default":"./dist/commonjs/decode.js"}}}}"#.as_slice(),
+                ),
+                ("package/decode.js", b"module.exports = {};\n"),
+                ("package/dist/commonjs/decode.js", b"module.exports = {};\n"),
+            ],
+        );
+        let graph = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: entities.clone(),
+                integrity: integrity.clone(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: true,
+                dev: false,
+            }],
+        };
+        let shared_root = shared_extracted_package_root(shared.path(), &graph.packages[0]);
+        std::fs::create_dir_all(&shared_root).unwrap();
+        std::fs::write(
+            shared_root.join("package.json"),
+            br#"{"name":"entities","version":"7.0.1","exports":{"./decode":{"require":{"default":"./dist/commonjs/decode.js"}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(shared_root.join("decode.js"), b"module.exports = {};\n").unwrap();
+
+        let tarball = PackageCache::new(shared.path().join("cache"))
+            .unwrap()
+            .get_tarball(&entities)
+            .unwrap()
+            .unwrap();
+        let mut marker =
+            expected_extracted_package_marker_from_bytes(&graph.packages[0], &tarball).unwrap();
+        marker.file_count = 0;
+        marker.unpacked_size = 0;
+        marker.file_tree_sha256.clear();
+        write_extracted_package_marker(&shared_root, &marker).unwrap();
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "https://registry.npmjs.org".into(),
+            shared.path().to_path_buf(),
+        );
+        adapter
+            .install(&graph, project.path(), InstallOptions::default())
+            .await
+            .unwrap();
+
+        assert!(project
+            .path()
+            .join("node_modules/entities/dist/commonjs/decode.js")
+            .exists());
+    }
+
+    #[tokio::test]
     async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplete() {
         let old = std::env::var_os("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE");
         std::env::set_var("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE", "1");
@@ -6956,6 +7540,7 @@ package_count = 0
                 integrity: integrity.clone(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             }],
@@ -7091,6 +7676,28 @@ package_count = 0
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    #[test]
+    fn test_prefetch_defaults_are_conservative() {
+        let _guard = env_test_lock().lock().unwrap();
+        let old_resolve = std::env::var_os("MEGAGATE_WEB_RESOLVE_PREFETCH");
+        std::env::remove_var("MEGAGATE_WEB_RESOLVE_PREFETCH");
+
+        assert!(!resolve_prefetch_enabled());
+
+        restore_env_var("MEGAGATE_WEB_RESOLVE_PREFETCH", old_resolve);
+    }
+
+    #[test]
+    fn test_prefetch_flag_can_be_enabled_explicitly() {
+        let _guard = env_test_lock().lock().unwrap();
+        let old_resolve = std::env::var_os("MEGAGATE_WEB_RESOLVE_PREFETCH");
+        std::env::set_var("MEGAGATE_WEB_RESOLVE_PREFETCH", "1");
+
+        assert!(resolve_prefetch_enabled());
+
+        restore_env_var("MEGAGATE_WEB_RESOLVE_PREFETCH", old_resolve);
+    }
+
     fn write_tar_entry(builder: &mut Builder<GzEncoder<std::fs::File>>, path: &str, data: &[u8]) {
         let mut header = Header::new_gnu();
         header.set_size(data.len() as u64);
@@ -7138,7 +7745,9 @@ package_count = 0
                     native::npm_registry::VersionInfo {
                         version: "4.4.3".into(),
                         dependencies: None,
+                        dev_dependencies: None,
                         optional_dependencies: None,
+                        peer_dependencies: None,
                         os: None,
                         cpu: None,
                         dist: None,
@@ -7149,7 +7758,9 @@ package_count = 0
                     native::npm_registry::VersionInfo {
                         version: "4.5.0-canary.20260504T180558".into(),
                         dependencies: None,
+                        dev_dependencies: None,
                         optional_dependencies: None,
+                        peer_dependencies: None,
                         os: None,
                         cpu: None,
                         dist: None,
@@ -7272,11 +7883,21 @@ fn build_graph_from_lockfile(
                 Some(PackageId::new(PackageName::new(d).ok()?, v))
             })
             .collect();
+        let peer_deps: Vec<PackageId> = lp
+            .peer_deps
+            .iter()
+            .filter_map(|d| {
+                let dep_pkg = lockfile.packages.iter().find(|lp| lp.name == *d)?;
+                let v = Version::parse(&dep_pkg.version).ok()?;
+                Some(PackageId::new(PackageName::new(d).ok()?, v))
+            })
+            .collect();
         packages.push(ResolvedPackage {
             id: PackageId::new(dep.name.clone(), version),
             integrity: lp.integrity.clone().unwrap_or_default(),
             tarball_url: String::new(),
             deps,
+            peer_deps,
             direct: manifest.find_dep(dep.name.as_str()).is_some(),
             dev: manifest.dev_dependencies.iter().any(|d| d.name == dep.name),
         });

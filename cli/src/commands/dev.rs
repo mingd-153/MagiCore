@@ -10,11 +10,12 @@ pub async fn run(
     clear: bool,
 ) -> anyhow::Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
-    let host = host.unwrap_or_else(|| "127.0.0.1".to_string());
+    let host = host.unwrap_or_else(|| "localhost".to_string());
     let root = ctx.root().to_path_buf();
 
     info("Starting MegaGate Native Dev Server...");
     info(&format!("Project root: {}", root.display()));
+    info(&format!("Execution profile: {}", ctx.execution_summary()));
 
     match ctx.adapter().name() {
         "web" => {

@@ -213,6 +213,444 @@ Day `core-web` len muc beta nghiem tuc hon bang cach:
     - xau hon ro ret
     - da rollback khoi source
     - khong promotable
+- da chot ma tran cho 2 co che tarball prefetch:
+  - file code:
+    - `adapters/web/src/lib.rs`
+  - thay doi:
+    - them toggle `MEGAGATE_WEB_BATCH_PREFETCH`
+    - them concurrency `MEGAGATE_WEB_BATCH_PREFETCH_CONCURRENCY`
+    - qua trinh doi default:
+      - vong dau:
+        - batch prefetch -> `off`
+        - resolve prefetch -> `on`
+      - sau matrix `N=3`:
+        - batch prefetch -> `off`
+        - resolve prefetch -> `off`
+  - benchmark matrix (`heavy-empty-cache-install-direct`, 1 run):
+    - baseline:
+      - batch `on(8)`, resolve `off`
+      - `benchmark_brutal_results_20260728_141819.md`
+      - mg: `~23.508s`
+    - batch24:
+      - batch `on(24)`, resolve `off`
+      - `benchmark_brutal_results_20260728_141909.md`
+      - mg: `~23.016s`
+    - resolve24:
+      - batch `off`, resolve `on`
+      - `benchmark_brutal_results_20260728_141938.md`
+      - mg: `~19.089s`
+    - both24:
+      - batch `on(24)`, resolve `on`
+      - `benchmark_brutal_results_20260728_142001.md`
+      - mg: `~27.975s`
+    - both off:
+      - `benchmark_brutal_results_20260728_142058.md`
+      - mg: `~21.026s`
+    - default verify sau doi code:
+      - `benchmark_brutal_results_20260728_142157.md`
+      - mg: `~21.607s`
+  - ket luan:
+    - single-run nhin ra `resolve on / batch off` la huong dep nhat
+    - `both on` la huong xau nhat
+    - nhung single-run van chua du trung thuc de goi la default da duoc chung minh
+- da rerun ma tran voi `N=3` de giam nhieu:
+  - baseline:
+    - `benchmark_brutal_results_20260728_142546.md`
+    - mg: `~36.120s ± 3.471s`
+  - batch24:
+    - `benchmark_brutal_results_20260728_142740.md`
+    - mg: `~50.068s ± 4.707s`
+  - resolve24:
+    - `benchmark_brutal_results_20260728_143016.md`
+    - mg: `~33.940s ± 2.763s`
+  - both off:
+    - `benchmark_brutal_results_20260728_143203.md`
+    - mg: `~26.977s ± 2.874s`
+  - doc dung:
+    - khi do nhieu hon, cau hinh nhanh nhat lai la `batch off / resolve off`
+    - `resolve on / batch off` van tot hon hai cau hinh co batch-prefetch, nhung khong con la so 1
+    - vi vay:
+      - `batch prefetch off` van la ket luan giu lai
+      - `resolve prefetch on` chua du bang chung de giu mac dinh trong beta push
+      - default beta da duoc dua ve `batch off / resolve off`
+      - can tiep tuc dao vao download scheduling / metadata -> resolve -> install path truoc khi doi default them lan nua
+  - verify tren binary sau khi dua default ve `both off`:
+    - `benchmark_brutal_results_20260728_143502.md`
+    - mg: `~18.716s`
+  - cach doc dung:
+    - day la 1 single-run dep
+    - khong du de phu dinh matrix `N=3`
+    - nhung no xac nhan default moi khong bi regress tuc thi
+  - guardrail code:
+    - them 2 test policy trong `adapters/web/src/lib.rs`
+      - `test_prefetch_defaults_are_conservative`
+      - `test_prefetch_flags_can_be_enabled_explicitly`
+    - verify:
+      - `cargo test -p mg-web-adapter --lib` -> `52/52`
+    - y nghia:
+      - khoa lai beta default hien tai
+      - tranh viec bi doi ngam boi nhung lan tuning tiep theo ma khong co benchmark ho tro
+  - cache hygiene / security consistency:
+    - speculative tarball paths (`on_batch_resolved`, `spawn_tarball_download`) gio da verify integrity truoc khi ghi vao cache
+    - install path va prefetch path dung chung helper `prepare_verified_tarball_for_cache(...)`
+    - verify:
+      - `cargo test -p mg-web-adapter --lib` -> `52/52`
+    - cach doc dung:
+      - day la fix correctness va cache hygiene
+      - khong tu dong co nghia la cold lane nhanh hon
+  - resolver metadata batch cleanup:
+    - `prefetch_versions(...)` va `prefetch_dependencies(...)` da duoc gom ve dung chung `prefetch_resolution_metadata(...)`
+    - verify:
+      - `cargo test -p mg-web-adapter --lib` -> `52/52`
+      - `cargo test -p mg-resolver` -> `16/16`
+    - benchmark spot-check:
+      - `benchmark_brutal_results_20260728_144313.md`
+      - mg: `~20.286s`
+    - cach doc dung:
+      - day la cleanup tot cho code path
+      - nhung spot-check nay chua chung minh duoc performance win
+  - alias metadata dedupe:
+    - `prefetch_resolution_metadata(...)` gio dedupe theo `source package`
+    - tranh fetch metadata trung khi nhieu alias cung tro ve mot goi that
+    - verify:
+      - them test `test_prefetch_resolution_metadata_dedupes_aliases_by_source_package`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - cach doc dung:
+      - day la mot fix co logic performance ro rang
+      - nhung chua co benchmark lane rieng de dinh luong muc loi
+  - root alias path da duoc sua den noi benchmark duoc:
+    - truoc khi sua:
+      - lane `alias-heavy-empty-cache-install-direct` fail
+      - root alias bi fetch nhu package that (`strip-ansi-a`, `lodash-e`, ...)
+    - sau khi sua:
+      - `resolve(...)` ghi nho alias target tu root manifest ngay tu dau
+      - solver nhan `range` that thay vi giu nguyen spec `npm:...`
+      - benchmark lane moi:
+        - `benchmark_brutal_results_20260728_145320.md`
+        - mg: `~4.972s`
+    - cach doc dung:
+      - day truoc het la bugfix correctness
+      - dong thoi no bien alias-heavy tu mot lane fail thanh mot lane do duoc
+  - profile snapshot cua lane nang nhat:
+    - reproduce truc tiep `heavy-empty-cache-install-direct` voi `MEGAGATE_WEB_PROFILE_INSTALL=1`
+    - ket qua:
+      - `resolve_graph ~8517ms`
+      - `adapter_install ~13289ms`
+      - `prepare_extracted_roots ~13147ms`
+      - pipeline:
+        - `packages=642`
+        - `bytes=104468299`
+        - `download_ms_total=209611`
+        - `extract_ms_total=5255`
+    - doc dung:
+      - nut that khong con nam o tail-end prune/bin/lockfile
+      - extract ton tai nhung khong phai diem dau tien can danh
+      - cold lane van dang bi chi phoi boi:
+        - resolver/metadata
+        - tarball download path
+  - da cat bot local/shared tarball churn o strict cold path:
+    - neu co shared cache:
+      - hit shared cache thi khong copy nguoc ve local tarball cache nua
+      - network download thi ghi thang vao shared cache, bo vong local -> shared
+    - verify:
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark:
+      - truoc:
+        - `benchmark_brutal_results_20260728_144313.md`
+        - mg: `~20.286s`
+      - sau:
+        - `benchmark_brutal_results_20260728_145849.md`
+        - mg: `~19.286s`
+    - cach doc dung:
+      - day la improvement nho nhung that
+      - chung minh local/shared tarball double-write la disk churn co hai
+  - da overlap prefetch versions cua next-wave dependencies trong resolver:
+    - thay doi:
+      - sau `prefetch_dependencies(...)`, resolver bat dau `prefetch_versions(...)` cho next wave
+      - overlap phan nay voi `add_resolution(...)`
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - profile so sanh:
+      - truoc: `solve_total ~10357ms`
+      - sau: `solve_total ~6362ms`
+    - benchmark so sanh:
+      - truoc resolver overlap:
+        - `benchmark_brutal_results_20260728_145849.md`
+        - mg: `~19.286s`
+      - sau resolver overlap:
+        - `benchmark_brutal_results_20260728_150927.md`
+        - mg: `~18.443s`
+    - cach doc dung:
+      - day la mot win lon hon cac cleanup nho truoc do
+      - resolver/metadata van chua xong, nhung da bi cat giam that
+  - retune download concurrency tren baseline moi:
+    - sweep:
+      - `16` -> `benchmark_brutal_results_20260728_151212.md` -> `~19.150s`
+      - `24` -> `benchmark_brutal_results_20260728_151235.md` -> `~17.450s`
+      - `32` -> `benchmark_brutal_results_20260728_151257.md` -> `~19.270s`
+    - doc dung:
+      - `24` van la diem ngot
+      - va tren baseline moi no dang thang ro hon
+      - moc thuc te tot nhat moi cua lane nang nay hien la `~17.450s`
+  - re-test pipeline task pressure tren baseline moi:
+    - `pipeline_task_concurrency=24` -> `~20.326s`
+    - `pipeline_task_concurrency=56` -> `~20.674s`
+    - `pipeline_task_concurrency=80` -> `~23.851s`
+    - so voi baseline dang giu `~17.450s`:
+      - tat ca deu te hon
+    - doc dung:
+      - task-pressure tuning huong nay van la non-promotable
+      - khong nen doi default theo knob nay luc nay
+  - re-test metadata concurrency tren baseline moi:
+    - sweep dau:
+      - `16` -> `~19.902s`
+      - `24` -> `~20.614s`
+      - `32` -> `~18.264s`
+    - run xac nhan `32`:
+      - `benchmark_brutal_results_20260728_152116.md`
+      - `~19.686s`
+    - doc dung:
+      - co tin hieu rang `32` co the co cua
+      - nhung signal chua on dinh
+      - chua nen doi default theo knob nay
+  - da khoa lai lane nang bang `N=3`:
+    - `benchmark_brutal_results_20260728_152537.md`
+    - mg:
+      - mean `~20.413s`
+      - sigma `~2.092s`
+      - range `18.023s .. 21.913s`
+    - doc dung:
+    - single-run `~17.450s` van co gia tri nhu mot diem sang
+    - nhung baseline trung thuc de noi chuyen tiep theo nen la quanh `~20.4s`
+    - lane nay van con nhieu, nen chua du de goi la on dinh product
+  - vong check tiep theo tren binary hien tai:
+    - da them memoization cho optional enqueue decision trong `NpmDependencyProvider`
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark default hien tai (`resolve prefetch off`):
+      - `benchmark_brutal_results_20260728_153044.md`
+      - mg: `~20.201s`
+    - benchmark ep `MEGAGATE_WEB_RESOLVE_PREFETCH=1` quay lai:
+      - `benchmark_brutal_results_20260728_153148.md`
+      - mg: `~24.720s`
+    - cach doc dung:
+      - optional enqueue memoization an toan, nhung khong phai breakthrough
+      - `resolve prefetch on` van la huong sai tren lane nay:
+        - `resolve_graph` co the dep hon chut
+        - nhung `prepare_extracted_roots` va tong cold install bi keo xau di rat ro
+    - ket luan:
+      - giu `resolve prefetch` mac dinh la `off`
+      - tiep tuc dao vao:
+        - metadata/resolve first-run
+        - download-dominated install phase
+        - overlap nao co loi that, thay vi overlap dep tren tung profile cuc bo
+  - da doi hot metadata cache sang `Arc<PackageMetadata>`:
+    - file code:
+      - `adapters/web/src/lib.rs`
+    - thay doi:
+      - `MetadataCache` khong clone full metadata payload cho moi cache hit nua
+      - `metadata(...)`, `prefetch_resolution_metadata(...)`, va fallback loader di theo `Arc` tren hot path
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark:
+      - `benchmark_brutal_results_20260728_153516.md`
+      - mg: `~20.551s`
+    - cach doc dung:
+      - day la fix dung huong ve memory/copy pressure
+      - nhung no chua tao duoc cu nhay wall-clock ro net o cold lane
+      - resolver front-half giu duoc muc dep hon, nhung install/materialization van la ben nan hon
+    - ket luan:
+      - giu thay doi nay
+      - khong duoc marketing nhu mot win benchmark lon
+      - tiep tuc tap trung vao:
+        - first-run metadata scheduling
+        - download/extract/materialization pressure
+  - da re-test `pipeline task concurrency` tren binary hien tai:
+    - config:
+      - lane `heavy-empty-cache-install-direct`
+      - `download_concurrency=24`
+    - ket qua:
+      - `pipeline_task_concurrency=24`
+        - `benchmark_brutal_results_20260728_153647.md`
+        - mg: `~33.218s`
+      - `pipeline_task_concurrency=32`
+        - `benchmark_brutal_results_20260728_153651.md`
+        - mg: `~30.754s`
+      - so voi current default-band:
+        - `benchmark_brutal_results_20260728_153044.md`
+        - mg: `~20.201s`
+      - so voi vong `Arc` vua xong:
+        - `benchmark_brutal_results_20260728_153516.md`
+        - mg: `~20.551s`
+    - cach doc dung:
+      - day khong phai dao dong nhe
+      - siet task concurrency o install pipeline van pha lane nay rat nang
+      - huong nay tiep tuc la huong sai tren binary hien tai
+    - ket luan:
+      - giu default hien tai
+      - dung dao them vao knob nay luc nay
+  - da cat bot resolver-side version copy pressure:
+    - file code:
+      - `core/crates/mg-resolver/src/solver/mod.rs`
+    - thay doi:
+      - `prefetched_versions` gio dung `Arc<[Version]>`
+      - cac phase chon version tai resolver tai su dung slice da prefetch thay vi clone lai ca `Vec<Version>`
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark:
+      - `benchmark_brutal_results_20260728_154349.md`
+      - mg: `~19.278s`
+    - cach doc dung:
+      - day la mot spot-run dep hon ro so voi band `~20.2s - ~20.5s` ngay truoc do
+      - no cho thay reducer copy pressure trong resolver co tac dung that
+      - nhung van chua du de doi sang loi khang dinh product-ready
+    - ket luan:
+      - giu thay doi nay
+      - can rerun `N=3` tren cung lane truoc khi claim manh hon
+  - da rerun `N=3` cho lane nay va ket qua khong giu duoc moc dep:
+    - `benchmark_brutal_results_20260728_154729.md`
+    - mg:
+      - mean `~23.487s`
+      - sigma `~0.316s`
+      - range `23.127s .. 23.714s`
+    - so voi spot-run:
+      - `benchmark_brutal_results_20260728_154349.md`
+      - mg: `~19.278s`
+    - cach doc dung:
+      - cleanup `Arc<[Version]>` van nen giu
+      - nhung run `~19.278s` khong duoc xem la baseline moi
+      - lane repeated hien tai van o vung `~23.5s`
+      - dieu nay xac nhan bottleneck con lai van o pressure cua network/materialization, khong phai chi do resolver-side copy
+    - ket luan:
+      - khong duoc dung `~19.278s` de noi chuyen product
+      - baseline trung thuc cho vong toi uu tiep theo phai la `~23.487s ± 0.316s`
+  - da thu them mot resolver-side copy reduction o dependency path:
+    - file code:
+      - `core/crates/mg-resolver/src/solver/mod.rs`
+    - thay doi:
+      - dependency prefetch results doi sang `Arc<[ResolvedDep]>`
+      - `add_resolution(...)` doc dependency slice, khong clone lai `Vec<ResolvedDep>` moi lan
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark:
+      - `benchmark_brutal_results_20260728_155321.md`
+      - mg: `~24.787s`
+    - cach doc dung:
+      - correctness van sach
+      - nhung performance khong thang, thuc te con xau hon baseline repeated hien tai
+    - ket luan:
+      - dung dao them vao resolver-side micro-copy tuning luc nay
+      - chuyen trong tam vong toi uu tiep theo sang strict-layout materialization va duong download -> materialize
+  - da overlap shared tarball-cache persistence voi extraction tren cold strict path:
+    - file code:
+      - `adapters/web/src/lib.rs`
+    - thay doi:
+      - `TarballFetchResult.bytes` doi sang `Arc<[u8]>`
+      - voi strict/shared-cache cold path, shared tarball cache khong bi ghi xong roi moi extract nua
+      - warm shared cache duoc day song song voi extraction
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark:
+      - `benchmark_brutal_results_20260728_155700.md`
+      - mg: `~18.792s`
+    - cach doc dung:
+      - day la mot spot-run dep va hop logic voi ly thuyet toi uu
+      - no tan cong thang vao cold critical path, khac voi cac micro-tuning resolver gan day
+      - nhung van chi la 1 run
+    - ket luan:
+      - giu thay doi nay
+      - can rerun `N=3` ngay tren cung lane truoc khi xem day la baseline moi
+  - da rerun `N=3` cho thay doi overlap nay:
+    - `benchmark_brutal_results_20260728_155901.md`
+    - mg:
+      - mean `~22.138s`
+      - sigma `~1.811s`
+      - range `20.079s .. 23.480s`
+    - so voi repeated baseline truoc:
+      - `benchmark_brutal_results_20260728_154729.md`
+      - `~23.487s ± 0.316s`
+    - so voi spot-run dep:
+      - `benchmark_brutal_results_20260728_155700.md`
+      - `~18.792s`
+    - cach doc dung:
+      - overlap nay co loi that khi do lap lai
+      - nhung muc loi thuc te nho hon kha nhieu so voi single-run dep
+      - lane van con nhieu
+    - ket luan:
+      - giu thay doi nay
+      - baseline repeated trung thuc moi cho setup nay la `~22.138s ± 1.811s`
+      - khong duoc dung `~18.792s` lam con so de noi chuyen product
+  - da gom shared `PackageCache` handle ngay dau pipeline:
+    - file code:
+      - `adapters/web/src/lib.rs`
+    - thay doi:
+      - `pipeline_download_and_extract(...)` resolve shared `PackageCache` mot lan
+      - shared tarball read/persist dung lai handle nay thay vi goi `shared_cache.package_cache()` cho tung package
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark:
+      - `benchmark_brutal_results_20260728_160443.md`
+      - mg: `~22.258s`
+    - cach doc dung:
+      - day la cleanup dung huong va giam setup lap lai
+      - nhung no chua du de keo cold lane di xa hon mot cach co y nghia
+    - ket luan:
+      - giu cleanup nay
+      - khong tinh no la moc performance readiness
+      - tiep tuc danh thang vao extraction/materialization pressure
+  - da day phan wait cua shared-cache persist ra sau materialization:
+    - file code:
+      - `adapters/web/src/lib.rs`
+    - thay doi:
+      - `pipeline_download_and_extract(...)` tra ve persist handles rieng
+      - strict-layout install khong doi shared-cache warming ben trong tung extraction task nua
+      - wait persist duoc day xuong sau materialization
+    - verify:
+      - `cargo test -p mg-resolver` -> `16/16`
+      - `cargo test -p mg-web-adapter --lib` -> `53/53`
+    - benchmark:
+      - `benchmark_brutal_results_20260728_161356.md`
+      - mg: `~21.397s`
+    - cach doc dung:
+      - day la them mot spot-run tot trong cung huong toi uu strict-layout
+      - nhung van chua du de thay baseline repeated trung thuc bang mot con so spot-run
+    - ket luan:
+      - giu thay doi nay
+      - tiep tuc dung repeated baseline lam chuan de noi chuyen readiness cho toi khi co `N=3` moi
+  - da rerun `N=3` cho line strict-layout nay:
+    - `benchmark_brutal_results_20260728_161833.md`
+    - mg:
+      - mean `~19.538s`
+      - sigma `~1.819s`
+      - range `18.487s .. 21.639s`
+    - so voi repeated baseline truoc:
+      - `benchmark_brutal_results_20260728_155901.md`
+      - `~22.138s ± 1.811s`
+    - cach doc dung:
+      - day la mot repeated improvement that
+      - lane van con variance va benchmark con canh bao outlier
+      - nhung tam baseline repeated da giam ro
+    - ket luan:
+      - giu toan bo chuoi toi uu strict-layout vua lam
+      - baseline repeated trung thuc moi cho setup nay la `~19.538s ± 1.819s`
+      - day van chua du de tuyen bo product-ready, nhung la mot buoc tien that
+  - da xuat hien 1 run le rat xau sau do:
+    - `benchmark_brutal_results_20260728_162142.md`
+    - mg: `~38.176s`
+    - cach doc dung:
+      - run nay nam rat xa khoi repeated baseline hien tai
+      - profile cho thay mot dot spike rong o download/network path, khong giong mot regression gon va lap lai duoc
+      - vi vay no khong duoc phep thay repeated baseline `~19.538s ± 1.819s`
+    - ket luan:
+      - coi day la outlier
+      - chi doi baseline repeated neu mot `N=3` moi lap lai duoc regression
 
 ## Doc benchmark moi nhat
 
@@ -271,6 +709,13 @@ Day `core-web` len muc beta nghiem tuc hon bang cach:
   - tuyen `first materialization` van can dao tiep, nhung khong theo huong staging/prune cleanup vua fail
   - tuyen `strict dependency-linking` can dao tiep, nhung khong theo huong leaf mkdir deferral vua fail
   - tuyen `fresh virtual-store fast path` khong nen dao lai theo cach vua thu
+  - matrix `N=3` vua xac nhan:
+    - `batch off / resolve off` dang thang trong lane nay
+    - `resolve on / batch off` khong con du co so de goi la default toi uu
+  - huong dao tiep theo:
+    - metadata -> resolve serialization cost o first-run
+    - download scheduling trong install phase
+    - overlap hop ly ma khong tu canh tranh cache/bandwidth
 
 ## Nguyen tac
 
@@ -278,3 +723,38 @@ Day `core-web` len muc beta nghiem tuc hon bang cach:
 - khong fake security
 - khong claim "hon Bun/pnpm" neu so lieu hien tai chua chung minh
 - sua o source sinh template truoc, sau do sua output template da ton tai
+
+## Tuesday, July 28, 2026 16:26 - strict-layout scoped regression duoc sua, nhung heavy cold lane chua co break moi
+
+- phat hien:
+  - mot toi uu strict-layout moi vua lam gãy scoped-package dependency linking
+  - root cause:
+    - dung `parent()` tren `strict_vstore_package_dir(...)`
+    - voi package scoped, no tro thanh `.../node_modules/@scope` thay vi `.../node_modules`
+  - bieu hien:
+    - nested dependency cua `@nuxt/kit` khong duoc materialize dung cho
+    - test `test_install_materializes_nested_conflicting_dependency_versions` fail
+- da sua:
+  - them `strict_vstore_node_modules_dir(...)`
+  - strict dependency-link phase quay lai dung dung muc `node_modules` cua virtual store
+  - cac toi uu an toan van duoc giu:
+    - overlap shared tarball-cache persist voi extraction
+    - doi shared-cache persist wait toi sau materialization
+    - skip recreate symlink neu target da dung
+- re-verify:
+  - `cargo test -p mg-web-adapter --lib` -> `53 passed`
+  - `cargo test -p mg-resolver` -> `16 passed`
+- benchmark moi:
+  - `benchmark_brutal_results_20260728_162642.md`
+  - lane `heavy-empty-cache-install-direct`
+  - mg: `~21.995s +- 1.390s`
+  - range: `20.398s .. 22.938s`
+- cach doc:
+  - ket qua nay khong pha repeated baseline tot nhat `~19.538s +- 1.819s`
+  - vi vay:
+    - regression correctness da duoc xu ly
+    - nhung cold wall-clock van chua duoc day len muc product claim
+  - uu tien tiep theo van khong doi:
+    - metadata first-run
+    - download scheduling
+    - first materialization cho graph nang

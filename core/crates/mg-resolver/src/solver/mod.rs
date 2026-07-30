@@ -16,9 +16,10 @@
 pub mod pubgrub;
 
 use async_trait::async_trait;
-use futures_util::future::join_all;
+use futures_util::future::{join, join_all};
 use mg_types::{PackageId, PackageName, Version, VersionRange};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub use pubgrub::{Cause, Incompatibility, PubGrubSolver, SolveError as PubGrubSolveError, Term};
@@ -94,22 +95,44 @@ pub trait DependencyProvider: Send + Sync {
         &self,
         packages: &[PackageName],
     ) -> Result<Vec<(PackageName, Vec<Version>)>, DependencyError> {
-        let mut results = Vec::with_capacity(packages.len());
-        for name in packages {
-            results.push((name.clone(), self.get_versions(name).await?));
+        if packages.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(results)
+        // Fire all version lookups concurrently — eliminates the N×latency serial bottleneck.
+        let futures: Vec<_> = packages
+            .iter()
+            .map(|name| {
+                let name = name.clone();
+                async move {
+                    let versions = self.get_versions(&name).await?;
+                    Ok::<_, DependencyError>((name, versions))
+                }
+            })
+            .collect();
+        let results = join_all(futures).await;
+        results.into_iter().collect()
     }
 
     async fn prefetch_dependencies(
         &self,
         ids: &[PackageId],
     ) -> Result<Vec<(PackageId, Vec<ResolvedDep>)>, DependencyError> {
-        let mut results = Vec::with_capacity(ids.len());
-        for id in ids {
-            results.push((id.clone(), self.get_dependencies(id).await?));
+        if ids.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(results)
+        // Fire all dependency fetches concurrently.
+        let futures: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                let id = id.clone();
+                async move {
+                    let deps = self.get_dependencies(&id).await?;
+                    Ok::<_, DependencyError>((id, deps))
+                }
+            })
+            .collect();
+        let results = join_all(futures).await;
+        results.into_iter().collect()
     }
 
     /// Called by solver after each batch resolves exact package versions.
@@ -354,10 +377,12 @@ impl Resolver {
         matches.into_iter().max()
     }
 
-    fn versions_to_map(entries: Vec<(PackageName, Vec<Version>)>) -> HashMap<String, Vec<Version>> {
+    fn versions_to_map(
+        entries: Vec<(PackageName, Vec<Version>)>,
+    ) -> HashMap<String, Arc<[Version]>> {
         entries
             .into_iter()
-            .map(|(name, versions)| (name.as_str().to_string(), versions))
+            .map(|(name, versions)| (name.as_str().to_string(), Arc::<[Version]>::from(versions)))
             .collect()
     }
 
@@ -453,18 +478,18 @@ impl Resolver {
                         message: format!("invalid override '{}': {}", override_spec, e),
                     })?;
                     let versions = if let Some(prefetched) = prefetched_versions.get(&name_str) {
-                        prefetched.clone()
+                        Arc::clone(prefetched)
                     } else {
-                        self.provider
-                            .get_versions(&name)
-                            .await
-                            .map_err(|e| SolveError {
+                        Arc::<[Version]>::from(self.provider.get_versions(&name).await.map_err(
+                            |e| SolveError {
                                 message: format!("versions fetch failed for '{}': {}", name_str, e),
-                            })?
+                            },
+                        )?)
                     };
-                    if let Some(v) = Self::select_best_version(&versions, &oc, override_spec)
-                        .or_else(|| versions.iter().filter(|v| v.pre.is_none()).cloned().max())
-                        .or_else(|| versions.iter().cloned().max())
+                    if let Some(v) =
+                        Self::select_best_version(versions.as_ref(), &oc, override_spec)
+                            .or_else(|| versions.iter().filter(|v| v.pre.is_none()).cloned().max())
+                            .or_else(|| versions.iter().cloned().max())
                     {
                         resolved.insert(name_str.clone(), v.clone());
                         resolved_versions.insert((name_str.clone(), v.clone()));
@@ -479,17 +504,18 @@ impl Resolver {
                         continue;
                     }
                     let versions = if let Some(prefetched) = prefetched_versions.get(&name_str) {
-                        prefetched.clone()
+                        Arc::clone(prefetched)
                     } else {
-                        self.provider
-                            .get_versions(&name)
-                            .await
-                            .map_err(|e| SolveError {
+                        Arc::<[Version]>::from(self.provider.get_versions(&name).await.map_err(
+                            |e| SolveError {
                                 message: format!("cannot fetch versions for '{}': {}", name_str, e),
-                            })?
+                            },
+                        )?)
                     };
 
-                    if let Some(other) = Self::select_best_version(&versions, &constraint, &spec) {
+                    if let Some(other) =
+                        Self::select_best_version(versions.as_ref(), &constraint, &spec)
+                    {
                         let key = (name_str.clone(), other.clone());
                         if !resolved_versions.contains(&key) {
                             resolved_versions.insert(key);
@@ -501,16 +527,15 @@ impl Resolver {
 
                 // Phase 3: fresh resolve
                 let versions = if let Some(prefetched) = prefetched_versions.get(&name_str) {
-                    prefetched.clone()
+                    Arc::clone(prefetched)
                 } else {
-                    self.provider
-                        .get_versions(&name)
-                        .await
-                        .map_err(|e| SolveError {
+                    Arc::<[Version]>::from(self.provider.get_versions(&name).await.map_err(
+                        |e| SolveError {
                             message: format!("cannot fetch versions for '{}': {}", name_str, e),
-                        })?
+                        },
+                    )?)
                 };
-                let version = Self::select_best_version(&versions, &constraint, &spec);
+                let version = Self::select_best_version(versions.as_ref(), &constraint, &spec);
 
                 match version {
                     Some(v) => {
@@ -547,34 +572,72 @@ impl Resolver {
                     .map_err(|e| SolveError {
                         message: format!("on_batch_resolved hook failed: {e}"),
                     })?;
-                let prefetched_dependencies: HashMap<PackageId, Vec<ResolvedDep>> =
-                    dependency_results.into_iter().collect();
-
+                let prefetched_dependencies: HashMap<PackageId, Arc<[ResolvedDep]>> =
+                    dependency_results
+                        .into_iter()
+                        .map(|(id, deps)| (id, Arc::<[ResolvedDep]>::from(deps)))
+                        .collect();
+                let mut next_prefetch_seen = HashSet::new();
+                let next_prefetch_names: Vec<PackageName> = prefetched_dependencies
+                    .values()
+                    .flat_map(|deps| deps.iter())
+                    .filter_map(|dep| {
+                        let name = dep.package.as_str().to_string();
+                        if prefetched_versions.contains_key(&name)
+                            || !next_prefetch_seen.insert(name)
+                        {
+                            None
+                        } else {
+                            Some(dep.package.clone())
+                        }
+                    })
+                    .collect();
                 let add_resolution_started_at = Instant::now();
-                for (name, name_str, version) in selected {
-                    let pid = PackageId::new(name.clone(), version.clone());
-                    let deps =
-                        prefetched_dependencies
+                let add_resolution_future = async {
+                    let mut local_resolutions = Vec::new();
+                    let mut local_queue = VecDeque::new();
+                    for (name, name_str, version) in selected {
+                        let pid = PackageId::new(name.clone(), version.clone());
+                        let deps = prefetched_dependencies
                             .get(&pid)
-                            .cloned()
                             .ok_or_else(|| SolveError {
                                 message: format!(
                                     "dependency prefetch missing result for '{}'",
                                     pid
                                 ),
                             })?;
-                    Self::add_resolution(
-                        &mut resolutions,
-                        &name,
-                        &name_str,
-                        version,
-                        deps,
-                        self.provider.as_ref(),
-                        &mut queue,
-                    )
-                    .await?;
-                }
+                        Self::add_resolution(
+                            &mut local_resolutions,
+                            &name,
+                            &name_str,
+                            version,
+                            deps.as_ref(),
+                            self.provider.as_ref(),
+                            &mut local_queue,
+                        )
+                        .await?;
+                    }
+                    Ok::<_, SolveError>((local_resolutions, local_queue))
+                };
+                let (add_resolution_result, prefetched_next_result) =
+                    if next_prefetch_names.is_empty() {
+                        (add_resolution_future.await, Ok(Vec::new()))
+                    } else {
+                        join(
+                            add_resolution_future,
+                            self.provider.prefetch_versions(&next_prefetch_names),
+                        )
+                        .await
+                    };
+                let (new_resolutions, new_queue) = add_resolution_result?;
+                resolutions.extend(new_resolutions);
+                queue.extend(new_queue);
                 profile.mark("add_resolution", add_resolution_started_at);
+                prefetched_versions.extend(Self::versions_to_map(prefetched_next_result.map_err(
+                    |e| SolveError {
+                        message: format!("next-wave prefetch failed: {e}"),
+                    },
+                )?));
             }
             profile.mark("batch_total", batch_started_at);
         }
@@ -589,7 +652,7 @@ impl Resolver {
         name: &PackageName,
         _name_str: &str,
         version: Version,
-        deps: Vec<ResolvedDep>,
+        deps: &[ResolvedDep],
         provider: &dyn DependencyProvider,
         queue: &mut VecDeque<(PackageName, String)>,
     ) -> Result<(), SolveError> {
@@ -602,7 +665,6 @@ impl Resolver {
             .iter()
             .map(|d| (d.package.as_str().to_string(), d.spec.clone()))
             .collect();
-
         let enqueue_results = join_all(deps.iter().map(|dep| provider.should_enqueue(dep))).await;
         for (dep, should_enqueue) in deps.iter().zip(enqueue_results) {
             if should_enqueue.map_err(|e| SolveError {

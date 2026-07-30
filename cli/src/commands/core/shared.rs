@@ -873,6 +873,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
                 })
                 .collect::<Result<Vec<_>>>()?;
             Ok(ResolvedPackage {
+                peer_deps: vec![],
                 id: PackageId::new(name, version),
                 integrity: pkg.integrity.clone().unwrap_or_default(),
                 tarball_url: String::new(),
@@ -1088,6 +1089,7 @@ mod tests {
                 integrity: String::new(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: false,
                 dev: false,
             }],
@@ -1098,6 +1100,7 @@ mod tests {
                 integrity: "sha512-test".into(),
                 tarball_url: "https://registry.example/zod.tgz".into(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: true,
             }],
@@ -1281,4 +1284,18 @@ fn megagate_global_package_roots() -> Vec<PathBuf> {
         );
     }
     roots
+}
+
+pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
+    if core_type != "web" {
+        return false;
+    }
+    let env_val = std::env::var("MEGAGATE_WEB_STRICT_LAYOUT")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase());
+    match env_val.as_deref() {
+        Some("1" | "true" | "yes" | "on") => false,
+        Some(_) => true,
+        None => true,
+    }
 }
