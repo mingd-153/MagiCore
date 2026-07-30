@@ -6,20 +6,6 @@ pub fn available_cores() -> Vec<(&'static str, &'static str)> {
     let mut cores = Vec::new();
     #[cfg(feature = "web")]
     cores.push(("web", "🌐  Web application"));
-    #[cfg(feature = "game")]
-    cores.push(("game", "🎮  Game"));
-    #[cfg(feature = "ai")]
-    cores.push(("ai", "🤖  AI agent / ML project"));
-    #[cfg(feature = "clo")]
-    cores.push(("clo", "☁️   Cloud infrastructure"));
-    #[cfg(feature = "cicd")]
-    cores.push(("cicd", "🔄  CI/CD pipeline"));
-    #[cfg(feature = "iot")]
-    cores.push(("iot", "🔌  IoT / Embedded device"));
-    #[cfg(feature = "app")]
-    cores.push(("app", "📱  Mobile / Desktop app"));
-    #[cfg(feature = "lib")]
-    cores.push(("lib", "📦  Library"));
     cores
 }
 

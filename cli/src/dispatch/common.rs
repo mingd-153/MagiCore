@@ -11,7 +11,7 @@ pub async fn dispatch_common(command: CommonCommand, core: Option<&str>) -> Resu
         CommonCommand::Dev { host, port, clear } => {
             commands::dev::run(core, host, port, clear).await
         }
-        CommonCommand::Build => commands::build::run(core).await,
+        CommonCommand::Build { target } => commands::build::run(core, target).await,
         CommonCommand::Start => commands::start::run(core).await,
         CommonCommand::Exec { command, args } => commands::exec::run(core, command, args),
         CommonCommand::Info { package, json } => commands::info::run(package, json).await,

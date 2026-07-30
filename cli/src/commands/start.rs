@@ -20,6 +20,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
         println!("🚀 {}", "MegaGate Production Server".bold().magenta());
     }
     info(&format!("Project root: {}", root.display()));
+    info(&format!("Execution profile: {}", ctx.execution_summary()));
 
     match ctx.adapter().name() {
         "web" => {
@@ -43,7 +44,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
             };
 
             info(&format!(
-                "Serving directory '{}' → http://127.0.0.1:{}",
+                "Serving directory '{}' -> http://localhost:{}",
                 dist_dir.file_name().unwrap_or_default().to_string_lossy(),
                 fe_port
             ));
@@ -58,12 +59,12 @@ pub async fn run(core: Option<&str>) -> Result<()> {
                 // Add automatic compression (gzip/brotli/deflate)
                 .layer(CompressionLayer::new());
 
-            let bind_addr = format!("127.0.0.1:{}", fe_port);
+            let bind_addr = format!("localhost:{}", fe_port);
             let listener = TcpListener::bind(&bind_addr).await?;
 
             success(&format!(
-                "Production Server running natively on http://{}",
-                bind_addr
+                "Production Server running natively on http://localhost:{}",
+                fe_port
             ));
             axum::serve(listener, app).await?;
 

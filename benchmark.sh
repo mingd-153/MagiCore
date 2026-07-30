@@ -17,6 +17,8 @@ BENCH_RUNS="${BENCH_RUNS:-5}"
 BENCH_WARMUP="${BENCH_WARMUP:-1}"
 BENCH_SHOW_OUTPUT="${BENCH_SHOW_OUTPUT:-0}"
 MG_BENCH_QUIET="${MG_BENCH_QUIET:-0}"
+BENCH_ALLOW_NETWORK="${BENCH_ALLOW_NETWORK:-1}"
+BENCH_SEED_CACHE="${BENCH_SEED_CACHE:-0}"
 DEV_TIMEOUT_SECONDS="${DEV_TIMEOUT_SECONDS:-12}"
 START_TIMEOUT_SECONDS="${START_TIMEOUT_SECONDS:-12}"
 BACKEND_TIMEOUT_SECONDS="${BACKEND_TIMEOUT_SECONDS:-90}"
@@ -39,6 +41,8 @@ ALL_LANES=(
   remove-single
   remove-single-steady
   remove-single-mutate-only
+  update-web
+  audit-web
   list
   why
   build
@@ -49,7 +53,9 @@ ALL_LANES=(
   mg-create-web-rich
   heavy-cold-install
   heavy-empty-cache-install
+  ultra-heavy-empty-cache-install
   heavy-empty-cache-install-direct
+  alias-heavy-empty-cache-install-direct
   heavy-warm-install
   heavy-build
   heavy-dev-startup
@@ -73,9 +79,12 @@ SMOKE_LANES=(
   mg-create-web-rich
   heavy-cold-install
   heavy-empty-cache-install-direct
+  alias-heavy-empty-cache-install-direct
   backend-go-echo
 )
-MG_ONLY_LANES=(mg-create-web mg-create-web-rich heavy-empty-cache-install-direct backend-go-echo backend-rust-axum backend-python-fastapi backend-java-spring native-go-echo-baseline native-rust-axum-baseline native-python-fastapi-baseline native-java-spring-baseline)
+MG_ONLY_LANES=(mg-create-web mg-create-web-rich update-web audit-web heavy-empty-cache-install-direct alias-heavy-empty-cache-install-direct backend-go-echo backend-rust-axum backend-python-fastapi backend-java-spring native-go-echo-baseline native-rust-axum-baseline native-python-fastapi-baseline native-java-spring-baseline)
+ONLINE_REQUIRED_LANES=(cold-online-registry add-single add-single-steady add-single-mutate-only add-multiple update-web audit-web heavy-empty-cache-install ultra-heavy-empty-cache-install heavy-empty-cache-install-direct alias-heavy-empty-cache-install-direct backend-go-echo native-go-echo-baseline backend-rust-axum native-rust-axum-baseline backend-python-fastapi native-python-fastapi-baseline backend-java-spring native-java-spring-baseline)
+SEEDABLE_CACHE_LANES=(add-single add-single-steady add-single-mutate-only add-multiple remove-single remove-single-steady remove-single-mutate-only update-web audit-web)
 
 cleanup() {
     if [[ "$KEEP_TMP_ROOT" == "1" || "$INTERRUPTED" == "1" ]]; then
@@ -165,6 +174,8 @@ lane_title() {
         remove-single) echo "REMOVE SINGLE" ;;
         remove-single-steady) echo "REMOVE SINGLE STEADY" ;;
         remove-single-mutate-only) echo "REMOVE SINGLE MUTATE ONLY" ;;
+        update-web) echo "UPDATE WEB" ;;
+        audit-web) echo "AUDIT WEB" ;;
         list) echo "LIST" ;;
         why) echo "WHY" ;;
         build) echo "BUILD" ;;
@@ -175,7 +186,9 @@ lane_title() {
         mg-create-web-rich) echo "MG CREATE WEB RICH" ;;
         heavy-cold-install) echo "HEAVY COLD INSTALL" ;;
         heavy-empty-cache-install) echo "HEAVY EMPTY CACHE INSTALL" ;;
+        ultra-heavy-empty-cache-install) echo "ULTRA HEAVY EMPTY CACHE INSTALL" ;;
         heavy-empty-cache-install-direct) echo "HEAVY EMPTY CACHE INSTALL DIRECT" ;;
+        alias-heavy-empty-cache-install-direct) echo "ALIAS HEAVY EMPTY CACHE INSTALL DIRECT" ;;
         heavy-warm-install) echo "HEAVY WARM INSTALL" ;;
         heavy-build) echo "HEAVY BUILD" ;;
         heavy-dev-startup) echo "HEAVY DEV STARTUP" ;;
@@ -193,6 +206,14 @@ lane_title() {
 
 is_mg_only_lane() {
     contains_item "$1" "${MG_ONLY_LANES[@]}"
+}
+
+is_online_required_lane() {
+    contains_item "$1" "${ONLINE_REQUIRED_LANES[@]}"
+}
+
+is_seedable_cache_lane() {
+    contains_item "$1" "${SEEDABLE_CACHE_LANES[@]}"
 }
 
 preflight() {
@@ -375,6 +396,155 @@ create_heavy_fixture() {
     cp -R "$ROOT_DIR/tools/core-web-lab/fixtures/heavy-web" "$dir"
 }
 
+create_ultra_heavy_fixture() {
+    local src="$ROOT_DIR/tools/core-web-lab/fixtures/heavy-web"
+    local dir="$TMP_ROOT/fixtures/ultra-heavy-web"
+    cp -R "$src" "$dir"
+    python3 - "$dir/package.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    pkg = json.load(f)
+deps = pkg.setdefault("dependencies", {})
+for idx in range(1, 13):
+    deps[f"strip-ansi-x{idx}"] = "npm:strip-ansi@^6.0.1"
+for idx in range(1, 13):
+    deps[f"lodash-x{idx}"] = "npm:lodash@^4.17.21"
+for idx in range(1, 9):
+    deps[f"axios-x{idx}"] = "npm:axios@^1.9.0"
+for idx in range(1, 7):
+    deps[f"zod-x{idx}"] = "npm:zod@^4.0.17"
+deps["@tanstack/react-query"] = "^5.85.5"
+deps["@tanstack/react-table"] = "^8.21.3"
+deps["rxjs"] = "^7.8.2"
+deps["immer"] = "^10.1.1"
+deps["react-use"] = "^17.6.0"
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(pkg, f, indent=2)
+    f.write("\n")
+PY
+}
+
+create_alias_heavy_fixture() {
+    local dir="$TMP_ROOT/fixtures/alias-heavy-web"
+    mkdir -p "$dir/src"
+    cat >"$dir/package.json" <<'EOF'
+{
+  "name": "bench-alias-heavy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4315",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4415"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^7.0.6",
+    "strip-ansi-a": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-b": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-c": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-d": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-e": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-f": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-g": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-h": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-i": "npm:strip-ansi@^6.0.1",
+    "strip-ansi-j": "npm:strip-ansi@^6.0.1",
+    "lodash-a": "npm:lodash@^4.17.21",
+    "lodash-b": "npm:lodash@^4.17.21",
+    "lodash-c": "npm:lodash@^4.17.21",
+    "lodash-d": "npm:lodash@^4.17.21",
+    "lodash-e": "npm:lodash@^4.17.21",
+    "lodash-f": "npm:lodash@^4.17.21",
+    "lodash-g": "npm:lodash@^4.17.21",
+    "lodash-h": "npm:lodash@^4.17.21",
+    "axios-a": "npm:axios@^1.9.0",
+    "axios-b": "npm:axios@^1.9.0",
+    "axios-c": "npm:axios@^1.9.0",
+    "axios-d": "npm:axios@^1.9.0",
+    "zod-a": "npm:zod@^4.0.17",
+    "zod-b": "npm:zod@^4.0.17",
+    "zod-c": "npm:zod@^4.0.17"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.8.3"
+  }
+}
+EOF
+    cat >"$dir/mg.toml" <<'EOF'
+name = "bench-alias-heavy"
+version = "0.1.0"
+ecosystem = "web"
+EOF
+    cat >"$dir/tsconfig.json" <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true
+  },
+  "include": ["src"]
+}
+EOF
+    cat >"$dir/index.html" <<'EOF'
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MegaGate Alias Bench</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+EOF
+    cat >"$dir/src/main.tsx" <<'EOF'
+import React from "react";
+import ReactDOM from "react-dom/client";
+
+function App() {
+  return (
+    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontFamily: "Inter, sans-serif" }}>
+      <div>
+        <h1>MegaGate alias benchmark fixture</h1>
+        <p>Alias-heavy metadata path.</p>
+      </div>
+    </main>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+EOF
+    cat >"$dir/vite.config.ts" <<'EOF'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()]
+});
+EOF
+}
+
 create_monorepo_fixture() {
     local dir="$TMP_ROOT/fixtures/base-mono"
     mkdir -p "$dir/apps/web/src" "$dir/packages/ui/src" "$dir/packages/config"
@@ -433,6 +603,8 @@ create_fixtures() {
     mkdir -p "$TMP_ROOT/fixtures"
     create_base_fixture
     create_heavy_fixture
+    create_ultra_heavy_fixture
+    create_alias_heavy_fixture
     create_monorepo_fixture
     local pm
     for pm in "${SELECTED_PMS[@]}"; do
@@ -613,6 +785,53 @@ base_lane="\${lane#prepare-}"
 workdir="\$TMP_ROOT/work/\$pm/\$base_lane"
 
 case "\$lane" in
+  seed-cache-add-single)
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd install --core web --ignore-scripts >/dev/null && mg_cmd add dayjs --core web --no-install >/dev/null || true ;;
+      bun) bun install >/dev/null && bun add dayjs --dry-run >/dev/null || true ;;
+      pnpm) pnpm install --ignore-scripts >/dev/null && pnpm add dayjs --lockfile-only --ignore-scripts >/dev/null || true ;;
+      npm) npm install >/dev/null && npm install dayjs --package-lock-only --ignore-scripts >/dev/null || true ;;
+      yarn) yarn install >/dev/null && yarn add dayjs --mode=skip-builds >/dev/null || true ;;
+    esac
+    ;;
+  seed-cache-add-multiple)
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd install --core web --ignore-scripts >/dev/null && mg_cmd add zustand jotai valibot sonner --core web --no-install >/dev/null || true ;;
+      bun) bun install >/dev/null && bun add zustand jotai valibot sonner --dry-run >/dev/null || true ;;
+      pnpm) pnpm install --ignore-scripts >/dev/null && pnpm add zustand jotai valibot sonner --lockfile-only --ignore-scripts >/dev/null || true ;;
+      npm) npm install >/dev/null && npm install zustand jotai valibot sonner --package-lock-only --ignore-scripts >/dev/null || true ;;
+      yarn) yarn install >/dev/null && yarn add zustand jotai valibot sonner --mode=skip-builds >/dev/null || true ;;
+    esac
+    ;;
+  seed-cache-remove-single)
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd install --core web --ignore-scripts >/dev/null ;;
+      bun) bun install >/dev/null ;;
+      pnpm) pnpm install --ignore-scripts >/dev/null ;;
+      npm) npm install >/dev/null ;;
+      yarn) yarn install >/dev/null ;;
+    esac
+    ;;
+  seed-cache-update-web)
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd install --core web --ignore-scripts >/dev/null ;;
+    esac
+    ;;
+  seed-cache-audit-web)
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    case "\$pm" in
+      mg) mg_cmd install --core web --ignore-scripts >/dev/null ;;
+    esac
+    ;;
   prepare-add-single-steady|prepare-remove-single-steady)
     copy_fixture "base-web" "\$workdir"
     cd "\$workdir"
@@ -768,6 +987,29 @@ empty-cache-install)
     grep -q '"jotai"' package.json
     grep -q '"valibot"' package.json
     grep -q '"sonner"' package.json
+    ;;
+  update-web)
+    [[ "\$pm" == "mg" ]] || { echo "update-web is currently benchmarked as an MG-only diagnostic lane" >&2; exit 90; }
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    mg_cmd install --core web --ignore-scripts
+    mg_cmd update-web react --install
+    assert_file "\$workdir/mg.lock"
+    ;;
+  audit-web)
+    [[ "\$pm" == "mg" ]] || { echo "audit-web is currently benchmarked as an MG-only diagnostic lane" >&2; exit 90; }
+    copy_fixture "base-web" "\$workdir"
+    cd "\$workdir"
+    mg_cmd install --core web --ignore-scripts
+    set +e
+    "\$MG_BIN" audit --core web >"\$workdir/audit.log" 2>&1
+    audit_status=\$?
+    set -e
+    if [[ \$audit_status -ne 0 && \$audit_status -ne 1 ]]; then
+      cat "\$workdir/audit.log" >&2 || true
+      exit \$audit_status
+    fi
+    assert_file "\$workdir/audit.log"
     ;;
   remove-single)
     copy_fixture "base-web" "\$workdir"
@@ -948,8 +1190,44 @@ empty-cache-install)
     esac
     assert_dir "\$workdir/node_modules"
     ;;
+  ultra-heavy-empty-cache-install)
+    case "\$pm" in
+      mg)
+        run_mg_with_empty_shared_cache "ultra-heavy-web"
+        ;;
+      bun)
+        copy_fixture "ultra-heavy-web" "\$workdir"
+        cd "\$workdir"
+        BUN_INSTALL_CACHE_DIR="\$workdir/.bun-cache" bun install
+        ;;
+      pnpm)
+        copy_fixture "ultra-heavy-web" "\$workdir"
+        cd "\$workdir"
+        pnpm install --ignore-scripts --store-dir "\$workdir/.pnpm-store"
+        ;;
+      npm)
+        copy_fixture "ultra-heavy-web" "\$workdir"
+        cd "\$workdir"
+        npm install --cache "\$workdir/.npm-cache"
+        ;;
+      yarn)
+        copy_fixture "ultra-heavy-web" "\$workdir"
+        cd "\$workdir"
+        YARN_CACHE_FOLDER="\$workdir/.yarn-cache" yarn install
+        ;;
+    esac
+    assert_dir "\$workdir/node_modules"
+    ;;
   heavy-empty-cache-install-direct)
     copy_fixture "heavy-web" "\$workdir"
+    cd "\$workdir"
+    rm -rf .megagate node_modules .empty-shared-cache
+    mkdir -p .empty-shared-cache
+    MEGAGATE_SHARED_CACHE_DIR="\$workdir/.empty-shared-cache" mg_cmd install --core web --ignore-scripts
+    assert_dir "\$workdir/node_modules"
+    ;;
+  alias-heavy-empty-cache-install-direct)
+    copy_fixture "alias-heavy-web" "\$workdir"
     cd "\$workdir"
     rm -rf .megagate node_modules .empty-shared-cache
     mkdir -p .empty-shared-cache
@@ -1119,6 +1397,10 @@ Rust: $(rustc --version 2>/dev/null || echo "N/A")
 - Localhost only: all dev/start probes use \`127.0.0.1\`.
 - No auto-install side effects inside the benchmark harness.
 - Comparisons only cover commands with a meaningful counterpart.
+- heavy-empty-cache-install is the cross-PM heavy cold-cache lane.
+- heavy-empty-cache-install-direct and alias-heavy-empty-cache-install-direct are MG-only diagnostic lanes.
+- Networked lanes are allowed: \`$BENCH_ALLOW_NETWORK\`
+- Seed-cache mode: \`$BENCH_SEED_CACHE\`
 - Benchmark mode: \`$BENCH_MODE\`
 - Selected PMs: \`${SELECTED_PMS[*]}\`
 - Selected lanes: \`${SELECTED_LANES[*]}\`
@@ -1150,7 +1432,24 @@ run_lane() {
     {
         echo "## $title"
         echo
+        if is_mg_only_lane "$lane"; then
+            echo "_Lane policy: MG-only diagnostic lane._"
+            echo
+        fi
+        if is_online_required_lane "$lane"; then
+            echo "_Lane policy: requires live network or pre-seeded cache for fair execution._"
+            echo
+        fi
     } >>"$RESULTS_MD"
+
+    if [[ "$BENCH_ALLOW_NETWORK" != "1" ]] && is_online_required_lane "$lane"; then
+        echo -e "$lane\tSKIPPED\tnetwork-disabled" >>"$STATUS_TSV"
+        {
+            echo "_Skipped: BENCH_ALLOW_NETWORK is disabled for a lane that requires network or pre-seeded cache._"
+            echo
+        } >>"$RESULTS_MD"
+        return 0
+    fi
 
     local hf_args=(
         --warmup "$BENCH_WARMUP"
@@ -1168,6 +1467,24 @@ run_lane() {
         done
         prepare_cmd="${prepare_cmd% && }"
         hf_args+=(--prepare "$prepare_cmd")
+    elif [[ "$BENCH_SEED_CACHE" == "1" ]] && is_seedable_cache_lane "$lane"; then
+        local seed_lane=""
+        case "$lane" in
+            add-single|add-single-steady|add-single-mutate-only) seed_lane="seed-cache-add-single" ;;
+            add-multiple) seed_lane="seed-cache-add-multiple" ;;
+            remove-single|remove-single-steady|remove-single-mutate-only) seed_lane="seed-cache-remove-single" ;;
+            update-web) seed_lane="seed-cache-update-web" ;;
+            audit-web) seed_lane="seed-cache-audit-web" ;;
+        esac
+        if [[ -n "$seed_lane" ]]; then
+            local prepare_cmd=""
+            local pm_name
+            for pm_name in "${names[@]}"; do
+                prepare_cmd+="bash $TMP_ROOT/runner.sh $pm_name $seed_lane && "
+            done
+            prepare_cmd="${prepare_cmd% && }"
+            hf_args+=(--prepare "$prepare_cmd")
+        fi
     fi
     local i
     for i in "${!names[@]}"; do

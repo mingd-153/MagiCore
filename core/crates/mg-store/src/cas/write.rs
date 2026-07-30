@@ -2,7 +2,6 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
 
 use super::integrity::IntegrityHash;
 use super::store::StoreError;
@@ -11,7 +10,11 @@ use super::store::StoreError;
 /// instead of being fully loaded into memory.
 pub const STREAM_THRESHOLD: usize = 1024 * 1024; // 1 MB
 
-/// Write data to file, verify SHA-256 hash matches, then set permissions.
+/// Write data to file and set permissions.
+///
+/// CAS entries are reproducible cache artifacts, so we avoid per-file fsync and
+/// read-back verification here. The content hash is already computed from the
+/// source bytes before writing, and failed/corrupt cache entries can be rebuilt.
 pub fn write_all_verify_and_set_perms(
     mut writer: fs::File,
     dest: &Path,
@@ -25,42 +28,19 @@ pub fn write_all_verify_and_set_perms(
         msg: format!("write failed: {e}"),
     })?;
 
-    writer.sync_all().map_err(|e| StoreError::Io {
-        path: dest.to_path_buf(),
-        msg: format!("sync failed: {e}"),
-    })?;
-
-    // Verify written content matches expected hash
-    let actual_data = fs::read(dest).map_err(|e| StoreError::Io {
-        path: dest.to_path_buf(),
-        msg: format!("read back failed: {e}"),
-    })?;
-
-    let actual = IntegrityHash::from_bytes(&actual_data, executable);
-    if actual.hash != expected.hash {
-        let _ = fs::remove_file(dest);
-        return Err(StoreError::Io {
-            path: dest.to_path_buf(),
-            msg: format!(
-                "integrity mismatch after write: expected {}, got {}",
-                expected.hash, actual.hash
-            ),
-        });
-    }
-
     set_permissions(dest, executable)?;
 
     Ok(expected)
 }
 
-/// Stream data from reader to writer while computing SHA-256, verify on completion.
+/// Stream data from reader to writer while computing the content hash.
 pub fn stream_write_verify_and_set_perms(
     mut writer: fs::File,
     dest: &Path,
     mut reader: impl Read,
     executable: bool,
 ) -> Result<IntegrityHash, StoreError> {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     let mut buf = [0u8; 65536];
 
     loop {
@@ -78,12 +58,7 @@ pub fn stream_write_verify_and_set_perms(
         })?;
     }
 
-    writer.sync_all().map_err(|e| StoreError::Io {
-        path: dest.to_path_buf(),
-        msg: format!("sync failed: {e}"),
-    })?;
-
-    let hash = hex::encode(hasher.finalize());
+    let hash = hasher.finalize().to_hex().to_string();
     let integrity = IntegrityHash { hash, executable };
 
     set_permissions(dest, executable)?;

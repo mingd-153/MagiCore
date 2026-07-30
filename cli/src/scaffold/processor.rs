@@ -992,6 +992,10 @@ struct WebTemplateContext {
     backend_language: String,
     template: String,
     features: String,
+    execution_architecture: String,
+    execution_lane: String,
+    execution_compatibility_layer: String,
+    execution_native_targets: String,
 }
 
 impl WebTemplateContext {
@@ -1050,6 +1054,38 @@ impl WebTemplateContext {
         };
 
         let project_package = project_slug.replace('-', "_");
+        let execution_compatibility_layer = if config.features.iter().any(|feature| {
+            let normalized = feature.trim().to_ascii_lowercase();
+            normalized == "ts" || normalized == "typescript"
+        }) {
+            "ts".to_string()
+        } else {
+            "js".to_string()
+        };
+        let execution_architecture = if matches!(mode.as_str(), "frontend" | "fullstack" | "monorepo")
+        {
+            "rust-first".to_string()
+        } else {
+            "multi-runtime".to_string()
+        };
+        let execution_lane = if matches!(mode.as_str(), "frontend" | "fullstack" | "monorepo") {
+            "compatibility-shell".to_string()
+        } else {
+            "runtime-native".to_string()
+        };
+        let execution_native_targets = if matches!(mode.as_str(), "frontend" | "fullstack" | "monorepo")
+        {
+            quoted_list(&[
+                "frontend-executable".to_string(),
+                "wasm-bridge".to_string(),
+                "native-module".to_string(),
+            ])
+        } else {
+            quoted_list(&[
+                "service-binary".to_string(),
+                "worker-binary".to_string(),
+            ])
+        };
 
         Self {
             project_name,
@@ -1063,6 +1099,10 @@ impl WebTemplateContext {
             backend_language,
             template: primary_template,
             features: quoted_list(&config.features),
+            execution_architecture,
+            execution_lane,
+            execution_compatibility_layer,
+            execution_native_targets,
         }
     }
 
@@ -1079,6 +1119,12 @@ impl WebTemplateContext {
             "backend_language" => Some(self.backend_language.as_str()),
             "template" => Some(self.template.as_str()),
             "features" => Some(self.features.as_str()),
+            "execution_architecture" => Some(self.execution_architecture.as_str()),
+            "execution_lane" => Some(self.execution_lane.as_str()),
+            "execution_compatibility_layer" => {
+                Some(self.execution_compatibility_layer.as_str())
+            }
+            "execution_native_targets" => Some(self.execution_native_targets.as_str()),
             _ => None,
         }
     }

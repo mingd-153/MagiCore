@@ -1,3 +1,7 @@
+pub mod deps_bundler;
+pub mod dev_server;
+pub mod hmr;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -57,6 +61,13 @@ impl Bundler {
             ".css".to_string(),
             ".json".to_string(),
         ];
+        builder.loader.insert(".svg".to_string(), esbuild_rs::Loader::DataURL);
+        builder.loader.insert(".png".to_string(), esbuild_rs::Loader::DataURL);
+        builder.loader.insert(".jpg".to_string(), esbuild_rs::Loader::DataURL);
+        builder.loader.insert(".jpeg".to_string(), esbuild_rs::Loader::DataURL);
+        builder.loader.insert(".gif".to_string(), esbuild_rs::Loader::DataURL);
+        builder.loader.insert(".webp".to_string(), esbuild_rs::Loader::DataURL);
+        builder.loader.insert(".ico".to_string(), esbuild_rs::Loader::File);
         builder.target = match self.config.target.as_str() {
             "es5" => esbuild_rs::Target::ES5,
             "es2015" => esbuild_rs::Target::ES2015,

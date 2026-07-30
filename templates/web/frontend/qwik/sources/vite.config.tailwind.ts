@@ -1,5 +1,7 @@
+import { defineConfig } from "vite";
+import { qwikCity } from "@builder.io/qwik-city/vite";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [tailwindcss(), react()],
+  plugins: [tailwindcss(), qwikCity()],
 });

@@ -61,6 +61,93 @@ pub fn extract_tarball_from_reader<R: Read>(reader: R, dest: &Path) -> Result<()
     Ok(())
 }
 
+/// Extract a gzip-compressed tarball from an arbitrary reader directly into the CAS,
+/// and hardlink the files to the destination directory.
+/// Uses Rayon to perform hashing, CAS writing, and hardlinking in parallel.
+pub fn extract_tarball_to_cas_and_link<R: Read>(
+    reader: R,
+    dest: &Path,
+    store: &mg_store::ContentStore,
+) -> Result<()> {
+    use rayon::prelude::*;
+
+    let decoder = GzDecoder::new(reader);
+    let mut archive = Archive::new(decoder);
+
+    std::fs::create_dir_all(dest)?;
+    let dest_root = dest.canonicalize()?;
+
+    struct FileEntry {
+        path: PathBuf,
+        data: Vec<u8>,
+        executable: bool,
+    }
+    let mut files_map = std::collections::HashMap::new();
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let rel_path = sanitize_archive_path(entry.path()?.as_ref())?;
+        let target = dest_root.join(rel_path);
+
+        if !target.starts_with(&dest_root) {
+            bail!("tar entry escapes destination: {}", target.display());
+        }
+
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            bail!("tar links are not allowed: {}", target.display());
+        }
+
+        if entry_type.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            continue;
+        }
+
+        if matches!(entry_type.as_byte(), b'g' | b'x') {
+            continue;
+        }
+
+        if !entry_type.is_file() {
+            bail!("unsupported tar entry type for {}", target.display());
+        }
+
+        let mode = entry.header().mode().unwrap_or(0o644);
+        let executable = mode & 0o111 != 0;
+
+        let mut data = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut data)?;
+
+        files_map.insert(target.clone(), FileEntry { path: target, data, executable });
+    }
+
+    let files: Vec<_> = files_map.into_values().collect();
+
+    let mut dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for file in &files {
+        if let Some(parent) = file.path.parent() {
+            dirs.insert(parent.to_path_buf());
+        }
+    }
+    let mut dirs: Vec<_> = dirs.into_iter().collect();
+    dirs.sort_by_key(|d| d.components().count());
+    for dir in dirs {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    // Process all files in parallel: Hash (Blake3) -> Save to CAS -> Hardlink
+    files.into_par_iter().try_for_each(|file| -> Result<()> {
+        let hash = store.import_bytes_with_exec(&file.data, file.executable)
+            .map_err(|e| anyhow::anyhow!("failed to import to CAS: {}", e))?;
+        
+        store.export_to(&hash, &file.path)
+            .map_err(|e| anyhow::anyhow!("failed to hardlink from CAS: {}", e))?;
+            
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
 fn sanitize_archive_path(path: &Path) -> Result<PathBuf> {
     let mut clean = PathBuf::new();
 

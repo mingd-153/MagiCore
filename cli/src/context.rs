@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use mg_config::project::ProjectConfig;
+use mg_config::project::{ProjectConfig, ProjectExecutionConfig};
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
 
@@ -91,5 +91,26 @@ impl ProjectContext {
 
     pub fn adapter(&self) -> &dyn PackageAdapter {
         self.adapter.as_ref()
+    }
+
+    pub fn execution(&self) -> &ProjectExecutionConfig {
+        &self.config.execution
+    }
+
+    pub fn execution_summary(&self) -> String {
+        let execution = self.execution();
+        let native_targets = if execution.native_targets.is_empty() {
+            "none".to_string()
+        } else {
+            execution.native_targets.join(", ")
+        };
+
+        format!(
+            "architecture={}, lane={}, compatibility={}, native_targets={}",
+            execution.architecture,
+            execution.lane,
+            execution.compatibility_layer,
+            native_targets
+        )
     }
 }

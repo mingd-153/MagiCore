@@ -26,7 +26,10 @@ pub fn validate_cas_root(root: &Path) -> Result<(), StoreError> {
 }
 
 pub fn ensure_cas_dirs(root: &Path) -> Result<(), StoreError> {
-    let dirs = [root.join("files").join("sha256")];
+    let dirs = [
+        root.join("files").join("blake3"),
+        root.join("compiled").join("blake3"),
+    ];
     for dir in &dirs {
         fs::create_dir_all(dir).map_err(|e| StoreError::Io {
             path: dir.clone(),
@@ -75,6 +78,7 @@ mod tests {
     fn test_ensure_cas_dirs_creates_structure() {
         let root = tempdir().unwrap().path().join("cas");
         ensure_cas_dirs(&root).unwrap();
-        assert!(root.join("files").join("sha256").exists());
+        assert!(root.join("files").join("blake3").exists());
+        assert!(root.join("compiled").join("blake3").exists());
     }
 }

@@ -15,17 +15,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn should_use_legacy_flat_layout(adapter_name: &str) -> bool {
-    if adapter_name != "web" {
-        return false;
-    }
 
-    std::env::var("MEGAGATE_WEB_STRICT_LAYOUT")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .map(|value| !matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(true)
-}
 
 /// mg install — install dependencies for the current project
 pub async fn run(
@@ -176,7 +166,7 @@ async fn install_into_root(
     let opts = mg_types::adapter::InstallOptions {
         ignore_scripts,
         allow_scripts,
-        legacy_flat: should_use_legacy_flat_layout(adapter.name()),
+        legacy_flat: crate::commands::core::shared::should_use_legacy_flat_layout(adapter.name()),
         frozen: false,
         ..Default::default()
     };
@@ -333,6 +323,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
                 .collect::<Result<Vec<_>>>()?;
 
             Ok(ResolvedPackage {
+                peer_deps: vec![],
                 id: PackageId::new(name, version),
                 integrity: pkg.integrity.clone().unwrap_or_default(),
                 tarball_url: String::new(),

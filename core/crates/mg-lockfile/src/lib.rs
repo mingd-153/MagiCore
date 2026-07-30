@@ -34,6 +34,8 @@ pub struct LockPackage {
     pub dev: bool,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub peer_deps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -334,6 +336,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         lock.packages.push(LockPackage {
             name: "tokio".to_string(),
@@ -342,6 +345,7 @@ mod tests {
             direct: false,
             dev: true,
             dependencies: vec!["bytes@1.6.0".to_string()],
+            peer_deps: vec![],
         });
 
         let json = serialization::to_json(&lock).unwrap();
@@ -390,6 +394,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec!["@tailwindcss/node@4.3.2".to_string()],
+            peer_deps: vec![],
         });
 
         let toml = serialization::to_toml(&lock).unwrap();
@@ -475,11 +480,13 @@ mod tests {
             direct: false,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         };
         assert_eq!(pkg.integrity, None);
         assert!(!pkg.direct);
         assert!(!pkg.dev);
         assert!(pkg.dependencies.is_empty());
+        assert!(pkg.peer_deps.is_empty());
     }
 
     #[test]
@@ -531,6 +538,7 @@ mode = "test""#;
             direct: false,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         };
         let json = serialization::to_json(&pkg).unwrap();
         let parsed: LockPackage = serialization::from_json(&json).unwrap();

@@ -46,6 +46,7 @@ anyhow = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
+blake3 = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }

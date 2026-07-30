@@ -4,6 +4,73 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectExecutionConfig {
+    #[serde(default = "default_execution_architecture")]
+    pub architecture: String,
+    #[serde(default = "default_execution_lane")]
+    pub lane: String,
+    #[serde(default = "default_execution_compatibility_layer")]
+    pub compatibility_layer: String,
+    #[serde(default)]
+    pub native_targets: Vec<String>,
+}
+
+fn default_execution_architecture() -> String {
+    "rust-first".to_string()
+}
+
+fn default_execution_lane() -> String {
+    "compatibility-shell".to_string()
+}
+
+fn default_execution_compatibility_layer() -> String {
+    "js".to_string()
+}
+
+impl Default for ProjectExecutionConfig {
+    fn default() -> Self {
+        Self {
+            architecture: default_execution_architecture(),
+            lane: default_execution_lane(),
+            compatibility_layer: default_execution_compatibility_layer(),
+            native_targets: vec![],
+        }
+    }
+}
+
+fn default_execution_for(ecosystem: &str, features: &[String]) -> ProjectExecutionConfig {
+    let has_ts = features.iter().any(|feature| {
+        let value = feature.trim().to_ascii_lowercase();
+        value == "ts" || value == "typescript"
+    });
+
+    match ecosystem {
+        "web" => ProjectExecutionConfig {
+            architecture: "rust-first".to_string(),
+            lane: "compatibility-shell".to_string(),
+            compatibility_layer: if has_ts { "ts" } else { "js" }.to_string(),
+            native_targets: vec![
+                "frontend-executable".to_string(),
+                "backend-executable".to_string(),
+                "wasm-bridge".to_string(),
+            ],
+        },
+        "game" | "app" | "lib" => ProjectExecutionConfig {
+            architecture: "native-first".to_string(),
+            lane: "native-ready".to_string(),
+            compatibility_layer: "none".to_string(),
+            native_targets: vec!["binary".to_string()],
+        },
+        _ => ProjectExecutionConfig {
+            architecture: "rust-first".to_string(),
+            lane: "compatibility-shell".to_string(),
+            compatibility_layer: "none".to_string(),
+            native_targets: vec![],
+        },
+    }
+}
+
 /// Project config saved by `mg init` and read by all commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
@@ -26,6 +93,9 @@ pub struct ProjectConfig {
     /// Features selected (e.g. ["ts", "tailwind"])
     #[serde(default)]
     pub features: Vec<String>,
+    /// Execution strategy / runtime lane metadata
+    #[serde(default)]
+    pub execution: ProjectExecutionConfig,
 }
 
 fn default_version() -> String {
@@ -34,14 +104,16 @@ fn default_version() -> String {
 
 impl ProjectConfig {
     pub fn new(name: impl Into<String>, ecosystem: impl Into<String>) -> Self {
+        let ecosystem = ecosystem.into();
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
-            ecosystem: ecosystem.into(),
+            ecosystem: ecosystem.clone(),
             mode: String::new(),
             frameworks: vec![],
             template: String::new(),
             features: vec![],
+            execution: default_execution_for(&ecosystem, &[]),
         }
     }
 
@@ -53,13 +125,15 @@ impl ProjectConfig {
         template: impl Into<String>,
         features: Vec<String>,
     ) -> Self {
+        let ecosystem = ecosystem.into();
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
-            ecosystem: ecosystem.into(),
+            ecosystem: ecosystem.clone(),
             mode: mode.into(),
             frameworks,
             template: template.into(),
+            execution: default_execution_for(&ecosystem, &features),
             features,
         }
     }
@@ -145,6 +219,9 @@ mod tests {
         assert_eq!(cfg.ecosystem, "web");
         assert!(cfg.mode.is_empty());
         assert!(cfg.frameworks.is_empty());
+        assert_eq!(cfg.execution.architecture, "rust-first");
+        assert_eq!(cfg.execution.lane, "compatibility-shell");
+        assert_eq!(cfg.execution.compatibility_layer, "js");
     }
 
     #[test]
@@ -163,6 +240,10 @@ mod tests {
         assert_eq!(cfg.frameworks, vec!["react-vite"]);
         assert_eq!(cfg.template, "templates/web/frontend/react-vite");
         assert_eq!(cfg.features, vec!["ts", "tailwind"]);
+        assert_eq!(cfg.execution.architecture, "rust-first");
+        assert_eq!(cfg.execution.lane, "compatibility-shell");
+        assert_eq!(cfg.execution.compatibility_layer, "ts");
+        assert!(cfg.execution.native_targets.contains(&"frontend-executable".to_string()));
     }
 
     #[test]
@@ -236,6 +317,7 @@ mod tests {
         assert_eq!(loaded.frameworks, vec!["react-vite"]);
         assert_eq!(loaded.template, "templates/web/frontend/react-vite");
         assert_eq!(loaded.features, vec!["ts"]);
+        assert_eq!(loaded.execution.compatibility_layer, "ts");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
