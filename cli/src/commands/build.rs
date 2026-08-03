@@ -271,6 +271,11 @@ fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<Bui
             ],
         ),
         ["astro", "build"] => (node_runner(), node_bin_args(root, "astro", &["build"])?, vec![]),
+        ["remix", "vite:build"] => (
+            node_runner(),
+            node_bin_args(root, "remix", &["vite:build"])?,
+            vec![],
+        ),
         ["ng", "build"] => (
             node_runner(),
             node_bin_args(root, "ng", &["build"])?,

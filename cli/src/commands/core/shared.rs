@@ -917,6 +917,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         assert!(lock_matches_manifest(&lock, &manifest));
     }
@@ -946,6 +947,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         assert!(!lock_matches_manifest(&lock, &manifest));
     }
@@ -979,6 +981,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec!["not-a-package-id".into()],
+            peer_deps: vec![],
         });
 
         let err = graph_from_lockfile(&lock).unwrap_err();
@@ -1016,6 +1019,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec!["loose-envify@1.4.0".into()],
+            peer_deps: vec![],
         });
         lock.packages.push(LockPackage {
             name: "loose-envify".into(),
@@ -1024,6 +1028,7 @@ mod tests {
             direct: false,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         lock.packages.push(LockPackage {
             name: "zod".into(),
@@ -1032,6 +1037,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         lock.packages.push(LockPackage {
             name: "orphan".into(),
@@ -1040,6 +1046,7 @@ mod tests {
             direct: false,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         std::fs::write(
             root.path().join("mg.lock"),
