@@ -370,6 +370,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
 
         assert!(lock_matches_manifest(&lock, &manifest));
@@ -401,6 +402,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
 
         assert!(!lock_matches_manifest(&lock, &manifest));
@@ -434,6 +436,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         std::fs::write(
             dir.path().join("mg.lock"),
@@ -476,6 +479,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec!["not-a-package-id".into()],
+            peer_deps: vec![],
         });
 
         let err = graph_from_lockfile(&lock).unwrap_err();

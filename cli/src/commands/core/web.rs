@@ -2980,7 +2980,11 @@ async fn fetch_npm_latest_version(package: &str) -> Result<String> {
             if let Some(version) = scaffold_baseline_version(package) {
                 return Ok(version.to_string());
             }
-            Err(error)
+            eprintln!(
+                "warning: could not resolve version for '{package}' ({}); using 'latest'",
+                error
+            );
+            Ok("latest".to_string())
         }
     }
 }
@@ -4086,6 +4090,7 @@ packages = ["packages/*"]
                 direct: true,
                 dev: false,
                 dependencies: vec![],
+                peer_deps: vec![],
             },
             LockPackage {
                 name: "@core/shared".to_string(),
@@ -4094,6 +4099,7 @@ packages = ["packages/*"]
                 direct: true,
                 dev: false,
                 dependencies: vec![],
+                peer_deps: vec![],
             },
         ];
         let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
@@ -4114,6 +4120,7 @@ packages = ["packages/*"]
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         }];
         let shared_lock_toml = serialization::to_toml(&shared_lock).unwrap();
         std::fs::write(shared.join("mg.lock"), &shared_lock_toml).unwrap();
@@ -4157,6 +4164,7 @@ packages = ["packages/*"]
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         }];
         let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
         std::fs::write(frontend.join("mg.lock"), &frontend_lock_toml).unwrap();
