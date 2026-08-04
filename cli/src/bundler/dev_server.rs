@@ -63,9 +63,9 @@ fn bare_import_re() -> &'static regex::Regex {
         //   import 'pkg'        import "pkg"
         //   import('pkg')       import("pkg")
         //   export from 'pkg'
-        // KHÔNG khớp: đường dẫn bắt đầu bằng '.', '/', '@megagate'
+        // Đường dẫn tương đối/absolute/@megagate được lọc trong rewrite_imports()
         regex::Regex::new(
-            r#"(?P<keyword>from|import(?:\s*\()|import|export\s+(?:\*|(?:\{[^}]*\}))\s+from)\s*['"](?P<pkg>(?!(?:\./|\.\./|/|@megagate/))[^'"]+)['"]"#
+            r#"(?P<keyword>from|import(?:\s*\()|import|export\s+(?:\*|(?:\{[^}]*\}))\s+from)\s*['"](?P<pkg>[^'"]+)['"]"#
         ).expect("invalid bare import regex")
     })
 }
@@ -76,6 +76,14 @@ fn rewrite_imports(js: &str) -> String {
     re.replace_all(js, |caps: &regex::Captures| {
         let keyword = &caps["keyword"];
         let pkg = &caps["pkg"];
+        // Bỏ qua đường dẫn tương đối, absolute, và deps đã rewrite
+        if pkg.starts_with("./")
+            || pkg.starts_with("../")
+            || pkg.starts_with('/')
+            || pkg.starts_with("@megagate/")
+        {
+            return caps.get(0).unwrap().as_str().to_string();
+        }
         // Xử lý scoped packages: @org/pkg → @org/pkg (giữ nguyên, chỉ thay separator)
         // Ví dụ: @tanstack/react-query → /@megagate/deps/@tanstack/react-query
         let is_dynamic = keyword.starts_with("import(");
