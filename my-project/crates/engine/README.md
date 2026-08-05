@@ -1,3 +1,0 @@
-# engine
-
-Rust engine crate.

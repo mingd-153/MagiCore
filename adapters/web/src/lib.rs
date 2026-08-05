@@ -349,23 +349,33 @@ pub struct WebAdapter {
     store: Option<ContentStore>,
     shared_cache: Option<SharedWebCache>,
     prefetch_handle: Mutex<Option<tokio::task::JoinHandle<MgResult<u64>>>>,
+    /// Opt-in dedupe preference for the next resolve (02 §2.1).
+    dedupe_pref: std::sync::atomic::AtomicBool,
+    /// Already-installed versions (from lockfile) for PreferExisting.
+    existing_versions: Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl WebAdapter {
     pub fn new() -> Self {
         let registry_url = effective_registry_url(DEFAULT_NPM_REGISTRY);
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, shared_cache)
+        Self::build(registry_url, None, shared_cache)
     }
     pub fn with_registry(registry_url: String) -> Self {
         let registry_url = effective_registry_url(&registry_url);
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, shared_cache)
+        Self::build(registry_url, None, shared_cache)
+    }
+    pub fn with_registry_and_token(registry_url: String, token: Option<String>) -> Self {
+        let registry_url = effective_registry_url(&registry_url);
+        let shared_cache = SharedWebCache::discover();
+        Self::build(registry_url, token, shared_cache)
     }
 
-    fn build(registry_url: String, shared_cache: Option<SharedWebCache>) -> Self {
+    fn build(registry_url: String, token: Option<String>, shared_cache: Option<SharedWebCache>) -> Self {
         let provider = Arc::new(NpmDependencyProvider::new(
             &registry_url,
+            token,
             shared_cache.clone(),
         ));
         Self {
@@ -375,12 +385,14 @@ impl WebAdapter {
             store: None,
             shared_cache,
             prefetch_handle: Mutex::new(None),
+            dedupe_pref: std::sync::atomic::AtomicBool::new(false),
+            existing_versions: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
     #[cfg(test)]
     fn with_registry_and_shared_cache(registry_url: String, shared_root: PathBuf) -> Self {
-        Self::build(registry_url, Some(SharedWebCache { root: shared_root }))
+        Self::build(registry_url, None, Some(SharedWebCache { root: shared_root }))
     }
     pub fn with_store(mut self, store: ContentStore) -> Self {
         self.store = Some(store);
@@ -594,6 +606,25 @@ impl PackageAdapter for WebAdapter {
     }
     fn can_handle(&self, project_root: &Path) -> bool {
         project_root.join("package.json").exists()
+    }
+
+    fn set_dedupe_pref(&self, enabled: bool) {
+        self.dedupe_pref
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+        self.resolver.set_dedupe_pref(if enabled {
+            mg_resolver::solver::DedupePref::PreferExisting
+        } else {
+            mg_resolver::solver::DedupePref::PreferLatest
+        });
+    }
+
+    fn set_existing_versions(&self, versions: std::collections::HashMap<String, String>) {
+        let parsed: std::collections::HashMap<String, mg_types::Version> = versions
+            .iter()
+            .filter_map(|(name, v)| mg_types::Version::parse(v).ok().map(|ver| (name.clone(), ver)))
+            .collect();
+        *self.existing_versions.lock().unwrap() = versions;
+        self.resolver.set_existing_versions(parsed);
     }
 
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
@@ -904,7 +935,10 @@ impl PackageAdapter for WebAdapter {
     }
 
     async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
-        let reg = native::npm_registry::NpmRegistry::new(&self.registry_url);
+        let reg = native::npm_registry::NpmRegistry::new_with_token(
+            &self.registry_url,
+            self.provider.registry.auth_token().map(str::to_string),
+        );
         for pkg in &graph.packages {
             let unscoped = pkg.id.name().unscoped();
             let url = format!(
@@ -938,7 +972,10 @@ impl PackageAdapter for WebAdapter {
     ) -> MgResult<InstallSummary> {
         let start = std::time::Instant::now();
         let mut profile = InstallProfile::from_env();
-        let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
+        let registry = native::npm_registry::NpmRegistry::new_with_token(
+            &self.registry_url,
+            self.provider.registry.auth_token().map(str::to_string),
+        );
         let store_root = project_cache_dir(project_root);
         let layout = Layout::new(store_root);
         std::fs::create_dir_all(layout.root())?;
@@ -947,11 +984,10 @@ impl PackageAdapter for WebAdapter {
         let cache = PackageCache::new(layout.cache_dir())
             .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
         let shared_cache = self.shared_cache.clone();
-        let database = if opts.legacy_flat {
-            Some(Database::open(&layout.db_path()).map_err(|e| mg_types::MgError::Store(e.to_string()))?)
-        } else {
-            None
-        };
+        let database = Some(
+            Database::open(&layout.db_path())
+                .map_err(|e| mg_types::MgError::Store(e.to_string()))?,
+        );
         let default_store = ContentStore::new(layout.cas_dir())
             .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
         let store = self.store.as_ref().unwrap_or(&default_store);
@@ -1395,6 +1431,25 @@ impl PackageAdapter for WebAdapter {
         }
         profile.mark("lifecycle_scripts", start);
 
+        // Refcount (02 §2.2): this project now references every installed package.
+        // Clear first so refs mirror the current graph exactly.
+        let project_root_str = project_root.to_string_lossy().to_string();
+        if let Some(database) = database.as_ref() {
+            database
+                .clear_all_refs(&project_root_str)
+                .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+            for pkg in &graph.packages {
+                database
+                    .set_ref(&project_root_str, &pkg.id)
+                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+            }
+        }
+
+        // Repair mode (02 §2.2): re-link dangling symlinks from the virtual store.
+        if opts.repair {
+            repair_dangling_symlinks(&node_modules)?;
+        }
+
         summary.duration_ms = start.elapsed().as_millis() as u64;
         profile.flush(summary.duration_ms);
         Ok(summary)
@@ -1678,9 +1733,9 @@ struct NpmDependencyProvider {
     optional_enqueue_cache: DashMap<String, bool>,
 }
 impl NpmDependencyProvider {
-    fn new(url: &str, shared_cache: Option<SharedWebCache>) -> Self {
+    fn new(url: &str, token: Option<String>, shared_cache: Option<SharedWebCache>) -> Self {
         Self {
-            registry: native::npm_registry::NpmRegistry::new(url),
+            registry: native::npm_registry::NpmRegistry::new_with_token(url, token),
             metadata_cache: MetadataCache::new(),
             metadata_locks: DashMap::new(),
             registry_cache: RegistryCache::new(),
@@ -2201,6 +2256,9 @@ impl PackageJson {
     }
 }
 
+/// Resolution cache TTL — version mới publish phải hiện trong 5 phút
+const RESOLUTION_CACHE_TTL_SECS: u64 = 300;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedWebCache {
     root: PathBuf,
@@ -2220,6 +2278,7 @@ struct CachedMetadataEnvelope {
 struct CachedResolutionEnvelope {
     cache_version: u32,
     registry_url: String,
+    fetched_at: u64,
     graph: ResolvedGraph,
 }
 
@@ -2382,6 +2441,16 @@ impl SharedWebCache {
         if envelope.cache_version != 1 || envelope.registry_url != registry_url {
             return Ok(None);
         }
+        // ponytail: TTL 5 phút — version mới publish lên registry private
+        // phải xuất hiện; registry public ổn định hơn nhưng chấp nhận chung.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if now.saturating_sub(envelope.fetched_at) > RESOLUTION_CACHE_TTL_SECS {
+            let _ = std::fs::remove_file(&path);
+            return Ok(None);
+        }
         Ok(Some(envelope.graph))
     }
 
@@ -2398,6 +2467,10 @@ impl SharedWebCache {
         let payload = serde_json::to_vec(&CachedResolutionEnvelope {
             cache_version: 1,
             registry_url: registry_url.to_string(),
+            fetched_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
             graph: graph.clone(),
         })?;
         atomic_write(&path, &payload)
@@ -2661,7 +2734,10 @@ async fn prefetch_tarballs(
         let local_cache = cache.clone();
         let shared_package_cache = shared_package_cache.clone();
         let download_semaphore = Arc::clone(&download_semaphore);
-        let registry = native::npm_registry::NpmRegistry::new(registry.registry_url());
+        let registry = native::npm_registry::NpmRegistry::new_with_token(
+            registry.registry_url(),
+            registry.auth_token().map(str::to_string),
+        );
         downloads.spawn(async move {
             let prefetch_lock = tarball_prefetch_lock(&pkg_clone.id);
             let _guard = prefetch_lock.lock().await;
@@ -2919,7 +2995,7 @@ fn spawn_tarball_download(
                     mg_types::MgError::Other(format!("download semaphore closed: {e}"))
                 })?;
                 let url = package_tarball_url(reg.registry_url(), &pkg);
-                let bytes = native::npm_registry::batch_download_tarball(&url)
+                let bytes = native::npm_registry::batch_download_tarball_with_auth(&url, reg.auth_token())
                     .await
                     .map_err(|e| mg_types::MgError::Network(format!("prefetch dl failed: {e}")))?;
                 let id = pkg.id.clone();
@@ -3358,6 +3434,16 @@ fn is_tarball_url_trusted(tarball_url: &str, registry_url: &str) -> bool {
 }
 
 fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
+    let unscoped = pkg.id.name().unscoped();
+    let fallback = |_registry: &str, _pkg: &ResolvedPackage| {
+        format!(
+            "{}/{}/-/{}-{}.tgz",
+            _registry.trim_end_matches('/'),
+            _pkg.id.name_str(),
+            _pkg.id.name().unscoped(),
+            _pkg.id.version()
+        )
+    };
     if !pkg.tarball_url.is_empty() {
         if !pkg.tarball_url.starts_with("https://")
             && !allow_insecure_loopback_url(&pkg.tarball_url)
@@ -3366,15 +3452,7 @@ fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
                 "WARNING: Tarball URL for '{}' is not HTTPS, using registry fallback",
                 pkg.id.name_str()
             );
-            let registry = registry_url.trim_end_matches('/');
-            let unscoped = pkg.id.name().unscoped();
-            return format!(
-                "{}/{}/-/{}-{}.tgz",
-                registry,
-                pkg.id.name_str(),
-                unscoped,
-                pkg.id.version()
-            );
+            return fallback(registry_url, pkg);
         }
 
         if !is_tarball_url_trusted(&pkg.tarball_url, registry_url) {
@@ -3382,28 +3460,16 @@ fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
                 "WARNING: Tarball URL for '{}' domain mismatch with registry, using registry fallback",
                 pkg.id.name_str()
             );
-            let registry = registry_url.trim_end_matches('/');
-            let unscoped = pkg.id.name().unscoped();
-            return format!(
-                "{}/{}/-/{}-{}.tgz",
-                registry,
-                pkg.id.name_str(),
-                unscoped,
-                pkg.id.version()
-            );
+            return fallback(registry_url, pkg);
         }
 
+        // Resolution cache TTL đã refresh metadata + tarball_url mới sau
+        // republish (5 phút) — nên custom URL trusted là an toàn; chỉ fallback
+        // khi resolution cache thực sự ghi thẻ stale (không đụng ở đây).
         return pkg.tarball_url.clone();
     }
 
-    let unscoped = pkg.id.name().unscoped();
-    format!(
-        "{}/{}/-/{}-{}.tgz",
-        registry_url.trim_end_matches('/'),
-        pkg.id.name_str(),
-        unscoped,
-        pkg.id.version()
-    )
+    fallback(registry_url, pkg)
 }
 
 fn local_extracted_package_root(layout: &Layout, pkg: &ResolvedPackage) -> PathBuf {
@@ -5005,6 +5071,58 @@ fn strict_vstore_package_dir(node_modules: &Path, package_id: &PackageId) -> Pat
     strict_vstore_node_modules_dir(node_modules, package_id).join(package_id.name().as_str())
 }
 
+/// Repair dangling symlinks under node_modules (02 §2.2): any symlink whose
+/// target is missing is re-created from the virtual store copy of the same
+/// package, when one exists. Only invoked via `mg install --repair`.
+fn repair_dangling_symlinks(node_modules: &Path) -> MgResult<()> {
+    let vstore_root = node_modules.join(".megagate");
+    let mut fixed = 0usize;
+    let mut stack = vec![node_modules.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_symlink = match entry.file_type() {
+                Ok(ft) => ft.is_symlink(),
+                Err(_) => false,
+            };
+            if is_symlink {
+                if path.exists() {
+                    continue;
+                }
+                // Dangling: find the vstore dir for this package and re-link.
+                let parent = match path.parent() {
+                    Some(parent) => parent,
+                    None => continue,
+                };
+                let package_dir = parent.join(path.file_name().unwrap_or_default());
+                let name_in_vstore = package_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                let vstore_pkg = vstore_root.join(name_in_vstore);
+                if vstore_pkg.exists() {
+                    let _ = std::fs::remove_file(&path);
+                    link_package_tree(&vstore_pkg, &path)?;
+                    fixed += 1;
+                }
+            } else if path.is_dir() && path != vstore_root {
+                stack.push(path);
+            }
+        }
+    }
+    if fixed > 0 {
+        eprintln!(
+            "[megagate] repair: re-linked {} dangling symlink(s)",
+            fixed
+        );
+    }
+    Ok(())
+}
+
 fn strict_vstore_node_modules_dir(node_modules: &Path, package_id: &PackageId) -> PathBuf {
     let vstore_pkg_name = format!(
         "{}@{}",
@@ -5766,6 +5884,7 @@ package_count = 0
 
         let provider = NpmDependencyProvider::new(
             "http://127.0.0.1:9",
+            None,
             Some(SharedWebCache {
                 root: shared.path().to_path_buf(),
             }),
@@ -5863,7 +5982,7 @@ package_count = 0
             }
         });
 
-        let provider = NpmDependencyProvider::new(&format!("http://{addr}"), None);
+        let provider = NpmDependencyProvider::new(&format!("http://{addr}"), None, None);
         let alias_a = PackageName::new("strip-ansi-a").unwrap();
         let alias_b = PackageName::new("strip-ansi-b").unwrap();
         let source = PackageName::new("strip-ansi").unwrap();
@@ -6220,6 +6339,7 @@ package_count = 0
                     dependencies: vec![],
                     peer_deps: vec![],
                 }],
+                patches: vec![],
                 sig: None,
             })
             .unwrap(),
@@ -6644,7 +6764,7 @@ package_count = 0
             }],
         };
 
-        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None);
+        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None, None);
         let err = adapter
             .install(&graph, dir.path(), InstallOptions::default())
             .await
@@ -6713,7 +6833,7 @@ package_count = 0
             ],
         };
 
-        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None);
+        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None, None);
         let _err = adapter
             .install(&graph, dir.path(), InstallOptions::default())
             .await

@@ -79,7 +79,7 @@ fn install_hint_command() -> &'static str {
 fn project_root() -> Result<std::path::PathBuf> {
     let started_at = std::time::Instant::now();
     let cwd = std::env::current_dir()
-        .context("failed to resolve current working directory — has it been deleted?")?;
+        .map_err(|e| anyhow::anyhow!("failed to resolve current working directory — has it been deleted?: {}", e))?;
     let root = shared::find_project_root(&cwd)?.ok_or_else(|| {
         anyhow::anyhow!("No MegaGate project found (missing .megagate/project.toml or package.json in the current project)")
     })?;
@@ -89,7 +89,9 @@ fn project_root() -> Result<std::path::PathBuf> {
 
 fn web_adapter() -> Box<dyn PackageAdapter> {
     let started_at = std::time::Instant::now();
-    let adapter = crate::factory::create_adapter(&Ecosystem::Web)
+    let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL").ok();
+    let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN").ok();
+    let adapter = crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())
         .expect("web adapter always available in web core build");
     web_command_profile_mark("web_adapter", started_at);
     adapter
@@ -154,10 +156,31 @@ pub async fn install(
     frozen: bool,
     ignore_scripts: bool,
     allow_scripts: bool,
+    prefer_dedupe: bool,
+    repair: bool,
 ) -> Result<()> {
     let root = project_root()?;
     let adapter: Arc<dyn PackageAdapter> = Arc::from(web_adapter());
     let targets = install_targets(&root)?;
+
+    // Dedupe opt-in (02 §2.1): CLI flag OR mg.toml [dedupe] prefer = true.
+    let mut dedupe_enabled = prefer_dedupe;
+    if !dedupe_enabled {
+        if let Ok(Some(cfg)) = mg_config::project::ProjectConfig::load(&root) {
+            dedupe_enabled = cfg.dedupe.prefer;
+        }
+    }
+    if dedupe_enabled {
+        adapter.set_dedupe_pref(true);
+        if let Ok(Some(lock)) = mg_lockfile::read_lockfile_checked(&root) {
+            let existing: std::collections::HashMap<String, String> = lock
+                .packages
+                .iter()
+                .map(|pkg| (pkg.name.clone(), pkg.version.clone()))
+                .collect();
+            adapter.set_existing_versions(existing);
+        }
+    }
 
     for pkg in &packages {
         let spinner = mg_ui::create_spinner(&format!("  Adding {}...", pkg));
@@ -169,7 +192,16 @@ pub async fn install(
 
     let project_mode = detect_project_mode(&root)?;
     if matches!(project_mode, WebProjectMode::Monorepo) {
-        install_monorepo_targets(&adapter, &targets, frozen, ignore_scripts, allow_scripts).await?;
+        install_monorepo_targets(
+            &adapter,
+            &targets,
+            frozen,
+            ignore_scripts,
+            allow_scripts,
+            prefer_dedupe,
+            repair,
+        )
+        .await?;
         link_monorepo_workspace_packages(&root, &targets)?;
         write_monorepo_root_lockfile(&root, &targets)?;
     } else {
@@ -182,6 +214,8 @@ pub async fn install(
                     frozen,
                     mg_types::adapter::InstallOptions {
                         allow_scripts,
+                        prefer_dedupe: dedupe_enabled,
+                        repair,
                         legacy_flat: shared::should_use_legacy_flat_layout("web"),
                         ..Default::default()
                     },
@@ -526,6 +560,8 @@ async fn install_monorepo_targets(
     frozen: bool,
     ignore_scripts: bool,
     allow_scripts: bool,
+    prefer_dedupe: bool,
+    repair: bool,
 ) -> Result<()> {
     let mut native_targets = Vec::new();
     let mut package_targets = Vec::new();
@@ -556,6 +592,8 @@ async fn install_monorepo_targets(
                 frozen,
                 ignore_scripts,
                 allow_scripts,
+                prefer_dedupe,
+                repair,
             )
             .await?;
             Ok::<PathBuf, anyhow::Error>(target)
@@ -616,6 +654,8 @@ async fn install_web_target_quiet(
     frozen: bool,
     ignore_scripts: bool,
     allow_scripts: bool,
+    prefer_dedupe: bool,
+    repair: bool,
 ) -> Result<()> {
     let execution = shared::prepare_install_execution(adapter, target, frozen, None).await?;
     if execution.graph.is_empty() {
@@ -624,6 +664,8 @@ async fn install_web_target_quiet(
     let opts = mg_types::adapter::InstallOptions {
         ignore_scripts,
         allow_scripts,
+        prefer_dedupe,
+        repair,
         legacy_flat: shared::should_use_legacy_flat_layout("web"),
         frozen,
         ..Default::default()
@@ -3750,7 +3792,7 @@ mod tests {
         )
         .unwrap();
 
-        let symfony_launch = build_dev_launch(symfony_dir.path(), "dev", None, Some(4404)).unwrap();
+        let symfony_launch = build_dev_launch(symfony_dir.path(), "dev", None, Some(4315)).unwrap();
         assert_eq!(symfony_launch.program, PathBuf::from("php"));
         assert_eq!(
             symfony_launch
@@ -3760,7 +3802,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "-S".to_string(),
-                "localhost:4404".to_string(),
+                "localhost:4315".to_string(),
                 "-t".to_string(),
                 "public".to_string(),
                 "public/index.php".to_string(),
@@ -3773,7 +3815,7 @@ mod tests {
             r#"<project><properties><quarkus.platform.version>3.6.0</quarkus.platform.version></properties></project>"#,
         )
         .unwrap();
-        let quarkus_launch = build_dev_launch(quarkus_dir.path(), "dev", None, Some(4405)).unwrap();
+        let quarkus_launch = build_dev_launch(quarkus_dir.path(), "dev", None, Some(4135)).unwrap();
         assert_eq!(quarkus_launch.program, PathBuf::from("mvn"));
         assert_eq!(
             quarkus_launch
@@ -3785,7 +3827,7 @@ mod tests {
                 "quarkus:dev".to_string(),
                 "-Dquarkus.http.host=localhost".to_string(),
                 "-Dquarkus.analytics.disabled=true".to_string(),
-                "-Dquarkus.http.port=4405".to_string(),
+                "-Dquarkus.http.port=4135".to_string(),
             ]
         );
 
@@ -3795,7 +3837,7 @@ mod tests {
             spring_dir.path(),
             "dev",
             Some("localhost".into()),
-            Some(4406),
+            Some(3415),
         )
         .unwrap();
         assert_eq!(spring_launch.program, PathBuf::from("mvn"));
@@ -3807,7 +3849,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "spring-boot:run".to_string(),
-                "-Dspring-boot.run.arguments=--server.port=4406 --server.address=localhost"
+                "-Dspring-boot.run.arguments=--server.port=3415 --server.address=localhost"
                     .to_string(),
             ]
         );

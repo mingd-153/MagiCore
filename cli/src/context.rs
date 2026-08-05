@@ -20,14 +20,31 @@ impl ProjectContext {
     ///   2. `mg.toml` (saved by `mg init`)
     ///   3. auto_detect (package.json → web, Cargo.toml → lib, pyproject.toml → ai)
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
-        let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
+        let cwd = std::env::current_dir()
+        .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {}", e))?;
         let project_root = ProjectConfig::find_project_root(&cwd);
 
         let (root, config) = Self::resolve_config(&cwd, project_root.as_ref(), core_override)?;
         let ecosystem = Ecosystem::from_str(&config.ecosystem)
             .ok_or_else(|| anyhow::anyhow!("Unknown ecosystem: '{}'", config.ecosystem))?;
 
-        let adapter = crate::factory::create_adapter(&ecosystem)?;
+        // Registry override từ mg.toml [registry] (url + token) — ưu tiên env
+        let registry_entry = config.registries.iter().find(|r| {
+            !r.url.contains("registry.npmjs.org")
+                || std::env::var("MEGAGATE_WEB_REGISTRY_URL").is_ok()
+        });
+        let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL")
+            .ok()
+            .or_else(|| registry_entry.map(|r| r.url.clone()));
+        let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN")
+            .ok()
+            .or_else(|| registry_entry.and_then(|r| r.token.clone()));
+
+        let adapter = crate::factory::create_adapter(
+            &ecosystem,
+            registry_url.as_deref(),
+            token.as_deref(),
+        )?;
         Ok(Self {
             root,
             config,

@@ -5,11 +5,13 @@
 
 pub mod cache;
 pub mod graph;
+pub mod patches;
 pub mod solver;
 pub mod version;
 
 pub use cache::RegistryCache;
 pub use graph::DependencyGraph;
+pub use patches::{apply_patch, get_patches_dir, verify_patch_integrity};
 pub use solver::{
     check_dependency_confusion, DepInfo, DependencyError, DependencyProvider, Resolution,
     ResolvedDep, Resolver, SolveError, SolveResult,

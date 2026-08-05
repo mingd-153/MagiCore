@@ -70,6 +70,81 @@ pub(crate) enum Commands {
     #[command(about = "Update MegaGate CLI to the latest version")]
     SelfUpdate,
 
+    // ── Common: Publish ──────────────────────────────────────────────
+    #[command(about = "Publish package to registry")]
+    Publish {
+        #[arg(long, help = "dist-tag (default: latest)")]
+        tag: Option<String>,
+        #[arg(long, help = "access level: public|restricted")]
+        access: Option<String>,
+        #[arg(long, help = "pack + verify, do not publish")]
+        dry_run: bool,
+        #[arg(long, help = "output JSON")]
+        json: bool,
+        #[arg(long, help = "OTP code for 2FA")]
+        otp: Option<String>,
+        #[arg(long, help = "delete existing version then republish (409)")]
+        force: bool,
+        #[arg(long, help = "skip lifecycle scripts")]
+        ignore_scripts: bool,
+        #[arg(long, help = "skip git checks")]
+        no_git_checks: bool,
+        #[arg(long, help = "publish branch (default: current branch tracking remote)")]
+        publish_branch: Option<String>,
+        #[arg(long, help = "all in one PUT (Phase 3)")]
+        batch: bool,
+        #[arg(long, help = "write JSON report file")]
+        report_summary: bool,
+        #[arg(long, help = "version bump patch")]
+        patch: bool,
+        #[arg(long, help = "version bump minor")]
+        minor: bool,
+        #[arg(long, help = "version bump major")]
+        major: bool,
+        #[arg(long, help = "override registry URL")]
+        registry: Option<String>,
+        #[arg(long, help = "override token (env MG_NPM_TOKEN recommended)")]
+        token: Option<String>,
+    },
+
+    // ── Common: Patch & Dedupe ───────────────────────────────────────
+    #[command(about = "Manage package patches (add/rm/ls/verify)")]
+    Patch {
+        #[command(subcommand)]
+        cmd: crate::commands::patch::PatchCmd,
+    },
+    #[command(about = "Deduplicate packages in lockfile (merge duplicates)")]
+    Dedupe {
+        #[arg(long, help = "report only, do not apply changes")]
+        dry_run: bool,
+        #[arg(long, help = "prefer latest version over existing instances")]
+        prefer_latest: bool,
+        #[arg(long, help = "output JSON")]
+        json: bool,
+    },
+
+    // ── Registry (Phase 3) ──────────────────────────────────────────
+    #[command(about = "Login to a registry (adduser flow, save token to .npmrc)")]
+    Login {        #[arg(long, help = "registry URL (default: config or npmjs)")]
+        registry: Option<String>,
+        #[arg(long, help = "username (prompt if omitted)")]
+        username: Option<String>,
+        #[arg(long, help = "password (prompt if omitted)")]
+        password: Option<String>,
+        #[arg(long, help = "write token to project .npmrc instead of ~/.npmrc")]
+        local: bool,
+    },
+    #[command(about = "Manage the private registry (serve, user add/rm)")]
+    Registry {
+        #[command(subcommand)]
+        cmd: crate::commands::registry::RegistryCmd,
+    },
+    #[command(about = "Push/pull/list AI models qua OCI registry")]
+    Model {
+        #[command(subcommand)]
+        cmd: crate::commands::model::ModelCmd,
+    },
+
     // ── Engine Commands (In-project, auto-detect core) ───────────────
     #[command(about = "Start the local development server", alias = "dev-web")]
     Dev {
@@ -130,6 +205,15 @@ pub(crate) enum Commands {
         ignore_scripts: bool,
         #[arg(long, help = "Allow dependency lifecycle scripts")]
         allow_scripts: bool,
+        #[arg(long, help = "Prefer reusing installed versions instead of latest (dedupe, opt-in)")]
+        prefer_dedupe: bool,
+        #[arg(long, help = "Re-link dangling symlinks in node_modules")]
+        repair: bool,
+    },
+    #[command(about = "Manage the local store (prune unreferenced packages)")]
+    Store {
+        #[command(subcommand)]
+        cmd: crate::commands::store::StoreCmd,
     },
     #[command(about = "Add dependencies (auto-detect core)")]
     Add {
@@ -242,6 +326,10 @@ pub(crate) enum Commands {
         ignore_scripts: bool,
         #[arg(long, help = "Allow dependency lifecycle scripts")]
         allow_scripts: bool,
+        #[arg(long, help = "Prefer reusing installed versions instead of latest (dedupe, opt-in)")]
+        prefer_dedupe: bool,
+        #[arg(long, help = "Re-link dangling symlinks in node_modules")]
+        repair: bool,
     },
     #[command(name = "install-game", about = "Install game dependencies", hide = true)]
     InstallGame { packages: Vec<String> },

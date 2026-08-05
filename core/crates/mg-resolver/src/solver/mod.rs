@@ -52,6 +52,18 @@ pub struct Resolution {
     pub integrity: String,
     pub deps: Vec<String>,
     pub dep_specs: Vec<(String, String)>,
+    /// Names of peer dependencies (used for peer instance merge — 02 §2.1)
+    pub peer_deps: Vec<String>,
+}
+
+/// Version selection preference for dedupe (02 §2.1 — Q8: default safe).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DedupePref {
+    /// Pick the newest matching version (current behaviour, default).
+    #[default]
+    PreferLatest,
+    /// Prefer a version already present in the graph/lockfile when it satisfies the range.
+    PreferExisting,
 }
 
 /// Complete resolution result: all packages in topo-ish order.
@@ -307,6 +319,21 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 pub struct Resolver {
     provider: std::sync::Arc<dyn DependencyProvider>,
     overrides: HashMap<String, String>,
+    /// Version selection preference (default PreferLatest = safe).
+    /// RwLock so shared resolvers (Arc in adapters) can be reconfigured per solve.
+    dedupe_pref: std::sync::RwLock<DedupePref>,
+    /// Versions already installed (from lockfile) to prefer under PreferExisting.
+    existing_versions: std::sync::RwLock<HashMap<String, Version>>,
+}
+
+impl std::fmt::Debug for Resolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Resolver")
+            .field("overrides", &self.overrides)
+            .field("dedupe_pref", &self.dedupe_pref.read().unwrap())
+            .field("existing_versions", &self.existing_versions.read().unwrap())
+            .finish()
+    }
 }
 
 #[derive(Default)]
@@ -340,11 +367,43 @@ impl Resolver {
         Self {
             provider,
             overrides: HashMap::new(),
+            dedupe_pref: std::sync::RwLock::new(DedupePref::default()),
+            existing_versions: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
     pub fn set_overrides(&mut self, overrides: HashMap<String, String>) {
         self.overrides = overrides;
+    }
+
+    /// Set dedupe preference (02 §2.1). Default is PreferLatest (safe).
+    pub fn set_dedupe_pref(&self, pref: DedupePref) {
+        *self.dedupe_pref.write().unwrap() = pref;
+    }
+
+    /// Provide versions already present in the project (from lockfile) so
+    /// PreferExisting can reuse them instead of installing new instances.
+    pub fn set_existing_versions(&self, existing: HashMap<String, Version>) {
+        *self.existing_versions.write().unwrap() = existing;
+    }
+
+    /// Pick the version to use: under PreferExisting, reuse the installed
+    /// version when it satisfies the constraint (dedupe — 02 §2.1).
+    fn select_version(
+        &self,
+        name: &str,
+        constraint: &VersionRange,
+        spec: &str,
+        versions: &[Version],
+    ) -> Option<Version> {
+        if *self.dedupe_pref.read().unwrap() == DedupePref::PreferExisting {
+            if let Some(existing) = self.existing_versions.read().unwrap().get(name) {
+                if constraint.matches(existing) {
+                    return Some(existing.clone());
+                }
+            }
+        }
+        Self::select_best_version(versions, constraint, spec)
     }
 
     fn select_best_version(
@@ -535,7 +594,8 @@ impl Resolver {
                         },
                     )?)
                 };
-                let version = Self::select_best_version(versions.as_ref(), &constraint, &spec);
+                let version =
+                    self.select_version(&name_str, &constraint, &spec, versions.as_ref());
 
                 match version {
                     Some(v) => {
@@ -643,7 +703,9 @@ impl Resolver {
         }
 
         profile.mark("solve_total", solve_started_at);
-        Ok(SolveResult { resolutions })
+        Ok(SolveResult {
+            resolutions: Self::merge_peer_instances(resolutions),
+        })
     }
 
     /// Record a resolved package and enqueue its transitive dependencies.
@@ -665,6 +727,11 @@ impl Resolver {
             .iter()
             .map(|d| (d.package.as_str().to_string(), d.spec.clone()))
             .collect();
+        let peer_deps: Vec<String> = deps
+            .iter()
+            .filter(|d| d.peer)
+            .map(|d| d.package.as_str().to_string())
+            .collect();
         let enqueue_results = join_all(deps.iter().map(|dep| provider.should_enqueue(dep))).await;
         for (dep, should_enqueue) in deps.iter().zip(enqueue_results) {
             if should_enqueue.map_err(|e| SolveError {
@@ -685,9 +752,42 @@ impl Resolver {
             integrity: String::new(),
             deps: dep_names,
             dep_specs,
+            peer_deps,
         });
 
         Ok(())
+    }
+
+    /// Peer instance merge post-solve (02 §2.1): merge resolutions that share
+    /// the same (name, version) — same peer signature — into one instance.
+    /// Safe: the solver already dedupes (name, version) pairs; this pass merges
+    /// dep lists when the same instance was recorded more than once.
+    fn merge_peer_instances(resolutions: Vec<Resolution>) -> Vec<Resolution> {
+        let mut merged: HashMap<(String, String), Resolution> = HashMap::new();
+        for r in resolutions {
+            let key = (
+                r.package_id.name_str().to_string(),
+                r.package_id.version().to_string(),
+            );
+            match merged.get_mut(&key) {
+                Some(existing) => {
+                    for dep in &r.deps {
+                        if !existing.deps.contains(dep) {
+                            existing.deps.push(dep.clone());
+                        }
+                    }
+                    for (name, spec) in &r.dep_specs {
+                        if !existing.dep_specs.contains(&(name.clone(), spec.clone())) {
+                            existing.dep_specs.push((name.clone(), spec.clone()));
+                        }
+                    }
+                }
+                None => {
+                    merged.insert(key, r);
+                }
+            }
+        }
+        merged.into_values().collect()
     }
 }
 

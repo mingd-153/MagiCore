@@ -1,5 +1,6 @@
 pub mod serialization;
 
+use mg_types::LockPatch;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -64,6 +65,9 @@ pub struct Lockfile {
     pub workspaces: Vec<WorkspaceLock>,
     #[serde(rename = "package", default)]
     pub packages: Vec<LockPackage>,
+    /// Package patches applied (A6: npm-format only — web/lib ts)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<LockPatch>,
     /// BLAKE3 HMAC signature of canonical lockfile content (optional, controlled by env).
     /// Format: `blake3:<hex-digest>` (keyed by MEGAGATE_LOCKFILE_KEY env var).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -80,6 +84,7 @@ impl Lockfile {
             resolution: ResolutionMeta::default(),
             workspaces: vec![],
             packages: vec![],
+            patches: vec![],
             sig: None,
         }
     }
@@ -97,6 +102,13 @@ pub fn lockfile_checksum(contents: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(contents);
     hex::encode(hasher.finalize())
+}
+
+pub fn write_lockfile(project_root: &Path, lockfile: &Lockfile) -> anyhow::Result<()> {
+    let toml = serialization::to_toml(lockfile)?;
+    atomic_write(&lockfile_path(project_root), toml.as_bytes())?;
+    write_lockfile_checksum(project_root, toml.as_bytes())?;
+    Ok(())
 }
 
 pub fn write_lockfile_checksum(project_root: &Path, contents: &[u8]) -> anyhow::Result<()> {
