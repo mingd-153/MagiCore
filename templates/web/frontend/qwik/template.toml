@@ -63,12 +63,24 @@ include_features = ["typescript"]
 [[files]]
 source = "vite.config.js"
 target = "vite.config.js"
-exclude_features = ["typescript"]
+exclude_features = ["typescript", "tailwindcss"]
 
 [[files]]
 source = "vite.config.ts"
 target = "vite.config.ts"
 include_features = ["typescript"]
+exclude_features = ["tailwindcss"]
+
+[[files]]
+source = "vite.config.tailwind.js"
+target = "vite.config.js"
+exclude_features = ["typescript"]
+include_features = ["tailwindcss"]
+
+[[files]]
+source = "vite.config.tailwind.ts"
+target = "vite.config.ts"
+include_features = ["tailwindcss"]
 
 [[files]]
 source = "config/framework.ts"

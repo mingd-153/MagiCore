@@ -362,14 +362,8 @@ target = ".storybook/main.ts"
 include_features = ["storybook"]
 
 [[files]]
-source = "src/pages/Home.ts"
-target = "src/pages/Home.ts"
-include_features = ["typescript"]
-
-[[files]]
-source = "src/pages/Home.js"
-target = "src/pages/Home.js"
-exclude_features = ["typescript"]
+source = "src/pages/Home.astro"
+target = "src/pages/Home.astro"
 
 [[files]]
 source = "src/app/api/rest/route.ts"

@@ -1,6 +1,17 @@
 pub mod cache;
+pub mod methods;
+pub mod offline;
+pub mod proxy;
 pub mod ratelimit;
 pub mod retry;
+pub mod timeout;
+pub mod tls;
+pub mod upload;
+
+pub use methods::HttpClient;
+pub use ratelimit::RateLimiter;
+pub use cache::HttpCache;
+pub use tls::TlsConfig;
 
 #[cfg(test)]
 mod tests {
@@ -22,7 +33,6 @@ mod tests {
             base: Duration::from_secs(1),
             max: Duration::from_secs(60),
         };
-        // base * 2^attempt
         assert_eq!(strat.delay(0), Duration::from_secs(1));
         assert_eq!(strat.delay(1), Duration::from_secs(2));
         assert_eq!(strat.delay(2), Duration::from_secs(4));
@@ -35,9 +45,7 @@ mod tests {
             base: Duration::from_secs(1),
             max: Duration::from_secs(10),
         };
-        // attempt 4: 1 * 16 = 16 → clamped to 10
         assert_eq!(strat.delay(4), Duration::from_secs(10));
-        // attempt 10: 1 * 1024 = 1024 → clamped to 10
         assert_eq!(strat.delay(10), Duration::from_secs(10));
     }
 
@@ -47,11 +55,8 @@ mod tests {
             base: Duration::from_millis(500),
             max: Duration::from_secs(2),
         };
-        // attempt 0: 500ms
         assert_eq!(strat.delay(0), Duration::from_millis(500));
-        // attempt 1: 1000ms
         assert_eq!(strat.delay(1), Duration::from_millis(1000));
-        // attempt 2: 2000ms → clamped to max
         assert_eq!(strat.delay(2), Duration::from_secs(2));
     }
 
@@ -66,7 +71,6 @@ mod tests {
 
     #[test]
     fn ratelimit_default_field_order() {
-        // Verify struct fields exist and are accessible
         let config = super::ratelimit::RateLimitConfig::default();
         assert!(config.max_requests > 0);
         assert!(config.period.as_nanos() > 0);
@@ -107,7 +111,6 @@ mod tests {
             timestamp: future,
             ttl: Duration::from_secs(60),
         };
-        // duration_since fails → unwrap_or(false)
         assert!(!entry.is_valid());
     }
 
@@ -118,7 +121,6 @@ mod tests {
             timestamp: SystemTime::now(),
             ttl: Duration::ZERO,
         };
-        // elapsed >= 0 → not < 0 → invalid
         assert!(!entry.is_valid());
     }
 }

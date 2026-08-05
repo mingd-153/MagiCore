@@ -22,7 +22,7 @@ pub async fn add(
     let _ = packages;
     Err(not_available())
 }
-pub async fn remove(_package: String) -> Result<()> {
+pub async fn remove(_packages: Vec<String>) -> Result<()> {
     Err(not_available())
 }
 pub async fn list() -> Result<()> {

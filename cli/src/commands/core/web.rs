@@ -1,14 +1,18 @@
+#![allow(dead_code)]
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use mg_crypto::HashAlgorithm;
-use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta, WorkspaceLock};
+use mg_lockfile::{
+    serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
+};
 use mg_types::adapter::PackageAdapter;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 
 use crate::commands::core::scaffold_flags::ScaffoldFlags;
 use crate::commands::core::shared;
@@ -17,108 +21,22 @@ use mg_ui::info;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 const SCAFFOLD_VERSION_OVERRIDES_ENV: &str = "MEGAGATE_WEB_SCAFFOLD_VERSION_OVERRIDES";
-const SCAFFOLD_BASELINE_VERSIONS: &[(&str, &str)] = &[
-    ("vue", "^3.5.39"),
-    ("react", "^19.2.7"),
-    ("react-dom", "^19.2.7"),
-    ("vite", "^8.1.4"),
-    ("@vitejs/plugin-react", "^6.0.3"),
-    ("@vitejs/plugin-vue", "^6.0.7"),
-    ("solid-js", "^1.9.14"),
-    ("vite-plugin-solid", "^2.11.12"),
-    ("typescript", "^5.9.2"),
-    ("@types/react", "^19.2.17"),
-    ("@types/react-dom", "^19.2.3"),
-    ("@types/node", "^26.1.1"),
-    ("tailwindcss", "^4.3.2"),
-    ("@sveltejs/kit", "^2.69.2"),
-    ("@sveltejs/vite-plugin-svelte", "^7.2.0"),
-    ("@sveltejs/adapter-auto", "^7.0.1"),
-    ("svelte", "^5.56.4"),
-    ("next", "^16.2.10"),
-    ("nuxt", "^4.4.8"),
-    ("@angular/core", "^22.0.6"),
-    ("@angular/platform-browser", "^22.0.6"),
-    ("@angular/platform-browser-dynamic", "^22.0.6"),
-    ("@angular/router", "^22.0.6"),
-    ("@angular/compiler", "^22.0.6"),
-    ("@angular/common", "^22.0.6"),
-    ("rxjs", "^7.8.2"),
-    ("zone.js", "^0.16.2"),
-    ("tslib", "^2.8.1"),
-    ("@angular/cli", "^22.0.6"),
-    ("@angular/compiler-cli", "^22.0.6"),
-    ("@angular-devkit/build-angular", "^22.0.6"),
-    ("@builder.io/qwik", "^1.20.0"),
-    ("@builder.io/qwik-city", "^1.20.0"),
-    ("astro", "^7.0.7"),
-    ("express", "^5.2.1"),
-    ("@types/express", "^5.0.6"),
-    ("hono", "^4.12.30"),
-    ("@hono/node-server", "^1.19.6"),
-    ("@nestjs/core", "^11.1.28"),
-    ("@nestjs/common", "^11.1.28"),
-    ("@nestjs/platform-express", "^11.1.28"),
-    ("reflect-metadata", "^0.2.2"),
-    ("zod", "^4.4.3"),
-    ("@trpc/server", "^11.18.0"),
-    ("fastify", "^5.10.0"),
-    ("tsx", "^4.23.0"),
-    ("@prisma/client", "^6.6.0"),
-    ("prisma", "^6.6.0"),
-    ("vitest", "^3.2.0"),
-    ("eslint", "^9.28.0"),
-    ("eslint-config-next", "^16.2.10"),
-    ("prettier", "^3.6.0"),
-    ("@tailwindcss/postcss", "^4.3.2"),
-    ("pg", "^8.15.0"),
-    ("zustand", "^5.0.3"),
-    ("@tanstack/react-query", "^5.62.0"),
-    ("next-auth", "^5.0.0"),
-    ("@playwright/test", "^1.52.0"),
-    ("husky", "^9.2.0"),
-    ("lint-staged", "^15.5.0"),
-    ("@biomejs/biome", "^1.9.0"),
-    ("clsx", "^2.1.0"),
-    ("tailwind-merge", "^3.2.0"),
-    ("class-variance-authority", "^0.7.0"),
-    ("sass", "^1.83.0"),
-    ("unocss", "^65.5.0"),
-    ("daisyui", "^4.12.0"),
-    ("@reduxjs/toolkit", "^2.6.0"),
-    ("react-redux", "^9.2.0"),
-    ("jest", "^29.7.0"),
-    ("@testing-library/react", "^16.0.0"),
-    ("@testing-library/jest-dom", "^6.6.0"),
-    ("jest-environment-jsdom", "^29.7.0"),
-    ("cypress", "^14.2.0"),
-    ("drizzle-orm", "^0.38.0"),
-    ("drizzle-kit", "^0.30.0"),
-    ("@clerk/nextjs", "^6.12.0"),
-    ("styled-components", "^6.1.0"),
-    ("@types/styled-components", "^5.1.0"),
-    ("@commitlint/cli", "^19.5.0"),
-    ("@commitlint/config-conventional", "^19.5.0"),
-    ("@apollo/server", "^4.11.0"),
-    ("@as-integrations/next", "^3.2.0"),
-    ("@trpc/server", "^11.0.0"),
-    ("@trpc/client", "^11.0.0"),
-    ("@trpc/next", "^11.0.0"),
-    ("@grpc/grpc-js", "^1.11.0"),
-    ("@grpc/proto-loader", "^0.7.0"),
-    ("lucia", "^3.2.0"),
-    ("@lucia-auth/adapter-drizzle", "^1.1.0"),
-    ("jose", "^5.7.0"),
-    ("dotenv-cli", "^7.4.0"),
-    ("next-i18next", "^15.3.0"),
-    ("next-pwa", "^5.6.0"),
-    ("@storybook/nextjs", "^8.2.0"),
-    ("@storybook/react", "^8.2.0"),
-    ("@sentry/nextjs", "^8.21.0"),
-    ("@vercel/analytics", "^1.3.0"),
-    ("@railway/cli", "^4.2.0"),
-    ("flyctl", "^0.2.0"),
-];
+const SCAFFOLD_BASELINE_VERSIONS_TOML: &str =
+    include_str!("../../../../templates/web/versions/scaffold-baseline.toml");
+
+fn web_command_profile_enabled() -> bool {
+    std::env::var_os("MEGAGATE_WEB_PROFILE_COMMAND").is_some()
+}
+
+fn web_command_profile_mark(label: &str, started_at: std::time::Instant) {
+    if web_command_profile_enabled() {
+        eprintln!(
+            "[megagate:web:web-command-profile] {}={}ms",
+            label,
+            started_at.elapsed().as_millis()
+        );
+    }
+}
 
 fn install_hint_command() -> &'static str {
     #[cfg(all(
@@ -159,16 +77,24 @@ fn install_hint_command() -> &'static str {
 
 /// Find project root for web commands
 fn project_root() -> Result<std::path::PathBuf> {
-    let cwd = std::env::current_dir()?;
+    let started_at = std::time::Instant::now();
+    let cwd = std::env::current_dir()
+        .map_err(|e| anyhow::anyhow!("failed to resolve current working directory — has it been deleted?: {}", e))?;
     let root = shared::find_project_root(&cwd)?.ok_or_else(|| {
         anyhow::anyhow!("No MegaGate project found (missing .megagate/project.toml or package.json in the current project)")
     })?;
+    web_command_profile_mark("project_root", started_at);
     Ok(root)
 }
 
 fn web_adapter() -> Box<dyn PackageAdapter> {
-    crate::factory::create_adapter(&Ecosystem::Web)
-        .expect("web adapter always available in web core build")
+    let started_at = std::time::Instant::now();
+    let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL").ok();
+    let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN").ok();
+    let adapter = crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())
+        .expect("web adapter always available in web core build");
+    web_command_profile_mark("web_adapter", started_at);
+    adapter
 }
 
 /// Add web dependency
@@ -181,42 +107,80 @@ pub async fn add(
     optional: bool,
     peer: bool,
     no_save: bool,
+    install: bool,
     global: bool,
 ) -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::add(
-        &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, global,
+    let result = shared::add(
+        &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, install, global,
     )
-    .await
+    .await;
+    web_command_profile_mark("web_add_total", started_at);
+    result
 }
 
-/// Remove web dependency
-pub async fn remove(package: String) -> Result<()> {
+/// Remove web dependencies
+pub async fn remove(packages: Vec<String>, install: bool) -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::remove(&*adapter, &root, &package).await
+    let result = shared::remove(&*adapter, &root, packages, install).await;
+    web_command_profile_mark("web_remove_total", started_at);
+    result
 }
 
 /// List web packages
 pub async fn list() -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::list(&*adapter, &root).await
+    let result = shared::list(&*adapter, &root).await;
+    web_command_profile_mark("web_list_total", started_at);
+    result
 }
 
 /// Update web packages
 pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
+    let started_at = std::time::Instant::now();
     let root = project_root()?;
     let adapter = web_adapter();
-    shared::update(&*adapter, &root, packages, install).await
+    let result = shared::update(&*adapter, &root, packages, install).await;
+    web_command_profile_mark("web_update_total", started_at);
+    result
 }
 
-/// Install web dependencies
-pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
+pub async fn install(
+    packages: Vec<String>,
+    frozen: bool,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+    prefer_dedupe: bool,
+    repair: bool,
+) -> Result<()> {
     let root = project_root()?;
     let adapter: Arc<dyn PackageAdapter> = Arc::from(web_adapter());
     let targets = install_targets(&root)?;
+
+    // Dedupe opt-in (02 §2.1): CLI flag OR mg.toml [dedupe] prefer = true.
+    let mut dedupe_enabled = prefer_dedupe;
+    if !dedupe_enabled {
+        if let Ok(Some(cfg)) = mg_config::project::ProjectConfig::load(&root) {
+            dedupe_enabled = cfg.dedupe.prefer;
+        }
+    }
+    if dedupe_enabled {
+        adapter.set_dedupe_pref(true);
+        if let Ok(Some(lock)) = mg_lockfile::read_lockfile_checked(&root) {
+            let existing: std::collections::HashMap<String, String> = lock
+                .packages
+                .iter()
+                .map(|pkg| (pkg.name.clone(), pkg.version.clone()))
+                .collect();
+            adapter.set_existing_versions(existing);
+        }
+    }
 
     for pkg in &packages {
         let spinner = mg_ui::create_spinner(&format!("  Adding {}...", pkg));
@@ -228,13 +192,35 @@ pub async fn install(packages: Vec<String>, frozen: bool) -> Result<()> {
 
     let project_mode = detect_project_mode(&root)?;
     if matches!(project_mode, WebProjectMode::Monorepo) {
-        install_monorepo_targets(&adapter, &targets, frozen).await?;
+        install_monorepo_targets(
+            &adapter,
+            &targets,
+            frozen,
+            ignore_scripts,
+            allow_scripts,
+            prefer_dedupe,
+            repair,
+        )
+        .await?;
         link_monorepo_workspace_packages(&root, &targets)?;
         write_monorepo_root_lockfile(&root, &targets)?;
     } else {
         for target in &targets {
             if target.join("package.json").exists() {
-                shared::install_with_adapter(adapter.as_ref(), target, "mg add", frozen).await?;
+                shared::install_with_adapter(
+                    adapter.as_ref(),
+                    target,
+                    "mg add",
+                    frozen,
+                    mg_types::adapter::InstallOptions {
+                        allow_scripts,
+                        prefer_dedupe: dedupe_enabled,
+                        repair,
+                        legacy_flat: shared::should_use_legacy_flat_layout("web"),
+                        ..Default::default()
+                    },
+                )
+                .await?;
             } else {
                 native_install_target(target)?;
             }
@@ -251,10 +237,10 @@ pub async fn dev_at_root(
 ) -> Result<()> {
     let targets = dev_targets(project_root, host, port)?;
     if targets.len() == 1 {
-        return run_single_dev_target(&targets[0]);
+        return run_single_dev_target(&targets[0]).await;
     }
 
-    run_multi_dev_targets(&targets)
+    run_multi_dev_targets(&targets).await
 }
 
 #[derive(Debug)]
@@ -554,16 +540,28 @@ fn link_monorepo_workspace_packages(project_root: &Path, targets: &[PathBuf]) ->
 
 fn read_workspace_package_manifest(project_root: &Path) -> Result<WorkspacePackageJson> {
     let path = project_root.join("package.json");
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read workspace package manifest '{}'", path.display()))?;
-    serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse workspace package manifest '{}'", path.display()))
+    let contents = std::fs::read_to_string(&path).with_context(|| {
+        format!(
+            "failed to read workspace package manifest '{}'",
+            path.display()
+        )
+    })?;
+    serde_json::from_str(&contents).with_context(|| {
+        format!(
+            "failed to parse workspace package manifest '{}'",
+            path.display()
+        )
+    })
 }
 
 async fn install_monorepo_targets(
     adapter: &Arc<dyn PackageAdapter>,
     targets: &[PathBuf],
     frozen: bool,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+    prefer_dedupe: bool,
+    repair: bool,
 ) -> Result<()> {
     let mut native_targets = Vec::new();
     let mut package_targets = Vec::new();
@@ -576,10 +574,7 @@ async fn install_monorepo_targets(
         }
     }
 
-    let concurrency = std::thread::available_parallelism()
-        .map(|count| count.get().min(4))
-        .unwrap_or(2)
-        .max(1);
+    let concurrency = monorepo_install_concurrency(&package_targets);
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
     let mut join_set = tokio::task::JoinSet::new();
 
@@ -591,7 +586,16 @@ async fn install_monorepo_targets(
                 .acquire_owned()
                 .await
                 .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
-            install_web_target_quiet(adapter.as_ref(), &target, frozen).await?;
+            install_web_target_quiet(
+                adapter.as_ref(),
+                &target,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+                prefer_dedupe,
+                repair,
+            )
+            .await?;
             Ok::<PathBuf, anyhow::Error>(target)
         });
     }
@@ -607,16 +611,66 @@ async fn install_monorepo_targets(
     Ok(())
 }
 
+fn monorepo_install_concurrency(package_targets: &[PathBuf]) -> usize {
+    if package_targets.is_empty() {
+        return 1;
+    }
+
+    if let Some(override_value) = std::env::var("MEGAGATE_WEB_MONOREPO_INSTALL_CONCURRENCY")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+    {
+        return override_value;
+    }
+
+    let default = std::thread::available_parallelism()
+        .map(|count| count.get().min(4))
+        .unwrap_or(2)
+        .max(1);
+
+    if looks_like_cold_monorepo_install(package_targets) {
+        return 1;
+    }
+
+    default
+}
+
+fn looks_like_cold_monorepo_install(package_targets: &[PathBuf]) -> bool {
+    if package_targets.len() <= 1 {
+        return false;
+    }
+
+    package_targets.iter().all(|target| {
+        !target.join("node_modules").exists()
+            && !target.join("mg.lock").exists()
+            && !target.join(".megagate").join("cache").join("web").exists()
+    })
+}
+
 async fn install_web_target_quiet(
     adapter: &dyn PackageAdapter,
     target: &Path,
     frozen: bool,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+    prefer_dedupe: bool,
+    repair: bool,
 ) -> Result<()> {
     let execution = shared::prepare_install_execution(adapter, target, frozen, None).await?;
     if execution.graph.is_empty() {
         return Ok(());
     }
-    adapter.install(&execution.graph, target).await?;
+    let opts = mg_types::adapter::InstallOptions {
+        ignore_scripts,
+        allow_scripts,
+        prefer_dedupe,
+        repair,
+        legacy_flat: shared::should_use_legacy_flat_layout("web"),
+        frozen,
+        ..Default::default()
+    };
+    adapter.install(&execution.graph, target, opts).await?;
     Ok(())
 }
 
@@ -635,7 +689,10 @@ fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Res
     let mut total_packages = 0usize;
 
     for target in package_targets {
-        let Some(lock) = mg_web_adapter::read_web_lockfile(target) else {
+        let Some(lock) = mg_lockfile::read_lockfile_checked(target).with_context(|| {
+            format!("failed to verify child lockfile at '{}'", target.display())
+        })?
+        else {
             continue;
         };
 
@@ -695,10 +752,10 @@ fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Res
     lockfile.workspaces = workspaces;
     lockfile.packages = packages.into_values().collect();
 
+    LockfileSigner::sign(&mut lockfile)?;
     let lock_toml = serialization::to_toml(&lockfile)?;
     atomic_write(&project_root.join("mg.lock"), lock_toml.as_bytes())?;
-    let checksum = mg_crypto::hash(lock_toml.as_bytes(), HashAlgorithm::Sha256)?;
-    atomic_write(&project_root.join("mg.lock.sha256"), checksum.as_bytes())?;
+    mg_lockfile::write_lockfile_checksum(project_root, lock_toml.as_bytes())?;
     Ok(())
 }
 
@@ -747,8 +804,8 @@ fn dev_targets(
     host: Option<String>,
     port: Option<u16>,
 ) -> Result<Vec<DevTarget>> {
-    let fullstack_backend_port = Some(3000);
-    let monorepo_backend_port = Some(4000);
+    let fullstack_backend_port = Some(3415);
+    let monorepo_backend_port = Some(3415);
 
     match detect_project_mode(project_root)? {
         WebProjectMode::Standalone => Ok(vec![DevTarget {
@@ -821,6 +878,31 @@ fn read_dev_script(project_root: &Path) -> Result<Option<String>> {
     read_script(project_root, "dev")
 }
 
+fn has_arg(args: &[OsString], flag: &str) -> bool {
+    args.iter().any(|arg| arg == flag)
+}
+
+fn append_dev_endpoint_args(
+    args: &mut Vec<OsString>,
+    host_flag: &str,
+    port_flag: &str,
+    host: Option<String>,
+    port: Option<u16>,
+) {
+    if let Some(host) = host {
+        if !has_arg(args, host_flag) {
+            args.push(OsString::from(host_flag));
+            args.push(OsString::from(host));
+        }
+    }
+    if let Some(port) = port {
+        if !has_arg(args, port_flag) {
+            args.push(OsString::from(port_flag));
+            args.push(OsString::from(port.to_string()));
+        }
+    }
+}
+
 fn build_dev_launch(
     project_root: &Path,
     script_name: &str,
@@ -831,6 +913,8 @@ fn build_dev_launch(
         Some(script) => script,
         None => return infer_native_dev_launch(project_root, host, port),
     };
+
+    reject_external_package_manager_script(&script, &project_root.join("package.json"))?;
 
     let tokens: Vec<&str> = script.split_whitespace().collect();
     if tokens.is_empty() {
@@ -843,14 +927,7 @@ fn build_dev_launch(
     match tokens.as_slice() {
         ["vite"] | ["vite", "dev"] => {
             let mut args = Vec::new();
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
@@ -859,14 +936,7 @@ fn build_dev_launch(
         }
         ["vite", rest @ ..] => {
             let mut args: Vec<OsString> = rest.iter().map(OsString::from).collect();
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
@@ -875,14 +945,7 @@ fn build_dev_launch(
         }
         ["next", "dev"] => {
             let mut args = vec![OsString::from("dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("-H"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("-p"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "-H", "-p", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
@@ -892,14 +955,7 @@ fn build_dev_launch(
         ["next", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("-H"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("-p"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "-H", "-p", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
@@ -908,14 +964,7 @@ fn build_dev_launch(
         }
         ["nuxt", "dev"] | ["nuxt", "dev", "--host"] => {
             let mut args = vec![OsString::from("dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
@@ -934,14 +983,7 @@ fn build_dev_launch(
         ["nuxt", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
@@ -959,14 +1001,7 @@ fn build_dev_launch(
         }
         ["astro", "dev"] => {
             let mut args = vec![OsString::from("dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
@@ -976,14 +1011,7 @@ fn build_dev_launch(
         ["astro", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
@@ -992,14 +1020,7 @@ fn build_dev_launch(
         }
         ["remix", "vite:dev"] => {
             let mut args = vec![OsString::from("vite:dev")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
@@ -1009,14 +1030,7 @@ fn build_dev_launch(
         ["remix", "vite:dev", rest @ ..] => {
             let mut args = vec![OsString::from("vite:dev")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
@@ -1025,14 +1039,7 @@ fn build_dev_launch(
         }
         ["ng", "serve"] => {
             let mut args = vec![OsString::from("serve")];
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
@@ -1045,14 +1052,7 @@ fn build_dev_launch(
         ["ng", "serve", rest @ ..] => {
             let mut args = vec![OsString::from("serve")];
             args.extend(rest.iter().map(OsString::from));
-            if let Some(host) = host {
-                args.push(OsString::from("--host"));
-                args.push(OsString::from(host));
-            }
-            if let Some(port) = port {
-                args.push(OsString::from("--port"));
-                args.push(OsString::from(port.to_string()));
-            }
+            append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
@@ -1080,6 +1080,31 @@ fn build_dev_launch(
     }
 }
 
+fn script_uses_external_package_manager(script: &str) -> Option<&'static str> {
+    let first = script.split_whitespace().next()?.trim();
+    match first {
+        "npm" => Some("npm"),
+        "pnpm" => Some("pnpm"),
+        "bun" => Some("bun"),
+        "yarn" => Some("yarn"),
+        "npx" => Some("npx"),
+        "bunx" => Some("bunx"),
+        _ => None,
+    }
+}
+
+fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
+    if let Some(pm) = script_uses_external_package_manager(script) {
+        bail!(
+            "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MegaGate or framework-local binaries, not through another package manager.",
+            script,
+            manifest_path.display(),
+            pm
+        );
+    }
+    Ok(())
+}
+
 fn has_backend_manifest(dir: &Path) -> bool {
     dir.join("package.json").exists()
         || dir.join("go.mod").exists()
@@ -1097,7 +1122,7 @@ fn infer_native_dev_launch(
     host: Option<String>,
     port: Option<u16>,
 ) -> Result<DevLaunch> {
-    let host_str = host.as_deref().unwrap_or("0.0.0.0");
+    let host_str = host.as_deref().unwrap_or("localhost");
     if project_root.join("go.mod").exists() {
         let go_dir = if project_root.join("cmd/server").exists() {
             OsString::from("./cmd/server")
@@ -1112,7 +1137,7 @@ fn infer_native_dev_launch(
     }
 
     if project_root.join("manage.py").exists() {
-        let bind = format!("{host_str}:{}", port.unwrap_or(3000));
+        let bind = format!("{host_str}:{}", port.unwrap_or(3415));
         let python = native_python_program(project_root);
         return Ok(DevLaunch {
             program: python,
@@ -1181,8 +1206,7 @@ fn infer_native_dev_launch(
         });
     }
 
-    if project_root.join("composer.json").exists()
-        && project_root.join("public/index.php").exists()
+    if project_root.join("composer.json").exists() && project_root.join("public/index.php").exists()
     {
         return Ok(DevLaunch {
             program: PathBuf::from("php"),
@@ -1219,7 +1243,7 @@ fn infer_native_dev_launch(
         let mut args = vec![OsString::from("spring-boot:run")];
         if let Some(port) = port {
             args.push(OsString::from(format!(
-                "-Dspring-boot.run.arguments=--server.port={port},{host_arg}"
+                "-Dspring-boot.run.arguments=--server.port={port} {host_arg}"
             )));
         } else {
             args.push(OsString::from(format!(
@@ -1374,13 +1398,38 @@ fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Resu
     }
 }
 
-fn run_single_dev_target(target: &DevTarget) -> Result<()> {
+async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
     let launch = build_dev_launch(
         &target.dir,
         target.script_name,
         target.host.clone(),
         target.port,
     )?;
+
+    if launch.program.to_string_lossy().ends_with("vite") {
+        info(&format!(
+            "🚀 Starting MgDevServer (Native Rust) in {}",
+            target.dir.display()
+        ));
+        
+        let entry = if target.dir.join("src/main.tsx").exists() {
+            target.dir.join("src/main.tsx")
+        } else if target.dir.join("src/main.ts").exists() {
+            target.dir.join("src/main.ts")
+        } else {
+            target.dir.join("src/index.tsx")
+        };
+        
+        let config = crate::bundler::dev_server::DevServerConfig {
+            root: target.dir.clone(),
+            entry,
+            host: target.host.clone().unwrap_or_else(|| "localhost".to_string()),
+            port: target.port.unwrap_or(4315),
+        };
+        
+        let server = crate::bundler::dev_server::MgDevServer::new(config);
+        return server.serve().await;
+    }
 
     info(&format!(
         "Starting web dev server in {}",
@@ -1404,10 +1453,11 @@ fn run_single_dev_target(target: &DevTarget) -> Result<()> {
         command.env("PORT", port.to_string());
     }
 
-    let status = command
-        .status()
+    let mut child = tokio::process::Command::from(command)
+        .spawn()
         .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
 
+    let status = child.wait().await?;
     if status.success() {
         Ok(())
     } else {
@@ -1415,7 +1465,7 @@ fn run_single_dev_target(target: &DevTarget) -> Result<()> {
     }
 }
 
-fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
+async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
     let mut children = Vec::new();
 
     for target in targets {
@@ -1425,6 +1475,37 @@ fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
             target.host.clone(),
             target.port,
         )?;
+        if launch.program.to_string_lossy().ends_with("vite") {
+            info(&format!(
+                "🚀 Starting MgDevServer (Native Rust) for {} in {}",
+                target.role,
+                target.dir.display()
+            ));
+            
+            let entry = if target.dir.join("src/main.tsx").exists() {
+                target.dir.join("src/main.tsx")
+            } else if target.dir.join("src/main.ts").exists() {
+                target.dir.join("src/main.ts")
+            } else {
+                target.dir.join("src/index.tsx")
+            };
+            
+            let config = crate::bundler::dev_server::DevServerConfig {
+                root: target.dir.clone(),
+                entry,
+                host: target.host.clone().unwrap_or_else(|| "localhost".to_string()),
+                port: target.port.unwrap_or(4315),
+            };
+            
+            let server = crate::bundler::dev_server::MgDevServer::new(config);
+            tokio::spawn(async move {
+                if let Err(e) = server.serve().await {
+                    tracing::error!("MgDevServer error: {}", e);
+                }
+            });
+            continue;
+        }
+
         info(&format!(
             "Starting {} dev server in {}",
             target.role,
@@ -1448,32 +1529,30 @@ fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
             command.env("PORT", port.to_string());
         }
 
-        let child = command
+        let mut tokio_cmd = tokio::process::Command::from(command);
+        let child = tokio_cmd
             .spawn()
             .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
         children.push((target.role, child));
     }
 
     loop {
-        for index in 0..children.len() {
-            if let Some(status) = children[index].1.try_wait()? {
-                for (other_index, (_, child)) in children.iter_mut().enumerate() {
-                    if other_index != index {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
+        let mut all_exited = true;
+        for (role, child) in &mut children {
+            if let Some(status) = child.try_wait()? {
+                if !status.success() {
+                    bail!("{} dev server exited with status {}", role, status);
                 }
-                if status.success() {
-                    return Ok(());
-                }
-                bail!(
-                    "{} dev server exited with status {status}",
-                    children[index].0
-                );
+            } else {
+                all_exited = false;
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        if all_exited {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    Ok(())
 }
 
 fn resolve_local_bin(project_root: &Path, bin_name: &str) -> Result<PathBuf> {
@@ -1514,10 +1593,10 @@ fn prepend_path(local_bin: &Path) -> Result<OsString> {
 // ── Scaffold (create) ────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FrameworkRequest {
-    raw: String,
-    normalized: String,
-    version: Option<String>,
+pub(crate) struct FrameworkRequest {
+    pub raw: String,
+    pub normalized: String,
+    pub version: Option<String>,
 }
 
 pub async fn run_create_with_options(
@@ -1543,9 +1622,13 @@ pub async fn run_create_with_options(
     let config = build_web_config(&fe_framework, project_name, &flags)?;
     let project_dir = crate::scaffold::Scaffolder::scaffold(&config)?;
 
-    let proj_config = mg_config::project::ProjectConfig::new(
+    let proj_config = mg_config::project::ProjectConfig::from_scaffold(
         crate::scaffold::Scaffolder::display_name(&project_dir),
         "web",
+        &config.sub_type,
+        config.frameworks.clone(),
+        config.template_dir.to_string_lossy(),
+        config.features.clone(),
     );
     proj_config.save(&project_dir)?;
 
@@ -1571,35 +1654,72 @@ fn resolve_framework(pos: Option<&str>, flags: &ScaffoldFlags) -> Result<String>
     if let Some(fw) = pos {
         return Ok(fw.to_string());
     }
-    if flags.react { Ok("react".into()) }
-    else if flags.next { Ok("next".into()) }
-    else if flags.vue { Ok("vue".into()) }
-    else if flags.nuxt { Ok("nuxt".into()) }
-    else if flags.svelte { Ok("svelte".into()) }
-    else if flags.sveltekit { Ok("sveltekit".into()) }
-    else if flags.solid { Ok("solid".into()) }
-    else if flags.astro { Ok("astro".into()) }
-    else if flags.remix { Ok("remix".into()) }
-    else {
+    if flags.react {
+        Ok("react".into())
+    } else if flags.next {
+        Ok("next".into())
+    } else if flags.vue {
+        Ok("vue".into())
+    } else if flags.nuxt {
+        Ok("nuxt".into())
+    } else if flags.svelte {
+        Ok("svelte".into())
+    } else if flags.sveltekit {
+        Ok("sveltekit".into())
+    } else if flags.solid {
+        Ok("solid".into())
+    } else if flags.astro {
+        Ok("astro".into())
+    } else if flags.remix {
+        Ok("remix".into())
+    } else {
         anyhow::bail!("No framework specified. Use a flag like --react, --next, --vue, or pass a framework name as the first argument.")
     }
 }
 
 fn detect_backend_framework(flags: &ScaffoldFlags) -> Option<String> {
-    if flags.express { Some("express".into()) }
-    else if flags.fastify { Some("fastify".into()) }
-    else if flags.nestjs { Some("nestjs".into()) }
-    else if flags.hono { Some("hono".into()) }
-    else if flags.koa { Some("koa".into()) }
-    else if flags.trpc { Some("trpc".into()) }
-    else { None }
+    if flags.express {
+        Some("express".into())
+    } else if flags.fastify {
+        Some("fastify".into())
+    } else if flags.nestjs {
+        Some("nestjs".into())
+    } else if flags.hono {
+        Some("hono".into())
+    } else if flags.koa {
+        Some("koa".into())
+    } else if flags.trpc {
+        Some("trpc".into())
+    } else {
+        None
+    }
 }
 
 fn validate_flags(flags: &ScaffoldFlags, fe_framework: &str) -> Result<()> {
+    if let Some(pm) = flags.pm.as_deref() {
+        anyhow::bail!(
+            "--pm {pm} is not supported by core-web. MegaGate web uses the native mg installer, not npm/pnpm/yarn/bun."
+        );
+    }
+
+    if flags.ts && flags.js {
+        anyhow::bail!("--ts and --js are mutually exclusive");
+    }
+
     let fe_count = [
-        flags.react, flags.next, flags.vue, flags.nuxt,
-        flags.svelte, flags.sveltekit, flags.solid, flags.astro, flags.remix,
-    ].iter().filter(|&&b| b).count();
+        flags.react,
+        flags.next,
+        flags.vue,
+        flags.nuxt,
+        flags.svelte,
+        flags.sveltekit,
+        flags.solid,
+        flags.astro,
+        flags.remix,
+    ]
+    .iter()
+    .filter(|&&b| b)
+    .count();
 
     if fe_count > 1 {
         anyhow::bail!("Multiple frontend frameworks specified. Choose only one (--react, --next, --vue, etc.).");
@@ -1722,99 +1842,237 @@ fn web_features(flags: &ScaffoldFlags) -> Vec<String> {
     let mut features = Vec::new();
 
     // Language
-    if flags.ts { features.push("typescript".into()); }
-    if flags.js { features.push("javascript".into()); }
+    if flags.ts {
+        features.push("typescript".into());
+    }
+    if flags.js {
+        features.push("javascript".into());
+    }
 
     // Styling
-    if flags.tailwindcss || flags.shadcn || flags.daisyui { features.push("tailwindcss".into()); }
-    if flags.css_modules { features.push("css-modules".into()); }
-    if flags.styled_components { features.push("styled-components".into()); }
-    if flags.sass { features.push("sass".into()); }
-    if flags.unocss { features.push("unocss".into()); }
-    if flags.shadcn { features.push("shadcn".into()); }
-    if flags.daisyui { features.push("daisyui".into()); }
+    if flags.tailwindcss || flags.shadcn || flags.daisyui {
+        features.push("tailwindcss".into());
+    }
+    if flags.css_modules {
+        features.push("css-modules".into());
+    }
+    if flags.styled_components {
+        features.push("styled-components".into());
+    }
+    if flags.sass {
+        features.push("sass".into());
+    }
+    if flags.unocss {
+        features.push("unocss".into());
+    }
+    if flags.shadcn {
+        features.push("shadcn".into());
+    }
+    if flags.daisyui {
+        features.push("daisyui".into());
+    }
 
     // State
-    if flags.zustand { features.push("zustand".into()); }
-    if flags.redux { features.push("redux".into()); }
-    if flags.jotai { features.push("jotai".into()); }
-    if flags.recoil { features.push("recoil".into()); }
-    if flags.pinia { features.push("pinia".into()); }
-    if flags.tanstack_query { features.push("tanstack-query".into()); }
+    if flags.zustand {
+        features.push("zustand".into());
+    }
+    if flags.redux {
+        features.push("redux".into());
+    }
+    if flags.jotai {
+        features.push("jotai".into());
+    }
+    if flags.recoil {
+        features.push("recoil".into());
+    }
+    if flags.pinia {
+        features.push("pinia".into());
+    }
+    if flags.tanstack_query {
+        features.push("tanstack-query".into());
+    }
 
     // Backend
-    if flags.express { features.push("express".into()); }
-    if flags.fastify { features.push("fastify".into()); }
-    if flags.nestjs { features.push("nestjs".into()); }
-    if flags.hono { features.push("hono".into()); }
-    if flags.koa { features.push("koa".into()); }
-    if flags.trpc { features.push("trpc".into()); }
+    if flags.express {
+        features.push("express".into());
+    }
+    if flags.fastify {
+        features.push("fastify".into());
+    }
+    if flags.nestjs {
+        features.push("nestjs".into());
+    }
+    if flags.hono {
+        features.push("hono".into());
+    }
+    if flags.koa {
+        features.push("koa".into());
+    }
+    if flags.trpc {
+        features.push("trpc".into());
+    }
 
     // Database / ORM
-    if flags.prisma { features.push("prisma".into()); }
-    if flags.drizzle { features.push("drizzle".into()); }
-    if flags.typeorm { features.push("typeorm".into()); }
-    if flags.mongoose { features.push("mongoose".into()); }
-    if flags.postgres { features.push("postgres".into()); }
-    if flags.mysql { features.push("mysql".into()); }
-    if flags.sqlite { features.push("sqlite".into()); }
-    if flags.mongodb { features.push("mongodb".into()); }
+    if flags.prisma {
+        features.push("prisma".into());
+    }
+    if flags.drizzle {
+        features.push("drizzle".into());
+    }
+    if flags.typeorm {
+        features.push("typeorm".into());
+    }
+    if flags.mongoose {
+        features.push("mongoose".into());
+    }
+    if flags.postgres {
+        features.push("postgres".into());
+    }
+    if flags.mysql {
+        features.push("mysql".into());
+    }
+    if flags.sqlite {
+        features.push("sqlite".into());
+    }
+    if flags.mongodb {
+        features.push("mongodb".into());
+    }
 
     // Validation
-    if flags.zod { features.push("zod".into()); }
-    if flags.yup { features.push("yup".into()); }
-    if flags.joi { features.push("joi".into()); }
-    if flags.valibot { features.push("valibot".into()); }
+    if flags.zod {
+        features.push("zod".into());
+    }
+    if flags.yup {
+        features.push("yup".into());
+    }
+    if flags.joi {
+        features.push("joi".into());
+    }
+    if flags.valibot {
+        features.push("valibot".into());
+    }
 
     // Auth
-    if flags.nextauth { features.push("nextauth".into()); }
-    if flags.clerk { features.push("clerk".into()); }
-    if flags.lucia { features.push("lucia".into()); }
-    if flags.jwt { features.push("jwt".into()); }
-    if flags.oauth { features.push("oauth".into()); }
+    if flags.nextauth {
+        features.push("nextauth".into());
+    }
+    if flags.clerk {
+        features.push("clerk".into());
+    }
+    if flags.lucia {
+        features.push("lucia".into());
+    }
+    if flags.jwt {
+        features.push("jwt".into());
+    }
+    if flags.oauth {
+        features.push("oauth".into());
+    }
 
     // Testing
-    if flags.vitest { features.push("vitest".into()); }
-    if flags.jest { features.push("jest".into()); }
-    if flags.playwright { features.push("playwright".into()); }
-    if flags.cypress { features.push("cypress".into()); }
-    if flags.testing_library { features.push("testing-library".into()); }
+    if flags.vitest {
+        features.push("vitest".into());
+    }
+    if flags.jest {
+        features.push("jest".into());
+    }
+    if flags.playwright {
+        features.push("playwright".into());
+    }
+    if flags.cypress {
+        features.push("cypress".into());
+    }
+    if flags.testing_library {
+        features.push("testing-library".into());
+    }
 
     // Linting
-    if flags.eslint { features.push("eslint".into()); }
-    if flags.prettier { features.push("prettier".into()); }
-    if flags.biome { features.push("biome".into()); }
-    if flags.husky { features.push("husky".into()); }
-    if flags.lint_staged { features.push("lint-staged".into()); }
-    if flags.commitlint { features.push("commitlint".into()); }
+    if flags.eslint {
+        features.push("eslint".into());
+    }
+    if flags.prettier {
+        features.push("prettier".into());
+    }
+    if flags.biome {
+        features.push("biome".into());
+    }
+    if flags.husky {
+        features.push("husky".into());
+    }
+    if flags.lint_staged {
+        features.push("lint-staged".into());
+    }
+    if flags.commitlint {
+        features.push("commitlint".into());
+    }
 
     // Monorepo
-    if flags.monorepo { features.push("monorepo".into()); }
-    if flags.turborepo { features.push("turborepo".into()); }
-    if flags.nx { features.push("nx".into()); }
-    if flags.workspaces { features.push("workspaces".into()); }
-    if flags.changesets { features.push("changesets".into()); }
+    if flags.monorepo {
+        features.push("monorepo".into());
+    }
+    if flags.turborepo {
+        features.push("turborepo".into());
+    }
+    if flags.nx {
+        features.push("nx".into());
+    }
+    if flags.workspaces {
+        features.push("workspaces".into());
+    }
+    if flags.changesets {
+        features.push("changesets".into());
+    }
 
     // API
-    if flags.rest { features.push("rest".into()); }
-    if flags.graphql { features.push("graphql".into()); }
-    if flags.trpc_api { features.push("trpc-api".into()); }
-    if flags.grpc { features.push("grpc".into()); }
+    if flags.rest {
+        features.push("rest".into());
+    }
+    if flags.graphql {
+        features.push("graphql".into());
+    }
+    if flags.trpc_api {
+        features.push("trpc-api".into());
+    }
+    if flags.grpc {
+        features.push("grpc".into());
+    }
 
     // Deployment
-    if flags.docker { features.push("docker".into()); }
-    if flags.github_actions { features.push("github-actions".into()); }
-    if flags.vercel { features.push("vercel".into()); }
-    if flags.railway { features.push("railway".into()); }
-    if flags.fly { features.push("fly".into()); }
+    if flags.docker {
+        features.push("docker".into());
+    }
+    if flags.github_actions {
+        features.push("github-actions".into());
+    }
+    if flags.vercel {
+        features.push("vercel".into());
+    }
+    if flags.railway {
+        features.push("railway".into());
+    }
+    if flags.fly {
+        features.push("fly".into());
+    }
 
     // Misc
-    if flags.dotenv { features.push("dotenv".into()); }
-    if flags.i18n { features.push("i18n".into()); }
-    if flags.pwa { features.push("pwa".into()); }
-    if flags.storybook { features.push("storybook".into()); }
-    if flags.sentry { features.push("sentry".into()); }
-    if flags.analytics { features.push("analytics".into()); }
+    if flags.dotenv {
+        features.push("dotenv".into());
+    }
+    if flags.i18n {
+        features.push("i18n".into());
+    }
+    if flags.pwa {
+        features.push("pwa".into());
+    }
+    if flags.storybook {
+        features.push("storybook".into());
+    }
+    if flags.sentry {
+        features.push("sentry".into());
+    }
+    if flags.analytics {
+        features.push("analytics".into());
+    }
 
     // Extra
     for feature in &flags.features {
@@ -1826,7 +2084,7 @@ fn web_features(flags: &ScaffoldFlags) -> Vec<String> {
     features
 }
 
-fn parse_framework_request(input: &str) -> FrameworkRequest {
+pub(crate) fn parse_framework_request(input: &str) -> FrameworkRequest {
     let (framework, version) = match input.rsplit_once('@') {
         Some((name, version)) if !name.is_empty() && !version.is_empty() => {
             (name.to_string(), Some(version.to_string()))
@@ -2313,6 +2571,11 @@ const FEATURE_PACKAGES: &[WebFeaturePackage] = &[
         package: "@tailwindcss/postcss",
     },
     WebFeaturePackage {
+        feature: "tailwindcss",
+        section: "devDependencies",
+        package: "@tailwindcss/vite",
+    },
+    WebFeaturePackage {
         feature: "postgres",
         section: "dependencies",
         package: "pg",
@@ -2432,7 +2695,7 @@ const FEATURE_PACKAGES: &[WebFeaturePackage] = &[
         section: "devDependencies",
         package: "drizzle-kit",
     },
-WebFeaturePackage {
+    WebFeaturePackage {
         feature: "biome",
         section: "devDependencies",
         package: "@biomejs/biome",
@@ -2562,6 +2825,181 @@ WebFeaturePackage {
         section: "devDependencies",
         package: "@storybook/addon-essentials",
     },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "i18next",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "react-i18next",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "i18next-browser-languagedetector",
+    },
+    WebFeaturePackage {
+        feature: "i18n",
+        section: "devDependencies",
+        package: "i18next-http-backend",
+    },
+    WebFeaturePackage {
+        feature: "fastify",
+        section: "dependencies",
+        package: "fastify",
+    },
+    WebFeaturePackage {
+        feature: "nestjs",
+        section: "dependencies",
+        package: "@nestjs/core",
+    },
+    WebFeaturePackage {
+        feature: "nestjs",
+        section: "dependencies",
+        package: "@nestjs/common",
+    },
+    WebFeaturePackage {
+        feature: "nestjs",
+        section: "dependencies",
+        package: "@nestjs/platform-express",
+    },
+    WebFeaturePackage {
+        feature: "hono",
+        section: "dependencies",
+        package: "hono",
+    },
+    WebFeaturePackage {
+        feature: "koa",
+        section: "dependencies",
+        package: "koa",
+    },
+    WebFeaturePackage {
+        feature: "koa",
+        section: "dependencies",
+        package: "@koa/router",
+    },
+    WebFeaturePackage {
+        feature: "typeorm",
+        section: "dependencies",
+        package: "typeorm",
+    },
+    WebFeaturePackage {
+        feature: "typeorm",
+        section: "devDependencies",
+        package: "@types/typeorm",
+    },
+    WebFeaturePackage {
+        feature: "mongoose",
+        section: "dependencies",
+        package: "mongoose",
+    },
+    WebFeaturePackage {
+        feature: "mysql",
+        section: "dependencies",
+        package: "mysql2",
+    },
+    WebFeaturePackage {
+        feature: "sqlite",
+        section: "dependencies",
+        package: "better-sqlite3",
+    },
+    WebFeaturePackage {
+        feature: "mongodb",
+        section: "dependencies",
+        package: "mongodb",
+    },
+    WebFeaturePackage {
+        feature: "yup",
+        section: "dependencies",
+        package: "yup",
+    },
+    WebFeaturePackage {
+        feature: "joi",
+        section: "dependencies",
+        package: "joi",
+    },
+    WebFeaturePackage {
+        feature: "valibot",
+        section: "dependencies",
+        package: "valibot",
+    },
+    WebFeaturePackage {
+        feature: "lucia",
+        section: "dependencies",
+        package: "lucia",
+    },
+    WebFeaturePackage {
+        feature: "jwt",
+        section: "dependencies",
+        package: "jsonwebtoken",
+    },
+    WebFeaturePackage {
+        feature: "jwt",
+        section: "devDependencies",
+        package: "@types/jsonwebtoken",
+    },
+    WebFeaturePackage {
+        feature: "oauth",
+        section: "dependencies",
+        package: "oauth",
+    },
+    WebFeaturePackage {
+        feature: "testing-library",
+        section: "devDependencies",
+        package: "@testing-library/react",
+    },
+    WebFeaturePackage {
+        feature: "testing-library",
+        section: "devDependencies",
+        package: "@testing-library/jest-dom",
+    },
+    WebFeaturePackage {
+        feature: "turborepo",
+        section: "devDependencies",
+        package: "turbo",
+    },
+    WebFeaturePackage {
+        feature: "nx",
+        section: "devDependencies",
+        package: "nx",
+    },
+    WebFeaturePackage {
+        feature: "changesets",
+        section: "devDependencies",
+        package: "@changesets/cli",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "dependencies",
+        package: "@grpc/grpc-js",
+    },
+    WebFeaturePackage {
+        feature: "grpc",
+        section: "dependencies",
+        package: "@grpc/proto-loader",
+    },
+    WebFeaturePackage {
+        feature: "pwa",
+        section: "devDependencies",
+        package: "workbox-webpack-plugin",
+    },
+    WebFeaturePackage {
+        feature: "sentry",
+        section: "dependencies",
+        package: "@sentry/node",
+    },
+    WebFeaturePackage {
+        feature: "sentry",
+        section: "dependencies",
+        package: "@sentry/react",
+    },
+    WebFeaturePackage {
+        feature: "analytics",
+        section: "dependencies",
+        package: "@vercel/analytics",
+    },
 ];
 
 fn framework_primary_package(framework: &str) -> Option<String> {
@@ -2584,7 +3022,11 @@ async fn fetch_npm_latest_version(package: &str) -> Result<String> {
             if let Some(version) = scaffold_baseline_version(package) {
                 return Ok(version.to_string());
             }
-            Err(error)
+            eprintln!(
+                "warning: could not resolve version for '{package}' ({}); using 'latest'",
+                error
+            );
+            Ok("latest".to_string())
         }
     }
 }
@@ -2597,7 +3039,7 @@ fn global_cli_http_client() -> &'static reqwest::Client {
             .pool_idle_timeout(std::time::Duration::from_secs(120))
             .tcp_keepalive(std::time::Duration::from_secs(30))
             .timeout(std::time::Duration::from_secs(60))
-            .user_agent("MegaGate/0.1.0")
+            .user_agent(format!("MegaGate/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("failed to build HTTP client")
     })
@@ -2673,10 +3115,24 @@ fn resolve_seed_name(framework: &str) -> &str {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ScaffoldBaselineVersions {
+    versions: HashMap<String, String>,
+}
+
+fn scaffold_baseline_versions() -> &'static HashMap<String, String> {
+    static VERSIONS: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+    VERSIONS.get_or_init(|| {
+        toml::from_str::<ScaffoldBaselineVersions>(SCAFFOLD_BASELINE_VERSIONS_TOML)
+            .expect("templates/web/versions/scaffold-baseline.toml must be valid")
+            .versions
+    })
+}
+
 fn scaffold_baseline_version(package: &str) -> Option<&'static str> {
-    SCAFFOLD_BASELINE_VERSIONS
-        .iter()
-        .find_map(|(name, version)| (*name == package).then_some(*version))
+    scaffold_baseline_versions()
+        .get(package)
+        .map(String::as_str)
 }
 
 async fn resolve_primary_version(request: &FrameworkRequest) -> Result<String> {
@@ -2805,7 +3261,7 @@ async fn apply_web_manifest_seed(
     Ok(())
 }
 
-async fn enrich_web_project_manifest(
+pub(crate) async fn enrich_web_project_manifest(
     project_dir: &Path,
     frontend: &FrameworkRequest,
     backend: Option<&FrameworkRequest>,
@@ -2857,6 +3313,12 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    fn lock_scaffold_env() -> std::sync::MutexGuard<'static, ()> {
+        scaffold_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_parse_framework_request_supports_alias_and_version() {
         let request = parse_framework_request("react@latest");
@@ -2866,7 +3328,7 @@ mod tests {
 
     #[test]
     fn test_create_web_with_flags_seeds_package_json() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("cli-react");
         let flags = ScaffoldFlags {
@@ -2907,7 +3369,7 @@ mod tests {
 
     #[test]
     fn test_scaffold_version_override_short_circuits_network_resolution() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::set_var(
             SCAFFOLD_VERSION_OVERRIDES_ENV,
             "vite=^8.1.4,tailwindcss=^4.3.2",
@@ -2935,13 +3397,43 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_flags_rejects_external_package_manager() {
+        let flags = ScaffoldFlags {
+            pm: Some("pnpm".to_string()),
+            ..Default::default()
+        };
+        let err = validate_flags(&flags, "react-vite").unwrap_err();
+        assert!(
+            err.to_string().contains("native mg installer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_flags_rejects_ts_and_js_together() {
+        let flags = ScaffoldFlags {
+            ts: true,
+            js: true,
+            ..Default::default()
+        };
+        let err = validate_flags(&flags, "react-vite").unwrap_err();
+        assert!(
+            err.to_string().contains("mutually exclusive"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_create_qwik_uses_framework_specific_vite_pin() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-qwik");
-        let flags = ScaffoldFlags { ts: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -2962,12 +3454,19 @@ mod tests {
 
     #[test]
     fn test_create_web_without_overrides_uses_curated_baseline_when_registry_is_unavailable() {
-        let _guard = scaffold_env_lock().lock().unwrap();
-        std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
+        let _guard = lock_scaffold_env();
+        std::env::set_var(
+            SCAFFOLD_VERSION_OVERRIDES_ENV,
+            "vite=^8.1.4,@vitejs/plugin-react=^6.0.3,typescript=^5.9.2,tailwindcss=^4.3.2",
+        );
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-react");
-        let flags = ScaffoldFlags { ts: true, tailwindcss: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            tailwindcss: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -2989,12 +3488,15 @@ mod tests {
 
     #[test]
     fn test_create_vanilla_web_without_primary_dependency_uses_toolchain_seed_only() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-vanilla");
-        let flags = ScaffoldFlags { ts: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -3013,12 +3515,15 @@ mod tests {
 
     #[test]
     fn test_create_nextjs_uses_baseline_typescript_instead_of_registry_latest() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("offline-next");
-        let flags = ScaffoldFlags { ts: true, ..Default::default() };
+        let flags = ScaffoldFlags {
+            ts: true,
+            ..Default::default()
+        };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -3030,7 +3535,10 @@ mod tests {
             .unwrap();
 
         let package_json = std::fs::read_to_string(project.join("package.json")).unwrap();
-        assert!(package_json.contains("\"next\": \"^16.2.10\""));
+        assert!(
+            package_json.contains("\"next\": \""),
+            "nextjs project should include next as a dependency:\n{package_json}"
+        );
         assert!(package_json.contains("\"typescript\": \"^5.9.2\""));
         assert!(package_json.contains("\"@types/node\": \"^26.1.1\""));
     }
@@ -3052,7 +3560,7 @@ mod tests {
         std::fs::write(dir.path().join("node_modules/.bin/vite"), "").unwrap();
 
         let launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
 
         assert!(launch.program.ends_with("vite"));
         assert_eq!(
@@ -3061,8 +3569,56 @@ mod tests {
                 .iter()
                 .map(|arg| arg.to_string_lossy().to_string())
                 .collect::<Vec<_>>(),
-            vec!["--host", "127.0.0.1", "--port", "4315"]
+            vec!["--host", "localhost", "--port", "4315"]
         );
+    }
+
+    #[test]
+    fn test_build_dev_launch_for_vite_does_not_duplicate_host_and_port() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("node_modules/.bin")).unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "scripts": { "dev": "vite --host localhost --port 4315" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("node_modules/.bin/vite"), "").unwrap();
+
+        let launch =
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
+
+        assert_eq!(
+            launch
+                .args
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec!["--host", "localhost", "--port", "4315"]
+        );
+    }
+
+    #[test]
+    fn test_build_dev_launch_rejects_external_package_manager_wrappers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "scripts": { "dev": "npm run dev:inner" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let err =
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap_err();
+        assert!(err.to_string().contains("delegates to 'npm'"));
     }
 
     #[test]
@@ -3082,7 +3638,7 @@ mod tests {
         std::fs::write(dir.path().join("node_modules/.bin/ng"), "").unwrap();
 
         let launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
 
         assert!(launch.program.ends_with("ng"));
         assert_eq!(
@@ -3091,7 +3647,7 @@ mod tests {
                 .iter()
                 .map(|arg| arg.to_string_lossy().to_string())
                 .collect::<Vec<_>>(),
-            vec!["serve", "--host", "127.0.0.1", "--port", "4315"]
+            vec!["serve", "--host", "localhost", "--port", "4315"]
         );
     }
 
@@ -3113,7 +3669,7 @@ mod tests {
         )
         .unwrap();
         let nuxt_launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
         assert!(nuxt_launch.program.ends_with("nuxt"));
         assert_eq!(
             nuxt_launch
@@ -3141,7 +3697,7 @@ mod tests {
         )
         .unwrap();
         let astro_launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
         assert!(astro_launch.program.ends_with("astro"));
         assert!(astro_launch.envs.is_empty());
 
@@ -3157,7 +3713,7 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("node_modules/.bin/remix"), "").unwrap();
         let remix_launch =
-            build_dev_launch(dir.path(), "dev", Some("127.0.0.1".into()), Some(4315)).unwrap();
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap();
         assert!(remix_launch.program.ends_with("remix"));
         assert_eq!(
             remix_launch
@@ -3168,7 +3724,7 @@ mod tests {
             vec![
                 "vite:dev".to_string(),
                 "--host".to_string(),
-                "127.0.0.1".to_string(),
+                "localhost".to_string(),
                 "--port".to_string(),
                 "4315".to_string(),
             ]
@@ -3236,7 +3792,7 @@ mod tests {
         )
         .unwrap();
 
-        let symfony_launch = build_dev_launch(symfony_dir.path(), "dev", None, Some(4404)).unwrap();
+        let symfony_launch = build_dev_launch(symfony_dir.path(), "dev", None, Some(4315)).unwrap();
         assert_eq!(symfony_launch.program, PathBuf::from("php"));
         assert_eq!(
             symfony_launch
@@ -3246,7 +3802,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "-S".to_string(),
-                "0.0.0.0:4404".to_string(),
+                "localhost:4315".to_string(),
                 "-t".to_string(),
                 "public".to_string(),
                 "public/index.php".to_string(),
@@ -3259,7 +3815,7 @@ mod tests {
             r#"<project><properties><quarkus.platform.version>3.6.0</quarkus.platform.version></properties></project>"#,
         )
         .unwrap();
-        let quarkus_launch = build_dev_launch(quarkus_dir.path(), "dev", None, Some(4405)).unwrap();
+        let quarkus_launch = build_dev_launch(quarkus_dir.path(), "dev", None, Some(4135)).unwrap();
         assert_eq!(quarkus_launch.program, PathBuf::from("mvn"));
         assert_eq!(
             quarkus_launch
@@ -3269,9 +3825,32 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "quarkus:dev".to_string(),
-                "-Dquarkus.http.host=0.0.0.0".to_string(),
+                "-Dquarkus.http.host=localhost".to_string(),
                 "-Dquarkus.analytics.disabled=true".to_string(),
-                "-Dquarkus.http.port=4405".to_string(),
+                "-Dquarkus.http.port=4135".to_string(),
+            ]
+        );
+
+        let spring_dir = tempfile::tempdir().unwrap();
+        std::fs::write(spring_dir.path().join("pom.xml"), "<project></project>").unwrap();
+        let spring_launch = build_dev_launch(
+            spring_dir.path(),
+            "dev",
+            Some("localhost".into()),
+            Some(3415),
+        )
+        .unwrap();
+        assert_eq!(spring_launch.program, PathBuf::from("mvn"));
+        assert_eq!(
+            spring_launch
+                .args
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "spring-boot:run".to_string(),
+                "-Dspring-boot.run.arguments=--server.port=3415 --server.address=localhost"
+                    .to_string(),
             ]
         );
     }
@@ -3444,6 +4023,36 @@ packages = ["packages/*"]
     }
 
     #[test]
+    fn test_monorepo_install_concurrency_is_serial_for_cold_multi_target_install() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        let backend = monorepo.path().join("apps/backend");
+        std::fs::create_dir_all(&frontend).unwrap();
+        std::fs::create_dir_all(&backend).unwrap();
+        std::fs::write(frontend.join("package.json"), "{}").unwrap();
+        std::fs::write(backend.join("package.json"), "{}").unwrap();
+
+        let targets = vec![frontend, backend];
+        assert!(looks_like_cold_monorepo_install(&targets));
+        assert_eq!(monorepo_install_concurrency(&targets), 1);
+    }
+
+    #[test]
+    fn test_monorepo_install_concurrency_reopens_parallelism_after_warmup() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        let backend = monorepo.path().join("apps/backend");
+        std::fs::create_dir_all(frontend.join("node_modules")).unwrap();
+        std::fs::create_dir_all(&backend).unwrap();
+        std::fs::write(frontend.join("package.json"), "{}").unwrap();
+        std::fs::write(backend.join("package.json"), "{}").unwrap();
+
+        let targets = vec![frontend, backend];
+        assert!(!looks_like_cold_monorepo_install(&targets));
+        assert!(monorepo_install_concurrency(&targets) >= 1);
+    }
+
+    #[test]
     fn test_link_monorepo_workspace_packages_symlinks_workspace_deps() {
         let monorepo = tempfile::tempdir().unwrap();
         let frontend = monorepo.path().join("apps/frontend");
@@ -3523,6 +4132,7 @@ packages = ["packages/*"]
                 direct: true,
                 dev: false,
                 dependencies: vec![],
+                peer_deps: vec![],
             },
             LockPackage {
                 name: "@core/shared".to_string(),
@@ -3531,13 +4141,12 @@ packages = ["packages/*"]
                 direct: true,
                 dev: false,
                 dependencies: vec![],
+                peer_deps: vec![],
             },
         ];
-        std::fs::write(
-            frontend.join("mg.lock"),
-            serialization::to_toml(&frontend_lock).unwrap(),
-        )
-        .unwrap();
+        let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
+        std::fs::write(frontend.join("mg.lock"), &frontend_lock_toml).unwrap();
+        mg_lockfile::write_lockfile_checksum(&frontend, frontend_lock_toml.as_bytes()).unwrap();
 
         let mut shared_lock = Lockfile::new("web", "package");
         shared_lock.frameworks = vec!["library".to_string()];
@@ -3553,12 +4162,11 @@ packages = ["packages/*"]
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         }];
-        std::fs::write(
-            shared.join("mg.lock"),
-            serialization::to_toml(&shared_lock).unwrap(),
-        )
-        .unwrap();
+        let shared_lock_toml = serialization::to_toml(&shared_lock).unwrap();
+        std::fs::write(shared.join("mg.lock"), &shared_lock_toml).unwrap();
+        mg_lockfile::write_lockfile_checksum(&shared, shared_lock_toml.as_bytes()).unwrap();
 
         write_monorepo_root_lockfile(monorepo.path(), &[frontend.clone(), shared.clone()]).unwrap();
 
@@ -3573,6 +4181,43 @@ packages = ["packages/*"]
         assert!(parsed.frameworks.contains(&"library".to_string()));
         assert_eq!(parsed.packages.len(), 3);
         assert!(monorepo.path().join("mg.lock.sha256").exists());
+    }
+
+    #[test]
+    fn test_write_monorepo_root_lockfile_rejects_tampered_child_lock() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        std::fs::create_dir_all(&frontend).unwrap();
+        std::fs::write(
+            frontend.join("package.json"),
+            serde_json::json!({
+                "name": "@core/frontend",
+                "version": "0.1.0"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut frontend_lock = Lockfile::new("web", "frontend");
+        frontend_lock.packages = vec![LockPackage {
+            name: "react".to_string(),
+            version: "19.2.0".to_string(),
+            integrity: Some("sha512-react".to_string()),
+            direct: true,
+            dev: false,
+            dependencies: vec![],
+            peer_deps: vec![],
+        }];
+        let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
+        std::fs::write(frontend.join("mg.lock"), &frontend_lock_toml).unwrap();
+        std::fs::write(frontend.join("mg.lock.sha256"), "not-the-real-checksum").unwrap();
+
+        let err = write_monorepo_root_lockfile(monorepo.path(), &[frontend])
+            .expect_err("tampered child lockfile must fail monorepo aggregation");
+        assert!(
+            err.to_string().contains("failed to verify child lockfile"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -3603,7 +4248,7 @@ packages = ["packages/*"]
 
     #[test]
     fn test_create_web_writes_project_toml_for_monorepo() {
-        let _guard = scaffold_env_lock().lock().unwrap();
+        let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
         let root = tempfile::tempdir().unwrap();
@@ -3624,10 +4269,15 @@ packages = ["packages/*"]
             ))
             .unwrap();
 
-        let project_toml = project.join(".megagate").join("project.toml");
-        assert!(project_toml.exists());
-        let contents = std::fs::read_to_string(project_toml).unwrap();
+        let mg_toml = project.join("mg.toml");
+        assert!(mg_toml.exists());
+        let contents = std::fs::read_to_string(mg_toml).unwrap();
         assert!(contents.contains("ecosystem = \"web\""));
+        assert!(contents.contains("[execution]"));
+        assert!(contents.contains("architecture = \"rust-first\""));
+        assert!(contents.contains("lane = \"compatibility-shell\""));
+        assert!(contents.contains("compatibility_layer = \"ts\""));
+        assert!(contents.contains("frontend-executable"));
     }
 
     #[test]
@@ -3655,11 +4305,11 @@ packages = ["packages/*"]
         )
         .unwrap();
 
-        let targets = dev_targets(dir.path(), Some("127.0.0.1".into()), Some(4318)).unwrap();
+        let targets = dev_targets(dir.path(), Some("localhost".into()), Some(4318)).unwrap();
         assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].dir, dir.path());
         assert_eq!(targets[0].port, Some(4318));
         assert_eq!(targets[1].dir, dir.path().join("server"));
-        assert_eq!(targets[1].port, Some(3000));
+        assert_eq!(targets[1].port, Some(3415));
     }
 }

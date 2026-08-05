@@ -1,8 +1,23 @@
+/// CLI command implementations
 pub mod audit;
+pub mod build;
+pub mod cache;
 pub mod core;
 pub mod dev;
+pub mod dlx;
+pub mod dedupe;
+pub mod exec;
 pub mod info;
-/// CLI command implementations
 pub mod init;
+pub mod install;
+pub mod login;
 pub mod outdated;
+pub mod patch;
+pub mod publish;
+pub mod model;
+pub mod registry;
+pub mod store;
+pub mod run;
 pub mod search;
+pub mod self_update;
+pub mod start;

@@ -7,9 +7,19 @@ pub mod database;
 pub mod layout;
 
 pub use cache::PackageCache;
-pub use cas::{ContentStore, IntegrityHash};
+pub use cas::{CompiledCache, CompiledModule, ContentStore, IntegrityHash};
 pub use database::{Database, DatabaseEntry};
 pub use layout::Layout;
+
+/// Trả về đường dẫn global store: `~/.megagate/store/v3`
+pub fn default_store_root() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".megagate")
+        .join("store")
+        .join("v3")
+}
+
 
 #[cfg(test)]
 mod tests {

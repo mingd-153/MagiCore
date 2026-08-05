@@ -32,6 +32,12 @@ impl Database {
                 hash TEXT PRIMARY KEY,
                 verified_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS refs (
+                project_root TEXT NOT NULL,
+                package_id TEXT NOT NULL,
+                ref_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (project_root, package_id)
+            );
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
             PRAGMA busy_timeout=5000;",
@@ -113,6 +119,59 @@ impl Database {
         )?;
         Ok(())
     }
+
+    /// Mark (project_root, package_id) as referenced — install. (02 §2.2)
+    pub fn set_ref(&self, project_root: &str, id: &PackageId) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO refs (project_root, package_id, ref_count) VALUES (?1, ?2, 1)
+             ON CONFLICT(project_root, package_id)
+             DO UPDATE SET ref_count = 1",
+            params![project_root, id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Remove the project reference for a package — remove/uninstall.
+    pub fn clear_ref(&self, project_root: &str, id: &PackageId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM refs WHERE project_root = ?1 AND package_id = ?2",
+            params![project_root, id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Remove all references of a project — called before re-install so the
+    /// refs table mirrors the current graph exactly (no stale entries).
+    pub fn clear_all_refs(&self, project_root: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM refs WHERE project_root = ?1",
+            params![project_root],
+        )?;
+        Ok(())
+    }
+
+    /// Return installed packages with no project referencing them —
+    /// candidates for `mg store prune` (02 §2.2).
+    pub fn list_unreferenced(&self) -> Result<Vec<PackageId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.version FROM packages p
+             LEFT JOIN refs r ON r.package_id = p.id || '@' || p.version
+             GROUP BY p.id, p.version
+             HAVING COUNT(r.project_root) = 0",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let version: String = row.get(1)?;
+            Ok(format!("{id}@{version}"))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            if let Ok(parsed) = PackageId::parse(&row?) {
+                result.push(parsed);
+            }
+        }
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -147,5 +206,22 @@ mod tests {
             .unwrap();
         let list = db.list_installed().unwrap();
         assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn test_refcount_set_clear_unreferenced() {
+        let dir = tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        let pkg = PackageId::parse("react@18.2.0").unwrap();
+        db.insert_package(&pkg, None).unwrap();
+        let project = "/tmp/proj-a";
+        db.set_ref(project, &pkg).unwrap();
+        assert!(db.list_unreferenced().unwrap().is_empty());
+        db.clear_ref(project, &pkg).unwrap();
+        let unreferenced = db.list_unreferenced().unwrap();
+        assert_eq!(unreferenced, vec![pkg.clone()]);
+        // Re-install in another project keeps it referenced.
+        db.set_ref("/tmp/proj-b", &pkg).unwrap();
+        assert!(db.list_unreferenced().unwrap().is_empty());
     }
 }

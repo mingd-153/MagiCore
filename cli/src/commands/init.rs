@@ -1,3 +1,5 @@
+use crate::commands::core::scaffold_flags::ScaffoldFlags;
+use crate::commands::core::web::{enrich_web_project_manifest, parse_framework_request};
 use crate::factory;
 use crate::scaffold::Scaffolder;
 use crate::wizard::engine::{Answer, Question, QuestionKind, ScaffoldConfig, WizardEngine};
@@ -5,8 +7,9 @@ use crate::wizard::web::WebWizard;
 use anyhow::Result;
 use mg_config::project::ProjectConfig;
 use mg_ui::{print_banner, print_next_steps, section};
+use std::path::Path;
 
-/// mg init — interactive project wizard
+/// mg init — create a new project with mg.toml
 pub async fn run(template: Option<String>) -> Result<()> {
     print_banner();
 
@@ -25,64 +28,81 @@ pub async fn run(template: Option<String>) -> Result<()> {
         };
         config.project_name = ask_project_name();
         if t == "web" {
-            let features = ask_web_features(&config);
+            let (features, show_multi) = ask_web_features(&config);
             if !features.is_empty() {
-                let feats = WizardEngine::run_question(&Question {
-                    prompt: "Select features:".to_string(),
-                    kind: QuestionKind::MultiSelect { options: features },
-                });
-                config.features = feats;
+                if show_multi {
+                    let feats = WizardEngine::run_question(&Question {
+                        prompt: "Select features:".to_string(),
+                        kind: QuestionKind::MultiSelect { options: features },
+                    });
+                    config.features = feats;
+                } else {
+                    config.features = features.into_iter().map(|a| a.value).collect();
+                }
             }
         }
         let project_dir = Scaffolder::scaffold(&config)?;
-        let proj_config = ProjectConfig::new(Scaffolder::display_name(&project_dir), &config.core);
-        proj_config.save(&project_dir)?;
+        write_mg_toml(&project_dir, &config)?;
+        if t == "web" && !config.frameworks.is_empty() {
+            seed_web_deps(&project_dir, &config).await?;
+        }
         return Ok(());
     }
 
-    // Step 1: Select core (auto-skip if single-core build)
     section("Choose your project type", 1, 4);
     let core = pick_core();
 
-    // Step 2: Run core-specific wizard
     section("Configure your project", 2, 4);
 
-    // Each core has its own decision tree
-    let (mut config, features) = run_core_wizard(&core);
+    let (mut config, features, show_multi) = run_core_wizard(&core);
 
-    // Step 3: Features (if the wizard returned any)
     section("Additional features", 3, 4);
     if !features.is_empty() {
-        let feats = WizardEngine::run_question(&Question {
-            prompt: "Select features:".to_string(),
-            kind: QuestionKind::MultiSelect { options: features },
-        });
-        config.features = feats;
+        if show_multi {
+            let feats = WizardEngine::run_question(&Question {
+                prompt: "Select features:".to_string(),
+                kind: QuestionKind::MultiSelect { options: features },
+            });
+            config.features = feats;
+        } else {
+            config.features = features.into_iter().map(|a| a.value).collect();
+        }
     }
 
-    // Step 4: Scaffold + save .megagate config
     section("Creating project...", 4, 4);
     let project_dir = Scaffolder::scaffold(&config)?;
 
-    let proj_config = ProjectConfig::new(Scaffolder::display_name(&project_dir), &config.core);
-    proj_config.save(&project_dir)?;
+    write_mg_toml(&project_dir, &config)?;
+
+    if config.core == "web" && !config.frameworks.is_empty() {
+        seed_web_deps(&project_dir, &config).await?;
+    }
 
     print_next_steps(&config.project_name);
     Ok(())
 }
 
-/// Pick a core from whatever is available in this build.
+fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
+    let name = Scaffolder::display_name(project_dir);
+    let template = config.template_dir.to_str().unwrap_or("").to_string();
+    let proj_config = ProjectConfig::from_scaffold(
+        name,
+        &config.core,
+        &config.sub_type,
+        config.frameworks.clone(),
+        template,
+        config.features.clone(),
+    );
+    proj_config.save(project_dir)?;
+    Ok(())
+}
+
 fn pick_core() -> String {
     let avail = factory::available_cores();
     if avail.is_empty() {
         eprintln!("error: no cores available in this build");
         std::process::exit(1);
     }
-    // Single-core build: auto-select, skip menu
-    if avail.len() == 1 {
-        return avail[0].0.to_string();
-    }
-
     let options: Vec<Answer> = avail
         .iter()
         .map(|(short, label)| Answer::new(label, short))
@@ -98,19 +118,14 @@ fn pick_core() -> String {
         .unwrap_or_else(|| avail[0].0.to_string())
 }
 
-/// Dispatch to the right core wizard.
-/// Each core defines its own decision tree independently.
-/// Non-web cores use a generic stub (just ask project name) until their wizard is built.
-fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>) {
+fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
     match core {
         "web" => {
             let mut cfg = WebWizard::run();
             cfg.project_name = ask_project_name();
-            let features = ask_web_features(&cfg);
-            (cfg, features)
+            let (features, show_multi) = ask_web_features(&cfg);
+            (cfg, features, show_multi)
         }
-        // Future cores will have their own wizards here:
-        // "game" => game::GameWizard::run() + game_features(),
         _ => {
             let name = ask_project_name();
             (
@@ -119,7 +134,8 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>) {
                     project_name: name,
                     ..Default::default()
                 },
-                vec![],
+                Vec::new(),
+                false,
             )
         }
     }
@@ -129,35 +145,71 @@ fn ask_project_name() -> String {
     mg_ui::prompt::input("Project name:").unwrap_or_else(|_| "my-project".to_string())
 }
 
-fn ask_web_features(config: &ScaffoldConfig) -> Vec<Answer> {
+async fn seed_web_deps(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
+    let mut flags = ScaffoldFlags::default();
+    for feat in &config.features {
+        match feat.as_str() {
+            "typescript" | "ts" => flags.ts = true,
+            "tailwindcss" | "tailwind" => flags.tailwindcss = true,
+            "eslint" => flags.eslint = true,
+            "vitest" => flags.vitest = true,
+            "playwright" => flags.playwright = true,
+            _ => {}
+        }
+    }
+    if config.sub_type == "monorepo" {
+        flags.monorepo = true;
+    }
+    let fe = &config.frameworks[0];
+    let frontend = parse_framework_request(fe);
+    match config.sub_type.as_str() {
+        "fullstack" => {
+            let backend = if config.frameworks.len() > 1 {
+                Some(parse_framework_request(&config.frameworks[1]))
+            } else {
+                None
+            };
+            enrich_web_project_manifest(project_dir, &frontend, backend.as_ref(), &flags).await
+        }
+        "monorepo" => {
+            let backend = config.frameworks.get(1).map(|b| parse_framework_request(b));
+            enrich_web_project_manifest(project_dir, &frontend, backend.as_ref(), &flags).await
+        }
+        _ => {
+            enrich_web_project_manifest(project_dir, &frontend, None, &flags).await
+        }
+    }
+}
+
+fn ask_web_features(config: &ScaffoldConfig) -> (Vec<Answer>, bool) {
     let use_defaults =
         mg_ui::prompt::confirm("Use default settings for this framework?").unwrap_or(true);
 
     let options = match config.sub_type.as_str() {
         "frontend" => vec![
-            Answer::new("TypeScript", "ts"),
-            Answer::new("Tailwind CSS", "tailwind"),
+            Answer::new("TypeScript", "typescript"),
+            Answer::new("Tailwind CSS", "tailwindcss"),
             Answer::new("ESLint", "eslint"),
             Answer::new("Vitest", "vitest"),
             Answer::new("Playwright", "playwright"),
         ],
         "backend" => vec![
-            Answer::new("TypeScript", "ts"),
+            Answer::new("TypeScript", "typescript"),
             Answer::new("OpenAPI contract", "openapi"),
             Answer::new("ESLint", "eslint"),
             Answer::new("Database layer", "db"),
             Answer::new("Container baseline", "docker"),
         ],
         "fullstack" => vec![
-            Answer::new("TypeScript", "ts"),
-            Answer::new("Tailwind CSS", "tailwind"),
+            Answer::new("TypeScript", "typescript"),
+            Answer::new("Tailwind CSS", "tailwindcss"),
             Answer::new("Shared schema/contracts", "schema"),
             Answer::new("API client generation", "api-client"),
             Answer::new("Playwright", "playwright"),
             Answer::new("Database layer", "db"),
         ],
         "monorepo" => vec![
-            Answer::new("TypeScript", "ts"),
+            Answer::new("TypeScript", "typescript"),
             Answer::new("Shared schema/contracts", "schema"),
             Answer::new("Shared config layer", "shared-config"),
             Answer::new("API client generation", "api-client"),
@@ -168,8 +220,8 @@ fn ask_web_features(config: &ScaffoldConfig) -> Vec<Answer> {
     };
 
     if use_defaults {
-        options.into_iter().take(2).collect()
+        (options.into_iter().take(2).collect(), false)
     } else {
-        options
+        (options, true)
     }
 }

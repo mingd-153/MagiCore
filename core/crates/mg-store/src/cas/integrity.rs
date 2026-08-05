@@ -1,4 +1,4 @@
-use sha2::{Digest, Sha256};
+use blake3::Hasher;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -9,10 +9,10 @@ pub struct IntegrityHash {
 
 impl IntegrityHash {
     pub fn from_bytes(data: &[u8], executable: bool) -> Self {
-        let mut hasher = Sha256::new();
+        let mut hasher = Hasher::new();
         hasher.update(data);
         Self {
-            hash: hex::encode(hasher.finalize()),
+            hash: hasher.finalize().to_hex().to_string(),
             executable,
         }
     }
@@ -25,7 +25,7 @@ impl IntegrityHash {
     }
 
     pub fn cas_path(&self, root: &Path) -> PathBuf {
-        let algo_dir = root.join("files").join("sha256");
+        let algo_dir = root.join("files").join("blake3");
         let first2 = &self.hash[..2];
         let mut path = algo_dir.join(first2).join(&self.hash);
         if self.executable {
@@ -38,7 +38,7 @@ impl IntegrityHash {
         use base64::Engine;
         let raw = hex::decode(&self.hash).unwrap_or_default();
         format!(
-            "sha256-{}",
+            "blake3-{}",
             base64::engine::general_purpose::STANDARD.encode(&raw)
         )
     }
@@ -76,7 +76,7 @@ mod tests {
         let root = tempdir().unwrap();
         let hash = IntegrityHash::from_bytes(b"test", false);
         let path = hash.cas_path(root.path());
-        assert!(path.to_string_lossy().contains("files/sha256/"));
+        assert!(path.to_string_lossy().contains("files/blake3/"));
         assert!(path.to_string_lossy().contains(&hash.hash[..2]));
         assert!(path.to_string_lossy().ends_with(&hash.hash));
     }

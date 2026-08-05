@@ -14,8 +14,8 @@ required_context = ["mode", "frameworks"]
 
 [[files]]
 source = "web.toml"
-target = ".megagate/web.toml"
-required_context = ["mode", "frameworks", "template", "features"]
+target = "mg.toml"
+required_context = ["project_name", "mode", "frameworks", "template", "features", "execution_architecture", "execution_lane", "execution_compatibility_layer", "execution_native_targets"]
 
 [[files]]
 source = "Dockerfile"

@@ -5,4 +5,4 @@ mode = "multi-core"
 primary_core = "all"
 no_default_features = true
 features = ["all"]
-install_hint = "brew install megagate  |  curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install.sh | sh"
+install_hint = "brew install megagate  |  curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install-from-gh.sh | bash -s -- --package megagate"
