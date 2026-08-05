@@ -198,7 +198,7 @@ struct WorkspaceLayout {
     packages_dir: Option<String>,
 }
 
-fn discover_workspace_projects(project_root: &Path) -> Result<Option<Vec<PathBuf>>> {
+pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<Vec<PathBuf>>> {
     let workspace_path = project_root.join("megagate.workspace.toml");
     if !workspace_path.exists() {
         return Ok(None);

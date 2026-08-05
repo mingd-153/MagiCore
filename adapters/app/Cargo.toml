@@ -1,0 +1,13 @@
+[package]
+name = "mg-app-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Mobile app ecosystem adapter for MegaGate"
+
+[dependencies]
+
+[lints]
+workspace = true

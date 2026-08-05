@@ -38,6 +38,11 @@ pub struct InstallOptions {
     /// Packages to force-install even when incremental mode is active.
     /// Only used when `incremental` is true.
     pub force_install: Vec<PackageId>,
+    /// Prefer reusing installed versions (dedupe) instead of latest (02 §2.1).
+    /// Opt-in — default off for safety.
+    pub prefer_dedupe: bool,
+    /// Re-link dangling symlinks in node_modules from the virtual store (02 §2.2).
+    pub repair: bool,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -242,6 +247,14 @@ pub trait PackageAdapter: Send + Sync {
     ) -> MgResult<Vec<UpdatedPackage>>;
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>>;
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport>;
+
+    /// Enable dedupe preference (reuse installed versions) for the next resolve.
+    /// Default no-op — opt-in per install (02 §2.1).
+    fn set_dedupe_pref(&self, _enabled: bool) {}
+
+    /// Provide already-installed versions (from lockfile) for dedupe resolution.
+    /// Default no-op.
+    fn set_existing_versions(&self, _versions: std::collections::HashMap<String, String>) {}
 }
 
 #[cfg(test)]

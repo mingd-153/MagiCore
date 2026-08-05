@@ -13,7 +13,10 @@ pub async fn run(cli: Cli) -> Result<()> {
     let core = cli.core.as_deref();
 
     if cli.recursive {
-        reject_unsupported_recursive(cli.command.as_ref())?;
+        // Publish đã implement recursive (Phase 1); các lệnh khác bị chặn
+        if !matches!(cli.command, Some(Commands::Publish { .. })) {
+            reject_unsupported_recursive(cli.command.as_ref())?;
+        }
     }
 
     if cli.audit_strict {
@@ -24,7 +27,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 
     match cli.command {
-        Some(command) => dispatch_command(command, core).await,
+        Some(command) => dispatch_command(command, core, cli.recursive).await,
         None => {
             let cores = crate::factory::available_cores();
             mg_ui::help::print_custom_help(&cores);
@@ -59,6 +62,13 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Outdated { .. } => "outdated",
         Commands::Audit => "audit",
         Commands::SelfUpdate => "self-update",
+        Commands::Publish { .. } => "publish",
+        Commands::Patch { .. } => "patch",
+        Commands::Dedupe { .. } => "dedupe",
+        Commands::Store { .. } => "store",
+        Commands::Login { .. } => "login",
+        Commands::Registry { .. } => "registry",
+        Commands::Model { .. } => "model",
         Commands::Dev { .. } => "dev",
         Commands::Run { .. } => "run",
         Commands::Build { .. } => "build",
@@ -125,9 +135,9 @@ fn command_name(command: &Commands) -> &'static str {
     }
 }
 
-async fn dispatch_command(command: Commands, core: Option<&str>) -> Result<()> {
+async fn dispatch_command(command: Commands, core: Option<&str>, recursive: bool) -> Result<()> {
     match command_to_dispatch(command, core) {
-        DispatchCommand::Common(cmd) => common::dispatch_common(cmd, core).await,
+        DispatchCommand::Common(cmd) => common::dispatch_common(cmd, core, recursive).await,
         DispatchCommand::Core(cmd) => core::dispatch_core(cmd).await,
     }
 }
@@ -173,6 +183,65 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::Link { package } => Some(CommonCommand::Link { package }),
         Commands::Unlink { package } => Some(CommonCommand::Unlink { package }),
         Commands::Why { package } => Some(CommonCommand::Why { package }),
+        Commands::Publish {
+            tag,
+            access,
+            dry_run,
+            json,
+            otp,
+            force,
+            ignore_scripts,
+            no_git_checks,
+            publish_branch,
+            batch,
+            report_summary,
+            patch,
+            minor,
+            major,
+            registry,
+            token,
+        } => Some(CommonCommand::Publish {
+            tag,
+            access,
+            dry_run,
+            json,
+            otp,
+            force,
+            ignore_scripts,
+            no_git_checks,
+            publish_branch,
+            batch,
+            report_summary,
+            patch,
+            minor,
+            major,
+            registry,
+            token,
+        }),
+        Commands::Patch { cmd } => Some(CommonCommand::Patch { cmd }),
+        Commands::Dedupe {
+            dry_run,
+            prefer_latest,
+            json,
+        } => Some(CommonCommand::Dedupe {
+            dry_run,
+            prefer_latest,
+            json,
+        }),
+        Commands::Login {
+            registry,
+            username,
+            password,
+            local,
+        } => Some(CommonCommand::Login {
+            registry,
+            username,
+            password,
+            local,
+        }),
+        Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
+        Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
+        Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
         _ => None,
     };
 
@@ -238,11 +307,15 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             frozen,
             ignore_scripts,
             allow_scripts,
+            prefer_dedupe,
+            repair,
         } => Some(CoreCommand::InstallWeb {
             packages,
             frozen,
             ignore_scripts,
             allow_scripts,
+            prefer_dedupe,
+            repair,
         }),
         Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
         Commands::InstallAi { packages } => Some(CoreCommand::InstallAi { packages }),
@@ -453,12 +526,16 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             frozen,
             ignore_scripts,
             allow_scripts,
+            prefer_dedupe,
+            repair,
         } => SomeCore(match ecosystem.as_deref() {
             Some("web") => CoreCommand::InstallWeb {
                 packages,
                 frozen,
                 ignore_scripts,
                 allow_scripts,
+                prefer_dedupe,
+                repair,
             },
             Some("game") => CoreCommand::InstallGame { packages },
             Some("ai") => CoreCommand::InstallAi { packages },
@@ -472,6 +549,8 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
                 frozen,
                 ignore_scripts,
                 allow_scripts,
+                prefer_dedupe,
+                repair,
             },
         }),
         Commands::Add {
@@ -618,7 +697,6 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn audit_strict_rejects_materializing_install_commands() {
         let install = Commands::Install {
@@ -626,6 +704,8 @@ mod tests {
             frozen: false,
             ignore_scripts: false,
             allow_scripts: false,
+        prefer_dedupe: false,
+        repair: false,
         };
         assert!(reject_unsupported_audit_strict(&install).is_ok());
 
@@ -666,6 +746,8 @@ mod tests {
             frozen: false,
             ignore_scripts: false,
             allow_scripts: false,
+            prefer_dedupe: false,
+            repair: false,
         }))
         .unwrap_err();
 

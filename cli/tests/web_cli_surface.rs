@@ -30,6 +30,22 @@ fn test_create_web_accepts_flags() {
 }
 
 #[test]
+fn test_install_accepts_dedupe_and_repair_flags() {
+    let (ok, out) = common::mg(&["install-web", "--help"]);
+    assert!(ok, "install-web --help failed\n{out}");
+    assert!(out.contains("--prefer-dedupe"), "should mention --prefer-dedupe");
+    assert!(out.contains("--repair"), "should mention --repair");
+}
+
+#[test]
+fn test_store_prune_accepts_flags() {
+    let (ok, out) = common::mg(&["store", "prune", "--help"]);
+    assert!(ok, "store prune --help failed\n{out}");
+    assert!(out.contains("--dry-run"), "should mention --dry-run");
+    assert!(out.contains("--json"), "should mention --json");
+}
+
+#[test]
 fn test_install_web_accepts_flags() {
     let (ok, out) = common::mg(&["install-web", "--help"]);
     assert!(ok, "install-web --help failed\n{out}");

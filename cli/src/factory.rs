@@ -10,10 +10,21 @@ pub fn available_cores() -> Vec<(&'static str, &'static str)> {
 }
 
 /// Create an adapter for the given ecosystem.
-pub fn create_adapter(ecosystem: &Ecosystem) -> anyhow::Result<Box<dyn PackageAdapter>> {
+/// `registry_url`/`token`: optional registry override từ mg.toml [registry].
+pub fn create_adapter(
+    ecosystem: &Ecosystem,
+    registry_url: Option<&str>,
+    token: Option<&str>,
+) -> anyhow::Result<Box<dyn PackageAdapter>> {
     match ecosystem {
         #[cfg(feature = "web")]
-        Ecosystem::Web => Ok(Box::new(mg_web_adapter::WebAdapter::new())),
+        Ecosystem::Web => Ok(Box::new(match (registry_url, token) {
+            (Some(url), _) => mg_web_adapter::WebAdapter::with_registry_and_token(
+                url.to_string(),
+                token.map(str::to_string),
+            ),
+            _ => mg_web_adapter::WebAdapter::new(),
+        })),
         #[cfg(not(feature = "web"))]
         Ecosystem::Web => anyhow::bail!("'web' core is not included in this build."),
         Ecosystem::Game => anyhow::bail!("'game' core is under development."),

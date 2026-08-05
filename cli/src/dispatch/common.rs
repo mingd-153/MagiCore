@@ -5,7 +5,7 @@ use crate::context::ProjectContext;
 
 use super::types::CommonCommand;
 
-pub async fn dispatch_common(command: CommonCommand, core: Option<&str>) -> Result<()> {
+pub async fn dispatch_common(command: CommonCommand, core: Option<&str>, recursive: bool) -> Result<()> {
     match command {
         CommonCommand::Init { template } => commands::init::run(template).await,
         CommonCommand::Dev { host, port, clear } => {
@@ -44,5 +44,62 @@ pub async fn dispatch_common(command: CommonCommand, core: Option<&str>) -> Resu
             let ctx = ProjectContext::load_with_core(core)?;
             commands::core::shared::why(ctx.adapter(), ctx.root(), &package).await
         }
+        CommonCommand::Login {
+            registry,
+            username,
+            password,
+            local,
+        } => {
+            commands::login::run(crate::commands::login::LoginArgs {
+                registry,
+                username,
+                password,
+                local,
+            })
+            .await
+        }
+        CommonCommand::Registry { cmd } => commands::registry::run(crate::commands::registry::RegistryArgs { cmd }).await,
+        CommonCommand::Model { cmd } => commands::model::run(crate::commands::model::ModelArgs { cmd }).await,
+        CommonCommand::Publish {
+            tag,
+            access,
+            dry_run,
+            json,
+            otp,
+            force,
+            ignore_scripts,
+            no_git_checks,
+            publish_branch,
+            batch,
+            report_summary,
+            patch,
+            minor,
+            major,
+            registry,
+            token,
+        } => {
+            commands::publish::run(crate::commands::publish::PublishArgs {
+                tag,
+                access,
+                dry_run,
+                json,
+                otp,
+                force,
+                ignore_scripts,
+                no_git_checks,
+                publish_branch,
+                batch,
+                report_summary,
+                patch,
+                minor,
+                major,
+                registry,
+                token,
+            }, recursive)
+            .await
+        }
+        CommonCommand::Patch { cmd } => commands::patch::run(crate::commands::patch::PatchArgs { cmd }).await,
+        CommonCommand::Dedupe { dry_run, prefer_latest, json } => commands::dedupe::run(crate::commands::dedupe::DedupeArgs { dry_run, prefer_latest, json }).await,
+        CommonCommand::Store { cmd } => commands::store::run(cmd).await,
     }
 }

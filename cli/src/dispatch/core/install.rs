@@ -25,7 +25,17 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             frozen,
             ignore_scripts,
             allow_scripts,
-        } => commands::core::web::install(packages, frozen, ignore_scripts, allow_scripts).await,
+            prefer_dedupe,
+            repair,
+        } => commands::core::web::install(
+            packages,
+            frozen,
+            ignore_scripts,
+            allow_scripts,
+            prefer_dedupe,
+            repair,
+        )
+        .await,
         CoreCommand::InstallGame { packages } => commands::core::game::install(packages).await,
         CoreCommand::InstallAi { packages } => commands::core::ai::install(packages).await,
         CoreCommand::InstallClo { packages } => commands::core::clo::install(packages).await,

@@ -37,6 +37,7 @@ pub struct DistInfo {
 
 pub struct NpmRegistry {
     registry_url: String,
+    token: Option<String>,
 }
 
 pub enum DownloadedTarball {
@@ -116,7 +117,27 @@ impl NpmRegistry {
     pub fn new(registry_url: &str) -> Self {
         Self {
             registry_url: registry_url.to_string(),
+            token: None,
         }
+    }
+
+    pub fn new_with_token(registry_url: &str, token: Option<String>) -> Self {
+        Self {
+            registry_url: registry_url.to_string(),
+            token,
+        }
+    }
+
+    fn with_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(token) = &self.token {
+            req.header("Authorization", format!("Bearer {token}"))
+        } else {
+            req
+        }
+    }
+
+    pub fn auth_token(&self) -> Option<&str> {
+        self.token.as_deref()
     }
 
     pub async fn fetch_metadata(&self, package: &str) -> Result<PackageMetadata> {
@@ -134,7 +155,8 @@ impl NpmRegistry {
         with_retry("metadata", package, move || {
             let resp_future = client.get(&url);
             let metadata_future = async move {
-                let resp = resp_future
+                let resp = self
+                    .with_auth(resp_future)
                     .header("Accept", "application/vnd.npm.install-v1+json")
                     .send()
                     .await?
@@ -161,8 +183,8 @@ impl NpmRegistry {
         let etag_owned = etag.map(|s| s.to_string());
 
         with_retry("metadata-conditional", package, move || {
-            let mut req = global_http_client()
-                .get(&url)
+            let mut req = self
+                .with_auth(global_http_client().get(&url))
                 .header("Accept", "application/vnd.npm.install-v1+json");
             if let Some(ref etag_val) = etag_owned {
                 req = req.header("If-None-Match", etag_val);
@@ -193,8 +215,8 @@ impl NpmRegistry {
     /// the raw bytes (e.g., integrity verification before store import).
     pub async fn download_tarball(&self, url: &str) -> Result<Vec<u8>> {
         with_retry("tarball", url, || async {
-            let resp = global_http_client()
-                .get(url)
+            let resp = self
+                .with_auth(global_http_client().get(url))
                 .send()
                 .await?
                 .error_for_status()?;
@@ -222,8 +244,8 @@ impl NpmRegistry {
             if let Some(parent) = dest.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-            let resp = batch_http_client()
-                .get(url)
+            let resp = self
+                .with_auth(batch_http_client().get(url))
                 .send()
                 .await?
                 .error_for_status()?;
@@ -260,8 +282,8 @@ impl NpmRegistry {
                 tokio::fs::create_dir_all(parent).await?;
             }
 
-            let resp = batch_http_client()
-                .get(url)
+            let resp = self
+                .with_auth(batch_http_client().get(url))
                 .send()
                 .await?
                 .error_for_status()?;
@@ -327,6 +349,21 @@ pub async fn batch_download_tarball(url: &str) -> Result<Vec<u8>> {
     let client = batch_http_client();
     with_retry("batch-tarball", url, || async {
         let resp = client.get(url).send().await?.error_for_status()?;
+        let bytes = resp.bytes().await?;
+        Ok(bytes.to_vec())
+    })
+    .await
+}
+
+/// Batch download kèm auth token (registry private)
+pub async fn batch_download_tarball_with_auth(url: &str, token: Option<&str>) -> Result<Vec<u8>> {
+    let client = batch_http_client();
+    with_retry("batch-tarball", url, || async {
+        let mut req = client.get(url);
+        if let Some(t) = token {
+            req = req.header("Authorization", format!("Bearer {t}"));
+        }
+        let resp = req.send().await?.error_for_status()?;
         let bytes = resp.bytes().await?;
         Ok(bytes.to_vec())
     })

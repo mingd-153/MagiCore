@@ -84,3 +84,6 @@ mg-bench-*
 templates/web/.docs/WEB_BENCHMARK_CLI_AUDIT_LOG_*.md
 tools/core-web-lab/
 
+
+# System design docs (working drafts)
+sys-mg/
