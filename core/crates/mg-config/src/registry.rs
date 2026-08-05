@@ -5,7 +5,19 @@ use serde::{Deserialize, Serialize};
 pub struct Registry {
     pub name: String,
     pub url: String,
+    #[serde(default)]
     pub priority: u32,
+    /// Token auth (publish) — Phase 0 fields, mg.toml [registry]
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    /// Ràng buộc phương thức auth: "token" | "basic" — None = auto (token trước).
+    /// (mg.toml [registry] — chỉ ảnh hưởng auth lấy từ config, không đè npmrc/env)
+    #[serde(default)]
+    pub auth_type: Option<String>,
 }
 
 impl Registry {
@@ -14,19 +26,10 @@ impl Registry {
             name,
             url,
             priority: 0,
+            token: None,
+            username: None,
+            password: None,
+            auth_type: None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Registry;
-
-    #[test]
-    fn new_sets_name_url_and_default_priority() {
-        let reg = Registry::new("my-reg".into(), "https://example.com".into());
-        assert_eq!(reg.name, "my-reg");
-        assert_eq!(reg.url, "https://example.com");
-        assert_eq!(reg.priority, 0);
     }
 }

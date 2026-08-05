@@ -1,13 +1,19 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use mg_lockfile::{serialization, Lockfile};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::{Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use colored::Colorize;
+use mg_lockfile::{LockPackage, Lockfile};
+use mg_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
+use mg_types::{
+    adapter::PreparedAdd, DependencySpec, Manifest, PackageId, PackageName, ResolvedGraph,
+    ResolvedPackage, Version,
+};
 use mg_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
 };
+#[cfg(feature = "web")]
+use time::{format_description::well_known::Rfc3339, Duration as TimeDuration, OffsetDateTime};
 
 #[allow(dead_code)]
 pub fn find_project_root(cwd: &Path) -> Result<Option<PathBuf>> {
@@ -34,6 +40,7 @@ pub async fn add(
     optional: bool,
     peer: bool,
     no_save: bool,
+    install: bool,
     global: bool,
 ) -> Result<()> {
     const MAX_PACKAGES: usize = 50;
@@ -56,6 +63,18 @@ pub async fn add(
     };
     mg_ui::info(&format!("Adding {} package(s) to {}...", total, group));
 
+    let manifest_before_add = if !no_save {
+        let started_at = std::time::Instant::now();
+        let manifest = adapter.parse_manifest(root).await.ok();
+        profile_install_mark("add_parse_manifest_before", started_at);
+        manifest
+    } else {
+        None
+    };
+    let mut manifest_after_add = manifest_before_add.clone();
+    let mut added_ids = Vec::new();
+    let mut added_packages = Vec::new();
+    let mut changed_any = false;
     for package in packages {
         let spec = mg_types::DependencySpec::parse(&package)?;
         let name = spec.name;
@@ -76,7 +95,14 @@ pub async fn add(
             no_save,
             global,
         };
-        let pkg_id = adapter.add(root, &name, range.as_ref(), opts).await?;
+        let add_started_at = std::time::Instant::now();
+        let PreparedAdd {
+            id: pkg_id,
+            range: saved_range,
+        } = adapter
+            .prepare_add(root, &name, range.as_ref(), opts)
+            .await?;
+        profile_install_mark("adapter_prepare_add", add_started_at);
         spinner.finish_and_clear();
         let requested_range = range
             .as_ref()
@@ -85,22 +111,45 @@ pub async fn add(
         let resolved_version = pkg_id.version().to_string();
 
         if !no_save {
-            if resolved_version == "0.0.0" {
-                mg_ui::info(&format!(
-                    "  {}@{} saved to {}",
-                    pkg_id.name_str(),
-                    requested_range,
-                    group
-                ));
-            } else {
-                mg_ui::info(&format!(
-                    "  {}@{} added to {}",
-                    pkg_id.name_str(),
-                    resolved_version,
-                    group
-                ));
+            if let Some(manifest) = manifest_after_add.as_mut() {
+                let mut saved_spec = DependencySpec::new(name.clone(), saved_range.clone());
+                saved_spec.dev = dev;
+                saved_spec.optional = optional;
+                saved_spec.peer = peer;
+                let changed = manifest.add_dep(saved_spec, dev, optional, peer);
+                if changed {
+                    changed_any = true;
+                    added_ids.push(pkg_id.clone());
+                    added_packages.push(AddedPackage {
+                        id: pkg_id.clone(),
+                        dev,
+                        optional,
+                        peer,
+                    });
+                    if resolved_version == "0.0.0" {
+                        mg_ui::info(&format!(
+                            "  {}@{} saved to {}",
+                            pkg_id.name_str(),
+                            requested_range,
+                            group
+                        ));
+                    } else {
+                        mg_ui::info(&format!(
+                            "  {}@{} added to {}",
+                            pkg_id.name_str(),
+                            resolved_version,
+                            group
+                        ));
+                    }
+                    mg_ui::success(&format!("Added {}", package));
+                } else {
+                    mg_ui::info(&format!(
+                        "  {} already present in {}, skipping",
+                        pkg_id.name_str(),
+                        group
+                    ));
+                }
             }
-            mg_ui::success(&format!("Added {}", package));
         } else {
             mg_ui::info(&format!(
                 "  {}@{} checked (--no-save, manifest unchanged)",
@@ -111,9 +160,49 @@ pub async fn add(
     }
 
     if !no_save {
-        mg_ui::info(&format!(
-            "Run '{}' to install",
-            mg_ui::style_cmd(install_command_for_adapter(adapter))
+        if changed_any {
+            if let Some(manifest) = manifest_after_add.as_ref() {
+                let write_started_at = std::time::Instant::now();
+                adapter.write_manifest(root, manifest).await?;
+                profile_install_mark("add_write_manifest", write_started_at);
+            }
+        } else {
+            info("Manifest unchanged.");
+        }
+    }
+
+    if !no_save && !changed_any {
+        info("Skipping install because dependencies were already present.");
+        return Ok(());
+    }
+
+    if !no_save && install {
+        info("Installing added packages...");
+        if !try_install_added_packages_from_lock(
+            adapter,
+            root,
+            manifest_before_add.as_ref(),
+            &added_packages,
+        )
+        .await?
+        {
+            install_with_adapter(
+                adapter,
+                root,
+                install_command_for_adapter(adapter),
+                false,
+                InstallOptions {
+                    incremental: true,
+                    force_install: added_ids,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
+    } else if !no_save {
+        info(&format!(
+            "Run '{}' to update lockfile and node_modules",
+            style_cmd(install_command_for_adapter(adapter))
         ));
     }
 
@@ -121,16 +210,98 @@ pub async fn add(
 }
 
 #[allow(dead_code)]
-pub async fn remove(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Result<()> {
-    let name = PackageName::new(package)?;
-    info(&format!("Removing {}...", package));
-    adapter.remove(root, &name).await?;
-    success(&format!("Removed {}", package));
-    info(&format!(
-        "Run '{}' to update lockfile",
-        style_cmd(install_command_for_adapter(adapter))
-    ));
+pub async fn remove(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    packages: Vec<String>,
+    install: bool,
+) -> Result<()> {
+    const MAX_PACKAGES: usize = 50;
+    if packages.len() > MAX_PACKAGES {
+        anyhow::bail!(
+            "Too many packages ({}). Maximum per remove command is {}.",
+            packages.len(),
+            MAX_PACKAGES
+        );
+    }
+    info(&format!("Removing {} package(s)...", packages.len()));
+    let parse_started_at = std::time::Instant::now();
+    let mut manifest = adapter.parse_manifest(root).await?;
+    profile_install_mark("remove_parse_manifest", parse_started_at);
+    let mut removed_any = false;
+    for package in &packages {
+        let _ = PackageName::new(package)?;
+        if manifest.remove_dep(package) {
+            removed_any = true;
+            success(&format!("Removed {}", package));
+        } else {
+            info(&format!("  {} not found in manifest, skipping", package));
+        }
+    }
+    if !removed_any {
+        info("Manifest unchanged.");
+        if install {
+            info("Skipping reinstall because no dependencies were removed.");
+        }
+        return Ok(());
+    }
+    let write_started_at = std::time::Instant::now();
+    adapter.write_manifest(root, &manifest).await?;
+    profile_install_mark("remove_write_manifest", write_started_at);
+    if !install {
+        info(&format!(
+            "Run '{}' to update lockfile and node_modules",
+            style_cmd(install_command_for_adapter(adapter))
+        ));
+        return Ok(());
+    }
+    info("Re-installing dependency graph...");
+    if let Some(graph) = load_pruned_locked_graph(root, adapter.name(), &manifest)? {
+        info("Using mg.lock for remaining dependency graph.");
+        let started_at = std::time::Instant::now();
+        let spinner = create_spinner("  Linking packages...");
+        let mut summary = adapter
+            .install(
+                &graph,
+                root,
+                InstallOptions {
+                    incremental: true,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        spinner.finish_and_clear();
+        summary.duration_ms = started_at.elapsed().as_millis() as u64;
+        print_install_summary(
+            summary.added.len(),
+            summary.bytes_from_cache as usize,
+            summary.duration_ms,
+            "0 B",
+        );
+        mg_ui::blank_line();
+        success("All dependencies installed");
+        return Ok(());
+    }
+    install_with_adapter(
+        adapter,
+        root,
+        install_command_for_adapter(adapter),
+        false,
+        mg_types::adapter::InstallOptions {
+            incremental: true,
+            ..Default::default()
+        },
+    )
+    .await?;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct AddedPackage {
+    id: PackageId,
+    dev: bool,
+    optional: bool,
+    peer: bool,
 }
 
 #[allow(dead_code)]
@@ -176,8 +347,17 @@ pub async fn update(
             success(&format!("Updated {} package(s)", updated.len()));
             if install {
                 info("Installing updated packages...");
-                install_with_adapter(adapter, root, install_command_for_adapter(adapter), false)
-                    .await?;
+                install_with_adapter(
+                    adapter,
+                    root,
+                    install_command_for_adapter(adapter),
+                    false,
+                    mg_types::adapter::InstallOptions {
+                        incremental: true,
+                        ..Default::default()
+                    },
+                )
+                .await?;
             } else {
                 info(&format!(
                     "Run '{}' to install updates",
@@ -201,7 +381,17 @@ pub async fn update(
         success("Update complete");
         if install {
             info("Installing updated packages...");
-            install_with_adapter(adapter, root, install_command_for_adapter(adapter), false).await?;
+            install_with_adapter(
+                adapter,
+                root,
+                install_command_for_adapter(adapter),
+                false,
+                mg_types::adapter::InstallOptions {
+                    incremental: true,
+                    ..Default::default()
+                },
+            )
+            .await?;
         } else {
             info(&format!(
                 "Run '{}' to install updates",
@@ -218,12 +408,15 @@ pub async fn install_with_adapter(
     root: &Path,
     add_cmd: &str,
     frozen: bool,
+    opts: mg_types::adapter::InstallOptions,
 ) -> Result<()> {
+    let command_started_at = std::time::Instant::now();
     let InstallExecution {
         graph,
         summary: _prepared_summary,
         used_lockfile,
     } = prepare_install_execution(adapter, root, frozen, Some(add_cmd)).await?;
+    profile_install_mark("prepare_install_execution", command_started_at);
     let started_at = std::time::Instant::now();
 
     let resolve_bar = create_progress_bar(graph.len() as u64, "Resolving...");
@@ -249,8 +442,9 @@ pub async fn install_with_adapter(
     }
 
     let spinner = create_spinner("  Linking packages...");
-    let mut summary = adapter.install(&graph, root).await?;
+    let mut summary = adapter.install(&graph, root, opts).await?;
     spinner.finish_and_clear();
+    profile_install_mark("adapter_install", started_at);
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
 
     print_install_summary(
@@ -259,8 +453,9 @@ pub async fn install_with_adapter(
         summary.duration_ms,
         "0 B",
     );
-    println!();
+    mg_ui::blank_line();
     success("All dependencies installed");
+    profile_install_mark("install_with_adapter_total", command_started_at);
     Ok(())
 }
 
@@ -280,6 +475,7 @@ pub(crate) async fn prepare_install_execution(
     let spinner = create_spinner("  Reading project manifest...");
     let manifest = adapter.parse_manifest(root).await?;
     spinner.finish_and_clear();
+    profile_install_mark("parse_manifest", started_at);
 
     let all_deps: Vec<_> = manifest.all_dependencies().collect();
     if all_deps.is_empty() {
@@ -301,6 +497,7 @@ pub(crate) async fn prepare_install_execution(
         load_locked_graph(root, adapter.name(), &manifest)?
     {
         info("Using mg.lock for install state.");
+        profile_install_mark("load_locked_graph", started_at);
         (graph, true)
     } else {
         if frozen {
@@ -311,10 +508,14 @@ pub(crate) async fn prepare_install_execution(
             );
         }
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
+        let resolve_started_at = std::time::Instant::now();
         let graph = adapter.resolve(&manifest).await?;
         spinner.finish_and_clear();
+        profile_install_mark("resolve_graph", resolve_started_at);
         (graph, false)
     };
+    enforce_audit_strict_policy(adapter, &graph).await?;
+    profile_install_mark("prepare_install_execution_total", started_at);
     Ok(InstallExecution {
         graph,
         summary: mg_types::adapter::InstallSummary {
@@ -325,33 +526,235 @@ pub(crate) async fn prepare_install_execution(
     })
 }
 
+async fn enforce_audit_strict_policy(
+    adapter: &dyn PackageAdapter,
+    graph: &ResolvedGraph,
+) -> Result<()> {
+    if std::env::var_os("MG_AUDIT_STRICT").is_none() || graph.packages.is_empty() {
+        return Ok(());
+    }
+
+    if adapter.name() != "web" {
+        anyhow::bail!(
+            "--audit-strict is only implemented for the web core right now; refusing to claim policy parity for '{}'",
+            adapter.name()
+        );
+    }
+
+    #[cfg(not(feature = "web"))]
+    {
+        anyhow::bail!("--audit-strict requires the web core registry adapter, which is not included in this build");
+    }
+
+    #[cfg(feature = "web")]
+    {
+        enforce_web_audit_strict_policy(graph).await
+    }
+}
+
+#[cfg(feature = "web")]
+async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
+    use mg_types::adapter::VulnerabilitySeverity;
+
+    let registry =
+        mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
+    let now = OffsetDateTime::now_utc();
+    let quarantine_cutoff = now - TimeDuration::hours(24);
+
+    for pkg in &graph.packages {
+        let metadata = registry.fetch_metadata(pkg.id.name_str()).await?;
+        if let Some(published_at) = metadata.time.get(&pkg.id.version().to_string()) {
+            let published = OffsetDateTime::parse(published_at, &Rfc3339).map_err(|err| {
+                anyhow::anyhow!(
+                    "failed to parse published time for '{}@{}': {}",
+                    pkg.id.name_str(),
+                    pkg.id.version(),
+                    err
+                )
+            })?;
+            if published > quarantine_cutoff {
+                anyhow::bail!(
+                    "--audit-strict blocked '{}@{}' because it was published within the last 24 hours ({published_at})",
+                    pkg.id.name_str(),
+                    pkg.id.version(),
+                );
+            }
+        }
+    }
+
+    let mut body = serde_json::Map::new();
+    for pkg in &graph.packages {
+        body.insert(
+            pkg.id.name_str().to_string(),
+            serde_json::json!([pkg.id.version().to_string()]),
+        );
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent(format!("megagate/{}", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let response = client
+        .post("https://registry.npmjs.org/-/npm/v1/security/advisories/bulk")
+        .json(&body)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        anyhow::bail!("--audit-strict advisory API returned {}", response.status());
+    }
+    let advisories: serde_json::Value = response.json().await?;
+    if let Some(map) = advisories.as_object() {
+        for (pkg_name, advisory_list) in map {
+            if let Some(advisories_arr) = advisory_list.as_array() {
+                for advisory in advisories_arr {
+                    let severity = VulnerabilitySeverity::from_str(
+                        advisory["severity"].as_str().unwrap_or("info"),
+                    );
+                    if severity.is_at_least(&VulnerabilitySeverity::Medium) {
+                        let title = advisory["title"]
+                            .as_str()
+                            .unwrap_or("unknown vulnerability");
+                        anyhow::bail!(
+                            "--audit-strict blocked '{}' due to {} advisory: {}",
+                            pkg_name,
+                            severity.as_str(),
+                            title
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn try_install_added_packages_from_lock(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    manifest_before_add: Option<&Manifest>,
+    added_packages: &[AddedPackage],
+) -> Result<bool> {
+    if added_packages.is_empty() {
+        return Ok(false);
+    }
+    let Some(previous_manifest) = manifest_before_add else {
+        return Ok(false);
+    };
+    let Some(locked_graph) = load_locked_graph(root, adapter.name(), previous_manifest)? else {
+        return Ok(false);
+    };
+
+    let delta_manifest = build_delta_manifest(previous_manifest, added_packages)?;
+
+    let resolve_started_at = std::time::Instant::now();
+    let spinner = create_spinner(&format!(
+        "  Resolving {} new package(s)...",
+        added_packages.len()
+    ));
+    let delta_graph = adapter.resolve(&delta_manifest).await?;
+    spinner.finish_and_clear();
+    profile_install_mark("resolve_delta_graph", resolve_started_at);
+
+    let graph = merge_graphs(locked_graph, delta_graph);
+    let added_ids = added_packages
+        .iter()
+        .map(|pkg| pkg.id.clone())
+        .collect::<Vec<_>>();
+    let started_at = std::time::Instant::now();
+    let spinner = create_spinner("  Linking changed packages...");
+    let mut summary = adapter
+        .install(
+            &graph,
+            root,
+            InstallOptions {
+                incremental: true,
+                force_install: added_ids.to_vec(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    spinner.finish_and_clear();
+    summary.duration_ms = started_at.elapsed().as_millis() as u64;
+    print_install_summary(
+        summary.added.len(),
+        summary.bytes_from_cache as usize,
+        summary.duration_ms,
+        "0 B",
+    );
+    mg_ui::blank_line();
+    success("All dependencies installed");
+    profile_install_mark("install_delta_with_lock_total", started_at);
+    Ok(true)
+}
+
+fn build_delta_manifest(manifest: &Manifest, added_packages: &[AddedPackage]) -> Result<Manifest> {
+    let mut delta = Manifest::new(&manifest.name, manifest.ecosystem.clone());
+    for package in added_packages {
+        let mut spec = DependencySpec::new(
+            package.id.name().clone(),
+            mg_types::VersionRange::parse(&format!("={}", package.id.version()))?,
+        );
+        spec.dev = package.dev;
+        spec.optional = package.optional;
+        spec.peer = package.peer;
+        delta.add_dep(spec, package.dev, package.optional, package.peer);
+    }
+    Ok(delta)
+}
+
+fn merge_graphs(mut base: ResolvedGraph, delta: ResolvedGraph) -> ResolvedGraph {
+    let mut positions = std::collections::HashMap::new();
+    for (idx, pkg) in base.packages.iter().enumerate() {
+        positions.insert(pkg.id.clone(), idx);
+    }
+    for pkg in delta.packages {
+        if let Some(idx) = positions.get(&pkg.id).copied() {
+            let existing = &mut base.packages[idx];
+            existing.direct |= pkg.direct;
+            existing.dev |= pkg.dev;
+            if existing.integrity.is_empty() && !pkg.integrity.is_empty() {
+                existing.integrity = pkg.integrity;
+            }
+            if existing.tarball_url.is_empty() && !pkg.tarball_url.is_empty() {
+                existing.tarball_url = pkg.tarball_url;
+            }
+            for dep in pkg.deps {
+                if !existing.deps.contains(&dep) {
+                    existing.deps.push(dep);
+                }
+            }
+        } else {
+            positions.insert(pkg.id.clone(), base.packages.len());
+            base.packages.push(pkg);
+        }
+    }
+    base
+}
+
+fn profile_install_mark(label: &str, started_at: std::time::Instant) {
+    let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    if enabled {
+        eprintln!(
+            "[megagate:web:command-profile] {}={}ms",
+            label,
+            started_at.elapsed().as_millis()
+        );
+    }
+}
+
 #[allow(dead_code)]
 fn load_locked_graph(
     project_root: &Path,
     adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
-    let lock_path = project_root.join("mg.lock");
-    if !lock_path.exists() {
+    let Some(lock) = read_checked_lockfile(project_root)? else {
         return Ok(None);
-    }
-    let contents = std::fs::read_to_string(&lock_path)?;
-
-    // Lockfile integrity check: verify SHA-256 checksum from sidecar
-    let checksum_path = project_root.join("mg.lock.sha256");
-    if checksum_path.exists() {
-        let expected = std::fs::read_to_string(&checksum_path)?.trim().to_string();
-        let actual = mg_crypto::hash(contents.as_bytes(), mg_crypto::HashAlgorithm::Sha256)?;
-        if expected != actual {
-            anyhow::bail!(
-                "Lockfile checksum mismatch: mg.lock has been tampered with.\n  expected: {expected}\n  actual:   {actual}"
-            );
-        }
-    }
-
-    let lock: Lockfile = match serialization::from_toml(&contents) {
-        Ok(lock) => lock,
-        Err(_) => return Ok(None),
     };
     let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
     if lock.core != adapter_name || !state_ok || lock.packages.is_empty() {
@@ -367,6 +770,10 @@ fn load_locked_graph(
         return Ok(None);
     }
     Ok(Some(graph_from_lockfile(&lock)?))
+}
+
+fn read_checked_lockfile(project_root: &Path) -> Result<Option<Lockfile>> {
+    mg_lockfile::read_lockfile_checked(project_root)
 }
 
 #[allow(dead_code)]
@@ -385,6 +792,63 @@ fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
     })
 }
 
+fn load_pruned_locked_graph(
+    project_root: &Path,
+    adapter_name: &str,
+    manifest: &Manifest,
+) -> Result<Option<ResolvedGraph>> {
+    let Some(lock) = read_checked_lockfile(project_root)? else {
+        return Ok(None);
+    };
+    let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
+    if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
+        return Ok(None);
+    }
+
+    let direct_manifest: Vec<_> = manifest.all_dependencies().collect();
+    let mut direct_ids = Vec::with_capacity(direct_manifest.len());
+    for dep in direct_manifest {
+        let Some(pkg) = lock
+            .packages
+            .iter()
+            .find(|pkg| pkg.name == dep.name.as_str())
+        else {
+            return Ok(None);
+        };
+        let version = Version::parse(&pkg.version)?;
+        if !dep.range.matches(&version) {
+            return Ok(None);
+        }
+        direct_ids.push(format!("{}@{}", pkg.name, pkg.version));
+    }
+
+    let packages_by_id: std::collections::HashMap<String, &LockPackage> = lock
+        .packages
+        .iter()
+        .map(|pkg| (format!("{}@{}", pkg.name, pkg.version), pkg))
+        .collect();
+    let mut reachable = std::collections::BTreeSet::new();
+    let mut stack = direct_ids;
+    while let Some(id) = stack.pop() {
+        if !reachable.insert(id.clone()) {
+            continue;
+        }
+        let Some(pkg) = packages_by_id.get(&id) else {
+            return Ok(None);
+        };
+        for dep in &pkg.dependencies {
+            stack.push(dep.clone());
+        }
+    }
+
+    let mut pruned = lock;
+    pruned
+        .packages
+        .retain(|pkg| reachable.contains(&format!("{}@{}", pkg.name, pkg.version)));
+    pruned.resolution.package_count = pruned.packages.len();
+    Ok(Some(graph_from_lockfile(&pruned)?))
+}
+
 #[allow(dead_code)]
 fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
     let packages = lock
@@ -396,9 +860,20 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
             let deps = pkg
                 .dependencies
                 .iter()
-                .filter_map(|dep| PackageId::parse(dep).ok())
-                .collect();
+                .map(|dep| {
+                    PackageId::parse(dep).map_err(|err| {
+                        anyhow::anyhow!(
+                            "invalid dependency id '{}' in lockfile package '{}@{}': {}",
+                            dep,
+                            pkg.name,
+                            pkg.version,
+                            err
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
             Ok(ResolvedPackage {
+                peer_deps: vec![],
                 id: PackageId::new(name, version),
                 integrity: pkg.integrity.clone().unwrap_or_default(),
                 tarball_url: String::new(),
@@ -414,7 +889,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_lockfile::{LockPackage, ResolutionMeta};
+    use mg_lockfile::{serialization, LockPackage, ResolutionMeta};
     use mg_types::{DependencySpec, Ecosystem, VersionRange};
 
     #[test]
@@ -442,6 +917,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         assert!(lock_matches_manifest(&lock, &manifest));
     }
@@ -471,7 +947,362 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         assert!(!lock_matches_manifest(&lock, &manifest));
+    }
+
+    #[test]
+    fn test_read_checked_lockfile_errors_on_checksum_mismatch() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = Lockfile::new("web", "frontend");
+        std::fs::write(
+            root.path().join("mg.lock"),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(root.path().join("mg.lock.sha256"), "bad").unwrap();
+
+        let err = read_checked_lockfile(root.path()).unwrap_err();
+
+        assert!(
+            err.to_string().contains("lockfile checksum mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_graph_from_lockfile_rejects_invalid_dependency_id() {
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.packages.push(LockPackage {
+            name: "react".into(),
+            version: "18.2.0".into(),
+            integrity: None,
+            direct: true,
+            dev: false,
+            dependencies: vec!["not-a-package-id".into()],
+            peer_deps: vec![],
+        });
+
+        let err = graph_from_lockfile(&lock).unwrap_err();
+
+        assert!(
+            err.to_string().contains("invalid dependency id"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_pruned_locked_graph_keeps_only_reachable_packages() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manifest = Manifest::new("demo", Ecosystem::Web);
+        manifest.add_dep(
+            DependencySpec::new(
+                PackageName::new("react").unwrap(),
+                VersionRange::parse("^18.0.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.resolution = ResolutionMeta {
+            state: "locked".into(),
+            store: "megagate".into(),
+            package_count: 4,
+        };
+        lock.packages.push(LockPackage {
+            name: "react".into(),
+            version: "18.3.1".into(),
+            integrity: None,
+            direct: true,
+            dev: false,
+            dependencies: vec!["loose-envify@1.4.0".into()],
+            peer_deps: vec![],
+        });
+        lock.packages.push(LockPackage {
+            name: "loose-envify".into(),
+            version: "1.4.0".into(),
+            integrity: None,
+            direct: false,
+            dev: false,
+            dependencies: vec![],
+            peer_deps: vec![],
+        });
+        lock.packages.push(LockPackage {
+            name: "zod".into(),
+            version: "4.4.3".into(),
+            integrity: None,
+            direct: true,
+            dev: false,
+            dependencies: vec![],
+            peer_deps: vec![],
+        });
+        lock.packages.push(LockPackage {
+            name: "orphan".into(),
+            version: "1.0.0".into(),
+            integrity: None,
+            direct: false,
+            dev: false,
+            dependencies: vec![],
+            peer_deps: vec![],
+        });
+        std::fs::write(
+            root.path().join("mg.lock"),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+
+        let graph = load_pruned_locked_graph(root.path(), "web", &manifest)
+            .unwrap()
+            .unwrap();
+        let names = graph
+            .packages
+            .iter()
+            .map(|pkg| pkg.id.name_str().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert!(names.contains("react"));
+        assert!(names.contains("loose-envify"));
+        assert!(!names.contains("zod"));
+        assert!(!names.contains("orphan"));
+    }
+
+    #[test]
+    fn test_build_delta_manifest_keeps_dependency_group() {
+        let manifest = Manifest::new("demo", Ecosystem::Web);
+        let added = vec![AddedPackage {
+            id: PackageId::parse("vitest@3.2.1").unwrap(),
+            dev: true,
+            optional: false,
+            peer: false,
+        }];
+
+        let delta = build_delta_manifest(&manifest, &added).unwrap();
+
+        assert!(delta.dependencies.is_empty());
+        assert_eq!(delta.dev_dependencies.len(), 1);
+        assert_eq!(delta.dev_dependencies[0].name.as_str(), "vitest");
+        assert_eq!(delta.dev_dependencies[0].range.as_str(), "=3.2.1");
+    }
+
+    #[test]
+    fn test_merge_graphs_promotes_existing_transitive_to_direct() {
+        let dep_id = PackageId::parse("zod@4.4.3").unwrap();
+        let base = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: dep_id.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            }],
+        };
+        let delta = ResolvedGraph {
+            packages: vec![ResolvedPackage {
+                id: dep_id,
+                integrity: "sha512-test".into(),
+                tarball_url: "https://registry.example/zod.tgz".into(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: true,
+                dev: true,
+            }],
+        };
+
+        let merged = merge_graphs(base, delta);
+
+        assert_eq!(merged.packages.len(), 1);
+        assert!(merged.packages[0].direct);
+        assert!(merged.packages[0].dev);
+        assert_eq!(merged.packages[0].integrity, "sha512-test");
+    }
+}
+
+fn link_name(package: &str) -> &str {
+    if package.contains('/') {
+        package.rsplit('/').next().unwrap_or(package)
+    } else {
+        package
+    }
+}
+
+pub async fn link(adapter: &dyn PackageAdapter, root: &Path, package: Option<&str>) -> Result<()> {
+    if adapter.name() != "web" {
+        anyhow::bail!("link only supported for web core");
+    }
+    let pkg = package.ok_or_else(|| anyhow::anyhow!("Usage: mg link <package>"))?;
+    info(&format!("Linking {}...", pkg));
+
+    let node_modules = root.join("node_modules");
+    let name = link_name(pkg);
+    let link_path = node_modules.join(name);
+
+    if link_path.exists() {
+        anyhow::bail!("{} already exists in node_modules", name);
+    }
+
+    std::fs::create_dir_all(&node_modules)?;
+    let source = find_package_source(root, pkg)?;
+    std::os::unix::fs::symlink(&source, &link_path)?;
+
+    success(&format!("Linked {} -> {}", name, source.display()));
+    Ok(())
+}
+
+pub async fn unlink(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    package: Option<&str>,
+) -> Result<()> {
+    if adapter.name() != "web" {
+        anyhow::bail!("unlink only supported for web core");
+    }
+    let pkg = package.ok_or_else(|| anyhow::anyhow!("Usage: mg unlink <package>"))?;
+    info(&format!("Unlinking {}...", pkg));
+
+    let name = link_name(pkg);
+    let link_path = root.join("node_modules").join(name);
+    if !link_path.exists() {
+        anyhow::bail!("{} is not linked in node_modules", name);
+    }
+
+    let meta = std::fs::symlink_metadata(&link_path)?;
+    if meta.file_type().is_symlink() || meta.is_file() {
+        std::fs::remove_file(&link_path)?;
+    } else {
+        std::fs::remove_dir_all(&link_path)?;
+    }
+
+    success(&format!("Unlinked {}", pkg));
+    Ok(())
+}
+
+pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Result<()> {
+    if adapter.name() != "web" {
+        anyhow::bail!("why only supported for web core");
+    }
+
+    let lock_path = root.join("mg.lock");
+    if !lock_path.exists() {
+        anyhow::bail!("mg.lock not found — run 'mg install' first");
+    }
+
+    let content = std::fs::read_to_string(&lock_path)?;
+    let lock: mg_lockfile::Lockfile = mg_lockfile::serialization::from_toml(&content)?;
+
+    let target = lock.packages.iter().find(|p| p.name == package);
+    let target = match target {
+        Some(p) => p,
+        None => {
+            info(&format!("Package '{}' not found in mg.lock", package));
+            return Ok(());
+        }
+    };
+
+    mg_ui::blank_line();
+    println!(
+        "{} {}@{}",
+        "📦",
+        package.bold().cyan(),
+        target.version.dimmed()
+    );
+    if target.direct {
+        println!("  {} Direct dependency", "├─".green());
+    }
+    if target.dev {
+        println!("  {} Dev dependency", "├─".green());
+    }
+
+    let rdeps: Vec<&mg_lockfile::LockPackage> = lock
+        .packages
+        .iter()
+        .filter(|p| p.dependencies.iter().any(|d| d.starts_with(package)))
+        .collect();
+
+    if rdeps.is_empty() {
+        println!("  {} No reverse dependencies", "└─".yellow());
+    } else {
+        println!("  {} Required by:", "├─".green());
+        for dep in &rdeps {
+            println!("  │   {} {}@{}", "◉".blue(), dep.name, dep.version);
+        }
+    }
+
+    if !target.dependencies.is_empty() {
+        println!("  {} Depends on:", "└─".green());
+        for dep in &target.dependencies {
+            println!("      {} {}", "◉".blue(), dep);
+        }
+    }
+
+    Ok(())
+}
+
+fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {
+    // If it's a local path, use it directly
+    if package.starts_with('.') || package.starts_with('/') {
+        let path = if package.starts_with('/') {
+            PathBuf::from(package)
+        } else {
+            root.join(package)
+        };
+        if path.exists() {
+            return Ok(path.canonicalize()?);
+        }
+        anyhow::bail!("local package path not found: {}", path.display());
+    }
+
+    // Check local node_modules
+    let local = root.join("node_modules").join(package);
+    if local.exists() {
+        return Ok(local);
+    }
+
+    for global in megagate_global_package_roots() {
+        let global_pkg = global.join(package);
+        if global_pkg.exists() {
+            return Ok(global_pkg);
+        }
+    }
+
+    anyhow::bail!(
+        "package '{}' not found in local node_modules or MegaGate global package roots.\n\
+         Use 'mg install' to install it first, provide a local path, or configure MEGAGATE_GLOBAL_PACKAGE_ROOT.",
+        package
+    )
+}
+
+fn megagate_global_package_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(path) = std::env::var_os("MEGAGATE_GLOBAL_PACKAGE_ROOT") {
+        roots.push(PathBuf::from(path));
+    }
+    if let Some(cache_dir) = dirs::cache_dir() {
+        roots.push(
+            cache_dir
+                .join("megagate")
+                .join("global")
+                .join("web")
+                .join("node_modules"),
+        );
+    }
+    roots
+}
+
+pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
+    if core_type != "web" {
+        return false;
+    }
+    let env_val = std::env::var("MEGAGATE_WEB_STRICT_LAYOUT")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase());
+    match env_val.as_deref() {
+        Some("1" | "true" | "yes" | "on") => false,
+        Some(_) => true,
+        None => true,
     }
 }

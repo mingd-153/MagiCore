@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-use mg_config::project::ProjectConfig;
+use anyhow::Context;
+use mg_config::project::{ProjectConfig, ProjectExecutionConfig};
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
 
-/// Project context: detects the project, loads config, provides the right adapter.
+/// Project context: detects project, loads mg.toml, provides right adapter.
 pub struct ProjectContext {
     pub root: PathBuf,
     #[allow(dead_code)]
@@ -13,21 +14,37 @@ pub struct ProjectContext {
 }
 
 impl ProjectContext {
-    /// Load context, optionally with an explicit `--core` override.
+    /// Load context, optionally with explicit `--core` override.
     /// Priority:
-    ///   1. `--core` flag (user says what they want)
-    ///   2. `.megagate/project.toml` (saved by `mg init`)
+    ///   1. `--core` flag
+    ///   2. `mg.toml` (saved by `mg init`)
     ///   3. auto_detect (package.json → web, Cargo.toml → lib, pyproject.toml → ai)
-    ///   4. Single-core build default (only 1 core available — use it)
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
-        let cwd = std::env::current_dir()?;
+        let cwd = std::env::current_dir()
+        .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {}", e))?;
         let project_root = ProjectConfig::find_project_root(&cwd);
 
         let (root, config) = Self::resolve_config(&cwd, project_root.as_ref(), core_override)?;
         let ecosystem = Ecosystem::from_str(&config.ecosystem)
             .ok_or_else(|| anyhow::anyhow!("Unknown ecosystem: '{}'", config.ecosystem))?;
 
-        let adapter = crate::factory::create_adapter(&ecosystem)?;
+        // Registry override từ mg.toml [registry] (url + token) — ưu tiên env
+        let registry_entry = config.registries.iter().find(|r| {
+            !r.url.contains("registry.npmjs.org")
+                || std::env::var("MEGAGATE_WEB_REGISTRY_URL").is_ok()
+        });
+        let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL")
+            .ok()
+            .or_else(|| registry_entry.map(|r| r.url.clone()));
+        let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN")
+            .ok()
+            .or_else(|| registry_entry.and_then(|r| r.token.clone()));
+
+        let adapter = crate::factory::create_adapter(
+            &ecosystem,
+            registry_url.as_deref(),
+            token.as_deref(),
+        )?;
         Ok(Self {
             root,
             config,
@@ -40,32 +57,21 @@ impl ProjectContext {
         project_root: Option<&PathBuf>,
         core_override: Option<&str>,
     ) -> anyhow::Result<(PathBuf, ProjectConfig)> {
-        // Case 1: Project root found (has .megagate/ or package.json)
         if let Some(root) = project_root {
-            // Try .megagate/project.toml first
             if let Some(mut cfg) = ProjectConfig::load(root)? {
-                // --core overrides the saved ecosystem
                 if let Some(core) = core_override {
                     cfg.ecosystem = core.to_string();
                 }
                 return Ok((root.clone(), cfg));
             }
 
-            // Try auto_detect
             if let Some(eco) = ProjectConfig::auto_detect(root) {
                 let eco = core_override.unwrap_or(&eco);
                 let name = Self::dir_name(root);
                 return Ok((root.clone(), ProjectConfig::new(name, eco)));
             }
 
-            // Has project root but nothing detected
             if let Some(core) = core_override {
-                let name = Self::dir_name(root);
-                return Ok((root.clone(), ProjectConfig::new(name, core)));
-            }
-
-            // Single-core fallback
-            if let Some(core) = Self::single_core_default() {
                 let name = Self::dir_name(root);
                 return Ok((root.clone(), ProjectConfig::new(name, core)));
             }
@@ -78,32 +84,16 @@ impl ProjectContext {
             );
         }
 
-        // Case 2: No project root at all
         if let Some(core) = core_override {
-            return Ok((cwd.to_path_buf(), ProjectConfig::new("project", core)));
-        }
-
-        // Single-core build: auto-default
-        if let Some(core) = Self::single_core_default() {
             return Ok((cwd.to_path_buf(), ProjectConfig::new("project", core)));
         }
 
         anyhow::bail!(
             "No MegaGate project found.\n\
-             Run '{}' to create one, or specify {}.\n\
-             Tip: if you installed a single-core build, you can omit --core.",
+             Run '{}' to create one, or specify {}.",
             mg_ui::style_cmd("mg init"),
             mg_ui::style_cmd("--core <type>"),
         );
-    }
-
-    fn single_core_default() -> Option<String> {
-        let avail = crate::factory::available_core_names();
-        if crate::factory::is_single_core_build() {
-            Some(avail[0].to_string())
-        } else {
-            None
-        }
     }
 
     fn dir_name(path: &std::path::Path) -> String {
@@ -118,5 +108,26 @@ impl ProjectContext {
 
     pub fn adapter(&self) -> &dyn PackageAdapter {
         self.adapter.as_ref()
+    }
+
+    pub fn execution(&self) -> &ProjectExecutionConfig {
+        &self.config.execution
+    }
+
+    pub fn execution_summary(&self) -> String {
+        let execution = self.execution();
+        let native_targets = if execution.native_targets.is_empty() {
+            "none".to_string()
+        } else {
+            execution.native_targets.join(", ")
+        };
+
+        format!(
+            "architecture={}, lane={}, compatibility={}, native_targets={}",
+            execution.architecture,
+            execution.lane,
+            execution.compatibility_layer,
+            native_targets
+        )
     }
 }

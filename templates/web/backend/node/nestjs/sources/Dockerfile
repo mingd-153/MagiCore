@@ -1,9 +1,11 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
+RUN apk add --no-cache curl tar bash
+RUN curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install-from-gh.sh | bash -s -- --package megagate-web --dir /usr/local/bin
 COPY package*.json tsconfig.json ./
-RUN npm ci
+RUN mg install --frozen
 COPY . .
-RUN npm run build
+RUN mg build
 
 FROM node:22-alpine
 WORKDIR /app

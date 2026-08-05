@@ -12,7 +12,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run build
+      - name: Install MegaGate web core
+        run: curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install-from-gh.sh | bash -s -- --package megagate-web --dir "$HOME/.local/bin"
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: mg install --frozen
+      - run: mg run lint
+      - run: mg build

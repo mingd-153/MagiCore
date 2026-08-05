@@ -21,8 +21,11 @@ mg-store = { workspace = true }
 mg-lockfile = { workspace = true }
 mg-fetcher = { workspace = true }
 mg-http = { workspace = true }
-mg-crypto = { workspace = true }
 mg-ui = { workspace = true }
+mg-pack = { workspace = true }
+mg-publish = { workspace = true }
+mg-registry-server = { workspace = true }
+mg-oci = { workspace = true }
 
 # Adapters (optional — per-core feature flags)
 mg-web-adapter = { path = "../adapters/web", optional = true }
@@ -30,6 +33,7 @@ mg-web-adapter = { path = "../adapters/web", optional = true }
 # CLI
 clap = { workspace = true }
 clap_complete = { workspace = true }
+semver = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -45,9 +49,33 @@ toml = { workspace = true }
 # HTTP
 reqwest = { workspace = true }
 url = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# Compression
+axum = { workspace = true }
+tower-http = { workspace = true }
+notify = { workspace = true }
+
+# Bundler
+esbuild-rs = { workspace = true }
+glob = { workspace = true }
+mime_guess = { workspace = true }
+lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
+futures-util = { workspace = true }
+walkdir = { workspace = true }
+time = { workspace = true }
+
+# Import rewriting + hashing
+regex = { workspace = true }
+blake3 = { workspace = true }
 
 # Utilities
 colored = { workspace = true }
+dirs = { workspace = true }
+crossterm = { workspace = true }
+tempfile = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
@@ -68,6 +96,8 @@ lib      = []
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+reqwest = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,5 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use mg_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mg_types::{
+    adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
+    ResolvedPackage, Version,
+};
 use mg_web_adapter::WebAdapter;
 use std::path::Path;
 
@@ -49,6 +52,7 @@ fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
                 integrity: String::new(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             })
@@ -75,7 +79,10 @@ fn bench_cached_install_small(c: &mut Criterion) {
             },
             |(dir, graph)| async move {
                 let adapter = WebAdapter::new();
-                adapter.install(&graph, dir.path()).await.unwrap();
+                adapter
+                    .install(&graph, dir.path(), InstallOptions::default())
+                    .await
+                    .unwrap();
             },
         )
     });
@@ -100,7 +107,10 @@ fn bench_cached_install_medium(c: &mut Criterion) {
             },
             |(dir, graph)| async move {
                 let adapter = WebAdapter::new();
-                adapter.install(&graph, dir.path()).await.unwrap();
+                adapter
+                    .install(&graph, dir.path(), InstallOptions::default())
+                    .await
+                    .unwrap();
             },
         )
     });
@@ -127,7 +137,10 @@ fn bench_cached_install_real(c: &mut Criterion) {
             },
             |(dir, graph)| async move {
                 let adapter = WebAdapter::new();
-                adapter.install(&graph, dir.path()).await.unwrap();
+                adapter
+                    .install(&graph, dir.path(), InstallOptions::default())
+                    .await
+                    .unwrap();
             },
         )
     });

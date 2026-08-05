@@ -900,19 +900,24 @@ impl Scaffolder {
 
         Ok(())
     }
-
 }
 
 fn render_target_path(target: &str, context: &WebTemplateContext) -> String {
     let mut s = target.to_string();
     if let Some(v) = context.value("project_slug") {
-        s = s.replace("{{ project_slug }}", v).replace("{{project_slug}}", v);
+        s = s
+            .replace("{{ project_slug }}", v)
+            .replace("{{project_slug}}", v);
     }
     if let Some(v) = context.value("project_name") {
-        s = s.replace("{{ project_name }}", v).replace("{{project_name}}", v);
+        s = s
+            .replace("{{ project_name }}", v)
+            .replace("{{project_name}}", v);
     }
     if let Some(v) = context.value("project_package") {
-        s = s.replace("{{ project_package }}", v).replace("{{project_package}}", v);
+        s = s
+            .replace("{{ project_package }}", v)
+            .replace("{{project_package}}", v);
     }
     s
 }
@@ -987,6 +992,10 @@ struct WebTemplateContext {
     backend_language: String,
     template: String,
     features: String,
+    execution_architecture: String,
+    execution_lane: String,
+    execution_compatibility_layer: String,
+    execution_native_targets: String,
 }
 
 impl WebTemplateContext {
@@ -1045,6 +1054,38 @@ impl WebTemplateContext {
         };
 
         let project_package = project_slug.replace('-', "_");
+        let execution_compatibility_layer = if config.features.iter().any(|feature| {
+            let normalized = feature.trim().to_ascii_lowercase();
+            normalized == "ts" || normalized == "typescript"
+        }) {
+            "ts".to_string()
+        } else {
+            "js".to_string()
+        };
+        let execution_architecture = if matches!(mode.as_str(), "frontend" | "fullstack" | "monorepo")
+        {
+            "rust-first".to_string()
+        } else {
+            "multi-runtime".to_string()
+        };
+        let execution_lane = if matches!(mode.as_str(), "frontend" | "fullstack" | "monorepo") {
+            "compatibility-shell".to_string()
+        } else {
+            "runtime-native".to_string()
+        };
+        let execution_native_targets = if matches!(mode.as_str(), "frontend" | "fullstack" | "monorepo")
+        {
+            quoted_list(&[
+                "frontend-executable".to_string(),
+                "wasm-bridge".to_string(),
+                "native-module".to_string(),
+            ])
+        } else {
+            quoted_list(&[
+                "service-binary".to_string(),
+                "worker-binary".to_string(),
+            ])
+        };
 
         Self {
             project_name,
@@ -1058,6 +1099,10 @@ impl WebTemplateContext {
             backend_language,
             template: primary_template,
             features: quoted_list(&config.features),
+            execution_architecture,
+            execution_lane,
+            execution_compatibility_layer,
+            execution_native_targets,
         }
     }
 
@@ -1074,6 +1119,12 @@ impl WebTemplateContext {
             "backend_language" => Some(self.backend_language.as_str()),
             "template" => Some(self.template.as_str()),
             "features" => Some(self.features.as_str()),
+            "execution_architecture" => Some(self.execution_architecture.as_str()),
+            "execution_lane" => Some(self.execution_lane.as_str()),
+            "execution_compatibility_layer" => {
+                Some(self.execution_compatibility_layer.as_str())
+            }
+            "execution_native_targets" => Some(self.execution_native_targets.as_str()),
             _ => None,
         }
     }
@@ -1353,10 +1404,7 @@ mod tests {
             assert!(out.join("README.md").exists(), "{} README", core);
             if core == "web" {
                 assert!(out.join("mg.lock").exists(), "web mg.lock");
-                assert!(
-                    out.join(".megagate").join("web.toml").exists(),
-                    "web manifest"
-                );
+                assert!(out.join("mg.toml").exists(), "web mg.toml");
             }
         }
     }
@@ -1382,7 +1430,7 @@ mod tests {
 
         let out = Scaffolder::scaffold(&config).unwrap();
         assert!(out.join("mg.lock").exists());
-        assert!(out.join(".megagate").join("web.toml").exists());
+        assert!(out.join("mg.toml").exists());
         assert!(out.join("megagate.workspace.toml").exists());
         let root_package = std::fs::read_to_string(out.join("package.json")).unwrap();
         assert!(root_package.contains("\"dev\": \"mg --core web dev\""));

@@ -26,7 +26,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(data.clone())
             .configure(routes::health::configure)
     })
-    .bind(format!("0.0.0.0:{}", cfg.port))?
+    .bind(format!("127.0.0.1:{}", cfg.port))?
     .run();
 
     let handle = server.handle();

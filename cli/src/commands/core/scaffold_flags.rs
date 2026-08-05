@@ -9,11 +9,19 @@ pub struct ScaffoldFlags {
     pub name: Option<String>,
     #[arg(long, help = "Target directory")]
     pub dir: Option<String>,
-    #[arg(long, help = "Package manager (npm|pnpm|yarn|bun)")]
+    #[arg(
+        long,
+        hide = true,
+        help = "Deprecated compatibility hint; MegaGate web uses its native installer"
+    )]
     pub pm: Option<String>,
     #[arg(long, help = "Init git repo")]
     pub git: bool,
-    #[arg(long, help = "Auto-install dependencies after scaffold", default_value_t = true)]
+    #[arg(
+        long,
+        help = "Auto-install dependencies after scaffold",
+        default_value_t = true
+    )]
     pub install: bool,
     #[arg(short = 'y', long, help = "Skip prompts, use defaults")]
     pub yes: bool,
@@ -21,7 +29,10 @@ pub struct ScaffoldFlags {
     pub preset: Option<String>,
 
     // ── Project type ──────────────────────────────────────────────
-    #[arg(long, help = "Project layout type (frontend|backend|fullstack|monorepo)")]
+    #[arg(
+        long,
+        help = "Project layout type (frontend|backend|fullstack|monorepo)"
+    )]
     pub project_type: Option<String>,
 
     // ── Language ──────────────────────────────────────────────────
@@ -169,7 +180,10 @@ pub struct ScaffoldFlags {
     pub turborepo: bool,
     #[arg(long, help = "Nx")]
     pub nx: bool,
-    #[arg(long, help = "Native npm/pnpm/yarn workspaces")]
+    #[arg(
+        long,
+        help = "MegaGate workspace layout with ecosystem-compatible package manifests"
+    )]
     pub workspaces: bool,
     #[arg(long, help = "Changesets for version/publish management")]
     pub changesets: bool,

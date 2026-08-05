@@ -119,8 +119,14 @@ mod tests {
         let a_hash = crate::hash(&a_data, HashAlgorithm::Sha256).unwrap();
         let b_hash = crate::hash(&b_data, HashAlgorithm::Sha256).unwrap();
 
-        imap.insert("a.txt".into(), Integrity::new(HashAlgorithm::Sha256, a_hash, 5));
-        imap.insert("b.txt".into(), Integrity::new(HashAlgorithm::Sha256, b_hash, 4));
+        imap.insert(
+            "a.txt".into(),
+            Integrity::new(HashAlgorithm::Sha256, a_hash, 5),
+        );
+        imap.insert(
+            "b.txt".into(),
+            Integrity::new(HashAlgorithm::Sha256, b_hash, 4),
+        );
         files.insert("a.txt".into(), a_data);
         files.insert("b.txt".into(), b_data);
 
@@ -135,8 +141,14 @@ mod tests {
         let a_data = b"alpha".to_vec();
         let a_hash = crate::hash(&a_data, HashAlgorithm::Sha256).unwrap();
 
-        imap.insert("a.txt".into(), Integrity::new(HashAlgorithm::Sha256, a_hash, 5));
-        imap.insert("b.txt".into(), Integrity::new(HashAlgorithm::Sha256, "badhash".into(), 4));
+        imap.insert(
+            "a.txt".into(),
+            Integrity::new(HashAlgorithm::Sha256, a_hash, 5),
+        );
+        imap.insert(
+            "b.txt".into(),
+            Integrity::new(HashAlgorithm::Sha256, "badhash".into(), 4),
+        );
         files.insert("a.txt".into(), a_data);
         files.insert("b.txt".into(), b"beta".to_vec());
 
@@ -151,8 +163,14 @@ mod tests {
         let data = b"present".to_vec();
         let hash = crate::hash(&data, HashAlgorithm::Sha256).unwrap();
 
-        imap.insert("present.txt".into(), Integrity::new(HashAlgorithm::Sha256, hash.clone(), 7));
-        imap.insert("missing.txt".into(), Integrity::new(HashAlgorithm::Sha256, hash, 7));
+        imap.insert(
+            "present.txt".into(),
+            Integrity::new(HashAlgorithm::Sha256, hash.clone(), 7),
+        );
+        imap.insert(
+            "missing.txt".into(),
+            Integrity::new(HashAlgorithm::Sha256, hash, 7),
+        );
         files.insert("present.txt".into(), data);
 
         assert!(!imap.verify_all(&files).unwrap());

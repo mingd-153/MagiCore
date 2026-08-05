@@ -17,13 +17,13 @@ mg-store = { workspace = true }
 mg-lockfile = { workspace = true }
 mg-fetcher = { workspace = true }
 mg-http = { workspace = true }
-mg-crypto = { workspace = true }
 mg-ui = { workspace = true }
 
 # Async
 tokio = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
+futures-util = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -45,6 +45,11 @@ hex = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
+lru = { workspace = true }
+chrono = { workspace = true }
+
+# Parallelism
+rayon = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

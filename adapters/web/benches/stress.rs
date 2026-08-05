@@ -1,5 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use mg_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mg_types::{
+    adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
+    ResolvedPackage, Version,
+};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -97,6 +100,7 @@ fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
                 integrity: String::new(),
                 tarball_url: String::new(),
                 deps: vec![],
+                peer_deps: vec![],
                 direct: true,
                 dev: false,
             })
@@ -106,7 +110,8 @@ fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
 
 fn install_all(adapter: &mg_web_adapter::WebAdapter, graph: &ResolvedGraph, dir: &Path) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(adapter.install(graph, dir)).unwrap();
+    rt.block_on(adapter.install(graph, dir, InstallOptions::default()))
+        .unwrap();
 }
 
 /// 1. Large Tree: 100 packages, 10 files each
@@ -161,12 +166,14 @@ fn bench_concurrent_install(c: &mut Criterion) {
                 let h1 = std::thread::spawn(move || {
                     let adapter = mg_web_adapter::WebAdapter::new();
                     let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(adapter.install(&g1, dd1.path())).unwrap();
+                    rt.block_on(adapter.install(&g1, dd1.path(), InstallOptions::default()))
+                        .unwrap();
                 });
                 let h2 = std::thread::spawn(move || {
                     let adapter = mg_web_adapter::WebAdapter::new();
                     let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(adapter.install(&g2, dd2.path())).unwrap();
+                    rt.block_on(adapter.install(&g2, dd2.path(), InstallOptions::default()))
+                        .unwrap();
                 });
                 h1.join().unwrap();
                 h2.join().unwrap();
@@ -201,7 +208,8 @@ fn bench_corrupted_metadata(c: &mut Criterion) {
             },
             |(dir, graph, adapter)| {
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                let result = rt.block_on(adapter.install(&graph, dir.path()));
+                let result =
+                    rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()));
                 assert!(result.is_ok(), "install should succeed: {:?}", result.err());
                 assert!(dir
                     .path()
@@ -268,7 +276,8 @@ fn bench_reinstall_changed(c: &mut Criterion) {
                 make_tarball_with_files(dir.path(), &pkg, &[("version.txt", b"v1")]);
                 let adapter = mg_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(adapter.install(&graph, dir.path())).unwrap();
+                rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
+                    .unwrap();
                 (dir, graph, pkg)
             },
             |(dir, _graph, _pkg)| {
@@ -319,7 +328,8 @@ fn bench_mixed_integrity(c: &mut Criterion) {
             |(dir, graph, pkgs)| {
                 let adapter = mg_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                let result = rt.block_on(adapter.install(&graph, dir.path()));
+                let result =
+                    rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()));
                 assert!(
                     result.is_ok(),
                     "mixed integrity install: {:?}",
@@ -349,13 +359,15 @@ fn bench_clean_reinstall(c: &mut Criterion) {
                 make_tarball(dir.path(), &pkg, 2);
                 let adapter = mg_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(adapter.install(&graph, dir.path())).unwrap();
+                rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
+                    .unwrap();
                 std::fs::remove_dir_all(dir.path().join("node_modules")).unwrap();
                 (dir, graph, adapter)
             },
             |(dir, graph, adapter)| {
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(adapter.install(&graph, dir.path())).unwrap();
+                rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
+                    .unwrap();
                 assert!(dir
                     .path()
                     .join("node_modules")

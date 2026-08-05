@@ -1,5 +1,12 @@
 pub mod serialization;
 
+use mg_types::LockPatch;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+
+pub const LOCKFILE_NAME: &str = "mg.lock";
+pub const LOCKFILE_CHECKSUM_NAME: &str = "mg.lock.sha256";
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResolutionMeta {
     pub state: String,
@@ -28,6 +35,8 @@ pub struct LockPackage {
     pub dev: bool,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub peer_deps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -56,6 +65,13 @@ pub struct Lockfile {
     pub workspaces: Vec<WorkspaceLock>,
     #[serde(rename = "package", default)]
     pub packages: Vec<LockPackage>,
+    /// Package patches applied (A6: npm-format only — web/lib ts)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<LockPatch>,
+    /// BLAKE3 HMAC signature of canonical lockfile content (optional, controlled by env).
+    /// Format: `blake3:<hex-digest>` (keyed by MEGAGATE_LOCKFILE_KEY env var).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub sig: Option<String>,
 }
 
 impl Lockfile {
@@ -68,6 +84,146 @@ impl Lockfile {
             resolution: ResolutionMeta::default(),
             workspaces: vec![],
             packages: vec![],
+            patches: vec![],
+            sig: None,
+        }
+    }
+}
+
+pub fn lockfile_path(project_root: &Path) -> PathBuf {
+    project_root.join(LOCKFILE_NAME)
+}
+
+pub fn lockfile_checksum_path(project_root: &Path) -> PathBuf {
+    project_root.join(LOCKFILE_CHECKSUM_NAME)
+}
+
+pub fn lockfile_checksum(contents: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(contents);
+    hex::encode(hasher.finalize())
+}
+
+pub fn write_lockfile(project_root: &Path, lockfile: &Lockfile) -> anyhow::Result<()> {
+    let toml = serialization::to_toml(lockfile)?;
+    atomic_write(&lockfile_path(project_root), toml.as_bytes())?;
+    write_lockfile_checksum(project_root, toml.as_bytes())?;
+    Ok(())
+}
+
+pub fn write_lockfile_checksum(project_root: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    atomic_write(
+        &lockfile_checksum_path(project_root),
+        lockfile_checksum(contents).as_bytes(),
+    )?;
+    Ok(())
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(err.into())
+        }
+    }
+}
+
+pub fn read_lockfile_checked(project_root: &Path) -> anyhow::Result<Option<Lockfile>> {
+    let path = lockfile_path(project_root);
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+
+    let checksum_path = lockfile_checksum_path(project_root);
+    if checksum_path.exists() {
+        let expected = std::fs::read_to_string(&checksum_path)?;
+        let actual = lockfile_checksum(contents.as_bytes());
+        if actual.trim() != expected.trim() {
+            anyhow::bail!("lockfile checksum mismatch - mg.lock may have been tampered with");
+        }
+    }
+
+    let lock = serialization::from_toml::<Lockfile>(&contents)
+        .map_err(|err| anyhow::anyhow!("failed to parse lockfile '{}': {}", path.display(), err))?;
+    LockfileSigner::verify(&lock)?;
+    Ok(Some(lock))
+}
+
+/// BLAKE3-keyed signing for mg.lock files.
+/// Signing is opt-in; set MEGAGATE_LOCKFILE_KEY to a hex-encoded 32-byte secret.
+pub struct LockfileSigner;
+
+impl LockfileSigner {
+    fn key() -> anyhow::Result<Option<[u8; 32]>> {
+        let raw = match std::env::var("MEGAGATE_LOCKFILE_KEY") {
+            Ok(raw) => raw,
+            Err(std::env::VarError::NotPresent) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        let bytes = hex::decode(raw.trim())
+            .map_err(|err| anyhow::anyhow!("invalid MEGAGATE_LOCKFILE_KEY hex: {err}"))?;
+        if bytes.len() != 32 {
+            anyhow::bail!(
+                "invalid MEGAGATE_LOCKFILE_KEY length: expected 32 bytes, got {}",
+                bytes.len()
+            );
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        Ok(Some(key))
+    }
+
+    /// Compute a canonical (stable) representation of the lockfile without the `sig` field.
+    fn canonical(lock: &Lockfile) -> anyhow::Result<String> {
+        let mut tmp = lock.clone();
+        tmp.sig = None;
+        // Sort packages deterministically
+        tmp.packages
+            .sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
+        serialization::to_toml(&tmp)
+    }
+
+    /// Sign the lockfile in-place. No-op if MEGAGATE_LOCKFILE_KEY is not set.
+    pub fn sign(lock: &mut Lockfile) -> anyhow::Result<()> {
+        let Some(key) = Self::key()? else {
+            return Ok(());
+        };
+        let canonical = Self::canonical(lock)?;
+        let digest = blake3::keyed_hash(&key, canonical.as_bytes());
+        lock.sig = Some(format!("blake3:{}", hex::encode(digest.as_bytes())));
+        Ok(())
+    }
+
+    /// Verify the lockfile signature. Returns Ok(true) when signed+valid, Ok(false) when unsigned.
+    /// Returns an error when the signature is present but invalid.
+    pub fn verify(lock: &Lockfile) -> anyhow::Result<bool> {
+        let key = Self::key()?;
+        let Some(ref sig_str) = lock.sig else {
+            return Ok(false);
+        };
+        let Some(key) = key else {
+            anyhow::bail!("lockfile is signed but MEGAGATE_LOCKFILE_KEY is not set");
+        };
+        let hex_digest = sig_str.strip_prefix("blake3:").ok_or_else(|| {
+            anyhow::anyhow!("unknown lockfile signature algorithm in '{}'", sig_str)
+        })?;
+        let expected = hex::decode(hex_digest)
+            .map_err(|e| anyhow::anyhow!("invalid hex in lockfile signature: {e}"))?;
+        let canonical = Self::canonical(lock)?;
+        let actual = blake3::keyed_hash(&key, canonical.as_bytes());
+        if actual.as_bytes() == expected.as_slice() {
+            Ok(true)
+        } else {
+            Err(anyhow::anyhow!(
+                "lockfile signature mismatch — possible tampering detected"
+            ))
         }
     }
 }
@@ -76,6 +232,12 @@ impl Lockfile {
 mod tests {
     use super::*;
     use crate::serialization;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     #[test]
     fn test_resolution_meta_default() {
@@ -98,6 +260,79 @@ mod tests {
     }
 
     #[test]
+    fn test_lockfile_checksum_is_sha256_hex() {
+        assert_eq!(
+            lockfile_checksum(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn test_read_lockfile_checked_rejects_checksum_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = Lockfile::new("web", "frontend");
+        std::fs::write(
+            lockfile_path(dir.path()),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(lockfile_checksum_path(dir.path()), "bad").unwrap();
+
+        let err = read_lockfile_checked(dir.path()).unwrap_err();
+
+        assert!(
+            err.to_string().contains("lockfile checksum mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sign_rejects_invalid_lockfile_key() {
+        let _guard = env_lock();
+        std::env::set_var("MEGAGATE_LOCKFILE_KEY", "not-hex");
+        let mut lock = Lockfile::new("web", "frontend");
+
+        let err = LockfileSigner::sign(&mut lock).unwrap_err();
+
+        std::env::remove_var("MEGAGATE_LOCKFILE_KEY");
+        assert!(
+            err.to_string().contains("invalid MEGAGATE_LOCKFILE_KEY"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_verify_rejects_signed_lock_without_key() {
+        let _guard = env_lock();
+        std::env::remove_var("MEGAGATE_LOCKFILE_KEY");
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.sig = Some("blake3:00".into());
+
+        let err = LockfileSigner::verify(&lock).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("lockfile is signed but MEGAGATE_LOCKFILE_KEY is not set"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sign_and_verify_with_valid_key() {
+        let _guard = env_lock();
+        std::env::set_var(
+            "MEGAGATE_LOCKFILE_KEY",
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        );
+        let mut lock = Lockfile::new("web", "frontend");
+
+        LockfileSigner::sign(&mut lock).unwrap();
+        assert!(LockfileSigner::verify(&lock).unwrap());
+
+        std::env::remove_var("MEGAGATE_LOCKFILE_KEY");
+    }
+
+    #[test]
     fn test_json_roundtrip() {
         let mut lock = Lockfile::new("backend", "api");
         lock.frameworks = vec!["actix-web".to_string()];
@@ -113,6 +348,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
         lock.packages.push(LockPackage {
             name: "tokio".to_string(),
@@ -121,6 +357,7 @@ mod tests {
             direct: false,
             dev: true,
             dependencies: vec!["bytes@1.6.0".to_string()],
+            peer_deps: vec![],
         });
 
         let json = serialization::to_json(&lock).unwrap();
@@ -169,6 +406,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec!["@tailwindcss/node@4.3.2".to_string()],
+            peer_deps: vec![],
         });
 
         let toml = serialization::to_toml(&lock).unwrap();
@@ -254,11 +492,13 @@ mod tests {
             direct: false,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         };
         assert_eq!(pkg.integrity, None);
         assert!(!pkg.direct);
         assert!(!pkg.dev);
         assert!(pkg.dependencies.is_empty());
+        assert!(pkg.peer_deps.is_empty());
     }
 
     #[test]
@@ -310,6 +550,7 @@ mode = "test""#;
             direct: false,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         };
         let json = serialization::to_json(&pkg).unwrap();
         let parsed: LockPackage = serialization::from_json(&json).unwrap();

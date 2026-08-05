@@ -118,7 +118,7 @@ pub trait BaseAdapter: PackageAdapter + Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_types::adapter::{AuditReport, InstallSummary, ResolvedGraph};
+    use mg_types::adapter::{AuditReport, InstallOptions, InstallSummary, ResolvedGraph};
     use mg_types::ecosystem::Ecosystem;
     use mg_types::manifest::Manifest;
 
@@ -157,7 +157,12 @@ mod tests {
         async fn fetch(&self, _: &ResolvedGraph) -> MgResult<()> {
             Ok(())
         }
-        async fn install(&self, _: &ResolvedGraph, _: &Path) -> MgResult<InstallSummary> {
+        async fn install(
+            &self,
+            _: &ResolvedGraph,
+            _: &Path,
+            _: InstallOptions,
+        ) -> MgResult<InstallSummary> {
             Ok(InstallSummary::default())
         }
         async fn add(
@@ -235,7 +240,12 @@ mod tests {
         async fn fetch(&self, _: &ResolvedGraph) -> MgResult<()> {
             Ok(())
         }
-        async fn install(&self, _: &ResolvedGraph, _: &Path) -> MgResult<InstallSummary> {
+        async fn install(
+            &self,
+            _: &ResolvedGraph,
+            _: &Path,
+            _: InstallOptions,
+        ) -> MgResult<InstallSummary> {
             Ok(InstallSummary::default())
         }
         async fn add(
@@ -253,11 +263,7 @@ mod tests {
         async fn remove(&self, _: &Path, _: &PackageName) -> MgResult<()> {
             Ok(())
         }
-        async fn update(
-            &self,
-            _: &Path,
-            _: Option<&PackageName>,
-        ) -> MgResult<Vec<UpdatedPackage>> {
+        async fn update(&self, _: &Path, _: Option<&PackageName>) -> MgResult<Vec<UpdatedPackage>> {
             Ok(vec![])
         }
         async fn list(&self, _: &Path) -> MgResult<Vec<InstalledPackage>> {
@@ -301,7 +307,12 @@ mod tests {
         async fn fetch(&self, _: &ResolvedGraph) -> MgResult<()> {
             Ok(())
         }
-        async fn install(&self, _: &ResolvedGraph, _: &Path) -> MgResult<InstallSummary> {
+        async fn install(
+            &self,
+            _: &ResolvedGraph,
+            _: &Path,
+            _: InstallOptions,
+        ) -> MgResult<InstallSummary> {
             Ok(InstallSummary::default())
         }
         async fn add(
@@ -558,7 +569,10 @@ mod tests {
         let packages = adapter.base_list(dir.path()).await.unwrap();
         assert_eq!(packages.len(), 2);
 
-        let express_pkg = packages.iter().find(|p| p.id.name_str() == "express").unwrap();
+        let express_pkg = packages
+            .iter()
+            .find(|p| p.id.name_str() == "express")
+            .unwrap();
         let jest_pkg = packages.iter().find(|p| p.id.name_str() == "jest").unwrap();
 
         assert!(!express_pkg.is_dev);

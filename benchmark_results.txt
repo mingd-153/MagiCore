@@ -1,0 +1,278 @@
+Benchmark 1: mg install
+Thank you for using core-js ( https://github.com/zloirock/core-js ) for polyfilling JavaScript standard library!
+
+The project needs your help! Please consider supporting of core-js on Open Collective or Patreon: 
+> https://opencollective.com/core-js 
+> https://www.patreon.com/zloirock 
+
+Also, the author of core-js ( https://github.com/zloirock ) is looking for a good job -)
+
+
+  ┌──────────────────────────────────────────────┐
+  │           📦  Install Complete               │
+  ├──────────────────────────────────────────────┤
+  │ 553 packages installed
+  │ 88667920 from cache
+  │ 14869 ms total
+  │        0 B saved (CAS dedup)
+  └──────────────────────────────────────────────┘
+
+  ✔ All dependencies installed
+
+  ┌──────────────────────────────────────────────┐
+  │           📦  Install Complete               │
+  ├──────────────────────────────────────────────┤
+  │ 553 packages installed
+  │ 997284 from cache
+  │   418 ms total
+  │        0 B saved (CAS dedup)
+  └──────────────────────────────────────────────┘
+
+  ✔ All dependencies installed
+
+  ┌──────────────────────────────────────────────┐
+  │           📦  Install Complete               │
+  ├──────────────────────────────────────────────┤
+  │ 553 packages installed
+  │ 1001492 from cache
+  │   414 ms total
+  │        0 B saved (CAS dedup)
+  └──────────────────────────────────────────────┘
+
+  ✔ All dependencies installed
+
+  ┌──────────────────────────────────────────────┐
+  │           📦  Install Complete               │
+  ├──────────────────────────────────────────────┤
+  │ 553 packages installed
+  │ 999395 from cache
+  │   416 ms total
+  │        0 B saved (CAS dedup)
+  └──────────────────────────────────────────────┘
+
+  ✔ All dependencies installed
+
+  ┌──────────────────────────────────────────────┐
+  │           📦  Install Complete               │
+  ├──────────────────────────────────────────────┤
+  │ 553 packages installed
+  │ 997284 from cache
+  │   403 ms total
+  │        0 B saved (CAS dedup)
+  └──────────────────────────────────────────────┘
+
+  ✔ All dependencies installed
+
+  ┌──────────────────────────────────────────────┐
+  │           📦  Install Complete               │
+  ├──────────────────────────────────────────────┤
+  │ 553 packages installed
+  │ 997284 from cache
+  │   424 ms total
+  │        0 B saved (CAS dedup)
+  └──────────────────────────────────────────────┘
+
+  ✔ All dependencies installed
+  Time (mean ± σ):     840.8 ms ±  19.0 ms    [User: 1165.2 ms, System: 338.4 ms]
+  Range (min … max):   817.7 ms … 869.1 ms    5 runs
+ 
+Benchmark 2: bun install
+bun install v1.3.14 (0d9b296a)
+Resolving dependencies
+Resolved, downloaded and extracted [501]
+26 |     "typescript": "^5.3.3"
+         ^
+warn: Duplicate dependency: "typescript" specified in package.json
+   at /private/tmp/mg-bench-57892/package.json:26:5
+
+9 |     "commander": "^11.1.0", "prettier": "^3.1.0", "typescript": "^5.3.3",
+                                                                    ^
+note: "typescript" originally specified here
+   at /private/tmp/mg-bench-57892/package.json:9:65
+Saved lockfile
+
++ iconv-lite@0.6.3 (v0.7.3 available)
++ send@0.18.0 (v1.2.1 available)
+
+96 packages installed [1.83s]
+bun install v1.3.14 (0d9b296a)
+26 |     "typescript": "^5.3.3"
+         ^
+warn: Duplicate dependency: "typescript" specified in package.json
+   at /private/tmp/mg-bench-57892/package.json:26:5
+
+9 |     "commander": "^11.1.0", "prettier": "^3.1.0", "typescript": "^5.3.3",
+                                                                    ^
+note: "typescript" originally specified here
+   at /private/tmp/mg-bench-57892/package.json:9:65
+
+Checked 712 installs across 619 packages (no changes) [48.00ms]
+bun install v1.3.14 (0d9b296a)
+26 |     "typescript": "^5.3.3"
+         ^
+warn: Duplicate dependency: "typescript" specified in package.json
+   at /private/tmp/mg-bench-57892/package.json:26:5
+
+9 |     "commander": "^11.1.0", "prettier": "^3.1.0", "typescript": "^5.3.3",
+                                                                    ^
+note: "typescript" originally specified here
+   at /private/tmp/mg-bench-57892/package.json:9:65
+
+Checked 712 installs across 619 packages (no changes) [25.00ms]
+bun install v1.3.14 (0d9b296a)
+26 |     "typescript": "^5.3.3"
+         ^
+warn: Duplicate dependency: "typescript" specified in package.json
+   at /private/tmp/mg-bench-57892/package.json:26:5
+
+9 |     "commander": "^11.1.0", "prettier": "^3.1.0", "typescript": "^5.3.3",
+                                                                    ^
+note: "typescript" originally specified here
+   at /private/tmp/mg-bench-57892/package.json:9:65
+
+Checked 712 installs across 619 packages (no changes) [24.00ms]
+bun install v1.3.14 (0d9b296a)
+26 |     "typescript": "^5.3.3"
+         ^
+warn: Duplicate dependency: "typescript" specified in package.json
+   at /private/tmp/mg-bench-57892/package.json:26:5
+
+9 |     "commander": "^11.1.0", "prettier": "^3.1.0", "typescript": "^5.3.3",
+                                                                    ^
+note: "typescript" originally specified here
+   at /private/tmp/mg-bench-57892/package.json:9:65
+
+Checked 712 installs across 619 packages (no changes) [32.00ms]
+bun install v1.3.14 (0d9b296a)
+26 |     "typescript": "^5.3.3"
+         ^
+warn: Duplicate dependency: "typescript" specified in package.json
+   at /private/tmp/mg-bench-57892/package.json:26:5
+
+9 |     "commander": "^11.1.0", "prettier": "^3.1.0", "typescript": "^5.3.3",
+                                                                    ^
+note: "typescript" originally specified here
+   at /private/tmp/mg-bench-57892/package.json:9:65
+
+Checked 712 installs across 619 packages (no changes) [33.00ms]
+  Time (mean ± σ):      37.4 ms ±  10.1 ms    [User: 13.5 ms, System: 23.6 ms]
+  Range (min … max):    28.7 ms …  54.0 ms    5 runs
+ 
+Benchmark 3: pnpm install
+[WARN] Moving iconv-lite that was installed by a different package manager to "node_modules/.ignored"
+[WARN] Moving send that was installed by a different package manager to "node_modules/.ignored"
+Progress: resolved 1, reused 0, downloaded 0, added 0
+[WARN] deprecated uuid@9.0.1: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+[WARN] deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+[WARN] deprecated sinon@17.0.2: There
+[WARN] deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+Progress: resolved 490, reused 481, downloaded 0, added 0
+[WARN] 8 deprecated subdependencies found: @humanwhocodes/config-array@0.13.0, @humanwhocodes/object-schema@2.0.3, @sinonjs/text-encoding@0.7.3, core-js@2.6.12, glob@7.2.3, inflight@1.0.6, node-domexception@1.0.0, rimraf@3.0.2
+Packages: +610
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 618, reused 610, downloaded 0, added 280
+Progress: resolved 618, reused 610, downloaded 0, added 610, done
+
+dependencies:
++ async 3.2.6
++ axios 1.18.1
++ babel-core 6.26.3
++ body-parser 1.20.6 (2.3.0 is available)
++ chalk 5.6.2
++ commander 11.1.0 (15.0.0 is available)
++ compression 1.8.1
++ cookie-parser 1.4.7
++ cors 2.8.6
++ debug 4.4.3
++ dotenv 16.6.1 (17.4.2 is available)
++ eslint 8.57.1 (10.7.0 is available) deprecated
++ express 4.22.2 (5.2.1 is available)
++ glob 10.5.0 (13.0.6 is available) deprecated
++ helmet 7.2.0 (8.3.0 is available)
++ http-errors 2.0.1
++ iconv-lite 0.6.3 (0.7.3 is available)
++ isarray 2.0.5
++ jest 29.7.0 (30.4.2 is available)
++ js-yaml 4.3.0 (5.2.1 is available)
++ json5 2.2.3
++ jsonwebtoken 9.0.3
++ lodash 4.18.1
++ moment 2.30.1
++ morgan 1.11.0
++ ms 2.1.3
++ next 14.2.35 (16.2.10 is available)
++ node-fetch 3.3.2
++ once 1.4.0
++ path-to-regexp 6.3.0 (8.4.2 is available)
++ prettier 3.9.5
++ qs 6.15.3
++ raw-body 2.5.3 (4.0.0 is available)
++ react 18.3.1 (19.2.7 is available)
++ react-dom 18.3.1 (19.2.7 is available)
++ readable-stream 4.7.0
++ safe-buffer 5.2.1
++ semver 7.8.5
++ send 0.18.0 (1.2.1 is available)
++ serve-static 1.16.3 (2.2.1 is available)
++ sinon 17.0.2 (22.0.0 is available) deprecated
++ statuses 2.0.2
++ supports-color 9.4.0 (10.2.2 is available)
++ through2 4.0.2 (5.0.5 is available)
++ tslib 2.8.1
++ uuid 9.0.1 (14.0.1 is available) deprecated
++ vue 3.5.39 (3.5.40 is available)
++ vue-router 4.6.4 (5.2.0 is available)
++ webpack 5.108.4
++ yargs 17.7.3 (18.0.0 is available)
++ zod 3.25.76 (4.4.3 is available)
+
+devDependencies:
++ typescript 5.9.3 (7.0.2 is available)
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: core-js@2.6.12
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+✓ Lockfile passes supply-chain policies (verified 397ms ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: core-js@2.6.12
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+✓ Lockfile passes supply-chain policies (verified 884ms ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: core-js@2.6.12
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+✓ Lockfile passes supply-chain policies (verified 1s ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: core-js@2.6.12
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+✓ Lockfile passes supply-chain policies (verified 1s ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: core-js@2.6.12
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+✓ Lockfile passes supply-chain policies (verified 2s ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: core-js@2.6.12
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+  Time (mean ± σ):     479.5 ms ±   9.3 ms    [User: 561.8 ms, System: 105.4 ms]
+  Range (min … max):   471.1 ms … 494.2 ms    5 runs
+ 
+  Warning: Ignoring non-zero exit code.
+ 
+Summary
+  bun install ran
+   12.83 ± 3.48 times faster than pnpm install
+   22.50 ± 6.12 times faster than mg install

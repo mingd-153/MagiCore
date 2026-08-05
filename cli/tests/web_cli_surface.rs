@@ -30,6 +30,22 @@ fn test_create_web_accepts_flags() {
 }
 
 #[test]
+fn test_install_accepts_dedupe_and_repair_flags() {
+    let (ok, out) = common::mg(&["install-web", "--help"]);
+    assert!(ok, "install-web --help failed\n{out}");
+    assert!(out.contains("--prefer-dedupe"), "should mention --prefer-dedupe");
+    assert!(out.contains("--repair"), "should mention --repair");
+}
+
+#[test]
+fn test_store_prune_accepts_flags() {
+    let (ok, out) = common::mg(&["store", "prune", "--help"]);
+    assert!(ok, "store prune --help failed\n{out}");
+    assert!(out.contains("--dry-run"), "should mention --dry-run");
+    assert!(out.contains("--json"), "should mention --json");
+}
+
+#[test]
 fn test_install_web_accepts_flags() {
     let (ok, out) = common::mg(&["install-web", "--help"]);
     assert!(ok, "install-web --help failed\n{out}");
@@ -40,6 +56,21 @@ fn test_install_web_accepts_flags() {
 fn test_add_web_accepts_flags() {
     let (ok, out) = common::mg(&["add-web", "--help"]);
     assert!(ok, "add-web --help failed\n{out}");
+    assert!(
+        out.contains("Add web dependencies"),
+        "should mention plural dependencies"
+    );
     assert!(out.contains("--dev"), "should mention --dev");
     assert!(out.contains("--global"), "should mention --global");
+}
+
+#[test]
+fn test_remove_web_accepts_multiple_packages() {
+    let (ok, out) = common::mg(&["remove-web", "--help"]);
+    assert!(ok, "remove-web --help failed\n{out}");
+    assert!(
+        out.contains("[PACKAGES]...") || out.contains("<PACKAGES>..."),
+        "should mention repeated packages\n{out}"
+    );
+    assert!(out.contains("--no-install"), "should mention --no-install");
 }
