@@ -1,5 +1,10 @@
 use anyhow::Result;
 use mg_ui::info;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+const DEFAULT_RUN_SCRIPT_TIMEOUT_SECS: u64 = 300;
+const RUN_SCRIPT_TIMEOUT_ENV: &str = "MG_RUN_SCRIPT_TIMEOUT_SECS";
 
 /// mg run <script> [args...] — MegaGate Native Task Runner.
 /// Priority:
@@ -33,24 +38,10 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
     )
 }
 
-fn reject_external_package_manager_script(
-    cmd: &str,
-    manifest_path: &std::path::Path,
-) -> Result<()> {
-    let first = cmd.split_whitespace().next().unwrap_or_default();
-    let delegated_pm = match first {
-        "npm" => Some("npm"),
-        "pnpm" => Some("pnpm"),
-        "bun" => Some("bun"),
-        "yarn" => Some("yarn"),
-        "npx" => Some("npx"),
-        "bunx" => Some("bunx"),
-        _ => None,
-    };
-
-    if let Some(pm) = delegated_pm {
+fn reject_external_package_manager_script(cmd: &str, manifest_path: &Path) -> Result<()> {
+    if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(cmd) {
         anyhow::bail!(
-            "Script '{}' in '{}' delegates to '{}'. Core-web task execution must not bounce through another package manager.",
+            "Script '{}' in '{}' delegates to forbidden package manager '{}'. Core-web task execution must not bounce through another package manager.",
             cmd,
             manifest_path.display(),
             pm
@@ -60,7 +51,7 @@ fn reject_external_package_manager_script(
     Ok(())
 }
 
-fn resolve_mg_toml_script(path: &std::path::Path, script: &str) -> Result<Option<String>> {
+fn resolve_mg_toml_script(path: &Path, script: &str) -> Result<Option<String>> {
     let content = std::fs::read_to_string(path)?;
     let toml: toml::Value = toml::from_str(&content)?;
     Ok(toml
@@ -70,7 +61,7 @@ fn resolve_mg_toml_script(path: &std::path::Path, script: &str) -> Result<Option
         .map(|s| s.to_string()))
 }
 
-fn resolve_package_json_script(path: &std::path::Path, script: &str) -> Result<Option<String>> {
+fn resolve_package_json_script(path: &Path, script: &str) -> Result<Option<String>> {
     let content = std::fs::read_to_string(path)?;
     let manifest: serde_json::Value = serde_json::from_str(&content)?;
     Ok(manifest
@@ -83,35 +74,54 @@ fn resolve_package_json_script(path: &std::path::Path, script: &str) -> Result<O
 fn execute_task_with_bin(
     cmd: &str,
     args: &[String],
-    cwd: &std::path::Path,
+    cwd: &Path,
     script_name: &str,
-    bin_path: Option<std::path::PathBuf>,
+    bin_path: Option<PathBuf>,
 ) -> Result<()> {
-    let full_cmd = if args.is_empty() {
-        cmd.to_string()
-    } else {
-        format!("{} {}", cmd, args.join(" "))
-    };
+    let invocation = mg_exec::allowlist::parse_script_invocation(cmd)
+        .map_err(|e| anyhow::anyhow!("Unsupported script '{}': {}", script_name, e))?;
+    let program = invocation.program;
+    let mut script_args = invocation.args;
+    script_args.extend(args.iter().cloned());
+    let full_cmd = std::iter::once(program.as_str())
+        .chain(script_args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     info(&format!("$ {}", full_cmd));
 
-    let mut path_env = std::env::var("PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect())
+        .unwrap_or_default();
     if let Some(bin) = bin_path {
         if bin.exists() {
-            path_env = format!("{}:{}", bin.display(), path_env);
+            paths.insert(0, bin);
         }
     }
+    let path_env = std::env::join_paths(paths)?;
 
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&full_cmd)
-        .current_dir(cwd)
-        .env("PATH", &path_env)
-        .env("MG_LIFECYCLE_EVENT", script_name)
-        .status()?;
+    let mut env = vec![
+        ("PATH".to_string(), path_env.to_string_lossy().to_string()),
+        ("MG_LIFECYCLE_EVENT".to_string(), script_name.to_string()),
+    ];
+    env.extend(invocation.env);
 
-    if !status.success() {
-        std::process::exit(status.code().unwrap_or(1));
-    }
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(cwd.to_path_buf()),
+        timeout: Some(run_script_timeout()),
+        env,
+        clean_env: true,
+        ..Default::default()
+    };
+    mg_exec::prelude::run_inherited(&program, &script_args, &opts)?;
     Ok(())
+}
+
+fn run_script_timeout() -> Duration {
+    std::env::var(RUN_SCRIPT_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(DEFAULT_RUN_SCRIPT_TIMEOUT_SECS))
 }

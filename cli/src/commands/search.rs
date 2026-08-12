@@ -2,6 +2,8 @@ use anyhow::Result;
 use mg_ui::info;
 use serde::Serialize;
 
+use crate::commands::web_registry_config::{search_endpoint, web_registry_url};
+
 /// mg search <query> [--core <core>] — search packages across all 8 MegaGate cores.
 /// Groups results by Core & Language when no --core flag is provided.
 /// Accepts an optional `core_filter` to narrow results to a specific ecosystem.
@@ -27,12 +29,8 @@ pub async fn run_with_core(
     let size = 20u32;
     let from = page.unwrap_or(1).saturating_sub(1) * size;
 
-    let url = format!(
-        "https://registry.npmjs.org/-/v1/search?text={}&size={}&from={}",
-        urlencoding(&search_query),
-        size,
-        from
-    );
+    let registry_url = web_registry_url();
+    let url = search_endpoint(&registry_url, &search_query, size, from)?;
 
     let client = reqwest::Client::new();
     let resp = client.get(&url).send().await?;
@@ -178,10 +176,6 @@ fn detect_core_label(name: &str, desc: &str) -> String {
         return "[Core: App (Mobile/Desktop)]".to_string();
     }
     "[Core: Web / Node]".to_string()
-}
-
-fn urlencoding(s: &str) -> String {
-    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
 #[derive(Serialize)]

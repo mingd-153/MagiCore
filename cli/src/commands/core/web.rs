@@ -2,7 +2,6 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
@@ -21,8 +20,109 @@ use mg_ui::info;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 const SCAFFOLD_VERSION_OVERRIDES_ENV: &str = "MEGAGATE_WEB_SCAFFOLD_VERSION_OVERRIDES";
-const SCAFFOLD_BASELINE_VERSIONS_TOML: &str =
-    include_str!("../../../../templates/web/versions/scaffold-baseline.toml");
+/// Version baseline — trước đây ở templates/web/versions/scaffold-baseline.toml;
+/// registry-first (templates/ xóa khỏi repo) → giữ thẳng trong code.
+const SCAFFOLD_BASELINE_VERSIONS_TOML: &str = r#"[versions]
+vue = "^3.5.39"
+react = "^19.2.7"
+react-dom = "^19.2.7"
+vite = "^8.1.4"
+"@vitejs/plugin-react" = "^6.0.3"
+"@vitejs/plugin-vue" = "^6.0.7"
+solid-js = "^1.9.14"
+vite-plugin-solid = "^2.11.12"
+typescript = "^5.9.2"
+"@types/react" = "^19.2.17"
+"@types/react-dom" = "^19.2.3"
+"@types/node" = "^26.1.1"
+tailwindcss = "^4.3.2"
+"@sveltejs/kit" = "^2.69.2"
+"@sveltejs/vite-plugin-svelte" = "^7.2.0"
+"@sveltejs/adapter-auto" = "^7.0.1"
+svelte = "^5.56.4"
+next = "^16.2.10"
+nuxt = "^4.4.8"
+"@angular/core" = "^22.0.6"
+"@angular/platform-browser" = "^22.0.6"
+"@angular/platform-browser-dynamic" = "^22.0.6"
+"@angular/router" = "^22.0.6"
+"@angular/compiler" = "^22.0.6"
+"@angular/common" = "^22.0.6"
+rxjs = "^7.8.2"
+"zone.js" = "^0.16.2"
+tslib = "^2.8.1"
+"@angular/cli" = "^22.0.6"
+"@angular/compiler-cli" = "^22.0.6"
+"@angular-devkit/build-angular" = "^22.0.6"
+"@builder.io/qwik" = "^1.20.0"
+"@builder.io/qwik-city" = "^1.20.0"
+astro = "^7.0.7"
+express = "^5.2.1"
+"@types/express" = "^5.0.6"
+hono = "^4.12.30"
+"@hono/node-server" = "^1.19.6"
+"@nestjs/core" = "^11.1.28"
+"@nestjs/common" = "^11.1.28"
+"@nestjs/platform-express" = "^11.1.28"
+reflect-metadata = "^0.2.2"
+zod = "^4.4.3"
+"@trpc/server" = "^11.18.0"
+fastify = "^5.10.0"
+tsx = "^4.23.0"
+"@prisma/client" = "^6.6.0"
+prisma = "^6.6.0"
+vitest = "^3.2.0"
+eslint = "^9.28.0"
+eslint-config-next = "^16.2.10"
+prettier = "^3.6.0"
+"@tailwindcss/postcss" = "^4.3.2"
+pg = "^8.15.0"
+zustand = "^5.0.3"
+"@tanstack/react-query" = "^5.62.0"
+next-auth = "^5.0.0"
+"@playwright/test" = "^1.52.0"
+husky = "^9.2.0"
+lint-staged = "^15.5.0"
+"@biomejs/biome" = "^1.9.0"
+clsx = "^2.1.0"
+tailwind-merge = "^3.2.0"
+class-variance-authority = "^0.7.0"
+sass = "^1.83.0"
+unocss = "^65.5.0"
+daisyui = "^4.12.0"
+"@reduxjs/toolkit" = "^2.6.0"
+react-redux = "^9.2.0"
+jest = "^29.7.0"
+"@testing-library/react" = "^16.0.0"
+"@testing-library/jest-dom" = "^6.6.0"
+jest-environment-jsdom = "^29.7.0"
+cypress = "^14.2.0"
+drizzle-orm = "^0.38.0"
+drizzle-kit = "^0.30.0"
+"@clerk/nextjs" = "^6.12.0"
+styled-components = "^6.1.0"
+"@types/styled-components" = "^5.1.0"
+"@commitlint/cli" = "^19.5.0"
+"@commitlint/config-conventional" = "^19.5.0"
+"@apollo/server" = "^4.11.0"
+"@as-integrations/next" = "^3.2.0"
+"@trpc/client" = "^11.0.0"
+"@trpc/next" = "^11.0.0"
+"@grpc/grpc-js" = "^1.11.0"
+"@grpc/proto-loader" = "^0.7.0"
+lucia = "^3.2.0"
+"@lucia-auth/adapter-drizzle" = "^1.1.0"
+jose = "^5.7.0"
+dotenv-cli = "^7.4.0"
+next-i18next = "^15.3.0"
+next-pwa = "^5.6.0"
+"@storybook/nextjs" = "^8.2.0"
+"@storybook/react" = "^8.2.0"
+"@sentry/nextjs" = "^8.21.0"
+"@vercel/analytics" = "^1.3.0"
+"@railway/cli" = "^4.2.0"
+flyctl = "^0.2.0"
+"#;
 
 fn web_command_profile_enabled() -> bool {
     std::env::var_os("MEGAGATE_WEB_PROFILE_COMMAND").is_some()
@@ -78,8 +178,12 @@ fn install_hint_command() -> &'static str {
 /// Find project root for web commands
 fn project_root() -> Result<std::path::PathBuf> {
     let started_at = std::time::Instant::now();
-    let cwd = std::env::current_dir()
-        .map_err(|e| anyhow::anyhow!("failed to resolve current working directory — has it been deleted?: {}", e))?;
+    let cwd = std::env::current_dir().map_err(|e| {
+        anyhow::anyhow!(
+            "failed to resolve current working directory — has it been deleted?: {}",
+            e
+        )
+    })?;
     let root = shared::find_project_root(&cwd)?.ok_or_else(|| {
         anyhow::anyhow!("No MegaGate project found (missing .megagate/project.toml or package.json in the current project)")
     })?;
@@ -91,8 +195,9 @@ fn web_adapter() -> Box<dyn PackageAdapter> {
     let started_at = std::time::Instant::now();
     let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL").ok();
     let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN").ok();
-    let adapter = crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())
-        .expect("web adapter always available in web core build");
+    let adapter =
+        crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())
+            .expect("web adapter always available in web core build");
     web_command_profile_mark("web_adapter", started_at);
     adapter
 }
@@ -1080,21 +1185,8 @@ fn build_dev_launch(
     }
 }
 
-fn script_uses_external_package_manager(script: &str) -> Option<&'static str> {
-    let first = script.split_whitespace().next()?.trim();
-    match first {
-        "npm" => Some("npm"),
-        "pnpm" => Some("pnpm"),
-        "bun" => Some("bun"),
-        "yarn" => Some("yarn"),
-        "npx" => Some("npx"),
-        "bunx" => Some("bunx"),
-        _ => None,
-    }
-}
-
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
-    if let Some(pm) = script_uses_external_package_manager(script) {
+    if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(script) {
         bail!(
             "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MegaGate or framework-local binaries, not through another package manager.",
             script,
@@ -1378,24 +1470,33 @@ fn native_install_target(project_root: &Path) -> Result<()> {
 }
 
 fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Result<()> {
-    let status = Command::new(program)
-        .args(args)
-        .current_dir(project_root)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .with_context(|| format!("failed to start native install '{}'", program))?;
+    let env = native_install_env(project_root, program)?;
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(project_root.to_path_buf()),
+        log_path: Some(project_root.join(".megagate").join("exec.log")),
+        clean_env: true,
+        env,
+        ..Default::default()
+    };
+    let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    mg_exec::prelude::run(program, &args, &opts)
+        .with_context(|| format!("failed to run native install '{}'", program))?;
+    Ok(())
+}
 
-    if status.success() {
-        Ok(())
-    } else {
-        bail!(
-            "native install command '{}' exited with status {}",
-            format_args!("{} {}", program, args.join(" ")),
-            status
-        )
+fn native_install_env(project_root: &Path, program: &str) -> Result<Vec<(String, String)>> {
+    let mut env = Vec::new();
+    if program == "go" {
+        let go_root = project_root.join(".megagate").join("cache").join("go");
+        let mod_cache = go_root.join("pkg").join("mod");
+        let build_cache = go_root.join("build");
+        std::fs::create_dir_all(&mod_cache)?;
+        std::fs::create_dir_all(&build_cache)?;
+        env.push(("GOPATH".to_string(), go_root.display().to_string()));
+        env.push(("GOMODCACHE".to_string(), mod_cache.display().to_string()));
+        env.push(("GOCACHE".to_string(), build_cache.display().to_string()));
     }
+    Ok(env)
 }
 
 async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
@@ -1411,7 +1512,7 @@ async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
             "🚀 Starting MgDevServer (Native Rust) in {}",
             target.dir.display()
         ));
-        
+
         let entry = if target.dir.join("src/main.tsx").exists() {
             target.dir.join("src/main.tsx")
         } else if target.dir.join("src/main.ts").exists() {
@@ -1419,14 +1520,17 @@ async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
         } else {
             target.dir.join("src/index.tsx")
         };
-        
+
         let config = crate::bundler::dev_server::DevServerConfig {
             root: target.dir.clone(),
             entry,
-            host: target.host.clone().unwrap_or_else(|| "localhost".to_string()),
+            host: target
+                .host
+                .clone()
+                .unwrap_or_else(|| "localhost".to_string()),
             port: target.port.unwrap_or(4315),
         };
-        
+
         let server = crate::bundler::dev_server::MgDevServer::new(config);
         return server.serve().await;
     }
@@ -1436,33 +1540,7 @@ async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
         target.dir.display()
     ));
     info(&format!("  {}", launch.describe()));
-
-    let local_bin = target.dir.join("node_modules").join(".bin");
-    let mut command = Command::new(&launch.program);
-    command
-        .args(&launch.args)
-        .current_dir(&target.dir)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .env("PATH", prepend_path(&local_bin)?);
-    for (key, value) in &launch.envs {
-        command.env(key, value);
-    }
-    if let Some(port) = target.port {
-        command.env("PORT", port.to_string());
-    }
-
-    let mut child = tokio::process::Command::from(command)
-        .spawn()
-        .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
-
-    let status = child.wait().await?;
-    if status.success() {
-        Ok(())
-    } else {
-        bail!("dev server exited with status {status}")
-    }
+    run_dev_launch_with_guard(target, &launch)
 }
 
 async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
@@ -1481,7 +1559,7 @@ async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
                 target.role,
                 target.dir.display()
             ));
-            
+
             let entry = if target.dir.join("src/main.tsx").exists() {
                 target.dir.join("src/main.tsx")
             } else if target.dir.join("src/main.ts").exists() {
@@ -1489,14 +1567,17 @@ async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
             } else {
                 target.dir.join("src/index.tsx")
             };
-            
+
             let config = crate::bundler::dev_server::DevServerConfig {
                 root: target.dir.clone(),
                 entry,
-                host: target.host.clone().unwrap_or_else(|| "localhost".to_string()),
+                host: target
+                    .host
+                    .clone()
+                    .unwrap_or_else(|| "localhost".to_string()),
                 port: target.port.unwrap_or(4315),
             };
-            
+
             let server = crate::bundler::dev_server::MgDevServer::new(config);
             tokio::spawn(async move {
                 if let Err(e) = server.serve().await {
@@ -1512,47 +1593,62 @@ async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
             target.dir.display()
         ));
         info(&format!("  {}", launch.describe()));
-
-        let local_bin = target.dir.join("node_modules").join(".bin");
-        let mut command = Command::new(&launch.program);
-        command
-            .args(&launch.args)
-            .current_dir(&target.dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .env("PATH", prepend_path(&local_bin)?);
-        for (key, value) in &launch.envs {
-            command.env(key, value);
-        }
-        if let Some(port) = target.port {
-            command.env("PORT", port.to_string());
-        }
-
-        let mut tokio_cmd = tokio::process::Command::from(command);
-        let child = tokio_cmd
-            .spawn()
-            .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
-        children.push((target.role, child));
+        children.push(tokio::spawn({
+            let target = target.clone();
+            async move { run_dev_launch_with_guard(&target, &launch) }
+        }));
     }
 
-    loop {
-        let mut all_exited = true;
-        for (role, child) in &mut children {
-            if let Some(status) = child.try_wait()? {
-                if !status.success() {
-                    bail!("{} dev server exited with status {}", role, status);
-                }
-            } else {
-                all_exited = false;
-            }
-        }
-        if all_exited {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    for child in children {
+        child.await??;
     }
     Ok(())
+}
+
+fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<()> {
+    let local_bin = target.dir.join("node_modules").join(".bin");
+    let mut env = vec![(
+        "PATH".to_string(),
+        prepend_path(&local_bin)?.to_string_lossy().to_string(),
+    )];
+    env.extend(native_runtime_env(&target.dir, &launch.program)?);
+    env.extend(launch.envs.iter().map(|(key, value)| {
+        (
+            key.to_string_lossy().to_string(),
+            value.to_string_lossy().to_string(),
+        )
+    }));
+    if let Some(port) = target.port {
+        env.push(("PORT".to_string(), port.to_string()));
+    }
+
+    let args = launch
+        .args
+        .iter()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(target.dir.clone()),
+        env,
+        clean_env: true,
+        disable_timeout: true,
+        ..Default::default()
+    };
+
+    if launch.program.components().count() > 1 {
+        mg_exec::prelude::run_project_binary_inherited(&launch.program, &args, &opts)
+    } else {
+        mg_exec::prelude::run_inherited(&launch.program.to_string_lossy(), &args, &opts)
+    }
+    .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
+    Ok(())
+}
+
+fn native_runtime_env(project_root: &Path, program: &Path) -> Result<Vec<(String, String)>> {
+    let Some(name) = program.file_name().and_then(|name| name.to_str()) else {
+        return Ok(Vec::new());
+    };
+    native_install_env(project_root, name)
 }
 
 fn resolve_local_bin(project_root: &Path, bin_name: &str) -> Result<PathBuf> {
@@ -1618,6 +1714,88 @@ pub async fn run_create_with_options(
         "Creating new web project '{}' with {}",
         project_name, fe_framework
     ));
+
+    // Registry-first preflight: ensure mọi layer scaffold sẽ dùng (frontend leaf,
+    // backend leaf theo lang/fw, monorepo base/partials) — pnpm-style delegate.
+    // Embedded kernel + cache + disk được kiểm trước; thiếu thì fetch registry.
+    let frontend = parse_framework_request(&fe_framework);
+    let be_from_flags = detect_backend_framework(&flags);
+    let be_name = be_from_flags
+        .clone()
+        .or_else(|| fullstack_backend_framework(&frontend.raw).map(str::to_string))
+        .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string));
+    let be_ref = be_name.as_deref();
+    let mut rels: Vec<String> = vec![format!("web/frontend/{}", frontend.normalized)];
+    match be_ref {
+        Some(be) => {
+            if let Some(lang) = crate::scaffold::processor::infer_backend_language(be) {
+                // Backend-only mode dùng web/backend/{lang}/{be}; monorepo dùng
+                // web/monorepo/backend/{lang}/{be} — fetch cả 2 (registry-first).
+                rels.push(format!("web/backend/{lang}/{be}"));
+                rels.push(format!("web/monorepo/backend/{lang}/{be}"));
+            }
+            // Fullstack combo Node (react-express, vue-laravel...) — be đến từ
+            // framework name, không phải flag → cần split leaf riêng theo combo.
+            if be_from_flags.is_none() {
+                rels.push(format!("web/fullstack/split/{}", frontend.raw));
+            }
+        }
+        // Backend-only mode khi framework name là backend thuần (express, fastapi...):
+        // scaffold dùng web/backend/{lang}/{fe}, không có frontend leaf.
+        None => {
+            if let Some(lang) =
+                crate::scaffold::processor::infer_backend_language(&frontend.normalized)
+            {
+                rels.push(format!("web/backend/{lang}/{}", frontend.normalized));
+                rels.push(format!(
+                    "web/monorepo/backend/{lang}/{}",
+                    frontend.normalized
+                ));
+            } else {
+                // Không có backend riêng → fullstack split combo Node
+                // (react-express...) hoặc all-in-one (nextjs/remix/...) —
+                // ensure đúng bucket theo framework.
+                let bucket =
+                    if crate::scaffold::processor::is_all_in_one_fullstack(&frontend.normalized) {
+                        "all-in-one"
+                    } else {
+                        "split"
+                    };
+                rels.push(format!("web/fullstack/{bucket}/{}", frontend.normalized));
+            }
+        }
+    }
+    if flags.monorepo {
+        rels.push("web/monorepo/base".to_string());
+        rels.push(format!("web/monorepo/frontend/{}", frontend.normalized));
+    }
+    // Shared partials (processor dùng mọi mode): fetch hết — layer nhỏ, an toàn.
+    for partial in [
+        "base",
+        "backend",
+        "frontend",
+        "frontend-common",
+        "frontend-foundation",
+        "frontend-rust-ready",
+        "fullstack",
+        "monorepo",
+        "monorepo-backend",
+        "monorepo-frontend",
+        "monorepo-frontend-common",
+        "monorepo-frontend-foundation",
+        "monorepo-frontend-rust-ready",
+        "monorepo-packages",
+    ] {
+        rels.push(format!("web/shared/partials/{partial}"));
+    }
+    for rel in &rels {
+        if !crate::commands::template::ensure_layer(rel).await {
+            mg_ui::warning(&format!(
+                "Template layer '{}' not in embedded kernel, cache, or registry; scaffold may fail if no local templates/ dir matches",
+                rel
+            ));
+        }
+    }
 
     let config = build_web_config(&fe_framework, project_name, &flags)?;
     let project_dir = crate::scaffold::Scaffolder::scaffold(&config)?;
@@ -1690,6 +1868,26 @@ fn detect_backend_framework(flags: &ScaffoldFlags) -> Option<String> {
         Some("koa".into())
     } else if flags.trpc {
         Some("trpc".into())
+    } else if flags.axum {
+        Some("axum".into())
+    } else if flags.actix_web {
+        Some("actix-web".into())
+    } else if flags.gin {
+        Some("gin".into())
+    } else if flags.echo {
+        Some("echo".into())
+    } else if flags.fiber {
+        Some("fiber".into())
+    } else if flags.fastapi {
+        Some("fastapi".into())
+    } else if flags.django {
+        Some("django".into())
+    } else if flags.flask {
+        Some("flask".into())
+    } else if flags.quarkus {
+        Some("quarkus".into())
+    } else if flags.symfony {
+        Some("symfony".into())
     } else {
         None
     }
@@ -1787,11 +1985,15 @@ fn build_web_config(
     flags: &ScaffoldFlags,
 ) -> Result<crate::wizard::engine::ScaffoldConfig> {
     let frontend = parse_framework_request(framework);
+    // Fullstack combos (react-axum, vue-gin, ...) carry the backend in the
+    // combined name; check the raw request so normalization to the shared
+    // frontend leaf (react-vite) does not hide it.
+    let raw_backend = fullstack_backend_framework(&frontend.raw)
+        .or_else(|| fullstack_backend_framework(&frontend.normalized))
+        .map(str::to_string);
 
     let mut config = if flags.monorepo {
-        match detect_backend_framework(flags)
-            .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string))
-        {
+        match detect_backend_framework(flags).or(raw_backend) {
             Some(be) => {
                 let backend = parse_framework_request(&be);
                 crate::wizard::engine::ScaffoldConfig {
@@ -2108,6 +2310,17 @@ fn normalize_cli_web_framework(framework: &str) -> String {
         "solid" | "solid-app" => "solidjs".to_string(),
         "angular-app" => "angular".to_string(),
         "qwik-app" => "qwik".to_string(),
+        // Fullstack combos with non-Node backends: frontend half resolves to
+        // the shared frontend leaf (react-vite / vue-vite / sveltekit).
+        "react-axum" | "react-actix-web" | "react-gin" | "react-echo" | "react-fiber"
+        | "react-fastapi" | "react-django" | "react-flask" | "react-quarkus" | "react-symfony" => {
+            "react-vite".to_string()
+        }
+        "vue-axum" | "vue-actix-web" | "vue-gin" | "vue-echo" | "vue-fiber" | "vue-fastapi"
+        | "vue-django" | "vue-flask" | "vue-quarkus" | "vue-symfony" => "vue-vite".to_string(),
+        "svelte-axum" | "svelte-gin" | "svelte-fastapi" | "svelte-quarkus" => {
+            "sveltekit".to_string()
+        }
         other => other.to_string(),
     }
 }
@@ -3086,6 +3299,8 @@ fn scaffold_version_override(package: &str) -> Option<String> {
 }
 
 fn fullstack_backend_framework(framework: &str) -> Option<&'static str> {
+    // Explicit combos (legacy + Rust/Go/Python/Java/PHP backends).
+    // Backend name is the template folder under templates/web/backend/<lang>/.
     match framework {
         "react-fastify" => Some("fastify"),
         "react-spring" => Some("spring-boot"),
@@ -3094,11 +3309,35 @@ fn fullstack_backend_framework(framework: &str) -> Option<&'static str> {
         "react-hono" => Some("hono"),
         "react-nestjs" => Some("nestjs"),
         "react-trpc" => Some("trpc"),
+        "react-axum" => Some("axum"),
+        "react-actix-web" => Some("actix-web"),
+        "react-gin" => Some("gin"),
+        "react-echo" => Some("echo"),
+        "react-fiber" => Some("fiber"),
+        "react-fastapi" => Some("fastapi"),
+        "react-django" => Some("django"),
+        "react-flask" => Some("flask"),
+        "react-quarkus" => Some("quarkus"),
+        "react-symfony" => Some("symfony"),
         "vue-express" => Some("express"),
         "vue-hono" => Some("hono"),
         "vue-nestjs" => Some("nestjs"),
+        "vue-axum" => Some("axum"),
+        "vue-actix-web" => Some("actix-web"),
+        "vue-gin" => Some("gin"),
+        "vue-echo" => Some("echo"),
+        "vue-fiber" => Some("fiber"),
+        "vue-fastapi" => Some("fastapi"),
+        "vue-django" => Some("django"),
+        "vue-flask" => Some("flask"),
+        "vue-quarkus" => Some("quarkus"),
+        "vue-symfony" => Some("symfony"),
         "svelte-express" => Some("express"),
         "svelte-hono" => Some("hono"),
+        "svelte-axum" => Some("axum"),
+        "svelte-fastapi" => Some("fastapi"),
+        "svelte-gin" => Some("gin"),
+        "svelte-quarkus" => Some("quarkus"),
         "next" | "nextjs" => None, // Next.js has built-in API routes
         "nuxt" | "nuxtjs" => Some("hono"),
         _ => None,
@@ -3319,6 +3558,13 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Registry-first: template layer cần fetch/cache sẵn (~/.mg/templates hoặc
+    /// MG_TEMPLATES_DIR). Máy sạch offline → skip test materialize.
+    fn template_layer_ready(rel: &str) -> bool {
+        let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
+        root.exists("template.toml") && root.exists("sources")
+    }
+
     #[test]
     fn test_parse_framework_request_supports_alias_and_version() {
         let request = parse_framework_request("react@latest");
@@ -3328,6 +3574,10 @@ mod tests {
 
     #[test]
     fn test_create_web_with_flags_seeds_package_json() {
+        if !template_layer_ready("web/frontend/react-vite") {
+            eprintln!("skipped: web/frontend/react-vite template layer not available offline (registry-first)");
+            return;
+        }
         let _guard = lock_scaffold_env();
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("cli-react");
@@ -3425,6 +3675,12 @@ mod tests {
 
     #[test]
     fn test_create_qwik_uses_framework_specific_vite_pin() {
+        if !template_layer_ready("web/frontend/qwik") {
+            eprintln!(
+                "skipped: web/frontend/qwik template layer not available offline (registry-first)"
+            );
+            return;
+        }
         let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
@@ -3454,6 +3710,10 @@ mod tests {
 
     #[test]
     fn test_create_web_without_overrides_uses_curated_baseline_when_registry_is_unavailable() {
+        if !template_layer_ready("web/frontend/react-vite") {
+            eprintln!("skipped: web/frontend/react-vite template layer not available offline (registry-first)");
+            return;
+        }
         let _guard = lock_scaffold_env();
         std::env::set_var(
             SCAFFOLD_VERSION_OVERRIDES_ENV,
@@ -3488,6 +3748,10 @@ mod tests {
 
     #[test]
     fn test_create_vanilla_web_without_primary_dependency_uses_toolchain_seed_only() {
+        if !template_layer_ready("web/frontend/vanilla") {
+            eprintln!("skipped: web/frontend/vanilla template layer not available offline (registry-first)");
+            return;
+        }
         let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
@@ -3515,6 +3779,10 @@ mod tests {
 
     #[test]
     fn test_create_nextjs_uses_baseline_typescript_instead_of_registry_latest() {
+        if !template_layer_ready("web/frontend/nextjs") {
+            eprintln!("skipped: web/frontend/nextjs template layer not available offline (registry-first)");
+            return;
+        }
         let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 
@@ -3619,6 +3887,25 @@ mod tests {
         let err =
             build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap_err();
         assert!(err.to_string().contains("delegates to 'npm'"));
+    }
+
+    #[test]
+    fn test_build_dev_launch_rejects_external_pm_after_separator() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "scripts": { "dev": "vite --host localhost --port 4315 && bun install" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let err =
+            build_dev_launch(dir.path(), "dev", Some("localhost".into()), Some(4315)).unwrap_err();
+        assert!(err.to_string().contains("delegates to 'bun'"));
     }
 
     #[test]
@@ -4247,7 +4534,36 @@ packages = ["packages/*"]
     }
 
     #[test]
+    fn test_native_runtime_env_provides_project_local_go_cache_for_dev() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = native_runtime_env(dir.path(), Path::new("go")).unwrap();
+
+        let env = env.into_iter().collect::<std::collections::HashMap<_, _>>();
+        let go_root = dir.path().join(".megagate/cache/go");
+        let mod_cache = dir.path().join(".megagate/cache/go/pkg/mod");
+        let build_cache = dir.path().join(".megagate/cache/go/build");
+        assert_eq!(
+            env.get("GOPATH").map(String::as_str),
+            Some(go_root.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            env.get("GOMODCACHE").map(String::as_str),
+            Some(mod_cache.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            env.get("GOCACHE").map(String::as_str),
+            Some(build_cache.to_string_lossy().as_ref())
+        );
+        assert!(dir.path().join(".megagate/cache/go/pkg/mod").exists());
+        assert!(dir.path().join(".megagate/cache/go/build").exists());
+    }
+
+    #[test]
     fn test_create_web_writes_project_toml_for_monorepo() {
+        if !template_layer_ready("web/frontend/react-vite") {
+            eprintln!("skipped: web/frontend/react-vite template layer not available offline (registry-first)");
+            return;
+        }
         let _guard = lock_scaffold_env();
         std::env::remove_var(SCAFFOLD_VERSION_OVERRIDES_ENV);
 

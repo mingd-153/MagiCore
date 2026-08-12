@@ -15,6 +15,7 @@ pub fn matches(command: &CoreCommand) -> bool {
             | CoreCommand::InstallIot { .. }
             | CoreCommand::InstallApp { .. }
             | CoreCommand::InstallLib { .. }
+            | CoreCommand::InstallHardware { .. }
     )
 }
 
@@ -27,15 +28,17 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             allow_scripts,
             prefer_dedupe,
             repair,
-        } => commands::core::web::install(
-            packages,
-            frozen,
-            ignore_scripts,
-            allow_scripts,
-            prefer_dedupe,
-            repair,
-        )
-        .await,
+        } => {
+            commands::core::web::install(
+                packages,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+                prefer_dedupe,
+                repair,
+            )
+            .await
+        }
         CoreCommand::InstallGame { packages } => commands::core::game::install(packages).await,
         CoreCommand::InstallAi { packages } => commands::core::ai::install(packages).await,
         CoreCommand::InstallClo { packages } => commands::core::clo::install(packages).await,
@@ -43,6 +46,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         CoreCommand::InstallIot { packages } => commands::core::iot::install(packages).await,
         CoreCommand::InstallApp { packages } => commands::core::app::install(packages).await,
         CoreCommand::InstallLib { packages } => commands::core::library::install(packages).await,
+        CoreCommand::InstallHardware { packages } => {
+            commands::core::hardware::install(packages).await
+        }
         _ => unreachable!("non-install command routed to install dispatcher"),
     }
 }

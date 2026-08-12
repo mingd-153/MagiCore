@@ -34,7 +34,6 @@
 /// Mỗi file .ts/.tsx/.jsx được hash bằng Blake3 → tra CompiledCache.
 /// Nếu hit: serve ngay (~0ms). Nếu miss: esbuild transpile → lưu vào cache.
 /// Cache được dùng chung giữa tất cả project trên máy (global ~/.megagate store).
-
 use crate::bundler::deps_bundler::DepsCache;
 use crate::bundler::hmr::{hmr_ws_handler, HmrManager, HMR_CLIENT_SCRIPT};
 use axum::{
@@ -171,8 +170,7 @@ impl MgDevServer {
         let bind_addr = format!("{}:{}", bind_host, self.config.port);
         info!(
             "🚀 MgDevServer (Native ESM) đang lắng nghe tại http://{}:{}",
-            self.config.host,
-            self.config.port
+            self.config.host, self.config.port
         );
 
         let listener = TcpListener::bind(&bind_addr).await?;
@@ -245,10 +243,7 @@ async fn serve_hmr_client() -> impl IntoResponse {
 /// Route: GET /@megagate/deps/*pkg
 /// Ví dụ: /@megagate/deps/react → bundle react từ node_modules/react
 ///         /@megagate/deps/@tanstack/react-query → scoped package
-async fn serve_dep(
-    Path(pkg): Path<String>,
-    State(state): State<ServerState>,
-) -> impl IntoResponse {
+async fn serve_dep(Path(pkg): Path<String>, State(state): State<ServerState>) -> impl IntoResponse {
     debug!("deps request: {}", pkg);
 
     match state.deps_cache.get_or_bundle(&pkg).await {
@@ -274,7 +269,10 @@ async fn serve_dep(
             }
 
             Response::builder()
-                .header(header::CONTENT_TYPE, "application/javascript; charset=utf-8")
+                .header(
+                    header::CONTENT_TYPE,
+                    "application/javascript; charset=utf-8",
+                )
                 .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
                 .body(Body::from(js))
                 .unwrap_or_else(|_| {
@@ -282,9 +280,8 @@ async fn serve_dep(
                 })
         }
         None => {
-            let err_js = format!(
-                r#"console.error('[MgDevServer] Failed to bundle dependency: {pkg}');"#
-            );
+            let err_js =
+                format!(r#"console.error('[MgDevServer] Failed to bundle dependency: {pkg}');"#);
             Response::builder()
                 .header(header::CONTENT_TYPE, "application/javascript")
                 .status(StatusCode::NOT_FOUND)
@@ -314,25 +311,18 @@ async fn serve_source_or_static(
         return (StatusCode::NOT_FOUND, format!("Not found: /{}", rel_path)).into_response();
     };
 
-    let ext = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match ext {
         // ─── TypeScript / JSX: transpile on-the-fly ───────────────────────
-        "ts" | "tsx" | "jsx" | "js" | "mjs" => {
-            serve_transpiled(file_path, &state).await
-        }
+        "ts" | "tsx" | "jsx" | "js" | "mjs" => serve_transpiled(file_path, &state).await,
         // ─── CSS: serve trực tiếp ─────────────────────────────────────────
         "css" => match tokio::fs::read_to_string(file_path).await {
             Ok(content) => Response::builder()
                 .header(header::CONTENT_TYPE, "text/css; charset=utf-8")
                 .header(header::CACHE_CONTROL, "no-cache")
                 .body(Body::from(content))
-                .unwrap_or_else(|_| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
-                }),
+                .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()),
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read CSS").into_response(),
         },
         // ─── Static assets: serve với mime-type đúng ─────────────────────
@@ -469,7 +459,10 @@ document.body?.prepend(el);
 
 fn js_response(js: String) -> Response {
     Response::builder()
-        .header(header::CONTENT_TYPE, "application/javascript; charset=utf-8")
+        .header(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from(js))
         .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "").into_response())

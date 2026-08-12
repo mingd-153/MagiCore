@@ -4,8 +4,8 @@
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
 use mg_config::project::ProjectConfig;
-use mg_resolver::patches::{apply_patch, get_patches_dir, verify_patch_integrity};
-use mg_types::{LockPatch, PatchKind, PatchSpec};
+use mg_resolver::patches::{get_patches_dir, verify_patch_integrity};
+use mg_types::PatchSpec;
 use std::fs;
 use std::path::Path;
 
@@ -45,12 +45,12 @@ pub async fn run(args: PatchArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("mg.toml not found — run mg init"))?;
 
     match args.cmd {
-        PatchCmd::Add { package, file, range } => {
-            add_patch(&mut project, &project_root, &package, &file, range).await
-        }
-        PatchCmd::Remove { package } => {
-            remove_patch(&mut project, &project_root, &package).await
-        }
+        PatchCmd::Add {
+            package,
+            file,
+            range,
+        } => add_patch(&mut project, &project_root, &package, &file, range).await,
+        PatchCmd::Remove { package } => remove_patch(&mut project, &project_root, &package).await,
         PatchCmd::List => list_patches(&project).await,
         PatchCmd::Verify => verify_patches(&project, &project_root).await,
     }
@@ -90,12 +90,7 @@ async fn add_patch(
         .transpose()?
         .unwrap_or_else(|| mg_types::VersionRange::parse("*").unwrap());
 
-    let spec = PatchSpec::new(
-        package.to_string(),
-        version_range,
-        dest_name,
-        integrity,
-    );
+    let spec = PatchSpec::new(package.to_string(), version_range, dest_name, integrity);
 
     // Store in mg.toml [patches]
     project.patches.push(spec);
@@ -105,7 +100,11 @@ async fn add_patch(
     Ok(())
 }
 
-async fn remove_patch(project: &mut ProjectConfig, project_root: &Path, package: &str) -> Result<()> {
+async fn remove_patch(
+    project: &mut ProjectConfig,
+    project_root: &Path,
+    package: &str,
+) -> Result<()> {
     let len_before = project.patches.len();
     project.patches.retain(|p| p.package != package);
     if project.patches.len() == len_before {
@@ -123,7 +122,10 @@ async fn list_patches(project: &ProjectConfig) -> Result<()> {
     }
     println!("Active patches:");
     for p in &project.patches {
-        println!("  {} @ {} -> {} ({})", p.package, p.version_range, p.patch_path, p.integrity);
+        println!(
+            "  {} @ {} -> {} ({})",
+            p.package, p.version_range, p.patch_path, p.integrity
+        );
     }
     Ok(())
 }
@@ -135,7 +137,11 @@ async fn verify_patches(project: &ProjectConfig, project_root: &Path) -> Result<
     for spec in &project.patches {
         let patch_path = patches_dir.join(&spec.patch_path);
         if !patch_path.exists() {
-            println!("✗ {}: patch file missing ({})", spec.package, patch_path.display());
+            println!(
+                "✗ {}: patch file missing ({})",
+                spec.package,
+                patch_path.display()
+            );
             all_ok = false;
             continue;
         }

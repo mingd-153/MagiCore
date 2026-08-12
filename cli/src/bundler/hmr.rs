@@ -23,7 +23,10 @@ pub struct HmrManager {
 impl HmrManager {
     pub fn new() -> Self {
         let (tx, _rx) = broadcast::channel(100);
-        Self { tx, version: Arc::new(AtomicU64::new(0)) }
+        Self {
+            tx,
+            version: Arc::new(AtomicU64::new(0)),
+        }
     }
 
     pub fn version(&self) -> u64 {
@@ -38,9 +41,9 @@ impl HmrManager {
     pub fn watch_dir(&self, path: &Path) -> anyhow::Result<RecommendedWatcher> {
         let tx = self.tx.clone();
         let version = self.version.clone();
-        
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            match res {
+
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<Event>| match res {
                 Ok(event) => {
                     trace!("HMR File Event: {:?}", event);
                     if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
@@ -49,8 +52,7 @@ impl HmrManager {
                     }
                 }
                 Err(e) => error!("watch error: {:?}", e),
-            }
-        })?;
+            })?;
 
         watcher.watch(path, RecursiveMode::Recursive)?;
         info!("HMR watching directory: {}", path.display());

@@ -107,6 +107,28 @@ pub struct ScaffoldFlags {
     #[arg(long, help = "tRPC server")]
     pub trpc: bool,
 
+    // ── Backend framework — other ecosystems (Rust/Go/Python/Java/PHP) ────
+    #[arg(long, help = "Axum (Rust)")]
+    pub axum: bool,
+    #[arg(long, help = "Actix Web (Rust)")]
+    pub actix_web: bool,
+    #[arg(long, help = "Gin (Go)")]
+    pub gin: bool,
+    #[arg(long, help = "Echo (Go)")]
+    pub echo: bool,
+    #[arg(long, help = "Fiber (Go)")]
+    pub fiber: bool,
+    #[arg(long, help = "FastAPI (Python)")]
+    pub fastapi: bool,
+    #[arg(long, help = "Django (Python)")]
+    pub django: bool,
+    #[arg(long, help = "Flask (Python)")]
+    pub flask: bool,
+    #[arg(long, help = "Quarkus (Java)")]
+    pub quarkus: bool,
+    #[arg(long, help = "Symfony (PHP)")]
+    pub symfony: bool,
+
     // ── Database / ORM ────────────────────────────────────────────
     #[arg(long, help = "Prisma ORM")]
     pub prisma: bool,

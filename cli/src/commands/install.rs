@@ -15,8 +15,6 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-
-
 /// mg install — install dependencies for the current project
 pub async fn run(
     packages: Vec<String>,
@@ -259,10 +257,31 @@ fn load_locked_graph(
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     let Some(lock) = read_checked_lockfile(project_root)? else {
+        let legacy = mg_lockfile::import::detect_legacy_lockfiles(project_root);
+        if !legacy.is_empty() {
+            let names = legacy
+                .iter()
+                .map(|lock| lock.file_name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            mg_ui::warning(&format!(
+                "Ignoring legacy lockfile(s): {names}. Run an explicit MegaGate lock migration before install if you want to seed mg.lock from them."
+            ));
+        }
         return Ok(None);
     };
 
     let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
+    // Future lockfile versions must not be guessed (npm shrinkwrap.js:1003
+    // model): abort with a clear error instead of silently re-resolving.
+    if lock.version > mg_lockfile::migrate::current_version() {
+        anyhow::bail!(
+            "mg.lock version {} is newer than this version of mg (supports up to {}). \
+             Upgrade mg to read this lockfile.",
+            lock.version,
+            mg_lockfile::migrate::current_version()
+        );
+    }
     if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
         return Ok(None);
     }

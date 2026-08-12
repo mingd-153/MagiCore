@@ -4,6 +4,9 @@ use mg_ui::info;
 #[cfg(feature = "web")]
 use serde::Serialize;
 
+#[cfg(feature = "web")]
+use crate::commands::web_registry_config::web_registry_url;
+
 /// mg info <pkg> — show package information.
 /// Queries multiple registries, auto-labels Core/Language based on package metadata.
 pub async fn run(package: String, json: bool) -> Result<()> {
@@ -15,9 +18,8 @@ pub async fn run(package: String, json: bool) -> Result<()> {
 
     #[cfg(feature = "web")]
     {
-        // Query NPM registry (Web core — Node.js ecosystem)
-        let registry =
-            mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
+        // Query npm-compatible registry — đọc registry web qua config/env tập trung.
+        let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
 
         let meta = match registry.fetch_metadata(&package).await {
             Ok(m) => m,

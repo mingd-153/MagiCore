@@ -7,7 +7,7 @@ use tokio::net::TcpListener;
 use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::context::ProjectContext;
+use crate::{commands::start_config::resolve_web_start_bind, context::ProjectContext};
 
 /// mg start — MegaGate Native Production Server.
 /// Detects output directory dynamically (dist, build, out) and serves it using Axum.
@@ -24,7 +24,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
 
     match ctx.adapter().name() {
         "web" => {
-            let fe_port = 4315u16;
+            let (host, port) = resolve_web_start_bind()?;
 
             // Dynamically detect build output directory
             let possible_dirs = vec!["dist", "build", "out", ".next", "public"];
@@ -44,9 +44,10 @@ pub async fn run(core: Option<&str>) -> Result<()> {
             };
 
             info(&format!(
-                "Serving directory '{}' -> http://localhost:{}",
+                "Serving directory '{}' -> http://{}:{}",
                 dist_dir.file_name().unwrap_or_default().to_string_lossy(),
-                fe_port
+                host,
+                port
             ));
 
             // Serve static files from the detected directory
@@ -59,12 +60,12 @@ pub async fn run(core: Option<&str>) -> Result<()> {
                 // Add automatic compression (gzip/brotli/deflate)
                 .layer(CompressionLayer::new());
 
-            let bind_addr = format!("localhost:{}", fe_port);
+            let bind_addr = format!("{host}:{port}");
             let listener = TcpListener::bind(&bind_addr).await?;
 
             success(&format!(
-                "Production Server running natively on http://localhost:{}",
-                fe_port
+                "Production Server running natively on http://{}:{}",
+                host, port
             ));
             axum::serve(listener, app).await?;
 

@@ -37,9 +37,7 @@ pub struct DedupeEntry {
 }
 
 /// Merge duplicate lockfile entries into a merged Lockfile (no-op if none).
-fn merged_lockfile(
-    lock: &mg_lockfile::Lockfile,
-) -> (mg_lockfile::Lockfile, usize) {
+fn merged_lockfile(lock: &mg_lockfile::Lockfile) -> (mg_lockfile::Lockfile, usize) {
     let mut seen: HashMap<(String, String), bool> = HashMap::new();
     let mut merged = 0usize;
     let mut new_packages = Vec::new();
@@ -59,7 +57,7 @@ fn merged_lockfile(
 
 /// Runtime verification (user decision 2026-08-05): build the project after
 /// merging; rollback the lockfile if the build fails.
-async fn verify_with_build(project_root: &Path, dry_run: bool) -> Result<()> {
+async fn verify_with_build(_project_root: &Path, dry_run: bool) -> Result<()> {
     if dry_run {
         return Ok(());
     }
@@ -90,9 +88,10 @@ fn cleanup_unreferenced_vstore(project_root: &Path, lock: &mg_lockfile::Lockfile
                 .and_then(|n| n.to_str())
                 .unwrap_or_default()
                 .to_string();
-            let in_lock = lock.packages.iter().any(|pkg| {
-                format!("{}@{}", pkg.name.replace('/', "+"), pkg.version) == name
-            });
+            let in_lock = lock
+                .packages
+                .iter()
+                .any(|pkg| format!("{}@{}", pkg.name.replace('/', "+"), pkg.version) == name);
             if !in_lock {
                 freed += dir_size(&dir);
                 let _ = fs::remove_dir_all(&dir);

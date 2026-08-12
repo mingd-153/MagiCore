@@ -113,11 +113,17 @@ async fn push(
                 bail!("thư mục không có file: {p}");
             }
             for f in files {
-                names.insert(digest_of(&f).await?, f.file_name().unwrap().to_string_lossy().into_owned());
+                names.insert(
+                    digest_of(&f).await?,
+                    f.file_name().unwrap().to_string_lossy().into_owned(),
+                );
                 layers.push((f, MODEL_MEDIA_TYPE.to_string()));
             }
         } else {
-            names.insert(digest_of(path).await?, path.file_name().unwrap().to_string_lossy().into_owned());
+            names.insert(
+                digest_of(path).await?,
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+            );
             layers.push((path.to_path_buf(), MODEL_MEDIA_TYPE.to_string()));
         }
     }
@@ -140,7 +146,10 @@ async fn push(
         .push_model(repo, tag, &config, &layers)
         .await
         .context("push model thất bại — server đã chạy chưa? (mg registry serve)")?;
-    println!("pushed {repo}:{pushed} ({registry}) — {} layer(s)", layers.len());
+    println!(
+        "pushed {repo}:{pushed} ({registry}) — {} layer(s)",
+        layers.len()
+    );
     Ok(())
 }
 
@@ -170,8 +179,8 @@ async fn pull(
         .pull_blob(repo, &manifest.config.digest)
         .await
         .context("pull config blob thất bại")?;
-    let config: OciImageConfig = serde_json::from_slice(&config_data)
-        .context("parse config blob thất bại")?;
+    let config: OciImageConfig =
+        serde_json::from_slice(&config_data).context("parse config blob thất bại")?;
     let names: HashMap<String, String> = config.annotations.unwrap_or_default();
 
     let out_dir = Path::new(output);
@@ -183,7 +192,13 @@ async fn pull(
         let default_name = format!("layer-{i}.bin");
         let name = names
             .get(&layer.digest)
-            .map(|s| Path::new(s).file_name().unwrap().to_string_lossy().into_owned())
+            .map(|s| {
+                Path::new(s)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .unwrap_or(default_name);
         let data = c
             .pull_blob(repo, &layer.digest)
@@ -194,7 +209,11 @@ async fn pull(
         written += 1;
         println!("  {name} ({} bytes)", data.len());
     }
-    println!("pulled {repo}:{tag} → {} ({} file)", out_dir.display(), written);
+    println!(
+        "pulled {repo}:{tag} → {} ({} file)",
+        out_dir.display(),
+        written
+    );
     Ok(())
 }
 

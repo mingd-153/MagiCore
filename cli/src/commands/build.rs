@@ -5,7 +5,6 @@ use mg_ui::info;
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::Instant;
 
 use crate::bundler::{Bundler, BundlerConfig};
@@ -44,14 +43,7 @@ fn build_rust(root: &Path) -> Result<()> {
     let start = Instant::now();
     info("Detected Rust project — running cargo build...");
 
-    let status = std::process::Command::new("cargo")
-        .arg("build")
-        .current_dir(root)
-        .status()?;
-
-    if !status.success() {
-        bail!("cargo build failed");
-    }
+    run_allowlisted_tool(root, "cargo", &["build"])?;
 
     let elapsed = start.elapsed();
     mg_ui::success(&format!("Rust build completed in {:?}", elapsed));
@@ -136,7 +128,10 @@ async fn build_web(
         WebBuildTarget::NativeReady | WebBuildTarget::CompiledExecutable
     ) {
         if let Some(engine_crate) = find_native_engine_crate(root) {
-            let binary = build_native_engine(&engine_crate, matches!(resolved_target, WebBuildTarget::CompiledExecutable))?;
+            let binary = build_native_engine(
+                &engine_crate,
+                matches!(resolved_target, WebBuildTarget::CompiledExecutable),
+            )?;
             mg_ui::success(&format!("Native engine binary ready: {}", binary.display()));
         } else {
             info("No native engine crate detected for this project; compatibility artifact is still ready.");
@@ -216,24 +211,29 @@ fn run_framework_build_if_supported(root: &Path) -> Result<bool> {
     ));
 
     let local_bin = root.join("node_modules").join(".bin");
-    let mut command = Command::new(&program);
-    command
-        .args(&args)
-        .current_dir(root)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .env("PATH", prepend_path(&local_bin)?);
+    let mut env = vec![(
+        "PATH".to_string(),
+        prepend_path(&local_bin)?.to_string_lossy().to_string(),
+    )];
     for (key, value) in envs {
-        command.env(key, value);
+        env.push((
+            key.to_string_lossy().to_string(),
+            value.to_string_lossy().to_string(),
+        ));
     }
 
-    let status = command
-        .status()
+    let args = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        env,
+        clean_env: true,
+        ..Default::default()
+    };
+    mg_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
         .with_context(|| format!("failed to start build '{}'", program.display()))?;
-    if !status.success() {
-        bail!("framework build exited with status {}", status);
-    }
 
     Ok(true)
 }
@@ -242,20 +242,32 @@ type BuildLaunch = (PathBuf, Vec<OsString>, Vec<(OsString, OsString)>);
 
 fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<BuildLaunch>> {
     let launch = match tokens {
-        ["vite", "build"] => (node_runner(), node_bin_args(root, "vite", &["build"])?, vec![]),
-        ["vite", "build", rest @ ..] => {
-            (node_runner(), node_bin_args(root, "vite", &["build"])?
+        ["vite", "build"] => (
+            node_runner(),
+            node_bin_args(root, "vite", &["build"])?,
+            vec![],
+        ),
+        ["vite", "build", rest @ ..] => (
+            node_runner(),
+            node_bin_args(root, "vite", &["build"])?
                 .into_iter()
                 .chain(rest.iter().map(OsString::from))
-                .collect(), vec![])
-        }
-        ["next", "build"] => (node_runner(), node_bin_args(root, "next", &["build"])?, vec![]),
-        ["next", "build", rest @ ..] => {
-            (node_runner(), node_bin_args(root, "next", &["build"])?
+                .collect(),
+            vec![],
+        ),
+        ["next", "build"] => (
+            node_runner(),
+            node_bin_args(root, "next", &["build"])?,
+            vec![],
+        ),
+        ["next", "build", rest @ ..] => (
+            node_runner(),
+            node_bin_args(root, "next", &["build"])?
                 .into_iter()
                 .chain(rest.iter().map(OsString::from))
-                .collect(), vec![])
-        }
+                .collect(),
+            vec![],
+        ),
         ["nuxt", "build"] => (
             node_runner(),
             node_bin_args(root, "nuxt", &["build"])?,
@@ -270,7 +282,11 @@ fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<Bui
                 ),
             ],
         ),
-        ["astro", "build"] => (node_runner(), node_bin_args(root, "astro", &["build"])?, vec![]),
+        ["astro", "build"] => (
+            node_runner(),
+            node_bin_args(root, "astro", &["build"])?,
+            vec![],
+        ),
         ["remix", "vite:build"] => (
             node_runner(),
             node_bin_args(root, "remix", &["vite:build"])?,
@@ -290,21 +306,8 @@ fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<Bui
     Ok(Some(launch))
 }
 
-fn script_uses_external_package_manager(script: &str) -> Option<&'static str> {
-    let first = script.split_whitespace().next()?.trim();
-    match first {
-        "npm" => Some("npm"),
-        "pnpm" => Some("pnpm"),
-        "bun" => Some("bun"),
-        "yarn" => Some("yarn"),
-        "npx" => Some("npx"),
-        "bunx" => Some("bunx"),
-        _ => None,
-    }
-}
-
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
-    if let Some(pm) = script_uses_external_package_manager(script) {
+    if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(script) {
         bail!(
             "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MegaGate or framework-local binaries, not through another package manager.",
             script,
@@ -320,7 +323,10 @@ fn node_runner() -> PathBuf {
 }
 
 fn node_bin_args(project_root: &Path, bin_name: &str, args: &[&str]) -> Result<Vec<OsString>> {
-    let bin = project_root.join("node_modules").join(".bin").join(bin_name);
+    let bin = project_root
+        .join("node_modules")
+        .join(".bin")
+        .join(bin_name);
     if !bin.exists() {
         bail!(
             "Missing local executable '{}'. Run 'mg install-web' in '{}'.",
@@ -411,7 +417,10 @@ fn find_entry_point(root: &Path) -> Result<PathBuf> {
 fn find_native_engine_crate(root: &Path) -> Option<PathBuf> {
     let candidates = [
         root.join("crates").join("engine"),
-        root.join("apps").join("frontend").join("crates").join("engine"),
+        root.join("apps")
+            .join("frontend")
+            .join("crates")
+            .join("engine"),
     ];
 
     candidates
@@ -426,17 +435,12 @@ fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
         crate_dir.display()
     ));
 
-    let mut command = Command::new("cargo");
-    command.arg("build");
+    let mut args = vec!["build"];
     if release {
-        command.arg("--release");
+        args.push("--release");
     }
-    command.current_dir(crate_dir);
 
-    let status = command.status()?;
-    if !status.success() {
-        bail!("native engine cargo build failed");
-    }
+    run_allowlisted_tool(crate_dir, "cargo", &args)?;
 
     let binary_name = if cfg!(windows) {
         "mg-web-engine.exe"
@@ -457,6 +461,18 @@ fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
         start.elapsed()
     ));
     Ok(binary)
+}
+
+fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()> {
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".megagate").join("exec.log")),
+        clean_env: true,
+        ..Default::default()
+    };
+    let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    mg_exec::prelude::run(program, &args, &opts)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -511,7 +527,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let crate_dir = dir.path().join("crates").join("engine");
         fs::create_dir_all(crate_dir.join("src")).unwrap();
-        fs::write(crate_dir.join("Cargo.toml"), "[package]\nname=\"mg-web-engine\"\nversion=\"0.1.0\"\nedition=\"2021\"\n").unwrap();
+        fs::write(
+            crate_dir.join("Cargo.toml"),
+            "[package]\nname=\"mg-web-engine\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+        )
+        .unwrap();
 
         assert_eq!(find_native_engine_crate(dir.path()), Some(crate_dir));
     }
@@ -528,41 +548,35 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(vite.0, Path::new("node"));
-        assert_eq!(
-            vite.1,
-            {
-                let args = vite
-                    .1
-                    .iter()
-                    .map(|value| value.to_string_lossy().to_string())
-                    .collect::<Vec<_>>();
-                assert_eq!(args[0], "--preserve-symlinks");
-                assert_eq!(args[1], "--preserve-symlinks-main");
-                assert!(args[2].contains("node_modules"));
-                assert_eq!(args[3], "build");
-                vite.1.clone()
-            }
-        );
+        assert_eq!(vite.1, {
+            let args = vite
+                .1
+                .iter()
+                .map(|value| value.to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(args[0], "--preserve-symlinks");
+            assert_eq!(args[1], "--preserve-symlinks-main");
+            assert!(args[2].contains("node_modules"));
+            assert_eq!(args[3], "build");
+            vite.1.clone()
+        });
 
         let next = map_framework_build_script(dir.path(), &["next", "build"])
             .unwrap()
             .unwrap();
         assert_eq!(next.0, Path::new("node"));
-        assert_eq!(
-            next.1,
-            {
-                let args = next
-                    .1
-                    .iter()
-                    .map(|value| value.to_string_lossy().to_string())
-                    .collect::<Vec<_>>();
-                assert_eq!(args[0], "--preserve-symlinks");
-                assert_eq!(args[1], "--preserve-symlinks-main");
-                assert!(args[2].contains("node_modules"));
-                assert_eq!(args[3], "build");
-                next.1.clone()
-            }
-        );
+        assert_eq!(next.1, {
+            let args = next
+                .1
+                .iter()
+                .map(|value| value.to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(args[0], "--preserve-symlinks");
+            assert_eq!(args[1], "--preserve-symlinks-main");
+            assert!(args[2].contains("node_modules"));
+            assert_eq!(args[3], "build");
+            next.1.clone()
+        });
     }
 
     #[test]
@@ -573,5 +587,15 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("delegates to 'npm'"));
+    }
+
+    #[test]
+    fn framework_build_script_rejects_external_pm_wrappers_after_separator() {
+        let err = reject_external_package_manager_script(
+            "vite build && yarn install",
+            Path::new("/tmp/package.json"),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("delegates to 'yarn'"));
     }
 }

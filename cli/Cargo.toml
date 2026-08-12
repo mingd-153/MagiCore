@@ -26,9 +26,14 @@ mg-pack = { workspace = true }
 mg-publish = { workspace = true }
 mg-registry-server = { workspace = true }
 mg-oci = { workspace = true }
+mg-exec = { workspace = true }
 
 # Adapters (optional — per-core feature flags)
 mg-web-adapter = { path = "../adapters/web", optional = true }
+mg-lib-adapter = { path = "../adapters/lib", optional = true }
+mg-game-adapter = { path = "../adapters/game", optional = true }
+mg-iot-adapter = { path = "../adapters/iot", optional = true }
+mg-hardware-adapter = { path = "../adapters/hardware", optional = true }
 
 # CLI
 clap = { workspace = true }
@@ -74,6 +79,8 @@ blake3 = { workspace = true }
 # Utilities
 colored = { workspace = true }
 dirs = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
 crossterm = { workspace = true }
 tempfile = { workspace = true }
 
@@ -84,15 +91,16 @@ tracing-subscriber = { workspace = true }
 # Feature flags per core — used for per-core binary builds
 [features]
 default = ["all"]
-all      = ["web", "game", "ai", "clo", "cicd", "iot", "app", "lib"]
+all      = ["web", "game", "ai", "clo", "cicd", "iot", "app", "lib", "hardware"]
 web      = ["mg-web-adapter"]
-game     = []
+game     = ["mg-game-adapter"]
 ai       = []
 clo      = []
 cicd     = []
-iot      = []
+iot      = ["mg-iot-adapter"]
 app      = []
-lib      = []
+lib      = ["mg-lib-adapter"]
+hardware = ["mg-hardware-adapter"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

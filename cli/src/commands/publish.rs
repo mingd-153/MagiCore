@@ -6,9 +6,8 @@ use clap::Args;
 use semver::Version;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
-use mg_ui::info;
 use mg_config::npmrc::NpmRc;
 use mg_config::project::ProjectConfig;
 use mg_pack::ignore::select_files;
@@ -16,9 +15,12 @@ use mg_pack::manifest::{dep_fields, sanitize};
 use mg_pack::tarball::pack;
 use mg_publish::auth::resolve_auth;
 use mg_types::PublishSummary;
+use mg_ui::info;
 
 /// Default registry (hardcode warning — OK: default const, overrideable via config/env)
 const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org/";
+const DEFAULT_PUBLISH_LIFECYCLE_TIMEOUT_SECS: u64 = 300;
+const PUBLISH_LIFECYCLE_TIMEOUT_ENV: &str = "MG_PUBLISH_LIFECYCLE_TIMEOUT_SECS";
 
 #[derive(Args, Debug, Clone)]
 pub struct PublishArgs {
@@ -38,7 +40,10 @@ pub struct PublishArgs {
     pub ignore_scripts: bool,
     #[arg(long, help = "skip git checks")]
     pub no_git_checks: bool,
-    #[arg(long, help = "publish branch (default: current branch tracking remote)")]
+    #[arg(
+        long,
+        help = "publish branch (default: current branch tracking remote)"
+    )]
     pub publish_branch: Option<String>,
     #[arg(long, help = "all in one PUT (Phase 3)")]
     pub batch: bool,
@@ -54,14 +59,17 @@ pub struct PublishArgs {
     pub registry: Option<String>,
     #[arg(long, help = "override token (env MG_NPM_TOKEN recommended)")]
     pub token: Option<String>,
-}pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
+}
+pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     if recursive {
         let project_root = ProjectConfig::find_project_root(&cwd)
             .ok_or_else(|| anyhow!("Could not find project root — run mg init"))?;
         let mut workspaces = super::install::discover_workspace_projects(&project_root)?
-            .ok_or_else(|| anyhow!("--recursive requires megagate.workspace.toml (mode = \"monorepo\")"))?;
+            .ok_or_else(|| {
+                anyhow!("--recursive requires megagate.workspace.toml (mode = \"monorepo\")")
+            })?;
         workspaces = topo_sort_workspaces(workspaces)?;
         for ws in &workspaces {
             info(&format!("Publishing workspace: {}", ws.display()));
@@ -143,8 +151,15 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
         let mut v = Version::parse(&project.version)?;
         match bump {
             "patch" => v.patch += 1,
-            "minor" => { v.minor += 1; v.patch = 0; }
-            "major" => { v.major += 1; v.minor = 0; v.patch = 0; }
+            "minor" => {
+                v.minor += 1;
+                v.patch = 0;
+            }
+            "major" => {
+                v.major += 1;
+                v.minor = 0;
+                v.patch = 0;
+            }
             _ => {}
         }
         let new_v = v.to_string();
@@ -191,7 +206,11 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
 
     // 8. mg-pack: build tarball (filename dùng unscoped — scoped name chứa '/' làm tempdir join fail)
     let entry_prefix = format!("{}-{}", project.name, new_version);
-    let filename = format!("{}-{}.tgz", project.name.replace(['/', '@'], "-"), new_version);
+    let filename = format!(
+        "{}-{}.tgz",
+        project.name.replace(['/', '@'], "-"),
+        new_version
+    );
     let temp_dir = tempfile::tempdir()?;
     let tarball_path = temp_dir.path().join(filename);
     let pack_result = pack(&project_root, &tarball_path, &entry_prefix)?;
@@ -211,17 +230,37 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
 
     // 12. Publish PUT
     if !args.dry_run {
-        upload_tarball_client(&registry_url, &auth, &publish_name, &new_version, &tarball_path).await?;
+        upload_tarball_client(
+            &registry_url,
+            &auth,
+            &publish_name,
+            &new_version,
+            &tarball_path,
+        )
+        .await?;
         publish_put(
-            &registry_url, &auth, &publish_name, &new_version,
-            &sanitized.manifest, &dep_fields_map, &pack_result,
+            &registry_url,
+            &auth,
+            &publish_name,
+            &new_version,
+            &sanitized.manifest,
+            &dep_fields_map,
+            &pack_result,
             &args,
-        ).await?;
+        )
+        .await?;
     }
 
     // 13. Dist-tags
     if !args.dry_run && args.tag.as_deref() != Some("latest") {
-        set_dist_tag(&registry_url, &auth, &publish_name, &new_version, args.tag.as_deref().unwrap_or("latest")).await?;
+        set_dist_tag(
+            &registry_url,
+            &auth,
+            &publish_name,
+            &new_version,
+            args.tag.as_deref().unwrap_or("latest"),
+        )
+        .await?;
     }
 
     // 14. Output summary
@@ -242,10 +281,16 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     } else {
         println!("✓ Published {}@{}", summary.name, summary.version);
         println!("  tag: {}", summary.tag);
-        println!("  size: {} bytes (unpacked: {})", summary.size, summary.unpacked_size);
+        println!(
+            "  size: {} bytes (unpacked: {})",
+            summary.size, summary.unpacked_size
+        );
         println!("  shasum: {}", summary.shasum);
         println!("  integrity: {}", summary.integrity);
-        println!("  files: {}, entries: {}", summary.files, summary.entry_count);
+        println!(
+            "  files: {}, entries: {}",
+            summary.files, summary.entry_count
+        );
     }
 
     // Save updated version to mg.toml + package.json
@@ -260,32 +305,50 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
 /// Git checks — tree clean, on publish branch, remote not lagging
 fn git_checks(args: &PublishArgs) -> Result<()> {
     // Tree clean (except ignored)
-    let status = Command::new("git").args(["status", "--porcelain"]).output()?;
-    if !status.stdout.is_empty() {
+    let status = run_git_capture(&["status", "--porcelain"])?;
+    if !status.trim().is_empty() {
         bail!("Git tree not clean — commit or stash changes first (or --no-git-checks)");
     }
 
     // Current branch
     let branch = args.publish_branch.clone().unwrap_or_else(|| {
-        Command::new("git").args(["rev-parse", "--abbrev-ref", "HEAD"]).output()
-            .ok().and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().to_string())
+        run_git_capture(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .ok()
+            .map(|s| s.trim().to_string())
             .unwrap_or_default()
     });
 
     // Has upstream
-    let upstream = Command::new("git").args(["rev-parse", "--abbrev-ref", &format!("{}@{{upstream}}", branch)]).output();
-    if upstream.is_ok() && upstream.unwrap().status.success() {
+    let upstream_ref = format!("{}@{{upstream}}", branch);
+    let upstream = run_git_capture(&["rev-parse", "--abbrev-ref", &upstream_ref]);
+    if upstream.is_ok() {
         // Check lag
-        let lag = Command::new("git").args(["rev-list", "--count", &format!("HEAD..{}@{{upstream}}", branch)]).output()?;
-        if lag.status.success() {
-            let count = String::from_utf8_lossy(&lag.stdout).trim().parse::<usize>().unwrap_or(0);
-            if count > 0 {
-                bail!("Branch {} lags {} commits behind upstream — pull first", branch, count);
-            }
+        let rev_range = format!("HEAD..{}@{{upstream}}", branch);
+        let lag = run_git_capture(&["rev-list", "--count", &rev_range])?;
+        let count = lag.trim().parse::<usize>().unwrap_or(0);
+        if count > 0 {
+            bail!(
+                "Branch {} lags {} commits behind upstream — pull first",
+                branch,
+                count
+            );
         }
     }
 
     Ok(())
+}
+
+fn run_git_capture(args: &[&str]) -> Result<String> {
+    let args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let opts = mg_exec::prelude::ExecOptions {
+        clean_env: true,
+        ..Default::default()
+    };
+    let report = mg_exec::prelude::run("git", &args, &opts)?;
+    Ok(report.stdout_tail)
 }
 
 /// Select registry per 01 §2 priority
@@ -296,16 +359,25 @@ fn select_registry(
     args: &PublishArgs,
 ) -> Result<String> {
     // 1. --registry flag
-    if let Some(r) = &args.registry { return Ok(r.clone()); }
+    if let Some(r) = &args.registry {
+        return Ok(r.clone());
+    }
 
     // 2. publishConfig.registry in package.json
-    if let Some(url) = pkg_json.get("publishConfig").and_then(|p| p.get("registry")).and_then(|v| v.as_str()) {
+    if let Some(url) = pkg_json
+        .get("publishConfig")
+        .and_then(|p| p.get("registry"))
+        .and_then(|v| v.as_str())
+    {
         return Ok(url.to_string());
     }
 
     // 3. .npmrc registry / scope registry
     let npmrc = NpmRc::load(project_root)?;
-    let scope = pkg_json.get("name").and_then(|v| v.as_str()).and_then(|n| n.strip_prefix('@').map(|s| format!("@{}", s)));
+    let scope = pkg_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .and_then(|n| n.strip_prefix('@').map(|s| format!("@{}", s)));
     if let Some(url) = npmrc.registry_for(scope.as_deref()) {
         return Ok(url);
     }
@@ -321,14 +393,36 @@ fn select_registry(
 
 /// Run lifecycle script if defined
 fn run_lifecycle(pkg_json: &serde_json::Value, script: &str) -> Result<()> {
-    if let Some(cmd) = pkg_json.get("scripts").and_then(|s| s.get(script)).and_then(|v| v.as_str()) {
+    if let Some(cmd) = pkg_json
+        .get("scripts")
+        .and_then(|s| s.get(script))
+        .and_then(|v| v.as_str())
+    {
         println!("> {}: {}", script, cmd);
-        let status = Command::new("sh").args(["-c", cmd]).status()?;
-        if !status.success() {
-            bail!("Lifecycle script '{}' failed", script);
+        mg_exec::allowlist::reject_forbidden_pm_script(cmd)?;
+        let invocation = mg_exec::allowlist::parse_script_invocation(cmd)?;
+        let mut env = invocation.env;
+        if let Some(path) = std::env::var_os("PATH") {
+            env.push(("PATH".to_string(), path.to_string_lossy().to_string()));
         }
+        let opts = mg_exec::prelude::ExecOptions {
+            timeout: Some(publish_lifecycle_timeout()),
+            env,
+            clean_env: true,
+            ..Default::default()
+        };
+        mg_exec::prelude::run_inherited(&invocation.program, &invocation.args, &opts)?;
     }
     Ok(())
+}
+
+fn publish_lifecycle_timeout() -> Duration {
+    std::env::var(PUBLISH_LIFECYCLE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(DEFAULT_PUBLISH_LIFECYCLE_TIMEOUT_SECS))
 }
 
 /// Verify token with whoami endpoint (npmjs)
@@ -336,7 +430,11 @@ async fn verify_token(registry_url: &str, auth: &mg_publish::auth::Auth) -> Resu
     let client = reqwest::Client::new();
     let whoami_url = format!("{}/-/whoami", registry_url.trim_end_matches('/'));
     let req = client.get(&whoami_url);
-    let req = if let Some(h) = auth.header_value() { req.header("Authorization", h) } else { req };
+    let req = if let Some(h) = auth.header_value() {
+        req.header("Authorization", h)
+    } else {
+        req
+    };
     let resp = req.send().await?;
     let status = resp.status();
     if !status.is_success() {
@@ -347,9 +445,14 @@ async fn verify_token(registry_url: &str, auth: &mg_publish::auth::Auth) -> Resu
 
 /// Publish PUT to registry
 async fn publish_put(
-    registry_url: &str, auth: &mg_publish::auth::Auth, name: &str, version: &str,
-    manifest: &serde_json::Value, deps: &serde_json::Map<String, serde_json::Value>,
-    pack_result: &mg_pack::tarball::PackResult, args: &PublishArgs,
+    registry_url: &str,
+    auth: &mg_publish::auth::Auth,
+    name: &str,
+    version: &str,
+    manifest: &serde_json::Value,
+    deps: &serde_json::Map<String, serde_json::Value>,
+    pack_result: &mg_pack::tarball::PackResult,
+    args: &PublishArgs,
 ) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/{}", registry_url.trim_end_matches('/'), name);
@@ -360,7 +463,10 @@ async fn publish_put(
     body.insert("name".into(), serde_json::Value::String(name.into()));
     body.insert("dist-tags".into(), serde_json::json!({"latest": version}));
     body.insert("maintainers".into(), serde_json::json!([]));
-    body.insert("time".into(), serde_json::json!({"created": "", "modified": ""}));
+    body.insert(
+        "time".into(),
+        serde_json::json!({"created": "", "modified": ""}),
+    );
     body.insert("private".into(), serde_json::json!(false));
     let mut versions = serde_json::Map::new();
     let mut version_obj = manifest.clone();
@@ -373,37 +479,60 @@ async fn publish_put(
         "unpackedSize": pack_result.unpacked_size,
     }));
     for (k, v) in deps {
-        version_obj.as_object_mut().unwrap().insert(k.clone(), v.clone());
+        version_obj
+            .as_object_mut()
+            .unwrap()
+            .insert(k.clone(), v.clone());
     }
-    
+
     // Access field for scoped packages
     if let Some(access) = &args.access {
-        version_obj.as_object_mut().unwrap().insert("access".into(), serde_json::Value::String(access.clone()));
+        version_obj
+            .as_object_mut()
+            .unwrap()
+            .insert("access".into(), serde_json::Value::String(access.clone()));
     }
-    
+
     // OTP
     if let Some(otp) = &args.otp {
         body.insert("otp".into(), serde_json::Value::String(otp.clone()));
     }
-    
+
     versions.insert(version.into(), version_obj);
     body.insert("versions".into(), serde_json::Value::Object(versions));
 
     let req = client.put(&url).json(&body);
-    let req = if let Some(h) = auth.header_value() { req.header("Authorization", h) } else { req };
+    let req = if let Some(h) = auth.header_value() {
+        req.header("Authorization", h)
+    } else {
+        req
+    };
     let resp = req.send().await?;
     let status = resp.status();
 
     if status.as_u16() == 409 {
         if args.force {
             // DELETE old version then retry
-            let del_url = format!("{}/-/{}-{}.tgz", registry_url.trim_end_matches('/'), name, version);
+            let del_url = format!(
+                "{}/-/{}-{}.tgz",
+                registry_url.trim_end_matches('/'),
+                name,
+                version
+            );
             let del_req = client.delete(&del_url);
-            let del_req = if let Some(h) = auth.header_value() { del_req.header("Authorization", h) } else { del_req };
+            let del_req = if let Some(h) = auth.header_value() {
+                del_req.header("Authorization", h)
+            } else {
+                del_req
+            };
             del_req.send().await?;
             // Retry PUT - need to rebuild request
             let body_retry = client.put(&url).json(&body);
-            let body_retry = if let Some(h) = auth.header_value() { body_retry.header("Authorization", h) } else { body_retry };
+            let body_retry = if let Some(h) = auth.header_value() {
+                body_retry.header("Authorization", h)
+            } else {
+                body_retry
+            };
             let retry = body_retry.send().await?;
             let retry_status = retry.status();
             if !retry_status.is_success() {
@@ -411,7 +540,10 @@ async fn publish_put(
                 bail!("Publish failed after force delete: {}", txt);
             }
         } else {
-            bail!("Version {} already exists — use --force to overwrite", version);
+            bail!(
+                "Version {} already exists — use --force to overwrite",
+                version
+            );
         }
     } else if !status.is_success() {
         let txt = resp.text().await?;
@@ -422,15 +554,28 @@ async fn publish_put(
 }
 
 async fn upload_tarball_client(
-    registry_url: &str, auth: &mg_publish::auth::Auth, name: &str, version: &str,
+    registry_url: &str,
+    auth: &mg_publish::auth::Auth,
+    name: &str,
+    version: &str,
     tarball_path: &std::path::Path,
 ) -> Result<()> {
     let client = reqwest::Client::new();
     let unscoped = name.rsplit('/').next().unwrap_or(name);
-    let url = format!("{}/{}/-/{}-{}.tgz", registry_url.trim_end_matches('/'), name, unscoped, version);
+    let url = format!(
+        "{}/{}/-/{}-{}.tgz",
+        registry_url.trim_end_matches('/'),
+        name,
+        unscoped,
+        version
+    );
     let data = fs::read(tarball_path)?;
     let req = client.put(&url).body(data);
-    let req = if let Some(h) = auth.header_value() { req.header("Authorization", h) } else { req };
+    let req = if let Some(h) = auth.header_value() {
+        req.header("Authorization", h)
+    } else {
+        req
+    };
     let resp = req.send().await?;
     let status = resp.status();
     if !status.is_success() {
@@ -441,12 +586,27 @@ async fn upload_tarball_client(
 }
 
 /// Set dist-tag
-async fn set_dist_tag(registry_url: &str, auth: &mg_publish::auth::Auth, name: &str, version: &str, tag: &str) -> Result<()> {
+async fn set_dist_tag(
+    registry_url: &str,
+    auth: &mg_publish::auth::Auth,
+    name: &str,
+    version: &str,
+    tag: &str,
+) -> Result<()> {
     let client = reqwest::Client::new();
-    let url = format!("{}/-/package/{}/dist-tags/{}", registry_url.trim_end_matches('/'), name, tag);
+    let url = format!(
+        "{}/-/package/{}/dist-tags/{}",
+        registry_url.trim_end_matches('/'),
+        name,
+        tag
+    );
     let body = serde_json::json!({ "version": version });
     let req = client.put(&url).json(&body);
-    let req = if let Some(h) = auth.header_value() { req.header("Authorization", h) } else { req };
+    let req = if let Some(h) = auth.header_value() {
+        req.header("Authorization", h)
+    } else {
+        req
+    };
     let resp = req.send().await?;
     let status = resp.status();
     if !status.is_success() {

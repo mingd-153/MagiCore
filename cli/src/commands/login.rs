@@ -84,7 +84,8 @@ pub async fn run(args: LoginArgs) -> Result<()> {
     let npmrc_path = if args.local {
         std::env::current_dir()?.join(".npmrc")
     } else {
-        PathBuf::from(dirs::home_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?).join(".npmrc")
+        PathBuf::from(dirs::home_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?)
+            .join(".npmrc")
     };
 
     NpmRc::save_auth_token(&npmrc_path, &host, token)?;

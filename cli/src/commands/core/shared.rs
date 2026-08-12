@@ -556,8 +556,9 @@ async fn enforce_audit_strict_policy(
 async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
     use mg_types::adapter::VulnerabilitySeverity;
 
-    let registry =
-        mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
+    let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new(
+        &crate::commands::web_registry_config::web_registry_url(),
+    );
     let now = OffsetDateTime::now_utc();
     let quarantine_cutoff = now - TimeDuration::hours(24);
 
@@ -594,11 +595,10 @@ async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
         .timeout(std::time::Duration::from_secs(30))
         .user_agent(format!("megagate/{}", env!("CARGO_PKG_VERSION")))
         .build()?;
-    let response = client
-        .post("https://registry.npmjs.org/-/npm/v1/security/advisories/bulk")
-        .json(&body)
-        .send()
-        .await?;
+    let advisory_url = crate::commands::web_registry_config::advisory_bulk_endpoint(
+        &crate::commands::web_registry_config::web_registry_url(),
+    )?;
+    let response = client.post(advisory_url).json(&body).send().await?;
     if !response.status().is_success() {
         anyhow::bail!("--audit-strict advisory API returned {}", response.status());
     }
@@ -754,13 +754,31 @@ fn load_locked_graph(
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     let Some(lock) = read_checked_lockfile(project_root)? else {
+        let legacy = mg_lockfile::import::detect_legacy_lockfiles(project_root);
+        if !legacy.is_empty() {
+            let names = legacy
+                .iter()
+                .map(|lock| lock.file_name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            mg_ui::warning(&format!(
+                "Ignoring legacy lockfile(s): {names}. Run an explicit MegaGate lock migration before install if you want to seed mg.lock from them."
+            ));
+        }
         return Ok(None);
     };
     let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
-    if lock.core != adapter_name || !state_ok || lock.packages.is_empty() {
-        return Ok(None);
+    // Future lockfile versions must not be guessed (npm shrinkwrap.js:1003
+    // model): abort with a clear error instead of silently re-resolving.
+    if lock.version > mg_lockfile::migrate::current_version() {
+        anyhow::bail!(
+            "mg.lock version {} is newer than this version of mg (supports up to {}). \
+             Upgrade mg to read this lockfile.",
+            lock.version,
+            mg_lockfile::migrate::current_version()
+        );
     }
-    if lock.version != 1 {
+    if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
         return Ok(None);
     }
     if lock.packages.iter().any(|p| p.name.is_empty()) {
@@ -988,6 +1006,65 @@ mod tests {
 
         assert!(
             err.to_string().contains("invalid dependency id"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_locked_graph_ignores_legacy_pm_lockfile() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manifest = Manifest::new("demo", Ecosystem::Web);
+        manifest.add_dep(
+            DependencySpec::new(
+                PackageName::new("left-pad").unwrap(),
+                VersionRange::parse("^1.3.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+        std::fs::write(
+            root.path().join("package-lock.json"),
+            r#"{
+  "name": "demo",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "demo", "dependencies": { "left-pad": "^1.3.0" } },
+    "node_modules/left-pad": { "version": "1.3.0", "integrity": "sha512-abc" }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let graph = load_locked_graph(root.path(), "web", &manifest).unwrap();
+
+        assert!(graph.is_none());
+        assert!(
+            !root.path().join("mg.lock").exists(),
+            "legacy lockfiles must not become mg.lock without an explicit migration command"
+        );
+    }
+
+    #[test]
+    fn test_load_locked_graph_fails_closed_on_future_version() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = Manifest::new("demo", Ecosystem::Web);
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.version = 99;
+        lock.resolution = ResolutionMeta {
+            state: "locked".into(),
+            store: "megagate".into(),
+            package_count: 0,
+        };
+        std::fs::write(
+            root.path().join("mg.lock"),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+
+        let err = load_locked_graph(root.path(), "web", &manifest).unwrap_err();
+        assert!(
+            err.to_string().contains("newer than this version"),
             "unexpected error: {err}"
         );
     }
@@ -1302,7 +1379,8 @@ pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
         .map(|v| v.trim().to_ascii_lowercase());
     match env_val.as_deref() {
         Some("1" | "true" | "yes" | "on") => false,
-        Some(_) => true,
-        None => true,
+        Some("0" | "false" | "no" | "off" | "legacy" | "flat") => true,
+        Some(_) => false,
+        None => false,
     }
 }

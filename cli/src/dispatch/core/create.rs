@@ -14,6 +14,7 @@ pub fn matches(command: &CoreCommand) -> bool {
         CoreCommand::CreateIot { .. } => true,
         CoreCommand::CreateApp { .. } => true,
         CoreCommand::CreateLib { .. } => true,
+        CoreCommand::CreateHardware { .. } => true,
         _ => false,
     }
 }
@@ -55,6 +56,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         CoreCommand::CreateLib { project_name } => {
             commands::core::library::create::run(&project_name).await
         }
+        CoreCommand::CreateHardware {
+            framework,
+            project_name,
+        } => commands::core::hardware::create::run(&framework, &project_name).await,
         _ => unreachable!("non-create command routed to create dispatcher"),
     }
 }

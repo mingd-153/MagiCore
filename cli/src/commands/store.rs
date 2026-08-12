@@ -28,10 +28,7 @@ pub struct PruneReport {
 }
 
 fn store_db_for(project_root: &Path) -> Result<PathBuf> {
-    let store_root = project_root
-        .join(".megagate")
-        .join("cache")
-        .join("web");
+    let store_root = project_root.join(".megagate").join("cache").join("web");
     Ok(store_root.join("store.db"))
 }
 
@@ -64,10 +61,7 @@ fn prune_unreferenced(project_root: &Path, dry_run: bool) -> Result<PruneReport>
     let db = Database::open(&store_db_for(project_root)?)?;
     let unreferenced = db.list_unreferenced()?;
     let mut report = PruneReport {
-        unreferenced: unreferenced
-            .iter()
-            .map(|id| id.to_string())
-            .collect(),
+        unreferenced: unreferenced.iter().map(|id| id.to_string()).collect(),
         removed: Vec::new(),
         removed_bytes: 0,
         dry_run,
@@ -106,9 +100,11 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                println!("Store prune {}: {} unreferenced package(s)",
+                println!(
+                    "Store prune {}: {} unreferenced package(s)",
                     if dry_run { "(dry-run)" } else { "(pruned)" },
-                    report.unreferenced.len());
+                    report.unreferenced.len()
+                );
                 for removed in &report.removed {
                     println!("  removed {removed}");
                 }
