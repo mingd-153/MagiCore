@@ -107,6 +107,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             )
             .await
         }
+        CoreCommand::AddHardware { packages } => commands::core::hardware::add(packages).await,
         CoreCommand::RemoveWeb { packages, install } => {
             commands::core::web::remove(packages, install).await
         }
@@ -125,6 +126,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         CoreCommand::ListIot => commands::core::iot::list().await,
         CoreCommand::ListApp => commands::core::app::list().await,
         CoreCommand::ListLib => commands::core::library::list().await,
+        CoreCommand::ListHardware => commands::core::hardware::list().await,
         CoreCommand::UpdateWeb { packages, install } => {
             commands::core::web::update(packages, install).await
         }

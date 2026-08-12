@@ -65,6 +65,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Publish { .. } => "publish",
         Commands::Patch { .. } => "patch",
         Commands::Dedupe { .. } => "dedupe",
+        Commands::Template { .. } => "template",
         Commands::Store { .. } => "store",
         Commands::Login { .. } => "login",
         Commands::Registry { .. } => "registry",
@@ -92,6 +93,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::CreateIot { .. } => "create-iot",
         Commands::CreateApp { .. } => "create-app",
         Commands::CreateLib { .. } => "create-lib",
+        Commands::CreateHardware { .. } => "create-hardware",
         Commands::InstallWeb { .. } => "install-web",
         Commands::InstallGame { .. } => "install-game",
         Commands::InstallAi { .. } => "install-ai",
@@ -100,6 +102,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::InstallIot { .. } => "install-iot",
         Commands::InstallApp { .. } => "install-app",
         Commands::InstallLib { .. } => "install-lib",
+        Commands::InstallHardware { .. } => "install-hardware",
         Commands::AddWeb { .. } => "add-web",
         Commands::AddGame { .. } => "add-game",
         Commands::AddAi { .. } => "add-ai",
@@ -108,6 +111,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::AddIot { .. } => "add-iot",
         Commands::AddApp { .. } => "add-app",
         Commands::AddLib { .. } => "add-lib",
+        Commands::AddHardware { .. } => "add-hardware",
         Commands::RemoveWeb { .. } => "remove-web",
         Commands::RemoveGame { .. } => "remove-game",
         Commands::RemoveAi { .. } => "remove-ai",
@@ -124,6 +128,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::ListIot => "list-iot",
         Commands::ListApp => "list-app",
         Commands::ListLib => "list-lib",
+        Commands::ListHardware => "list-hardware",
         Commands::UpdateWeb { .. } => "update-web",
         Commands::UpdateGame { .. } => "update-game",
         Commands::UpdateAi { .. } => "update-ai",
@@ -242,6 +247,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
         Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
         Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
+        Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
         _ => None,
     };
 
@@ -302,6 +308,13 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             project_name,
         }),
         Commands::CreateLib { project_name } => Some(CoreCommand::CreateLib { project_name }),
+        Commands::CreateHardware {
+            framework,
+            project_name,
+        } => Some(CoreCommand::CreateHardware {
+            framework,
+            project_name,
+        }),
         Commands::InstallWeb {
             packages,
             frozen,
@@ -324,6 +337,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::InstallIot { packages } => Some(CoreCommand::InstallIot { packages }),
         Commands::InstallApp { packages } => Some(CoreCommand::InstallApp { packages }),
         Commands::InstallLib { packages } => Some(CoreCommand::InstallLib { packages }),
+        Commands::InstallHardware { packages } => Some(CoreCommand::InstallHardware { packages }),
         Commands::AddWeb {
             packages,
             dev,
@@ -462,6 +476,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             no_save,
             global,
         }),
+        Commands::AddHardware { packages } => Some(CoreCommand::AddHardware { packages }),
         Commands::RemoveWeb {
             packages,
             no_install,
@@ -484,6 +499,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::ListIot => Some(CoreCommand::ListIot),
         Commands::ListApp => Some(CoreCommand::ListApp),
         Commands::ListLib => Some(CoreCommand::ListLib),
+        Commands::ListHardware => Some(CoreCommand::ListHardware),
         Commands::UpdateWeb { packages, install } => {
             Some(CoreCommand::UpdateWeb { packages, install })
         }
@@ -628,6 +644,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
                 no_save,
                 global,
             },
+            Some("hardware") => CoreCommand::AddHardware { packages },
             Some("lib") => CoreCommand::AddLib {
                 packages,
                 dev,
@@ -688,6 +705,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             Some("iot") => CoreCommand::ListIot,
             Some("app") => CoreCommand::ListApp,
             Some("lib") => CoreCommand::ListLib,
+            Some("hardware") => CoreCommand::ListHardware,
             _ => CoreCommand::ListWeb,
         }),
         _ => unreachable!("Unhandled command"),
@@ -704,8 +722,8 @@ mod tests {
             frozen: false,
             ignore_scripts: false,
             allow_scripts: false,
-        prefer_dedupe: false,
-        repair: false,
+            prefer_dedupe: false,
+            repair: false,
         };
         assert!(reject_unsupported_audit_strict(&install).is_ok());
 

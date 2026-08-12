@@ -90,6 +90,9 @@ pub enum CommonCommand {
     Store {
         cmd: crate::commands::store::StoreCmd,
     },
+    Template {
+        cmd: crate::commands::template::TemplateCmd,
+    },
     Login {
         registry: Option<String>,
         username: Option<String>,
@@ -138,6 +141,10 @@ pub enum CoreCommand {
     CreateLib {
         project_name: String,
     },
+    CreateHardware {
+        framework: String,
+        project_name: String,
+    },
     InstallWeb {
         packages: Vec<String>,
         frozen: bool,
@@ -165,6 +172,9 @@ pub enum CoreCommand {
         packages: Vec<String>,
     },
     InstallLib {
+        packages: Vec<String>,
+    },
+    InstallHardware {
         packages: Vec<String>,
     },
     AddWeb {
@@ -240,6 +250,9 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
+    AddHardware {
+        packages: Vec<String>,
+    },
     RemoveWeb {
         packages: Vec<String>,
         install: bool,
@@ -273,6 +286,7 @@ pub enum CoreCommand {
     ListIot,
     ListApp,
     ListLib,
+    ListHardware,
     UpdateWeb {
         packages: Vec<String>,
         install: bool,
@@ -367,9 +381,28 @@ impl TryFrom<Commands> for DispatchCommand {
                 token,
             }),
             Commands::Patch { cmd } => Some(CommonCommand::Patch { cmd }),
-            Commands::Dedupe { dry_run, prefer_latest, json } => Some(CommonCommand::Dedupe { dry_run, prefer_latest, json }),
+            Commands::Dedupe {
+                dry_run,
+                prefer_latest,
+                json,
+            } => Some(CommonCommand::Dedupe {
+                dry_run,
+                prefer_latest,
+                json,
+            }),
             Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
-            Commands::Login { registry, username, password, local } => Some(CommonCommand::Login { registry, username, password, local }),
+            Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
+            Commands::Login {
+                registry,
+                username,
+                password,
+                local,
+            } => Some(CommonCommand::Login {
+                registry,
+                username,
+                password,
+                local,
+            }),
             Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
             Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
             Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
@@ -567,6 +600,7 @@ impl TryFrom<Commands> for DispatchCommand {
                     Some("iot") => SomeCore(CoreCommand::ListIot),
                     Some("app") => SomeCore(CoreCommand::ListApp),
                     Some("lib") => SomeCore(CoreCommand::ListLib),
+                    Some("hardware") => SomeCore(CoreCommand::ListHardware),
                     _ => SomeCore(CoreCommand::ListWeb),
                 }
             }
@@ -820,6 +854,7 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::ListIot => SomeCore(CoreCommand::ListIot),
             Commands::ListApp => SomeCore(CoreCommand::ListApp),
             Commands::ListLib => SomeCore(CoreCommand::ListLib),
+            Commands::ListHardware => SomeCore(CoreCommand::ListHardware),
             Commands::UpdateWeb { packages, install } => {
                 SomeCore(CoreCommand::UpdateWeb { packages, install })
             }

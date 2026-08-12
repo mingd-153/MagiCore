@@ -3,6 +3,8 @@ use anyhow::Result;
 use serde::Serialize;
 
 #[cfg(feature = "web")]
+use crate::commands::web_registry_config::web_registry_url;
+#[cfg(feature = "web")]
 use crate::context::ProjectContext;
 #[cfg(feature = "web")]
 use mg_ui::{info, success};
@@ -43,8 +45,7 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
             ));
         }
 
-        let registry =
-            mg_web_adapter::native::npm_registry::NpmRegistry::new("https://registry.npmjs.org");
+        let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
 
         let mut outdated_pkgs: Vec<OutdatedPkg> = Vec::new();
 

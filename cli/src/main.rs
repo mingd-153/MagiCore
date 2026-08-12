@@ -89,7 +89,10 @@ pub(crate) enum Commands {
         ignore_scripts: bool,
         #[arg(long, help = "skip git checks")]
         no_git_checks: bool,
-        #[arg(long, help = "publish branch (default: current branch tracking remote)")]
+        #[arg(
+            long,
+            help = "publish branch (default: current branch tracking remote)"
+        )]
         publish_branch: Option<String>,
         #[arg(long, help = "all in one PUT (Phase 3)")]
         batch: bool,
@@ -125,7 +128,8 @@ pub(crate) enum Commands {
 
     // ── Registry (Phase 3) ──────────────────────────────────────────
     #[command(about = "Login to a registry (adduser flow, save token to .npmrc)")]
-    Login {        #[arg(long, help = "registry URL (default: config or npmjs)")]
+    Login {
+        #[arg(long, help = "registry URL (default: config or npmjs)")]
         registry: Option<String>,
         #[arg(long, help = "username (prompt if omitted)")]
         username: Option<String>,
@@ -205,7 +209,10 @@ pub(crate) enum Commands {
         ignore_scripts: bool,
         #[arg(long, help = "Allow dependency lifecycle scripts")]
         allow_scripts: bool,
-        #[arg(long, help = "Prefer reusing installed versions instead of latest (dedupe, opt-in)")]
+        #[arg(
+            long,
+            help = "Prefer reusing installed versions instead of latest (dedupe, opt-in)"
+        )]
         prefer_dedupe: bool,
         #[arg(long, help = "Re-link dangling symlinks in node_modules")]
         repair: bool,
@@ -214,6 +221,11 @@ pub(crate) enum Commands {
     Store {
         #[command(subcommand)]
         cmd: crate::commands::store::StoreCmd,
+    },
+    #[command(about = "Manage kernel templates (publish/fetch — registry-backed)")]
+    Template {
+        #[command(subcommand)]
+        cmd: crate::commands::template::TemplateCmd,
     },
     #[command(about = "Add dependencies (auto-detect core)")]
     Add {
@@ -282,7 +294,11 @@ pub(crate) enum Commands {
         #[command(flatten)]
         flags: crate::commands::core::scaffold_flags::ScaffoldFlags,
     },
-    #[command(name = "create-game", about = "Scaffold a new game project", hide = true)]
+    #[command(
+        name = "create-game",
+        about = "Scaffold a new game project",
+        hide = true
+    )]
     CreateGame {
         framework: String,
         project_name: String,
@@ -292,12 +308,20 @@ pub(crate) enum Commands {
         framework: String,
         project_name: String,
     },
-    #[command(name = "create-clo", about = "Scaffold a new cloud project", hide = true)]
+    #[command(
+        name = "create-clo",
+        about = "Scaffold a new cloud project",
+        hide = true
+    )]
     CreateClo {
         framework: String,
         project_name: String,
     },
-    #[command(name = "create-cicd", about = "Scaffold a new CI/CD project", hide = true)]
+    #[command(
+        name = "create-cicd",
+        about = "Scaffold a new CI/CD project",
+        hide = true
+    )]
     CreateCicd {
         framework: String,
         project_name: String,
@@ -312,8 +336,21 @@ pub(crate) enum Commands {
         framework: String,
         project_name: String,
     },
-    #[command(name = "create-lib", about = "Scaffold a new library project", hide = true)]
+    #[command(
+        name = "create-lib",
+        about = "Scaffold a new library project",
+        hide = true
+    )]
     CreateLib { project_name: String },
+    #[command(
+        name = "create-hardware",
+        about = "Scaffold hardware packages (optimizer/bench)",
+        hide = true
+    )]
+    CreateHardware {
+        framework: String,
+        project_name: String,
+    },
 
     // ── Per-core: install-<core> ───────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -326,25 +363,50 @@ pub(crate) enum Commands {
         ignore_scripts: bool,
         #[arg(long, help = "Allow dependency lifecycle scripts")]
         allow_scripts: bool,
-        #[arg(long, help = "Prefer reusing installed versions instead of latest (dedupe, opt-in)")]
+        #[arg(
+            long,
+            help = "Prefer reusing installed versions instead of latest (dedupe, opt-in)"
+        )]
         prefer_dedupe: bool,
         #[arg(long, help = "Re-link dangling symlinks in node_modules")]
         repair: bool,
     },
-    #[command(name = "install-game", about = "Install game dependencies", hide = true)]
+    #[command(
+        name = "install-game",
+        about = "Install game dependencies",
+        hide = true
+    )]
     InstallGame { packages: Vec<String> },
     #[command(name = "install-ai", about = "Install AI dependencies", hide = true)]
     InstallAi { packages: Vec<String> },
-    #[command(name = "install-clo", about = "Install cloud dependencies", hide = true)]
+    #[command(
+        name = "install-clo",
+        about = "Install cloud dependencies",
+        hide = true
+    )]
     InstallClo { packages: Vec<String> },
-    #[command(name = "install-cicd", about = "Install CI/CD dependencies", hide = true)]
+    #[command(
+        name = "install-cicd",
+        about = "Install CI/CD dependencies",
+        hide = true
+    )]
     InstallCicd { packages: Vec<String> },
     #[command(name = "install-iot", about = "Install IoT dependencies", hide = true)]
     InstallIot { packages: Vec<String> },
     #[command(name = "install-app", about = "Install app dependencies", hide = true)]
     InstallApp { packages: Vec<String> },
-    #[command(name = "install-lib", about = "Install library dependencies", hide = true)]
+    #[command(
+        name = "install-lib",
+        about = "Install library dependencies",
+        hide = true
+    )]
     InstallLib { packages: Vec<String> },
+    #[command(
+        name = "install-hardware",
+        about = "Install hardware packages (optimizer/bench)",
+        hide = true
+    )]
+    InstallHardware { packages: Vec<String> },
 
     // ── Per-core: add-<core> ───────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -486,6 +548,15 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
+    #[command(
+        name = "add-hardware",
+        about = "Add hardware packages (optimizer/bench)",
+        hide = true
+    )]
+    AddHardware {
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
 
     // ── Per-core: remove-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -508,7 +579,11 @@ pub(crate) enum Commands {
     RemoveIot { packages: Vec<String> },
     #[command(name = "remove-app", about = "Remove app dependencies", hide = true)]
     RemoveApp { packages: Vec<String> },
-    #[command(name = "remove-lib", about = "Remove library dependencies", hide = true)]
+    #[command(
+        name = "remove-lib",
+        about = "Remove library dependencies",
+        hide = true
+    )]
     RemoveLib { packages: Vec<String> },
 
     // ── Per-core: list-<core> ──────────────────────────────────
@@ -529,6 +604,8 @@ pub(crate) enum Commands {
     ListApp,
     #[command(name = "list-lib", about = "List library packages", hide = true)]
     ListLib,
+    #[command(name = "list-hardware", about = "List hardware packages", hide = true)]
+    ListHardware,
 
     // ── Per-core: update-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -794,8 +871,72 @@ mod tests {
     #[test]
     fn test_available_cores_matches_build_shape() {
         let available = crate::factory::available_cores();
-        #[cfg(feature = "web")]
+
+        #[cfg(all(feature = "web", not(feature = "lib")))]
         assert_eq!(available, vec![("web", "🌐  Web application")]);
+
+        #[cfg(all(feature = "web", feature = "lib", not(feature = "game")))]
+        assert_eq!(
+            available,
+            vec![
+                ("web", "🌐  Web application"),
+                ("lib", "📚  Library (ts / rust / python)")
+            ]
+        );
+
+        #[cfg(all(
+            feature = "web",
+            feature = "lib",
+            feature = "game",
+            not(feature = "iot")
+        ))]
+        assert_eq!(
+            available,
+            vec![
+                ("web", "🌐  Web application"),
+                ("lib", "📚  Library (ts / rust / python)"),
+                ("game", "🎮  Game (bevy / godot / unity / unreal)")
+            ]
+        );
+
+        #[cfg(all(
+            feature = "web",
+            feature = "lib",
+            feature = "game",
+            feature = "iot",
+            not(feature = "hardware")
+        ))]
+        assert_eq!(
+            available,
+            vec![
+                ("web", "🌐  Web application"),
+                ("lib", "📚  Library (ts / rust / python)"),
+                ("game", "🎮  Game (bevy / godot / unity / unreal)"),
+                ("iot", "📡  IoT (esp32-rust / platformio / zephyr)")
+            ]
+        );
+
+        #[cfg(all(
+            feature = "web",
+            feature = "lib",
+            feature = "game",
+            feature = "iot",
+            feature = "hardware"
+        ))]
+        assert_eq!(
+            available,
+            vec![
+                ("web", "🌐  Web application"),
+                ("lib", "📚  Library (ts / rust / python)"),
+                ("game", "🎮  Game (bevy / godot / unity / unreal)"),
+                ("iot", "📡  IoT (esp32-rust / platformio / zephyr)"),
+                (
+                    "hardware",
+                    "⚙️  Hardware (optimizer/bench — GPU/CPU acceleration)"
+                )
+            ]
+        );
+
         #[cfg(not(feature = "web"))]
         assert!(available.is_empty());
     }

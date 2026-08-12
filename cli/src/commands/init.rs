@@ -7,7 +7,7 @@ use crate::wizard::web::WebWizard;
 use anyhow::Result;
 use mg_config::project::ProjectConfig;
 use mg_ui::{print_banner, print_next_steps, section};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// mg init — create a new project with mg.toml
 pub async fn run(template: Option<String>) -> Result<()> {
@@ -16,6 +16,8 @@ pub async fn run(template: Option<String>) -> Result<()> {
     if let Some(t) = template {
         let mut config = if t == "web" {
             WebWizard::run()
+        } else if t == "hardware" {
+            crate::wizard::hardware::HardwareWizard::run()
         } else {
             ScaffoldConfig {
                 core: t.clone(),
@@ -40,6 +42,11 @@ pub async fn run(template: Option<String>) -> Result<()> {
                     config.features = features.into_iter().map(|a| a.value).collect();
                 }
             }
+        }
+        if t == "hardware" {
+            let project_dir = init_hardware(&config).await?;
+            write_mg_toml(&project_dir, &config)?;
+            return Ok(());
         }
         let project_dir = Scaffolder::scaffold(&config)?;
         write_mg_toml(&project_dir, &config)?;
@@ -70,7 +77,11 @@ pub async fn run(template: Option<String>) -> Result<()> {
     }
 
     section("Creating project...", 4, 4);
-    let project_dir = Scaffolder::scaffold(&config)?;
+    let project_dir = if config.core == "hardware" {
+        init_hardware(&config).await?
+    } else {
+        Scaffolder::scaffold(&config)?
+    };
 
     write_mg_toml(&project_dir, &config)?;
 
@@ -80,6 +91,22 @@ pub async fn run(template: Option<String>) -> Result<()> {
 
     print_next_steps(&config.project_name);
     Ok(())
+}
+
+/// hardware core: tạo root project + materialize package vào subfolder (giống add-hardware),
+/// để mg.toml nằm ở root và list-hardware detect được package.
+async fn init_hardware(config: &ScaffoldConfig) -> Result<PathBuf> {
+    let root = std::env::current_dir()
+        .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {e}"))?
+        .join(&config.project_name);
+    std::fs::create_dir_all(&root)?;
+    let framework = config
+        .frameworks
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("optimizer");
+    crate::commands::core::hardware::materialize_template(&root, framework).await?;
+    Ok(root)
 }
 
 fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
@@ -125,6 +152,11 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
             cfg.project_name = ask_project_name();
             let (features, show_multi) = ask_web_features(&cfg);
             (cfg, features, show_multi)
+        }
+        "hardware" => {
+            let mut cfg = crate::wizard::hardware::HardwareWizard::run();
+            cfg.project_name = ask_project_name();
+            (cfg, Vec::new(), false)
         }
         _ => {
             let name = ask_project_name();
@@ -175,9 +207,7 @@ async fn seed_web_deps(project_dir: &Path, config: &ScaffoldConfig) -> Result<()
             let backend = config.frameworks.get(1).map(|b| parse_framework_request(b));
             enrich_web_project_manifest(project_dir, &frontend, backend.as_ref(), &flags).await
         }
-        _ => {
-            enrich_web_project_manifest(project_dir, &frontend, None, &flags).await
-        }
+        _ => enrich_web_project_manifest(project_dir, &frontend, None, &flags).await,
     }
 }
 

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::process::Command;
 
 /// mg dlx <package[@version]> [args...] — download+execute a package without installing it permanently
 /// Similar to pnpm dlx / npx (but cached for reuse).
@@ -47,17 +46,15 @@ pub async fn run(package: String, args: Vec<String>) -> Result<()> {
             serde_json::to_string_pretty(&pkg_json)?,
         )?;
 
-        // Run mg install in this directory
+        // Run current MegaGate binary through mg-exec guard — chạy chính mg, không gọi PM ngoài.
         let mg_bin = std::env::current_exe()?;
-        let install_status = Command::new(&mg_bin)
-            .arg("install")
-            .arg("--ignore-scripts")
-            .current_dir(&pkg_dir)
-            .status()?;
-
-        if !install_status.success() {
-            anyhow::bail!("dlx: failed to install '{}'", package);
-        }
+        let install_args = vec!["install".to_string(), "--ignore-scripts".to_string()];
+        let install_opts = mg_exec::prelude::ExecOptions {
+            cwd: Some(pkg_dir.clone()),
+            clean_env: true,
+            ..Default::default()
+        };
+        mg_exec::prelude::run_project_binary_inherited(&mg_bin, &install_args, &install_opts)?;
     }
 
     // Find the binary
@@ -76,15 +73,19 @@ pub async fn run(package: String, args: Vec<String>) -> Result<()> {
 
     mg_ui::info(&format!("$ {} {}", bin_path.display(), args.join(" ")));
 
-    let status = Command::new(&bin_path)
-        .args(&args)
-        .current_dir(std::env::current_dir()?)
-        .status()?;
-
-    if !status.success() {
-        let code = status.code().unwrap_or(1);
-        std::process::exit(code);
-    }
+    let cwd = std::env::current_dir()?;
+    let bin_path_env = std::env::join_paths([bin_dir.clone()])?;
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(cwd.clone()),
+        log_path: Some(cwd.join(".megagate").join("exec.log")),
+        clean_env: true,
+        env: vec![(
+            "PATH".to_string(),
+            bin_path_env.to_string_lossy().to_string(),
+        )],
+        ..Default::default()
+    };
+    mg_exec::prelude::run_project_binary(&bin_path, &args, &opts)?;
 
     Ok(())
 }

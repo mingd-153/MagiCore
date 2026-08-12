@@ -72,12 +72,18 @@ pub async fn run(args: RegistryArgs) -> Result<()> {
         } => {
             let _ = tracing_subscriber::fmt()
                 .with_env_filter(
-                    EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("info")),
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
                 )
                 .try_init(); // main.rs đã init global — không panic nếu set rồi
-            mg_registry_server::serve(host, port, store_dir, admin_token, max_body_size, rate_limit)
-                .await
+            mg_registry_server::serve(
+                host,
+                port,
+                store_dir,
+                admin_token,
+                max_body_size,
+                rate_limit,
+            )
+            .await
         }
         RegistryCmd::User { cmd } => match cmd {
             UserCmd::Add {
@@ -95,7 +101,12 @@ pub async fn run(args: RegistryArgs) -> Result<()> {
     }
 }
 
-async fn user_add(name: &str, password: Option<String>, scopes: &[String], registry: &str) -> Result<()> {
+async fn user_add(
+    name: &str,
+    password: Option<String>,
+    scopes: &[String],
+    registry: &str,
+) -> Result<()> {
     let password = match password {
         Some(p) => p,
         None => {
@@ -112,7 +123,8 @@ async fn user_add(name: &str, password: Option<String>, scopes: &[String], regis
         registry.trim_end_matches('/'),
         name
     );
-    let body = serde_json::json!({ "name": name, "password": password, "email": "", "scopes": scopes });
+    let body =
+        serde_json::json!({ "name": name, "password": password, "email": "", "scopes": scopes });
     let client = reqwest::Client::new();
     let resp = client.put(&url).json(&body).send().await?;
     let status = resp.status();
@@ -125,7 +137,10 @@ async fn user_add(name: &str, password: Option<String>, scopes: &[String], regis
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No token in response: {}", text))?;
     println!("User {} created. Token: {}", name, token);
-    println!("Set it in .npmrc via: mg login --username {} --password <pw>", name);
+    println!(
+        "Set it in .npmrc via: mg login --username {} --password <pw>",
+        name
+    );
     Ok(())
 }
 

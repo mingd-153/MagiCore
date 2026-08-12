@@ -8,6 +8,7 @@ pub mod app;
 pub mod cicd;
 pub mod clo;
 pub mod game;
+pub mod hardware;
 pub mod iot;
 pub mod lib;
 pub mod web;
@@ -28,6 +29,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
         "iot" => Ecosystem::Iot,
         "app" => Ecosystem::App,
         "lib" => Ecosystem::Lib,
+        "hardware" => Ecosystem::Hardware,
         other => anyhow::bail!("Unknown core: {}", other),
     };
 
@@ -36,6 +38,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
 
 pub async fn execute_audit(ecosystem: &Ecosystem) -> Result<()> {
     match ecosystem {
+        Ecosystem::Hardware => hardware::audit().await,
         Ecosystem::Web => anyhow::bail!("web audit requires project adapter context"),
         Ecosystem::Game => game::audit().await,
         Ecosystem::Ai => ai::audit().await,

@@ -10,7 +10,6 @@
 ///   - DepsCache là Arc<RwLock<HashMap>> để nhiều request đọc song song không block nhau.
 ///   - Mỗi package được bundle 1 lần duy nhất cho toàn session.
 ///   - CSS được xử lý riêng (trả về empty nếu dependency không có CSS).
-
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -125,7 +124,11 @@ impl DepsCache {
                 .iter()
                 .map(|e| e.to_string())
                 .collect();
-            warn!("failed to pre-bundle dep '{}': {}", pkg_name, msgs.join("; "));
+            warn!(
+                "failed to pre-bundle dep '{}': {}",
+                pkg_name,
+                msgs.join("; ")
+            );
             return None;
         }
 
