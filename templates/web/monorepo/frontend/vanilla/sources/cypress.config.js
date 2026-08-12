@@ -1,1 +1,0 @@
-../../../../frontend/vanilla/sources/cypress.config.js

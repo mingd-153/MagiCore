@@ -1,4 +1,0 @@
-[[files]]
-source = "megagate.workspace.toml"
-target = "megagate.workspace.toml"
-required_context = ["frontend_framework", "backend_language", "backend_framework"]

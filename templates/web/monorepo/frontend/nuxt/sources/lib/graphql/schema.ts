@@ -1,1 +1,0 @@
-../../../../../../frontend/nuxt/sources/src/lib/graphql/schema.ts

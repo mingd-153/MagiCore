@@ -1,1 +1,0 @@
-../../../../frontend/vue-vite/sources/cypress.config.ts

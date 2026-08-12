@@ -1,1 +1,0 @@
-../../../../frontend/angular/sources/postcss.config.mjs

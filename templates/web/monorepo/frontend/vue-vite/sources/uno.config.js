@@ -1,1 +1,0 @@
-../../../../frontend/vue-vite/sources/uno.config.js

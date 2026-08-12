@@ -1,1 +1,0 @@
-../../../../frontend/vanilla/sources/jest.config.ts

@@ -1,1 +1,0 @@
-../../../../frontend/astro/sources/vite-env.d.ts

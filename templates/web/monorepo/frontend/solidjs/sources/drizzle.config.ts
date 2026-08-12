@@ -1,1 +1,0 @@
-../../../../frontend/solidjs/sources/drizzle.config.ts

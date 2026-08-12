@@ -1,1 +1,0 @@
-../../../../frontend/nextjs/sources/tailwind.config.ts

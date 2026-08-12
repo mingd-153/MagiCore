@@ -1,1 +1,0 @@
-../../../../frontend/qwik/sources/vite.config.js

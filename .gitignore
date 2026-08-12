@@ -87,3 +87,9 @@ tools/core-web-lab/
 
 # System design docs (working drafts)
 sys-mg/
+
+# PM analysis clones — không commit source clone về
+PMs/*
+
+# Doc .md trong thư mục con (cấp 1) — không commit doc rải rác
+/*/*.md

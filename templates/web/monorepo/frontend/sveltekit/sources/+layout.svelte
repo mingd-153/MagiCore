@@ -1,1 +1,0 @@
-../../../../frontend/sveltekit/sources/+layout.svelte

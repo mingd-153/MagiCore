@@ -1,1 +1,0 @@
-../../../../frontend/angular/sources/drizzle.config.js

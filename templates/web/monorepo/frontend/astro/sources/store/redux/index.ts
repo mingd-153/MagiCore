@@ -1,1 +1,0 @@
-../../src/store/redux/index.ts

@@ -1,1 +1,0 @@
-../../../../frontend/vanilla/sources/i18n.config.ts

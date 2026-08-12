@@ -1,1 +1,0 @@
-{ "name": "@project/app", "private": true, "type": "module", "scripts": { "dev": "vite dev", "build": "vite build", "preview": "vite preview" } }

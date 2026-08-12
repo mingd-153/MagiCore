@@ -1,1 +1,0 @@
-../../../../frontend/nuxt/sources/uno.config.js

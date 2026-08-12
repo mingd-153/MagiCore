@@ -1,1 +1,0 @@
-../../../../frontend/angular/sources/sentry.client.config.js

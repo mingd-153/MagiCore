@@ -1,9 +1,0 @@
-[[files]]
-source = "package.json"
-target = "package.json"
-required_context = ["project_slug"]
-
-[[files]]
-source = "app.txt"
-target = "src/app.txt"
-required_context = ["framework"]

@@ -1,1 +1,0 @@
-../../../../frontend/astro/sources/cypress.config.ts

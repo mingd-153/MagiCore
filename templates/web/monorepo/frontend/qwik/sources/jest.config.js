@@ -1,1 +1,0 @@
-../../../../frontend/qwik/sources/jest.config.js

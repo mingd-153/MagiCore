@@ -1,1 +1,0 @@
-../../../../frontend/qwik/sources/uno.config.ts

@@ -1,9 +1,0 @@
-[[files]]
-source = "components/AppShell.jsx"
-target = "src/components/AppShell.jsx"
-exclude_features = ["typescript"]
-
-[[files]]
-source = "components/AppShell.tsx"
-target = "src/components/AppShell.tsx"
-include_features = ["typescript"]
