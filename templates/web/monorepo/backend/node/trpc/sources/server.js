@@ -1,1 +1,0 @@
-/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/backend/node/trpc/sources/server.js

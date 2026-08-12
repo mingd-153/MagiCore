@@ -1,8 +1,0 @@
-{
-  "buildCommand": "mg build",
-  "outputDirectory": "dist",
-  "devCommand": "mg dev",
-  "installCommand": "mg install",
-  "framework": "vite",
-  "regions": ["iad1"]
-}

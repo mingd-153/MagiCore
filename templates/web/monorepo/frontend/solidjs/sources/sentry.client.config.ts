@@ -1,1 +1,0 @@
-../../../../frontend/solidjs/sources/sentry.client.config.ts

@@ -1,1 +1,0 @@
-../../../../frontend/solidjs/sources/src/middleware.js

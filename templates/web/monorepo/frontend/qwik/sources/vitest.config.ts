@@ -1,1 +1,0 @@
-../../../../frontend/qwik/sources/vitest.config.ts

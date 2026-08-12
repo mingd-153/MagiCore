@@ -1,1 +1,0 @@
-../../../../frontend/angular/sources/vitest.config.js

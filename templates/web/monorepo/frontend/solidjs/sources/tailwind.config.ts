@@ -1,1 +1,0 @@
-../../../../frontend/solidjs/sources/tailwind.config.ts

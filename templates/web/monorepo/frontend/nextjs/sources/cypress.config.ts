@@ -1,1 +1,0 @@
-../../../../frontend/nextjs/sources/cypress.config.ts

@@ -1,1 +1,0 @@
-../../../../frontend/astro/sources/i18n.config.ts

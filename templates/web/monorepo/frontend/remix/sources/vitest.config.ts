@@ -1,1 +1,0 @@
-../../../../frontend/remix/sources/vitest.config.ts

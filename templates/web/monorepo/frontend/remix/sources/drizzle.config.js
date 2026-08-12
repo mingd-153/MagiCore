@@ -1,1 +1,0 @@
-../../../../frontend/remix/sources/drizzle.config.js

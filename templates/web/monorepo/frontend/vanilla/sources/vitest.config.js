@@ -1,1 +1,0 @@
-../../../../frontend/vanilla/sources/vitest.config.js

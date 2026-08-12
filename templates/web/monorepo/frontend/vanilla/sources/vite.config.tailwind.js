@@ -1,1 +1,0 @@
-../../../../frontend/vanilla/sources/vite.config.tailwind.js

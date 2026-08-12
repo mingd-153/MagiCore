@@ -1,1 +1,0 @@
-../../../../frontend/sveltekit/sources/vite-env.d.ts

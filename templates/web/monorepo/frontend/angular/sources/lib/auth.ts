@@ -1,1 +1,0 @@
-../src/lib/auth.ts
