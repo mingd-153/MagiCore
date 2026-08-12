@@ -117,7 +117,14 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
         let mut data = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut data)?;
 
-        files_map.insert(target.clone(), FileEntry { path: target, data, executable });
+        files_map.insert(
+            target.clone(),
+            FileEntry {
+                path: target,
+                data,
+                executable,
+            },
+        );
     }
 
     let files: Vec<_> = files_map.into_values().collect();
@@ -136,12 +143,14 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
 
     // Process all files in parallel: Hash (Blake3) -> Save to CAS -> Hardlink
     files.into_par_iter().try_for_each(|file| -> Result<()> {
-        let hash = store.import_bytes_with_exec(&file.data, file.executable)
+        let hash = store
+            .import_bytes_with_exec(&file.data, file.executable)
             .map_err(|e| anyhow::anyhow!("failed to import to CAS: {}", e))?;
-        
-        store.export_to(&hash, &file.path)
+
+        store
+            .export_to(&hash, &file.path)
             .map_err(|e| anyhow::anyhow!("failed to hardlink from CAS: {}", e))?;
-            
+
         Ok(())
     })?;
 

@@ -74,7 +74,8 @@ pub struct GlobalPaths {
 
 impl GlobalPaths {
     pub fn new() -> std::io::Result<Self> {
-        let home = dirs::home_dir().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home dir"))?;
+        let home = dirs::home_dir()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home dir"))?;
         let mg_dir = home.join(".megagate");
         Ok(Self {
             root: mg_dir.clone(),

@@ -8,9 +8,9 @@ pub mod timeout;
 pub mod tls;
 pub mod upload;
 
+pub use cache::HttpCache;
 pub use methods::HttpClient;
 pub use ratelimit::RateLimiter;
-pub use cache::HttpCache;
 pub use tls::TlsConfig;
 
 #[cfg(test)]

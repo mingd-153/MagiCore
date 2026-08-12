@@ -29,7 +29,14 @@ fn redacts_short_p_password() {
 #[test]
 fn redacts_key_and_auth_token() {
     let a = redact_args(&s(&["--api-key=K", "_authToken=abc", "--secret=x"]));
-    assert_eq!(a, s(&["--api-key=[REDACTED]", "_authToken=[REDACTED]", "--secret=[REDACTED]"]));
+    assert_eq!(
+        a,
+        s(&[
+            "--api-key=[REDACTED]",
+            "_authToken=[REDACTED]",
+            "--secret=[REDACTED]"
+        ])
+    );
 }
 
 #[test]

@@ -33,8 +33,14 @@ fn package_serializes() {
         dist_tags: Default::default(),
         maintainers: vec![],
         time: HashMap::from([
-            ("created".to_string(), "2024-01-01T00:00:00.000Z".to_string()),
-            ("modified".to_string(), "2024-01-01T00:00:00.000Z".to_string()),
+            (
+                "created".to_string(),
+                "2024-01-01T00:00:00.000Z".to_string(),
+            ),
+            (
+                "modified".to_string(),
+                "2024-01-01T00:00:00.000Z".to_string(),
+            ),
         ]),
         private: true,
     };
@@ -62,7 +68,12 @@ async fn param_route_minimal() {
 
     let app = Router::new().route("/a/:x", get(|| async {}));
     let resp = app
-        .oneshot(Request::builder().uri("/a/hello").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/a/hello")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -91,7 +102,11 @@ async fn npm_routes_match() {
         // matched, package missing -> handler 404
         ("/-/package/x/dist-tags", "GET", StatusCode::NOT_FOUND),
         // matched, body rejected -> 415
-        ("/-/package/x/dist-tags/latest", "PUT", StatusCode::UNSUPPORTED_MEDIA_TYPE),
+        (
+            "/-/package/x/dist-tags/latest",
+            "PUT",
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        ),
         // matched, no auth -> 401
         ("/-/whoami", "GET", StatusCode::UNAUTHORIZED),
         // matched, works without data
@@ -102,7 +117,13 @@ async fn npm_routes_match() {
     for (path, method, expected) in cases {
         let resp = app
             .clone()
-            .oneshot(Request::builder().uri(path).method(method).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .method(method)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -160,25 +181,41 @@ async fn pypi_upload_index_download() {
             Request::builder()
                 .uri("/pypi/legacy/")
                 .method("POST")
-                .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
                 .header("authorization", "Bearer adm")
                 .body(Body::from(body))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(upload.status(), StatusCode::OK, "upload: {}", upload.status());
+    assert_eq!(
+        upload.status(),
+        StatusCode::OK,
+        "upload: {}",
+        upload.status()
+    );
 
     // Simple index (PEP 503 HTML — pip cũ/mới đều đọc được)
     let idx = app
         .clone()
-        .oneshot(Request::builder().uri("/pypi/simple/demo-pkg/").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/pypi/simple/demo-pkg/")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(idx.status(), StatusCode::OK, "index: {}", idx.status());
     let idx_body = axum::body::to_bytes(idx.into_body(), 8192).await.unwrap();
     let idx_html = String::from_utf8(idx_body.to_vec()).unwrap();
-    assert!(idx_html.contains("Links for demo-pkg"), "index HTML: {idx_html}");
+    assert!(
+        idx_html.contains("Links for demo-pkg"),
+        "index HTML: {idx_html}"
+    );
     assert!(
         idx_html.contains("../../packages/demo-pkg/demo_pkg-1.0.0-py3-none-any.whl"),
         "index link: {idx_html}"
@@ -214,14 +251,21 @@ async fn pypi_upload_index_download() {
             Request::builder()
                 .uri("/pypi/legacy/")
                 .method("POST")
-                .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
                 .header("authorization", "Bearer adm")
                 .body(Body::from(bad))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(bad_req.status(), StatusCode::BAD_REQUEST, "sha mismatch rejected");
+    assert_eq!(
+        bad_req.status(),
+        StatusCode::BAD_REQUEST,
+        "sha mismatch rejected"
+    );
 }
 
 #[tokio::test]
@@ -255,7 +299,9 @@ async fn users_persist_across_restart() {
     let store = std::sync::Arc::new(RegistryStore::new(&path).await.unwrap());
     let auth = AuthService::new(None, store);
     auth.load_from_db().await.unwrap();
-    let user = auth.verify_token("tok-1").expect("user token survives restart");
+    let user = auth
+        .verify_token("tok-1")
+        .expect("user token survives restart");
     assert_eq!(user.name, "alice");
     assert_eq!(user.scopes, vec!["@org/*".to_string()]);
 
@@ -282,39 +328,74 @@ async fn oci_routes_match() {
     // HEAD blob on missing digest -> 404 from handler (route matched)
     let head = app
         .clone()
-        .oneshot(Request::builder().uri("/v2/ai/mymodel/blobs/sha256:deadbeef").method("HEAD").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/v2/ai/mymodel/blobs/sha256:deadbeef")
+                .method("HEAD")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
-    assert_eq!(head.status(), StatusCode::NOT_FOUND, "blob HEAD: {}", head.status());
+    assert_eq!(
+        head.status(),
+        StatusCode::NOT_FOUND,
+        "blob HEAD: {}",
+        head.status()
+    );
 
     // POST uploads -> 200 with location (route matched)
     let post = app
         .clone()
-        .oneshot(Request::builder().uri("/v2/ai/mymodel/blobs/uploads/").method("POST").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/v2/ai/mymodel/blobs/uploads/")
+                .method("POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
-    assert_eq!(post.status(), StatusCode::OK, "upload start: {}", post.status());
+    assert_eq!(
+        post.status(),
+        StatusCode::OK,
+        "upload start: {}",
+        post.status()
+    );
 
     // tags list -> 200
     let tags = app
         .clone()
-        .oneshot(Request::builder().uri("/v2/ai/mymodel/tags/list").method("GET").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/v2/ai/mymodel/tags/list")
+                .method("GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
-    assert_eq!(tags.status(), StatusCode::OK, "tags/list: {}", tags.status());
+    assert_eq!(
+        tags.status(),
+        StatusCode::OK,
+        "tags/list: {}",
+        tags.status()
+    );
 
     // catalog -> 200
     let cat = app
         .clone()
-        .oneshot(Request::builder().uri("/v2/_catalog").method("GET").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/v2/_catalog")
+                .method("GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(cat.status(), StatusCode::OK, "catalog: {}", cat.status());
 }
-
-
-
-
 
 #[test]
 fn scope_glob_matches() {
@@ -387,14 +468,28 @@ async fn npm_delete_version_and_oci_tags_catalog() {
         )
         .await
         .unwrap();
-    assert_eq!(del.status(), StatusCode::NO_CONTENT, "delete version: {}", del.status());
+    assert_eq!(
+        del.status(),
+        StatusCode::NO_CONTENT,
+        "delete version: {}",
+        del.status()
+    );
 
     let get = app
         .clone()
-        .oneshot(Request::builder().uri("/npm/demo-pkg").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/npm/demo-pkg")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
-    assert_eq!(get.status(), StatusCode::NOT_FOUND, "package gone after delete");
+    assert_eq!(
+        get.status(),
+        StatusCode::NOT_FOUND,
+        "package gone after delete"
+    );
 
     // OCI: put manifest → tags/list + catalog thấy repo
     let digest = "sha256:aaaa";
@@ -414,23 +509,48 @@ async fn npm_delete_version_and_oci_tags_catalog() {
         )
         .await
         .unwrap();
-    assert_eq!(mput.status(), StatusCode::CREATED, "manifest put: {}", mput.status());
+    assert_eq!(
+        mput.status(),
+        StatusCode::CREATED,
+        "manifest put: {}",
+        mput.status()
+    );
 
     let tags = app
         .clone()
-        .oneshot(Request::builder().uri("/v2/ai/m1/tags/list").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/v2/ai/m1/tags/list")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let tags_body = axum::body::to_bytes(tags.into_body(), 4096).await.unwrap();
     let tags_json: serde_json::Value = serde_json::from_slice(&tags_body).unwrap();
-    assert_eq!(tags_json["tags"], serde_json::json!(["1.0.0"]), "tags: {}", tags_json);
+    assert_eq!(
+        tags_json["tags"],
+        serde_json::json!(["1.0.0"]),
+        "tags: {}",
+        tags_json
+    );
 
     let cat = app
         .clone()
-        .oneshot(Request::builder().uri("/v2/_catalog").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/v2/_catalog")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let cat_body = axum::body::to_bytes(cat.into_body(), 4096).await.unwrap();
     let cat_json: serde_json::Value = serde_json::from_slice(&cat_body).unwrap();
-    assert_eq!(cat_json["repositories"], serde_json::json!(["ai/m1"]), "catalog: {}", cat_json);
+    assert_eq!(
+        cat_json["repositories"],
+        serde_json::json!(["ai/m1"]),
+        "catalog: {}",
+        cat_json
+    );
 }

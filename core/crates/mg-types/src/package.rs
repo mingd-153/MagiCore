@@ -220,8 +220,10 @@ fn match_single_range(range: &str, version: &Version) -> bool {
             && version.minor == target.minor
             && version >= &target;
     }
-    if range.starts_with(">=") || range.starts_with("<=")
-        || range.starts_with('>') || range.starts_with('<')
+    if range.starts_with(">=")
+        || range.starts_with("<=")
+        || range.starts_with('>')
+        || range.starts_with('<')
     {
         if let Some((low, high)) = parse_wildcard_bounds(range) {
             return version >= &low && version < &high;
@@ -255,7 +257,8 @@ fn match_single_range(range: &str, version: &Version) -> bool {
 }
 
 fn parse_wildcard_bounds(range: &str) -> Option<(Version, Version)> {
-    let trimmed = range.trim_start_matches('=')
+    let trimmed = range
+        .trim_start_matches('=')
         .trim_start_matches('^')
         .trim_start_matches('~')
         .trim_start_matches(">=")
@@ -284,7 +287,10 @@ fn parse_wildcard_bounds(range: &str) -> Option<(Version, Version)> {
             let major: u64 = parts[0].parse().ok()?;
             let minor: u64 = parts[1].parse().ok()?;
             if parts[2] == "x" || parts[2] == "X" {
-                Some((Version::new(major, minor, 0), Version::new(major, minor + 1, 0)))
+                Some((
+                    Version::new(major, minor, 0),
+                    Version::new(major, minor + 1, 0),
+                ))
             } else {
                 None
             }
@@ -305,7 +311,8 @@ fn parse_hyphen_range(range: &str) -> Option<(Version, Version)> {
 }
 
 fn wildcard_satisfying_version(range: &str) -> Option<Version> {
-    let trimmed = range.trim_start_matches('=')
+    let trimmed = range
+        .trim_start_matches('=')
         .trim_start_matches('^')
         .trim_start_matches('~')
         .trim_start_matches(">=")

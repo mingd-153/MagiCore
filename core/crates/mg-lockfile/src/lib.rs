@@ -1,3 +1,6 @@
+pub mod import;
+pub mod merge;
+pub mod migrate;
 pub mod serialization;
 
 use mg_types::LockPatch;

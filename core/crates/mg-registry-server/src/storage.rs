@@ -2,11 +2,41 @@
 //! (Storage: SQLite for metadata, filesystem for blobs)
 
 use anyhow::{Context, Result};
+use base64::Engine;
 use serde_json;
-use sqlx::{Pool, Sqlite, SqlitePool, Row};
+use sqlx::{Pool, Row, Sqlite, SqlitePool};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+
+/// Hex fragment của digest để làm path component an toàn.
+/// - "sha512-<b64>": decode base64 → hex
+/// - chuỗi hex thuần (vd "sha256:<hex>", hoặc hex không prefix): dùng trực tiếp
+/// (Không slice raw b64 — b64 có thể bắt đầu `/`/`+` khiến Path::join tạo path
+/// tuyệt đối, vd join("/+") → "/+/..." → tạo thư mục ở root → 500.)
+fn digest_hex_path(digest: &str) -> (String, String) {
+    let body = digest
+        .rfind(|c: char| c == '-' || c == ':')
+        .map(|i| &digest[i + 1..])
+        .unwrap_or(digest);
+    let bytes = if body.bytes().all(|c| c.is_ascii_hexdigit()) {
+        (0..body.len() / 2)
+            .filter_map(|i| u8::from_str_radix(&body[i * 2..i * 2 + 2], 16).ok())
+            .collect::<Vec<u8>>()
+    } else {
+        base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .unwrap_or_default()
+    };
+    if bytes.is_empty() {
+        return ("00".into(), String::new());
+    }
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    if hex.len() < 4 {
+        return ("00".into(), hex);
+    }
+    (hex[..2].to_string(), hex[2..].to_string())
+}
 
 /// Registry storage backend
 pub struct RegistryStore {
@@ -20,31 +50,35 @@ impl RegistryStore {
         let store_dir = store_dir.as_ref().to_path_buf();
         let blobs_dir = store_dir.join("blobs");
         let db_path = store_dir.join("registry.db");
-        
+
         fs::create_dir_all(&store_dir).await?;
         fs::create_dir_all(&blobs_dir).await?;
-        
+
         let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
-        let pool = SqlitePool::connect(&db_url).await
+        let pool = SqlitePool::connect(&db_url)
+            .await
             .context("Failed to connect to SQLite")?;
-        
+
         // Run migrations
-        sqlx::migrate!("./migrations").run(&pool).await
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
             .context("Failed to run migrations")?;
-        
+
         let store = Self {
             db: pool,
             blobs_dir,
         };
-        
+
         store.init_schema().await?;
-        
+
         Ok(store)
     }
-    
+
     async fn init_schema(&self) -> Result<()> {
         // Packages table
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS packages (
                 name TEXT PRIMARY KEY,
                 description TEXT,
@@ -55,10 +89,14 @@ impl RegistryStore {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
-        "#).execute(&self.db).await?;
-        
+        "#,
+        )
+        .execute(&self.db)
+        .await?;
+
         // Package versions table
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS package_versions (
                 id TEXT PRIMARY KEY,
                 package_name TEXT NOT NULL,
@@ -67,20 +105,28 @@ impl RegistryStore {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (package_name) REFERENCES packages(name) ON DELETE CASCADE
             )
-        "#).execute(&self.db).await?;
-        
+        "#,
+        )
+        .execute(&self.db)
+        .await?;
+
         // Blobs table (for OCI)
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS blobs (
                 digest TEXT PRIMARY KEY,
                 size INTEGER NOT NULL,
                 path TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
-        "#).execute(&self.db).await?;
-        
+        "#,
+        )
+        .execute(&self.db)
+        .await?;
+
         // OCI manifests table
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS oci_manifests (
                 repo TEXT NOT NULL,
                 reference TEXT NOT NULL,
@@ -89,10 +135,14 @@ impl RegistryStore {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (repo, reference)
             )
-        "#).execute(&self.db).await?;
-        
+        "#,
+        )
+        .execute(&self.db)
+        .await?;
+
         // OCI blobs table
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS oci_blobs (
                 repo TEXT NOT NULL,
                 digest TEXT NOT NULL,
@@ -101,10 +151,14 @@ impl RegistryStore {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (repo, digest)
             )
-        "#).execute(&self.db).await?;
-        
+        "#,
+        )
+        .execute(&self.db)
+        .await?;
+
         // OCI upload sessions (chunked/resumable)
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS oci_uploads (
                 repo TEXT NOT NULL,
                 uuid TEXT NOT NULL,
@@ -113,22 +167,27 @@ impl RegistryStore {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (repo, uuid)
             )
-        "#).execute(&self.db).await?;
-        
+        "#,
+        )
+        .execute(&self.db)
+        .await?;
+
         Ok(())
     }
-    
+
     // === Package operations ===
-    
+
     pub async fn get_package(&self, name: &str) -> Result<Option<crate::model::Package>> {
-        let row = sqlx::query(r#"
+        let row = sqlx::query(
+            r#"
             SELECT name, description, dist_tags, maintainers, time, private
             FROM packages WHERE name = ?
-        "#)
+        "#,
+        )
         .bind(name)
         .fetch_optional(&self.db)
         .await?;
-        
+
         if let Some(row) = row {
             let mut pkg = crate::model::Package {
                 name: row.get("name"),
@@ -147,15 +206,20 @@ impl RegistryStore {
             Ok(None)
         }
     }
-    
-    pub async fn get_package_versions(&self, name: &str) -> Result<std::collections::HashMap<String, crate::model::PackageVersion>> {
-        let rows = sqlx::query(r#"
+
+    pub async fn get_package_versions(
+        &self,
+        name: &str,
+    ) -> Result<std::collections::HashMap<String, crate::model::PackageVersion>> {
+        let rows = sqlx::query(
+            r#"
             SELECT version, data FROM package_versions WHERE package_name = ?
-        "#)
+        "#,
+        )
         .bind(name)
         .fetch_all(&self.db)
         .await?;
-        
+
         let mut versions = std::collections::HashMap::new();
         for row in rows {
             let version: String = row.get("version");
@@ -165,14 +229,15 @@ impl RegistryStore {
         }
         Ok(versions)
     }
-    
+
     pub async fn put_package(&self, pkg: &crate::model::Package) -> Result<()> {
         let _pkg_json = serde_json::to_string(pkg)?;
         let time_json = serde_json::to_string(&pkg.time)?;
         let dist_tags_json = serde_json::to_string(&pkg.dist_tags)?;
         let maintainers_json = serde_json::to_string(&pkg.maintainers)?;
-        
-        sqlx::query(r#"
+
+        sqlx::query(
+            r#"
             INSERT INTO packages (name, description, dist_tags, maintainers, time, private)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
@@ -182,7 +247,8 @@ impl RegistryStore {
                 time = excluded.time,
                 private = excluded.private,
                 updated_at = datetime('now')
-        "#)
+        "#,
+        )
         .bind(&pkg.name)
         .bind(&pkg.description)
         .bind(&dist_tags_json)
@@ -191,16 +257,18 @@ impl RegistryStore {
         .bind(pkg.private)
         .execute(&self.db)
         .await?;
-        
+
         // Save versions
         for (version, ver) in &pkg.versions {
             let _ver_json = serde_json::to_string(ver)?;
             let id = format!("{}@{}", pkg.name, version);
-            sqlx::query(r#"
+            sqlx::query(
+                r#"
                 INSERT INTO package_versions (id, package_name, version, data)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET data = excluded.data
-            "#)
+            "#,
+            )
             .bind(&id)
             .bind(&pkg.name)
             .bind(version)
@@ -208,10 +276,10 @@ impl RegistryStore {
             .execute(&self.db)
             .await?;
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn delete_package(&self, name: &str) -> Result<()> {
         sqlx::query("DELETE FROM packages WHERE name = ?")
             .bind(name)
@@ -239,37 +307,40 @@ impl RegistryStore {
         }
         Ok(true)
     }
-    
+
     // === Blob operations ===
-    
+
     pub async fn put_blob(&self, digest: &str, data: &[u8]) -> Result<()> {
-        let path = self.blobs_dir.join(&digest[7..9]).join(&digest[9..]);
+        let (p1, p2) = digest_hex_path(digest);
+        let path = self.blobs_dir.join(&p1).join(&p2);
         fs::create_dir_all(path.parent().unwrap()).await?;
-        
+
         let mut file = fs::File::create(&path).await?;
         file.write_all(data).await?;
         file.flush().await?;
-        
-        sqlx::query(r#"
+
+        sqlx::query(
+            r#"
             INSERT INTO blobs (digest, size, path)
             VALUES (?, ?, ?)
             ON CONFLICT(digest) DO UPDATE SET size = excluded.size, path = excluded.path
-        "#)
+        "#,
+        )
         .bind(digest)
         .bind(data.len() as i64)
         .bind(path.to_string_lossy().to_string())
         .execute(&self.db)
         .await?;
-        
+
         Ok(())
     }
-    
+
     pub async fn get_blob(&self, digest: &str) -> Result<Option<Vec<u8>>> {
         let row = sqlx::query("SELECT path FROM blobs WHERE digest = ?")
             .bind(digest)
             .fetch_optional(&self.db)
             .await?;
-        
+
         if let Some(row) = row {
             let path: String = row.get("path");
             let data = fs::read(path).await?;
@@ -278,7 +349,7 @@ impl RegistryStore {
             Ok(None)
         }
     }
-    
+
     pub async fn blob_exists(&self, digest: &str) -> Result<bool> {
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blobs WHERE digest = ?")
             .bind(digest)
@@ -286,10 +357,15 @@ impl RegistryStore {
             .await?;
         Ok(count > 0)
     }
-    
+
     // === OCI operations ===
-    
-    pub async fn put_oci_manifest(&self, repo: &str, reference: &str, manifest_bytes: &[u8]) -> Result<()> {
+
+    pub async fn put_oci_manifest(
+        &self,
+        repo: &str,
+        reference: &str,
+        manifest_bytes: &[u8],
+    ) -> Result<()> {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(manifest_bytes);
@@ -308,13 +384,18 @@ impl RegistryStore {
         .await?;
         Ok(())
     }
-    
-    pub async fn get_oci_manifest(&self, repo: &str, reference: &str) -> Result<Option<crate::model::OciManifest>> {
-        let row = sqlx::query("SELECT manifest FROM oci_manifests WHERE repo = ? AND reference = ?")
-            .bind(repo)
-            .bind(reference)
-            .fetch_optional(&self.db)
-            .await?;
+
+    pub async fn get_oci_manifest(
+        &self,
+        repo: &str,
+        reference: &str,
+    ) -> Result<Option<crate::model::OciManifest>> {
+        let row =
+            sqlx::query("SELECT manifest FROM oci_manifests WHERE repo = ? AND reference = ?")
+                .bind(repo)
+                .bind(reference)
+                .fetch_optional(&self.db)
+                .await?;
 
         if let Some(row) = row {
             let manifest_json: String = row.get("manifest");
@@ -324,11 +405,12 @@ impl RegistryStore {
 
         // Fallback: reference may be a content digest
         if let Some(digest) = reference.strip_prefix("sha256:") {
-            if let Some(row) = sqlx::query("SELECT manifest FROM oci_manifests WHERE repo = ? AND digest = ?")
-                .bind(repo)
-                .bind(format!("sha256:{}", digest))
-                .fetch_optional(&self.db)
-                .await?
+            if let Some(row) =
+                sqlx::query("SELECT manifest FROM oci_manifests WHERE repo = ? AND digest = ?")
+                    .bind(repo)
+                    .bind(format!("sha256:{}", digest))
+                    .fetch_optional(&self.db)
+                    .await?
             {
                 let manifest_json: String = row.get("manifest");
                 let manifest = serde_json::from_str(&manifest_json)?;
@@ -337,14 +419,20 @@ impl RegistryStore {
         }
         Ok(None)
     }
-    
+
     /// Raw manifest bytes + stored content digest (as pushed by the client).
-    pub async fn get_oci_manifest_raw(&self, repo: &str, reference: &str) -> Result<Option<(String, String)>> {
-        let row = sqlx::query("SELECT manifest, digest FROM oci_manifests WHERE repo = ? AND reference = ?")
-            .bind(repo)
-            .bind(reference)
-            .fetch_optional(&self.db)
-            .await?;
+    pub async fn get_oci_manifest_raw(
+        &self,
+        repo: &str,
+        reference: &str,
+    ) -> Result<Option<(String, String)>> {
+        let row = sqlx::query(
+            "SELECT manifest, digest FROM oci_manifests WHERE repo = ? AND reference = ?",
+        )
+        .bind(repo)
+        .bind(reference)
+        .fetch_optional(&self.db)
+        .await?;
 
         if let Some(row) = row {
             return Ok(Some((row.get("manifest"), row.get("digest"))));
@@ -352,11 +440,13 @@ impl RegistryStore {
 
         // Fallback: reference may be a content digest
         if let Some(digest) = reference.strip_prefix("sha256:") {
-            let row = sqlx::query("SELECT manifest, digest FROM oci_manifests WHERE repo = ? AND digest = ?")
-                .bind(repo)
-                .bind(format!("sha256:{}", digest))
-                .fetch_optional(&self.db)
-                .await?;
+            let row = sqlx::query(
+                "SELECT manifest, digest FROM oci_manifests WHERE repo = ? AND digest = ?",
+            )
+            .bind(repo)
+            .bind(format!("sha256:{}", digest))
+            .fetch_optional(&self.db)
+            .await?;
             if let Some(row) = row {
                 return Ok(Some((row.get("manifest"), row.get("digest"))));
             }
@@ -372,40 +462,43 @@ impl RegistryStore {
             .await?;
         Ok(())
     }
-    
+
     pub async fn put_oci_blob(&self, repo: &str, digest: &str, data: &[u8]) -> Result<()> {
         let repo_dir = self.blobs_dir.join("oci").join(&repo);
         fs::create_dir_all(&repo_dir).await?;
-        
-        let path = repo_dir.join(&digest[7..9]).join(&digest[9..]);
+
+        let (p1, p2) = digest_hex_path(digest);
+        let path = repo_dir.join(&p1).join(&p2);
         fs::create_dir_all(path.parent().unwrap()).await?;
-        
+
         let mut file = fs::File::create(&path).await?;
         file.write_all(data).await?;
         file.flush().await?;
-        
-        sqlx::query(r#"
+
+        sqlx::query(
+            r#"
             INSERT INTO oci_blobs (repo, digest, size, path)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(repo, digest) DO UPDATE SET size = excluded.size, path = excluded.path
-        "#)
+        "#,
+        )
         .bind(repo)
         .bind(digest)
         .bind(data.len() as i64)
         .bind(path.to_string_lossy().to_string())
         .execute(&self.db)
         .await?;
-        
+
         Ok(())
     }
-    
+
     pub async fn get_oci_blob(&self, repo: &str, digest: &str) -> Result<Option<Vec<u8>>> {
         let row = sqlx::query("SELECT path FROM oci_blobs WHERE repo = ? AND digest = ?")
             .bind(repo)
             .bind(digest)
             .fetch_optional(&self.db)
             .await?;
-        
+
         if let Some(row) = row {
             let path: String = row.get("path");
             let data = fs::read(path).await?;
@@ -414,10 +507,10 @@ impl RegistryStore {
             Ok(None)
         }
     }
-    
+
     pub async fn oci_blob_exists(&self, repo: &str, digest: &str) -> Result<bool> {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM oci_blobs WHERE repo = ? AND digest = ?"
+            "SELECT COUNT(*) FROM oci_blobs WHERE repo = ? AND digest = ?",
         )
         .bind(repo)
         .bind(digest)
@@ -446,7 +539,12 @@ impl RegistryStore {
     }
 
     /// Copy blob từ repo khác vào repo này (cross-repo mount) — trả false nếu chưa tồn tại
-    pub async fn mount_oci_blob(&self, from_repo: &str, digest: &str, to_repo: &str) -> Result<bool> {
+    pub async fn mount_oci_blob(
+        &self,
+        from_repo: &str,
+        digest: &str,
+        to_repo: &str,
+    ) -> Result<bool> {
         let row = sqlx::query("SELECT path FROM oci_blobs WHERE repo = ? AND digest = ?")
             .bind(from_repo)
             .bind(digest)
@@ -456,19 +554,26 @@ impl RegistryStore {
         let src_path: String = row.get("path");
 
         let repo_dir = self.blobs_dir.join("oci").join(to_repo);
-        let dest = repo_dir.join(&digest[7..9]).join(&digest[9..]);
+        let (p1, p2) = digest_hex_path(digest);
+        let dest = repo_dir.join(&p1).join(&p2);
         fs::create_dir_all(dest.parent().unwrap()).await?;
         if !dest.exists() {
             fs::copy(&src_path, &dest).await?;
         }
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             INSERT INTO oci_blobs (repo, digest, size, path)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(repo, digest) DO UPDATE SET path = excluded.path
-        "#)
+        "#,
+        )
         .bind(to_repo)
         .bind(digest)
-        .bind(self.get_oci_blob_size(from_repo, digest).await?.unwrap_or(0))
+        .bind(
+            self.get_oci_blob_size(from_repo, digest)
+                .await?
+                .unwrap_or(0),
+        )
         .bind(dest.to_string_lossy().to_string())
         .execute(&self.db)
         .await?;
@@ -477,7 +582,7 @@ impl RegistryStore {
 
     async fn get_oci_blob_size(&self, repo: &str, digest: &str) -> Result<Option<i64>> {
         let size = sqlx::query_scalar::<_, i64>(
-            "SELECT size FROM oci_blobs WHERE repo = ? AND digest = ?"
+            "SELECT size FROM oci_blobs WHERE repo = ? AND digest = ?",
         )
         .bind(repo)
         .bind(digest)
@@ -505,7 +610,11 @@ impl RegistryStore {
         let Some(path) = self.oci_upload_path(repo, uuid).await? else {
             return Err(anyhow::anyhow!("upload session not found"));
         };
-        let mut file = fs::OpenOptions::new().create(true).append(true).open(&path).await?;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await?;
         file.write_all(data).await?;
         file.flush().await?;
         let offset = fs::metadata(&path).await?.len() as i64;
@@ -540,7 +649,7 @@ impl RegistryStore {
 
     pub async fn list_oci_tags(&self, repo: &str) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
-            "SELECT reference FROM oci_manifests WHERE repo = ? AND reference NOT LIKE 'sha256:%'"
+            "SELECT reference FROM oci_manifests WHERE repo = ? AND reference NOT LIKE 'sha256:%'",
         )
         .bind(repo)
         .fetch_all(&self.db)
@@ -558,23 +667,30 @@ impl RegistryStore {
     }
 
     // Search
-    pub async fn search_packages(&self, query: &str, limit: u32, offset: u32) -> Result<Vec<crate::model::SearchResultItem>> {
-        let rows = sqlx::query(r#"
+    pub async fn search_packages(
+        &self,
+        query: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<crate::model::SearchResultItem>> {
+        let rows = sqlx::query(
+            r#"
             SELECT name, description FROM packages 
             WHERE name LIKE ? AND private = 0
             LIMIT ? OFFSET ?
-        "#)
+        "#,
+        )
         .bind(format!("%{}%", query))
         .bind(limit as i64)
         .bind(offset as i64)
         .fetch_all(&self.db)
         .await?;
-        
+
         let mut results = Vec::new();
         for row in rows {
             let name: String = row.get("name");
             let description: Option<String> = row.get("description");
-            
+
             results.push(crate::model::SearchResultItem {
                 package: crate::model::SearchPackage {
                     name,
@@ -627,7 +743,8 @@ impl RegistryStore {
     /// Upsert user — token sinh ở client (adduser), lưu qua đây để sống qua restart
     pub async fn upsert_user(&self, token: &str, user: &crate::auth::User) -> Result<()> {
         let scopes_json = serde_json::to_string(&user.scopes)?;
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             INSERT INTO users (name, token, password, email, is_admin, scopes)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
@@ -636,7 +753,8 @@ impl RegistryStore {
                 email = excluded.email,
                 is_admin = excluded.is_admin,
                 scopes = excluded.scopes
-        "#)
+        "#,
+        )
         .bind(&user.name)
         .bind(token)
         .bind(&user.password)
@@ -668,10 +786,12 @@ impl RegistryStore {
     }
 
     pub async fn get_pypi_files(&self, name: &str) -> Result<Vec<crate::model::PypiFile>> {
-        let rows = sqlx::query(r#"
+        let rows = sqlx::query(
+            r#"
             SELECT name, version, filename, digest, size, requires_python
             FROM pypi_files WHERE name = ? ORDER BY filename
-        "#)
+        "#,
+        )
         .bind(name)
         .fetch_all(&self.db)
         .await?;
@@ -690,7 +810,8 @@ impl RegistryStore {
     }
 
     pub async fn put_pypi_file(&self, file: &crate::model::PypiFile) -> Result<()> {
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             INSERT INTO pypi_files (name, version, filename, digest, size, requires_python)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(name, filename) DO UPDATE SET
@@ -698,7 +819,8 @@ impl RegistryStore {
                 digest = excluded.digest,
                 size = excluded.size,
                 requires_python = excluded.requires_python
-        "#)
+        "#,
+        )
         .bind(&file.name)
         .bind(&file.version)
         .bind(&file.filename)

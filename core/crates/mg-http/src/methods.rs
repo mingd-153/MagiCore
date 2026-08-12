@@ -1,7 +1,13 @@
 //! HTTP methods wrapper — GET/PUT/POST/PATCH/DELETE chung (12 §11)
 //! (Wrapper chung cho reqwest — retry/ratelimit/cache tích hợp sẵn)
 
-use crate::{retry::RetryStrategy, ratelimit::{RateLimiter, RateLimitConfig}, cache::HttpCache};
+use crate::{
+    cache::HttpCache,
+    ratelimit::{RateLimitConfig, RateLimiter},
+    retry::RetryStrategy,
+    timeout::{apply_timeouts, TimeoutConfig},
+    tls::TlsConfig,
+};
 use anyhow::Result;
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
 use std::time::Duration;
@@ -18,8 +24,15 @@ pub struct HttpClient {
 
 impl HttpClient {
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+        Self::with_security(&TimeoutConfig::default(), &TlsConfig::default())
+    }
+
+    /// Build an HTTP client with explicit timeout and TLS policy.
+    /// Tạo client từ policy rõ ràng để tránh config bảo mật bị giữ nhưng không dùng.
+    pub fn with_security(timeout: &TimeoutConfig, tls: &TlsConfig) -> Result<Self> {
+        let builder = apply_timeouts(Client::builder(), timeout);
+        let builder = tls.apply(builder)?;
+        let client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("build reqwest client: {}", e))?;
         Ok(Self {
@@ -67,7 +80,8 @@ impl HttpClient {
 
         let mut attempt = 0;
         loop {
-            let mut req = req.try_clone()
+            let mut req = req
+                .try_clone()
                 .ok_or_else(|| anyhow::anyhow!("request not cloneable"))?;
             if let Some((name, value)) = &self.auth {
                 req = req.header(name, value);
@@ -118,6 +132,16 @@ impl HttpClient {
 
     pub async fn patch(&self, url: &str, body: Vec<u8>) -> Result<Response> {
         self.execute(self.client.patch(url).body(body)).await
+    }
+
+    pub async fn patch_with_timeout(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<Response> {
+        self.execute(self.client.patch(url).timeout(timeout).body(body))
+            .await
     }
 
     pub async fn delete(&self, url: &str) -> Result<Response> {

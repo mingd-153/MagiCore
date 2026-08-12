@@ -27,11 +27,21 @@ pub struct TimeoutConfig {
     pub dns: Duration,
 }
 
-fn default_connect() -> Duration { Duration::from_secs(10) }
-fn default_header_read() -> Duration { Duration::from_secs(30) }
-fn default_request() -> Duration { Duration::from_secs(30) }
-fn default_upload_chunk() -> Duration { Duration::from_secs(60) }
-fn default_dns() -> Duration { Duration::from_secs(5) }
+fn default_connect() -> Duration {
+    Duration::from_secs(10)
+}
+fn default_header_read() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_request() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_upload_chunk() -> Duration {
+    Duration::from_secs(60)
+}
+fn default_dns() -> Duration {
+    Duration::from_secs(5)
+}
 
 impl Default for TimeoutConfig {
     fn default() -> Self {
@@ -47,7 +57,10 @@ impl Default for TimeoutConfig {
 }
 
 /// Timeout builder cho reqwest
-pub fn apply_timeouts(builder: reqwest::ClientBuilder, config: &TimeoutConfig) -> reqwest::ClientBuilder {
+pub fn apply_timeouts(
+    builder: reqwest::ClientBuilder,
+    config: &TimeoutConfig,
+) -> reqwest::ClientBuilder {
     builder
         .connect_timeout(config.connect)
         .timeout(config.request)

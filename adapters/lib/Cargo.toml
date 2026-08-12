@@ -5,9 +5,35 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Library ecosystem adapter for MegaGate"
+description = "Library ecosystem adapter for MegaGate (ts/rust/python)"
 
 [dependencies]
+# Core crates
+mg-types = { workspace = true }
+mg-adapter-base = { workspace = true }
+mg-config = { workspace = true }
+mg-exec = { workspace = true }
+mg-web-adapter = { path = "../web" }
+mg-ui = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utilities
+semver = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

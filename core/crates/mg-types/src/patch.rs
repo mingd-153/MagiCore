@@ -36,7 +36,12 @@ pub struct PatchSpec {
 }
 
 impl PatchSpec {
-    pub fn new(package: String, version_range: VersionRange, patch_path: String, integrity: String) -> Self {
+    pub fn new(
+        package: String,
+        version_range: VersionRange,
+        patch_path: String,
+        integrity: String,
+    ) -> Self {
         Self {
             package,
             version_range,
@@ -59,7 +64,12 @@ pub struct LockPatch {
 
 impl LockPatch {
     pub fn new(name: String, version: String, sha256: String, applied_at: String) -> Self {
-        Self { name, version, sha256, applied_at }
+        Self {
+            name,
+            version,
+            sha256,
+            applied_at,
+        }
     }
 }
 
@@ -71,7 +81,12 @@ mod tests {
     #[test]
     fn patch_spec_serializes() {
         let vr = VersionRange::parse("^1.0.0").unwrap();
-        let spec = PatchSpec::new("react".into(), vr, "patches/react.patch".into(), "sha256-abc".into());
+        let spec = PatchSpec::new(
+            "react".into(),
+            vr,
+            "patches/react.patch".into(),
+            "sha256-abc".into(),
+        );
         let json = serde_json::to_string(&spec).unwrap();
         assert!(json.contains("react"));
         assert!(json.contains("sha256-abc"));
@@ -81,7 +96,12 @@ mod tests {
 
     #[test]
     fn lock_patch_serializes() {
-        let lp = LockPatch::new("react".into(), "1.0.0".into(), "sha256-def".into(), "2026-01-01T00:00:00Z".into());
+        let lp = LockPatch::new(
+            "react".into(),
+            "1.0.0".into(),
+            "sha256-def".into(),
+            "2026-01-01T00:00:00Z".into(),
+        );
         let json = serde_json::to_string(&lp).unwrap();
         let back: LockPatch = serde_json::from_str(&json).unwrap();
         assert_eq!(back.name, "react");

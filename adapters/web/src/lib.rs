@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -287,6 +287,82 @@ impl PipelineProfile {
     }
 }
 
+#[derive(Default)]
+struct MaterializationProfile {
+    enabled: bool,
+    packages_linked: AtomicUsize,
+    files_seen: AtomicUsize,
+    directories_seen: AtomicUsize,
+    hardlinks: AtomicUsize,
+    copies: AtomicUsize,
+    symlinks: AtomicUsize,
+}
+
+impl MaterializationProfile {
+    fn from_env() -> Self {
+        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        Self {
+            enabled,
+            ..Default::default()
+        }
+    }
+
+    fn record_package_linked(&self) {
+        if self.enabled {
+            self.packages_linked.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_directory(&self) {
+        if self.enabled {
+            self.directories_seen.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_file(&self) {
+        if self.enabled {
+            self.files_seen.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_hardlink(&self) {
+        if self.enabled {
+            self.hardlinks.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_copy(&self) {
+        if self.enabled {
+            self.copies.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_symlink(&self) {
+        if self.enabled {
+            self.symlinks.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn flush(&self) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!(
+            "[megagate:web:materialize-profile] packages_linked={} dirs={} files={} hardlinks={} copies={} symlinks={}",
+            self.packages_linked.load(Ordering::Relaxed),
+            self.directories_seen.load(Ordering::Relaxed),
+            self.files_seen.load(Ordering::Relaxed),
+            self.hardlinks.load(Ordering::Relaxed),
+            self.copies.load(Ordering::Relaxed),
+            self.symlinks.load(Ordering::Relaxed),
+        );
+    }
+}
+
 fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
 
@@ -372,7 +448,11 @@ impl WebAdapter {
         Self::build(registry_url, token, shared_cache)
     }
 
-    fn build(registry_url: String, token: Option<String>, shared_cache: Option<SharedWebCache>) -> Self {
+    fn build(
+        registry_url: String,
+        token: Option<String>,
+        shared_cache: Option<SharedWebCache>,
+    ) -> Self {
         let provider = Arc::new(NpmDependencyProvider::new(
             &registry_url,
             token,
@@ -392,7 +472,11 @@ impl WebAdapter {
 
     #[cfg(test)]
     fn with_registry_and_shared_cache(registry_url: String, shared_root: PathBuf) -> Self {
-        Self::build(registry_url, None, Some(SharedWebCache { root: shared_root }))
+        Self::build(
+            registry_url,
+            None,
+            Some(SharedWebCache { root: shared_root }),
+        )
     }
     pub fn with_store(mut self, store: ContentStore) -> Self {
         self.store = Some(store);
@@ -621,7 +705,11 @@ impl PackageAdapter for WebAdapter {
     fn set_existing_versions(&self, versions: std::collections::HashMap<String, String>) {
         let parsed: std::collections::HashMap<String, mg_types::Version> = versions
             .iter()
-            .filter_map(|(name, v)| mg_types::Version::parse(v).ok().map(|ver| (name.clone(), ver)))
+            .filter_map(|(name, v)| {
+                mg_types::Version::parse(v)
+                    .ok()
+                    .map(|ver| (name.clone(), ver))
+            })
             .collect();
         *self.existing_versions.lock().unwrap() = versions;
         self.resolver.set_existing_versions(parsed);
@@ -842,9 +930,9 @@ impl PackageAdapter for WebAdapter {
                         .iter()
                         .filter_map(|(name, spec)| {
                             let constraint = VersionRange::parse(spec).ok()?;
-                            let source = self.provider.source_package_name(
-                                &PackageName::new(name.as_str()).unwrap(),
-                            );
+                            let source = self
+                                .provider
+                                .source_package_name(&PackageName::new(name.as_str()).unwrap());
                             resolution_index
                                 .get(source.as_str())
                                 .and_then(|candidates| {
@@ -891,20 +979,28 @@ impl PackageAdapter for WebAdapter {
         let block_new = std::env::var("MEGAGATE_SECURITY_24H_BLOCK")
             .or_else(|_| std::env::var("MG_AUDIT_STRICT"))
             .ok()
-            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .map(|v| {
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false);
         if block_new {
             let allow_untrusted = std::env::var("MEGAGATE_ALLOW_UNTRUSTED")
                 .ok()
-                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                .map(|v| {
+                    matches!(
+                        v.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
                 .unwrap_or(false);
             if !allow_untrusted {
                 for r in &result.resolutions {
                     if let Some(pkg_meta) = metadata.get(r.package_id.name_str()) {
                         let ver = r.package_id.version().to_string();
-                        if let Err(msg) =
-                            native::npm_registry::check_publish_age(pkg_meta, &ver)
-                        {
+                        if let Err(msg) = native::npm_registry::check_publish_age(pkg_meta, &ver) {
                             return Err(mg_types::MgError::Other(msg));
                         }
                     }
@@ -1088,18 +1184,27 @@ impl PackageAdapter for WebAdapter {
         };
 
         let fetch_graph = if opts.incremental && !already_in_virtual_store.is_empty() {
+            if std::env::var("MEGAGATE_WEB_PROFILE_INSTALL").is_ok() {
+                eprintln!(
+                    "[megagate:web:materialize-profile] fetch_graph={} already_in_vstore={} graph_total={}",
+                    graph_without_packages(graph, &already_in_virtual_store)
+                        .packages
+                        .len(),
+                    already_in_virtual_store.len(),
+                    graph.packages.len()
+                );
+            }
             graph_without_packages(graph, &already_in_virtual_store)
         } else {
             graph.clone()
         };
         if !fetch_graph.is_empty() {
-            write_web_lockfile_with_state(project_root, graph, "installing")
-                .map_err(|e| {
-                    if let Some(root) = &staging_root {
-                        let _ = std::fs::remove_dir_all(root);
-                    }
-                    e
-                })?;
+            write_web_lockfile_with_state(project_root, graph, "installing").map_err(|e| {
+                if let Some(root) = &staging_root {
+                    let _ = std::fs::remove_dir_all(root);
+                }
+                e
+            })?;
         }
         let prefetch_handle = self.prefetch_handle.lock().unwrap().take();
         if opts.legacy_flat {
@@ -1287,7 +1392,9 @@ impl PackageAdapter for WebAdapter {
             }
         }
         profile.mark("materialize_root_packages", start);
+        let mut affected_root_bin_links: Vec<&ResolvedPackage> = Vec::new();
         if opts.legacy_flat {
+            affected_root_bin_links = root_packages.to_vec();
             for pkg in &root_packages {
                 let package_dir = node_modules.join(pkg.id.name().as_str());
                 reset_nested_node_modules(&package_dir)?;
@@ -1330,11 +1437,34 @@ impl PackageAdapter for WebAdapter {
                     .await?;
                 summary.bytes_from_cache += pipeline_bytes;
                 profile.mark("prepare_extracted_roots", start);
+                let fetch_ids = fetch_graph
+                    .packages
+                    .iter()
+                    .map(|pkg| pkg.id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                let root_packages_to_link = if opts.incremental {
+                    root_packages
+                        .iter()
+                        .copied()
+                        .filter(|pkg| {
+                            fetch_ids.contains(&pkg.id)
+                                || !installed_package_matches(
+                                    &node_modules.join(pkg.id.name().as_str()),
+                                    &pkg.id,
+                                )
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    root_packages.to_vec()
+                };
+                affected_root_bin_links = root_packages_to_link.clone();
+
                 materialize_strict_layout(
                     &node_modules,
                     graph,
+                    &fetch_graph,
                     &package_map,
-                    &root_packages,
+                    &root_packages_to_link,
                     &layout,
                     store,
                     shared_cache.as_ref(),
@@ -1372,7 +1502,15 @@ impl PackageAdapter for WebAdapter {
                 })?;
             }
         }
-        rebuild_bin_links(&node_modules, &root_packages)?;
+        if !node_modules.join(".bin").exists() && affected_root_bin_links.is_empty() {
+            affected_root_bin_links = root_packages.to_vec();
+        }
+        rebuild_bin_links(
+            &node_modules,
+            &root_packages,
+            &affected_root_bin_links,
+            !opts.legacy_flat,
+        )?;
         profile.mark("rebuild_bin_links", start);
 
         write_web_lockfile_with_state(project_root, graph, "locked")?;
@@ -2021,7 +2159,6 @@ impl NpmDependencyProvider {
         matches.sort();
         Ok(matches.into_iter().max())
     }
-
 }
 #[async_trait]
 impl DependencyProvider for NpmDependencyProvider {
@@ -2047,11 +2184,18 @@ impl DependencyProvider for NpmDependencyProvider {
             .versions
             .get(&package_id.version().to_string())
             .map(|v| {
-                let mut collected = self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                collected
-                    .extend(self.collect_resolved_deps(v.optional_dependencies.as_ref(), true, false));
-                collected
-                    .extend(self.collect_resolved_deps(v.peer_dependencies.as_ref(), false, true));
+                let mut collected =
+                    self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
+                collected.extend(self.collect_resolved_deps(
+                    v.optional_dependencies.as_ref(),
+                    true,
+                    false,
+                ));
+                collected.extend(self.collect_resolved_deps(
+                    v.peer_dependencies.as_ref(),
+                    false,
+                    true,
+                ));
                 collected
             })
             .unwrap_or_default();
@@ -2155,12 +2299,16 @@ impl DependencyProvider for NpmDependencyProvider {
                     .map(|v| {
                         let mut collected =
                             self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                        collected.extend(
-                            self.collect_resolved_deps(v.optional_dependencies.as_ref(), true, false),
-                        );
-                        collected.extend(
-                            self.collect_resolved_deps(v.peer_dependencies.as_ref(), false, true),
-                        );
+                        collected.extend(self.collect_resolved_deps(
+                            v.optional_dependencies.as_ref(),
+                            true,
+                            false,
+                        ));
+                        collected.extend(self.collect_resolved_deps(
+                            v.peer_dependencies.as_ref(),
+                            false,
+                            true,
+                        ));
                         collected
                     })
                     .unwrap_or_default();
@@ -2191,11 +2339,18 @@ impl DependencyProvider for NpmDependencyProvider {
                 .versions
                 .get(&package_id.version().to_string())
                 .map(|v| {
-                    let mut collected = self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                    collected
-                        .extend(self.collect_resolved_deps(v.optional_dependencies.as_ref(), true, false));
-                    collected
-                        .extend(self.collect_resolved_deps(v.peer_dependencies.as_ref(), false, true));
+                    let mut collected =
+                        self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
+                    collected.extend(self.collect_resolved_deps(
+                        v.optional_dependencies.as_ref(),
+                        true,
+                        false,
+                    ));
+                    collected.extend(self.collect_resolved_deps(
+                        v.peer_dependencies.as_ref(),
+                        false,
+                        true,
+                    ));
                     collected
                 })
                 .unwrap_or_default();
@@ -2799,14 +2954,19 @@ async fn prefetch_tarballs(
 
             if content_length > LARGE_PKG_THRESHOLD_BYTES {
                 // FAST-LANE: stream directly to a temp file, avoid RAM pressure.
-                let temp_path = local_cache.tarball_path(&pkg_clone.id)
+                let temp_path = local_cache
+                    .tarball_path(&pkg_clone.id)
                     .with_extension("tmp");
                 let computed_integrity = registry
                     .download_tarball_to_file(&url, &temp_path)
                     .await
-                    .map_err(|e| mg_types::MgError::Network(format!(
-                        "stream download failed for '{}': {}", pkg_clone.id.name_str(), e
-                    )))?;
+                    .map_err(|e| {
+                        mg_types::MgError::Network(format!(
+                            "stream download failed for '{}': {}",
+                            pkg_clone.id.name_str(),
+                            e
+                        ))
+                    })?;
                 Ok::<_, mg_types::MgError>(PrefetchOutcome::StreamedToTemp {
                     pkg: pkg_clone,
                     temp_path,
@@ -2846,7 +3006,11 @@ async fn prefetch_tarballs(
                         .cache_tarball_from_path(&pkg.id, &cache.tarball_path(&pkg.id));
                 }
             }
-            PrefetchOutcome::StreamedToTemp { mut pkg, temp_path, computed_integrity } => {
+            PrefetchOutcome::StreamedToTemp {
+                mut pkg,
+                temp_path,
+                computed_integrity,
+            } => {
                 // Integrity cross-check: if the package has a known hash, compare it with
                 // the hash we computed while streaming. This catches corrupted downloads
                 // without having to read the file back into RAM.
@@ -2869,13 +3033,15 @@ async fn prefetch_tarballs(
                     std::fs::create_dir_all(parent)
                         .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
                 }
-                std::fs::rename(&temp_path, &final_path)
-                    .map_err(|e| mg_types::MgError::Store(format!(
-                        "failed to promote streamed tarball for '{}': {}", pkg.id.name_str(), e
-                    )))?;
+                std::fs::rename(&temp_path, &final_path).map_err(|e| {
+                    mg_types::MgError::Store(format!(
+                        "failed to promote streamed tarball for '{}': {}",
+                        pkg.id.name_str(),
+                        e
+                    ))
+                })?;
                 if let Some(shared_package_cache) = shared_package_cache.as_ref() {
-                    let _ = shared_package_cache
-                        .cache_tarball_from_path(&pkg.id, &final_path);
+                    let _ = shared_package_cache.cache_tarball_from_path(&pkg.id, &final_path);
                 }
             }
         }
@@ -2995,9 +3161,12 @@ fn spawn_tarball_download(
                     mg_types::MgError::Other(format!("download semaphore closed: {e}"))
                 })?;
                 let url = package_tarball_url(reg.registry_url(), &pkg);
-                let bytes = native::npm_registry::batch_download_tarball_with_auth(&url, reg.auth_token())
-                    .await
-                    .map_err(|e| mg_types::MgError::Network(format!("prefetch dl failed: {e}")))?;
+                let bytes =
+                    native::npm_registry::batch_download_tarball_with_auth(&url, reg.auth_token())
+                        .await
+                        .map_err(|e| {
+                            mg_types::MgError::Network(format!("prefetch dl failed: {e}"))
+                        })?;
                 let id = pkg.id.clone();
                 let len = bytes.len() as u64;
                 let cache2 = cache.clone();
@@ -3434,7 +3603,6 @@ fn is_tarball_url_trusted(tarball_url: &str, registry_url: &str) -> bool {
 }
 
 fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
-    let unscoped = pkg.id.name().unscoped();
     let fallback = |_registry: &str, _pkg: &ResolvedPackage| {
         format!(
             "{}/{}/-/{}-{}.tgz",
@@ -3633,6 +3801,14 @@ fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
 }
 
 fn link_package_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
+    link_package_tree_with_profile(source_root, target_root, None)
+}
+
+fn link_package_tree_with_profile(
+    source_root: &Path,
+    target_root: &Path,
+    profile: Option<&MaterializationProfile>,
+) -> MgResult<()> {
     if let Some(parent) = target_root.parent() {
         std::fs::create_dir_all(parent).map_err(|err| {
             mg_types::MgError::Other(format!(
@@ -3643,9 +3819,22 @@ fn link_package_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
         })?;
     }
     remove_fs_entry(target_root)?;
-    // Hard-link the package tree so tools like Rollup see real files inside
-    // the project's node_modules/ — symlinks to external cache break CJS detection.
-    hardlink_tree(source_root, target_root).map_err(|err| {
+    if let Some(profile) = profile {
+        profile.record_package_linked();
+    }
+
+    if strict_tree_link_mode() == StrictTreeLinkMode::Symlink {
+        return crate::layout::create_symlink(source_root, target_root).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to symlink package '{}' -> '{}': {}",
+                source_root.display(),
+                target_root.display(),
+                err
+            ))
+        });
+    }
+
+    hardlink_tree_with_profile(source_root, target_root, profile).map_err(|err| {
         mg_types::MgError::Other(format!(
             "failed to link package '{}' -> '{}': {}",
             source_root.display(),
@@ -3653,6 +3842,25 @@ fn link_package_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
             err
         ))
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StrictTreeLinkMode {
+    Symlink,
+    Hardlink,
+}
+
+fn strict_tree_link_mode() -> StrictTreeLinkMode {
+    match std::env::var("MEGAGATE_WEB_STRICT_TREE_MODE")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "hardlink" | "copy" | "compat" => StrictTreeLinkMode::Hardlink,
+        "symlink" | "link" | "fast" => StrictTreeLinkMode::Symlink,
+        _ => StrictTreeLinkMode::Hardlink,
+    }
 }
 
 fn extracted_package_marker_path(root: &Path) -> PathBuf {
@@ -3704,9 +3912,7 @@ fn extracted_marker_matches_fast(
 }
 
 fn extracted_marker_has_content_signature(marker: &ExtractedPackageMarker) -> bool {
-    marker.file_count > 0
-        && marker.unpacked_size > 0
-        && !marker.file_tree_sha256.trim().is_empty()
+    marker.file_count > 0 && marker.unpacked_size > 0 && !marker.file_tree_sha256.trim().is_empty()
 }
 
 fn tarball_content_signature(tarball_bytes: &[u8]) -> MgResult<TarballContentSignature> {
@@ -4330,6 +4536,14 @@ async fn get_tarball_bytes(
 }
 
 fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
+    hardlink_tree_with_profile(source_root, target_root, None)
+}
+
+fn hardlink_tree_with_profile(
+    source_root: &Path,
+    target_root: &Path,
+    profile: Option<&MaterializationProfile>,
+) -> MgResult<()> {
     std::fs::create_dir_all(target_root).map_err(|err| {
         mg_types::MgError::Other(format!(
             "failed to create target '{}': {}",
@@ -4351,6 +4565,9 @@ fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
         let target = target_root.join(relative);
 
         if entry.file_type().is_dir() {
+            if let Some(profile) = profile {
+                profile.record_directory();
+            }
             std::fs::create_dir_all(&target).map_err(|err| {
                 mg_types::MgError::Other(format!(
                     "failed to create directory '{}' while cloning '{}': {}",
@@ -4365,8 +4582,10 @@ fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
         if !entry.file_type().is_file() {
             continue;
         }
+        if let Some(profile) = profile {
+            profile.record_file();
+        }
 
-        let executable = is_executable(path)?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 mg_types::MgError::Other(format!(
@@ -4386,8 +4605,16 @@ fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
                 ))
             })?;
         }
+        // Hardlinks share the inode with the source, so mode/exec bits are
+        // already correct (the extractor sets them once). Chmodding here would
+        // be a no-op that also mutates the shared cached file. Only the copy
+        // fallback needs an explicit chmod.
         match std::fs::hard_link(path, &target) {
-            Ok(()) => {}
+            Ok(()) => {
+                if let Some(profile) = profile {
+                    profile.record_hardlink();
+                }
+            }
             Err(_) => {
                 std::fs::copy(path, &target).map_err(|err| {
                     mg_types::MgError::Other(format!(
@@ -4397,9 +4624,12 @@ fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
                         err
                     ))
                 })?;
+                set_executable(&target, is_executable(path)?)?;
+                if let Some(profile) = profile {
+                    profile.record_copy();
+                }
             }
         }
-        set_executable(&target, executable)?;
     }
 
     Ok(())
@@ -4429,10 +4659,6 @@ fn select_root_packages(graph: &ResolvedGraph) -> Vec<&ResolvedPackage> {
         .iter()
         .filter(|pkg| pkg.direct)
         .collect::<Vec<_>>();
-    if !direct_packages.is_empty() {
-        return direct_packages;
-    }
-
     let mut selected: std::collections::HashMap<String, &ResolvedPackage> =
         std::collections::HashMap::new();
 
@@ -4447,6 +4673,31 @@ fn select_root_packages(graph: &ResolvedGraph) -> Vec<&ResolvedPackage> {
                 }
             })
             .or_insert(pkg);
+    }
+
+    // Tên không conflict (1 version duy nhất) → hoist lên root luôn, kể cả
+    // transitive; chỉ conflict version mới cần nested (ponytail: npm-style).
+    if !direct_packages.is_empty() {
+        let single_version_names: std::collections::HashSet<String> = graph
+            .packages
+            .iter()
+            .map(|pkg| pkg.id.name_str().to_string())
+            .fold(
+                std::collections::HashMap::<String, usize>::new(),
+                |mut counts, name| {
+                    *counts.entry(name).or_insert(0) += 1;
+                    counts
+                },
+            )
+            .into_iter()
+            .filter(|(_, count)| *count == 1)
+            .map(|(name, _)| name)
+            .collect();
+        return graph
+            .packages
+            .iter()
+            .filter(|pkg| pkg.direct || single_version_names.contains(pkg.id.name_str()))
+            .collect();
     }
 
     graph
@@ -4702,26 +4953,101 @@ struct InstalledPackageManifest {
     bin: Option<PackageBinField>,
 }
 
-fn rebuild_bin_links(node_modules: &Path, packages: &[&ResolvedPackage]) -> MgResult<()> {
+fn rebuild_bin_links(
+    node_modules: &Path,
+    expected_root: &[&ResolvedPackage],
+    affected: &[&ResolvedPackage],
+    strict: bool,
+) -> MgResult<()> {
     let bin_dir = node_modules.join(".bin");
-    if bin_dir.exists() {
-        std::fs::remove_dir_all(&bin_dir).map_err(|err| {
+    if !strict {
+        if bin_dir.exists() {
+            std::fs::remove_dir_all(&bin_dir).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to remove stale bin dir '{}': {}",
+                    bin_dir.display(),
+                    err
+                ))
+            })?;
+        }
+        std::fs::create_dir_all(&bin_dir).map_err(|err| {
             mg_types::MgError::Other(format!(
-                "failed to remove stale bin dir '{}': {}",
+                "failed to create bin dir '{}': {}",
                 bin_dir.display(),
                 err
             ))
         })?;
+    } else {
+        std::fs::create_dir_all(&bin_dir).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to create bin dir '{}': {}",
+                bin_dir.display(),
+                err
+            ))
+        })?;
+        // Strict layout: only touch links for the affected root set. Drop
+        // links pointing at a vstore package that left the resolved root set
+        // (removed or version-changed); leave everything else intact.
+        let vstore_keys: std::collections::HashSet<String> = expected_root
+            .iter()
+            .map(|pkg| {
+                format!(
+                    "{}@{}",
+                    pkg.id.name().as_str().replace('/', "+"),
+                    pkg.id.version()
+                )
+            })
+            .collect();
+        for entry in std::fs::read_dir(&bin_dir).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to read bin dir '{}': {}",
+                bin_dir.display(),
+                err
+            ))
+        })? {
+            let entry = entry.map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to iterate bin dir '{}': {}",
+                    bin_dir.display(),
+                    err
+                ))
+            })?;
+            let link = entry.path();
+            let Ok(target) = std::fs::read_link(&link) else {
+                continue;
+            };
+            let resolved = target.canonicalize();
+            let Ok(resolved) = resolved else {
+                // Dangling link: the package it pointed at is gone. Drop it.
+                std::fs::remove_file(&link).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to remove dangling bin link '{}': {}",
+                        link.display(),
+                        err
+                    ))
+                })?;
+                continue;
+            };
+            let resolved_str = resolved.to_string_lossy();
+            if !resolved_str.contains(".megagate/") {
+                continue;
+            }
+            let still_expected = vstore_keys
+                .iter()
+                .any(|key| resolved_str.contains(&format!(".megagate/{key}/node_modules/")));
+            if !still_expected {
+                std::fs::remove_file(&link).map_err(|err| {
+                    mg_types::MgError::Other(format!(
+                        "failed to remove stale bin link '{}': {}",
+                        link.display(),
+                        err
+                    ))
+                })?;
+            }
+        }
     }
-    std::fs::create_dir_all(&bin_dir).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to create bin dir '{}': {}",
-            bin_dir.display(),
-            err
-        ))
-    })?;
 
-    for pkg in packages {
+    for pkg in affected {
         let package_dir = node_modules.join(pkg.id.name().as_str());
         for (bin_name, relative_target) in package_bin_entries(&package_dir)? {
             if relative_target
@@ -5115,10 +5441,7 @@ fn repair_dangling_symlinks(node_modules: &Path) -> MgResult<()> {
         }
     }
     if fixed > 0 {
-        eprintln!(
-            "[megagate] repair: re-linked {} dangling symlink(s)",
-            fixed
-        );
+        eprintln!("[megagate] repair: re-linked {} dangling symlink(s)", fixed);
     }
     Ok(())
 }
@@ -5153,6 +5476,7 @@ fn graph_without_packages(
 fn materialize_strict_layout(
     node_modules: &Path,
     graph: &ResolvedGraph,
+    materialization_graph: &ResolvedGraph,
     package_map: &std::collections::HashMap<PackageId, &ResolvedPackage>,
     root_packages: &[&ResolvedPackage],
     layout: &Layout,
@@ -5162,9 +5486,6 @@ fn materialize_strict_layout(
     packages_with_scripts: &mut Vec<std::path::PathBuf>,
     extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
 ) -> MgResult<()> {
-    let _ = store;
-    let _ = shared_cache;
-    let _ = cache;
     let virtual_store = node_modules.join(".megagate");
     if let Err(e) = std::fs::create_dir_all(&virtual_store) {
         return Err(mg_types::MgError::Other(format!(
@@ -5172,11 +5493,12 @@ fn materialize_strict_layout(
             e
         )));
     }
+    let materialization_profile = MaterializationProfile::from_env();
 
     // 1. Link all packages into virtual store - PARALLEL.
     // Strict layout is store-linked so repeat installs do not re-hardlink every
     // cached package file into each project.
-    let vstore_dirs: Vec<_> = graph
+    let vstore_dirs: Vec<_> = materialization_graph
         .packages
         .iter()
         .map(|pkg| {
@@ -5185,9 +5507,15 @@ fn materialize_strict_layout(
             (pkg_id.clone(), vstore_pkg_dir, pkg.clone())
         })
         .collect();
-    let vstore_dir_map: std::collections::HashMap<PackageId, PathBuf> = vstore_dirs
+    let vstore_dir_map: std::collections::HashMap<PackageId, PathBuf> = graph
+        .packages
         .iter()
-        .map(|(pkg_id, vstore_pkg_dir, _)| (pkg_id.clone(), vstore_pkg_dir.clone()))
+        .map(|pkg| {
+            (
+                pkg.id.clone(),
+                strict_vstore_package_dir(node_modules, &pkg.id),
+            )
+        })
         .collect();
 
     // Parallel materialization: symlink from canonical root to vstore.
@@ -5205,11 +5533,19 @@ fn materialize_strict_layout(
                         ))
                     })?;
                 }
-                let package_root = extracted_roots
-                    .get(&pkg_id)
-                    .cloned()
-                    .unwrap_or_else(|| local_extracted_package_root(layout, &pkg));
-                link_package_tree(&package_root, &vstore_pkg_dir)?;
+                let package_root = materialization_package_root(
+                    layout,
+                    store,
+                    shared_cache,
+                    cache,
+                    extracted_roots,
+                    &pkg,
+                )?;
+                link_package_tree_with_profile(
+                    &package_root,
+                    &vstore_pkg_dir,
+                    Some(&materialization_profile),
+                )?;
             }
             Ok::<_, mg_types::MgError>(vstore_pkg_dir)
         })
@@ -5221,7 +5557,7 @@ fn materialize_strict_layout(
     }
 
     // 2. Link dependencies within virtual store - PARALLEL
-    let link_results: Vec<_> = graph
+    let link_results: Vec<_> = materialization_graph
         .packages
         .par_iter()
         .map(|pkg| {
@@ -5259,9 +5595,11 @@ fn materialize_strict_layout(
 
                     let symlink_path = vstore_node_modules.join(dep_id.name().as_str());
                     crate::layout::create_symlink(dep_vstore_pkg_dir, &symlink_path)?;
+                    materialization_profile.record_symlink();
 
                     let local_symlink_path = pkg_local_node_modules.join(dep_id.name().as_str());
                     crate::layout::create_symlink(dep_vstore_pkg_dir, &local_symlink_path)?;
+                    materialization_profile.record_symlink();
                 }
             }
 
@@ -5280,8 +5618,10 @@ fn materialize_strict_layout(
                 if let Some(dep_vstore_pkg_dir) = vstore_dir_map.get(peer_id) {
                     let symlink_path = vstore_node_modules.join(peer_id.name().as_str());
                     crate::layout::create_symlink(dep_vstore_pkg_dir, &symlink_path)?;
+                    materialization_profile.record_symlink();
                     let local_symlink_path = pkg_local_node_modules.join(peer_id.name().as_str());
                     crate::layout::create_symlink(dep_vstore_pkg_dir, &local_symlink_path)?;
+                    materialization_profile.record_symlink();
                 }
             }
 
@@ -5307,9 +5647,52 @@ fn materialize_strict_layout(
             )));
         };
         crate::layout::create_symlink(&vstore_pkg_dir, &root_link)?;
+        materialization_profile.record_symlink();
     }
 
+    materialization_profile.flush();
     Ok(())
+}
+
+fn materialization_package_root(
+    layout: &Layout,
+    store: &ContentStore,
+    shared_cache: Option<&SharedWebCache>,
+    cache: &PackageCache,
+    extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
+    pkg: &ResolvedPackage,
+) -> MgResult<PathBuf> {
+    if let Some(root) = extracted_roots.get(&pkg.id) {
+        if root.join("package.json").exists() {
+            return Ok(root.clone());
+        }
+    }
+
+    let local_tarball = cache.tarball_path(&pkg.id);
+    if local_tarball.exists() {
+        return ensure_extracted_package_root(layout, store, shared_cache, pkg, &local_tarball);
+    }
+
+    if let Some(shared_cache) = shared_cache {
+        let shared_package_cache = shared_cache
+            .package_cache()
+            .map_err(|err| mg_types::MgError::Store(err.to_string()))?;
+        let shared_tarball = shared_package_cache.tarball_path(&pkg.id);
+        if shared_tarball.exists() {
+            return ensure_extracted_package_root(
+                layout,
+                store,
+                Some(shared_cache),
+                pkg,
+                &shared_tarball,
+            );
+        }
+    }
+
+    Err(mg_types::MgError::Other(format!(
+        "missing extracted root and cached tarball for '{}'",
+        pkg.id
+    )))
 }
 
 #[cfg(test)]

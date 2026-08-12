@@ -32,6 +32,7 @@ mg-pack = { path = "core/crates/mg-pack" }
 mg-publish = { path = "core/crates/mg-publish" }
 mg-oci = { path = "core/crates/mg-oci" }
 mg-registry-server = { path = "core/crates/mg-registry-server" }
+mg-exec = { path = "core/crates/mg-exec" }
 
 # External deps (for mg-http, mg-oci, etc.)
 http = { version = "1.2", features = [] }
@@ -53,6 +54,7 @@ notify = "6.1"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 toml = "0.8"
 bincode = "1.3"
 

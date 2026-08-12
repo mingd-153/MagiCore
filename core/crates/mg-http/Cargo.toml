@@ -34,5 +34,13 @@ rustls-native-certs = "0.7"
 tempfile = { workspace = true }
 tokio-test = "0.4"
 
+[[test]]
+name = "test_skeleton"
+path = "test/skeleton.rs"
+
+[[test]]
+name = "test_security"
+path = "test/security.rs"
+
 [lints]
 workspace = true

@@ -3,7 +3,7 @@
 
 use crate::manifest::{OciDescriptor, OciManifest};
 use anyhow::{bail, Result};
-use mg_http::{HttpClient, TlsConfig};
+use mg_http::{timeout::TimeoutConfig, HttpClient, TlsConfig};
 use serde_json;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -12,21 +12,22 @@ use std::path::PathBuf;
 pub struct OciClient {
     client: HttpClient,
     base_url: String,
-    tls: TlsConfig,
 }
 
 impl OciClient {
     pub fn new(registry_url: impl Into<String>, tls: Option<TlsConfig>) -> Result<Self> {
         let url = registry_url.into();
-        let http = HttpClient::new()?.with_retry(mg_http::retry::RetryStrategy::Exponential {
-            base: std::time::Duration::from_secs(1),
-            max: std::time::Duration::from_secs(30),
-        });
         let tls = tls.unwrap_or_default();
+        let timeout = TimeoutConfig::default();
+        let http = HttpClient::with_security(&timeout, &tls)?.with_retry(
+            mg_http::retry::RetryStrategy::Exponential {
+                base: std::time::Duration::from_secs(1),
+                max: std::time::Duration::from_secs(30),
+            },
+        );
         Ok(Self {
             client: http,
             base_url: url,
-            tls,
         })
     }
 
@@ -48,7 +49,11 @@ impl OciClient {
         let json: serde_json::Value = resp.json().await?;
         Ok(json["repositories"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
@@ -66,14 +71,23 @@ impl OciClient {
         let json: serde_json::Value = resp.json().await?;
         Ok(json["tags"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
     /// Get blob by digest (HEAD first to check existence, then GET)
     pub async fn pull_blob(&self, repo: &str, digest: &str) -> Result<Vec<u8>> {
-        let url = format!("{}/v2/{}/blobs/{}", self.base_url.trim_end_matches('/'), repo, digest);
-        
+        let url = format!(
+            "{}/v2/{}/blobs/{}",
+            self.base_url.trim_end_matches('/'),
+            repo,
+            digest
+        );
+
         // First check if blob exists (HEAD)
         let head = self.client.get(&url).await?;
         if head.status().as_u16() == 404 {
@@ -88,9 +102,9 @@ impl OciClient {
         if !resp.status().is_success() {
             bail!("GET blob failed: {}", resp.status());
         }
-        
+
         let data = resp.bytes().await?.to_vec();
-        
+
         // Verify digest
         let mut hasher = Sha256::new();
         hasher.update(&data);
@@ -98,7 +112,7 @@ impl OciClient {
         if computed != digest {
             bail!("Digest mismatch: expected {}, got {}", digest, computed);
         }
-        
+
         Ok(data)
     }
 
@@ -107,29 +121,32 @@ impl OciClient {
         let mut hasher = Sha256::new();
         hasher.update(data);
         let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
-        
+
         // Check if already exists
         if self.blob_exists(repo, &digest).await? {
             return Ok(digest);
         }
-        
+
         // Write data to temp file for upload
         let temp_dir = tempfile::tempdir()?;
         let temp_file = temp_dir.path().join("blob.bin");
         std::fs::write(&temp_file, data)?;
-        
+
         // Start upload
-        let uploader = mg_http::upload::ChunkedUploader::new(
-            self.client.clone(), 
-            self.base_url.clone()
-        );
+        let uploader =
+            mg_http::upload::ChunkedUploader::new(self.client.clone(), self.base_url.clone());
         uploader.upload_file(repo, &temp_file).await?;
-        
+
         Ok(digest)
     }
 
     async fn blob_exists(&self, repo: &str, digest: &str) -> Result<bool> {
-        let url = format!("{}/v2/{}/blobs/{}", self.base_url.trim_end_matches('/'), repo, digest);
+        let url = format!(
+            "{}/v2/{}/blobs/{}",
+            self.base_url.trim_end_matches('/'),
+            repo,
+            digest
+        );
         match self.client.get(&url).await {
             Ok(resp) => Ok(resp.status().is_success()),
             Err(_) => Ok(false),
@@ -138,21 +155,36 @@ impl OciClient {
 
     /// Pull manifest
     pub async fn pull_manifest(&self, repo: &str, reference: &str) -> Result<OciManifest> {
-        let url = format!("{}/v2/{}/manifests/{}", self.base_url.trim_end_matches('/'), repo, reference);
-        
+        let url = format!(
+            "{}/v2/{}/manifests/{}",
+            self.base_url.trim_end_matches('/'),
+            repo,
+            reference
+        );
+
         let resp = self.client.get(&url).await?;
         if !resp.status().is_success() {
             bail!("Pull manifest failed: {}", resp.status());
         }
-        
+
         let manifest: OciManifest = resp.json().await?;
         Ok(manifest)
     }
 
     /// Push manifest
-    pub async fn push_manifest(&self, repo: &str, reference: &str, manifest: &OciManifest) -> Result<()> {
-        let url = format!("{}/v2/{}/manifests/{}", self.base_url.trim_end_matches('/'), repo, reference);
-        
+    pub async fn push_manifest(
+        &self,
+        repo: &str,
+        reference: &str,
+        manifest: &OciManifest,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/v2/{}/manifests/{}",
+            self.base_url.trim_end_matches('/'),
+            repo,
+            reference
+        );
+
         let body = serde_json::to_vec(manifest)?;
 
         let resp = self.client.put(&url, body).await?;
@@ -181,7 +213,7 @@ impl OciClient {
             let desc = OciDescriptor::new(media_type.to_string(), size, digest);
             layer_descriptors.push(desc);
         }
-        
+
         // Create config
         let config_data = serde_json::to_vec(config)?;
         let config_digest = self.push_blob(repo, &config_data).await?;
@@ -190,24 +222,21 @@ impl OciClient {
             config_data.len() as i64,
             config_digest,
         );
-        
+
         // Create manifest
         let manifest = OciManifest::new(config_desc, layer_descriptors);
-        
+
         // Push manifest
         let tag = tag.to_string();
         // Push manifest with repo and tag
         self.push_manifest(repo, &tag, &manifest).await?;
-        
+
         Ok(tag)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    
-
     #[test]
     fn manifest_creation() {
         let config = crate::manifest::OciDescriptor::new(

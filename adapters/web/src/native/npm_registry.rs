@@ -374,10 +374,7 @@ pub async fn batch_download_tarball_with_auth(url: &str, token: Option<&str>) ->
 /// the last 24 hours (Supply-chain quarantine period). Returns `Ok(true)` if the
 /// package passes the check, `Ok(false)` if publish time is unknown/unparseable
 /// (treated as safe to avoid blocking packages without a timestamp).
-pub fn check_publish_age(
-    metadata: &PackageMetadata,
-    version: &str,
-) -> Result<bool, String> {
+pub fn check_publish_age(metadata: &PackageMetadata, version: &str) -> Result<bool, String> {
     let Some(ts_str) = metadata.time.get(version) else {
         return Ok(false); // no timestamp — not quarantined
     };
@@ -409,8 +406,16 @@ fn base64_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity((bytes.len() * 4).div_ceil(3));
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as usize;
-        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        let b1 = if chunk.len() > 1 {
+            chunk[1] as usize
+        } else {
+            0
+        };
+        let b2 = if chunk.len() > 2 {
+            chunk[2] as usize
+        } else {
+            0
+        };
         out.push(ALPHABET[b0 >> 2] as char);
         out.push(ALPHABET[((b0 & 0x3) << 4) | (b1 >> 4)] as char);
         if chunk.len() > 1 {
@@ -536,8 +541,7 @@ mod tests {
             time: Default::default(),
         };
         // 1 hour ago
-        let published_at = (chrono::Utc::now() - chrono::Duration::hours(1))
-            .to_rfc3339();
+        let published_at = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
         meta.time.insert("1.0.0".to_string(), published_at);
 
         let result = check_publish_age(&meta, "1.0.0");
@@ -555,8 +559,7 @@ mod tests {
             time: Default::default(),
         };
         // 48 hours ago
-        let published_at = (chrono::Utc::now() - chrono::Duration::hours(48))
-            .to_rfc3339();
+        let published_at = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
         meta.time.insert("2.0.0".to_string(), published_at);
 
         let result = check_publish_age(&meta, "2.0.0");

@@ -32,7 +32,7 @@ impl OfflineClient {
             let age = SystemTime::now()
                 .duration_since(*ts)
                 .unwrap_or(Duration::MAX);
-            
+
             if age > self.ttl {
                 // Stale metadata - cho dùng nhưng warning lớn (12 §9)
                 eprintln!("WARNING: stale metadata for {} (age: {:.0}s, ttl: {:.0}s) - cannot verify latest version from registry",
@@ -60,11 +60,10 @@ impl OfflineClient {
 
     /// Load cache từ disk (file JSON: url -> {data, timestamp})
     pub fn load_cache(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("read cache file: {}", e))?;
-        let cache: HashMap<String, (Vec<u8>, SystemTime)> = 
-            serde_json::from_str(&content)
-                .map_err(|e| anyhow::anyhow!("parse cache JSON: {}", e))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("read cache file: {}", e))?;
+        let cache: HashMap<String, (Vec<u8>, SystemTime)> = serde_json::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("parse cache JSON: {}", e))?;
         Ok(Self::new(Duration::from_secs(600)).with_cache(cache))
     }
 
@@ -124,12 +123,13 @@ impl HybridClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn offline_client_cache_hit_fresh() {
         let mut client = OfflineClient::new(Duration::from_secs(600));
-        client.cache.insert("test".into(), (b"data".to_vec(), SystemTime::now()));
+        client
+            .cache
+            .insert("test".into(), (b"data".to_vec(), SystemTime::now()));
         let rt = tokio::runtime::Runtime::new().unwrap();
         let data = rt.block_on(client.get("test")).unwrap();
         assert_eq!(data, b"data");

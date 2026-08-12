@@ -65,7 +65,10 @@ impl OciDescriptor {
         self
     }
 
-    pub fn with_annotations(mut self, annotations: std::collections::HashMap<String, String>) -> Self {
+    pub fn with_annotations(
+        mut self,
+        annotations: std::collections::HashMap<String, String>,
+    ) -> Self {
         self.annotations = Some(annotations);
         self
     }
@@ -161,7 +164,8 @@ mod tests {
             "application/octet-stream".to_string(),
             100,
             "sha256:test".to_string(),
-        ).with_data(vec![1, 2, 3]);
+        )
+        .with_data(vec![1, 2, 3]);
         assert_eq!(desc.data.as_ref().unwrap().len(), 3);
     }
 }

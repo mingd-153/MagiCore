@@ -20,7 +20,6 @@ pub fn default_store_root() -> std::path::PathBuf {
         .join("v3")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,6 +1,7 @@
 //! PyPI-compatible endpoints — PEP 691 JSON simple index + twine legacy upload
 //! (Endpoint /pypi: ai/lib python publish qua registry chung, pip install được)
 
+use crate::{model::PypiFile, AppState};
 use axum::{
     extract::{Multipart, Path, State},
     http::{HeaderMap, StatusCode},
@@ -8,7 +9,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use crate::{model::PypiFile, AppState};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tracing::warn;
@@ -86,11 +86,8 @@ async fn download_file(
     );
     resp.headers_mut().insert(
         axum::http::header::CONTENT_DISPOSITION,
-        axum::http::HeaderValue::from_str(&format!(
-            "attachment; filename=\"{}\"",
-            filename
-        ))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        axum::http::HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename))
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     );
     Ok(resp)
 }
@@ -119,7 +116,11 @@ async fn upload_legacy(
     let mut content: Option<Vec<u8>> = None;
     let mut requires_python: Option<String> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|_| StatusCode::BAD_REQUEST)? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+    {
         let field_name = field.name().unwrap_or("").to_string();
         match field_name.as_str() {
             "name" => name = field.text().await.ok(),
@@ -129,15 +130,27 @@ async fn upload_legacy(
             "requires_python" => requires_python = field.text().await.ok(),
             "content" => {
                 filename = field.file_name().map(|s| s.to_string());
-                content = Some(field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?.to_vec())
+                content = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|_| StatusCode::BAD_REQUEST)?
+                        .to_vec(),
+                )
             }
             _ => {}
         }
     }
 
-    let name = name.filter(|n| !n.is_empty()).ok_or(StatusCode::BAD_REQUEST)?;
-    let version = version.filter(|v| !v.is_empty()).ok_or(StatusCode::BAD_REQUEST)?;
-    let filename = filename.filter(|f| !f.is_empty()).ok_or(StatusCode::BAD_REQUEST)?;
+    let name = name
+        .filter(|n| !n.is_empty())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let version = version
+        .filter(|v| !v.is_empty())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let filename = filename
+        .filter(|f| !f.is_empty())
+        .ok_or(StatusCode::BAD_REQUEST)?;
     let content = content.ok_or(StatusCode::BAD_REQUEST)?;
 
     // sha256 verify (fail-closed: không đúng digest → từ chối)
@@ -147,12 +160,19 @@ async fn upload_legacy(
     let expected = match sha256_digest {
         Some(d) => {
             let d = d.trim().to_lowercase();
-            if d.starts_with("sha256:") { d } else { format!("sha256:{d}") }
+            if d.starts_with("sha256:") {
+                d
+            } else {
+                format!("sha256:{d}")
+            }
         }
         None => actual.clone(),
     };
     if actual != expected {
-        warn!("pypi upload {}: sha256 mismatch ({} != {})", filename, actual, expected);
+        warn!(
+            "pypi upload {}: sha256 mismatch ({} != {})",
+            filename, actual, expected
+        );
         return Err(StatusCode::BAD_REQUEST);
     }
 

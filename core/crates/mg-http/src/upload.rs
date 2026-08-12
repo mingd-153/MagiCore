@@ -15,9 +15,9 @@ pub struct UploadSession {
     pub upload_id: String,
     pub offset: u64,
     pub total_size: Option<u64>,
-    pub digest: String,        // sha256 của toàn bộ blob
+    pub digest: String,          // sha256 của toàn bộ blob
     pub uploaded_digest: String, // sha256 của phần đã upload
-    pub started_at: String,    // ISO8601
+    pub started_at: String,      // ISO8601
     pub updated_at: String,
     pub chunk_size: u64,
 }
@@ -26,7 +26,7 @@ pub struct UploadSession {
 pub struct ChunkedUploader {
     client: HttpClient,
     base_url: String,
-    chunk_size: u64,      // mặc định 10 MiB
+    chunk_size: u64, // mặc định 10 MiB
     timeout_per_chunk: Duration,
 }
 
@@ -47,18 +47,25 @@ impl ChunkedUploader {
 
     /// Khởi tạo upload session → nhận upload_id
     pub async fn start_upload(&self, repo: &str) -> Result<String> {
-        let url = format!("{}/v2/{}/blobs/uploads/", self.base_url.trim_end_matches('/'), repo);
+        let url = format!(
+            "{}/v2/{}/blobs/uploads/",
+            self.base_url.trim_end_matches('/'),
+            repo
+        );
         let resp = self.client.post(&url, Vec::new()).await?;
         if !resp.status().is_success() {
             bail!("start upload failed: {}", resp.status());
         }
         // Server trả Location header với upload_id
-        let location = resp.headers()
+        let location = resp
+            .headers()
             .get("location")
             .ok_or_else(|| anyhow::anyhow!("missing Location header"))?
             .to_str()?;
         // Extract upload_id từ URL: .../blobs/uploads/{id}
-        let upload_id = location.split('/').last()
+        let upload_id = location
+            .split('/')
+            .last()
             .ok_or_else(|| anyhow::anyhow!("invalid Location: {}", location))?
             .to_string();
         Ok(upload_id)
@@ -81,13 +88,15 @@ impl ChunkedUploader {
         let end = offset + data.len() as u64 - 1;
         let _range = format!("bytes={}-{}", offset, end);
 
-        let resp = self.client
-            .patch(&url, data.to_vec())
+        let resp = self
+            .client
+            .patch_with_timeout(&url, data.to_vec(), self.timeout_per_chunk)
             .await?;
 
         if resp.status().as_u16() == 308 {
             // Resume incomplete - server trả Range header
-            let range_header = resp.headers()
+            let range_header = resp
+                .headers()
                 .get("range")
                 .and_then(|h| h.to_str().ok())
                 .unwrap_or("bytes=0-");
@@ -110,7 +119,7 @@ impl ChunkedUploader {
         &self,
         repo: &str,
         upload_id: &str,
-        expected_digest: &str,  // "sha256:..."
+        expected_digest: &str, // "sha256:..."
     ) -> Result<String> {
         let url = format!(
             "{}/v2/{}/blobs/uploads/{}?digest={}",
@@ -124,7 +133,8 @@ impl ChunkedUploader {
             bail!("finalize upload failed: {}", resp.status());
         }
         // Server trả Location với digest
-        let location = resp.headers()
+        let location = resp
+            .headers()
             .get("location")
             .ok_or_else(|| anyhow::anyhow!("missing Location after finalize"))?
             .to_str()?;
@@ -133,34 +143,37 @@ impl ChunkedUploader {
 
     /// Upload file hoàn chỉnh từ đường dẫn — auto chunk + resume
     pub async fn upload_file(&self, repo: &str, file_path: &Path) -> Result<String> {
-        let file = File::open(file_path)
-            .map_err(|e| anyhow::anyhow!("open file: {}", e))?;
+        let file = File::open(file_path).map_err(|e| anyhow::anyhow!("open file: {}", e))?;
         let file_size = file.metadata()?.len();
-        
+
         // Compute full SHA256
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; 8192];
         let mut file_clone = File::open(file_path)?;
         loop {
             let n = file_clone.read(&mut buf)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             hasher.update(&buf[..n]);
         }
         let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
 
         // Start session
         let upload_id: String = self.start_upload(repo).await?;
-        
+
         // Check for existing session (resume)
         let mut offset = 0u64;
         let mut file = file;
-        
+
         loop {
             let mut chunk = vec![0u8; self.chunk_size as usize];
             let n = file.read(&mut chunk)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             chunk.truncate(n);
-            
+
             offset = self.upload_chunk(repo, &upload_id, offset, &chunk).await?;
             tracing::info!("Uploaded {} / {} bytes", offset, file_size);
         }
@@ -174,7 +187,6 @@ impl ChunkedUploader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn uploader_creation() {

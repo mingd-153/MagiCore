@@ -6,6 +6,9 @@ use mg_types::error::MgResult;
 use mg_types::package::{DependencySpec, PackageId, PackageName, VersionRange};
 use mg_types::version::Version;
 
+/// Cargo.toml parse/write helpers — shared by lib (rust), game (bevy), iot (esp32-rust) cores.
+pub mod cargo_manifest;
+
 /// BaseAdapter — default implementations for add/remove/list/update.
 ///
 /// Each ecosystem adapter must implement both `PackageAdapter` and `BaseAdapter`.
