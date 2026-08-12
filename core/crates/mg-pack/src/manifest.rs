@@ -78,9 +78,17 @@ pub fn dep_fields(manifest: &Value) -> Map<String, Value> {
 }
 
 fn name_or(manifest: &str, override_name: &str) -> String {
-    if override_name.is_empty() { manifest.to_string() } else { override_name.to_string() }
+    if override_name.is_empty() {
+        manifest.to_string()
+    } else {
+        override_name.to_string()
+    }
 }
 
 fn version_or(manifest: &str, override_version: &str) -> String {
-    if override_version.is_empty() { manifest.to_string() } else { override_version.to_string() }
+    if override_version.is_empty() {
+        manifest.to_string()
+    } else {
+        override_version.to_string()
+    }
 }

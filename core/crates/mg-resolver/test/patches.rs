@@ -13,14 +13,18 @@ fn apply_simple_patch() {
 
     // Create patch
     let patch = vstore.join("test.patch");
-    std::fs::write(&patch, r#"--- a/test.txt
+    std::fs::write(
+        &patch,
+        r#"--- a/test.txt
 +++ b/test.txt
 @@ -1,3 +1,3 @@
  line1
 -line2
 +LINE2
  line3
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let modified = apply_patch(vstore, &patch).unwrap();
     assert_eq!(modified.len(), 1);
@@ -38,14 +42,18 @@ fn patch_context_mismatch_fails() {
     std::fs::write(&orig, "line1\nline2\nline3\n").unwrap();
 
     let patch = vstore.join("test.patch");
-    std::fs::write(&patch, r#"--- a/test.txt
+    std::fs::write(
+        &patch,
+        r#"--- a/test.txt
 +++ b/test.txt
 @@ -1,3 +1,3 @@
  line1
 -lineX
 +LINE2
  line3
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let result = apply_patch(vstore, &patch);
     assert!(result.is_err());

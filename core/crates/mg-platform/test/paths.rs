@@ -1,5 +1,5 @@
 //! Integration tests for mg-platform paths — test riêng tại test/ (RULE §5)
-use mg_platform::paths::{ProjectPaths, GlobalPaths};
+use mg_platform::paths::{GlobalPaths, ProjectPaths};
 use tempfile;
 
 #[test]
@@ -7,7 +7,9 @@ fn project_paths_computes_correctly() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = ProjectPaths::from_root(tmp.path());
     assert!(paths.patches_dir().ends_with(".megagate/patches"));
-    assert!(paths.lock_signatures.ends_with(".megagate/lock-signatures.json"));
+    assert!(paths
+        .lock_signatures
+        .ends_with(".megagate/lock-signatures.json"));
 }
 
 #[test]

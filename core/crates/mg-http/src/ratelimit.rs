@@ -41,7 +41,7 @@ impl RateLimiter {
             let mut requests = self.requests.lock().unwrap();
             let now = Instant::now();
             let cutoff = now - self.config.period;
-            
+
             // Remove old requests
             while let Some(&front) = requests.front() {
                 if front < cutoff {
@@ -50,12 +50,12 @@ impl RateLimiter {
                     break;
                 }
             }
-            
+
             if (requests.len() as u32) < self.config.max_requests {
                 requests.push_back(now);
                 return;
             }
-            
+
             // Need to wait
             let oldest = requests.front().copied().unwrap_or(now);
             let wait_time = self.config.period - now.duration_since(oldest);

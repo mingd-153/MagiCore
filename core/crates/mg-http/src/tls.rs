@@ -3,12 +3,11 @@
 
 use anyhow::{bail, Context, Result};
 use reqwest::ClientBuilder;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified},
-    ClientConfig, RootCertStore,
-    SignatureScheme, DigitallySignedStruct, Error as RustlsError,
+    ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme,
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use std::sync::Arc;
 
 /// TLS configuration options
@@ -73,7 +72,8 @@ impl TlsConfig {
             let certs = rustls_pemfile::certs(&mut ca_pem.as_bytes())
                 .map_err(|e| anyhow::anyhow!("parse CA certs: {}", e))?;
             for cert in certs {
-                root_store.add(cert.into())
+                root_store
+                    .add(cert.into())
                     .map_err(|e| anyhow::anyhow!("add custom CA: {}", e))?;
             }
         }
@@ -86,26 +86,27 @@ impl TlsConfig {
         .with_root_certificates(root_store);
 
         // Build config with client cert (mTLS) if provided
-        let config = if let (Some(cert_path), Some(key_path)) = (&self.client_cert, &self.client_key) {
-            let certs = load_certs(cert_path)?;
-            let key = load_private_key(key_path)?;
-            builder
-                .with_client_auth_cert(certs, key)
-                .map_err(|e| anyhow::anyhow!("load client cert/key: {}", e))?
-        } else {
-            let config = builder.with_no_client_auth();
-            if self.allow_untrusted {
-                ClientConfig::builder_with_protocol_versions(&[
-                    &rustls::version::TLS12,
-                    &rustls::version::TLS13,
-                ])
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(NoVerify::new()))
-                .with_no_client_auth()
+        let config =
+            if let (Some(cert_path), Some(key_path)) = (&self.client_cert, &self.client_key) {
+                let certs = load_certs(cert_path)?;
+                let key = load_private_key(key_path)?;
+                builder
+                    .with_client_auth_cert(certs, key)
+                    .map_err(|e| anyhow::anyhow!("load client cert/key: {}", e))?
             } else {
-                config
-            }
-        };
+                let config = builder.with_no_client_auth();
+                if self.allow_untrusted {
+                    ClientConfig::builder_with_protocol_versions(&[
+                        &rustls::version::TLS12,
+                        &rustls::version::TLS13,
+                    ])
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(NoVerify::new()))
+                    .with_no_client_auth()
+                } else {
+                    config
+                }
+            };
 
         Ok(Arc::new(config))
     }
@@ -115,10 +116,10 @@ impl TlsConfig {
         if self.allow_untrusted {
             builder = builder.danger_accept_invalid_certs(true);
         }
-        
+
         if let Some(ca) = &self.ca_bundle {
-            let ca_pem = std::fs::read(ca)
-                .map_err(|e| anyhow::anyhow!("read CA: {}: {}", ca, e))?;
+            let ca_pem =
+                std::fs::read(ca).map_err(|e| anyhow::anyhow!("read CA: {}: {}", ca, e))?;
             builder = builder.add_root_certificate(reqwest::Certificate::from_pem(&ca_pem)?);
         }
 
@@ -224,11 +225,17 @@ fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
 }
 
 /// Security headers & token handling (12 §10)
-pub fn secure_request_builder(builder: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
+pub fn secure_request_builder(
+    builder: reqwest::RequestBuilder,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
     let mut b = builder
-        .header("User-Agent", format!("megagate/{} (os; arch)", env!("CARGO_PKG_VERSION")))
+        .header(
+            "User-Agent",
+            format!("megagate/{} (os; arch)", env!("CARGO_PKG_VERSION")),
+        )
         .header("Accept", "application/json");
-    
+
     if let Some(t) = token {
         // Token chỉ trong header Authorization - KHÔNG query string
         b = b.bearer_auth(t);

@@ -97,7 +97,9 @@ impl NpmRc {
 
     /// Normalize host key: //registry.npmjs.org/ → registry.npmjs.org
     pub fn normalize_host(host: &str) -> String {
-        host.trim_start_matches('/').trim_end_matches('/').to_string()
+        host.trim_start_matches('/')
+            .trim_end_matches('/')
+            .to_string()
     }
 
     /// Registry cho scoped package (@scope → URL), fallback registry mặc định.

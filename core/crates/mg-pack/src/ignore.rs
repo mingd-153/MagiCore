@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Luôn thêm vào tarball nếu tồn tại
 const ALWAYS_INCLUDE: &[&str] = &["package.json", "README.md", "LICENSE", "CHANGELOG.md"];
 /// Luôn bỏ khỏi tarball
-const ALWAYS_EXCLUDE: &[&str] = &["node_modules", ".git", "mg.lock", ".megagate"];
+const ALWAYS_EXCLUDE: &[&str] = &["node_modules", ".git", ".megagate"];
 
 /// Danh sách file sẽ đóng gói (relative path, phân tách `/`).
 pub fn select_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -16,6 +16,7 @@ pub fn select_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut builder = ignore::WalkBuilder::new(root);
     builder.hidden(false); // đóng gói file ẩn (trừ luật ignore) — đúng npm behavior
     builder.require_git(false); // đọc .gitignore kể cả không có .git dir
+    builder.parents(false); // không áp ignore rule từ repo root — template layer tự chứa
     if has_npmignore {
         // npm behavior: .npmignore THAY THẾ .gitignore (không cộng dồn)
         builder.git_ignore(false);

@@ -56,7 +56,10 @@ impl AuthService {
 
     /// Add a user with token — ghi cả DB (persist) + cache
     pub fn add_user(&self, token: String, user: User) {
-        self.users.lock().unwrap().insert(token.clone(), user.clone());
+        self.users
+            .lock()
+            .unwrap()
+            .insert(token.clone(), user.clone());
         // fire-and-forget async — lỗi DB không chặn adduser (ghi log)
         let store = self.store.clone();
         tokio::spawn(async move {
@@ -169,17 +172,15 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     // Adduser public (chuẩn npm): tạo credential mới, không cần token sẵn có
-    if request.method() == axum::http::Method::PUT
-        && request.uri().path().starts_with("/-/user/")
-    {
+    if request.method() == axum::http::Method::PUT && request.uri().path().starts_with("/-/user/") {
         return Ok(next.run(request).await);
     }
 
     let auth_header = request.headers().get("authorization");
-    
+
     if let Some(auth_value) = auth_header {
         let auth_str = auth_value.to_str().map_err(|_| StatusCode::BAD_REQUEST)?;
-        
+
         if let Some(token) = auth_str.strip_prefix("Bearer ") {
             if let Some(user) = auth.verify_token(token) {
                 let mut request = request;
@@ -188,7 +189,8 @@ pub async fn auth_middleware(
             }
         } else if let Some(encoded) = auth_str.strip_prefix("Basic ") {
             if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-                let decoded_str = String::from_utf8(decoded).map_err(|_| StatusCode::BAD_REQUEST)?;
+                let decoded_str =
+                    String::from_utf8(decoded).map_err(|_| StatusCode::BAD_REQUEST)?;
                 let mut parts = decoded_str.splitn(2, ':');
                 if let (Some(_user), Some(pass)) = (parts.next(), parts.next()) {
                     // pip/shared registry clients gửi Basic auth — admin token cũng chấp nhận
@@ -214,7 +216,7 @@ pub async fn auth_middleware(
             }
         }
     }
-    
+
     Err(StatusCode::UNAUTHORIZED)
 }
 
@@ -225,7 +227,7 @@ pub async fn optional_auth(
     next: Next,
 ) -> Response {
     let auth_header = request.headers().get("authorization");
-    
+
     if let Some(auth_value) = auth_header {
         if let Ok(auth_str) = auth_value.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -237,7 +239,7 @@ pub async fn optional_auth(
             }
         }
     }
-    
+
     next.run(request).await
 }
 

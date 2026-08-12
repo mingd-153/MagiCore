@@ -1,5 +1,5 @@
 //! Integration tests for manifest sanitize — test riêng tại test/ (RULE §5)
-use mg_pack::manifest::{sanitize, dep_fields};
+use mg_pack::manifest::{dep_fields, sanitize};
 use serde_json::Value;
 
 fn manifest(v: &str) -> Value {
@@ -11,7 +11,10 @@ fn removes_private_and_publish_config() {
     let m = manifest(
         r#"{"name":"x","version":"1.0.0","private":true,"publishConfig":{"registry":"r"},"main":"index.js"}"#,
     );
-    assert!(sanitize(m, "", "").is_err(), "private: true phải chặn publish");
+    assert!(
+        sanitize(m, "", "").is_err(),
+        "private: true phải chặn publish"
+    );
 }
 
 #[test]
@@ -53,9 +56,7 @@ fn keeps_dep_fields() {
 
 #[test]
 fn sanitize_preserves_exports_field() {
-    let m = manifest(
-        r#"{"name":"x","version":"1.0.0","exports":{".":"./index.js"}}"#,
-    );
+    let m = manifest(r#"{"name":"x","version":"1.0.0","exports":{".":"./index.js"}}"#);
     let s = sanitize(m, "", "").unwrap();
     assert_eq!(s.manifest["exports"]["."], "./index.js");
 }

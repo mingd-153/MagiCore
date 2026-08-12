@@ -1,7 +1,7 @@
 //! Integration tests for auth resolution — test riêng tại test/ (RULE §5)
-use mg_publish::auth::{resolve_auth, Auth};
 use mg_config::npmrc::NpmRc;
 use mg_config::registry::Registry;
+use mg_publish::auth::{resolve_auth, Auth};
 
 // ponytail: env vars là global — serialize tests dùng env để hết race
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -63,7 +63,8 @@ fn mg_toml_registry_token_fallback() {
         std::env::remove_var("NPM_TOKEN");
         let mut reg = Registry::new("r".into(), "https://x/".into());
         reg.token = Some("toml-token".into());
-        let auth = resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap();
+        let auth =
+            resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap();
         assert_eq!(auth.token.as_deref(), Some("toml-token"));
     })
 }
@@ -79,7 +80,8 @@ fn auth_type_basic_forces_basic_auth() {
         reg.username = Some("u".into());
         reg.password = Some("p".into());
         reg.auth_type = Some("basic".into());
-        let auth = resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap();
+        let auth =
+            resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap();
         assert_eq!(auth.token, None);
         assert_eq!(auth.username.as_deref(), Some("u"));
         assert_eq!(auth.header_value().as_deref(), Some("Basic dTpw"));
@@ -94,7 +96,8 @@ fn auth_type_basic_without_credentials_errors() {
         let mut reg = Registry::new("r".into(), "https://x/".into());
         reg.token = Some("toml-token".into());
         reg.auth_type = Some("basic".into());
-        let err = resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap_err();
+        let err =
+            resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap_err();
         assert!(err.to_string().contains("auth_type"), "err: {err}");
     })
 }
@@ -108,7 +111,8 @@ fn auth_type_token_without_token_errors() {
         reg.username = Some("u".into());
         reg.password = Some("p".into());
         reg.auth_type = Some("token".into());
-        let err = resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap_err();
+        let err =
+            resolve_auth(&NpmRc::parse("").unwrap(), "https://x/", Some(&reg), None).unwrap_err();
         assert!(err.to_string().contains("auth_type"), "err: {err}");
     })
 }
@@ -136,7 +140,13 @@ fn missing_auth_errors() {
     with_env_lock(|| {
         std::env::remove_var("MG_NPM_TOKEN");
         std::env::remove_var("NPM_TOKEN");
-        assert!(resolve_auth(&NpmRc::parse("").unwrap(), "https://registry.npmjs.org/", None, None).is_err());
+        assert!(resolve_auth(
+            &NpmRc::parse("").unwrap(),
+            "https://registry.npmjs.org/",
+            None,
+            None
+        )
+        .is_err());
     })
 }
 

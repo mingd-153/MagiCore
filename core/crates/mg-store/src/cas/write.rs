@@ -2,7 +2,6 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 
-
 use super::integrity::IntegrityHash;
 use super::store::StoreError;
 

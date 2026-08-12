@@ -25,7 +25,10 @@ pub fn append(path: &Path, entry: &AuditEntry) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let line = serde_json::to_string(entry)?;
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     writeln!(f, "{line}")?;
     Ok(())
 }

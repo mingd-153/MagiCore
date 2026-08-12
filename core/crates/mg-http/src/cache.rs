@@ -46,11 +46,14 @@ impl HttpCache {
 
     pub fn insert(&self, key: String, data: Vec<u8>, ttl: Duration) {
         let mut cache = self.cache.lock().unwrap();
-        cache.insert(key, CacheEntry {
-            data,
-            timestamp: SystemTime::now(),
-            ttl,
-        });
+        cache.insert(
+            key,
+            CacheEntry {
+                data,
+                timestamp: SystemTime::now(),
+                ttl,
+            },
+        );
     }
 }
 

@@ -19,13 +19,17 @@ pub struct ProxyConfig {
 impl ProxyConfig {
     /// Load từ environment variables
     pub fn from_env() -> Self {
-        let http = env::var("HTTP_PROXY").or_else(|_| env::var("http_proxy")).ok();
-        let https = env::var("HTTPS_PROXY").or_else(|_| env::var("https_proxy")).ok();
+        let http = env::var("HTTP_PROXY")
+            .or_else(|_| env::var("http_proxy"))
+            .ok();
+        let https = env::var("HTTPS_PROXY")
+            .or_else(|_| env::var("https_proxy"))
+            .ok();
         let no_proxy = env::var("NO_PROXY")
             .or_else(|_| env::var("no_proxy"))
             .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
             .unwrap_or_else(|_| vec!["localhost".into(), "127.0.0.1".into()]);
-        
+
         Self {
             http,
             https,
@@ -35,8 +39,13 @@ impl ProxyConfig {
     }
 
     /// Thêm override cho registry cụ thể
-    pub fn with_registry_override(mut self, registry_url: impl Into<String>, proxy_url: impl Into<String>) -> Self {
-        self.per_registry.insert(registry_url.into(), proxy_url.into());
+    pub fn with_registry_override(
+        mut self,
+        registry_url: impl Into<String>,
+        proxy_url: impl Into<String>,
+    ) -> Self {
+        self.per_registry
+            .insert(registry_url.into(), proxy_url.into());
         self
     }
 
@@ -70,19 +79,27 @@ impl ProxyConfig {
         // Per-registry override優先
         for (reg, proxy) in &self.per_registry {
             if url.starts_with(reg) {
-                return Ok(Some(Proxy::all(proxy).map_err(|e| anyhow::anyhow!("invalid proxy url: {}", e))?));
+                return Ok(Some(
+                    Proxy::all(proxy).map_err(|e| anyhow::anyhow!("invalid proxy url: {}", e))?,
+                ));
             }
         }
 
         if let Some(p) = proxy_url {
-            Ok(Some(Proxy::all(p).map_err(|e| anyhow::anyhow!("invalid proxy url: {}", e))?))
+            Ok(Some(Proxy::all(p).map_err(|e| {
+                anyhow::anyhow!("invalid proxy url: {}", e)
+            })?))
         } else {
             Ok(None)
         }
     }
 
     /// Apply vào reqwest::ClientBuilder
-    pub fn apply(&self, builder: reqwest::ClientBuilder, url: &str) -> Result<reqwest::ClientBuilder> {
+    pub fn apply(
+        &self,
+        builder: reqwest::ClientBuilder,
+        url: &str,
+    ) -> Result<reqwest::ClientBuilder> {
         if let Some(proxy) = self.build_proxy(url)? {
             Ok(builder.proxy(proxy))
         } else {

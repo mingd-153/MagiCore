@@ -11,7 +11,10 @@ pub mod ratelimit;
 pub mod storage;
 
 /// Application state type alias
-pub type AppState = (std::sync::Arc<crate::storage::RegistryStore>, std::sync::Arc<crate::auth::AuthService>);
+pub type AppState = (
+    std::sync::Arc<crate::storage::RegistryStore>,
+    std::sync::Arc<crate::auth::AuthService>,
+);
 
 /// Start the registry server (used by bin `mg-registry` and `mg registry serve`)
 /// rate_limit_rps: số request/giây/IP cho phép (0 = tắt)

@@ -49,8 +49,6 @@ pub fn apply_patch(vstore_root: &Path, patch_path: &Path) -> Result<Vec<PathBuf>
 struct Hunk {
     old_start: usize,
     old_len: usize,
-    new_start: usize,
-    new_len: usize,
     lines: Vec<(char, String)>, // (' ', '-', '+') + content
 }
 
@@ -58,7 +56,9 @@ fn parse_file_header<I>(lines: &mut std::iter::Peekable<I>, prefix: &str) -> Res
 where
     I: Iterator<Item = std::string::String>,
 {
-    let line = lines.next().ok_or_else(|| anyhow!("expected {} header", prefix))?;
+    let line = lines
+        .next()
+        .ok_or_else(|| anyhow!("expected {} header", prefix))?;
     if !line.starts_with(prefix) {
         bail!("expected line starting with {}", prefix);
     }
@@ -82,7 +82,7 @@ where
         bail!("invalid hunk header: {}", header);
     }
     let old_range = parse_range(parts[1])?;
-    let new_range = parse_range(parts[2])?;
+    let _new_range = parse_range(parts[2])?;
 
     let mut hunk_lines = Vec::new();
     while let Some(line) = lines.next() {
@@ -102,8 +102,6 @@ where
     Ok(Hunk {
         old_start: old_range.0,
         old_len: old_range.1,
-        new_start: new_range.0,
-        new_len: new_range.1,
         lines: hunk_lines,
     })
 }

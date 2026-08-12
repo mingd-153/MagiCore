@@ -1,3 +1,4 @@
+use crate::{model::*, AppState};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
@@ -6,7 +7,6 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-use crate::{model::*, AppState};
 use serde::Deserialize;
 use std::collections::HashMap;
 use tracing::warn;
@@ -20,21 +20,35 @@ pub fn routes() -> Router<AppState> {
             "/:scope/:name",
             get(get_package_scoped).put(publish_package_scoped),
         )
-        .route("/npm/:name/-/:filename", get(download_tarball).delete(delete_package_version_route))
+        .route(
+            "/npm/:name/-/:filename",
+            get(download_tarball).delete(delete_package_version_route),
+        )
         .route("/npm/:name/-/:filename", put(upload_tarball))
-        .route("/:name/-/:filename", get(download_tarball).put(upload_tarball).delete(delete_package_version_route))
+        .route(
+            "/:name/-/:filename",
+            get(download_tarball)
+                .put(upload_tarball)
+                .delete(delete_package_version_route),
+        )
         .route(
             "/:scope/:name/-/:filename",
             get(download_tarball_scoped).delete(delete_package_version_scoped),
         )
+        .route("/:scope/:name/-/:filename", put(upload_tarball_scoped))
         .route(
-            "/:scope/:name/-/:filename",
-            put(upload_tarball_scoped),
+            "/-/package/:name/dist-tags/:tag",
+            put(set_dist_tag).delete(delete_dist_tag),
         )
-        .route("/-/package/:name/dist-tags/:tag", put(set_dist_tag).delete(delete_dist_tag))
         .route("/-/package/:name/dist-tags", get(get_dist_tags))
-        .route("/-/package/:scope/:name/dist-tags/:tag", put(set_dist_tag_scoped).delete(delete_dist_tag_scoped))
-        .route("/-/package/:scope/:name/dist-tags", get(get_dist_tags_scoped))
+        .route(
+            "/-/package/:scope/:name/dist-tags/:tag",
+            put(set_dist_tag_scoped).delete(delete_dist_tag_scoped),
+        )
+        .route(
+            "/-/package/:scope/:name/dist-tags",
+            get(get_dist_tags_scoped),
+        )
         .route("/-/user/:name", put(adduser).delete(delete_user))
         .route("/-/whoami", get(whoami))
         .route("/-/v1/search", get(search))
@@ -58,7 +72,13 @@ async fn publish_package_scoped(
     Path((scope, name)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<Package>, StatusCode> {
-    publish_package(State(state), headers, Path(scoped_full(&scope, &name)), body).await
+    publish_package(
+        State(state),
+        headers,
+        Path(scoped_full(&scope, &name)),
+        body,
+    )
+    .await
 }
 
 async fn download_tarball_scoped(
@@ -73,7 +93,12 @@ async fn upload_tarball_scoped(
     Path((scope, name, filename)): Path<(String, String, String)>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    upload_tarball(State(state), Path((scoped_full(&scope, &name), filename)), body).await
+    upload_tarball(
+        State(state),
+        Path((scoped_full(&scope, &name), filename)),
+        body,
+    )
+    .await
 }
 
 async fn delete_package_version_scoped(
@@ -111,8 +136,8 @@ async fn publish_package(
     use base64::Engine;
     use sha2::{Digest, Sha512};
 
-    let mut doc: serde_json::Value = serde_json::from_slice(&body)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mut doc: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Lưu tarball từ _attachments → blob content-addressed, gắn integrity vào dist.
     // Fail-closed: attachment sai (thiếu data / base64 hỏng) → từ chối, không publish "mù"
@@ -161,19 +186,19 @@ async fn publish_package(
         }
     }
 
-    let pkg: Package = serde_json::from_value(doc)
-        .map_err(|e| {
-            warn!("publish {}: body parse fail: {e}", name);
-            StatusCode::BAD_REQUEST
-        })?;
+    let pkg: Package = serde_json::from_value(doc).map_err(|e| {
+        warn!("publish {}: body parse fail: {e}", name);
+        StatusCode::BAD_REQUEST
+    })?;
 
     // Verify name matches
     if pkg.name != name {
         return Err(StatusCode::BAD_REQUEST);
     }
-    
+
     // Verify auth: fail-closed khi đã cấu hình admin token (registry private)
-    let token = headers.get("authorization")
+    let token = headers
+        .get("authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "));
     if auth.admin_token.is_some() {
@@ -182,16 +207,21 @@ async fn publish_package(
             StatusCode::UNAUTHORIZED
         })?;
         if !auth.can_publish(&user, &name) {
-            warn!("publish {}: user {} denied, scopes {:?}", name, user.name, user.scopes);
+            warn!(
+                "publish {}: user {} denied, scopes {:?}",
+                name, user.name, user.scopes
+            );
             return Err(StatusCode::FORBIDDEN);
         }
     } else if token.is_some() && auth.verify_token(token.unwrap()).is_none() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    
-    store.put_package(&pkg).await
+
+    store
+        .put_package(&pkg)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+
     Ok(Json(pkg))
 }
 
@@ -215,11 +245,15 @@ async fn download_tarball(
                         let mut resp = axum::response::Response::new(axum::body::Body::from(data));
                         resp.headers_mut().insert(
                             axum::http::header::CONTENT_TYPE,
-                            HeaderValue::from_static("application/octet-stream")
+                            HeaderValue::from_static("application/octet-stream"),
                         );
                         resp.headers_mut().insert(
                             "content-disposition",
-                            HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename)).unwrap()
+                            HeaderValue::from_str(&format!(
+                                "attachment; filename=\"{}\"",
+                                filename
+                            ))
+                            .unwrap(),
                         );
                         return Ok(resp.into_response());
                     }
@@ -242,14 +276,19 @@ async fn upload_tarball(
 
     let mut hasher = Sha512::new();
     hasher.update(&body);
-    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, hasher.finalize());
+    let b64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        hasher.finalize(),
+    );
     let digest = format!("sha512-{b64}");
     store
         .put_blob(&digest, &body)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(serde_json::json!({ "ok": true, "digest": digest, "size": body.len() })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "digest": digest, "size": body.len() }),
+    ))
 }
 
 // === Tarball/version delete (npm unpublish) ===
@@ -285,7 +324,11 @@ async fn get_dist_tags(
     Path(name): Path<String>,
     Query(query): Query<DistTagQuery>,
 ) -> Result<Json<HashMap<String, String>>, StatusCode> {
-    if let Some(pkg) = store.get_package(&name).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    if let Some(pkg) = store
+        .get_package(&name)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         if let Some(tag) = query.tag {
             if let Some(version) = pkg.dist_tags.get(&tag) {
                 let mut result = HashMap::new();
@@ -310,19 +353,23 @@ async fn set_dist_tag(
     Path((name, tag)): Path<(String, String)>,
     Json(body): Json<SetDistTagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut pkg = store.get_package(&name).await
+    let mut pkg = store
+        .get_package(&name)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    
+
     if !pkg.versions.contains_key(&body.version) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    
+
     let version = body.version;
     pkg.dist_tags.insert(tag.clone(), version.clone());
-    store.put_package(&pkg).await
+    store
+        .put_package(&pkg)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+
     Ok(Json(serde_json::json!({"tag": tag, "version": version})))
 }
 
@@ -330,17 +377,21 @@ async fn delete_dist_tag(
     State((store, _)): State<AppState>,
     Path((name, tag)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
-    let mut pkg = store.get_package(&name).await
+    let mut pkg = store
+        .get_package(&name)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    
+
     if pkg.dist_tags.remove(&tag).is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
-    
-    store.put_package(&pkg).await
+
+    store
+        .put_package(&pkg)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -391,7 +442,12 @@ async fn set_dist_tag_scoped(
     Path((scope, name, tag)): Path<(String, String, String)>,
     Json(body): Json<SetDistTagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    set_dist_tag(State(state), Path((scoped_full(&scope, &name), tag)), Json(body)).await
+    set_dist_tag(
+        State(state),
+        Path((scoped_full(&scope, &name), tag)),
+        Json(body),
+    )
+    .await
 }
 
 async fn delete_dist_tag_scoped(
@@ -413,7 +469,10 @@ async fn delete_user(
     if !matches!(auth.admin_token.as_deref(), Some(t) if Some(t) == token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let name = name.strip_prefix("org.couchdb.user:").unwrap_or(&name).to_string();
+    let name = name
+        .strip_prefix("org.couchdb.user:")
+        .unwrap_or(&name)
+        .to_string();
     if !auth.remove_user(&name).await.unwrap_or(false) {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -424,11 +483,12 @@ async fn whoami(
     State((_, auth)): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let token = headers.get("authorization")
+    let token = headers
+        .get("authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(String::from);
-    
+
     if let Some(token) = token {
         if let Some(user) = auth.verify_token(&token) {
             return Ok(Json(serde_json::json!({
@@ -437,7 +497,7 @@ async fn whoami(
             })));
         }
     }
-    
+
     Err(StatusCode::UNAUTHORIZED)
 }
 
@@ -456,10 +516,12 @@ async fn search(
 ) -> Result<Json<SearchResult>, StatusCode> {
     let limit = query.size.unwrap_or(20).min(100);
     let offset = query.from.unwrap_or(0);
-    let results = store.search_packages(&query.q, limit, offset).await
+    let results = store
+        .search_packages(&query.q, limit, offset)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let total = results.len() as u64;
-    
+
     Ok(Json(SearchResult {
         objects: results,
         total,

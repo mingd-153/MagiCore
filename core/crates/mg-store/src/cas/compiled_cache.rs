@@ -22,7 +22,10 @@ impl CompiledCache {
     fn module_path(&self, source_hash: &IntegrityHash) -> PathBuf {
         let algo_dir = self.root.join("compiled").join("blake3");
         let first2 = &source_hash.hash[..2];
-        algo_dir.join(first2).join(&source_hash.hash).with_extension("json")
+        algo_dir
+            .join(first2)
+            .join(&source_hash.hash)
+            .with_extension("json")
     }
 
     pub fn get(&self, source_hash: &IntegrityHash) -> Result<Option<CompiledModule>, StoreError> {
@@ -38,21 +41,25 @@ impl CompiledCache {
         Ok(Some(module))
     }
 
-    pub fn put(&self, source_hash: &IntegrityHash, module: &CompiledModule) -> Result<(), StoreError> {
+    pub fn put(
+        &self,
+        source_hash: &IntegrityHash,
+        module: &CompiledModule,
+    ) -> Result<(), StoreError> {
         let path = self.module_path(source_hash);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         let tmp = path.with_extension("tmp");
         let data = serde_json::to_vec(module).map_err(|e| StoreError::Io {
             path: tmp.clone(),
             msg: format!("failed to serialize compiled module: {}", e),
         })?;
-        
+
         fs::write(&tmp, data)?;
         fs::rename(&tmp, &path)?;
-        
+
         Ok(())
     }
 }

@@ -594,8 +594,7 @@ impl Resolver {
                         },
                     )?)
                 };
-                let version =
-                    self.select_version(&name_str, &constraint, &spec, versions.as_ref());
+                let version = self.select_version(&name_str, &constraint, &spec, versions.as_ref());
 
                 match version {
                     Some(v) => {

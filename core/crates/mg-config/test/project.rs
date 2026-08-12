@@ -46,7 +46,10 @@ fn from_scaffold_sets_all_fields() {
     assert_eq!(cfg.execution.architecture, "rust-first");
     assert_eq!(cfg.execution.lane, "compatibility-shell");
     assert_eq!(cfg.execution.compatibility_layer, "ts");
-    assert!(cfg.execution.native_targets.contains(&"frontend-executable".to_string()));
+    assert!(cfg
+        .execution
+        .native_targets
+        .contains(&"frontend-executable".to_string()));
 }
 
 #[test]
