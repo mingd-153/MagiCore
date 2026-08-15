@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use anyhow::Result;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
@@ -15,7 +16,7 @@ fn project_root() -> Result<PathBuf> {
     Ok(root)
 }
 
-fn lib_adapter() -> Box<dyn PackageAdapter> {
+fn lib_adapter() -> Arc<dyn PackageAdapter> {
     let registry_url = std::env::var("MEGAGATE_LIB_REGISTRY_URL").ok();
     let token = std::env::var("MEGAGATE_LIB_REGISTRY_TOKEN").ok();
     crate::factory::create_adapter(&Ecosystem::Lib, registry_url.as_deref(), token.as_deref())

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use anyhow::Result;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
@@ -17,7 +18,7 @@ fn project_root() -> Result<PathBuf> {
     Ok(root)
 }
 
-fn game_adapter() -> Box<dyn PackageAdapter> {
+fn game_adapter() -> Arc<dyn PackageAdapter> {
     crate::factory::create_adapter(&Ecosystem::Game, None, None)
         .expect("game adapter always available in game core build")
 }

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use anyhow::Result;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
@@ -15,7 +16,7 @@ fn project_root() -> Result<PathBuf> {
     Ok(root)
 }
 
-fn iot_adapter() -> Box<dyn PackageAdapter> {
+fn iot_adapter() -> Arc<dyn PackageAdapter> {
     crate::factory::create_adapter(&Ecosystem::Iot, None, None)
         .expect("iot adapter always available in iot core build")
 }
