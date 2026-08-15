@@ -64,12 +64,19 @@ pub fn extract_tarball_from_reader<R: Read>(reader: R, dest: &Path) -> Result<()
 /// Extract a gzip-compressed tarball from an arbitrary reader directly into the CAS,
 /// and hardlink the files to the destination directory.
 /// Uses Rayon to perform hashing, CAS writing, and hardlinking in parallel.
+///
+/// `claim` registers every imported blob against `project_root` in the store DB
+/// (refcount wiring) — pass `None` when the caller has no database (e.g. tests).
+/// (Tham số claim: đăng ký mọi blob đã import vào bảng refcount cho project —
+///  truyền None khi caller không có DB, ví dụ test.)
 pub fn extract_tarball_to_cas_and_link<R: Read>(
     reader: R,
     dest: &Path,
     store: &mg_store::ContentStore,
+    claim: Option<(&mg_store::Database, &str)>,
 ) -> Result<()> {
     use rayon::prelude::*;
+    use std::sync::{Arc, Mutex};
 
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
@@ -142,6 +149,9 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
     }
 
     // Process all files in parallel: Hash (Blake3) -> Save to CAS -> Hardlink
+    let imported: Arc<Mutex<std::collections::HashSet<String>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let has_claim = claim.is_some();
     files.into_par_iter().try_for_each(|file| -> Result<()> {
         let hash = store
             .import_bytes_with_exec(&file.data, file.executable)
@@ -151,8 +161,30 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
             .export_to(&hash, &file.path)
             .map_err(|e| anyhow::anyhow!("failed to hardlink from CAS: {}", e))?;
 
+        if has_claim {
+            // Refcount key = blake3 hex (exec suffix ".exec" stripped by
+            // prune_cas_blobs_under(), so claim the bare hex).
+            // (Khóa refcount = blake3 hex — prune strip đuôi .exec nên claim
+            //  đúng hex thuần.)
+            imported.lock().unwrap().insert(hash.hash.clone());
+        }
+
         Ok(())
     })?;
+
+    if let Some((db, project_root)) = claim {
+        let mut conn = std::collections::HashSet::new();
+        std::mem::swap(&mut conn, &mut imported.lock().unwrap());
+        for name in conn {
+            let _ = db.cas_claim(project_root, &name).map_err(|e| {
+                // Fail-soft: refcount is an optimization; prune's nlink net
+                // still protects these blobs. Never block extraction on it.
+                // (Fail-soft: refcount chỉ là tối ưu; prune còn lưới nlink
+                //  bảo vệ blob. Không bao giờ chặn extract vì claim lỗi.)
+                eprintln!("warning: failed to claim CAS blob {name}: {e}");
+            });
+        }
+    }
 
     Ok(())
 }

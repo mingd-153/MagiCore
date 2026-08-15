@@ -38,6 +38,11 @@ impl Database {
                 ref_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (project_root, package_id)
             );
+            CREATE TABLE IF NOT EXISTS cas_blob_refs (
+                project_root TEXT NOT NULL,
+                hash TEXT NOT NULL,
+                PRIMARY KEY (project_root, hash)
+            );
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
             PRAGMA busy_timeout=5000;",
@@ -169,6 +174,53 @@ impl Database {
             if let Ok(parsed) = PackageId::parse(&row?) {
                 result.push(parsed);
             }
+        }
+        Ok(result)
+    }
+
+    /// Register that `project_root` references a CAS blob — idempotent per
+    /// (project, hash). Call after `clear_all_cas_refs(project)` on re-install
+    /// so the table mirrors the current graph exactly.
+    /// (Đăng ký project tham chiếu blob CAS — idempotent theo (project, hash).
+    ///  Gọi sau clear_all_cas_refs khi re-install để bảng khớp graph hiện tại.)
+    pub fn cas_claim(&self, project_root: &str, hash: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO cas_blob_refs (project_root, hash) VALUES (?1, ?2)",
+            params![project_root, hash],
+        )?;
+        Ok(())
+    }
+
+    /// Remove all CAS blob claims of a project — called before re-install.
+    /// (Xóa toàn bộ claim blob của project — gọi trước khi re-install.)
+    pub fn clear_all_cas_refs(&self, project_root: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cas_blob_refs WHERE project_root = ?1",
+            params![project_root],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a single project claim (package removed from the graph).
+    /// (Xóa 1 claim của project — package bị gỡ khỏi graph.)
+    pub fn cas_release(&self, project_root: &str, hash: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cas_blob_refs WHERE project_root = ?1 AND hash = ?2",
+            params![project_root, hash],
+        )?;
+        Ok(())
+    }
+
+    /// Blob hashes with at least one live project claim — must NOT be pruned.
+    /// (Hash blob còn ít nhất 1 project claim — không được xóa.)
+    pub fn list_cas_live_refs(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT hash FROM cas_blob_refs ORDER BY hash")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
         }
         Ok(result)
     }

@@ -57,5 +57,9 @@ lru = { workspace = true }
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 
+[[test]]
+name = "test_refcount"
+path = "test/refcount.rs"
+
 [lints]
 workspace = true

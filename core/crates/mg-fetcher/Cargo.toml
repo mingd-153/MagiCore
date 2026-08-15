@@ -19,3 +19,7 @@ rayon = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "cas_claim"
+path = "test/cas_claim.rs"
