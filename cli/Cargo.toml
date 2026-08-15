@@ -28,6 +28,7 @@ mg-registry-server = { workspace = true }
 mg-oci = { workspace = true }
 mg-exec = { workspace = true }
 mg-plugin = { workspace = true }
+mg-workspace = { workspace = true }
 
 # Adapters (optional — per-core feature flags)
 mg-web-adapter = { path = "../adapters/web", optional = true }

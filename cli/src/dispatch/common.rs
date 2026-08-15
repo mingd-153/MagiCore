@@ -126,5 +126,6 @@ pub async fn dispatch_common(
         }
         CommonCommand::Store { cmd } => commands::store::run(cmd).await,
         CommonCommand::Template { cmd } => commands::template::run(cmd).await,
+        CommonCommand::Workspace { cmd } => commands::workspace::run(cmd).await,
     }
 }
