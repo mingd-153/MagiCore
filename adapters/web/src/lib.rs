@@ -12,6 +12,7 @@ use lru::LruCache;
 use mg_adapter_base::BaseAdapter;
 use mg_fetcher::extract::extract_tarball_to_cas_and_link;
 use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
+use mg_platform::reflink::reflink_clone;
 use mg_resolver::{
     DependencyError, DependencyProvider, RegistryCache, ResolvedDep, Resolver as CoreResolver,
 };
@@ -105,6 +106,13 @@ impl InstallProfile {
     fn mark(&mut self, label: &'static str, started_at: std::time::Instant) {
         if self.enabled {
             self.marks.push((label, started_at.elapsed().as_millis()));
+        }
+    }
+
+    fn mark_step(&mut self, label: &'static str, step_started_at: std::time::Instant) {
+        if self.enabled {
+            self.marks
+                .push((label, step_started_at.elapsed().as_millis()));
         }
     }
 
@@ -295,6 +303,7 @@ struct MaterializationProfile {
     directories_seen: AtomicUsize,
     hardlinks: AtomicUsize,
     copies: AtomicUsize,
+    reflinks: AtomicUsize,
     symlinks: AtomicUsize,
 }
 
@@ -347,17 +356,24 @@ impl MaterializationProfile {
         }
     }
 
+    fn record_reflink(&self) {
+        if self.enabled {
+            self.reflinks.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     fn flush(&self) {
         if !self.enabled {
             return;
         }
         eprintln!(
-            "[megagate:web:materialize-profile] packages_linked={} dirs={} files={} hardlinks={} copies={} symlinks={}",
+            "[megagate:web:materialize-profile] packages_linked={} dirs={} files={} hardlinks={} copies={} reflinks={} symlinks={}",
             self.packages_linked.load(Ordering::Relaxed),
             self.directories_seen.load(Ordering::Relaxed),
             self.files_seen.load(Ordering::Relaxed),
             self.hardlinks.load(Ordering::Relaxed),
             self.copies.load(Ordering::Relaxed),
+            self.reflinks.load(Ordering::Relaxed),
             self.symlinks.load(Ordering::Relaxed),
         );
     }
@@ -1090,6 +1106,22 @@ impl PackageAdapter for WebAdapter {
         let node_modules = project_root.join("node_modules");
         std::fs::create_dir_all(&node_modules)?;
         let mut summary = InstallSummary::default();
+
+        // CAS refcount (T1 slices 4-5): clear claims BEFORE extraction so the
+        // table ends as exactly the live set of this install. Extraction
+        // re-claims every blob it imports under the store-root key; stale
+        // claims of packages removed since the last install must not pin
+        // blobs (fail-closed: reused roots stay protected by the nlink net).
+        // (Refcount CAS: clear claim TRƯỚC extract để bảng cuối = đúng set sống
+        //  của install này. Extract sẽ claim lại mọi blob import dưới khóa
+        //  store-root; claim cũ của package đã gỡ không được giữ blob. Root
+        //  tái dùng vẫn được nlink bảo vệ — fail-closed.)
+        if let Some(database) = database.as_ref() {
+            database
+                .clear_all_cas_refs(&layout.root().to_string_lossy())
+                .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+        }
+
         let thread_id_hash = {
             let tid = std::thread::current().id();
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1424,6 +1456,7 @@ impl PackageAdapter for WebAdapter {
                 // concurrency. Starting a second tarball-prefetch pass for the
                 // same fetch_graph just competes for bandwidth and shared-cache IO
                 // on cold installs, which hurts the exact lane we care about.
+                let pipeline_step_started_at = std::time::Instant::now();
                 let (pipeline_bytes, extracted_roots, persist_handles) =
                     pipeline_download_and_extract(
                         &fetch_graph,
@@ -1436,6 +1469,10 @@ impl PackageAdapter for WebAdapter {
                     )
                     .await?;
                 summary.bytes_from_cache += pipeline_bytes;
+                profile.mark_step(
+                    "pipeline_download_and_extract_step",
+                    pipeline_step_started_at,
+                );
                 profile.mark("prepare_extracted_roots", start);
                 let fetch_ids = fetch_graph
                     .packages
@@ -1459,6 +1496,7 @@ impl PackageAdapter for WebAdapter {
                 };
                 affected_root_bin_links = root_packages_to_link.clone();
 
+                let strict_materialize_step_started_at = std::time::Instant::now();
                 materialize_strict_layout(
                     &node_modules,
                     graph,
@@ -1472,11 +1510,17 @@ impl PackageAdapter for WebAdapter {
                     &mut packages_with_scripts,
                     &extracted_roots,
                 )?;
+                profile.mark_step(
+                    "materialize_strict_layout_step",
+                    strict_materialize_step_started_at,
+                );
+                let persist_step_started_at = std::time::Instant::now();
                 for handle in persist_handles {
                     handle.await.map_err(|e| {
                         mg_types::MgError::Other(format!("shared cache persist task panicked: {e}"))
                     })?;
                 }
+                profile.mark_step("persist_shared_cache_step", persist_step_started_at);
             }
         }
         profile.mark("materialize_dependency_graph", start);
@@ -1515,6 +1559,8 @@ impl PackageAdapter for WebAdapter {
 
         write_web_lockfile_with_state(project_root, graph, "locked")?;
         profile.mark("write_lockfile", start);
+        prune_project_local_cache(&layout);
+        profile.mark("prune_project_local_cache", start);
 
         if should_run_lifecycle_scripts(opts.ignore_scripts, opts.allow_scripts) {
             use lifecycle::LifecycleRunner;
@@ -1572,6 +1618,10 @@ impl PackageAdapter for WebAdapter {
         // Refcount (02 §2.2): this project now references every installed package.
         // Clear first so refs mirror the current graph exactly.
         let project_root_str = project_root.to_string_lossy().to_string();
+        // CAS refcount claims were cleared before extraction; extraction
+        // re-claims blobs it imports, so no clearing happens here.
+        // (Claim refcount CAS đã clear trước extract; extract tự claim lại blob
+        //  nó import — không clear tiếp ở đây.)
         if let Some(database) = database.as_ref() {
             database
                 .clear_all_refs(&project_root_str)
@@ -1761,8 +1811,8 @@ impl PackageAdapter for WebAdapter {
             return Ok(AuditReport::clean(0));
         }
 
-        // Build the bulk-advisory request body for npm registry
-        // POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk
+        // Build npm-compatible bulk advisory request body — dựng request audit tương thích registry.
+        // Advisory endpoint follows the configured registry URL — endpoint audit bám registry cấu hình.
         // Body: { "package@version": ["dependency_range"], ... }
         let mut body = serde_json::Map::new();
         for pkg in &lockfile.packages {
@@ -1777,8 +1827,9 @@ impl PackageAdapter for WebAdapter {
             .build()
             .map_err(|e| mg_types::MgError::Network(format!("audit client error: {e}")))?;
 
+        let advisory_endpoint = registry_advisory_bulk_endpoint(&self.registry_url)?;
         let response = client
-            .post("https://registry.npmjs.org/-/npm/v1/security/advisories/bulk")
+            .post(advisory_endpoint)
             .json(&body)
             .send()
             .await
@@ -3271,6 +3322,58 @@ fn write_shared_cache_prune_stamp(root: &Path) -> MgResult<()> {
     Ok(())
 }
 
+fn prune_project_local_cache(layout: &Layout) {
+    let max_age = std::time::Duration::from_secs(shared_cache_max_age_secs());
+    let _ = prune_old_files_under(&layout.cache_dir(), max_age);
+    let _ = prune_unlinked_old_cas_files_under(&layout.cas_dir(), max_age);
+    let _ = prune_old_files_under(&layout.root().join("resolutions"), max_age);
+}
+
+fn prune_unlinked_old_cas_files_under(root: &Path, max_age: std::time::Duration) -> MgResult<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let mut directories = Vec::new();
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if entry.file_type().is_dir() {
+            directories.push(entry.path().to_path_buf());
+            continue;
+        }
+        if !entry.file_type().is_file()
+            || !path_is_older_than(entry.path(), max_age)
+            || !file_has_no_external_hardlinks(entry.path())
+        {
+            continue;
+        }
+        let _ = std::fs::remove_file(entry.path());
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for dir in directories {
+        remove_dir_if_empty(&dir);
+    }
+    Ok(())
+}
+
+fn file_has_no_external_hardlinks(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return std::fs::metadata(path)
+            .map(|metadata| metadata.nlink() <= 1)
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 fn prune_old_files_under(root: &Path, max_age: std::time::Duration) -> MgResult<()> {
     if !root.exists() {
         return Ok(());
@@ -3640,6 +3743,23 @@ fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
     fallback(registry_url, pkg)
 }
 
+fn registry_advisory_bulk_endpoint(registry_url: &str) -> MgResult<url::Url> {
+    let base = url::Url::parse(registry_url).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "invalid web registry URL '{}': {}",
+            registry_url, err
+        ))
+    })?;
+
+    base.join("-/npm/v1/security/advisories/bulk")
+        .map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "invalid advisory endpoint for registry '{}': {}",
+                registry_url, err
+            ))
+        })
+}
+
 fn local_extracted_package_root(layout: &Layout, pkg: &ResolvedPackage) -> PathBuf {
     shared_extracted_package_root(layout.root(), pkg)
 }
@@ -3704,6 +3824,25 @@ fn compute_sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
+}
+
+fn compute_sha256_hex_from_path(path: &Path) -> MgResult<String> {
+    let mut file = std::fs::File::open(path).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to open '{}' for sha256: {}",
+            path.display(),
+            err
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to hash '{}' with sha256: {}",
+            path.display(),
+            err
+        ))
+    })?;
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn compute_sha512_b64(bytes: &[u8]) -> String {
@@ -3879,6 +4018,28 @@ fn expected_extracted_package_marker_from_bytes(
     Ok(marker)
 }
 
+fn expected_extracted_package_marker_from_path(
+    pkg: &ResolvedPackage,
+    tarball_path: &Path,
+) -> MgResult<ExtractedPackageMarker> {
+    let tarball_fingerprint = if pkg.integrity.is_empty() {
+        compute_sha256_hex_from_path(tarball_path)?
+    } else {
+        format!("integrity:{}", pkg.integrity)
+    };
+    let content = tarball_content_signature_from_path(tarball_path)?;
+    Ok(ExtractedPackageMarker {
+        schema_version: 2,
+        name: pkg.id.name_str().to_string(),
+        version: pkg.id.version().to_string(),
+        integrity: (!pkg.integrity.is_empty()).then(|| pkg.integrity.clone()),
+        tarball_sha256: tarball_fingerprint,
+        file_count: content.file_count,
+        unpacked_size: content.unpacked_size,
+        file_tree_sha256: content.file_tree_sha256,
+    })
+}
+
 fn expected_extracted_package_marker_fast(
     pkg: &ResolvedPackage,
     tarball_bytes: &[u8],
@@ -3916,7 +4077,24 @@ fn extracted_marker_has_content_signature(marker: &ExtractedPackageMarker) -> bo
 }
 
 fn tarball_content_signature(tarball_bytes: &[u8]) -> MgResult<TarballContentSignature> {
-    let decoder = flate2::read::GzDecoder::new(std::io::Cursor::new(tarball_bytes));
+    tarball_content_signature_from_reader(std::io::Cursor::new(tarball_bytes))
+}
+
+fn tarball_content_signature_from_path(tarball_path: &Path) -> MgResult<TarballContentSignature> {
+    let file = std::fs::File::open(tarball_path).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to open tarball '{}' for content signature: {}",
+            tarball_path.display(),
+            err
+        ))
+    })?;
+    tarball_content_signature_from_reader(file)
+}
+
+fn tarball_content_signature_from_reader<R: std::io::Read>(
+    reader: R,
+) -> MgResult<TarballContentSignature> {
+    let decoder = flate2::read::GzDecoder::new(reader);
     let mut archive = tar::Archive::new(decoder);
     let mut files = Vec::<(String, u64)>::new();
 
@@ -4144,6 +4322,36 @@ fn write_extracted_package_marker(root: &Path, marker: &ExtractedPackageMarker) 
     Ok(())
 }
 
+fn materialized_package_matches(
+    target_root: &Path,
+    package_id: &PackageId,
+    source_marker: Option<&ExtractedPackageMarker>,
+) -> MgResult<bool> {
+    if !installed_package_matches(target_root, package_id) {
+        return Ok(false);
+    }
+
+    let Some(source_marker) = source_marker else {
+        return Ok(true);
+    };
+
+    let Some(target_marker) = read_extracted_package_marker(target_root)? else {
+        return Ok(false);
+    };
+
+    Ok(target_marker == *source_marker)
+}
+
+fn write_materialized_package_marker(
+    target_root: &Path,
+    source_marker: Option<&ExtractedPackageMarker>,
+) -> MgResult<()> {
+    if let Some(marker) = source_marker {
+        write_extracted_package_marker(target_root, marker)?;
+    }
+    Ok(())
+}
+
 fn ensure_extracted_package_root(
     layout: &Layout,
     store: &ContentStore,
@@ -4151,15 +4359,27 @@ fn ensure_extracted_package_root(
     pkg: &ResolvedPackage,
     tarball_path: &Path,
 ) -> MgResult<PathBuf> {
-    let tarball = std::fs::read(tarball_path).map_err(|err| {
-        mg_types::MgError::Other(format!(
-            "failed to read tarball '{}' for '{}': {}",
-            tarball_path.display(),
-            pkg.id.name_str(),
-            err
-        ))
-    })?;
-    ensure_extracted_package_root_from_bytes(layout, store, shared_cache, pkg, &tarball)
+    let fast_marker = expected_extracted_package_marker_from_path(pkg, tarball_path)?;
+    let claim = cas_claim_context(layout);
+    ensure_extracted_package_root_with_marker(
+        layout,
+        store,
+        shared_cache,
+        pkg,
+        &fast_marker,
+        |temp_root| {
+            let file = std::fs::File::open(tarball_path).map_err(|err| {
+                mg_types::MgError::Other(format!(
+                    "failed to open tarball '{}' for '{}': {}",
+                    tarball_path.display(),
+                    pkg.id.name_str(),
+                    err
+                ))
+            })?;
+            extract_tarball_to_cas_and_link(file, temp_root, store, claim_ctx(claim.as_ref()))
+                .map_err(|e| mg_types::MgError::Other(e.to_string()))
+        },
+    )
 }
 
 fn ensure_extracted_package_root_from_bytes(
@@ -4169,7 +4389,73 @@ fn ensure_extracted_package_root_from_bytes(
     pkg: &ResolvedPackage,
     tarball_bytes: &[u8],
 ) -> MgResult<PathBuf> {
-    let fast_marker = expected_extracted_package_marker_fast(pkg, tarball_bytes);
+    let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
+    let claim = cas_claim_context(layout);
+    ensure_extracted_package_root_with_marker(
+        layout,
+        store,
+        shared_cache,
+        pkg,
+        &expected_marker,
+        |temp_root| {
+            extract_tarball_to_cas_and_link(
+                std::io::Cursor::new(tarball_bytes),
+                temp_root,
+                store,
+                claim_ctx(claim.as_ref()),
+            )
+            .map_err(|e| mg_types::MgError::Other(e.to_string()))
+        },
+    )
+}
+
+/// CAS refcount claim context for one extraction: the project store DB (opened
+/// once per extract) plus the claim key (project store root). Missing/corrupt
+/// DB is NOT fatal — extraction proceeds and prune falls back to nlink-only
+/// (fail-closed, spec §5).
+/// (Ngữ cảnh claim refcount CAS cho một lần extract: DB project store (mở một
+///  lần mỗi extract) + khóa claim (root project store). DB mất/hỏng KHÔNG chặn
+///  extract — prune fallback nlink-only (fail-closed, spec §5).)
+struct CasClaimContext {
+    db: std::result::Result<Database, String>,
+    project_key: String,
+}
+
+fn cas_claim_context(layout: &Layout) -> Option<CasClaimContext> {
+    let db = Database::open(&layout.db_path()).map_err(|e| e.to_string());
+    Some(CasClaimContext {
+        db,
+        project_key: layout.root().to_string_lossy().into_owned(),
+    })
+}
+
+fn claim_ctx(ctx: Option<&CasClaimContext>) -> Option<(&Database, &str)> {
+    match ctx {
+        Some(ctx) => ctx.as_ref(),
+        None => None,
+    }
+}
+
+impl CasClaimContext {
+    fn as_ref(&self) -> Option<(&Database, &str)> {
+        match &self.db {
+            Ok(db) => Some((db, &self.project_key)),
+            Err(_) => None,
+        }
+    }
+}
+
+fn ensure_extracted_package_root_with_marker<F>(
+    layout: &Layout,
+    _store: &ContentStore,
+    shared_cache: Option<&SharedWebCache>,
+    pkg: &ResolvedPackage,
+    expected_marker: &ExtractedPackageMarker,
+    extract_into: F,
+) -> MgResult<PathBuf>
+where
+    F: FnOnce(&Path) -> MgResult<()>,
+{
     let canonical_root = shared_cache
         .map(|shared| shared.extracted_package_root(pkg))
         .unwrap_or_else(|| local_extracted_package_root(layout, pkg));
@@ -4181,7 +4467,7 @@ fn ensure_extracted_package_root_from_bytes(
     if canonical_root.join("package.json").exists() {
         let marker = read_extracted_package_marker(&canonical_root)?;
         if let Some(marker) = marker.as_ref() {
-            if extracted_marker_matches_fast(marker, &fast_marker) {
+            if extracted_marker_matches_fast(marker, expected_marker) {
                 if extracted_marker_has_content_signature(marker)
                     && (!extracted_cache_full_validation_enabled()
                         || extracted_content_matches(&canonical_root, marker)?)
@@ -4191,8 +4477,6 @@ fn ensure_extracted_package_root_from_bytes(
             }
         }
     }
-
-    let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
 
     // Extract directly to a temp dir next to canonical_root, then rename.
     // This avoids the hardlink_tree (15k+ file walks) that dominated cold extraction.
@@ -4215,8 +4499,7 @@ fn ensure_extracted_package_root_from_bytes(
         })?;
     }
     let extract_result: MgResult<()> = (|| {
-        extract_tarball_to_cas_and_link(std::io::Cursor::new(tarball_bytes), &temp_root, store)
-            .map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+        extract_into(&temp_root)?;
         let package_root = locate_package_dir(&temp_root)?;
         if let Some(parent) = canonical_root.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
@@ -4469,7 +4752,9 @@ async fn get_tarball_bytes(
     let tarball_url = package_tarball_url(url, pkg);
     let io_started_at = std::time::Instant::now();
     let mut pkg = pkg.clone();
-    let final_path = cache.tarball_path(&pkg.id);
+    let final_path = shared_package_cache
+        .map(|pc| pc.tarball_path(&pkg.id))
+        .unwrap_or_else(|| cache.tarball_path(&pkg.id));
     let temp_path = final_path.with_extension("tmp");
     let downloaded = native::npm_registry::NpmRegistry::new(url)
         .download_tarball_auto(&tarball_url, &temp_path)
@@ -4529,7 +4814,7 @@ async fn get_tarball_bytes(
                 payload: TarballPayload::CachedPath(final_path, bytes_len),
                 queue_wait_ms,
                 io_ms,
-                persist_to_shared_cache: shared_package_cache.is_some(),
+                persist_to_shared_cache: false,
             })
         }
     }
@@ -4539,11 +4824,52 @@ fn hardlink_tree(source_root: &Path, target_root: &Path) -> MgResult<()> {
     hardlink_tree_with_profile(source_root, target_root, None)
 }
 
+fn hardlink_thread_count() -> usize {
+    std::env::var("MEGAGATE_WEB_HARDLINK_THREADS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|&count| count > 0)
+        .unwrap_or(default_hardlink_threads())
+}
+
+fn default_hardlink_threads() -> usize {
+    // 6 measured sweet spot on 8-core; scale with cores but cap at 6 —
+    // beyond that APFS clonefile/hardlink contention eats the gains.
+    // (6 là điểm tối ưu đo trên 8 core; scale theo core nhưng chặn ở 6 —
+    //  quá đó clonefile/hardlink APFS cạnh tranh, lợi mất hết.)
+    std::thread::available_parallelism()
+        .map(|n| n.get().min(6).max(1))
+        .unwrap_or(2)
+}
+
+fn hardlink_pool() -> MgResult<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(hardlink_thread_count())
+            .thread_name(|index| format!("mg-web-hardlink-{index}"))
+            .build()
+            .map_err(|err| err.to_string())
+    });
+    pool.as_ref().map_err(|err| {
+        mg_types::MgError::Other(format!("failed to initialize hardlink thread pool: {err}"))
+    })
+}
+
 fn hardlink_tree_with_profile(
     source_root: &Path,
     target_root: &Path,
     profile: Option<&MaterializationProfile>,
 ) -> MgResult<()> {
+    // Fail-closed escape hatch: MEGAGATE_WEB_REFLINK=0 forces hardlink/copy
+    // path for exotic filesystems / debugging. Read once per tree, not per file.
+    // (Cửa thoát fail-closed: đặt MEGAGATE_WEB_REFLINK=0 để tắt reflink — hữu
+    //  ích trên filesystem lạ hoặc khi gỡ rối. Đọc 1 lần mỗi cây, không mỗi file.)
+    let reflink_enabled = match std::env::var("MEGAGATE_WEB_REFLINK") {
+        Ok(value) => value != "0",
+        Err(_) => true,
+    };
+
     std::fs::create_dir_all(target_root).map_err(|err| {
         mg_types::MgError::Other(format!(
             "failed to create target '{}': {}",
@@ -4551,6 +4877,9 @@ fn hardlink_tree_with_profile(
             err
         ))
     })?;
+
+let mut directories = Vec::new();
+    let mut files = Vec::new();
 
     for entry in WalkDir::new(source_root) {
         let entry = entry.map_err(|e| mg_types::MgError::Other(e.to_string()))?;
@@ -4568,14 +4897,7 @@ fn hardlink_tree_with_profile(
             if let Some(profile) = profile {
                 profile.record_directory();
             }
-            std::fs::create_dir_all(&target).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to create directory '{}' while cloning '{}': {}",
-                    target.display(),
-                    source_root.display(),
-                    err
-                ))
-            })?;
+            directories.push(target);
             continue;
         }
 
@@ -4585,53 +4907,134 @@ fn hardlink_tree_with_profile(
         if let Some(profile) = profile {
             profile.record_file();
         }
+        files.push((path.to_path_buf(), target));
+    }
 
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to create parent '{}' for '{}': {}",
-                    parent.display(),
-                    target.display(),
-                    err
-                ))
-            })?;
-        }
-        if target.exists() {
-            std::fs::remove_file(&target).map_err(|err| {
-                mg_types::MgError::Other(format!(
-                    "failed to remove existing file '{}' before clone: {}",
-                    target.display(),
-                    err
-                ))
-            })?;
-        }
-        // Hardlinks share the inode with the source, so mode/exec bits are
-        // already correct (the extractor sets them once). Chmodding here would
-        // be a no-op that also mutates the shared cached file. Only the copy
-        // fallback needs an explicit chmod.
-        match std::fs::hard_link(path, &target) {
+    directories.sort_by_key(|path| path.components().count());
+    for target in directories {
+        std::fs::create_dir_all(&target).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to create directory '{}' while cloning '{}': {}",
+                target.display(),
+                source_root.display(),
+                err
+            ))
+        })?;
+    }
+
+    hardlink_pool()?.install(|| {
+        files
+            .into_par_iter()
+            .try_for_each(|(path, target)| -> MgResult<()> {
+                backing_link_file(&path, &target, profile, reflink_enabled)
+            })
+    })?;
+
+    Ok(())
+}
+
+/// Link `source` → `target` with the backing chain: reflink → hardlink → copy.
+/// (Link file theo chuỗi backing: reflink trước, hardlink, rồi copy cuối cùng.)
+fn backing_link_file(
+    source: &Path,
+    target: &Path,
+    profile: Option<&MaterializationProfile>,
+    reflink_enabled: bool,
+) -> MgResult<()> {
+    if reflink_enabled {
+        // Reflink (copy-on-write clone) first — APFS clonefile / FICLONE.
+        // A reflink is independent of the source after the clone, so the
+        // durability invariant (install survives shared-cache deletion)
+        // holds the same as a hardlink. Fall back to hardlink/copy.
+        // (Reflink COW trước — clone độc lập source, giữ invariant bền vững.
+        //  Không reflink được thì fallback hardlink/copy như cũ.)
+        match reflink_clone(source, target) {
             Ok(()) => {
                 if let Some(profile) = profile {
-                    profile.record_hardlink();
+                    profile.record_reflink();
                 }
+                return Ok(());
             }
-            Err(_) => {
-                std::fs::copy(path, &target).map_err(|err| {
+            Err(mg_platform::reflink::ReflinkError::Other(_)) if target.exists() => {
+                // Re-materialize: stale target blocks the clone. Remove, retry once.
+                // (Re-materialize: target cũ chặn clone — xóa rồi thử lại 1 lần.)
+                std::fs::remove_file(target).map_err(|err| {
                     mg_types::MgError::Other(format!(
-                        "failed to materialize '{}' to '{}': {}",
-                        path.display(),
+                        "failed to remove existing file '{}' before reflink: {}",
                         target.display(),
                         err
                     ))
                 })?;
-                set_executable(&target, is_executable(path)?)?;
-                if let Some(profile) = profile {
-                    profile.record_copy();
+                if let Ok(()) = reflink_clone(source, target) {
+                    if let Some(profile) = profile {
+                        profile.record_reflink();
+                    }
+                    return Ok(());
                 }
             }
+            Err(mg_platform::reflink::ReflinkError::Other(err)) => {
+                return Err(mg_types::MgError::Other(format!(
+                    "reflink failed for '{}' -> '{}': {}",
+                    source.display(),
+                    target.display(),
+                    err
+                )));
+            }
+            Err(mg_platform::reflink::ReflinkError::NotSupported(_)) => {}
         }
     }
 
+    // Fallback: hardlink shares the inode with source, so mode/exec bits are
+    // already correct (extractor sets them once). Chmod only on copy fallback.
+    // (Fallback: hardlink dùng chung inode nên mode/exec đã đúng; chỉ copy
+    //  mới cần chmod tường minh.)
+    match std::fs::hard_link(source, target) {
+        Ok(()) => {
+            if let Some(profile) = profile {
+                profile.record_hardlink();
+            }
+            return Ok(());
+        }
+        Err(_) => {}
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to create parent '{}' for '{}': {}",
+                parent.display(),
+                target.display(),
+                err
+            ))
+        })?;
+    }
+    if target.exists() {
+        std::fs::remove_file(target).map_err(|err| {
+            mg_types::MgError::Other(format!(
+                "failed to remove existing file '{}' before clone: {}",
+                target.display(),
+                err
+            ))
+        })?;
+    }
+    if std::fs::hard_link(source, target).is_ok() {
+        if let Some(profile) = profile {
+            profile.record_hardlink();
+        }
+        return Ok(());
+    }
+    std::fs::copy(source, target).map_err(|err| {
+        mg_types::MgError::Other(format!(
+            "failed to materialize '{}' to '{}': {}",
+            source.display(),
+            target.display(),
+            err
+        ))
+    })?;
+    set_executable(target, is_executable(source)?)?;
+    if let Some(profile) = profile {
+        profile.record_copy();
+    }
     Ok(())
 }
 
@@ -5522,7 +5925,16 @@ fn materialize_strict_layout(
     let materialize_results: Vec<_> = vstore_dirs
         .into_par_iter()
         .map(|(pkg_id, vstore_pkg_dir, pkg)| {
-            if !installed_package_matches(&vstore_pkg_dir, &pkg_id) {
+            let package_root = materialization_package_root(
+                layout,
+                store,
+                shared_cache,
+                cache,
+                extracted_roots,
+                &pkg,
+            )?;
+            let source_marker = read_extracted_package_marker(&package_root)?;
+            if !materialized_package_matches(&vstore_pkg_dir, &pkg_id, source_marker.as_ref())? {
                 remove_fs_entry(&vstore_pkg_dir)?;
                 if let Some(parent) = vstore_pkg_dir.parent() {
                     std::fs::create_dir_all(parent).map_err(|err| {
@@ -5533,19 +5945,12 @@ fn materialize_strict_layout(
                         ))
                     })?;
                 }
-                let package_root = materialization_package_root(
-                    layout,
-                    store,
-                    shared_cache,
-                    cache,
-                    extracted_roots,
-                    &pkg,
-                )?;
                 link_package_tree_with_profile(
                     &package_root,
                     &vstore_pkg_dir,
                     Some(&materialization_profile),
                 )?;
+                write_materialized_package_marker(&vstore_pkg_dir, source_marker.as_ref())?;
             }
             Ok::<_, mg_types::MgError>(vstore_pkg_dir)
         })
@@ -6191,6 +6596,61 @@ package_count = 0
             package_root.join("index.js").exists(),
             "quota pruning must not remove package roots pinned by project refs"
         );
+    }
+
+    #[test]
+    fn test_project_cas_prune_keeps_hardlinked_live_blobs() {
+        let temp = tempfile::tempdir().unwrap();
+        let cas = temp.path().join("cas");
+        let blob = cas.join("ab").join("live");
+        let orphan = cas.join("cd").join("orphan");
+        let live_link = temp.path().join("node_modules").join("live");
+        std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(live_link.parent().unwrap()).unwrap();
+        std::fs::write(&blob, b"live").unwrap();
+        std::fs::write(&orphan, b"orphan").unwrap();
+        std::fs::hard_link(&blob, &live_link).unwrap();
+
+        prune_unlinked_old_cas_files_under(&cas, std::time::Duration::from_secs(0)).unwrap();
+
+        assert!(blob.exists());
+        assert!(live_link.exists());
+        assert!(!orphan.exists());
+    }
+
+    #[test]
+    fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
+        use std::os::unix::fs::MetadataExt;
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.txt");
+        let target = temp.path().join("target.txt");
+        std::fs::write(&source, b"payload-123").unwrap();
+
+        let profile = MaterializationProfile::default();
+        backing_link_file(&source, &target, Some(&profile), false).unwrap();
+
+        assert!(target.exists());
+        assert_eq!(std::fs::read(&target).unwrap(), b"payload-123");
+        assert_eq!(
+            std::fs::metadata(&source).unwrap().nlink(),
+            2,
+            "disabled reflink must produce a real hardlink (shared inode)"
+        );
+    }
+
+    #[test]
+    fn test_backing_link_rematerializes_stale_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.txt");
+        let target = temp.path().join("target.txt");
+        std::fs::write(&source, b"fresh-content").unwrap();
+        std::fs::write(&target, b"stale-content").unwrap();
+
+        let profile = MaterializationProfile::default();
+        backing_link_file(&source, &target, Some(&profile), true).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"fresh-content");
     }
 
     #[test]
