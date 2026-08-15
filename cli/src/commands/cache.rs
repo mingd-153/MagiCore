@@ -51,6 +51,20 @@ struct WebSharedCacheStats {
     project_refs: usize,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WebProjectCacheStats {
+    cas_bytes: u64,
+    tarball_bytes: u64,
+    resolution_bytes: u64,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WebProjectPruneStats {
+    cas_files: usize,
+    tarball_files: usize,
+    resolution_files: usize,
+}
+
 pub async fn run(
     action: String,
     target: String,
@@ -206,6 +220,17 @@ fn print_status(entries: &[CacheEntry]) -> Result<()> {
                 human_bytes(stats.unpinned_package_bytes),
                 stats.unpinned_package_roots
             );
+        } else if entry.label == "project" && entry.path.ends_with(".megagate/cache/web") {
+            let stats = web_project_cache_stats(&entry.path);
+            println!("project:web:cas\t{}\tcas", human_bytes(stats.cas_bytes));
+            println!(
+                "project:web:tarballs\t{}\tcache",
+                human_bytes(stats.tarball_bytes)
+            );
+            println!(
+                "project:web:resolutions\t{}\tresolutions",
+                human_bytes(stats.resolution_bytes)
+            );
         }
     }
     Ok(())
@@ -238,15 +263,8 @@ fn prune(entries: &[CacheEntry], yes: bool, dry_run: bool, core: Option<&str>) -
 
     for entry in entries {
         if entry.label == "shared" && core == Some("web") {
-            if dry_run {
-                let count = count_web_shared_unpinned_package_roots(&entry.path)?;
-                println!(
-                    "would prune\t{}\t{} unpinned package roots\t{}",
-                    entry.label,
-                    count,
-                    entry.path.display()
-                );
-            } else {
+            let count = count_web_shared_unpinned_package_roots(&entry.path)?;
+            if !dry_run {
                 let removed = prune_web_shared_unpinned_package_roots(&entry.path)?;
                 println!(
                     "pruned\t{}\t{} unpinned package roots\t{}",
@@ -254,11 +272,29 @@ fn prune(entries: &[CacheEntry], yes: bool, dry_run: bool, core: Option<&str>) -
                     removed,
                     entry.path.display()
                 );
+            } else {
+                println!(
+                    "would prune\t{}\t{} unpinned package roots\t{}",
+                    entry.label,
+                    count,
+                    entry.path.display()
+                );
             }
+        } else if entry.label == "project" && core == Some("web") {
+            let stats = prune_web_project_cache(&entry.path, dry_run)?;
+            println!(
+                "{}\t{}\t{} cas files\t{} tarball files\t{} resolution files\t{}",
+                if dry_run { "would prune" } else { "pruned" },
+                entry.label,
+                stats.cas_files,
+                stats.tarball_files,
+                stats.resolution_files,
+                entry.path.display()
+            );
         } else {
             println!(
                 "skip\t{}\t{}",
-                entry.label, "prune is only implemented for --core web shared cache"
+                entry.label, "prune is only implemented for --core web cache"
             );
         }
     }
@@ -286,6 +322,150 @@ fn prune_web_shared_unpinned_package_roots(root: &Path) -> Result<usize> {
     }
     cleanup_empty_dirs(&root.join("packages"));
     Ok(removed)
+}
+
+fn prune_web_project_cache(root: &Path, dry_run: bool) -> Result<WebProjectPruneStats> {
+    let mut stats = WebProjectPruneStats::default();
+    stats.cas_files = prune_cas_blobs_under(&root.join("cas"), root, dry_run)?;
+    stats.tarball_files = prune_files_under(&root.join("cache"), dry_run)?;
+    stats.resolution_files = prune_files_under(&root.join("resolutions"), dry_run)?;
+    Ok(stats)
+}
+
+/// Prune CAS blobs using the SQLite refcount (slice 5 of T1): a blob is
+/// prunable when it has no live refcount in the DB (or the DB has no row for
+/// it). The nlink heuristic stays as the outer safety net — never prune a
+/// blob still hardlinked into a live tree. DB missing/corrupt → nlink only.
+/// (Prune blob CAS theo refcount SQLite: xóa blob không còn ref nào trong DB
+///  (hoặc chưa từng claim). Heuristic nlink vẫn là lưới an toàn ngoài — không
+///  bao giờ xóa blob còn hardlink. DB mất/hỏng → chỉ dùng nlink.)
+fn prune_cas_blobs_under(cas_root: &Path, store_root: &Path, dry_run: bool) -> Result<usize> {
+    if !cas_root.exists() {
+        return Ok(0);
+    }
+
+    let live: HashSet<String> = match mg_store::Database::open(&store_root.join("store.db")) {
+        Ok(db) => {
+            let mut set = HashSet::new();
+            match db.list_cas_live_refs() {
+                Ok(live_refs) => {
+                    for hash in live_refs {
+                        set.insert(hash);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "cas refcount read failed, falling back to nlink-only prune: {err}"
+                    );
+                    return prune_unlinked_files_under(cas_root, dry_run);
+                }
+            }
+            set
+        }
+        Err(_) => return prune_unlinked_files_under(cas_root, dry_run),
+    };
+
+    // A blob is prunable when the DB has no live claim for it AND no live
+    // tree still hardlinks it (nlink outer safety net).
+    // (Blob xóa được khi DB không còn claim sống VÀ không cây nào còn
+    //  hardlink tới — nlink là lưới an toàn ngoài.)
+    let mut pruned = 0usize;
+    let mut directories = Vec::new();
+    for entry in WalkDir::new(cas_root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if entry.file_type().is_dir() {
+            directories.push(entry.path().to_path_buf());
+            continue;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let blob_hash = entry
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.split('.').next().unwrap_or(name).to_string())
+            .unwrap_or_default();
+        if live.contains(&blob_hash) {
+            continue;
+        }
+        if !file_has_no_external_hardlinks(entry.path()) {
+            continue;
+        }
+        pruned += 1;
+        if !dry_run {
+            remove_path(entry.path())?;
+        }
+    }
+    if !dry_run {
+        directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+        for dir in directories {
+            let _ = std::fs::remove_dir(&dir);
+        }
+    }
+    Ok(pruned)
+}
+
+fn prune_files_under(root: &Path, dry_run: bool) -> Result<usize> {
+    prune_files_under_with(root, dry_run, |_| true)
+}
+
+fn prune_unlinked_files_under(root: &Path, dry_run: bool) -> Result<usize> {
+    prune_files_under_with(root, dry_run, file_has_no_external_hardlinks)
+}
+
+fn prune_files_under_with<F>(root: &Path, dry_run: bool, should_prune: F) -> Result<usize>
+where
+    F: Fn(&Path) -> bool,
+{
+    if !root.exists() {
+        return Ok(0);
+    }
+    let mut pruned = 0usize;
+    let mut directories = Vec::new();
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if entry.file_type().is_dir() {
+            directories.push(entry.path().to_path_buf());
+            continue;
+        }
+        if !entry.file_type().is_file() || !should_prune(entry.path()) {
+            continue;
+        }
+        pruned += 1;
+        if !dry_run {
+            remove_path(entry.path())?;
+        }
+    }
+    if !dry_run {
+        directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+        for dir in directories {
+            let _ = std::fs::remove_dir(&dir);
+        }
+    }
+    Ok(pruned)
+}
+
+fn file_has_no_external_hardlinks(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return std::fs::metadata(path)
+            .map(|metadata| metadata.nlink() <= 1)
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 fn remove_path(path: &Path) -> Result<()> {
@@ -337,6 +517,14 @@ fn web_shared_cache_stats(root: &Path) -> WebSharedCacheStats {
         }
     }
     stats
+}
+
+fn web_project_cache_stats(root: &Path) -> WebProjectCacheStats {
+    WebProjectCacheStats {
+        cas_bytes: path_size(&root.join("cas")),
+        tarball_bytes: path_size(&root.join("cache")),
+        resolution_bytes: path_size(&root.join("resolutions")),
+    }
 }
 
 fn web_shared_package_roots(root: &Path) -> Vec<PathBuf> {
@@ -549,5 +737,115 @@ mod tests {
         let stats = web_shared_cache_stats(cache.path());
         assert_eq!(stats.pinned_package_roots, 1);
         assert_eq!(stats.unpinned_package_roots, 0);
+    }
+
+    #[test]
+    fn web_project_cache_stats_reports_cache_breakdown() {
+        let cache = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(cache.path().join("cas")).unwrap();
+        std::fs::create_dir_all(cache.path().join("cache")).unwrap();
+        std::fs::create_dir_all(cache.path().join("resolutions")).unwrap();
+        std::fs::write(cache.path().join("cas").join("blob"), [0u8; 4]).unwrap();
+        std::fs::write(cache.path().join("cache").join("tarball.tgz"), [0u8; 3]).unwrap();
+        std::fs::write(
+            cache.path().join("resolutions").join("graph.json"),
+            [0u8; 2],
+        )
+        .unwrap();
+
+        let stats = web_project_cache_stats(cache.path());
+
+        assert_eq!(
+            stats,
+            WebProjectCacheStats {
+                cas_bytes: 4,
+                tarball_bytes: 3,
+                resolution_bytes: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn web_project_prune_removes_only_safe_cache_files() {
+        let root = tempfile::tempdir().unwrap();
+        let web = root.path().join(".megagate").join("cache").join("web");
+        let cas_blob = web.join("cas").join("ab").join("live");
+        let cas_orphan = web.join("cas").join("cd").join("orphan");
+        let tarball = web.join("cache").join("pkg").join("1.0.0.tgz");
+        let resolution = web.join("resolutions").join("graph.json");
+        let live_link = root.path().join("node_modules").join("live");
+        std::fs::create_dir_all(cas_blob.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(cas_orphan.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(tarball.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(resolution.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(live_link.parent().unwrap()).unwrap();
+        std::fs::write(&cas_blob, b"live").unwrap();
+        std::fs::write(&cas_orphan, b"orphan").unwrap();
+        std::fs::write(&tarball, b"tarball").unwrap();
+        std::fs::write(&resolution, b"resolution").unwrap();
+        std::fs::hard_link(&cas_blob, &live_link).unwrap();
+
+        let dry_run = prune_web_project_cache(&web, true).unwrap();
+
+        assert_eq!(
+            dry_run,
+            WebProjectPruneStats {
+                cas_files: 1,
+                tarball_files: 1,
+                resolution_files: 1,
+            }
+        );
+        assert!(cas_orphan.exists());
+        assert!(tarball.exists());
+        assert!(resolution.exists());
+
+        let pruned = prune_web_project_cache(&web, false).unwrap();
+
+        assert_eq!(pruned, dry_run);
+        assert!(cas_blob.exists());
+        assert!(live_link.exists());
+        assert!(!cas_orphan.exists());
+        assert!(!tarball.exists());
+        assert!(!resolution.exists());
+    }
+
+    #[test]
+    fn web_project_prune_keeps_refcount_claimed_cas_blobs() {
+        let root = tempfile::tempdir().unwrap();
+        let web = root.path().join(".megagate").join("cache").join("web");
+        let claimed_blob = web.join("cas").join("ab").join("claimed-hash");
+        let orphan_blob = web.join("cas").join("cd").join("orphan-hash");
+        std::fs::create_dir_all(claimed_blob.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(orphan_blob.parent().unwrap()).unwrap();
+        std::fs::write(&claimed_blob, b"claimed").unwrap();
+        std::fs::write(&orphan_blob, b"orphan").unwrap();
+
+        let db = mg_store::Database::open(&web.join("store.db")).unwrap();
+        db.cas_claim("/proj/demo", "claimed-hash").unwrap();
+
+        let pruned = prune_web_project_cache(&web, false).unwrap();
+
+        assert_eq!(pruned.cas_files, 1);
+        assert!(claimed_blob.exists());
+        assert!(!orphan_blob.exists());
+    }
+
+    #[test]
+    fn web_project_prune_corrupt_db_falls_back_to_nlink() {
+        let root = tempfile::tempdir().unwrap();
+        let web = root.path().join(".megagate").join("cache").join("web");
+        let blob = web.join("cas").join("ab").join("blob-hash");
+        let live_link = root.path().join("node_modules").join("live");
+        std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(live_link.parent().unwrap()).unwrap();
+        std::fs::write(&blob, b"blob").unwrap();
+        std::fs::hard_link(&blob, &live_link).unwrap();
+        std::fs::write(&web.join("store.db"), b"not a sqlite db").unwrap();
+
+        let pruned = prune_web_project_cache(&web, false).unwrap();
+
+        assert_eq!(pruned.cas_files, 0);
+        assert!(blob.exists());
+        assert!(live_link.exists());
     }
 }
