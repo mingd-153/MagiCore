@@ -93,6 +93,9 @@ pub enum CommonCommand {
     Template {
         cmd: crate::commands::template::TemplateCmd,
     },
+    Workspace {
+        cmd: crate::commands::workspace::WorkspaceCmd,
+    },
     Login {
         registry: Option<String>,
         username: Option<String>,
@@ -392,6 +395,7 @@ impl TryFrom<Commands> for DispatchCommand {
             }),
             Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
             Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
+            Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
             Commands::Login {
                 registry,
                 username,

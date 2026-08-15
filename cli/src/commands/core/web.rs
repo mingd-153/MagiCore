@@ -517,56 +517,7 @@ fn is_workspace_monorepo(config: &WorkspaceConfig) -> bool {
 }
 
 fn discover_monorepo_install_targets(project_root: &Path) -> Result<Vec<PathBuf>> {
-    let workspace_path = project_root.join("megagate.workspace.toml");
-    let mut targets = Vec::new();
-
-    let (apps_dir, packages_dir) = if workspace_path.exists() {
-        let contents = std::fs::read_to_string(&workspace_path)?;
-        let config: WorkspaceConfig = toml::from_str(&contents)?;
-        let apps_dir = config
-            .layout
-            .as_ref()
-            .and_then(|layout| layout.apps_dir.as_deref())
-            .unwrap_or("apps");
-        let packages_dir = config
-            .layout
-            .as_ref()
-            .and_then(|layout| layout.packages_dir.as_deref())
-            .unwrap_or("packages");
-        (apps_dir.to_string(), packages_dir.to_string())
-    } else {
-        ("apps".to_string(), "packages".to_string())
-    };
-
-    collect_monorepo_installable_projects(project_root.join(apps_dir), &mut targets)?;
-    collect_monorepo_installable_projects(project_root.join(packages_dir), &mut targets)?;
-
-    targets.sort();
-    targets.dedup();
-    Ok(targets)
-}
-
-fn collect_monorepo_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result<()> {
-    if !root.exists() || !root.is_dir() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-
-        if path.join("package.json").exists() || has_backend_manifest(&path) {
-            out.push(path);
-            continue;
-        }
-
-        collect_monorepo_installable_projects(path, out)?;
-    }
-
-    Ok(())
+    mg_workspace::discover_workspace_targets(project_root).map_err(Into::into)
 }
 
 #[derive(Debug, Deserialize)]
@@ -679,34 +630,42 @@ async fn install_monorepo_targets(
         }
     }
 
-    let concurrency = monorepo_install_concurrency(&package_targets);
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
-    let mut join_set = tokio::task::JoinSet::new();
+    if !package_targets.is_empty() {
+        let graph = mg_workspace::build_workspace_graph(&package_targets)?;
+        let levels = mg_workspace::topo_levels(&graph)
+            .map_err(|e| anyhow::anyhow!("monorepo topo order failed: {e}"))?;
 
-    for target in package_targets {
-        let adapter = Arc::clone(adapter);
-        let semaphore = Arc::clone(&semaphore);
-        join_set.spawn(async move {
-            let _permit = semaphore
-                .acquire_owned()
-                .await
-                .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
-            install_web_target_quiet(
-                adapter.as_ref(),
-                &target,
-                frozen,
-                ignore_scripts,
-                allow_scripts,
-                prefer_dedupe,
-                repair,
-            )
-            .await?;
-            Ok::<PathBuf, anyhow::Error>(target)
-        });
-    }
+        let concurrency = monorepo_install_concurrency(&package_targets);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
 
-    while let Some(result) = join_set.join_next().await {
-        result.map_err(|e| anyhow::anyhow!("monorepo install task failed: {e}"))??;
+        for level in &levels {
+            let mut join_set = tokio::task::JoinSet::new();
+            for &node_index in level {
+                let node = graph.nodes[node_index].clone();
+                let adapter = Arc::clone(adapter);
+                let semaphore = Arc::clone(&semaphore);
+                join_set.spawn(async move {
+                    let _permit = semaphore
+                        .acquire_owned()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
+                    install_web_target_quiet(
+                        adapter.as_ref(),
+                        &node.path,
+                        frozen,
+                        ignore_scripts,
+                        allow_scripts,
+                        prefer_dedupe,
+                        repair,
+                    )
+                    .await?;
+                    Ok::<PathBuf, anyhow::Error>(node.path)
+                });
+            }
+            while let Some(result) = join_set.join_next().await {
+                result.map_err(|e| anyhow::anyhow!("monorepo install task failed: {e}"))??;
+            }
+        }
     }
 
     for target in native_targets {
@@ -4627,5 +4586,93 @@ packages = ["packages/*"]
         assert_eq!(targets[0].port, Some(4318));
         assert_eq!(targets[1].dir, dir.path().join("server"));
         assert_eq!(targets[1].port, Some(3415));
+    }
+
+    #[tokio::test]
+    async fn test_install_monorepo_targets_topo_parallel_two_apps_shared() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let frontend = monorepo.path().join("apps/frontend");
+        let backend = monorepo.path().join("apps/backend");
+        let shared = monorepo.path().join("packages/shared");
+        for dir in [&frontend, &backend, &shared] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(
+            frontend.join("package.json"),
+            "{\"name\":\"frontend\",\"version\":\"0.1.0\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            backend.join("package.json"),
+            "{\"name\":\"backend\",\"version\":\"0.1.0\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            shared.join("package.json"),
+            "{\"name\":\"@core/shared\",\"version\":\"0.1.0\"}",
+        )
+        .unwrap();
+
+        let adapter = web_adapter();
+        install_monorepo_targets(
+            &adapter,
+            &[frontend.clone(), backend, shared.clone()],
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // workspace:* dep trỏ package có manifest → link được (không phải "not found")
+        std::fs::write(
+            frontend.join("package.json"),
+            serde_json::json!({
+                "name": "frontend",
+                "version": "0.1.0",
+                "dependencies": { "@core/shared": "workspace:*" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        link_monorepo_workspace_packages(monorepo.path(), &[frontend, shared]).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_install_monorepo_targets_cycle_detects_error() {
+        let monorepo = tempfile::tempdir().unwrap();
+        let a = monorepo.path().join("apps/a");
+        let b = monorepo.path().join("apps/b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(
+            a.join("package.json"),
+            serde_json::json!({
+                "name": "a",
+                "dependencies": { "b": "workspace:*" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            b.join("package.json"),
+            serde_json::json!({
+                "name": "b",
+                "dependencies": { "a": "workspace:*" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let adapter = web_adapter();
+        let err = install_monorepo_targets(&adapter, &[a, b], false, false, false, false, false)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("cycle"),
+            "expected cycle error, got: {err}"
+        );
     }
 }

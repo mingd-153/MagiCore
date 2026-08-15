@@ -24,3 +24,4 @@ pub mod start_config;
 pub mod store;
 pub mod template;
 pub mod web_registry_config;
+pub mod workspace;

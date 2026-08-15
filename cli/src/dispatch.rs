@@ -66,6 +66,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Patch { .. } => "patch",
         Commands::Dedupe { .. } => "dedupe",
         Commands::Template { .. } => "template",
+        Commands::Workspace { .. } => "workspace",
         Commands::Store { .. } => "store",
         Commands::Login { .. } => "login",
         Commands::Registry { .. } => "registry",
@@ -248,6 +249,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
         Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
         Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
+        Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
         _ => None,
     };
 

@@ -227,6 +227,11 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::commands::template::TemplateCmd,
     },
+    #[command(about = "Show workspace graph (nodes + workspace:* edges)")]
+    Workspace {
+        #[command(subcommand)]
+        cmd: crate::commands::workspace::WorkspaceCmd,
+    },
     #[command(about = "Add dependencies (auto-detect core)")]
     Add {
         #[arg(required = true)]
@@ -1025,6 +1030,23 @@ mod tests {
                 assert_eq!(port, Some(4315));
             }
             _ => panic!("expected dev command"),
+        }
+    }
+
+    #[test]
+    fn test_workspace_list_parses_filter_and_json() {
+        let cli =
+            Cli::try_parse_from(["mg", "workspace", "list", "--filter", "./apps/*", "--json"])
+                .unwrap();
+
+        match cli.command.unwrap() {
+            Commands::Workspace { cmd } => match cmd {
+                crate::commands::workspace::WorkspaceCmd::List { filter, json } => {
+                    assert_eq!(filter.as_deref(), Some("./apps/*"));
+                    assert!(json);
+                }
+            },
+            _ => panic!("expected workspace command"),
         }
     }
 }
