@@ -1325,48 +1325,48 @@ empty-cache-install)
     ;;
   backend-go-echo)
     [[ "\$pm" == "mg" ]] || { echo "native backend lanes are MG-only" >&2; exit 90; }
-    run_mg_native_backend "echo" "4321"
+    run_mg_native_backend "echo" "3415"
     assert_file "\$workdir/app/go.mod"
     assert_file "\$workdir/app/go.sum"
     ;;
   native-go-echo-baseline)
     [[ "\$pm" == "mg" ]] || { echo "native baseline lanes are MG-only wrappers" >&2; exit 90; }
-    run_native_backend_baseline "echo" "4331"
+    run_native_backend_baseline "echo" "3541"
     assert_file "\$workdir/app/go.mod"
     assert_file "\$workdir/app/go.sum"
     ;;
   backend-rust-axum)
     [[ "\$pm" == "mg" ]] || { echo "native backend lanes are MG-only" >&2; exit 90; }
-    run_mg_native_backend "axum" "4322"
+    run_mg_native_backend "axum" "3451"
     assert_file "\$workdir/app/Cargo.toml"
     assert_file "\$workdir/app/Cargo.lock"
     ;;
   native-rust-axum-baseline)
     [[ "\$pm" == "mg" ]] || { echo "native baseline lanes are MG-only wrappers" >&2; exit 90; }
-    run_native_backend_baseline "axum" "4332"
+    run_native_backend_baseline "axum" "3514"
     assert_file "\$workdir/app/Cargo.toml"
     assert_file "\$workdir/app/Cargo.lock"
     ;;
   backend-python-fastapi)
     [[ "\$pm" == "mg" ]] || { echo "native backend lanes are MG-only" >&2; exit 90; }
-    run_mg_native_backend "fastapi" "4323"
+    run_mg_native_backend "fastapi" "3145"
     assert_file "\$workdir/app/requirements.txt"
     assert_dir "\$workdir/app/.venv"
     ;;
   native-python-fastapi-baseline)
     [[ "\$pm" == "mg" ]] || { echo "native baseline lanes are MG-only wrappers" >&2; exit 90; }
-    run_native_backend_baseline "fastapi" "4333"
+    run_native_backend_baseline "fastapi" "1345"
     assert_file "\$workdir/app/requirements.txt"
     assert_dir "\$workdir/app/.venv"
     ;;
   backend-java-spring)
     [[ "\$pm" == "mg" ]] || { echo "native backend lanes are MG-only" >&2; exit 90; }
-    run_mg_native_backend "spring-boot" "4324"
+    run_mg_native_backend "spring-boot" "3154"
     assert_file "\$workdir/app/pom.xml"
     ;;
   native-java-spring-baseline)
     [[ "\$pm" == "mg" ]] || { echo "native baseline lanes are MG-only wrappers" >&2; exit 90; }
-    run_native_backend_baseline "spring-boot" "4334"
+    run_native_backend_baseline "spring-boot" "1354"
     assert_file "\$workdir/app/pom.xml"
     ;;
   *)

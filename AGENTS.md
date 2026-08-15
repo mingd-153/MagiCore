@@ -3,6 +3,7 @@
 - Đọc `RULE.md` trước MỌI task — bắt buộc (workflow 5 bước, naming, song ngữ).
 - Nguồn chân lý: `sys-mg/11-folder-structure.md` (cây folder) + `sys-mg/00-index.md` (quyết định).
 - Báo cáo tiếng Việt; code/design không tự ý vượt phase đã duyệt.
+- **BÁO CÁO SAU MỖI LẦN SỬA (BẮT BUỘC, user 2026-08-15):** sau mỗi lần sửa xong (code/design/docs/RULE) → APPEND 1 entry vào `docs/specs/megaGateChangeLog.md` — ghi: sửa gì, động file nào, RULE đổi gì (nếu có), thời gian ISO. KHÔNG sửa đè entry cũ. RULE thay đổi → cập nhật AGENTS.md/RULE.md + ghi vào changeLog.
 - Task rà soát/phân tích/maintain codebase (hoặc user kéo folder vào) → đọc `CODEBASE_REVIEW.md` và tuân theo flow (chờ user kéo folder → index GitNexus → review → báo cáo).
 
 ## Quy trình PHÁT TRIỂN BẮT BUỘC (mandatory — DEFINE → SHIP)
