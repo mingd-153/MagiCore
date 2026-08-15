@@ -191,7 +191,7 @@ fn project_root() -> Result<std::path::PathBuf> {
     Ok(root)
 }
 
-fn web_adapter() -> Box<dyn PackageAdapter> {
+fn web_adapter() -> Arc<dyn PackageAdapter> {
     let started_at = std::time::Instant::now();
     let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL").ok();
     let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN").ok();
@@ -265,7 +265,7 @@ pub async fn install(
     repair: bool,
 ) -> Result<()> {
     let root = project_root()?;
-    let adapter: Arc<dyn PackageAdapter> = Arc::from(web_adapter());
+    let adapter: Arc<dyn PackageAdapter> = web_adapter();
     let targets = install_targets(&root)?;
 
     // Dedupe opt-in (02 §2.1): CLI flag OR mg.toml [dedupe] prefer = true.

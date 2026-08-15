@@ -1,6 +1,7 @@
 //! Hardware core — optimizer/bench packages (shared cho game/ai/cloud).
 //! Không có native package manager: packages được materialize từ templates/hardware/.
 
+use std::sync::Arc;
 use anyhow::Result;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
@@ -41,7 +42,7 @@ fn project_root() -> Result<PathBuf> {
     Ok(root)
 }
 
-fn hardware_adapter() -> Box<dyn PackageAdapter> {
+fn hardware_adapter() -> Arc<dyn PackageAdapter> {
     crate::factory::create_adapter(&Ecosystem::Hardware, None, None)
         .expect("hardware adapter always available in hardware core build")
 }

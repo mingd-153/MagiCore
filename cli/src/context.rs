@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use mg_config::project::{ProjectConfig, ProjectExecutionConfig};
 use mg_types::adapter::PackageAdapter;
@@ -9,7 +10,7 @@ pub struct ProjectContext {
     pub root: PathBuf,
     #[allow(dead_code)]
     pub config: ProjectConfig,
-    pub adapter: Box<dyn PackageAdapter>,
+    pub adapter: Arc<dyn PackageAdapter>,
 }
 
 impl ProjectContext {
