@@ -19,6 +19,7 @@ mg-fetcher = { workspace = true }
 mg-http = { workspace = true }
 mg-ui = { workspace = true }
 mg-exec = { workspace = true }
+mg-platform = { workspace = true }
 
 # Async
 tokio = { workspace = true }
