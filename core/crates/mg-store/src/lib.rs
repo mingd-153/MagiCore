@@ -4,11 +4,13 @@
 pub mod cache;
 pub mod cas;
 pub mod database;
+pub mod index;
 pub mod layout;
 
 pub use cache::PackageCache;
 pub use cas::{CompiledCache, CompiledModule, ContentStore, IntegrityHash};
 pub use database::{Database, DatabaseEntry};
+pub use index::{FileEntry, StoreIndex};
 pub use layout::Layout;
 
 /// Trả về đường dẫn global store: `~/.megagate/store/v3`

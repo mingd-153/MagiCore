@@ -37,6 +37,7 @@ parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 bincode = { workspace = true }
+rmp-serde = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -60,6 +61,10 @@ pretty_assertions = { workspace = true }
 [[test]]
 name = "test_refcount"
 path = "test/refcount.rs"
+
+[[test]]
+name = "test_index"
+path = "test/index.rs"
 
 [lints]
 workspace = true
