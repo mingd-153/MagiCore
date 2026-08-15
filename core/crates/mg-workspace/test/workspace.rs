@@ -4,7 +4,6 @@ use mg_workspace::{
     discover_workspace_targets, filter_matches, topo_levels, WorkspaceGraph, WorkspaceNode,
     WorkspacePackageManifest,
 };
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn node(name: &str, rel: &str) -> WorkspaceNode {

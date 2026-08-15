@@ -49,6 +49,11 @@ impl Layout {
     pub fn virtual_store_dir(&self) -> PathBuf {
         self.root.join("virtual_store")
     }
+
+    /// MessagePack package-file index (fast layer, rebuildable from SQLite).
+    pub fn index_msgpack_path(&self) -> PathBuf {
+        self.root.join("index.msgpack")
+    }
 }
 
 #[cfg(test)]
