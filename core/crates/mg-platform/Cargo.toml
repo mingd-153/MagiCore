@@ -10,6 +10,7 @@ description = "L0 OS layer: os, symlink, shell, paths, perms (MegaGate)"
 [dependencies]
 dirs = { workspace = true }
 anyhow = { workspace = true }
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -18,3 +19,7 @@ tempfile = { workspace = true }
 [[test]]
 name = "test_paths"
 path = "test/paths.rs"
+
+[[test]]
+name = "test_reflink"
+path = "test/reflink.rs"
