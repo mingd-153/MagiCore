@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use anyhow::Result;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 const OPTIMIZER_PKG: &str = "optimizer";
 

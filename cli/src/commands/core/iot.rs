@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use anyhow::Result;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| {

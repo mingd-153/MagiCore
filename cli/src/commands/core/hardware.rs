@@ -1,11 +1,11 @@
 //! Hardware core — optimizer/bench packages (shared cho game/ai/cloud).
 //! Không có native package manager: packages được materialize từ templates/hardware/.
 
-use std::sync::Arc;
 use anyhow::Result;
 use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub const OPTIMIZER_PKG: &str = "optimizer";
 pub const BENCH_PKG: &str = "bench";

@@ -11,9 +11,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
-use mg_types::adapter::{
-    InstallOptions, InstallSummary, PackageAdapter, ResolvedGraph,
-};
+use mg_types::adapter::{InstallOptions, InstallSummary, PackageAdapter, ResolvedGraph};
 use mg_types::error::MgResult;
 use mg_types::manifest::Manifest;
 use mg_types::Ecosystem;
@@ -166,10 +164,7 @@ impl PluginRegistry {
         let key = plugin.ecosystem.as_str();
         let mut map = self.by_ecosystem.lock().unwrap();
         if map.contains_key(key) {
-            return Err(format!(
-                "plugin already registered for ecosystem '{}'",
-                key
-            ));
+            return Err(format!("plugin already registered for ecosystem '{}'", key));
         }
         map.insert(key, plugin);
         Ok(())

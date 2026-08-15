@@ -4878,7 +4878,7 @@ fn hardlink_tree_with_profile(
         ))
     })?;
 
-let mut directories = Vec::new();
+    let mut directories = Vec::new();
     let mut files = Vec::new();
 
     for entry in WalkDir::new(source_root) {
