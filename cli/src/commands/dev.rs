@@ -97,6 +97,10 @@ pub async fn run(
             crate::commands::core::clo::dev(false).await?;
             Ok(())
         }
+        "cicd" => {
+            crate::commands::core::cicd::dev(false).await?;
+            Ok(())
+        }
         other => bail!("'mg dev' Engine is not implemented for the '{other}' core yet"),
     }
 }

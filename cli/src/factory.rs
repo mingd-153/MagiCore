@@ -67,7 +67,10 @@ pub fn create_adapter(
         ),
         #[cfg(not(feature = "clo"))]
         Ecosystem::Cloud => anyhow::bail!("'cloud' core is not included in this build."),
-        Ecosystem::Cicd => anyhow::bail!("'cicd' core is under development."),
+        Ecosystem::Cicd => Arc::new(
+            mg_cicd_adapter::adapter_for(&std::env::current_dir()?)
+                .ok_or_else(|| anyhow::anyhow!("Cannot detect a cicd project here (missing mg.toml/wrangler.toml/argocd/.github/workflows)."))?,
+        ),
         #[cfg(feature = "iot")]
         Ecosystem::Iot => Arc::new(
             mg_iot_adapter::adapter_for(&std::env::current_dir()?)

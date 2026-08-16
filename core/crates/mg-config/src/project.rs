@@ -118,6 +118,16 @@ pub struct ProjectConfig {
     /// Cloud core config (mg.toml [cloud]) — type (Q17)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud: Option<CloudConfig>,
+    /// CICD core config (mg.toml [cicd]) — provider (Q12)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cicd: Option<CicdConfig>,
+}
+
+/// CICD core config — `[cicd] provider` (github-actions/cloudflare/aws/gcp/argocd).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CicdConfig {
+    #[serde(default)]
+    pub provider: String,
 }
 
 /// Cloud core config — `[cloud] type` (cdk/pulumi/terraform).
@@ -190,6 +200,7 @@ impl ProjectConfig {
             game: None,
             iot: None,
             cloud: None,
+            cicd: None,
         }
     }
 
@@ -253,6 +264,16 @@ impl ProjectConfig {
         } else {
             None
         };
+        let cicd = if ecosystem == "cicd" {
+            Some(CicdConfig {
+                provider: frameworks
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "github-actions".to_string()),
+            })
+        } else {
+            None
+        };
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
@@ -269,6 +290,7 @@ impl ProjectConfig {
             game,
             iot,
             cloud,
+            cicd,
         }
     }
 
