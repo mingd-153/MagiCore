@@ -257,6 +257,11 @@ pub(crate) enum Commands {
         #[arg(short, long, help = "write docs to file (default: stdout)")]
         output: Option<std::path::PathBuf>,
     },
+    #[command(about = "Telemetry opt-in status/log (mặc định OFF — không gửi gì)")]
+    Telemetry {
+        #[command(subcommand)]
+        cmd: crate::commands::telemetry::TelemetryCmd,
+    },
     #[command(about = "Generate a CycloneDX 1.5 SBOM from the resolved graph")]
     Sbom {
         #[arg(short, long, help = "write SBOM to file (default: stdout)")]

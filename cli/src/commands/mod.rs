@@ -26,6 +26,7 @@ pub mod start;
 pub mod start_config;
 pub mod store;
 pub mod template;
+pub mod telemetry;
 pub mod trust;
 pub mod web_registry_config;
 pub mod workspace;
