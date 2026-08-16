@@ -177,6 +177,13 @@ pub(crate) enum Commands {
         #[arg(long, help = "Build target (e.g., native, browser, server)")]
         target: Option<String>,
     },
+    #[command(about = "Flash firmware to a device (IoT esp32)")]
+    Flash {
+        #[arg(long, help = "Board override (e.g., esp32c3, esp32s3)")]
+        board: Option<String>,
+        #[arg(long, help = "Skip cargo build, flash existing binary")]
+        skip_build: bool,
+    },
     #[command(about = "Start the production server")]
     Start,
     #[command(about = "Execute a shell command in scope of a project")]

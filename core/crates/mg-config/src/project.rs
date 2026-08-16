@@ -112,6 +112,9 @@ pub struct ProjectConfig {
     /// Game core config (mg.toml [game]) — engine (Q15)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<GameConfig>,
+    /// IoT core config (mg.toml [iot]) — framework + board (Q16/Q20)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iot: Option<IotConfig>,
 }
 
 /// Game core config — `[game] engine` (bevy/godot/unity/unreal).
@@ -119,6 +122,15 @@ pub struct ProjectConfig {
 pub struct GameConfig {
     #[serde(default)]
     pub engine: String,
+}
+
+/// IoT core config — `[iot] framework` (esp32-rust/platformio/zephyr) + `board`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IotConfig {
+    #[serde(default)]
+    pub framework: String,
+    #[serde(default)]
+    pub board: String,
 }
 
 /// Library core config — `[lib] language` (ts/rust/python) + pip package allowlist.
@@ -141,6 +153,14 @@ fn default_version() -> String {
     "0.1.0".to_string()
 }
 
+fn default_iot_board(framework: Option<&str>) -> &'static str {
+    match framework {
+        Some("esp32-rust") => "esp32c3",
+        Some("platformio") => "esp32dev",
+        _ => "nrf52dk_nrf52832",
+    }
+}
+
 impl ProjectConfig {
     pub fn new(name: impl Into<String>, ecosystem: impl Into<String>) -> Self {
         let ecosystem = ecosystem.into();
@@ -158,6 +178,7 @@ impl ProjectConfig {
             dedupe: DedupeConfig::default(),
             lib: None,
             game: None,
+            iot: None,
         }
     }
 
@@ -196,6 +217,21 @@ impl ProjectConfig {
         } else {
             None
         };
+        let iot = if ecosystem == "iot" {
+            let framework = frameworks
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "esp32-rust".to_string());
+            Some(IotConfig {
+                board: features
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| default_iot_board(Some(&framework)).to_string()),
+                framework,
+            })
+        } else {
+            None
+        };
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
@@ -210,6 +246,7 @@ impl ProjectConfig {
             dedupe: DedupeConfig::default(),
             lib,
             game,
+            iot,
         }
     }
 

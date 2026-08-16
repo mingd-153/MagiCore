@@ -251,3 +251,28 @@ fn non_game_has_no_game_config() {
     let web = ProjectConfig::from_scaffold("i", "web", "", vec![], "", vec![]);
     assert!(web.game.is_none());
 }
+
+#[test]
+fn iot_scaffold_sets_framework_and_default_board() {
+    let pio = ProjectConfig::from_scaffold(
+        "j",
+        "iot",
+        "",
+        vec!["platformio".to_string()],
+        "",
+        vec!["esp32dev".to_string()],
+    );
+    let cfg = pio.iot.unwrap();
+    assert_eq!(cfg.framework, "platformio");
+    assert_eq!(cfg.board, "esp32dev");
+    let none = ProjectConfig::from_scaffold("k", "iot", "", vec![], "", vec![]);
+    let none_cfg = none.iot.unwrap();
+    assert_eq!(none_cfg.framework, "esp32-rust");
+    assert_eq!(none_cfg.board, "esp32c3");
+}
+
+#[test]
+fn non_iot_has_no_iot_config() {
+    let web = ProjectConfig::from_scaffold("l", "web", "", vec![], "", vec![]);
+    assert!(web.iot.is_none());
+}
