@@ -31,8 +31,7 @@ pub fn handle(cmd: TelemetryCmd) -> Result<()> {
         }
         TelemetryCmd::Log => {
             let dir = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            let path = std::path::Path::new(&dir)
-                .join(".megagate/telemetry/events.jsonl");
+            let path = std::path::Path::new(&dir).join(".megagate/telemetry/events.jsonl");
             if path.exists() {
                 println!("{}", path.display());
                 let raw = std::fs::read_to_string(&path)?;
@@ -54,10 +53,7 @@ pub fn handle(cmd: TelemetryCmd) -> Result<()> {
                 .map(|s| s.lines().map(str::to_string).collect::<Vec<_>>())
                 .unwrap_or_default();
             lines.retain(|l| !l.starts_with("MEGAGATE_TELEMETRY="));
-            lines.push(format!(
-                "MEGAGATE_TELEMETRY={}",
-                if on { "1" } else { "0" }
-            ));
+            lines.push(format!("MEGAGATE_TELEMETRY={}", if on { "1" } else { "0" }));
             std::fs::write(&env_file, lines.join("\n") + "\n")?;
             println!(
                 "telemetry: {} (thêm dòng vào ~/.config/megagate/env — shell prompt phải source nó; mặc định OFF nếu không có gì)"

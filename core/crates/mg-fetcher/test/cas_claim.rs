@@ -6,7 +6,6 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use mg_fetcher::extract::extract_tarball_to_cas_and_link;
 use mg_store::{ContentStore, Database};
-use std::io::Write;
 use tar::{Builder, Header};
 use tempfile::TempDir;
 

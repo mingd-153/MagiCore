@@ -100,7 +100,11 @@ async fn download_tarball_scoped(
     State(state): State<AppState>,
     Path((scope, name, filename)): Path<(String, String, String)>,
 ) -> Result<Response, StatusCode> {
-    let result = download_tarball(State(state), Path((scoped_full(&scope, &name), filename.clone()))).await;
+    let result = download_tarball(
+        State(state),
+        Path((scoped_full(&scope, &name), filename.clone())),
+    )
+    .await;
     eprintln!(
         "download_tarball_scoped: scope={} name={} filename={} status={:?}",
         scope,
@@ -253,16 +257,13 @@ async fn publish_package(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let version = pkg
-        .versions
-        .keys()
-        .next()
-        .cloned()
-        .or_else(|| {
-            let v = pkg.dist_tags.get("latest").cloned();
-            v
-        });
-    let _ = store.audit("publish", &pkg.name, version.as_deref(), None).await;
+    let version = pkg.versions.keys().next().cloned().or_else(|| {
+        let v = pkg.dist_tags.get("latest").cloned();
+        v
+    });
+    let _ = store
+        .audit("publish", &pkg.name, version.as_deref(), None)
+        .await;
     Ok(Json(pkg))
 }
 
@@ -322,7 +323,7 @@ async fn upload_tarball(
         hasher.finalize(),
     );
     let digest = format!("sha512-{b64}");
-store
+    store
         .put_blob(&digest, &body)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

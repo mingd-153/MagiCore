@@ -373,7 +373,9 @@ pub async fn run(args: ModelArgs) -> Result<()> {
 /// GGUF quantize qua python passthrough (A4, sys-mg/05 §4)
 fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
     if target != "q4_k_m" && target != "q8_0" {
-        anyhow::bail!("target không hỗ trợ: {target} (dùng q4_k_m hoặc q8_0; awq cần GPU toolchain)");
+        anyhow::bail!(
+            "target không hỗ trợ: {target} (dùng q4_k_m hoặc q8_0; awq cần GPU toolchain)"
+        );
     }
     if !std::path::Path::new(path).exists() {
         anyhow::bail!("file không tồn tại: {path}");
@@ -396,13 +398,7 @@ fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
         );
     }
     let status = std::process::Command::new("python3")
-        .args([
-            "-m",
-            "llama_cpp.quantize",
-            path,
-            &out,
-            target,
-        ])
+        .args(["-m", "llama_cpp.quantize", path, &out, target])
         .status()?;
     if !status.success() {
         anyhow::bail!("llama_cpp.quantize fail (exit {:?})", status.code());
