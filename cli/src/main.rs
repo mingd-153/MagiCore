@@ -252,6 +252,11 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::commands::hooks::HooksCmd,
     },
+    #[command(about = "Auto-generate CLI docs từ clap schema")]
+    Docs {
+        #[arg(short, long, help = "write docs to file (default: stdout)")]
+        output: Option<std::path::PathBuf>,
+    },
     #[command(about = "Generate a CycloneDX 1.5 SBOM from the resolved graph")]
     Sbom {
         #[arg(short, long, help = "write SBOM to file (default: stdout)")]
