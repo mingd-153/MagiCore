@@ -7,6 +7,7 @@ use std::path::Path;
 pub async fn audit(
     adapter: &dyn mg_types::adapter::PackageAdapter,
     project_root: &Path,
+    fix: bool,
 ) -> Result<()> {
     if !mg_ui::is_quiet() {
         mg_ui::blank_line();
@@ -18,6 +19,20 @@ pub async fn audit(
     print_report(&report);
 
     if report.vulnerability_count > 0 {
+        if fix {
+            info("Bumping vulnerable packages to latest (fail-closed)...");
+            let ids: Vec<_> = report
+                .vulnerabilities
+                .iter()
+                .map(|v| v.package.clone())
+                .collect();
+            let fixed = adapter.audit_fix(project_root, &ids).await?;
+            success(&format!(
+                "audit --fix bumped {} package(s); lockfile rewritten",
+                fixed
+            ));
+            return Ok(());
+        }
         bail!(
             "audit found {} vulnerabilities across {} packages",
             report.vulnerability_count,

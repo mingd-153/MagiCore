@@ -60,7 +60,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Info { .. } => "info",
         Commands::Search { .. } => "search",
         Commands::Outdated { .. } => "outdated",
-        Commands::Audit => "audit",
+        Commands::Audit { .. } => "audit",
         Commands::SelfUpdate => "self-update",
         Commands::Publish { .. } => "publish",
         Commands::Patch { .. } => "patch",
@@ -68,6 +68,8 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Template { .. } => "template",
         Commands::Workspace { .. } => "workspace",
         Commands::Store { .. } => "store",
+        Commands::Trust { .. } => "trust",
+        Commands::Sbom { .. } => "sbom",
         Commands::Login { .. } => "login",
         Commands::Registry { .. } => "registry",
         Commands::Model { .. } => "model",
@@ -168,7 +170,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             page,
         }),
         Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
-        Commands::Audit => Some(CommonCommand::Audit),
+        Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
         Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
         Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
         Commands::Build { target } => Some(CommonCommand::Build { target }),
@@ -248,6 +250,8 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
         Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
         Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
+        Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
+        Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
         Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
         Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
         _ => None,
@@ -744,7 +748,7 @@ mod tests {
 
     #[test]
     fn audit_strict_allows_audit_and_manifest_only_mutation() {
-        assert!(reject_unsupported_audit_strict(&Commands::Audit).is_ok());
+        assert!(reject_unsupported_audit_strict(&Commands::Audit { fix: false }).is_ok());
 
         let add = Commands::AddWeb {
             packages: vec!["zod".into()],

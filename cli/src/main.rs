@@ -66,7 +66,13 @@ pub(crate) enum Commands {
         json: bool,
     },
     #[command(about = "Audit packages for vulnerabilities")]
-    Audit,
+    Audit {
+        #[arg(
+            long,
+            help = "Bump vulnerable packages and rewrite lockfile on success"
+        )]
+        fix: bool,
+    },
     #[command(about = "Update MegaGate CLI to the latest version")]
     SelfUpdate,
 
@@ -221,6 +227,16 @@ pub(crate) enum Commands {
     Store {
         #[command(subcommand)]
         cmd: crate::commands::store::StoreCmd,
+    },
+    #[command(about = "Approve/deny lifecycle scripts per package (T5 trust gate)")]
+    Trust {
+        #[command(subcommand)]
+        cmd: crate::commands::trust::TrustCmd,
+    },
+    #[command(about = "Generate a CycloneDX 1.5 SBOM from the resolved graph")]
+    Sbom {
+        #[arg(short, long, help = "write SBOM to file (default: stdout)")]
+        output: Option<String>,
     },
     #[command(about = "Manage kernel templates (publish/fetch — registry-backed)")]
     Template {

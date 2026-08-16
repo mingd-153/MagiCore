@@ -28,7 +28,9 @@ pub enum CommonCommand {
     Outdated {
         json: bool,
     },
-    Audit,
+    Audit {
+        fix: bool,
+    },
     SelfUpdate,
     Run {
         script: String,
@@ -89,6 +91,12 @@ pub enum CommonCommand {
     },
     Store {
         cmd: crate::commands::store::StoreCmd,
+    },
+    Trust {
+        cmd: crate::commands::trust::TrustCmd,
+    },
+    Sbom {
+        output: Option<String>,
     },
     Template {
         cmd: crate::commands::template::TemplateCmd,
@@ -346,7 +354,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 page,
             }),
             Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
-            Commands::Audit => Some(CommonCommand::Audit),
+            Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
             Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
             Commands::Publish {
                 tag,
@@ -394,6 +402,8 @@ impl TryFrom<Commands> for DispatchCommand {
                 json,
             }),
             Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
+            Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
+            Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
             Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
             Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
             Commands::Login {

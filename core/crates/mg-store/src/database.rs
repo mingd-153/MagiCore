@@ -1,6 +1,6 @@
 /// SQLite-backed database for installed packages and integrity metadata.
 use anyhow::Result;
-use mg_types::PackageId;
+use mg_types::{PackageId, Version};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
@@ -53,6 +53,15 @@ impl Database {
                 PRIMARY KEY (id, version, path)
             );
             CREATE INDEX IF NOT EXISTS idx_package_files_blob ON package_files (blob_hash);
+            CREATE TABLE IF NOT EXISTS trust_policy (
+                package_id TEXT PRIMARY KEY,
+                policy TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS release_policy (
+                ecosystem TEXT PRIMARY KEY,
+                min_age_secs INTEGER NOT NULL
+            );
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
             PRAGMA busy_timeout=5000;",
@@ -308,6 +317,111 @@ impl Database {
         )?;
         Ok(count as usize)
     }
+
+    // ── T5 security trust gate ──────────────────────────────────────────
+
+    /// Policy recorded for a package. `package_id` is the raw key: `name` or
+    /// `name@version`.
+    pub fn get_trust_policy(&self, package_id: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT policy FROM trust_policy WHERE package_id = ?1")?;
+        let mut rows = stmt.query_map(params![package_id], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(Ok(policy)) => Ok(Some(policy)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    /// Record approve/deny for a package (`name` covers all versions,
+    /// `name@version` covers exactly one).
+    pub fn upsert_trust_policy(&self, package_id: &str, policy: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO trust_policy (package_id, policy, updated_at) VALUES (?1, ?2, ?3)",
+            params![package_id, policy, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_trust_policies(&self) -> Result<Vec<(String, String, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT package_id, policy, updated_at FROM trust_policy ORDER BY package_id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn clear_trust_policy(&self, package_id: &str) -> Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM trust_policy WHERE package_id = ?1",
+            params![package_id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Remove policies for packages no longer installed (bare name or
+    /// name@version). Returns number of rows removed. `mg trust prune`.
+    pub fn prune_trust_policies(&self) -> Result<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM trust_policy WHERE package_id NOT IN (
+                 SELECT id || '@' || version FROM packages
+             ) AND package_id NOT IN (
+                 SELECT id FROM packages
+             )",
+            [],
+        )?;
+        Ok(n)
+    }
+
+    /// Min-release-age (seconds) for an ecosystem. None = not set (use default).
+    pub fn release_policy(&self, ecosystem: &str) -> Result<Option<u64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT min_age_secs FROM release_policy WHERE ecosystem = ?1")?;
+        let mut rows = stmt.query_map(params![ecosystem], |row| row.get::<_, u64>(0))?;
+        match rows.next() {
+            Some(Ok(v)) => Ok(Some(v)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn upsert_release_policy(&self, ecosystem: &str, min_age_secs: u64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO release_policy (ecosystem, min_age_secs) VALUES (?1, ?2)",
+            params![ecosystem, min_age_secs],
+        )?;
+        Ok(())
+    }
+
+    /// Highest installed version for a package name — None = not installed.
+    /// Used by the T5 no-downgrade guard (semver compare, not string compare).
+    pub fn latest_installed_version(&self, name: &str) -> Result<Option<Version>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT version FROM packages WHERE id = ?1")?;
+        let rows = stmt.query_map(params![name], |row| row.get::<_, String>(0))?;
+        let mut best: Option<Version> = None;
+        for row in rows {
+            let v = match Version::parse(&row?) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if best.as_ref().map_or(true, |b| v > *b) {
+                best = Some(v);
+            }
+        }
+        Ok(best)
+    }
 }
 
 #[cfg(test)]
@@ -359,5 +473,101 @@ mod tests {
         // Re-install in another project keeps it referenced.
         db.set_ref("/tmp/proj-b", &pkg).unwrap();
         assert!(db.list_unreferenced().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_trust_policy_upsert_get_list_clear() {
+        let dir = tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        assert_eq!(db.get_trust_policy("react").unwrap(), None);
+
+        db.upsert_trust_policy("react", "approved").unwrap();
+        assert_eq!(
+            db.get_trust_policy("react").unwrap().as_deref(),
+            Some("approved")
+        );
+
+        db.upsert_trust_policy("react", "denied").unwrap();
+        assert_eq!(
+            db.get_trust_policy("react").unwrap().as_deref(),
+            Some("denied")
+        );
+
+        let list = db.list_trust_policies().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, "react");
+        assert_eq!(list[0].1, "denied");
+        assert!(list[0].2 > 0);
+
+        assert!(db.clear_trust_policy("react").unwrap());
+        assert_eq!(db.get_trust_policy("react").unwrap(), None);
+    }
+
+    #[test]
+    fn test_trust_policy_exact_version_and_bare_name_are_distinct() {
+        let dir = tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        db.upsert_trust_policy("react", "approved").unwrap();
+        db.upsert_trust_policy("react@18.2.0", "denied").unwrap();
+
+        // bare covers any version; exact overrides for that version via keys.
+        assert_eq!(
+            db.get_trust_policy("react").unwrap().as_deref(),
+            Some("approved")
+        );
+        assert_eq!(
+            db.get_trust_policy("react@18.2.0").unwrap().as_deref(),
+            Some("denied")
+        );
+        assert_eq!(db.get_trust_policy("react@19.0.0").unwrap(), None);
+    }
+
+    #[test]
+    fn test_prune_trust_policies_keeps_installed() {
+        let dir = tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        let installed = PackageId::parse("react@18.2.0").unwrap();
+        db.insert_package(&installed, None).unwrap();
+
+        db.upsert_trust_policy("react", "approved").unwrap();
+        db.upsert_trust_policy("react@18.2.0", "approved").unwrap();
+        db.upsert_trust_policy("ghost@1.0.0", "approved").unwrap();
+
+        assert_eq!(db.prune_trust_policies().unwrap(), 1); // only ghost removed
+        assert!(db.get_trust_policy("react").unwrap().is_some());
+        assert!(db.get_trust_policy("react@18.2.0").unwrap().is_some());
+        assert!(db.get_trust_policy("ghost@1.0.0").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_release_policy_default_and_upsert() {
+        let dir = tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        assert_eq!(db.release_policy("web").unwrap(), None);
+
+        db.upsert_release_policy("web", 86400).unwrap();
+        assert_eq!(db.release_policy("web").unwrap(), Some(86400));
+
+        db.upsert_release_policy("web", 0).unwrap();
+        assert_eq!(db.release_policy("web").unwrap(), Some(0));
+        assert_eq!(db.release_policy("game").unwrap(), None);
+    }
+
+    #[test]
+    fn test_latest_installed_version_semver_compared() {
+        let dir = tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        assert_eq!(db.latest_installed_version("react").unwrap(), None);
+
+        db.insert_package(&PackageId::parse("react@9.0.0").unwrap(), None)
+            .unwrap();
+        db.insert_package(&PackageId::parse("react@10.2.0").unwrap(), None)
+            .unwrap();
+        db.insert_package(&PackageId::parse("react@2.5.0").unwrap(), None)
+            .unwrap();
+
+        // "10.2.0" > "9.0.0" as semver even though "9" sorts after "10" as text.
+        let latest = db.latest_installed_version("react").unwrap().unwrap();
+        assert_eq!(latest, Version::new(10, 2, 0));
     }
 }

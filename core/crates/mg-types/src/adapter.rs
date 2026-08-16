@@ -1,5 +1,5 @@
 use crate::ecosystem::Ecosystem;
-use crate::error::MgResult;
+use crate::error::{MgError, MgResult};
 use crate::manifest::Manifest;
 use crate::package::{PackageId, PackageName, VersionRange};
 use async_trait::async_trait;
@@ -247,6 +247,16 @@ pub trait PackageAdapter: Send + Sync {
     ) -> MgResult<Vec<UpdatedPackage>>;
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>>;
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport>;
+
+    /// T5 audit --fix: re-resolve the given vulnerable packages to a newer
+    /// version and rewrite the lockfile ONLY when re-resolution succeeds
+    /// (fail-closed — a failed resolve leaves manifest + lockfile untouched).
+    /// Returns the number of packages bumped. Default: unsupported.
+    async fn audit_fix(&self, _project_root: &Path, _vulnerable: &[PackageId]) -> MgResult<usize> {
+        Err(MgError::Other(
+            "audit --fix is not supported for this core".to_string(),
+        ))
+    }
 
     /// Enable dedupe preference (reuse installed versions) for the next resolve.
     /// Default no-op — opt-in per install (02 §2.1).
