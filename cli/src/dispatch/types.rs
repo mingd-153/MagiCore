@@ -105,6 +105,9 @@ pub enum CommonCommand {
     Hooks {
         cmd: crate::commands::hooks::HooksCmd,
     },
+    Docs {
+        output: Option<std::path::PathBuf>,
+    },
     Sbom {
         output: Option<String>,
     },
@@ -417,6 +420,7 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
             Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
             Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
+            Commands::Docs { output } => Some(CommonCommand::Docs { output }),
             Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
             Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
             Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),

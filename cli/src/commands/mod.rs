@@ -6,6 +6,7 @@ pub mod core;
 pub mod dedupe;
 pub mod dev;
 pub mod dlx;
+pub mod docs;
 pub mod exec;
 pub mod hooks;
 pub mod info;
