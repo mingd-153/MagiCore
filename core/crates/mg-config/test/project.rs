@@ -315,6 +315,21 @@ fn non_app_has_no_app_config() {
 }
 
 #[test]
+fn ai_scaffold_sets_framework() {
+    let mcp =
+        ProjectConfig::from_scaffold("v", "ai", "", vec!["mcp-server".to_string()], "", vec![]);
+    assert_eq!(mcp.ai.unwrap().framework, "mcp-server");
+    let none = ProjectConfig::from_scaffold("w", "ai", "", vec![], "", vec![]);
+    assert_eq!(none.ai.unwrap().framework, "python-agent");
+}
+
+#[test]
+fn non_ai_has_no_ai_config() {
+    let web = ProjectConfig::from_scaffold("x", "web", "", vec![], "", vec![]);
+    assert!(web.ai.is_none());
+}
+
+#[test]
 fn non_cicd_has_no_cicd_config() {
     let web = ProjectConfig::from_scaffold("r", "web", "", vec![], "", vec![]);
     assert!(web.cicd.is_none());

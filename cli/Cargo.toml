@@ -38,6 +38,7 @@ mg-iot-adapter = { path = "../adapters/iot", optional = true }
 mg-cloud-adapter = { path = "../adapters/cloud", optional = true }
 mg-app-adapter = { path = "../adapters/app", optional = true }
 mg-cicd-adapter = { path = "../adapters/cicd", optional = true }
+mg-ai-adapter = { path = "../adapters/ai", optional = true }
 mg-hardware-adapter = { path = "../adapters/hardware", optional = true }
 
 # CLI
@@ -99,7 +100,7 @@ default = ["all"]
 all      = ["web", "game", "ai", "clo", "cicd", "iot", "app", "lib", "hardware"]
 web      = ["mg-web-adapter"]
 game     = ["mg-game-adapter"]
-ai       = []
+ai       = ["mg-ai-adapter"]
 clo      = ["mg-cloud-adapter"]
 cicd     = ["mg-cicd-adapter"]
 iot      = ["mg-iot-adapter"]

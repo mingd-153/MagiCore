@@ -124,6 +124,16 @@ pub struct ProjectConfig {
     /// App core config (mg.toml [app]) — language (Q18)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<AppConfig>,
+    /// AI core config (mg.toml [ai]) — framework (Q11)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai: Option<AiConfig>,
+}
+
+/// AI core config — `[ai] framework` (python-agent/mcp-server).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiConfig {
+    #[serde(default)]
+    pub framework: String,
 }
 
 /// App core config — `[app] language` (flutter/kotlin/swift).
@@ -212,6 +222,7 @@ impl ProjectConfig {
             cloud: None,
             cicd: None,
             app: None,
+            ai: None,
         }
     }
 
@@ -295,6 +306,16 @@ impl ProjectConfig {
         } else {
             None
         };
+        let ai = if ecosystem == "ai" {
+            Some(AiConfig {
+                framework: frameworks
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "python-agent".to_string()),
+            })
+        } else {
+            None
+        };
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
@@ -313,6 +334,7 @@ impl ProjectConfig {
             cloud,
             cicd,
             app,
+            ai,
         }
     }
 

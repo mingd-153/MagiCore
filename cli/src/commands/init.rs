@@ -30,6 +30,8 @@ pub async fn run(template: Option<String>) -> Result<()> {
             crate::wizard::cicd::CicdWizard::run()
         } else if t == "app" {
             crate::wizard::app::AppWizard::run()
+        } else if t == "ai" {
+            crate::wizard::ai::AiWizard::run()
         } else {
             ScaffoldConfig {
                 core: t.clone(),
@@ -197,6 +199,11 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
         }
         "app" => {
             let mut cfg = crate::wizard::app::AppWizard::run();
+            cfg.project_name = ask_project_name();
+            (cfg, Vec::new(), false)
+        }
+        "ai" => {
+            let mut cfg = crate::wizard::ai::AiWizard::run();
             cfg.project_name = ask_project_name();
             (cfg, Vec::new(), false)
         }
