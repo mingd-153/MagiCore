@@ -3,6 +3,31 @@ use mg_ui::info;
 
 use crate::context::ProjectContext;
 
+/// Lệnh dev cho từng engine game (Q15/Q20): bevy → cargo run; godot → mở editor.
+fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
+    let adapter = mg_game_adapter::adapter_for(root)
+        .ok_or_else(|| anyhow::anyhow!("No game engine detected in {}", root.display()))?;
+    match adapter.engine() {
+        "bevy" => Ok(("cargo".to_string(), vec!["run".to_string()])),
+        "godot" => {
+            let path = root
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("project path is not valid UTF-8"))?;
+            Ok((
+                "godot".to_string(),
+                vec![
+                    "--editor".to_string(),
+                    "--path".to_string(),
+                    path.to_string(),
+                ],
+            ))
+        }
+        other => bail!(
+            "'mg dev' for '{other}' engine is not implemented yet — bevy (cargo run) and godot (editor) are available (P1, Q20). unity/unreal dev là P2."
+        ),
+    }
+}
+
 pub async fn run(
     core: Option<&str>,
     host: Option<String>,
@@ -25,9 +50,66 @@ pub async fn run(
             crate::commands::core::web::dev_at_root(&root, Some(host), port).await
         }
         "game" => {
-            info("Engine Game: Starting native watcher and game runtime...");
+            let (cmd, args) = game_dev_command(&root)?;
+            let opts = mg_exec::prelude::ExecOptions {
+                cwd: Some(root.clone()),
+                log_path: Some(root.join(".megagate").join("exec.log")),
+                clean_env: true,
+                ..Default::default()
+            };
+            info(&format!(
+                "Game dev: running `{} {}`...",
+                cmd,
+                args.join(" ")
+            ));
+            mg_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
+                if cmd == "godot" {
+                    anyhow::anyhow!(
+                        "godot failed: {e} — install the Godot editor first (https://godotengine.org) and ensure `godot` is in PATH"
+                    )
+                } else {
+                    anyhow::anyhow!("{} failed: {e}", cmd)
+                }
+            })?;
             Ok(())
         }
         other => bail!("'mg dev' Engine is not implemented for the '{other}' core yet"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn game_dev_bevy_runs_cargo() {
+        let dir = std::env::temp_dir().join(format!("mg-dev-bevy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"game\"\n\n[dependencies]\n",
+        )
+        .unwrap();
+        let (cmd, args) = game_dev_command(&dir).unwrap();
+        assert_eq!(cmd, "cargo");
+        assert_eq!(args, vec!["run"]);
+    }
+
+    #[test]
+    fn game_dev_godot_opens_editor() {
+        let dir = std::env::temp_dir().join(format!("mg-dev-godot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("project.godot"), "[application]\nname=\"demo\"\n").unwrap();
+        let (cmd, args) = game_dev_command(&dir).unwrap();
+        assert_eq!(cmd, "godot");
+        assert!(args.iter().any(|a| a == "--editor"));
+        assert!(args.iter().any(|a| a == "--path"));
+    }
+
+    #[test]
+    fn game_dev_unknown_engine_bails() {
+        assert!(game_dev_command(std::path::Path::new("/nonexistent")).is_err());
     }
 }

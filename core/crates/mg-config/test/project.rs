@@ -236,3 +236,18 @@ fn non_lib_has_no_lib_config() {
     let web = ProjectConfig::from_scaffold("c", "web", "", vec![], "", vec![]);
     assert!(web.lib.is_none());
 }
+
+#[test]
+fn game_scaffold_sets_engine_default_bevy() {
+    let godot =
+        ProjectConfig::from_scaffold("g", "game", "", vec!["godot".to_string()], "", vec![]);
+    assert_eq!(godot.game.unwrap().engine, "godot");
+    let none = ProjectConfig::from_scaffold("h", "game", "", vec![], "", vec![]);
+    assert_eq!(none.game.unwrap().engine, "bevy");
+}
+
+#[test]
+fn non_game_has_no_game_config() {
+    let web = ProjectConfig::from_scaffold("i", "web", "", vec![], "", vec![]);
+    assert!(web.game.is_none());
+}
