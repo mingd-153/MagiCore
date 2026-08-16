@@ -96,6 +96,7 @@ impl AuthService {
                 return Some(User {
                     name: "admin".to_string(),
                     is_admin: true,
+                    role: UserRole::Admin,
                     scopes: vec![],
                     password: None,
                     email: None,
@@ -127,9 +128,9 @@ impl AuthService {
         false
     }
 
-    /// Check if user can publish package
+    /// Check if user can publish package (task #4: viewer = read-only)
     pub fn can_publish(&self, user: &User, package: &str) -> bool {
-        self.can_access(user, package)
+        user.role.can_publish() && self.can_access(user, package)
     }
 }
 
@@ -138,9 +139,41 @@ impl AuthService {
 pub struct User {
     pub name: String,
     pub is_admin: bool,
+    pub role: UserRole,
     pub scopes: Vec<String>,
     pub password: Option<String>,
     pub email: Option<String>,
+}
+
+/// RBAC role (task #4): viewer = read-only, publisher = read+write scoped, admin = all
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UserRole {
+    Viewer,
+    Publisher,
+    #[default]
+    Admin,
+}
+
+impl UserRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UserRole::Viewer => "viewer",
+            UserRole::Publisher => "publisher",
+            UserRole::Admin => "admin",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "publisher" => UserRole::Publisher,
+            "admin" => UserRole::Admin,
+            _ => UserRole::Viewer,
+        }
+    }
+
+    pub fn can_publish(&self) -> bool {
+        matches!(self, UserRole::Publisher | UserRole::Admin)
+    }
 }
 
 /// Extract auth from request headers
@@ -200,6 +233,7 @@ pub async fn auth_middleware(
                             request.extensions_mut().insert(User {
                                 name: "admin".to_string(),
                                 is_admin: true,
+                                role: UserRole::Admin,
                                 scopes: vec![],
                                 password: None,
                                 email: None,
