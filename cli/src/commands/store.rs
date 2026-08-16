@@ -1,10 +1,11 @@
 //! mg store — manage the local package store (02 §2.2)
 //! (Quản lý store: prune package không còn project nào tham chiếu)
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use mg_config::project::ProjectConfig;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum StoreCmd {
@@ -65,6 +66,60 @@ fn dir_size(path: &std::path::Path) -> u64 {
         }
     }
     total
+}
+
+/// Copy toàn bộ cây thư mục (per-file — không dùng `cp` ngoài, portable).
+/// Nguồn không tồn tại → trả Ok (no-op) để backup thiếu vstore vẫn chạy được.
+fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
+    if !src.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dst).with_context(|| format!("create {}", dst.display()))?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            copy_dir(&from, &to)?;
+        } else if ft.is_file() || ft.is_symlink() {
+            std::fs::copy(&from, &to).with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Xoá nội dung thư mục đích (giữ chính thư mục) trước khi restore — fail nếu không xoá được.
+fn clear_dir(dst: &Path) -> Result<()> {
+    if !dst.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dst)? {
+        let entry = entry?;
+        let p = entry.path();
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(&p)
+                .with_context(|| format!("remove {}", p.display()))?;
+        } else {
+            std::fs::remove_file(&p).with_context(|| format!("remove {}", p.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn timestamp() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{secs}")
+}
+
+fn default_backup_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let base = Path::new(&home).join(".megagate");
+    std::fs::create_dir_all(&base)?;
+    Ok(base.join(format!("store_backup_{}", timestamp())))
 }
 
 fn prune_unreferenced(project_root: &Path, dry_run: bool) -> Result<PruneReport> {
@@ -137,11 +192,58 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             Ok(())
         }
         StoreCmd::Backup { path } => {
-            println!("backup store: path = {:?}", path);
+            let backup_dir = match path {
+                Some(p) => PathBuf::from(p),
+                None => default_backup_dir()?,
+            };
+            // Backup 2 phần: store.db (index) + vstore (packages thật)
+            let db_src = store_db_for(&project_root)?;
+            let db_dst = backup_dir.join("store.db");
+            let vstore_dst = backup_dir.join("vstore");
+            if db_src.exists() {
+                if let Some(parent) = db_dst.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&db_src, &db_dst)
+                    .with_context(|| format!("copy {} → {}", db_src.display(), db_dst.display()))?;
+            }
+            copy_dir(&vstore_root_for(&project_root), &vstore_dst)?;
+            println!("backup store → {}", backup_dir.display());
+            println!("  store.db: {} bytes", std::fs::metadata(&db_dst).map(|m| m.len()).unwrap_or(0));
+            println!(
+                "  vstore: {} bytes",
+                dir_size(&vstore_dst)
+            );
+            println!("  restore: mg store restore --path {}", backup_dir.display());
             Ok(())
         }
         StoreCmd::Restore { path } => {
-            println!("restore store: path = {:?}", path);
+            let backup_dir = PathBuf::from(path);
+            let db_src = backup_dir.join("store.db");
+            let vstore_src = backup_dir.join("vstore");
+            if !db_src.exists() && !vstore_src.exists() {
+                bail!(
+                    "backup không hợp lệ: {} (thiếu store.db và vstore)",
+                    backup_dir.display()
+                );
+            }
+            // Fail-closed: điểm yếu ghi đè — tự backup trước khi khôi phục
+            let safety_backup = default_backup_dir()?;
+            let db_dst = store_db_for(&project_root)?;
+            copy_dir(&vstore_root_for(&project_root), &safety_backup.join("vstore"))?;
+            if db_dst.exists() {
+                std::fs::copy(&db_dst, safety_backup.join("store.db"))?;
+            }
+            if db_src.exists() {
+                if let Some(parent) = db_dst.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&db_src, &db_dst)?;
+            }
+            clear_dir(&vstore_root_for(&project_root))?;
+            copy_dir(&vstore_src, &vstore_root_for(&project_root))?;
+            println!("restore store ← {}", backup_dir.display());
+            println!("  backup an toàn (trước khi khôi phục): {}", safety_backup.display());
             Ok(())
         }
     }
