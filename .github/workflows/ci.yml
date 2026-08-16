@@ -27,6 +27,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: cargo check
         run: cargo check --all-targets
+      - name: module hygiene
+        run: bash scripts/check-module-hygiene.sh
 
   test:
     name: Test

@@ -93,3 +93,5 @@ PMs/*
 
 # Doc .md trong thư mục con (cấp 1) — không commit doc rải rác
 /*/*.md
+!.github/PULL_REQUEST_TEMPLATE.md
+!scripts/notes/*.md
