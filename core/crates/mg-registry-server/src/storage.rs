@@ -737,17 +737,20 @@ impl RegistryStore {
 
     /// Load mọi user (token → User) từ DB — gọi lúc khởi động
     pub async fn load_users(&self) -> Result<Vec<(String, crate::auth::User)>> {
-        let rows = sqlx::query("SELECT token, name, password, email, is_admin, scopes FROM users")
-            .fetch_all(&self.db)
-            .await?;
+        let rows =
+            sqlx::query("SELECT token, name, password, email, is_admin, role, scopes FROM users")
+                .fetch_all(&self.db)
+                .await?;
         let mut out = Vec::new();
         for row in rows {
             let scopes: Vec<String> = serde_json::from_str(&row.get::<String, _>("scopes"))?;
+            let role: String = row.get("role");
             out.push((
                 row.get("token"),
                 crate::auth::User {
                     name: row.get("name"),
                     is_admin: row.get("is_admin"),
+                    role: crate::auth::UserRole::from_str(&role),
                     scopes,
                     password: row.get("password"),
                     email: row.get("email"),
@@ -762,13 +765,14 @@ impl RegistryStore {
         let scopes_json = serde_json::to_string(&user.scopes)?;
         sqlx::query(
             r#"
-            INSERT INTO users (name, token, password, email, is_admin, scopes)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO users (name, token, password, email, is_admin, role, scopes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
                 token = excluded.token,
                 password = excluded.password,
                 email = excluded.email,
                 is_admin = excluded.is_admin,
+                role = excluded.role,
                 scopes = excluded.scopes
         "#,
         )
@@ -777,6 +781,7 @@ impl RegistryStore {
         .bind(&user.password)
         .bind(&user.email)
         .bind(user.is_admin)
+        .bind(user.role.as_str())
         .bind(&scopes_json)
         .execute(&self.db)
         .await?;

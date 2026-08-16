@@ -460,6 +460,7 @@ async fn adduser(
     let user = crate::auth::User {
         name: name.to_string(),
         is_admin: false,
+        role: crate::auth::UserRole::Publisher,
         scopes: body.scopes,
         password: Some(body.password),
         email: body.email,

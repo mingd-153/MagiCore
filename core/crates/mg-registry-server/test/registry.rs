@@ -85,6 +85,47 @@ async fn audit_log_writes() {
     pool.close().await;
 }
 
+#[tokio::test]
+async fn rbac_role_controls_publish() {
+    use mg_registry_server::auth::{AuthService, UserRole};
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(RegistryStore::new(temp_dir.path()).await.unwrap());
+    let auth = AuthService::new(None, store);
+
+    let viewer = mg_registry_server::auth::User {
+        name: "viewer1".into(),
+        is_admin: false,
+        role: UserRole::Viewer,
+        scopes: vec!["@org/*".into()],
+        password: None,
+        email: None,
+    };
+    let publisher = mg_registry_server::auth::User {
+        name: "pub1".into(),
+        is_admin: false,
+        role: UserRole::Publisher,
+        scopes: vec!["@org/*".into()],
+        password: None,
+        email: None,
+    };
+    let admin = mg_registry_server::auth::User {
+        name: "admin1".into(),
+        is_admin: true,
+        role: UserRole::Admin,
+        scopes: vec![],
+        password: None,
+        email: None,
+    };
+
+    assert!(!auth.can_publish(&viewer, "@org/x"));
+    assert!(!auth.can_publish(&viewer, "@other/x"));
+    assert!(auth.can_publish(&publisher, "@org/x"));
+    assert!(!auth.can_publish(&publisher, "@other/x"));
+    assert!(auth.can_publish(&admin, "@other/x"));
+    assert!(auth.can_access(&viewer, "@org/x"));
+    assert!(!auth.can_access(&viewer, "@other/x"));
+}
+
 /// Param routes use matchit 0.7 `:param` syntax (not `{param}` which is
 /// matchit 0.8 / axum 0.8). Guard against silent 404 regression.
 #[tokio::test]
@@ -312,6 +353,7 @@ async fn users_persist_across_restart() {
             User {
                 name: "alice".to_string(),
                 is_admin: false,
+                role: mg_registry_server::auth::UserRole::Publisher,
                 scopes: vec!["@org/*".to_string()],
                 password: Some("pw".to_string()),
                 email: None,
