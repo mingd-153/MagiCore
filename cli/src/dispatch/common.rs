@@ -26,7 +26,7 @@ pub async fn dispatch_common(
             page,
         } => commands::search::run(query, json, exact, page).await,
         CommonCommand::Outdated { json } => commands::outdated::run(core, json).await,
-        CommonCommand::Audit => commands::audit::run(core).await,
+        CommonCommand::Audit { fix } => commands::audit::run(core, fix).await,
         CommonCommand::SelfUpdate => commands::self_update::run().await,
         CommonCommand::Run { script, args } => commands::run::run(script, args, core).await,
         CommonCommand::Dlx { package, args } => commands::dlx::run(package, args).await,
@@ -125,6 +125,8 @@ pub async fn dispatch_common(
             .await
         }
         CommonCommand::Store { cmd } => commands::store::run(cmd).await,
+        CommonCommand::Trust { cmd } => commands::trust::run(cmd).await,
+        CommonCommand::Sbom { output } => commands::sbom::run(core, output).await,
         CommonCommand::Template { cmd } => commands::template::run(cmd).await,
         CommonCommand::Workspace { cmd } => commands::workspace::run(cmd).await,
     }

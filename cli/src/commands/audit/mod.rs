@@ -13,10 +13,13 @@ pub mod iot;
 pub mod lib;
 pub mod web;
 
-pub async fn run(core: Option<&str>) -> Result<()> {
+pub async fn run(core: Option<&str>, fix: bool) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     if ctx.adapter().name() == "web" {
-        return web::audit(ctx.adapter(), ctx.root()).await;
+        return web::audit(ctx.adapter(), ctx.root(), fix).await;
+    }
+    if fix {
+        anyhow::bail!("audit --fix is only supported for the web core");
     }
 
     // Convert adapter name to Ecosystem

@@ -991,7 +991,15 @@ impl PackageAdapter for WebAdapter {
         profile.mark("assemble_resolved_packages", package_started_at);
 
         // 24h Supply-chain Security Check.
-        // Enabled by MEGAGATE_SECURITY_24H_BLOCK=1 (or MG_AUDIT_STRICT for back-compat).
+        // Enabled by MEGAGATE_SECURITY_24H_BLOCK=1 (or MG_AUDIT_STRICT for back-compat)
+        // OR by an explicit release_policy in the store DB (`mg trust policy <secs>`).
+        let store_min_age = (|| {
+            let cwd = std::env::current_dir().ok()?;
+            let layout = Layout::new(project_cache_dir(&cwd));
+            Database::open(&layout.db_path())
+                .ok()
+                .and_then(|db| db.release_policy("web").ok().flatten())
+        })();
         let block_new = std::env::var("MEGAGATE_SECURITY_24H_BLOCK")
             .or_else(|_| std::env::var("MG_AUDIT_STRICT"))
             .ok()
@@ -1001,23 +1009,58 @@ impl PackageAdapter for WebAdapter {
                     "1" | "true" | "yes" | "on"
                 )
             })
+            .unwrap_or(false)
+            || store_min_age.is_some();
+        let min_age_secs = store_min_age.unwrap_or(86400) as i64;
+        let allow_untrusted = std::env::var("MEGAGATE_ALLOW_UNTRUSTED")
+            .ok()
+            .map(|v| {
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false);
-        if block_new {
-            let allow_untrusted = std::env::var("MEGAGATE_ALLOW_UNTRUSTED")
-                .ok()
-                .map(|v| {
-                    matches!(
-                        v.trim().to_ascii_lowercase().as_str(),
-                        "1" | "true" | "yes" | "on"
-                    )
-                })
-                .unwrap_or(false);
-            if !allow_untrusted {
-                for r in &result.resolutions {
-                    if let Some(pkg_meta) = metadata.get(r.package_id.name_str()) {
-                        let ver = r.package_id.version().to_string();
-                        if let Err(msg) = native::npm_registry::check_publish_age(pkg_meta, &ver) {
-                            return Err(mg_types::MgError::Other(msg));
+        if allow_untrusted {
+            use std::sync::OnceLock;
+            static WARNED: OnceLock<()> = OnceLock::new();
+            WARNED.get_or_init(|| {
+                eprintln!(
+                    "⚠️  [megagate] WARNING: MEGAGATE_ALLOW_UNTRUSTED=1 — supply-chain guards\n   \
+                     (24h quarantine + no-downgrade) are BYPASSED for this process."
+                );
+            });
+        }
+        if block_new && !allow_untrusted {
+            for r in &result.resolutions {
+                if let Some(pkg_meta) = metadata.get(r.package_id.name_str()) {
+                    let ver = r.package_id.version().to_string();
+                    if let Err(msg) =
+                        native::npm_registry::check_publish_age(pkg_meta, &ver, min_age_secs)
+                    {
+                        return Err(mg_types::MgError::Other(msg));
+                    }
+                }
+            }
+        }
+
+        // No-downgrade guard (T5): never resolve below the highest installed
+        // version of a package — MEGAGATE_ALLOW_UNTRUSTED=1 overrides.
+        if !allow_untrusted {
+            if let Ok(cwd) = std::env::current_dir() {
+                let layout = Layout::new(project_cache_dir(&cwd));
+                if let Ok(db) = Database::open(&layout.db_path()) {
+                    for r in &result.resolutions {
+                        let id = &r.package_id;
+                        let old = db.latest_installed_version(id.name_str()).ok().flatten();
+                        if let Some(old) = old {
+                            let new_v = id.version();
+                            if *new_v < old {
+                                return Err(mg_types::MgError::Other(format!(
+                                    "🚨 SECURITY: Downgrade blocked for '{id}' — installed {old}, requested {new_v}.\n   \
+                                     This can regress packages in the CAS store. Use MEGAGATE_ALLOW_UNTRUSTED=1 to override."
+                                )));
+                            }
                         }
                     }
                 }
@@ -1562,11 +1605,16 @@ impl PackageAdapter for WebAdapter {
         prune_project_local_cache(&layout);
         profile.mark("prune_project_local_cache", start);
 
-        if should_run_lifecycle_scripts(opts.ignore_scripts, opts.allow_scripts) {
+        if !opts.ignore_scripts {
             use lifecycle::LifecycleRunner;
             use std::sync::Arc;
             use tokio::sync::Semaphore;
             use tokio::task::JoinSet;
+
+            // T5 trust gate: per-package allowlist (approved → run, denied →
+            // never, unlisted → fail-closed unless blanket opt-in). Load once.
+            let trust_map = load_trust_policies(&layout);
+            let blanket_scripts = opts.allow_scripts || lifecycle_scripts_allowed();
 
             // Filter packages that actually have lifecycle scripts
             let mut scripted_packages = Vec::new();
@@ -1585,6 +1633,31 @@ impl PackageAdapter for WebAdapter {
                                 })
                                 .unwrap_or(false);
                             if has_scripts {
+                                let name = manifest
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let version = manifest
+                                    .get("version")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default();
+                                let policy = trust_map
+                                    .get(&format!("{name}@{version}"))
+                                    .or_else(|| trust_map.get(&name))
+                                    .map(String::as_str);
+                                if !trust_allows_script(policy, blanket_scripts) {
+                                    if policy == Some("denied") {
+                                        eprintln!(
+                                            "[megagate] DENIED lifecycle scripts for {name}@{version} (mg trust deny)"
+                                        );
+                                    } else {
+                                        eprintln!(
+                                            "[megagate] skipped lifecycle scripts for {name}@{version} — not approved. Approve with: mg trust approve {name}"
+                                        );
+                                    }
+                                    continue;
+                                }
                                 scripted_packages.push(pkg_dir.clone());
                             }
                         }
@@ -1905,6 +1978,60 @@ impl PackageAdapter for WebAdapter {
             vulnerability_count: vuln_count,
             vulnerabilities,
         })
+    }
+
+    /// T5 `mg audit --fix`: bump each vulnerable package to `latest`, re-resolve,
+    /// and rewrite the lockfile only if the new resolution succeeds. Manifest is
+    /// updated too, but only after a successful resolve (fail-closed).
+    async fn audit_fix(
+        &self,
+        project_root: &Path,
+        vulnerable: &[mg_types::PackageId],
+    ) -> MgResult<usize> {
+        use mg_types::DependencySpec;
+
+        if vulnerable.is_empty() {
+            return Ok(0);
+        }
+
+        let mut manifest = self.parse_manifest(project_root).await?;
+        let names: std::collections::HashSet<&str> =
+            vulnerable.iter().map(|id| id.name_str()).collect();
+
+        // dep_groups order: dependencies, devDependencies, peerDependencies, optionalDependencies.
+        let flags = [
+            (false, false, false),
+            (true, false, false),
+            (false, false, true),
+            (false, true, false),
+        ];
+        let mut bumps: Vec<(DependencySpec, bool, bool, bool)> = Vec::new();
+        for (group, (dev, optional, peer)) in manifest.dep_groups().iter().zip(flags) {
+            for spec in group.1 {
+                if names.contains(spec.name.as_str()) {
+                    bumps.push((spec.clone(), dev, optional, peer));
+                }
+            }
+        }
+        if bumps.is_empty() {
+            return Err(mg_types::MgError::Other(
+                "audit --fix: found no matching dependency to bump (validate manifest)".into(),
+            ));
+        }
+
+        for (spec, dev, optional, peer) in &bumps {
+            // `*` resolves to the newest matching version without depending on
+            // dist-tags being present in the registry metadata.
+            let new_spec = DependencySpec::new(spec.name.clone(), mg_types::VersionRange::star());
+            manifest.remove_dep(spec.name.as_str());
+            manifest.add_dep(new_spec, *dev, *optional, *peer);
+        }
+
+        // Fail-closed: only after a successful re-resolution do we touch any file.
+        let graph = self.resolve(&manifest).await?;
+        self.write_manifest(project_root, &manifest).await?;
+        write_web_lockfile_with_state(project_root, &graph, "fixed")?;
+        Ok(bumps.len())
     }
 }
 
@@ -3275,8 +3402,32 @@ fn lifecycle_scripts_allowed() -> bool {
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
+#[allow(dead_code)]
 fn should_run_lifecycle_scripts(ignore_scripts: bool, allow_scripts: bool) -> bool {
     !ignore_scripts && (allow_scripts || lifecycle_scripts_allowed())
+}
+
+/// T5: package_id -> policy (approved/denied) allowlist stored in the project
+/// store DB. Empty map = no trust gate configured (fail-closed down below).
+fn load_trust_policies(layout: &Layout) -> std::collections::HashMap<String, String> {
+    Database::open(&layout.db_path())
+        .and_then(|db| db.list_trust_policies())
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(id, policy, _)| (id, policy))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// T5 fail-closed gate for lifecycle scripts:
+/// approved → run; denied → never; unknown → only under a blanket opt-in.
+fn trust_allows_script(policy: Option<&str>, blanket_scripts: bool) -> bool {
+    match policy {
+        Some("approved") => true,
+        Some("denied") => false,
+        _ => blanket_scripts,
+    }
 }
 
 fn extracted_cache_full_validation_enabled() -> bool {
@@ -6216,6 +6367,126 @@ mod tests {
         assert_eq!(parsed.packages[0].version, "3.4.0");
     }
 
+    #[tokio::test]
+    async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
+        let shared = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        seed_shared_metadata(
+            shared.path(),
+            "react",
+            serde_json::json!({
+                "name": "react",
+                "description": null,
+                "versions": {
+                    "18.2.0": {
+                        "version": "18.2.0",
+                        "dependencies": null,
+                        "optionalDependencies": null,
+                        "os": null,
+                        "cpu": null,
+                        "dist": {
+                            "tarball": "https://registry.example.test/react-18.2.0.tgz",
+                            "integrity": "sha512-c2hhcmVk"
+                        }
+                    },
+                    "19.0.0": {
+                        "version": "19.0.0",
+                        "dependencies": null,
+                        "optionalDependencies": null,
+                        "os": null,
+                        "cpu": null,
+                        "dist": {
+                            "tarball": "https://registry.example.test/react-19.0.0.tgz",
+                            "integrity": "sha512-c2hhcmVk2"
+                        }
+                    }
+                },
+                "dist-tags": { "latest": "19.0.0" }
+            }),
+        );
+
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "private": true,
+                "dependencies": { "react": "^18.2.0" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "http://127.0.0.1:9".into(),
+            shared.path().to_path_buf(),
+        );
+        let vulnerable = vec![PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        )];
+
+        let bumped = adapter.audit_fix(dir.path(), &vulnerable).await.unwrap();
+        assert_eq!(bumped, 1);
+
+        let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
+        let dep = manifest.find_dep("react").unwrap();
+        assert_eq!(dep.range.as_str(), "*");
+
+        let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
+        let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
+        assert!(parsed
+            .packages
+            .iter()
+            .any(|p| p.name == "react" && p.version == "19.0.0"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_fix_fail_closed_keeps_manifest_and_lockfile_when_resolve_fails() {
+        let shared = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::json!({
+                "name": "demo",
+                "version": "0.1.0",
+                "private": true,
+                "dependencies": { "react": "^18.2.0" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mg.lock"),
+            "[resolution]\nstate = \"locked\"\n",
+        )
+        .unwrap();
+        let original_manifest = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
+        let original_lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
+
+        // Registry + metadata cache both empty -> resolve must fail -> nothing written.
+        let adapter = WebAdapter::with_registry_and_shared_cache(
+            "http://127.0.0.1:9".into(),
+            shared.path().to_path_buf(),
+        );
+        let vulnerable = vec![PackageId::new(
+            PackageName::new("react").unwrap(),
+            Version::parse("18.2.0").unwrap(),
+        )];
+
+        assert!(adapter.audit_fix(dir.path(), &vulnerable).await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("package.json")).unwrap(),
+            original_manifest
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("mg.lock")).unwrap(),
+            original_lock
+        );
+    }
+
     #[test]
     fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
         let dir = tempfile::tempdir().unwrap();
@@ -6476,6 +6747,18 @@ package_count = 0
         assert!(should_run_lifecycle_scripts(false, false));
         assert!(!should_run_lifecycle_scripts(true, true));
         restore_env_var("MEGAGATE_WEB_ALLOW_SCRIPTS", old);
+    }
+
+    #[test]
+    fn test_trust_gate_fail_closed_with_escape_hatch() {
+        // Fail-closed: unlisted → run only under blanket opt-in.
+        assert!(!trust_allows_script(None, false));
+        assert!(trust_allows_script(None, true));
+        // Explicit policy wins both ways.
+        assert!(trust_allows_script(Some("approved"), false));
+        assert!(!trust_allows_script(Some("denied"), true));
+        // Unknown policy value is treated as unlisted (fail-closed).
+        assert!(!trust_allows_script(Some("suspicious"), false));
     }
 
     #[test]

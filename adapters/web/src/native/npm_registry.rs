@@ -371,10 +371,17 @@ pub async fn batch_download_tarball_with_auth(url: &str, token: Option<&str>) ->
 }
 
 /// Security guard: returns `Err` if the given package version was published within
-/// the last 24 hours (Supply-chain quarantine period). Returns `Ok(true)` if the
-/// package passes the check, `Ok(false)` if publish time is unknown/unparseable
-/// (treated as safe to avoid blocking packages without a timestamp).
-pub fn check_publish_age(metadata: &PackageMetadata, version: &str) -> Result<bool, String> {
+/// the last `min_age_secs` (Supply-chain quarantine period). Returns `Ok(true)` if
+/// the package passes the check, `Ok(false)` if publish time is unknown/unparseable
+/// (treated as safe to avoid blocking packages without a timestamp). `0` disables.
+pub fn check_publish_age(
+    metadata: &PackageMetadata,
+    version: &str,
+    min_age_secs: i64,
+) -> Result<bool, String> {
+    if min_age_secs <= 0 {
+        return Ok(true);
+    }
     let Some(ts_str) = metadata.time.get(version) else {
         return Ok(false); // no timestamp — not quarantined
     };
@@ -384,12 +391,15 @@ pub fn check_publish_age(metadata: &PackageMetadata, version: &str) -> Result<bo
     let now = chrono::Utc::now();
     let age = now.signed_duration_since(published.with_timezone(&chrono::Utc));
 
-    if age < chrono::Duration::hours(24) {
+    if age < chrono::Duration::seconds(min_age_secs) {
         let hours = age.num_minutes() as f64 / 60.0;
         Err(format!(
-            "🚨 SECURITY: Package '{}@{}' was published only {:.1}h ago (< 24h quarantine).\n   \
-             This may be a supply-chain attack. Use --allow-untrusted to override.",
-            metadata.name, version, hours
+            "🚨 SECURITY: Package '{}@{}' was published only {:.1}h ago (< {}h quarantine).\n   \
+             This may be a supply-chain attack. Set MEGAGATE_ALLOW_UNTRUSTED=1 to override.",
+            metadata.name,
+            version,
+            hours,
+            min_age_secs / 3600
         ))
     } else {
         Ok(true)
@@ -544,9 +554,13 @@ mod tests {
         let published_at = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
         meta.time.insert("1.0.0".to_string(), published_at);
 
-        let result = check_publish_age(&meta, "1.0.0");
+        let result = check_publish_age(&meta, "1.0.0", 86400);
         assert!(result.is_err(), "should block packages published < 24h ago");
         assert!(result.unwrap_err().contains("quarantine"));
+
+        // Custom window: 30 minutes → the same 1h-old package passes.
+        let result = check_publish_age(&meta, "1.0.0", 1800);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -562,7 +576,7 @@ mod tests {
         let published_at = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
         meta.time.insert("2.0.0".to_string(), published_at);
 
-        let result = check_publish_age(&meta, "2.0.0");
+        let result = check_publish_age(&meta, "2.0.0", 86400);
         assert!(result.is_ok());
     }
 
