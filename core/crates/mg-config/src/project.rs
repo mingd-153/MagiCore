@@ -109,6 +109,16 @@ pub struct ProjectConfig {
     /// Library core config (mg.toml [lib]) — ngôn ngữ + pip allowlist (Q9/Q19)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lib: Option<LibConfig>,
+    /// Game core config (mg.toml [game]) — engine (Q15)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<GameConfig>,
+}
+
+/// Game core config — `[game] engine` (bevy/godot/unity/unreal).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GameConfig {
+    #[serde(default)]
+    pub engine: String,
 }
 
 /// Library core config — `[lib] language` (ts/rust/python) + pip package allowlist.
@@ -147,6 +157,7 @@ impl ProjectConfig {
             patches: vec![],
             dedupe: DedupeConfig::default(),
             lib: None,
+            game: None,
         }
     }
 
@@ -175,6 +186,16 @@ impl ProjectConfig {
         } else {
             None
         };
+        let game = if ecosystem == "game" {
+            Some(GameConfig {
+                engine: frameworks
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "bevy".to_string()),
+            })
+        } else {
+            None
+        };
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
@@ -188,6 +209,7 @@ impl ProjectConfig {
             patches: vec![],
             dedupe: DedupeConfig::default(),
             lib,
+            game,
         }
     }
 
