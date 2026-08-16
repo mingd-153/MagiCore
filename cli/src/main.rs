@@ -247,6 +247,11 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::commands::trust::TrustCmd,
     },
+    #[command(about = "Run user-defined pre/post scripts (mg.hooks.toml)")]
+    Hooks {
+        #[command(subcommand)]
+        cmd: crate::commands::hooks::HooksCmd,
+    },
     #[command(about = "Generate a CycloneDX 1.5 SBOM from the resolved graph")]
     Sbom {
         #[arg(short, long, help = "write SBOM to file (default: stdout)")]
