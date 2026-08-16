@@ -108,6 +108,9 @@ pub enum CommonCommand {
     Docs {
         output: Option<std::path::PathBuf>,
     },
+    Telemetry {
+        cmd: crate::commands::telemetry::TelemetryCmd,
+    },
     Sbom {
         output: Option<String>,
     },
@@ -421,6 +424,7 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
             Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
             Commands::Docs { output } => Some(CommonCommand::Docs { output }),
+            Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
             Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
             Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
             Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
