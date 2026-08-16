@@ -77,6 +77,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Run { .. } => "run",
         Commands::Build { .. } => "build",
         Commands::Flash { .. } => "flash",
+        Commands::Deploy { .. } => "deploy",
         Commands::Start => "start",
         Commands::Exec { .. } => "exec",
         Commands::Dlx { .. } => "dlx",
@@ -176,6 +177,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
         Commands::Build { target } => Some(CommonCommand::Build { target }),
         Commands::Flash { board, skip_build } => Some(CommonCommand::Flash { board, skip_build }),
+        Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),
         Commands::Start => Some(CommonCommand::Start),
         Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
         Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
@@ -340,7 +342,10 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
         }),
         Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
         Commands::InstallAi { packages } => Some(CoreCommand::InstallAi { packages }),
-        Commands::InstallClo { packages } => Some(CoreCommand::InstallClo { packages }),
+        Commands::InstallClo { packages } => Some(CoreCommand::InstallClo {
+            packages,
+            dry_run: false,
+        }),
         Commands::InstallCicd { packages } => Some(CoreCommand::InstallCicd { packages }),
         Commands::InstallIot { packages } => Some(CoreCommand::InstallIot { packages }),
         Commands::InstallApp { packages } => Some(CoreCommand::InstallApp { packages }),
@@ -552,6 +557,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             allow_scripts,
             prefer_dedupe,
             repair,
+            dry_run,
         } => SomeCore(match ecosystem.as_deref() {
             Some("web") => CoreCommand::InstallWeb {
                 packages,
@@ -563,7 +569,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             },
             Some("game") => CoreCommand::InstallGame { packages },
             Some("ai") => CoreCommand::InstallAi { packages },
-            Some("clo") => CoreCommand::InstallClo { packages },
+            Some("clo") => CoreCommand::InstallClo { packages, dry_run },
             Some("cicd") => CoreCommand::InstallCicd { packages },
             Some("iot") => CoreCommand::InstallIot { packages },
             Some("app") => CoreCommand::InstallApp { packages },
@@ -732,6 +738,7 @@ mod tests {
             allow_scripts: false,
             prefer_dedupe: false,
             repair: false,
+            dry_run: false,
         };
         assert!(reject_unsupported_audit_strict(&install).is_ok());
 
@@ -774,6 +781,7 @@ mod tests {
             allow_scripts: false,
             prefer_dedupe: false,
             repair: false,
+            dry_run: false,
         }))
         .unwrap_err();
 

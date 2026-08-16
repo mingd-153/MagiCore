@@ -93,6 +93,10 @@ pub async fn run(
             })?;
             Ok(())
         }
+        "cloud" => {
+            crate::commands::core::clo::dev(false).await?;
+            Ok(())
+        }
         other => bail!("'mg dev' Engine is not implemented for the '{other}' core yet"),
     }
 }

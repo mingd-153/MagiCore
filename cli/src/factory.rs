@@ -60,7 +60,13 @@ pub fn create_adapter(
         #[cfg(not(feature = "game"))]
         Ecosystem::Game => anyhow::bail!("'game' core is not included in this build."),
         Ecosystem::Ai => anyhow::bail!("'ai' core is under development."),
-        Ecosystem::Cloud => anyhow::bail!("'cloud' core is under development."),
+        #[cfg(feature = "clo")]
+        Ecosystem::Cloud => Arc::new(
+            mg_cloud_adapter::adapter_for(&std::env::current_dir()?)
+                .ok_or_else(|| anyhow::anyhow!("Cannot detect a cloud project here (missing mg.toml/Pulumi.yaml/*.tf/cdk package.json)."))?,
+        ),
+        #[cfg(not(feature = "clo"))]
+        Ecosystem::Cloud => anyhow::bail!("'cloud' core is not included in this build."),
         Ecosystem::Cicd => anyhow::bail!("'cicd' core is under development."),
         #[cfg(feature = "iot")]
         Ecosystem::Iot => Arc::new(

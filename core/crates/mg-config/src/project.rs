@@ -115,6 +115,16 @@ pub struct ProjectConfig {
     /// IoT core config (mg.toml [iot]) — framework + board (Q16/Q20)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iot: Option<IotConfig>,
+    /// Cloud core config (mg.toml [cloud]) — type (Q17)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<CloudConfig>,
+}
+
+/// Cloud core config — `[cloud] type` (cdk/pulumi/terraform).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CloudConfig {
+    #[serde(default)]
+    pub r#type: String,
 }
 
 /// Game core config — `[game] engine` (bevy/godot/unity/unreal).
@@ -179,6 +189,7 @@ impl ProjectConfig {
             lib: None,
             game: None,
             iot: None,
+            cloud: None,
         }
     }
 
@@ -232,6 +243,16 @@ impl ProjectConfig {
         } else {
             None
         };
+        let cloud = if ecosystem == "clo" || ecosystem == "cloud" {
+            Some(CloudConfig {
+                r#type: frameworks
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "terraform".to_string()),
+            })
+        } else {
+            None
+        };
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
@@ -247,6 +268,7 @@ impl ProjectConfig {
             lib,
             game,
             iot,
+            cloud,
         }
     }
 

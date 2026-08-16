@@ -276,3 +276,17 @@ fn non_iot_has_no_iot_config() {
     let web = ProjectConfig::from_scaffold("l", "web", "", vec![], "", vec![]);
     assert!(web.iot.is_none());
 }
+
+#[test]
+fn cloud_scaffold_sets_type() {
+    let cdk = ProjectConfig::from_scaffold("m", "clo", "", vec!["cdk".to_string()], "", vec![]);
+    assert_eq!(cdk.cloud.unwrap().r#type, "cdk");
+    let none = ProjectConfig::from_scaffold("n", "cloud", "", vec![], "", vec![]);
+    assert_eq!(none.cloud.unwrap().r#type, "terraform");
+}
+
+#[test]
+fn non_cloud_has_no_cloud_config() {
+    let web = ProjectConfig::from_scaffold("o", "web", "", vec![], "", vec![]);
+    assert!(web.cloud.is_none());
+}
