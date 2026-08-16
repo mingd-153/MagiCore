@@ -17,6 +17,18 @@ pub enum StoreCmd {
     },
     /// Show package store summary
     Status,
+    /// Sao lưu store về một thư mục mục tiêu
+    Backup {
+        /// Đường dẫn thư mục đích (mặc định: ~/.megagate/store_backup_<timestamp>)
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Phục hồi store từ thư mục sao lưu
+    Restore {
+        /// Đường dẫn thư mục sao lưu
+        #[arg(long)]
+        path: String,
+    },
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -122,6 +134,14 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
                 "virtual store: {}",
                 vstore_root_for(&project_root).display()
             );
+            Ok(())
+        }
+        StoreCmd::Backup { path } => {
+            println!("backup store: path = {:?}", path);
+            Ok(())
+        }
+        StoreCmd::Restore { path } => {
+            println!("restore store: path = {:?}", path);
             Ok(())
         }
     }
