@@ -55,6 +55,14 @@ pub fn known_boards() -> Vec<(String, String, String)> {
         .collect()
 }
 
+/// Board id → rust target triple (registry KNOWN_BOARDS; None nếu chưa biết).
+pub fn board_target(board: &str) -> Option<String> {
+    KNOWN_BOARDS
+        .iter()
+        .find(|(id, _, _)| *id == board)
+        .map(|(_, _, target)| target.to_string())
+}
+
 pub struct IotAdapter {
     framework: IotFramework,
 }
@@ -133,7 +141,7 @@ fn cargo_dep_version(root: &Path, name: &PackageName) -> Option<Version> {
         .and_then(|d| d.range.satisfying_version())
 }
 
-fn board_target(root: &Path) -> Option<String> {
+fn target_from_manifest(root: &Path) -> Option<String> {
     if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(target) = v
@@ -362,7 +370,7 @@ impl IotAdapter {
     }
 
     pub fn target(&self, root: &Path) -> Option<String> {
-        board_target(root)
+        target_from_manifest(root)
     }
 }
 
@@ -418,5 +426,22 @@ mod tests {
             .iter()
             .any(|(id, _, t)| id == "esp32c3" && t == "riscv32imac-unknown-none-elf"));
         assert!(boards.iter().any(|(id, _, _)| id == "nrf52dk_nrf52832"));
+    }
+
+    #[test]
+    fn board_target_maps_known_boards() {
+        assert_eq!(
+            board_target("esp32c3").as_deref(),
+            Some("riscv32imac-unknown-none-elf")
+        );
+        assert_eq!(
+            board_target("esp32s3").as_deref(),
+            Some("xtensa-esp32s3-none-elf")
+        );
+        assert_eq!(
+            board_target("nrf52dk_nrf52832").as_deref(),
+            Some("thumbv7em-none-eabihf")
+        );
+        assert!(board_target("unknown-board").is_none());
     }
 }

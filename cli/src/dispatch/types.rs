@@ -39,6 +39,10 @@ pub enum CommonCommand {
     Build {
         target: Option<String>,
     },
+    Flash {
+        board: Option<String>,
+        skip_build: bool,
+    },
     Start,
     Exec {
         command: String,
@@ -421,6 +425,9 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
             Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
             Commands::Build { target } => Some(CommonCommand::Build { target }),
+            Commands::Flash { board, skip_build } => {
+                Some(CommonCommand::Flash { board, skip_build })
+            }
             Commands::Start => Some(CommonCommand::Start),
             Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
             Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),

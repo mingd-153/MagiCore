@@ -16,6 +16,9 @@ pub async fn dispatch_common(
             commands::dev::run(core, host, port, clear).await
         }
         CommonCommand::Build { target } => commands::build::run(core, target).await,
+        CommonCommand::Flash { board, skip_build } => {
+            commands::core::iot::flash(board.as_deref(), skip_build).await
+        }
         CommonCommand::Start => commands::start::run(core).await,
         CommonCommand::Exec { command, args } => commands::exec::run(core, command, args),
         CommonCommand::Info { package, json } => commands::info::run(package, json).await,

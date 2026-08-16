@@ -73,7 +73,40 @@ pub async fn run(
             })?;
             Ok(())
         }
+        "iot" => {
+            let (cmd, args) = iot_dev_command(&root)?;
+            let opts = mg_exec::prelude::ExecOptions {
+                cwd: Some(root.clone()),
+                log_path: Some(root.join(".megagate").join("exec.log")),
+                clean_env: true,
+                ..Default::default()
+            };
+            info(&format!("IoT dev: running `{} {}`...", cmd, args.join(" ")));
+            mg_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
+                if cmd == "espflash" {
+                    anyhow::anyhow!(
+                        "espflash failed: {e} — install espflash first (`cargo install espflash`) and ensure it is in PATH"
+                    )
+                } else {
+                    anyhow::anyhow!("{} failed: {e}", cmd)
+                }
+            })?;
+            Ok(())
+        }
         other => bail!("'mg dev' Engine is not implemented for the '{other}' core yet"),
+    }
+}
+
+/// Lệnh dev cho từng framework IoT (Q16/Q20): esp32-rust → espflash monitor;
+/// platformio/zephyr → passthrough tới tool của framework (P1).
+fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
+    let adapter = mg_iot_adapter::adapter_for(root)
+        .ok_or_else(|| anyhow::anyhow!("No IoT framework detected in {}", root.display()))?;
+    match adapter.framework() {
+        "esp32-rust" => Ok(("espflash".to_string(), vec!["monitor".to_string()])),
+        "platformio" => Ok(("pio".to_string(), vec!["run".to_string()])),
+        "zephyr" => Ok(("west".to_string(), vec!["build".to_string()])),
+        other => bail!("'mg dev' for '{other}' iot framework is not implemented yet"),
     }
 }
 
@@ -111,5 +144,32 @@ mod tests {
     #[test]
     fn game_dev_unknown_engine_bails() {
         assert!(game_dev_command(std::path::Path::new("/nonexistent")).is_err());
+    }
+
+    #[test]
+    fn iot_dev_esp32_uses_espflash_monitor() {
+        let dir = std::env::temp_dir().join(format!("mg-dev-iot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+        let (cmd, args) = iot_dev_command(&dir).unwrap();
+        assert_eq!(cmd, "espflash");
+        assert_eq!(args, vec!["monitor"]);
+    }
+
+    #[test]
+    fn iot_dev_platformio_uses_pio() {
+        let dir = std::env::temp_dir().join(format!("mg-dev-pio-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("platformio.ini"), "[env:esp32dev]\n").unwrap();
+        let (cmd, args) = iot_dev_command(&dir).unwrap();
+        assert_eq!(cmd, "pio");
+        assert_eq!(args, vec!["run"]);
+    }
+
+    #[test]
+    fn iot_dev_unknown_framework_bails() {
+        assert!(iot_dev_command(std::path::Path::new("/nonexistent")).is_err());
     }
 }
