@@ -183,6 +183,7 @@ pub enum CoreCommand {
     },
     InstallCicd {
         packages: Vec<String>,
+        dry_run: bool,
     },
     InstallIot {
         packages: Vec<String>,
@@ -481,7 +482,7 @@ impl TryFrom<Commands> for DispatchCommand {
                     Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
                     Some("ai") => SomeCore(CoreCommand::InstallAi { packages }),
                     Some("clo") => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
-                    Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages }),
+                    Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages, dry_run }),
                     Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
                     Some("app") => SomeCore(CoreCommand::InstallApp { packages }),
                     Some("lib") => SomeCore(CoreCommand::InstallLib { packages }),
@@ -720,7 +721,10 @@ impl TryFrom<Commands> for DispatchCommand {
                 packages,
                 dry_run: false,
             }),
-            Commands::InstallCicd { packages } => SomeCore(CoreCommand::InstallCicd { packages }),
+            Commands::InstallCicd { packages } => SomeCore(CoreCommand::InstallCicd {
+                packages,
+                dry_run: false,
+            }),
             Commands::InstallIot { packages } => SomeCore(CoreCommand::InstallIot { packages }),
             Commands::InstallApp { packages } => SomeCore(CoreCommand::InstallApp { packages }),
             Commands::InstallLib { packages } => SomeCore(CoreCommand::InstallLib { packages }),

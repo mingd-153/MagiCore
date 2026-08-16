@@ -290,3 +290,18 @@ fn non_cloud_has_no_cloud_config() {
     let web = ProjectConfig::from_scaffold("o", "web", "", vec![], "", vec![]);
     assert!(web.cloud.is_none());
 }
+
+#[test]
+fn cicd_scaffold_sets_provider() {
+    let cf =
+        ProjectConfig::from_scaffold("p", "cicd", "", vec!["cloudflare".to_string()], "", vec![]);
+    assert_eq!(cf.cicd.unwrap().provider, "cloudflare");
+    let none = ProjectConfig::from_scaffold("q", "cicd", "", vec![], "", vec![]);
+    assert_eq!(none.cicd.unwrap().provider, "github-actions");
+}
+
+#[test]
+fn non_cicd_has_no_cicd_config() {
+    let web = ProjectConfig::from_scaffold("r", "web", "", vec![], "", vec![]);
+    assert!(web.cicd.is_none());
+}
