@@ -106,6 +106,18 @@ pub struct ProjectConfig {
     /// Dedupe settings (mg.toml [dedupe]) — opt-in (02 §2.1)
     #[serde(default)]
     pub dedupe: DedupeConfig,
+    /// Library core config (mg.toml [lib]) — ngôn ngữ + pip allowlist (Q9/Q19)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lib: Option<LibConfig>,
+}
+
+/// Library core config — `[lib] language` (ts/rust/python) + pip package allowlist.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LibConfig {
+    #[serde(default)]
+    pub language: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pip_allowed_packages: Vec<String>,
 }
 
 /// Dedupe config — opt-in via mg.toml `[dedupe] prefer = true` (02 §2.1).
@@ -134,6 +146,7 @@ impl ProjectConfig {
             registries: vec![],
             patches: vec![],
             dedupe: DedupeConfig::default(),
+            lib: None,
         }
     }
 
@@ -146,6 +159,22 @@ impl ProjectConfig {
         features: Vec<String>,
     ) -> Self {
         let ecosystem = ecosystem.into();
+        let lib = if ecosystem == "lib" {
+            Some(LibConfig {
+                language: frameworks
+                    .first()
+                    .map(|f| match f.as_str() {
+                        "typescript" | "ts" => "ts",
+                        "python" | "py" => "python",
+                        _ => "rust",
+                    })
+                    .unwrap_or("rust")
+                    .to_string(),
+                pip_allowed_packages: Vec::new(),
+            })
+        } else {
+            None
+        };
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
@@ -158,6 +187,7 @@ impl ProjectConfig {
             registries: vec![],
             patches: vec![],
             dedupe: DedupeConfig::default(),
+            lib,
         }
     }
 

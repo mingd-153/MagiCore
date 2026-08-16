@@ -18,6 +18,8 @@ pub async fn run(template: Option<String>) -> Result<()> {
             WebWizard::run()
         } else if t == "hardware" {
             crate::wizard::hardware::HardwareWizard::run()
+        } else if t == "lib" {
+            crate::wizard::lib::LibWizard::run()
         } else {
             ScaffoldConfig {
                 core: t.clone(),
@@ -155,6 +157,11 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
         }
         "hardware" => {
             let mut cfg = crate::wizard::hardware::HardwareWizard::run();
+            cfg.project_name = ask_project_name();
+            (cfg, Vec::new(), false)
+        }
+        "lib" => {
+            let mut cfg = crate::wizard::lib::LibWizard::run();
             cfg.project_name = ask_project_name();
             (cfg, Vec::new(), false)
         }
