@@ -212,3 +212,27 @@ fn find_project_root_accepts_parent_mg_toml() {
     assert_eq!(ProjectConfig::find_project_root(&child), Some(root.clone()));
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn lib_scaffold_sets_language_and_empty_allowlist() {
+    let cfg =
+        ProjectConfig::from_scaffold("demo", "lib", "", vec!["python".to_string()], "", vec![]);
+    let lib = cfg.lib.expect("[lib] must exist for lib core");
+    assert_eq!(lib.language, "python");
+    assert!(lib.pip_allowed_packages.is_empty());
+}
+
+#[test]
+fn lib_scaffold_maps_ts_and_default_rust() {
+    let ts =
+        ProjectConfig::from_scaffold("a", "lib", "", vec!["typescript".to_string()], "", vec![]);
+    assert_eq!(ts.lib.unwrap().language, "ts");
+    let rust = ProjectConfig::from_scaffold("b", "lib", "", vec!["bevy".to_string()], "", vec![]);
+    assert_eq!(rust.lib.unwrap().language, "rust");
+}
+
+#[test]
+fn non_lib_has_no_lib_config() {
+    let web = ProjectConfig::from_scaffold("c", "web", "", vec![], "", vec![]);
+    assert!(web.lib.is_none());
+}

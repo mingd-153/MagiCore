@@ -131,6 +131,38 @@ fn exec_tool(root: &Path, cmd: &str, args: &[String]) -> MgResult<()> {
     Ok(())
 }
 
+/// pip package allowlist — đọc `[lib] pip_allowed_packages` từ mg.toml (Q9).
+/// Rỗng = fail-closed: mọi pip add/remove/update theo tên bị chặn, in cách khai báo.
+fn read_pip_allowlist(root: &Path) -> Vec<String> {
+    let mg_toml = root.join("mg.toml");
+    let Ok(content) = std::fs::read_to_string(&mg_toml) else {
+        return Vec::new();
+    };
+    let Ok(v) = toml::from_str::<toml::Value>(&content) else {
+        return Vec::new();
+    };
+    v.get("lib")
+        .and_then(|l| l.get("pip_allowed_packages"))
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn check_pip_allowed(root: &Path, name: &str) -> MgResult<()> {
+    let allowed = read_pip_allowlist(root);
+    if allowed.iter().any(|a| a == name) {
+        return Ok(());
+    }
+    Err(mg_types::MgError::Other(format!(
+        "pip '{}' is not in [lib].pip_allowed_packages (mg.toml). Fail-closed — add the package there to allow pip install/uninstall.",
+        name
+    )))
+}
+
 impl LibAdapter {
     fn for_language(
         language: LibLanguage,
@@ -217,6 +249,88 @@ fn write_pyproject_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
     )
     .map_err(|e| mg_types::MgError::Other(format!("write pyproject.toml: {e}")))?;
     Ok(())
+}
+
+/// rust: name → version từ Cargo.lock (không exec, đọc file chuẩn thôi).
+fn cargo_lock_versions(root: &Path) -> Vec<(String, String)> {
+    let Ok(content) = std::fs::read_to_string(root.join("Cargo.lock")) else {
+        return Vec::new();
+    };
+    let Ok(v) = toml::from_str::<toml::Value>(&content) else {
+        return Vec::new();
+    };
+    v.get("package")
+        .and_then(|p| p.as_array())
+        .map(|pkgs| {
+            pkgs.iter()
+                .filter_map(|p| {
+                    let name = p.get("name")?.as_str()?.to_string();
+                    let version = p.get("version")?.as_str()?.to_string();
+                    Some((name, version))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// python: name → version từ venv site-packages *.dist-info/METADATA (không exec).
+/// fallback: rỗng → list fall về manifest range.
+fn dist_info_versions(root: &Path) -> Vec<(String, String)> {
+    let candidates: [PathBuf; 4] = [
+        root.join("venv").join("lib"),
+        root.join(".venv").join("lib"),
+        root.join("lib"),
+        root.join("site-packages"),
+    ];
+    let mut out = Vec::new();
+    for base in candidates {
+        if !base.exists() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_dist_infos(&path, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn collect_dist_infos(dir: &Path, out: &mut Vec<(String, String)>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".dist-info") {
+                if let Some((pkg, version)) = parse_dist_metadata(&path.join("METADATA")) {
+                    out.push((pkg, version));
+                }
+            } else if path.is_dir() {
+                collect_dist_infos(&path, out);
+            }
+        }
+    }
+}
+
+/// Đọc Name + Version 2 dòng đầu METADATA.
+fn parse_dist_metadata(path: &Path) -> Option<(String, String)> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut name = None;
+    let mut version = None;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("Name:") {
+            name = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("Version:") {
+            version = Some(rest.trim().to_string());
+        }
+        if name.is_some() && version.is_some() {
+            break;
+        }
+    }
+    Some((name?, version?))
 }
 
 fn placeholder_id(name: &PackageName, range: Option<&VersionRange>) -> PackageId {
@@ -341,6 +455,7 @@ impl PackageAdapter for LibAdapter {
                     .unwrap_or_else(|| placeholder_id(name, range)))
             }
             LibLanguage::Python => {
+                check_pip_allowed(project_root, name.as_str())?;
                 exec_tool(
                     project_root,
                     "pip",
@@ -369,6 +484,7 @@ impl PackageAdapter for LibAdapter {
                 )?;
             }
             LibLanguage::Python => {
+                check_pip_allowed(project_root, name.as_str())?;
                 exec_tool(
                     project_root,
                     "pip",
@@ -401,6 +517,13 @@ impl PackageAdapter for LibAdapter {
                 exec_tool(project_root, "cargo", &args)?;
             }
             LibLanguage::Python => {
+                if let Some(n) = name {
+                    check_pip_allowed(project_root, n.as_str())?;
+                } else {
+                    return Err(mg_types::MgError::Other(
+                        "pip update-all is not allowed — name a package (Q9 allowlist)".to_string(),
+                    ));
+                }
                 let mut args = vec!["install".to_string(), "--upgrade".to_string()];
                 if let Some(n) = name {
                     args.push(n.as_str().to_string());
@@ -417,14 +540,28 @@ impl PackageAdapter for LibAdapter {
             return web.list(project_root).await;
         }
         let manifest = self.parse_manifest(project_root).await?;
+        let installed: std::collections::HashMap<String, String> = match self.language {
+            LibLanguage::Rust => cargo_lock_versions(project_root).into_iter().collect(),
+            LibLanguage::Python => dist_info_versions(project_root).into_iter().collect(),
+            LibLanguage::Ts => unreachable!("ts handled by web delegate"),
+        };
         Ok(manifest
             .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: placeholder_id(&dep.name, Some(&dep.range)),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
+            .map(|dep| {
+                let version = installed
+                    .get(dep.name.as_str())
+                    .and_then(|v| Version::parse(v).ok())
+                    .or_else(|| dep.range.satisfying_version());
+                InstalledPackage {
+                    id: PackageId::new(
+                        dep.name.clone(),
+                        version.unwrap_or_else(|| Version::new(0, 1, 0)),
+                    ),
+                    path: PathBuf::new(),
+                    integrity: None,
+                    is_direct: true,
+                    is_dev: dep.dev,
+                }
             })
             .collect())
     }
@@ -473,7 +610,6 @@ pub fn adapter_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     fn tmp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("mg-lib-test-{}-{name}", std::process::id()));
@@ -485,8 +621,11 @@ mod tests {
     #[test]
     fn detect_rust_project() {
         let dir = tmp_dir("rust");
-        let mut f = std::fs::File::create(dir.join("Cargo.toml")).unwrap();
-        writeln!(f, "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n").unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
+        )
+        .unwrap();
         let adapter = adapter_for(&dir, None, None).unwrap();
         assert_eq!(adapter.language(), "rust");
     }
@@ -544,5 +683,106 @@ mod tests {
         assert_eq!(re.dependencies[0].name.as_str(), "serde");
         let content = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
         assert!(content.contains("megagate"), "metadata preserved");
+    }
+
+    #[test]
+    fn pip_allowlist_empty_fail_closed() {
+        let dir = tmp_dir("pip-empty");
+        std::fs::write(
+            dir.join("mg.toml"),
+            "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\n",
+        )
+        .unwrap();
+        let err = check_pip_allowed(&dir, "requests").unwrap_err();
+        assert!(
+            err.to_string().contains("pip_allowed_packages"),
+            "rõ cách sửa"
+        );
+    }
+
+    #[test]
+    fn cargo_lock_versions_reads_real_versions() {
+        let dir = tmp_dir("lock");
+        std::fs::write(
+            dir.join("Cargo.lock"),
+            "[[package]]\nname = \"serde\"\nversion = \"1.0.219\"\n\n[[package]]\nname = \"sqlx\"\nversion = \"0.8.6\"\n",
+        )
+        .unwrap();
+        let versions: std::collections::HashMap<String, String> =
+            cargo_lock_versions(&dir).into_iter().collect();
+        assert_eq!(versions.get("serde").map(String::as_str), Some("1.0.219"));
+        assert_eq!(versions.get("sqlx").map(String::as_str), Some("0.8.6"));
+    }
+
+    #[test]
+    fn dist_info_versions_reads_venv() {
+        let dir = tmp_dir("distinfo");
+        let meta = dir
+            .join(".venv")
+            .join("lib")
+            .join("python3.11")
+            .join("site-packages")
+            .join("requests-2.32.3.dist-info");
+        std::fs::create_dir_all(&meta).unwrap();
+        std::fs::write(
+            meta.join("METADATA"),
+            "Metadata-Version: 2.1\nName: requests\nVersion: 2.32.3\nSummary: HTTP for Humans\n",
+        )
+        .unwrap();
+        let versions: std::collections::HashMap<String, String> =
+            dist_info_versions(&dir).into_iter().collect();
+        assert_eq!(versions.get("requests").map(String::as_str), Some("2.32.3"));
+    }
+
+    #[test]
+    fn pip_allowlist_allows_listed() {
+        let dir = tmp_dir("pip-ok");
+        std::fs::write(
+            dir.join("mg.toml"),
+            "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\npip_allowed_packages = [\"requests\", \"numpy\"]\n",
+        )
+        .unwrap();
+        check_pip_allowed(&dir, "requests").unwrap();
+        let err = check_pip_allowed(&dir, "flask").unwrap_err();
+        assert!(err.to_string().contains("flask"));
+    }
+
+    #[tokio::test]
+    async fn update_all_python_fail_closed() {
+        let dir = tmp_dir("upd-all");
+        std::fs::write(
+            dir.join("mg.toml"),
+            "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\npip_allowed_packages = [\"requests\"]\n",
+        )
+        .unwrap();
+        let adapter = adapter_for(&dir, None, None).unwrap();
+        let err = adapter.update(&dir, None).await.unwrap_err();
+        assert!(
+            err.to_string().contains("update-all"),
+            "pip update-all bị chặn fail-closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn ts_delegate_ignores_workspace_protocol_in_monorepo() {
+        let dir = tmp_dir("lib-ws");
+        std::fs::write(
+            dir.join("package.json"),
+            serde_json::json!({
+                "name": "frontend",
+                "version": "0.1.0",
+                "dependencies": {
+                    "@core/shared": "workspace:*",
+                    "react": "^18.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let adapter = adapter_for(&dir, None, None).unwrap();
+        assert_eq!(adapter.language(), "ts");
+        let manifest = adapter.parse_manifest(&dir).await.unwrap();
+        assert!(manifest.find_dep("react").is_some());
+        assert!(manifest.find_dep("@core/shared").is_none());
     }
 }
