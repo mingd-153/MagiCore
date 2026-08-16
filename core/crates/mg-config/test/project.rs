@@ -301,6 +301,20 @@ fn cicd_scaffold_sets_provider() {
 }
 
 #[test]
+fn app_scaffold_sets_language() {
+    let fl = ProjectConfig::from_scaffold("s", "app", "", vec!["flutter".to_string()], "", vec![]);
+    assert_eq!(fl.app.unwrap().language, "flutter");
+    let none = ProjectConfig::from_scaffold("t", "app", "", vec![], "", vec![]);
+    assert_eq!(none.app.unwrap().language, "flutter");
+}
+
+#[test]
+fn non_app_has_no_app_config() {
+    let web = ProjectConfig::from_scaffold("u", "web", "", vec![], "", vec![]);
+    assert!(web.app.is_none());
+}
+
+#[test]
 fn non_cicd_has_no_cicd_config() {
     let web = ProjectConfig::from_scaffold("r", "web", "", vec![], "", vec![]);
     assert!(web.cicd.is_none());
