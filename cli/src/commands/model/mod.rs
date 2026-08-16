@@ -314,6 +314,18 @@ pub enum ModelCmd {
         /// Tên model (khớp manifest: org/model/file hoặc repo:tag)
         name: String,
     },
+    /// Quantize GGUF (A4: python passthrough `python -m llama_cpp.quantize` —
+    /// không static link llama-cpp-2; fail-closed nếu llama_cpp chưa cài)
+    Quantize {
+        /// Đường dẫn file model gốc (GGUF/ggml)
+        path: String,
+        /// Target quant: q4_k_m | q8_0 (awq cần GPU toolchain — chưa hỗ trợ)
+        #[arg(long, default_value = "q4_k_m")]
+        target: String,
+        /// Output path (mặc định: <path>.<target>.gguf cùng thư mục)
+        #[arg(long)]
+        output: Option<String>,
+    },
 }
 
 pub async fn run(args: ModelArgs) -> Result<()> {
@@ -350,7 +362,54 @@ pub async fn run(args: ModelArgs) -> Result<()> {
             }
         }
         ModelCmd::Rm { name } => remove_local(&name),
+        ModelCmd::Quantize {
+            path,
+            target,
+            output,
+        } => quantize(&path, &target, output.as_deref()),
     }
+}
+
+/// GGUF quantize qua python passthrough (A4, sys-mg/05 §4)
+fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
+    if target != "q4_k_m" && target != "q8_0" {
+        anyhow::bail!("target không hỗ trợ: {target} (dùng q4_k_m hoặc q8_0; awq cần GPU toolchain)");
+    }
+    if !std::path::Path::new(path).exists() {
+        anyhow::bail!("file không tồn tại: {path}");
+    }
+    let out = match output {
+        Some(o) => o.to_string(),
+        None => format!("{path}.{target}.gguf"),
+    };
+    // WARNING: TĨNH cho đường dẫn được chỉ định — KHÔNG dùng đường dẫn từ prompt
+    let py = std::process::Command::new("python3")
+        .args(["-c", "import llama_cpp; print('ok')"])
+        .output();
+    let python_ok = match py {
+        Ok(o) => o.status.success(),
+        Err(_) => false,
+    };
+    if !python_ok {
+        anyhow::bail!(
+            "llama_cpp chưa cài — cài thử: `uv pip install llama-cpp-python` rồi chạy lại (A4: passthrough, không bundles llama-cpp-2)"
+        );
+    }
+    let status = std::process::Command::new("python3")
+        .args([
+            "-m",
+            "llama_cpp.quantize",
+            path,
+            &out,
+            target,
+        ])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("llama_cpp.quantize fail (exit {:?})", status.code());
+    }
+    println!("quantized: {} ({target})", out);
+    println!("push lên registry: mg model push {out} --repo ai/<name> (variant nén)");
+    Ok(())
 }
 
 fn client(registry: &str, token: Option<String>) -> Result<OciClient> {
