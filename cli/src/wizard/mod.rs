@@ -1,3 +1,4 @@
+pub mod app;
 pub mod cicd;
 pub mod cloud;
 pub mod engine;

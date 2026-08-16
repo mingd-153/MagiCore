@@ -78,7 +78,10 @@ pub fn create_adapter(
         ),
         #[cfg(not(feature = "iot"))]
         Ecosystem::Iot => anyhow::bail!("'iot' core is not included in this build."),
-        Ecosystem::App => anyhow::bail!("'app' core is under development."),
+        Ecosystem::App => Arc::new(
+            mg_app_adapter::adapter_for(&std::env::current_dir()?)
+                .ok_or_else(|| anyhow::anyhow!("Cannot detect an app project here (missing mg.toml/pubspec.yaml/build.gradle/Package.swift)."))?,
+        ),
         #[cfg(feature = "hardware")]
         Ecosystem::Hardware => Arc::new(
             mg_hardware_adapter::adapter_for(&std::env::current_dir()?)

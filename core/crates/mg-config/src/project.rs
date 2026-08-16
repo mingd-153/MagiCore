@@ -121,6 +121,16 @@ pub struct ProjectConfig {
     /// CICD core config (mg.toml [cicd]) — provider (Q12)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cicd: Option<CicdConfig>,
+    /// App core config (mg.toml [app]) — language (Q18)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<AppConfig>,
+}
+
+/// App core config — `[app] language` (flutter/kotlin/swift).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppConfig {
+    #[serde(default)]
+    pub language: String,
 }
 
 /// CICD core config — `[cicd] provider` (github-actions/cloudflare/aws/gcp/argocd).
@@ -201,6 +211,7 @@ impl ProjectConfig {
             iot: None,
             cloud: None,
             cicd: None,
+            app: None,
         }
     }
 
@@ -274,6 +285,16 @@ impl ProjectConfig {
         } else {
             None
         };
+        let app = if ecosystem == "app" {
+            Some(AppConfig {
+                language: frameworks
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "flutter".to_string()),
+            })
+        } else {
+            None
+        };
         Self {
             name: name.into(),
             version: "0.1.0".to_string(),
@@ -291,6 +312,7 @@ impl ProjectConfig {
             iot,
             cloud,
             cicd,
+            app,
         }
     }
 

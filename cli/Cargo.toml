@@ -36,6 +36,7 @@ mg-lib-adapter = { path = "../adapters/lib", optional = true }
 mg-game-adapter = { path = "../adapters/game", optional = true }
 mg-iot-adapter = { path = "../adapters/iot", optional = true }
 mg-cloud-adapter = { path = "../adapters/cloud", optional = true }
+mg-app-adapter = { path = "../adapters/app", optional = true }
 mg-cicd-adapter = { path = "../adapters/cicd", optional = true }
 mg-hardware-adapter = { path = "../adapters/hardware", optional = true }
 
@@ -102,7 +103,7 @@ ai       = []
 clo      = ["mg-cloud-adapter"]
 cicd     = ["mg-cicd-adapter"]
 iot      = ["mg-iot-adapter"]
-app      = []
+app      = ["mg-app-adapter"]
 lib      = ["mg-lib-adapter"]
 hardware = ["mg-hardware-adapter"]
 

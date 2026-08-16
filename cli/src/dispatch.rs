@@ -351,7 +351,10 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             dry_run: false,
         }),
         Commands::InstallIot { packages } => Some(CoreCommand::InstallIot { packages }),
-        Commands::InstallApp { packages } => Some(CoreCommand::InstallApp { packages }),
+        Commands::InstallApp { packages } => Some(CoreCommand::InstallApp {
+            packages,
+            dry_run: false,
+        }),
         Commands::InstallLib { packages } => Some(CoreCommand::InstallLib { packages }),
         Commands::InstallHardware { packages } => Some(CoreCommand::InstallHardware { packages }),
         Commands::AddWeb {
@@ -575,7 +578,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             Some("clo") => CoreCommand::InstallClo { packages, dry_run },
             Some("cicd") => CoreCommand::InstallCicd { packages, dry_run },
             Some("iot") => CoreCommand::InstallIot { packages },
-            Some("app") => CoreCommand::InstallApp { packages },
+            Some("app") => CoreCommand::InstallApp { packages, dry_run },
             Some("lib") => CoreCommand::InstallLib { packages },
             _ => CoreCommand::InstallWeb {
                 packages,

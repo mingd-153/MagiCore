@@ -190,6 +190,7 @@ pub enum CoreCommand {
     },
     InstallApp {
         packages: Vec<String>,
+        dry_run: bool,
     },
     InstallLib {
         packages: Vec<String>,
@@ -484,7 +485,7 @@ impl TryFrom<Commands> for DispatchCommand {
                     Some("clo") => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
                     Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages, dry_run }),
                     Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
-                    Some("app") => SomeCore(CoreCommand::InstallApp { packages }),
+                    Some("app") => SomeCore(CoreCommand::InstallApp { packages, dry_run }),
                     Some("lib") => SomeCore(CoreCommand::InstallLib { packages }),
                     _ => SomeCore(CoreCommand::InstallWeb {
                         packages,
@@ -726,7 +727,10 @@ impl TryFrom<Commands> for DispatchCommand {
                 dry_run: false,
             }),
             Commands::InstallIot { packages } => SomeCore(CoreCommand::InstallIot { packages }),
-            Commands::InstallApp { packages } => SomeCore(CoreCommand::InstallApp { packages }),
+            Commands::InstallApp { packages } => SomeCore(CoreCommand::InstallApp {
+                packages,
+                dry_run: false,
+            }),
             Commands::InstallLib { packages } => SomeCore(CoreCommand::InstallLib { packages }),
             Commands::AddWeb {
                 packages,

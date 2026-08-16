@@ -48,7 +48,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             commands::core::cicd::install(packages, dry_run).await
         }
         CoreCommand::InstallIot { packages } => commands::core::iot::install(packages).await,
-        CoreCommand::InstallApp { packages } => commands::core::app::install(packages).await,
+        CoreCommand::InstallApp { packages, dry_run } => {
+            commands::core::app::install(packages, dry_run).await
+        }
         CoreCommand::InstallLib { packages } => commands::core::library::install(packages).await,
         CoreCommand::InstallHardware { packages } => {
             commands::core::hardware::install(packages).await
