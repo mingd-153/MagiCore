@@ -102,6 +102,9 @@ pub enum CommonCommand {
     Trust {
         cmd: crate::commands::trust::TrustCmd,
     },
+    Hooks {
+        cmd: crate::commands::hooks::HooksCmd,
+    },
     Sbom {
         output: Option<String>,
     },
@@ -413,6 +416,7 @@ impl TryFrom<Commands> for DispatchCommand {
             }),
             Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
             Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
+            Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
             Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
             Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
             Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),

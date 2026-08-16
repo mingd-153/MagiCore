@@ -8,12 +8,15 @@ authors.workspace = true
 description = "Config parsing and project metadata for MegaGate"
 
 [dependencies]
-serde = { workspace = true }
-toml = { workspace = true }
 anyhow = { workspace = true }
 dirs = { workspace = true }
-serde_json = { workspace = true }
 mg-types = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
 
 # Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
 [[test]]
@@ -31,6 +34,10 @@ path = "test/user.rs"
 [[test]]
 name = "test_project"
 path = "test/project.rs"
+
+[[test]]
+name = "test_hooks"
+path = "test/hooks.rs"
 
 [lints]
 workspace = true
