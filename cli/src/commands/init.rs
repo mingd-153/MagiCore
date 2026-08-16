@@ -24,6 +24,8 @@ pub async fn run(template: Option<String>) -> Result<()> {
             crate::wizard::game::GameWizard::run()
         } else if t == "iot" {
             crate::wizard::iot::IotWizard::run()
+        } else if t == "clo" || t == "cloud" {
+            crate::wizard::cloud::CloudWizard::run()
         } else {
             ScaffoldConfig {
                 core: t.clone(),
@@ -176,6 +178,11 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
         }
         "iot" => {
             let mut cfg = crate::wizard::iot::IotWizard::run();
+            cfg.project_name = ask_project_name();
+            (cfg, Vec::new(), false)
+        }
+        "clo" | "cloud" => {
+            let mut cfg = crate::wizard::cloud::CloudWizard::run();
             cfg.project_name = ask_project_name();
             (cfg, Vec::new(), false)
         }

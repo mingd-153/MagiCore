@@ -184,6 +184,11 @@ pub(crate) enum Commands {
         #[arg(long, help = "Skip cargo build, flash existing binary")]
         skip_build: bool,
     },
+    #[command(about = "Deploy cloud infrastructure (dry-run default)")]
+    Deploy {
+        #[arg(long, help = "Actually run the deploy (default is dry-run print-only)")]
+        run: bool,
+    },
     #[command(about = "Start the production server")]
     Start,
     #[command(about = "Execute a shell command in scope of a project")]
@@ -229,6 +234,8 @@ pub(crate) enum Commands {
         prefer_dedupe: bool,
         #[arg(long, help = "Re-link dangling symlinks in node_modules")]
         repair: bool,
+        #[arg(long, help = "Print the commands that would run (cloud terraform)")]
+        dry_run: bool,
     },
     #[command(about = "Manage the local store (prune unreferenced packages)")]
     Store {
@@ -1053,6 +1060,29 @@ mod tests {
                 assert_eq!(port, Some(4315));
             }
             _ => panic!("expected dev command"),
+        }
+    }
+
+    #[test]
+    fn test_deploy_defaults_to_dry_run() {
+        let cli = Cli::try_parse_from(["mg", "deploy"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Deploy { run } => assert!(!run),
+            _ => panic!("expected deploy command"),
+        }
+        let cli = Cli::try_parse_from(["mg", "deploy", "--run"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Deploy { run } => assert!(run),
+            _ => panic!("expected deploy command"),
+        }
+    }
+
+    #[test]
+    fn test_install_parses_dry_run_flag() {
+        let cli = Cli::try_parse_from(["mg", "install", "--dry-run"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Install { dry_run, .. } => assert!(dry_run),
+            _ => panic!("expected install command"),
         }
     }
 

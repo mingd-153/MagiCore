@@ -43,6 +43,9 @@ pub enum CommonCommand {
         board: Option<String>,
         skip_build: bool,
     },
+    Deploy {
+        run: bool,
+    },
     Start,
     Exec {
         command: String,
@@ -176,6 +179,7 @@ pub enum CoreCommand {
     },
     InstallClo {
         packages: Vec<String>,
+        dry_run: bool,
     },
     InstallCicd {
         packages: Vec<String>,
@@ -428,6 +432,7 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Flash { board, skip_build } => {
                 Some(CommonCommand::Flash { board, skip_build })
             }
+            Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),
             Commands::Start => Some(CommonCommand::Start),
             Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
             Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
@@ -461,6 +466,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 allow_scripts,
                 prefer_dedupe,
                 repair,
+                dry_run,
             } => {
                 let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
@@ -474,7 +480,7 @@ impl TryFrom<Commands> for DispatchCommand {
                     }),
                     Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
                     Some("ai") => SomeCore(CoreCommand::InstallAi { packages }),
-                    Some("clo") => SomeCore(CoreCommand::InstallClo { packages }),
+                    Some("clo") => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
                     Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages }),
                     Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
                     Some("app") => SomeCore(CoreCommand::InstallApp { packages }),
@@ -710,7 +716,10 @@ impl TryFrom<Commands> for DispatchCommand {
             }),
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
             Commands::InstallAi { packages } => SomeCore(CoreCommand::InstallAi { packages }),
-            Commands::InstallClo { packages } => SomeCore(CoreCommand::InstallClo { packages }),
+            Commands::InstallClo { packages } => SomeCore(CoreCommand::InstallClo {
+                packages,
+                dry_run: false,
+            }),
             Commands::InstallCicd { packages } => SomeCore(CoreCommand::InstallCicd { packages }),
             Commands::InstallIot { packages } => SomeCore(CoreCommand::InstallIot { packages }),
             Commands::InstallApp { packages } => SomeCore(CoreCommand::InstallApp { packages }),
