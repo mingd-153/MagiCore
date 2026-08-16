@@ -63,7 +63,14 @@ async fn get_package_scoped(
     State(state): State<AppState>,
     Path((scope, name)): Path<(String, String)>,
 ) -> Result<Json<Package>, StatusCode> {
-    get_package(State(state), Path(scoped_full(&scope, &name))).await
+    let result = get_package(State(state), Path(scoped_full(&scope, &name))).await;
+    eprintln!(
+        "get_package_scoped: scope={} name={} result={:?}",
+        scope,
+        name,
+        result.as_ref().map(|p| p.name.clone())
+    );
+    result
 }
 
 async fn publish_package_scoped(
@@ -72,20 +79,36 @@ async fn publish_package_scoped(
     Path((scope, name)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<Package>, StatusCode> {
-    publish_package(
+    let result = publish_package(
         State(state),
         headers,
         Path(scoped_full(&scope, &name)),
         body,
     )
     .await
+    .inspect_err(|e| eprintln!("publish_package_scoped error: {e:?}"));
+    eprintln!(
+        "publish_package_scoped: scope={} name={} result={:?}",
+        scope,
+        name,
+        result.as_ref().map(|p| p.name.clone())
+    );
+    result
 }
 
 async fn download_tarball_scoped(
     State(state): State<AppState>,
     Path((scope, name, filename)): Path<(String, String, String)>,
 ) -> Result<Response, StatusCode> {
-    download_tarball(State(state), Path((scoped_full(&scope, &name), filename))).await
+    let result = download_tarball(State(state), Path((scoped_full(&scope, &name), filename.clone()))).await;
+    eprintln!(
+        "download_tarball_scoped: scope={} name={} filename={} status={:?}",
+        scope,
+        name,
+        filename,
+        result.as_ref().map(|_| "ok")
+    );
+    result
 }
 
 async fn upload_tarball_scoped(
@@ -93,12 +116,20 @@ async fn upload_tarball_scoped(
     Path((scope, name, filename)): Path<(String, String, String)>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    upload_tarball(
+    let result = upload_tarball(
         State(state),
-        Path((scoped_full(&scope, &name), filename)),
+        Path((scoped_full(&scope, &name), filename.clone())),
         body,
     )
-    .await
+    .await;
+    eprintln!(
+        "upload_tarball_scoped: scope={} name={} filename={} result={:?}",
+        scope,
+        name,
+        filename,
+        result.as_ref()
+    );
+    result
 }
 
 async fn delete_package_version_scoped(
@@ -222,6 +253,16 @@ async fn publish_package(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let version = pkg
+        .versions
+        .keys()
+        .next()
+        .cloned()
+        .or_else(|| {
+            let v = pkg.dist_tags.get("latest").cloned();
+            v
+        });
+    let _ = store.audit("publish", &pkg.name, version.as_deref(), None).await;
     Ok(Json(pkg))
 }
 
@@ -281,11 +322,13 @@ async fn upload_tarball(
         hasher.finalize(),
     );
     let digest = format!("sha512-{b64}");
-    store
+store
         .put_blob(&digest, &body)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
+    let _ = store
+        .audit("upload-tarball", &_name, Some(&_filename), None)
+        .await;
     Ok(Json(
         serde_json::json!({ "ok": true, "digest": digest, "size": body.len() }),
     ))
@@ -304,12 +347,14 @@ async fn delete_package_version_route(
     let Some(version) = version else {
         return Err(StatusCode::BAD_REQUEST);
     };
-    store
+    let res = store
         .delete_package_version(&name, version)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .then_some(StatusCode::NO_CONTENT)
-        .ok_or(StatusCode::NOT_FOUND)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let _ = store.audit("delete", &name, Some(version), None).await;
+    Ok(res)
 }
 
 // === Dist-tags ===

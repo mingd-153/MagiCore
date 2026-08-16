@@ -57,6 +57,34 @@ async fn test_store_creation() {
     drop(store);
 }
 
+#[tokio::test]
+async fn audit_log_writes() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = RegistryStore::new(temp_dir.path()).await.unwrap();
+    store
+        .audit("publish", "pkg-a", Some("1.0.0"), Some("user1"))
+        .await
+        .unwrap();
+    store
+        .audit("delete", "pkg-a", Some("1.0.0"), None)
+        .await
+        .unwrap();
+    let pool = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}?mode=rwc",
+        temp_dir.path().join("registry.db").display()
+    ))
+    .await
+    .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log WHERE event_type IN ('publish','delete')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 2);
+    pool.close().await;
+}
+
 /// Param routes use matchit 0.7 `:param` syntax (not `{param}` which is
 /// matchit 0.8 / axum 0.8). Guard against silent 404 regression.
 #[tokio::test]
