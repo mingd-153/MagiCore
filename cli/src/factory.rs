@@ -59,7 +59,10 @@ pub fn create_adapter(
         ),
         #[cfg(not(feature = "game"))]
         Ecosystem::Game => anyhow::bail!("'game' core is not included in this build."),
-        Ecosystem::Ai => anyhow::bail!("'ai' core is under development."),
+        Ecosystem::Ai => Arc::new(
+            mg_ai_adapter::adapter_for(&std::env::current_dir()?)
+                .ok_or_else(|| anyhow::anyhow!("Cannot detect an ai project here (missing mg.toml [ai] framework / pyproject [tool.megagate] framework)."))?,
+        ),
         #[cfg(feature = "clo")]
         Ecosystem::Cloud => Arc::new(
             mg_cloud_adapter::adapter_for(&std::env::current_dir()?)
