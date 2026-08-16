@@ -176,7 +176,13 @@ impl RegistryStore {
     }
 
     /// Audit log event (task #3: publish/delete/upload → SQLite)
-    pub async fn audit(&self, event_type: &str, name: &str, version: Option<&str>, user: Option<&str>) -> Result<()> {
+    pub async fn audit(
+        &self,
+        event_type: &str,
+        name: &str,
+        version: Option<&str>,
+        user: Option<&str>,
+    ) -> Result<()> {
         sqlx::query(
             r#"
             INSERT INTO audit_log (event_type, name, version, user)
