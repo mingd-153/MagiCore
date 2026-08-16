@@ -175,6 +175,23 @@ impl RegistryStore {
         Ok(())
     }
 
+    /// Audit log event (task #3: publish/delete/upload → SQLite)
+    pub async fn audit(&self, event_type: &str, name: &str, version: Option<&str>, user: Option<&str>) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO audit_log (event_type, name, version, user)
+            VALUES (?, ?, ?, ?)
+        "#,
+        )
+        .bind(event_type)
+        .bind(name)
+        .bind(version)
+        .bind(user)
+        .execute(&self.db)
+        .await?;
+        Ok(())
+    }
+
     // === Package operations ===
 
     pub async fn get_package(&self, name: &str) -> Result<Option<crate::model::Package>> {
