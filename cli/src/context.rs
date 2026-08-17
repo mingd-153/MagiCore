@@ -23,8 +23,17 @@ impl ProjectContext {
         let cwd = std::env::current_dir()
             .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {}", e))?;
         let project_root = ProjectConfig::find_project_root(&cwd);
+Self::load_at(cwd.as_path(), project_root.as_ref(), core_override)
+    }
 
-        let (root, config) = Self::resolve_config(&cwd, project_root.as_ref(), core_override)?;
+    /// Load context anchored at an explicit cwd (workspace mix core: mỗi
+    /// project trong monorepo tự detect core riêng).
+    pub fn load_at(
+        cwd: &std::path::Path,
+        project_root: Option<&PathBuf>,
+        core_override: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let (root, config) = Self::resolve_config(cwd, project_root, core_override)?;
         let ecosystem = Ecosystem::from_str(&config.ecosystem)
             .ok_or_else(|| anyhow::anyhow!("Unknown ecosystem: '{}'", config.ecosystem))?;
 
@@ -40,13 +49,23 @@ impl ProjectContext {
             .ok()
             .or_else(|| registry_entry.and_then(|r| r.token.clone()));
 
-        let adapter =
-            crate::factory::create_adapter(&ecosystem, registry_url.as_deref(), token.as_deref())?;
+        let adapter = crate::factory::create_adapter_for(
+            &root,
+            &ecosystem,
+            registry_url.as_deref(),
+            token.as_deref(),
+        )?;
         Ok(Self {
             root,
             config,
             adapter,
         })
+    }
+
+    /// Load context for a single workspace project (mix core detect riêng).
+    pub fn load_for_dir(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let project_root = ProjectConfig::find_project_root(dir);
+        Self::load_at(dir, project_root.as_ref(), None)
     }
 
     fn resolve_config(

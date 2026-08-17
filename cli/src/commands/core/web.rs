@@ -297,18 +297,45 @@ pub async fn install(
 
     let project_mode = detect_project_mode(&root)?;
     if matches!(project_mode, WebProjectMode::Monorepo) {
-        install_monorepo_targets(
-            &adapter,
-            &targets,
-            frozen,
-            ignore_scripts,
-            allow_scripts,
-            prefer_dedupe,
-            repair,
-        )
-        .await?;
-        link_monorepo_workspace_packages(&root, &targets)?;
-        write_monorepo_root_lockfile(&root, &targets)?;
+        // Mix core (Q23): mỗi workspace project detect core riêng — web targets
+        // đi qua web adapter, target khác (lib/app/ai/...) qua adapter của nó.
+        let mut web_targets = Vec::new();
+        let mut mix_targets = Vec::new();
+        for target in &targets {
+            if target.join("package.json").exists() {
+                web_targets.push(target.clone());
+            } else {
+                mix_targets.push(target.clone());
+            }
+        }
+
+        if !web_targets.is_empty() {
+            install_monorepo_targets(
+                &adapter,
+                &web_targets,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+                prefer_dedupe,
+                repair,
+            )
+            .await?;
+            link_monorepo_workspace_packages(&root, &web_targets)?;
+            write_monorepo_root_lockfile(&root, &web_targets)?;
+        }
+
+        for target in &mix_targets {
+            let ctx = crate::context::ProjectContext::load_for_dir(target)?;
+            mg_ui::info(&format!("Installing workspace: {}", target.display()));
+            crate::commands::install::install_into_root_ws(
+                ctx.adapter(),
+                target,
+                &packages,
+                ignore_scripts,
+                allow_scripts,
+            )
+            .await?;
+        }
     } else {
         for target in &targets {
             if target.join("package.json").exists() {
@@ -649,6 +676,10 @@ async fn install_monorepo_targets(
                         .acquire_owned()
                         .await
                         .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
+                    mg_ui::info(&format!(
+                        "Installing workspace: {}",
+                        node.path.display()
+                    ));
                     install_web_target_quiet(
                         adapter.as_ref(),
                         &node.path,

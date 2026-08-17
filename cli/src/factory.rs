@@ -35,6 +35,22 @@ pub fn create_adapter(
     registry_url: Option<&str>,
     token: Option<&str>,
 ) -> anyhow::Result<Arc<dyn PackageAdapter>> {
+    create_adapter_for(
+        &std::env::current_dir()
+            .map_err(|e| anyhow::anyhow!("failed to resolve current directory: {e}"))?,
+        ecosystem,
+        registry_url,
+        token,
+    )
+}
+
+/// Tạo adapter gắn với project root rõ ràng (mix core: workspace target).
+pub fn create_adapter_for(
+    root: &std::path::Path,
+    ecosystem: &Ecosystem,
+    registry_url: Option<&str>,
+    token: Option<&str>,
+) -> anyhow::Result<Arc<dyn PackageAdapter>> {
     if let Some(plugin) = mg_plugin::global().get(*ecosystem) {
         if let Some(adapter) = plugin.as_adapter() {
             return Ok(adapter);
@@ -54,48 +70,47 @@ pub fn create_adapter(
         Ecosystem::Web => anyhow::bail!("'web' core is not included in this build."),
         #[cfg(feature = "game")]
         Ecosystem::Game => Arc::new(
-            mg_game_adapter::adapter_for(&std::env::current_dir()?)
+            mg_game_adapter::adapter_for(root)
                 .ok_or_else(|| anyhow::anyhow!("Cannot detect a game project here (missing mg.toml/project.godot/manifest.json/.uproject)."))?,
         ),
         #[cfg(not(feature = "game"))]
         Ecosystem::Game => anyhow::bail!("'game' core is not included in this build."),
         Ecosystem::Ai => Arc::new(
-            mg_ai_adapter::adapter_for(&std::env::current_dir()?)
+            mg_ai_adapter::adapter_for(root)
                 .ok_or_else(|| anyhow::anyhow!("Cannot detect an ai project here (missing mg.toml [ai] framework / pyproject [tool.megagate] framework)."))?,
         ),
         #[cfg(feature = "clo")]
         Ecosystem::Cloud => Arc::new(
-            mg_cloud_adapter::adapter_for(&std::env::current_dir()?)
+            mg_cloud_adapter::adapter_for(root)
                 .ok_or_else(|| anyhow::anyhow!("Cannot detect a cloud project here (missing mg.toml/Pulumi.yaml/*.tf/cdk package.json)."))?,
         ),
         #[cfg(not(feature = "clo"))]
         Ecosystem::Cloud => anyhow::bail!("'cloud' core is not included in this build."),
         Ecosystem::Cicd => Arc::new(
-            mg_cicd_adapter::adapter_for(&std::env::current_dir()?)
+            mg_cicd_adapter::adapter_for(root)
                 .ok_or_else(|| anyhow::anyhow!("Cannot detect a cicd project here (missing mg.toml/wrangler.toml/argocd/.github/workflows)."))?,
         ),
         #[cfg(feature = "iot")]
         Ecosystem::Iot => Arc::new(
-            mg_iot_adapter::adapter_for(&std::env::current_dir()?)
+            mg_iot_adapter::adapter_for(root)
                 .ok_or_else(|| anyhow::anyhow!("Cannot detect an iot project here (missing mg.toml/platformio.ini/west.yml)."))?,
         ),
         #[cfg(not(feature = "iot"))]
         Ecosystem::Iot => anyhow::bail!("'iot' core is not included in this build."),
         Ecosystem::App => Arc::new(
-            mg_app_adapter::adapter_for(&std::env::current_dir()?)
+            mg_app_adapter::adapter_for(root)
                 .ok_or_else(|| anyhow::anyhow!("Cannot detect an app project here (missing mg.toml/pubspec.yaml/build.gradle/Package.swift)."))?,
         ),
         #[cfg(feature = "hardware")]
         Ecosystem::Hardware => Arc::new(
-            mg_hardware_adapter::adapter_for(&std::env::current_dir()?)
+            mg_hardware_adapter::adapter_for(root)
                 .ok_or_else(|| anyhow::anyhow!("Cannot detect a hardware project here (missing mg.toml with ecosystem = \"hardware\")."))?,
         ),
         #[cfg(not(feature = "hardware"))]
         Ecosystem::Hardware => anyhow::bail!("'hardware' core is not included in this build."),
         #[cfg(feature = "lib")]
         Ecosystem::Lib => Arc::new(
-            mg_lib_adapter::adapter_for(
-                &std::env::current_dir()?,
+            mg_lib_adapter::adapter_for(root,
                 registry_url.map(str::to_string),
                 token.map(str::to_string),
             )
