@@ -40,7 +40,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             .await
         }
         CoreCommand::InstallGame { packages } => commands::core::game::install(packages).await,
-        CoreCommand::InstallAi { packages } => commands::core::ai::install(packages).await,
+        CoreCommand::InstallAi { packages, dry_run } => commands::core::ai::install(packages, dry_run).await,
         CoreCommand::InstallClo { packages, dry_run } => {
             commands::core::clo::install(packages, dry_run).await
         }

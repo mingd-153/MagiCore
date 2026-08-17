@@ -196,6 +196,7 @@ pub enum CoreCommand {
     },
     InstallAi {
         packages: Vec<String>,
+        dry_run: bool,
     },
     InstallClo {
         packages: Vec<String>,
@@ -509,7 +510,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         repair,
                     }),
                     Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
-                    Some("ai") => SomeCore(CoreCommand::InstallAi { packages }),
+                    Some("ai") => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
                     Some("clo") => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
                     Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages, dry_run }),
                     Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
@@ -745,7 +746,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 repair,
             }),
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
-            Commands::InstallAi { packages } => SomeCore(CoreCommand::InstallAi { packages }),
+            Commands::InstallAi { packages, dry_run } => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
             Commands::InstallClo { packages } => SomeCore(CoreCommand::InstallClo {
                 packages,
                 dry_run: false,

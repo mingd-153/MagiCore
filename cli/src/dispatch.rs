@@ -357,7 +357,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             repair,
         }),
         Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
-        Commands::InstallAi { packages } => Some(CoreCommand::InstallAi { packages }),
+        Commands::InstallAi { packages, dry_run } => Some(CoreCommand::InstallAi { packages, dry_run }),
         Commands::InstallClo { packages } => Some(CoreCommand::InstallClo {
             packages,
             dry_run: false,
@@ -590,7 +590,7 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
                 repair,
             },
             Some("game") => CoreCommand::InstallGame { packages },
-            Some("ai") => CoreCommand::InstallAi { packages },
+            Some("ai") => CoreCommand::InstallAi { packages, dry_run },
             Some("clo") => CoreCommand::InstallClo { packages, dry_run },
             Some("cicd") => CoreCommand::InstallCicd { packages, dry_run },
             Some("iot") => CoreCommand::InstallIot { packages },
