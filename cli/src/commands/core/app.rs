@@ -42,12 +42,15 @@ fn install_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
             tool: "swift".to_string(),
             args: vec!["package".to_string(), "resolve".to_string()],
         },
-        mg_app_adapter::AppLanguage::ReactNative | mg_app_adapter::AppLanguage::ObjC => {
-            InstallCommand {
-                tool: String::new(),
-                args: vec![],
-            }
-        }
+        // react-native: npm trong subdir RN — C9 scoped exception (npm policy §5.1)
+        mg_app_adapter::AppLanguage::ReactNative => InstallCommand {
+            tool: "npm".to_string(),
+            args: vec!["install".to_string()],
+        },
+        mg_app_adapter::AppLanguage::ObjC => InstallCommand {
+            tool: String::new(),
+            args: vec![],
+        },
         mg_app_adapter::AppLanguage::Multi => InstallCommand {
             tool: String::new(),
             args: vec![],
@@ -70,9 +73,11 @@ fn dev_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
             tool: "swift".to_string(),
             args: vec!["run".to_string()],
         },
-        mg_app_adapter::AppLanguage::ReactNative
-        | mg_app_adapter::AppLanguage::ObjC
-        | mg_app_adapter::AppLanguage::Multi => InstallCommand {
+        mg_app_adapter::AppLanguage::ReactNative => InstallCommand {
+            tool: "npm".to_string(),
+            args: vec!["run".to_string(), "android".to_string()],
+        },
+        mg_app_adapter::AppLanguage::ObjC | mg_app_adapter::AppLanguage::Multi => InstallCommand {
             tool: String::new(),
             args: vec![],
         },
@@ -142,16 +147,16 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     if lang == mg_app_adapter::AppLanguage::Multi {
         return install_multi(&root, dry_run).await;
     }
-    if matches!(
-        lang,
-        mg_app_adapter::AppLanguage::ReactNative | mg_app_adapter::AppLanguage::ObjC
-    ) {
-        return Err(not_available(
-            "has no install flow yet — react-native/objc resolution is a future track (§5.2 npm policy)",
-        ));
+    if matches!(lang, mg_app_adapter::AppLanguage::ObjC) {
+        return install_objc(&root, dry_run).await;
     }
 
     let cmd = install_command(lang);
+    if cmd.tool.is_empty() {
+        return Err(not_available(
+            "has no install flow for this language yet — edit manifest and resolve with the platform tool",
+        ));
+    }
     if dry_run {
         mg_ui::info(&format!(
             "[dry-run] would run: {} {} (install chạy thật khi có tool — bỏ `--dry-run`)",
@@ -235,6 +240,93 @@ fn platform_install_commands() -> (InstallCommand, InstallCommand, InstallComman
     )
 }
 
+/// objC: resolve package dependencies qua xcodebuild (allowlist §3 — xcodebuild P2).
+/// Project/workspace tìm từ thư mục con; không thấy → lỗi rõ.
+async fn install_objc(root: &Path, dry_run: bool) -> Result<()> {
+    let Some(xcode_project) = find_xcode_project(root) else {
+        anyhow::bail!(
+            "không tìm thấy *.xcworkspace/*.xcodeproj dưới {} — objC app thiếu Xcode project",
+            root.display()
+        );
+    };
+    let (flag, name) = if xcode_project.ends_with(".xcworkspace") {
+        ("-workspace", xcode_project.as_str())
+    } else {
+        ("-project", xcode_project.as_str())
+    };
+    let args: Vec<String> = vec![
+        "-resolvePackageDependencies".to_string(),
+        flag.to_string(),
+        name.to_string(),
+    ];
+    if dry_run {
+        mg_ui::info(&format!(
+            "[dry-run] would run: xcodebuild {} (install chạy thật khi có Xcode)",
+            args.join(" ")
+        ));
+        return Ok(());
+    }
+    mg_ui::info(&format!(
+        "Installing objC: xcodebuild {}",
+        args.join(" ")
+    ));
+    run_tool(root, "xcodebuild", &args)
+}
+
+/// Tìm Xcode project — ưu tiên workspace, fallback project, không đệ quy sâu.
+fn find_xcode_project(root: &Path) -> Option<String> {
+    let mut workspace: Option<String> = None;
+    let mut project: Option<String> = None;
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(".xcworkspace") && workspace.is_none() {
+            workspace = Some(name);
+        } else if name.ends_with(".xcodeproj") && project.is_none() {
+            project = Some(name);
+        }
+    }
+    workspace.or(project)
+}
+
+/// [app] dev_scheme trong mg.toml — objC dev chạy xcodebuild build; thiếu → dùng Xcode IDE.
+fn dev_scheme(root: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(root.join("mg.toml")).ok()?;
+    let v: toml::Value = toml::from_str(&content).ok()?;
+    v.get("app")
+        .and_then(|a| a.get("dev_scheme"))
+        .and_then(|s| s.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
+/// objC dev — có [app] dev_scheme → xcodebuild build (simulator), không → mở Xcode.
+async fn dev_objc(root: &Path, dry_run: bool) -> Result<()> {
+    let Some(scheme) = dev_scheme(root) else {
+        let Some(proj) = find_xcode_project(root) else {
+            anyhow::bail!("không tìm thấy *.xcworkspace/*.xcodeproj — objC app thiếu Xcode project");
+        };
+        anyhow::bail!(
+            "objC dev chạy trong Xcode — mở {proj}, hoặc khai [app] dev_scheme = \"<scheme>\" trong mg.toml để `mg dev` chạy xcodebuild build trên simulator"
+        );
+    };
+    let args: Vec<String> = vec![
+        "-scheme".to_string(),
+        scheme,
+        "-destination".to_string(),
+        "platform=iOS Simulator,name=iPhone 16".to_string(),
+        "build".to_string(),
+    ];
+    if dry_run {
+        mg_ui::info(&format!(
+            "[dry-run] would run: xcodebuild {}",
+            args.join(" ")
+        ));
+        return Ok(());
+    }
+    mg_ui::info(&format!("App dev (objC): xcodebuild {}", args.join(" ")));
+    run_tool(root, "xcodebuild", &args)
+}
+
 /// `mg dev` — chạy app qua tool theo language.
 pub async fn dev(_dry_run: bool) -> Result<()> {
     let root = project_root()?;
@@ -257,13 +349,13 @@ pub async fn dev(_dry_run: bool) -> Result<()> {
         ));
         return run_tool(&dir, &cmd.tool, &cmd.args);
     }
-    if matches!(
-        lang,
-        mg_app_adapter::AppLanguage::ReactNative | mg_app_adapter::AppLanguage::ObjC
-    ) {
-        return Err(not_available(
-            "has no dev flow yet — react-native/objc targets are scaffold-only in P1",
-        ));
+    if lang == mg_app_adapter::AppLanguage::ObjC {
+        return dev_objc(&root, _dry_run).await;
+    }
+    if lang == mg_app_adapter::AppLanguage::Multi {
+        anyhow::bail!(
+            "đa platform dev P1 chạy qua từng subdir: `mg dev` ở flutter/ hoặc react-native/ (xem `mg build`)"
+        );
     }
     let cmd = dev_command(lang);
     mg_ui::info(&format!(
@@ -368,6 +460,9 @@ mod tests {
         let sw = install_command(mg_app_adapter::AppLanguage::Swift);
         assert_eq!(sw.tool, "swift");
         assert_eq!(sw.args, vec!["package", "resolve"]);
+        let rn = install_command(mg_app_adapter::AppLanguage::ReactNative);
+        assert_eq!(rn.tool, "npm");
+        assert_eq!(rn.args, vec!["install"]);
     }
 
     #[test]
@@ -384,5 +479,39 @@ mod tests {
             dev_command(mg_app_adapter::AppLanguage::Swift).args,
             vec!["run"]
         );
+        assert_eq!(
+            dev_command(mg_app_adapter::AppLanguage::ReactNative).args,
+            vec!["run", "android"]
+        );
+    }
+
+    #[test]
+    fn xcode_project_prefers_workspace() {
+        let dir = std::env::temp_dir().join(format!("mg-app-xc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("App.xcodeproj"), "").unwrap();
+        std::fs::write(dir.join("App.xcworkspace"), "").unwrap();
+        assert_eq!(find_xcode_project(&dir).unwrap(), "App.xcworkspace");
+        std::fs::remove_file(dir.join("App.xcworkspace")).unwrap();
+        assert_eq!(find_xcode_project(&dir).unwrap(), "App.xcodeproj");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dev_scheme_reads_mg_toml() {
+        let dir = std::env::temp_dir().join(format!("mg-app-scheme-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(dev_scheme(&dir).is_none());
+        std::fs::write(
+            dir.join("mg.toml"),
+            "[app]\nlanguage = \"objc\"\ndev_scheme = \"App\"\n",
+        )
+        .unwrap();
+        assert_eq!(dev_scheme(&dir).unwrap(), "App");
+        std::fs::write(dir.join("mg.toml"), "[app]\nlanguage = \"objc\"\n").unwrap();
+        assert!(dev_scheme(&dir).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

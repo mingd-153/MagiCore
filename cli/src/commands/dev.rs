@@ -22,9 +22,35 @@ fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<Strin
                 ],
             ))
         }
-        other => bail!(
-            "'mg dev' for '{other}' engine is not implemented yet — bevy (cargo run) and godot (editor) are available (P1, Q20). unity/unreal dev là P2."
-        ),
+        // unity: mở editor GUI qua CLI (fail-closed nếu unity không có trong PATH).
+        "unity" => {
+            let path = root
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("project path is not valid UTF-8"))?;
+            Ok((
+                "unity".to_string(),
+                vec!["-projectPath".to_string(), path.to_string()],
+            ))
+        }
+        // unreal: engine binary đặt tên theo version, không có PATH chuẩn — chỉ dẫn mở editor.
+        "unreal" => {
+            let uproject = root
+                .read_dir()
+                .ok()
+                .and_then(|mut entries| {
+                    entries.find_map(|e| {
+                        let name = e.as_ref().ok()?.file_name().to_string_lossy().to_string();
+                        name.ends_with(".uproject").then_some(name)
+                    })
+                })
+                .unwrap_or_else(|| "Game.uproject".to_string());
+            Err(anyhow::anyhow!(
+                "unreal dev chạy trong Unreal Editor (engine binary đặt tên theo version, không có PATH chuẩn) — mở {uproject} bằng editor, hoặc cài UnrealBuildTool và chạy build trực tiếp. Run `mg build` + editor để chạy."
+            ))
+        }
+        other => Err(anyhow::anyhow!(
+            "'mg dev' cho engine '{other}' chưa có lệnh — dùng editor của engine để chạy"
+        )),
     }
 }
 
@@ -155,6 +181,27 @@ mod tests {
         assert_eq!(cmd, "godot");
         assert!(args.iter().any(|a| a == "--editor"));
         assert!(args.iter().any(|a| a == "--path"));
+    }
+
+    #[test]
+    fn game_dev_unity_opens_editor_cli() {
+        let dir = std::env::temp_dir().join(format!("mg-dev-unity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Packages")).unwrap();
+        std::fs::write(dir.join("Packages").join("manifest.json"), "{}").unwrap();
+        let (cmd, args) = game_dev_command(&dir).unwrap();
+        assert_eq!(cmd, "unity");
+        assert!(args.iter().any(|a| a == "-projectPath"));
+    }
+
+    #[test]
+    fn game_dev_unreal_hints_editor() {
+        let dir = std::env::temp_dir().join(format!("mg-dev-unreal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Game.uproject"), "{}").unwrap();
+        let err = game_dev_command(&dir).unwrap_err();
+        assert!(err.to_string().contains("Game.uproject"));
     }
 
     #[test]

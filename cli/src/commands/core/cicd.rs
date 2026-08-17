@@ -4,24 +4,38 @@ fn not_available(reason: &str) -> anyhow::Error {
     anyhow::anyhow!("'cicd' {reason}")
 }
 
-/// `mg ci generate` — sinh .github/workflows/ci.yml cho github-actions (07 §4).
-/// Workflow: checkout → setup-megagate → mg install → mg verify → (deploy step tùy chọn qua `--run`).
+/// `mg ci generate` — sinh file CI theo provider (07 §4).
+/// Workflow: checkout → setup-megagate → mg install → mg verify.
 pub fn ci_generate() -> Result<()> {
     let root =
         std::env::current_dir().map_err(|e| anyhow::anyhow!("failed to resolve cwd: {e}"))?;
     let provider = provider_config()?;
-    if provider != mg_cicd_adapter::CicdProvider::GithubActions {
-        anyhow::bail!(
-            "'mg ci generate' hiện chỉ hỗ trợ github-actions (provider hiện tại: {}); gitlab/circle P2 (07 §4)",
-            provider.as_str()
-        );
+    match provider {
+        mg_cicd_adapter::CicdProvider::GithubActions => {
+            let dir = root.join(".github").join("workflows");
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join("ci.yml");
+            let workflow = WORKFLOW_TEMPLATE.replace("{name}", "CI");
+            std::fs::write(&path, workflow)?;
+            mg_ui::success(&format!("CI workflow generated: {}", path.display()));
+        }
+        mg_cicd_adapter::CicdProvider::Gitlab => {
+            let path = root.join(".gitlab-ci.yml");
+            std::fs::write(&path, GITLAB_TEMPLATE)?;
+            mg_ui::success(&format!("GitLab CI generated: {}", path.display()));
+        }
+        mg_cicd_adapter::CicdProvider::CircleCi => {
+            let dir = root.join(".circleci");
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join("config.yml");
+            std::fs::write(&path, CIRCLE_TEMPLATE)?;
+            mg_ui::success(&format!("CircleCI config generated: {}", path.display()));
+        }
+        other => anyhow::bail!(
+            "'mg ci generate' chưa có template cho provider '{}' — hỗ trợ github-actions | gitlab | circleci",
+            other.as_str()
+        ),
     }
-    let dir = root.join(".github").join("workflows");
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("ci.yml");
-    let workflow = WORKFLOW_TEMPLATE.replace("{name}", "CI");
-    std::fs::write(&path, workflow)?;
-    mg_ui::success(&format!("CI workflow generated: {}", path.display()));
     Ok(())
 }
 
@@ -44,6 +58,38 @@ jobs:
         run: mg install
       - name: Verify
         run: mg verify
+"#;
+
+const GITLAB_TEMPLATE: &str = r#"stages:
+  - ci
+
+ci:
+  stage: ci
+  image: rust:1.86
+  before_script:
+    - rustup toolchain install stable --profile minimal
+    - cargo install --git https://github.com/mingd-153/MegaGate --branch phase-4 mg --locked
+  script:
+    - mg install
+    - mg verify
+"#;
+
+const CIRCLE_TEMPLATE: &str = r#"version: 2.1
+jobs:
+  ci:
+    docker:
+      - image: cimg/rust:1.86
+    steps:
+      - checkout
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo install --git https://github.com/mingd-153/MegaGate --branch phase-4 mg --locked
+      - run: mg install
+      - run: mg verify
+workflows:
+  version: 2
+  ci:
+    jobs:
+      - ci
 "#;
 
 /// `mg verify` — chạy chain theo adapter: audit (web P1) → test → build (07 §4).
@@ -256,8 +302,10 @@ fn deploy_command(provider: mg_cicd_adapter::CicdProvider) -> Result<DeployComma
             tool: "gcloud",
             args: vec!["app".to_string(), "deploy".to_string(), "--no-promote".to_string()],
         }),
-        mg_cicd_adapter::CicdProvider::GithubActions => Err(not_available(
-            "github-actions is CI-only — push to trigger; no local deploy command.",
+        mg_cicd_adapter::CicdProvider::GithubActions
+        | mg_cicd_adapter::CicdProvider::Gitlab
+        | mg_cicd_adapter::CicdProvider::CircleCi => Err(not_available(
+            "is CI-only — push to trigger; no local deploy command.",
         )),
         mg_cicd_adapter::CicdProvider::Aws => Err(not_available(
             "aws deploy needs a target (s3 bucket/pipeline) — configure [deploy] targets then run `mg deploy`.",
@@ -421,8 +469,19 @@ mod tests {
     #[test]
     fn ci_only_providers_bail() {
         assert!(deploy_command(mg_cicd_adapter::CicdProvider::GithubActions).is_err());
+        assert!(deploy_command(mg_cicd_adapter::CicdProvider::Gitlab).is_err());
+        assert!(deploy_command(mg_cicd_adapter::CicdProvider::CircleCi).is_err());
         assert!(deploy_command(mg_cicd_adapter::CicdProvider::Aws).is_err());
         assert!(deploy_command(mg_cicd_adapter::CicdProvider::Argocd).is_err());
+    }
+
+    #[test]
+    fn ci_templates_cover_all_providers() {
+        assert!(WORKFLOW_TEMPLATE.contains("actions/checkout@v4"));
+        assert!(GITLAB_TEMPLATE.contains("mg verify"));
+        assert!(GITLAB_TEMPLATE.contains("stages:"));
+        assert!(CIRCLE_TEMPLATE.contains("version: 2.1"));
+        assert!(CIRCLE_TEMPLATE.contains("cimg/rust"));
     }
 
     #[test]

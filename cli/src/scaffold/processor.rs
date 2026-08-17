@@ -796,11 +796,11 @@ impl Scaffolder {
             "#import \"ObjcBridge.h\"\n\n@implementation MGShared\n+ (NSString *)hello {\n    return @\"hello from MegaGate shared (objc)\";\n}\n@end\n",
         )?;
 
-        // react-native/ — js entry
+        // react-native/ — js entry (scripts.android/ios: `mg dev` chạy qua npm run — C9)
         Self::write_file(
             &target.join("react-native").join("package.json"),
             &format!(
-                "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"dependencies\": {{\n    \"react\": \"18.2.0\",\n    \"react-native\": \"0.74.0\"\n  }}\n}}\n",
+                "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"scripts\": {{\n    \"android\": \"react-native run-android\",\n    \"ios\": \"react-native run-ios\"\n  }},\n  \"dependencies\": {{\n    \"react\": \"18.2.0\",\n    \"react-native\": \"0.74.0\"\n  }}\n}}\n",
                 slug
             ),
         )?;

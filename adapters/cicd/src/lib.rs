@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CicdProvider {
     GithubActions,
+    Gitlab,
+    CircleCi,
     Cloudflare,
     Aws,
     Gcp,
@@ -25,6 +27,8 @@ impl CicdProvider {
     pub fn as_str(&self) -> &'static str {
         match self {
             CicdProvider::GithubActions => "github-actions",
+            CicdProvider::Gitlab => "gitlab",
+            CicdProvider::CircleCi => "circleci",
             CicdProvider::Cloudflare => "cloudflare",
             CicdProvider::Aws => "aws",
             CicdProvider::Gcp => "gcp",
@@ -48,6 +52,8 @@ pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
             {
                 return match p {
                     "github-actions" => Some(CicdProvider::GithubActions),
+                    "gitlab" => Some(CicdProvider::Gitlab),
+                    "circleci" => Some(CicdProvider::CircleCi),
                     "cloudflare" => Some(CicdProvider::Cloudflare),
                     "aws" => Some(CicdProvider::Aws),
                     "gcp" => Some(CicdProvider::Gcp),
@@ -65,6 +71,12 @@ pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
     }
     if root.join(".github").join("workflows").exists() {
         return Some(CicdProvider::GithubActions);
+    }
+    if root.join(".gitlab-ci.yml").exists() {
+        return Some(CicdProvider::Gitlab);
+    }
+    if root.join(".circleci").join("config.yml").exists() {
+        return Some(CicdProvider::CircleCi);
     }
     if root.join("main.tf").exists() {
         return Some(CicdProvider::Aws);
@@ -236,6 +248,27 @@ mod tests {
         let dir = tmp_dir("cfg");
         std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"aws\"\n").unwrap();
         assert_eq!(detect_provider(&dir), Some(CicdProvider::Aws));
+    }
+
+    #[test]
+    fn detect_gitlab_via_mg_toml_and_probe() {
+        let dir = tmp_dir("gl");
+        std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"gitlab\"\n").unwrap();
+        assert_eq!(detect_provider(&dir), Some(CicdProvider::Gitlab));
+        std::fs::remove_file(dir.join("mg.toml")).unwrap();
+        std::fs::write(dir.join(".gitlab-ci.yml"), "stages: [ci]\n").unwrap();
+        assert_eq!(detect_provider(&dir), Some(CicdProvider::Gitlab));
+    }
+
+    #[test]
+    fn detect_circleci_via_mg_toml_and_probe() {
+        let dir = tmp_dir("cc");
+        std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"circleci\"\n").unwrap();
+        assert_eq!(detect_provider(&dir), Some(CicdProvider::CircleCi));
+        std::fs::remove_file(dir.join("mg.toml")).unwrap();
+        std::fs::create_dir_all(dir.join(".circleci")).unwrap();
+        std::fs::write(dir.join(".circleci").join("config.yml"), "version: 2.1\n").unwrap();
+        assert_eq!(detect_provider(&dir), Some(CicdProvider::CircleCi));
     }
 
     #[test]

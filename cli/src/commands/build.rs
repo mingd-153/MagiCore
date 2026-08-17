@@ -103,14 +103,22 @@ async fn build_iot(root: &Path) -> Result<()> {
 }
 
 /// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
-/// full resolver — không wrapper PM); python → P2 (python -m build).
+/// full resolver — không wrapper PM); python → python -m build (fail-closed nếu thiếu module build).
 async fn build_lib(root: &Path) -> Result<()> {
     if root.join("Cargo.toml").exists() {
         return build_rust(root);
     }
     if root.join("pyproject.toml").exists() {
-        mg_ui::warning("python lib build là P2 (09 §5 — python -m build) — bỏ qua");
-        return Ok(());
+        if tool_unavailable("python") {
+            mg_ui::warning("python not found — install Python toolchain first");
+            return Ok(());
+        }
+        info("Building python lib: python -m build");
+        return run_allowlisted_tool(root, "python", &["-m", "build"]).map_err(|e| {
+            anyhow::anyhow!(
+                "python -m build failed: {e} — cài `pip install build` trong project này trước"
+            )
+        });
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
     if tsc.exists() {
