@@ -29,8 +29,124 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
         "web" => build_web(&root, ctx.execution(), target).await,
         "app" => build_app(&root).await,
         "cloud" => build_cloud(&root).await,
+        "game" => build_game(&root).await,
+        "iot" => build_iot(&root).await,
+        "lib" => build_lib(&root).await,
+        "hardware" => build_hardware(&root).await,
+        "ai" => {
+            mg_ui::warning(
+                "ai core không có build artifact (05 §7 — agent chạy qua `mg run`/`mg dev`); bỏ qua",
+            );
+            Ok(())
+        }
         other => bail!("'mg build' not implemented for '{}' core yet", other),
     }
+}
+
+/// Game build (03 §4): bevy → cargo build (build_rust); godot/unity → P2
+/// (godot --export / Unity batchmode) — cảnh báo, không fail.
+async fn build_game(root: &Path) -> Result<()> {
+    let engine = mg_game_adapter::detect_engine(root);
+    match engine {
+        Some(mg_game_adapter::GameEngine::Bevy) => build_rust(root),
+        Some(mg_game_adapter::GameEngine::Godot) => {
+            mg_ui::warning(
+                "godot export build là P2 (03 §4) — dùng editor export; bỏ qua build",
+            );
+            Ok(())
+        }
+        Some(mg_game_adapter::GameEngine::Unity) => {
+            mg_ui::warning(
+                "unity batchmode build là P1 chưa mở — scaffold-only; bỏ qua build",
+            );
+            Ok(())
+        }
+        Some(mg_game_adapter::GameEngine::Unreal) => {
+            mg_ui::warning("unreal build là P2 (03 §4) — scaffold-only; bỏ qua build");
+            Ok(())
+        }
+        None => {
+            mg_ui::warning("không detect được game engine (project.godot/Cargo.toml/.uproject)");
+            Ok(())
+        }
+    }
+}
+
+/// IoT build (04 §5): esp32-rust → cargo (build_rust); platformio → pio run;
+/// zephyr → west build. Toolchain thiếu → cảnh báo + hướng cài (04: không tự tải P1).
+async fn build_iot(root: &Path) -> Result<()> {
+    if root.join("platformio.ini").exists() {
+        if tool_unavailable("pio") {
+            mg_ui::warning("pio (platformio) not found — run `pip install platformio` first");
+            return Ok(());
+        }
+        return run_allowlisted_tool(root, "pio", &["run"]);
+    }
+    if root.join("west.yml").exists() {
+        if tool_unavailable("west") {
+            mg_ui::warning("west not found — install Zephyr SDK + `pip install west` first");
+            return Ok(());
+        }
+        return run_allowlisted_tool(root, "west", &["build", "-b", "native_sim"]);
+    }
+    if root.join("Cargo.toml").exists() {
+        // esp32-rust: build_rust giữ cargo build; --target esp theo [iot] board là P1.5
+        // (04 §5: cần espup toolchain — detect + lỗi rõ)
+        if tool_unavailable("cargo") {
+            mg_ui::warning("cargo not found — install Rust toolchain first");
+            return Ok(());
+        }
+        return build_rust(root);
+    }
+    mg_ui::warning("không detect được iot framework (platformio.ini/west.yml/Cargo.toml)");
+    Ok(())
+}
+
+/// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
+/// full resolver — không wrapper PM); python → P2 (python -m build).
+async fn build_lib(root: &Path) -> Result<()> {
+    if root.join("Cargo.toml").exists() {
+        return build_rust(root);
+    }
+    if root.join("pyproject.toml").exists() {
+        mg_ui::warning("python lib build là P2 (09 §5 — python -m build) — bỏ qua");
+        return Ok(());
+    }
+    let tsc = root.join("node_modules").join(".bin").join("tsc");
+    if tsc.exists() {
+        let args = node_bin_args(root, "tsc", &["-p", "tsconfig.json"])?
+            .into_iter()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        let local_bin = root.join("node_modules").join(".bin");
+        let env = vec![(
+            "PATH".to_string(),
+            prepend_path(&local_bin)?.to_string_lossy().to_string(),
+        )];
+        info(&format!("tsc: node {}", args.join(" ")));
+        let opts = mg_exec::prelude::ExecOptions {
+            cwd: Some(root.to_path_buf()),
+            env,
+            clean_env: true,
+            ..Default::default()
+        };
+        return mg_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
+    }
+    mg_ui::warning("ts lib cần `mg install` trước (node_modules/.bin/tsc missing)");
+    Ok(())
+}
+
+/// Hardware build: platformio (pio run) — chung cơ chế với iot.
+async fn build_hardware(root: &Path) -> Result<()> {
+    if root.join("platformio.ini").exists() {
+        if tool_unavailable("pio") {
+            mg_ui::warning("pio (platformio) not found — run `pip install platformio` first");
+            return Ok(());
+        }
+        return run_allowlisted_tool(root, "pio", &["run"]);
+    }
+    mg_ui::warning("không detect được hardware framework (platformio.ini missing)");
+    Ok(())
 }
 
 /// C9 — build app: single framework passthrough hoặc multi-platform (shared + platforms).
@@ -651,9 +767,9 @@ fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::{
-        build_cloud, build_multi_app, find_native_engine_crate, map_framework_build_script,
-        reject_external_package_manager_script, resolve_web_build_target, tool_unavailable,
-        WebBuildTarget,
+        build_cloud, build_game, build_iot, build_lib, build_multi_app,
+        find_native_engine_crate, map_framework_build_script, reject_external_package_manager_script,
+        resolve_web_build_target, tool_unavailable, WebBuildTarget,
     };
     use mg_config::project::ProjectExecutionConfig;
     use std::{fs, path::Path};
@@ -817,6 +933,44 @@ mod tests {
         std::fs::write(tmp.join("mg.toml"), "[cloud]\ntype = \"pulumi\"\n").unwrap();
         std::fs::write(tmp.join("Pulumi.yaml"), "name: x\nruntime: nodejs\n").unwrap();
         rt.block_on(build_cloud(&tmp)).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn game_build_warns_skip_when_engine_p2() {
+        let tmp = std::env::temp_dir().join(format!("mg-build-game-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("mg.toml"), "ecosystem = \"game\"\n").unwrap();
+        std::fs::write(tmp.join("project.godot"), "[application]\n").unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(build_game(&tmp)).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn iot_build_warns_skip_when_toolchain_missing() {
+        let tmp = std::env::temp_dir().join(format!("mg-build-iot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("mg.toml"), "ecosystem = \"iot\"\n").unwrap();
+        std::fs::write(tmp.join("platformio.ini"), "[env:esp32dev]\nplatform = espressif32\n")
+            .unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(build_iot(&tmp)).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn lib_ts_build_warns_when_tsc_missing() {
+        let tmp = std::env::temp_dir().join(format!("mg-build-libts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("mg.toml"), "ecosystem = \"lib\"\n").unwrap();
+        std::fs::write(tmp.join("package.json"), "{\"name\":\"x\",\"version\":\"0.1.0\"}")
+            .unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(build_lib(&tmp)).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

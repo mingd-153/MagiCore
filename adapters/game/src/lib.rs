@@ -45,7 +45,7 @@ pub struct GameAdapter {
     engine: GameEngine,
 }
 
-fn detect_engine(root: &Path) -> Option<GameEngine> {
+pub fn detect_engine(root: &Path) -> Option<GameEngine> {
     if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
