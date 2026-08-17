@@ -64,20 +64,48 @@ pub fn resolve_auth(
         }
     }
 
-    // host từ URL (bỏ scheme + path)
-    let host = url::Url::parse(registry_url)
+    // host từ URL (bỏ scheme + path) — thử cả origin + dạng //host:port (npmrc
+    // chuẩn viết "//127.0.0.1:4315/:_authToken", có thể viết url-key đầy đủ)
+    let parsed = url::Url::parse(registry_url).ok();
+    let host = parsed
+        .as_ref()
         .map(|u| u.host_str().unwrap_or_default().to_string())
         .unwrap_or_default();
-    if let Some(token) = npmrc.token_for(&host) {
+    let candidates: Vec<String> = {
+        let mut v = Vec::new();
+        if let Some(u) = &parsed {
+            let hwp = u
+                .port()
+                .map(|p| format!("{}:{}", host, p))
+                .unwrap_or_else(|| host.clone());
+            let origin = u.as_str().trim_end_matches('/').to_string();
+            // ưu tiên key có port/origin trước host-thuần (tránh nhầm token
+            // registry khác port cùng host, vd "//127.0.0.1" vs "//127.0.0.1:4315")
+            v.push(origin);
+            v.push(format!("//{hwp}"));
+            v.push(hwp);
+            v.push(host.clone());
+        } else {
+            v.push(host.clone());
+        }
+        v
+    };
+    if let Some(token) = candidates
+        .iter()
+        .find_map(|c| npmrc.token_for(c).cloned())
+    {
         return Ok(Auth {
-            token: Some(token.clone()),
+            token: Some(token),
             ..Default::default()
         });
     }
-    if let Some((user, pass)) = npmrc.basic_auth.get(&host) {
+    if let Some((user, pass)) = candidates
+        .iter()
+        .find_map(|c| npmrc.basic_auth.get(c.as_str()).cloned())
+    {
         return Ok(Auth {
-            username: Some(user.clone()),
-            password: Some(pass.clone()),
+            username: Some(user),
+            password: Some(pass),
             ..Default::default()
         });
     }
@@ -121,4 +149,32 @@ pub fn resolve_auth(
         "Auth not found for registry {} — set MG_NPM_TOKEN or NPM_TOKEN, .npmrc, or mg.toml [registry]",
         registry_url
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mg_config::npmrc::NpmRc;
+
+    #[test]
+    fn token_from_url_keyed_npmrc() {
+        // .npmrc chuẩn npm: //host/:_authToken — nhưng cũng chấp url-key
+        let npmrc = NpmRc::parse("//127.0.0.1:4315/:_authToken=uabc\n").unwrap();
+        let auth = resolve_auth(&npmrc, "http://127.0.0.1:4315", None, None).unwrap();
+        assert_eq!(auth.token.as_deref(), Some("uabc"));
+
+        let npmrc = NpmRc::parse("http://127.0.0.1:4315/:_authToken=habc\n").unwrap();
+        let auth = resolve_auth(&npmrc, "http://127.0.0.1:4315", None, None).unwrap();
+        assert_eq!(auth.token.as_deref(), Some("habc"));
+    }
+
+    #[test]
+    fn basic_from_url_keyed_npmrc() {
+        let npmrc = NpmRc::parse("http://127.0.0.1:4315/:username=u\nhttp://127.0.0.1:4315/:_password=cGFzcw==\n")
+            .unwrap();
+        let auth = resolve_auth(&npmrc, "http://127.0.0.1:4315", None, None).unwrap();
+        assert_eq!(auth.username.as_deref(), Some("u"));
+        // _password giữ base64 (npm format — server decode)
+        assert_eq!(auth.password.as_deref(), Some("cGFzcw=="));
+    }
 }

@@ -17,8 +17,26 @@ fn project_root() -> Result<PathBuf> {
 }
 
 fn lib_adapter() -> Arc<dyn PackageAdapter> {
-    let registry_url = std::env::var("MEGAGATE_LIB_REGISTRY_URL").ok();
-    let token = std::env::var("MEGAGATE_LIB_REGISTRY_TOKEN").ok();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let (registry_url, token) = crate::context::ProjectContext::load_at(
+        &cwd,
+        mg_config::project::ProjectConfig::find_project_root(&cwd).as_ref(),
+        None,
+    )
+    .ok()
+    .map(|ctx| (ctx.config.registries.first().map(|r| r.url.clone()), ctx.config.registries.first().and_then(|r| r.token.clone())))
+    .map(|(u, t)| {
+        (
+            u.or_else(|| std::env::var("MEGAGATE_LIB_REGISTRY_URL").ok()),
+            t.or_else(|| std::env::var("MEGAGATE_LIB_REGISTRY_TOKEN").ok()),
+        )
+    })
+    .unwrap_or_else(|| {
+        (
+            std::env::var("MEGAGATE_LIB_REGISTRY_URL").ok(),
+            std::env::var("MEGAGATE_LIB_REGISTRY_TOKEN").ok(),
+        )
+    });
     crate::factory::create_adapter(&Ecosystem::Lib, registry_url.as_deref(), token.as_deref())
         .expect("lib adapter always available in lib core build")
 }
