@@ -37,6 +37,10 @@ pub async fn run(
 
         for workspace in workspaces {
             info(&format!("Installing workspace: {}", workspace.display()));
+            // Mix core (Q23): detect core riêng cho từng project — không dùng
+            // adapter của root (root có thể không thuộc core nào).
+            let ctx = crate::context::ProjectContext::load_for_dir(&workspace)?;
+            let adapter = ctx.adapter();
             install_into_root(
                 adapter,
                 &workspace,
@@ -181,7 +185,19 @@ async fn install_into_root(
 
     mg_ui::blank_line();
     success("All dependencies installed");
+
     Ok(())
+}
+
+/// Mix core entry (Q23): install 1 workspace project với adapter đúng core.
+pub(crate) async fn install_into_root_ws(
+    adapter: &dyn mg_types::adapter::PackageAdapter,
+    project_root: &Path,
+    packages: &[String],
+    ignore_scripts: bool,
+    allow_scripts: bool,
+) -> Result<()> {
+    install_into_root(adapter, project_root, packages, ignore_scripts, allow_scripts).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,7 +256,9 @@ fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result
             continue;
         }
 
-        if path.join("package.json").exists() {
+        // Mix core (Q23): nhận mọi manifest — package.json (web), Cargo.toml
+        // (lib), pyproject.toml (ai), pubspec.yaml (app), mg.toml (mọi core).
+        if mg_config::project::ProjectConfig::auto_detect(&path).is_some() {
             out.push(path);
             continue;
         }
@@ -540,6 +558,46 @@ packages_dir = "packages"
 
         assert_eq!(workspaces, vec![frontend, contracts]);
         assert!(!workspaces.contains(&backend));
+    }
+
+    #[test]
+    fn test_discover_workspace_projects_mix_cores() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("megagate.workspace.toml"),
+            r#"
+mode = "monorepo"
+[layout]
+apps_dir = "apps"
+packages_dir = "packages"
+"#,
+        )
+        .unwrap();
+
+        let web = dir.path().join("apps/web");
+        fs::create_dir_all(&web).unwrap();
+        fs::write(web.join("package.json"), "{}").unwrap();
+
+        let lib = dir.path().join("packages/rustlib");
+        fs::create_dir_all(&lib.join("src")).unwrap();
+        fs::write(lib.join("Cargo.toml"), "[package]\nname = \"rustlib\"\n").unwrap();
+
+        let ignored = dir.path().join("packages/not-a-project");
+        fs::create_dir_all(&ignored).unwrap();
+        fs::write(ignored.join("notes.txt"), "x").unwrap();
+
+        let mut workspaces = discover_workspace_projects(dir.path()).unwrap().unwrap();
+        workspaces.sort();
+        let normalized: Vec<String> = workspaces
+            .iter()
+            .map(|p| {
+                p.strip_prefix(dir.path())
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(normalized, vec!["apps/web", "packages/rustlib"]);
     }
 
     #[test]
