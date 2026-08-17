@@ -728,7 +728,9 @@ impl Scaffolder {
         // shared/ — Kotlin KMP commonMain + androidMain (nơi chứa logic dùng chung)
         Self::write_file(
             &target.join("shared").join("build.gradle.kts"),
-            "plugins {\n    kotlin(\"multiplatform\") version \"2.0.0\"\n    kotlin(\"native.cocoapods\")\n}\n\nkotlin {\n    androidTarget()\n    iosX64()\n    iosArm64()\n    iosSimulatorArm64()\n    sourceSets {\n        commonMain.dependencies {\n            implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0\")\n        }\n    }\n}\n",
+            &format!(
+                "plugins {{\n    kotlin(\"multiplatform\") version \"2.0.0\"\n}}\n\nkotlin {{\n    androidTarget()\n    iosX64()\n    iosArm64()\n    iosSimulatorArm64()\n\n    sourceSets {{\n        commonMain.dependencies {{\n            implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0\")\n        }}\n    }}\n\n    listOf(\n        iosX64(),\n        iosArm64(),\n        iosSimulatorArm64()\n    ).forEach {{ iosTarget ->\n        iosTarget.binaries.framework {{\n            baseName = \"{name}\"\n            isStatic = true\n        }}\n    }}\n}}\n\nandroid {{\n    namespace = \"{pkg}.shared\"\n    compileSdk = 34\n}}\n"
+            ),
         )?;
         Self::write_file(
             &target.join("shared").join("settings.gradle.kts"),
@@ -745,10 +747,23 @@ impl Scaffolder {
             "package {pkg}\n\nobject Shared {\n    fun hello(): String = \"hello from MegaGate shared (KMP)\"\n}\n",
         )?;
 
-        // android/ — kotlin entry dùng shared
+        // android/ — kotlin entry dùng shared (gradle include + app module phụ thuộc shared)
         Self::write_file(
             &target.join("android").join("settings.gradle.kts"),
-            &format!("rootProject.name = \"{}-android\"\n", slug),
+            &format!(
+                "rootProject.name = \"{}-android\"\n\ninclude(\":app\", \":shared\")\n\nproject(\":shared\").projectDir = file(\"../shared\")\n",
+                slug
+            ),
+        )?;
+        Self::write_file(
+            &target.join("android").join("build.gradle.kts"),
+            "plugins {\n    id(\"com.android.application\") version \"8.5.0\" apply false\n    kotlin(\"android\") version \"2.0.0\" apply false\n}\n",
+        )?;
+        Self::write_file(
+            &target.join("android").join("app").join("build.gradle.kts"),
+            &format!(
+                "plugins {{\n    id(\"com.android.application\")\n    kotlin(\"android\")\n}}\n\nandroid {{\n    namespace = \"{pkg}.android\"\n    compileSdk = 34\n    defaultConfig {{\n        applicationId = \"{pkg}.android\"\n        minSdk = 24\n    }}\n}}\n\ndependencies {{\n    implementation(project(\":shared\"))\n}}\n"
+            ),
         )?;
         Self::write_file(
             &target.join("android").join("app").join("src").join("main").join("kotlin").join("Main.kt"),
@@ -2713,6 +2728,9 @@ mod tests {
             "mg.toml",
             "shared/build.gradle.kts",
             "shared/src/commonMain/kotlin/demo_multi/Shared.kt",
+            "android/build.gradle.kts",
+            "android/app/build.gradle.kts",
+            "android/settings.gradle.kts",
             "android/app/src/main/kotlin/Main.kt",
             "ios/Package.swift",
             "ios/Sources/demo-multi/main.swift",
@@ -2725,6 +2743,23 @@ mod tests {
         ] {
             assert!(out.join(expected).exists(), "missing {expected}");
         }
+        let shared_build = std::fs::read_to_string(out.join("shared/build.gradle.kts")).unwrap();
+        assert!(
+            shared_build.contains("baseName = \"demo-multi\""),
+            "shared framework baseName"
+        );
+        let android_build =
+            std::fs::read_to_string(out.join("android/app/build.gradle.kts")).unwrap();
+        assert!(
+            android_build.contains("implementation(project(\":shared\"))"),
+            "android depends on shared"
+        );
+        let android_settings =
+            std::fs::read_to_string(out.join("android/settings.gradle.kts")).unwrap();
+        assert!(
+            android_settings.contains("include(\":app\", \":shared\")"),
+            "android includes shared"
+        );
         let mg = std::fs::read_to_string(out.join("mg.toml")).unwrap();
         assert!(mg.contains("ecosystem = \"app\""), "app ecosystem");
         assert!(mg.contains("language = \"multi\""), "multi language");

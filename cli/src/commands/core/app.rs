@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn not_available(reason: &str) -> anyhow::Error {
     anyhow::anyhow!("'app' {reason}")
@@ -133,11 +133,16 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
 /// Multi: install từng platform trong subdir; toolchain thiếu → skip cảnh báo.
 async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
     let (android, ios, flutter) = platform_install_commands();
-    let platforms: [(&str, &Path, InstallCommand); 3] = [
-        ("android", &root.join("android"), android),
-        ("ios", &root.join("ios"), ios),
-        ("flutter", &root.join("flutter"), flutter),
+    let mut platforms: Vec<(&str, PathBuf, InstallCommand)> = vec![
+        ("android", root.join("android"), android),
+        ("ios", root.join("ios"), ios),
+        ("flutter", root.join("flutter"), flutter),
     ];
+    let rn = InstallCommand {
+        tool: "npm".to_string(),
+        args: vec!["install".to_string()],
+    };
+    platforms.push(("react-native", root.join("react-native"), rn));
     for (name, dir, cmd) in platforms {
         if !dir.exists() {
             mg_ui::info(&format!("Platform '{name}' missing directory — skipping"));
@@ -163,7 +168,7 @@ async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
             cmd.tool,
             cmd.args.join(" ")
         ));
-        run_tool(dir, &cmd.tool, &cmd.args)?;
+        run_tool(&dir, &cmd.tool, &cmd.args)?;
     }
     Ok(())
 }
@@ -177,7 +182,7 @@ fn tool_unavailable(tool: &str) -> bool {
         .is_none()
 }
 
-/// react-native (npm) + shared (KMP gradle) bỏ qua P1 — xem open question spec C9 §7.
+/// react-native (npm, C9 scoped exception) — shared (KMP gradle) chạy qua android gradle build.
 fn platform_install_commands() -> (InstallCommand, InstallCommand, InstallCommand) {
     (
         InstallCommand {
