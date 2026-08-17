@@ -189,6 +189,10 @@ pub(crate) enum Commands {
         #[arg(long, help = "Actually run the deploy (default is dry-run print-only)")]
         run: bool,
     },
+    #[command(about = "Generate CI pipeline (github-actions workflows)")]
+    CiGenerate,
+    #[command(about = "Run verify chain (audit → test → build) per project core")]
+    Verify,
     #[command(about = "Start the production server")]
     Start,
     #[command(about = "Execute a shell command in scope of a project")]

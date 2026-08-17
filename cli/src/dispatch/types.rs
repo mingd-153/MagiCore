@@ -46,6 +46,8 @@ pub enum CommonCommand {
     Deploy {
         run: bool,
     },
+    CiGenerate,
+    Verify,
     Start,
     Exec {
         command: String,
@@ -459,6 +461,8 @@ impl TryFrom<Commands> for DispatchCommand {
                 Some(CommonCommand::Flash { board, skip_build })
             }
             Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),
+            Commands::CiGenerate => Some(CommonCommand::CiGenerate),
+            Commands::Verify => Some(CommonCommand::Verify),
             Commands::Start => Some(CommonCommand::Start),
             Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
             Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
