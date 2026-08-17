@@ -1,10 +1,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-fn not_available(reason: &str) -> anyhow::Error {
-    anyhow::anyhow!("'ai' {reason}")
-}
-
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     mg_ai_adapter::adapter_for(&cwd)
@@ -52,15 +48,7 @@ pub async fn add(
 ) -> Result<()> {
     let root = project_root()?;
     // 05 §5: chốt 1 tool theo lock hiện có — ưu tiên uv, fallback pip (Q9 exec passthrough)
-    let tool = if root.join("uv.lock").exists() {
-        "uv"
-    } else if root.join("requirements.lock").exists() {
-        "pip"
-    } else if tool_uv_available() {
-        "uv"
-    } else {
-        "pip"
-    };
+    let tool = pick_ai_tool(&root);
     let mut args = vec![if tool == "uv" {
         "add".to_string()
     } else {
@@ -69,6 +57,19 @@ pub async fn add(
     args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
     run_ai_tool(&root, tool, &args)?;
     Ok(())
+}
+
+/// Chọn tool theo lock: uv.lock → uv, requirements.lock → pip, mặc định uv nếu có, else pip.
+fn pick_ai_tool(root: &std::path::Path) -> &'static str {
+    if root.join("uv.lock").exists() {
+        "uv"
+    } else if root.join("requirements.lock").exists() {
+        "pip"
+    } else if tool_uv_available() {
+        "uv"
+    } else {
+        "pip"
+    }
 }
 
 fn tool_uv_available() -> bool {
@@ -91,20 +92,93 @@ fn run_ai_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Result<()
     Ok(())
 }
 
-pub async fn remove(_packages: Vec<String>) -> Result<()> {
-    Err(not_available(
-        "has no package manager — remove deps with pip yourself.",
-    ))
+fn run_ai_tool_capture(
+    root: &std::path::Path,
+    tool: &str,
+    args: &[String],
+) -> Result<String> {
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".megagate").join("exec.log")),
+        clean_env: true,
+        ..Default::default()
+    };
+    let report = mg_exec::prelude::run(tool, args, &opts)
+        .map_err(|e| anyhow::anyhow!("{tool} failed: {e}"))?;
+    Ok(report.stdout_tail)
 }
+
+pub async fn remove(packages: Vec<String>) -> Result<()> {
+    if packages.is_empty() {
+        anyhow::bail!("mg remove-ai <pkg> [pkg...] — khai tên package cần gỡ");
+    }
+    let root = project_root()?;
+    let tool = pick_ai_tool(&root);
+    let mut args = vec![if tool == "uv" {
+        "remove".to_string()
+    } else {
+        "uninstall".to_string()
+    }];
+    if tool == "pip" {
+        args.push("-y".to_string());
+    }
+    args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    run_ai_tool(&root, tool, &args)?;
+    Ok(())
+}
+
 pub async fn list() -> Result<()> {
-    Err(not_available(
-        "has no package registry — inspect deps with `pip list` / `pip freeze`.",
-    ))
+    let root = project_root()?;
+    let tool = pick_ai_tool(&root);
+    let args = if tool == "uv" {
+        vec!["pip".to_string(), "list".to_string()]
+    } else {
+        vec!["list".to_string()]
+    };
+    run_ai_tool(&root, tool, &args)?;
+    Ok(())
 }
-pub async fn update(_packages: Vec<String>, _install: bool) -> Result<()> {
-    Err(not_available(
-        "dep updates flow through pip — run `pip install --upgrade` yourself.",
-    ))
+
+pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
+    let root = project_root()?;
+    let tool = pick_ai_tool(&root);
+    if packages.is_empty() {
+        // Không có tên package: cập nhật lock (uv) hoặc báo outdated (pip).
+        if tool == "uv" {
+            run_ai_tool(&root, tool, &["lock".to_string(), "--upgrade".to_string()])?;
+            if install {
+                run_ai_tool(&root, tool, &["sync".to_string()])?;
+            }
+        } else {
+            mg_ui::info("Chạy `pip list --outdated` để xem bản mới — không tự upgrade lock bằng pip.");
+            run_ai_tool(&root, tool, &["list".to_string(), "--outdated".to_string()])?;
+        }
+        return Ok(());
+    }
+    let mut args = if tool == "uv" {
+        vec!["lock".to_string(), "--upgrade-package".to_string()]
+    } else {
+        vec!["install".to_string(), "--upgrade".to_string()]
+    };
+    args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    if tool == "uv" {
+        args = vec!["lock".to_string()];
+        for p in packages.iter().flat_map(|p| p.split_whitespace()) {
+            args.push("--upgrade-package".to_string());
+            args.push(p.to_string());
+        }
+    }
+    run_ai_tool(&root, tool, &args)?;
+    if tool == "uv" {
+        if install {
+            run_ai_tool(&root, tool, &["sync".to_string()])?;
+        }
+    } else {
+        // pip: cập nhật lock sau khi upgrade
+        let locked = run_ai_tool_capture(&root, tool, &["freeze".to_string()])?;
+        std::fs::write(root.join("requirements.lock"), locked)?;
+    }
+    Ok(())
 }
 pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     let root = project_root()?;
