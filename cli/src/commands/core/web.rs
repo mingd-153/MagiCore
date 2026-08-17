@@ -277,13 +277,18 @@ pub async fn install(
     }
     if dedupe_enabled {
         adapter.set_dedupe_pref(true);
-        if let Ok(Some(lock)) = mg_lockfile::read_lockfile_checked(&root) {
-            let existing: std::collections::HashMap<String, String> = lock
-                .packages
+        // Shared lock seeding: root mg.lock (workspace aggregate) + mỗi web target lock.
+        let mut lock_roots: Vec<&std::path::Path> = vec![root.as_path()];
+        lock_roots.extend(
+            targets
                 .iter()
-                .map(|pkg| (pkg.name.clone(), pkg.version.clone()))
-                .collect();
-            adapter.set_existing_versions(existing);
+                .filter(|target| target.join("package.json").exists())
+                .map(|target| target.as_path()),
+        );
+        if let Ok(existing) = mg_lockfile::existing_versions_from(&lock_roots) {
+            if !existing.is_empty() {
+                adapter.set_existing_versions(existing);
+            }
         }
     }
 
