@@ -136,6 +136,22 @@ fn atomic_write(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     }
 }
 
+/// Union first-wins name→version map từ các lockfile (workspace shared lock seeding).
+/// Thứ tự roots quyết định version thắng: root lock (aggregate) trước, rồi target locks.
+pub fn existing_versions_from(
+    roots: &[&Path],
+) -> anyhow::Result<std::collections::HashMap<String, String>> {
+    let mut existing = std::collections::HashMap::new();
+    for root in roots {
+        if let Some(lock) = read_lockfile_checked(root)? {
+            for pkg in lock.packages {
+                existing.entry(pkg.name).or_insert_with(|| pkg.version);
+            }
+        }
+    }
+    Ok(existing)
+}
+
 pub fn read_lockfile_checked(project_root: &Path) -> anyhow::Result<Option<Lockfile>> {
     let path = lockfile_path(project_root);
     let contents = match std::fs::read_to_string(&path) {
