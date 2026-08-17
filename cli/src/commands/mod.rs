@@ -1,5 +1,6 @@
 /// CLI command implementations
 pub mod audit;
+pub mod bench;
 pub mod build;
 pub mod cache;
 pub mod core;
@@ -7,6 +8,7 @@ pub mod dedupe;
 pub mod dev;
 pub mod dlx;
 pub mod docs;
+pub mod doctor;
 pub mod exec;
 pub mod hooks;
 pub mod info;
@@ -14,6 +16,7 @@ pub mod init;
 pub mod install;
 pub mod login;
 pub mod model;
+pub mod network;
 pub mod outdated;
 pub mod patch;
 pub mod publish;

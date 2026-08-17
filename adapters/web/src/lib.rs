@@ -1274,11 +1274,10 @@ impl PackageAdapter for WebAdapter {
             graph.clone()
         };
         if !fetch_graph.is_empty() {
-            write_web_lockfile_with_state(project_root, graph, "installing").map_err(|e| {
+            write_web_lockfile_with_state(project_root, graph, "installing").inspect_err(|e| {
                 if let Some(root) = &staging_root {
                     let _ = std::fs::remove_dir_all(root);
                 }
-                e
             })?;
         }
         let prefetch_handle = self.prefetch_handle.lock().unwrap().take();
@@ -1314,11 +1313,10 @@ impl PackageAdapter for WebAdapter {
                 &registry,
             )
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 if let Some(root) = &staging_root {
                     let _ = std::fs::remove_dir_all(root);
                 }
-                e
             })?;
         }
         profile.mark("prefetch_tarballs", start);
@@ -3513,9 +3511,9 @@ fn file_has_no_external_hardlinks(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        return std::fs::metadata(path)
+        std::fs::metadata(path)
             .map(|metadata| metadata.nlink() <= 1)
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
 
     #[cfg(not(unix))]
@@ -4618,13 +4616,12 @@ where
     if canonical_root.join("package.json").exists() {
         let marker = read_extracted_package_marker(&canonical_root)?;
         if let Some(marker) = marker.as_ref() {
-            if extracted_marker_matches_fast(marker, expected_marker) {
-                if extracted_marker_has_content_signature(marker)
-                    && (!extracted_cache_full_validation_enabled()
-                        || extracted_content_matches(&canonical_root, marker)?)
-                {
-                    return Ok(canonical_root);
-                }
+            if extracted_marker_matches_fast(marker, expected_marker)
+                && extracted_marker_has_content_signature(marker)
+                && (!extracted_cache_full_validation_enabled()
+                    || extracted_content_matches(&canonical_root, marker)?)
+            {
+                return Ok(canonical_root);
             }
         }
     }
@@ -4687,7 +4684,7 @@ where
         let _ = std::fs::remove_dir_all(&temp_root);
     }
     extract_result?;
-    write_extracted_package_marker(&canonical_root, &expected_marker)?;
+    write_extracted_package_marker(&canonical_root, expected_marker)?;
     Ok(canonical_root)
 }
 
@@ -4735,6 +4732,7 @@ async fn pipeline_download_and_extract(
         let shared_cache = shared_cache.map(|s| (*s).clone());
         let shared_package_cache = shared_package_cache.clone();
         let registry_url = registry.map(|r| r.registry_url().to_string());
+        let registry_token = registry.and_then(|r| r.auth_token().map(str::to_string));
         let layout = layout.clone();
         let store = store.clone();
         let download_sem = Arc::clone(&download_sem);
@@ -4751,6 +4749,7 @@ async fn pipeline_download_and_extract(
                 &cache,
                 shared_package_cache.as_ref(),
                 registry_url.as_deref(),
+                registry_token.as_deref(),
                 &download_sem,
             )
             .await?;
@@ -4849,6 +4848,7 @@ async fn get_tarball_bytes(
     cache: &PackageCache,
     shared_package_cache: Option<&PackageCache>,
     registry_url: Option<&str>,
+    registry_token: Option<&str>,
     download_sem: &tokio::sync::Semaphore,
 ) -> MgResult<TarballFetchResult> {
     let prefer_shared_cache = shared_package_cache.is_some();
@@ -4907,16 +4907,17 @@ async fn get_tarball_bytes(
         .map(|pc| pc.tarball_path(&pkg.id))
         .unwrap_or_else(|| cache.tarball_path(&pkg.id));
     let temp_path = final_path.with_extension("tmp");
-    let downloaded = native::npm_registry::NpmRegistry::new(url)
-        .download_tarball_auto(&tarball_url, &temp_path)
-        .await
-        .map_err(|e| {
-            mg_types::MgError::Network(format!(
-                "download failed for '{}': {}",
-                pkg.id.name_str(),
-                e
-            ))
-        })?;
+    let downloaded =
+        native::npm_registry::NpmRegistry::new_with_token(url, registry_token.map(str::to_string))
+            .download_tarball_auto(&tarball_url, &temp_path)
+            .await
+            .map_err(|e| {
+                mg_types::MgError::Network(format!(
+                    "download failed for '{}': {}",
+                    pkg.id.name_str(),
+                    e
+                ))
+            })?;
     let io_ms = io_started_at.elapsed().as_millis() as u64;
     match downloaded {
         native::npm_registry::DownloadedTarball::Bytes(bytes) => {
@@ -5139,14 +5140,11 @@ fn backing_link_file(
     // already correct (extractor sets them once). Chmod only on copy fallback.
     // (Fallback: hardlink dùng chung inode nên mode/exec đã đúng; chỉ copy
     //  mới cần chmod tường minh.)
-    match std::fs::hard_link(source, target) {
-        Ok(()) => {
-            if let Some(profile) = profile {
-                profile.record_hardlink();
-            }
-            return Ok(());
+    if let Ok(()) = std::fs::hard_link(source, target) {
+        if let Some(profile) = profile {
+            profile.record_hardlink();
         }
-        Err(_) => {}
+        return Ok(());
     }
 
     if let Some(parent) = target.parent() {
@@ -6202,7 +6200,7 @@ fn materialize_strict_layout(
                 pkg.id
             )));
         };
-        crate::layout::create_symlink(&vstore_pkg_dir, &root_link)?;
+        crate::layout::create_symlink(vstore_pkg_dir, &root_link)?;
         materialization_profile.record_symlink();
     }
 

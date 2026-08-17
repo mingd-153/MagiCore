@@ -99,6 +99,9 @@ pub enum CommonCommand {
     Store {
         cmd: crate::commands::store::StoreCmd,
     },
+    Bench {
+        args: crate::commands::bench::BenchArgs,
+    },
     Trust {
         cmd: crate::commands::trust::TrustCmd,
     },
@@ -110,6 +113,12 @@ pub enum CommonCommand {
     },
     Telemetry {
         cmd: crate::commands::telemetry::TelemetryCmd,
+    },
+    Network {
+        cmd: crate::commands::network::NetworkCmd,
+    },
+    Doctor {
+        cmd: crate::commands::doctor::DoctorCmd,
     },
     Sbom {
         output: Option<String>,
@@ -421,10 +430,13 @@ impl TryFrom<Commands> for DispatchCommand {
                 json,
             }),
             Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
+            Commands::Bench { args } => Some(CommonCommand::Bench { args }),
             Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
             Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
             Commands::Docs { output } => Some(CommonCommand::Docs { output }),
             Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
+            Commands::Network { cmd } => Some(CommonCommand::Network { cmd }),
+            Commands::Doctor { cmd } => Some(CommonCommand::Doctor { cmd }),
             Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
             Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
             Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
