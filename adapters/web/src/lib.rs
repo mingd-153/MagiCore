@@ -2741,9 +2741,15 @@ impl SharedWebCache {
         atomic_write(&path, &payload)
     }
 
-    fn metadata_path(&self, package: &str) -> PathBuf {
+    fn metadata_path(&self, package: &str, registry_url: &str) -> PathBuf {
+        // key theo registry — đổi registry không dùng metadata cache cũ
+        let reg_key: String = registry_url
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
         self.root
             .join("metadata")
+            .join(reg_key)
             .join(package)
             .join("metadata.json")
     }
@@ -2810,8 +2816,9 @@ impl SharedWebCache {
     fn read_metadata(
         &self,
         package: &str,
+        registry_url: &str,
     ) -> Result<Option<CachedMetadataRecord>, DependencyError> {
-        let path = self.metadata_path(package);
+        let path = self.metadata_path(package, registry_url);
         if !path.exists() {
             return Ok(None);
         }
@@ -2850,8 +2857,9 @@ impl SharedWebCache {
         package: &str,
         metadata: &native::npm_registry::PackageMetadata,
         etag: Option<String>,
+        registry_url: &str,
     ) -> Result<(), DependencyError> {
-        self.write_metadata_record(package, metadata, etag, current_unix_secs(), None)
+        self.write_metadata_record(package, metadata, etag, current_unix_secs(), None, registry_url)
     }
 
     fn write_metadata_record(
@@ -2861,8 +2869,9 @@ impl SharedWebCache {
         etag: Option<String>,
         fetched_at: u64,
         stale_retry_after: Option<u64>,
+        registry_url: &str,
     ) -> Result<(), DependencyError> {
-        let path = self.metadata_path(package);
+        let path = self.metadata_path(package, registry_url);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 DependencyError(format!(
@@ -2936,8 +2945,9 @@ async fn load_metadata_by_name_with_fallback(
     registry: &native::npm_registry::NpmRegistry,
     shared_cache: Option<&SharedWebCache>,
 ) -> Result<Arc<native::npm_registry::PackageMetadata>, DependencyError> {
+    let registry_url = registry.registry_url().to_string();
     let cached = if let Some(shared_cache) = shared_cache {
-        shared_cache.read_metadata(package)?
+        shared_cache.read_metadata(package, &registry_url)?
     } else {
         None
     };
@@ -2962,13 +2972,14 @@ async fn load_metadata_by_name_with_fallback(
                             package,
                             &cached.metadata,
                             Some(etag.clone()),
+                            &registry_url,
                         );
                     }
                     return Ok(Arc::new(cached.metadata.clone()));
                 }
                 Ok(Some((metadata, new_etag))) => {
                     if let Some(shared_cache) = shared_cache {
-                        let _ = shared_cache.write_metadata(package, &metadata, Some(new_etag));
+                        let _ = shared_cache.write_metadata(package, &metadata, Some(new_etag), &registry_url);
                     }
                     return Ok(Arc::new(metadata));
                 }
@@ -2986,6 +2997,7 @@ async fn load_metadata_by_name_with_fallback(
                             Some(etag.clone()),
                             cached.fetched_at,
                             Some(next_stale_retry_after()),
+                            &registry_url,
                         );
                     }
                     return Ok(Arc::new(cached.metadata.clone()));
@@ -2997,7 +3009,7 @@ async fn load_metadata_by_name_with_fallback(
     match registry.fetch_metadata_with_etag(package).await {
         Ok((metadata, etag)) => {
             if let Some(shared_cache) = shared_cache {
-                let _ = shared_cache.write_metadata(package, &metadata, etag);
+                let _ = shared_cache.write_metadata(package, &metadata, etag, &registry_url);
             }
             Ok(Arc::new(metadata))
         }
@@ -3016,6 +3028,7 @@ async fn load_metadata_by_name_with_fallback(
                         cached.etag.clone(),
                         cached.fetched_at,
                         Some(next_stale_retry_after()),
+                        &registry_url,
                     );
                 }
                 return Ok(Arc::new(cached.metadata));
@@ -7205,7 +7218,7 @@ package_count = 0
         assert!(hits_after_first >= 1);
         assert_eq!(hits.load(Ordering::SeqCst), hits_after_first);
 
-        let cached = cache.read_metadata("react").unwrap().unwrap();
+        let cached = cache.read_metadata("react", "https://registry.npmjs.org").unwrap().unwrap();
         assert!(cached.stale_retry_after.is_some());
         assert!(metadata_record_retry_deferred(&cached));
     }
