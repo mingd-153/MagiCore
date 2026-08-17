@@ -2,6 +2,7 @@
 //! (Exec passthrough allowlist: 00-index §5.1 allowlist bất biến + §5.2 cấm vĩnh viễn)
 
 use anyhow::{bail, Result};
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptInvocation {
@@ -67,6 +68,54 @@ pub fn check_tool(name: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// C9: npm/npx chỉ được phép trong react-native subdir của project multi
+/// (package.json có dependency react-native + cha có mg.toml `[app] language = "multi"`).
+/// Ngoài phạm vi đó, npm vẫn bị cấm như §5.2.
+pub fn check_tool_scoped(name: &str, cwd: Option<&Path>) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        bail!("tool name is empty");
+    }
+    let normalized = normalize_script_token(name).unwrap_or_else(|| name.to_ascii_lowercase());
+    if FORBIDDEN_TOOLS.contains(&normalized.as_str()) {
+        if is_react_native_subdir(cwd) {
+            return Ok(());
+        }
+        bail!(
+            "tool '{name}' is forbidden outside react-native subdirs (C9 scoped exception — run inside <project>/react-native)"
+        );
+    }
+    if !ALLOWED_TOOLS.contains(&normalized.as_str()) {
+        bail!(
+            "tool '{name}' is not on the allowlist (00-index §5.1) — add it there only after review"
+        );
+    }
+    Ok(())
+}
+
+/// True khi cwd (hoặc cha gần nhất có mg.toml) là react-native subdir của project app multi.
+pub fn is_react_native_subdir(cwd: Option<&Path>) -> bool {
+    let Some(cwd) = cwd else { return false };
+    let rn_ok = cwd.join("package.json").is_file()
+        && std::fs::read_to_string(cwd.join("package.json"))
+            .map(|s| s.contains("\"react-native\""))
+            .unwrap_or(false);
+    if !rn_ok {
+        return false;
+    }
+    let mut current = cwd.parent();
+    while let Some(dir) = current {
+        let mg = dir.join("mg.toml");
+        if mg.is_file() {
+            return std::fs::read_to_string(mg)
+                .map(|s| s.contains("language = \"multi\""))
+                .unwrap_or(false);
+        }
+        current = dir.parent();
+    }
+    false
 }
 
 /// Find forbidden package-manager tools anywhere in a shell-ish script.

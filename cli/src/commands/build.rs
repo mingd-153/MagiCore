@@ -111,9 +111,13 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                 built += 1;
             }
             "react-native" => {
-                mg_ui::warning(
-                    "react-native build needs npm, which MegaGate policy forbids (§5.2) — skipping; RN resolution is a future track",
-                );
+                // npm chỉ cho phép trong RN subdir (C9 scoped exception, §5.2 giữ nguyên nơi khác)
+                if tool_unavailable("npm") {
+                    mg_ui::warning("npm not found — skipping react-native build");
+                    continue;
+                }
+                run_allowlisted_tool(&dir, "npm", &["install"])?;
+                built += 1;
             }
             "flutter" => {
                 if tool_unavailable("flutter") {

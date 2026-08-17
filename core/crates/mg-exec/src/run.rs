@@ -1,7 +1,7 @@
 //! Exec runner — chạy tool qua allowlist, args Vec riêng (00-index §5.5–§5.8)
 //! (passthrough run: dry-run, audit log, không shell injection, fail → bail kèm log trích)
 
-use crate::allowlist::{check_tool, FORBIDDEN_TOOLS};
+use crate::allowlist::{check_tool_scoped, FORBIDDEN_TOOLS};
 use crate::audit::{append, now_ts, AuditEntry};
 use crate::sanitizer::redact_args;
 use anyhow::{bail, Result};
@@ -66,7 +66,7 @@ pub struct ExecReport {
 
 /// Chạy `cmd args` sau khi check allowlist. Không dùng shell — args là Vec riêng (§5.6).
 pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    check_tool(cmd)?;
+    check_tool_scoped(cmd, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -76,7 +76,7 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
 /// Run an allowlisted tool while inheriting stdio for interactive/streaming commands.
 /// Chạy tool allowlist với stdio trực tiếp cho build/dev mà vẫn giữ guard chung.
 pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    check_tool(cmd)?;
+    check_tool_scoped(cmd, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -146,6 +146,13 @@ fn execute_command(
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
+    // C9: npm/npx chỉ được phép trong react-native subdir của project app multi.
+    let scoped_exempt: &[&str] = if crate::allowlist::is_react_native_subdir(Some(&cwd)) {
+        &["npm", "npx"]
+    } else {
+        &[]
+    };
+
     if opts.dry_run {
         // dry-run: in lệnh, không chạy, vẫn ghi audit với exit_code 0 + dry_run flag (§5.5)
         println!("[dry-run] {} {}", cmd, safe_args.join(" "));
@@ -185,7 +192,7 @@ fn execute_command(
     }
 
     let _shadow_path = if opts.clean_env {
-        let shadow_path = ShadowPath::create()?;
+        let shadow_path = ShadowPath::create(&scoped_exempt)?;
         let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
         command.env_clear();
         for (key, value) in &opts.env {
@@ -209,7 +216,7 @@ fn execute_command(
     } else {
         Some(opts.timeout.unwrap_or_else(default_timeout))
     };
-    let outcome = wait_with_timeout(child, timeout, opts.clean_env, mode)?;
+    let outcome = wait_with_timeout(child, timeout, opts.clean_env, &scoped_exempt, mode)?;
     let duration_ms = start.elapsed().as_millis() as u64;
     let exit_code = outcome.status.code().unwrap_or(-1);
 
@@ -247,12 +254,14 @@ struct ShadowPath {
 }
 
 impl ShadowPath {
-    fn create() -> Result<Self> {
+    fn create(scoped_exempt: &[&str]) -> Result<Self> {
         let dir = unique_temp_dir("mg-exec-shadow-path");
         std::fs::create_dir_all(&dir)?;
 
         for tool in FORBIDDEN_TOOLS {
-            write_blocker(&dir, tool)?;
+            if !scoped_exempt.contains(&tool) {
+                write_blocker(&dir, tool)?;
+            }
         }
 
         Ok(Self { dir })
@@ -335,7 +344,7 @@ fn reject_forbidden_script_file(cmd: &str) -> Result<()> {
     }
 
     let content = String::from_utf8_lossy(&bytes);
-    if let Some(tool) = forbidden_process_name("", &content) {
+    if let Some(tool) = forbidden_process_name("", &content, &[]) {
         bail!(
             "script '{}' references forbidden package manager '{}'",
             path.display(),
@@ -358,6 +367,7 @@ fn wait_with_timeout(
     mut child: std::process::Child,
     timeout: Option<Duration>,
     monitor_forbidden_children: bool,
+    exempt: &[&str],
     mode: OutputMode,
 ) -> Result<ExecOutcome> {
     let started = Instant::now();
@@ -367,7 +377,7 @@ fn wait_with_timeout(
             return finish_child(child, status, mode);
         }
         if monitor_forbidden_children {
-            if let Some(found) = find_forbidden_descendant(child.id()) {
+            if let Some(found) = find_forbidden_descendant(child.id(), exempt) {
                 terminate_process_tree(child.id());
                 let _ = child.kill();
                 let out = finish_after_forced_exit(child, mode)?;
@@ -479,7 +489,7 @@ struct ForbiddenProcess {
 }
 
 #[cfg(unix)]
-fn find_forbidden_descendant(root_pid: u32) -> Option<ForbiddenProcess> {
+fn find_forbidden_descendant(root_pid: u32, exempt: &[&str]) -> Option<ForbiddenProcess> {
     let output = Command::new("ps")
         .args(["-axo", "pid=,ppid=,comm=,command="])
         .output()
@@ -508,7 +518,7 @@ fn find_forbidden_descendant(root_pid: u32) -> Option<ForbiddenProcess> {
         for (pid, _ppid, command, command_line) in
             processes.iter().filter(|(_, ppid, _, _)| *ppid == parent)
         {
-            if let Some(name) = forbidden_process_name(command, command_line) {
+            if let Some(name) = forbidden_process_name(command, command_line, exempt) {
                 return Some(ForbiddenProcess { pid: *pid, name });
             }
             frontier.push(*pid);
@@ -519,7 +529,7 @@ fn find_forbidden_descendant(root_pid: u32) -> Option<ForbiddenProcess> {
 }
 
 #[cfg(not(unix))]
-fn find_forbidden_descendant(_root_pid: u32) -> Option<ForbiddenProcess> {
+fn find_forbidden_descendant(_root_pid: u32, _exempt: &[&str]) -> Option<ForbiddenProcess> {
     None
 }
 
@@ -537,16 +547,17 @@ fn process_basename(command: &str) -> String {
         .to_string()
 }
 
-fn forbidden_process_name(command: &str, command_line: &str) -> Option<String> {
+fn forbidden_process_name(command: &str, command_line: &str, exempt: &[&str]) -> Option<String> {
+    let exempt = |name: &str| exempt.contains(&name);
     let process_name = process_basename(command);
-    if FORBIDDEN_TOOLS.contains(&process_name.as_str()) {
+    if FORBIDDEN_TOOLS.contains(&process_name.as_str()) && !exempt(&process_name) {
         return Some(process_name);
     }
 
     command_line
         .split_whitespace()
         .map(process_basename)
-        .find(|name| FORBIDDEN_TOOLS.contains(&name.as_str()))
+        .find(|name| FORBIDDEN_TOOLS.contains(&name.as_str()) && !exempt(name))
 }
 
 fn forbidden_child_error(

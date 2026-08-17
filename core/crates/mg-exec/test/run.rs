@@ -51,7 +51,7 @@ fn inherited_run_rejects_forbidden_pm_before_spawn() {
         ..Default::default()
     };
     let err = run_inherited("pnpm", &["install".to_string()], &opts).unwrap_err();
-    assert!(err.to_string().contains("permanently forbidden"));
+    assert!(err.to_string().contains("forbidden"), "{err}");
 }
 
 #[test]
@@ -286,4 +286,41 @@ fn inherited_project_binary_rejects_script_that_references_forbidden_pm() {
     assert!(err
         .to_string()
         .contains("references forbidden package manager"));
+}
+
+#[test]
+fn npm_allowed_only_inside_react_native_subdir() {
+    let base = std::env::temp_dir().join(format!("mgexec-rn-{}", std::process::id()));
+    let rn = base.join("react-native");
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&rn).unwrap();
+    fs::write(base.join("mg.toml"), "[app]\nlanguage = \"multi\"\n").unwrap();
+    fs::write(
+        rn.join("package.json"),
+        "{\"dependencies\": {\"react-native\": \"0.7x\"}}",
+    )
+    .unwrap();
+
+    let opts = ExecOptions {
+        cwd: Some(rn.clone()),
+        clean_env: true,
+        ..Default::default()
+    };
+    let err = run_inherited("npm", &["install".to_string()], &opts).unwrap_err();
+    assert!(
+        !err.to_string().contains("forbidden"),
+        "npm inside react-native subdir must pass allowlist, got: {err}"
+    );
+
+    let outside = ExecOptions {
+        clean_env: true,
+        ..Default::default()
+    };
+    let err = run_inherited("npm", &["install".to_string()], &outside).unwrap_err();
+    assert!(
+        err.to_string().contains("forbidden"),
+        "npm outside react-native subdir must be rejected, got: {err}"
+    );
+
+    let _ = fs::remove_dir_all(&base);
 }
