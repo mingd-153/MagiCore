@@ -32,6 +32,8 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "platformio",
     "terraform",
     "tofu",
+    "cdk",
+    "pulumi",
     "aws",
     "wrangler",
     "gcloud",
