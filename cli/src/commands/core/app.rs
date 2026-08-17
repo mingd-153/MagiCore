@@ -95,6 +95,41 @@ fn run_tool(root: &Path, cmd: &str, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Lệnh theo language cho verb — None = không có CLI passthrough, sửa manifest tay.
+fn tool_command(lang: mg_app_adapter::AppLanguage, verb: &str) -> Option<InstallCommand> {
+    let (tool, base): (&str, &[&str]) = match (lang, verb) {
+        (mg_app_adapter::AppLanguage::Flutter, "add") => ("flutter", &["pub", "add"]),
+        (mg_app_adapter::AppLanguage::Flutter, "remove") => ("flutter", &["pub", "remove"]),
+        (mg_app_adapter::AppLanguage::Flutter, "list") => ("flutter", &["pub", "deps"]),
+        (mg_app_adapter::AppLanguage::Flutter, "update") => {
+            ("flutter", &["pub", "upgrade"])
+        }
+        (mg_app_adapter::AppLanguage::Kotlin, "list") => ("gradle", &["dependencies"]),
+        (mg_app_adapter::AppLanguage::Swift, "list") => {
+            ("swift", &["package", "show-dependencies"])
+        }
+        _ => return None,
+    };
+    Some(InstallCommand {
+        tool: tool.to_string(),
+        args: base.iter().map(|s| s.to_string()).collect(),
+    })
+}
+
+fn manifest_hint(lang: mg_app_adapter::AppLanguage, verb: &str) -> anyhow::Error {
+    let file = match lang {
+        mg_app_adapter::AppLanguage::Flutter => "pubspec.yaml",
+        mg_app_adapter::AppLanguage::Kotlin => "android/app/build.gradle(.kts)",
+        mg_app_adapter::AppLanguage::Swift => "Package.swift",
+        mg_app_adapter::AppLanguage::ReactNative => "package.json (npm — C9 scoped exception)",
+        mg_app_adapter::AppLanguage::ObjC => "iOS Podfile",
+        mg_app_adapter::AppLanguage::Multi => "platform subproject manifest",
+    };
+    anyhow::anyhow!(
+        "'{verb}' for {lang:?} has no CLI passthrough — edit {file} then run `mg install`."
+    )
+}
+
 /// `mg install` — passthrough tool theo language; `--dry-run` in lệnh không chạy.
 pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     let root = project_root()?;
@@ -251,25 +286,52 @@ pub async fn add(
     _no_save: bool,
     _global: bool,
 ) -> Result<()> {
-    let _ = packages;
-    Err(not_available(
-        "has no package manager — add deps with provider tooling (flutter pub add / gradle / swift package add).",
-    ))
+    let root = project_root()?;
+    let lang = language(&root)?;
+    if packages.is_empty() {
+        anyhow::bail!("mg add-app <pkg> [pkg...] — khai tên package cần thêm");
+    }
+    let Some(mut cmd) = tool_command(lang, "add") else {
+        return Err(manifest_hint(lang, "add"));
+    };
+    cmd.args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    run_tool(&root, &cmd.tool, &cmd.args)?;
+    Ok(())
 }
-pub async fn remove(_packages: Vec<String>) -> Result<()> {
-    Err(not_available(
-        "has no package manager — remove via provider tooling.",
-    ))
+
+pub async fn remove(packages: Vec<String>) -> Result<()> {
+    let root = project_root()?;
+    let lang = language(&root)?;
+    if packages.is_empty() {
+        anyhow::bail!("mg remove-app <pkg> [pkg...] — khai tên package cần gỡ");
+    }
+    let Some(mut cmd) = tool_command(lang, "remove") else {
+        return Err(manifest_hint(lang, "remove"));
+    };
+    cmd.args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    run_tool(&root, &cmd.tool, &cmd.args)?;
+    Ok(())
 }
+
 pub async fn list() -> Result<()> {
-    Err(not_available(
-        "has no package registry — inspect deps with provider tooling (pub deps / gradle dependencies / swift package show-dependencies).",
-    ))
+    let root = project_root()?;
+    let lang = language(&root)?;
+    let Some(cmd) = tool_command(lang, "list") else {
+        return Err(manifest_hint(lang, "list"));
+    };
+    run_tool(&root, &cmd.tool, &cmd.args)?;
+    Ok(())
 }
-pub async fn update(_packages: Vec<String>, _install: bool) -> Result<()> {
-    Err(not_available(
-        "dep updates flow through provider tooling (flutter pub upgrade / gradle / swift package update).",
-    ))
+
+pub async fn update(packages: Vec<String>, _install: bool) -> Result<()> {
+    let root = project_root()?;
+    let lang = language(&root)?;
+    let Some(mut cmd) = tool_command(lang, "update") else {
+        return Err(manifest_hint(lang, "update"));
+    };
+    cmd.args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    run_tool(&root, &cmd.tool, &cmd.args)?;
+    Ok(())
 }
 
 pub mod create {
