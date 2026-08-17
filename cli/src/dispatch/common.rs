@@ -25,6 +25,8 @@ pub async fn dispatch_common(
                 _ => commands::core::clo::deploy(run).await,
             }
         }
+        CommonCommand::CiGenerate => commands::core::cicd::ci_generate(),
+        CommonCommand::Verify => commands::core::cicd::verify().await,
         CommonCommand::Start => commands::start::run(core).await,
         CommonCommand::Exec { command, args } => commands::exec::run(core, command, args),
         CommonCommand::Info { package, json } => commands::info::run(package, json).await,
