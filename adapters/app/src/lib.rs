@@ -17,6 +17,9 @@ pub enum AppLanguage {
     Flutter,
     Kotlin,
     Swift,
+    ReactNative,
+    ObjC,
+    Multi,
 }
 
 impl AppLanguage {
@@ -25,6 +28,9 @@ impl AppLanguage {
             AppLanguage::Flutter => "flutter",
             AppLanguage::Kotlin => "kotlin",
             AppLanguage::Swift => "swift",
+            AppLanguage::ReactNative => "react-native",
+            AppLanguage::ObjC => "objc",
+            AppLanguage::Multi => "multi",
         }
     }
 }
@@ -46,6 +52,7 @@ pub fn detect_language(root: &Path) -> Option<AppLanguage> {
                     "flutter" => Some(AppLanguage::Flutter),
                     "kotlin" => Some(AppLanguage::Kotlin),
                     "swift" => Some(AppLanguage::Swift),
+                    "multi" => Some(AppLanguage::Multi),
                     _ => None,
                 };
             }
@@ -59,6 +66,16 @@ pub fn detect_language(root: &Path) -> Option<AppLanguage> {
     }
     if root.join("Package.swift").exists() {
         return Some(AppLanguage::Swift);
+    }
+    // react-native: package.json có dependency react-native (không phải web npm)
+    if let Ok(content) = std::fs::read_to_string(root.join("package.json")) {
+        if content.contains("\"react-native\"") {
+            return Some(AppLanguage::ReactNative);
+        }
+    }
+    // objc entry: nằm trong ios/ của project multi — ObjcBridge.m cạnh ObjcBridge.h
+    if root.join("ObjcBridge.h").exists() && root.join("ObjcBridge.m").exists() {
+        return Some(AppLanguage::ObjC);
     }
     None
 }
@@ -223,6 +240,36 @@ mod tests {
         let dir = tmp_dir("cfg");
         std::fs::write(dir.join("mg.toml"), "[app]\nlanguage = \"kotlin\"\n").unwrap();
         assert_eq!(detect_language(&dir), Some(AppLanguage::Kotlin));
+    }
+
+    #[test]
+    fn detect_multi_via_mg_toml() {
+        let dir = tmp_dir("multi");
+        std::fs::write(
+            dir.join("mg.toml"),
+            "[app]\nlanguage = \"multi\"\nplatforms = [\"android\"]\n",
+        )
+        .unwrap();
+        assert_eq!(detect_language(&dir), Some(AppLanguage::Multi));
+    }
+
+    #[test]
+    fn detect_react_native_via_package_json() {
+        let dir = tmp_dir("rn");
+        std::fs::write(
+            dir.join("package.json"),
+            "{\"dependencies\":{\"react-native\":\"0.74.0\"}}\n",
+        )
+        .unwrap();
+        assert_eq!(detect_language(&dir), Some(AppLanguage::ReactNative));
+    }
+
+    #[test]
+    fn detect_objc_via_bridge_pair() {
+        let dir = tmp_dir("objc");
+        std::fs::write(dir.join("ObjcBridge.h"), "@interface MGShared\n").unwrap();
+        std::fs::write(dir.join("ObjcBridge.m"), "@implementation MGShared\n").unwrap();
+        assert_eq!(detect_language(&dir), Some(AppLanguage::ObjC));
     }
 
     #[test]

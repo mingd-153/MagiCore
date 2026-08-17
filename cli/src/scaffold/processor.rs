@@ -461,7 +461,13 @@ impl Scaffolder {
             "clo" => Self::write_cloud_files(target, &name, &framework),
             "cicd" => Self::write_cicd_files(target, &name, &framework),
             "iot" => Self::write_iot_files(target, &name, &framework),
-            "app" => Self::write_app_files(target, &name, &framework),
+            "app" => {
+                if framework == "multi" {
+                    Self::write_multi_app_files(target, &name)
+                } else {
+                    Self::write_app_files(target, &name, &framework)
+                }
+            }
             "lib" => Self::write_lib_files(target, &name, &framework),
             other => anyhow::bail!("Unsupported core '{}'", other),
         }
@@ -710,6 +716,100 @@ impl Scaffolder {
                 )?;
             }
         }
+
+        Ok(())
+    }
+
+    /// C9 — multi-platform: shared Kotlin (KMP) + android/ios (swift+objc)/react-native/flutter.
+    fn write_multi_app_files(target: &Path, name: &str) -> Result<()> {
+        let slug = slugify(name);
+        let pkg = slug.replace('-', "_");
+
+        // shared/ — Kotlin KMP commonMain + androidMain (nơi chứa logic dùng chung)
+        Self::write_file(
+            &target.join("shared").join("build.gradle.kts"),
+            "plugins {\n    kotlin(\"multiplatform\") version \"2.0.0\"\n    kotlin(\"native.cocoapods\")\n}\n\nkotlin {\n    androidTarget()\n    iosX64()\n    iosArm64()\n    iosSimulatorArm64()\n    sourceSets {\n        commonMain.dependencies {\n            implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0\")\n        }\n    }\n}\n",
+        )?;
+        Self::write_file(
+            &target.join("shared").join("settings.gradle.kts"),
+            &format!("rootProject.name = \"{}-shared\"\n", slug),
+        )?;
+        Self::write_file(
+            &target
+                .join("shared")
+                .join("src")
+                .join("commonMain")
+                .join("kotlin")
+                .join(pkg.as_str())
+                .join("Shared.kt"),
+            "package {pkg}\n\nobject Shared {\n    fun hello(): String = \"hello from MegaGate shared (KMP)\"\n}\n",
+        )?;
+
+        // android/ — kotlin entry dùng shared
+        Self::write_file(
+            &target.join("android").join("settings.gradle.kts"),
+            &format!("rootProject.name = \"{}-android\"\n", slug),
+        )?;
+        Self::write_file(
+            &target.join("android").join("app").join("src").join("main").join("kotlin").join("Main.kt"),
+            "package {pkg}.android\n\nimport {pkg}.Shared\n\nfun main() {\n    println(Shared.hello())\n}\n",
+        )?;
+
+        // ios/ — swift + objc entry, cùng SPM target
+        Self::write_file(
+            &target.join("ios").join("Package.swift"),
+            &format!(
+                "// swift-tools-version: 5.9\nimport PackageDescription\n\nlet package = Package(\n    name: \"{}\",\n    targets: [.executableTarget(name: \"{}\")]\n)\n",
+                slug, slug
+            ),
+        )?;
+        Self::write_file(
+            &target
+                .join("ios")
+                .join("Sources")
+                .join(slug.as_str())
+                .join("main.swift"),
+            "print(\"MegaGate iOS app scaffold (swift)\")\n",
+        )?;
+        // ObjC bridge nằm ngoài SPM Sources (Xcode native project dùng) — SPM không chấp mixed language.
+        Self::write_file(
+            &target.join("ios").join("ObjcBridge").join("ObjcBridge.h"),
+            "#import <Foundation/Foundation.h>\n\n@interface MGShared : NSObject\n+ (NSString *)hello;\n@end\n",
+        )?;
+        Self::write_file(
+            &target.join("ios").join("ObjcBridge").join("ObjcBridge.m"),
+            "#import \"ObjcBridge.h\"\n\n@implementation MGShared\n+ (NSString *)hello {\n    return @\"hello from MegaGate shared (objc)\";\n}\n@end\n",
+        )?;
+
+        // react-native/ — js entry
+        Self::write_file(
+            &target.join("react-native").join("package.json"),
+            &format!(
+                "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"dependencies\": {{\n    \"react\": \"18.2.0\",\n    \"react-native\": \"0.74.0\"\n  }}\n}}\n",
+                slug
+            ),
+        )?;
+        Self::write_file(
+            &target.join("react-native").join("index.js"),
+            "const { AppRegistry } = require('react-native');\nconst App = require('./App');\n\nAppRegistry.registerComponent('main', () => App);\n",
+        )?;
+        Self::write_file(
+            &target.join("react-native").join("App.js"),
+            "const React = require('react');\nconst { Text } = require('react-native');\n\nmodule.exports = function App() {\n  return React.createElement(Text, null, 'hello from MegaGate (react-native)');\n};\n",
+        )?;
+
+        // flutter/ — dart entry
+        Self::write_file(
+            &target.join("flutter").join("pubspec.yaml"),
+            &format!(
+                "name: {}\ndescription: MegaGate Flutter platform entry\ndependencies:\n  flutter:\n    sdk: flutter\n",
+                slug
+            ),
+        )?;
+        Self::write_file(
+            &target.join("flutter").join("lib").join("main.dart"),
+            "import 'package:flutter/material.dart';\n\nvoid main() => runApp(const App());\n\nclass App extends StatelessWidget {\n  const App({super.key});\n\n  @override\n  Widget build(BuildContext context) {\n    return MaterialApp(home: Scaffold(body: Center(child: Text('hello from MegaGate (flutter)'))));\n  }\n}\n",
+        )?;
 
         Ok(())
     }
@@ -2584,5 +2684,55 @@ mod tests {
         };
         let out_no = Scaffolder::scaffold(&config_no).unwrap();
         assert!(!out_no.join(".env").exists());
+    }
+
+    #[test]
+    fn test_multi_app_scaffold_writes_shared_and_all_platforms() {
+        let root = tempfile::tempdir().unwrap();
+        let project_dir = root.path().join("demo-multi");
+        let config = ScaffoldConfig {
+            core: "app".to_string(),
+            sub_type: String::new(),
+            frameworks: vec!["multi".to_string()],
+            project_name: project_dir.to_string_lossy().to_string(),
+            features: vec![],
+            template_dir: PathBuf::new(),
+        };
+
+        let out = Scaffolder::scaffold(&config).unwrap();
+        let proj_config = mg_config::project::ProjectConfig::from_scaffold(
+            Scaffolder::display_name(&out),
+            "app",
+            "",
+            config.frameworks.clone(),
+            "",
+            config.features.clone(),
+        );
+        proj_config.save(&out).unwrap();
+        for expected in [
+            "mg.toml",
+            "shared/build.gradle.kts",
+            "shared/src/commonMain/kotlin/demo_multi/Shared.kt",
+            "android/app/src/main/kotlin/Main.kt",
+            "ios/Package.swift",
+            "ios/Sources/demo-multi/main.swift",
+            "ios/ObjcBridge/ObjcBridge.h",
+            "ios/ObjcBridge/ObjcBridge.m",
+            "react-native/package.json",
+            "react-native/App.js",
+            "flutter/pubspec.yaml",
+            "flutter/lib/main.dart",
+        ] {
+            assert!(out.join(expected).exists(), "missing {expected}");
+        }
+        let mg = std::fs::read_to_string(out.join("mg.toml")).unwrap();
+        assert!(mg.contains("ecosystem = \"app\""), "app ecosystem");
+        assert!(mg.contains("language = \"multi\""), "multi language");
+        for platform in ["android", "ios", "react-native", "flutter"] {
+            assert!(
+                mg.contains(&format!("\"{platform}\"")),
+                "platform {platform}"
+            );
+        }
     }
 }

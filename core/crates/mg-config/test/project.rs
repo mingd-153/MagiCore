@@ -169,6 +169,26 @@ fn auto_detect_no_manifest_returns_none() {
 }
 
 #[test]
+fn auto_detect_pubspec_returns_app() {
+    let dir = temp_test_dir("auto-app");
+    std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
+    assert_eq!(ProjectConfig::auto_detect(&dir), Some("app".to_string()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn auto_detect_mg_toml_ecosystem_wins() {
+    let dir = temp_test_dir("auto-mg");
+    std::fs::write(
+        dir.join("mg.toml"),
+        "name = \"x\"\necosystem = \"game\"\n[game]\nengine = \"bevy\"\n",
+    )
+    .unwrap();
+    assert_eq!(ProjectConfig::auto_detect(&dir), Some("game".to_string()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn find_project_root_mg_toml_in_cwd() {
     let dir = temp_test_dir("root-cwd-mg");
     std::fs::write(dir.join("mg.toml"), "").unwrap();

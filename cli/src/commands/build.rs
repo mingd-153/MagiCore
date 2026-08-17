@@ -27,8 +27,118 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
     info(&format!("Execution profile: {}", ctx.execution_summary()));
     match ctx.adapter().name() {
         "web" => build_web(&root, ctx.execution(), target).await,
+        "app" => build_app(&root).await,
         other => bail!("'mg build' not implemented for '{}' core yet", other),
     }
+}
+
+/// C9 — build app: single framework passthrough hoặc multi-platform (shared + platforms).
+/// Fail-closed: platform thiếu toolchain → cảnh báo + skip, không fail cả project.
+async fn build_app(root: &Path) -> Result<()> {
+    let cfg = std::fs::read_to_string(root.join("mg.toml"))?;
+    let v: toml::Value = toml::from_str(&cfg)?;
+    let language = v
+        .get("app")
+        .and_then(|a| a.get("language"))
+        .and_then(|l| l.as_str())
+        .unwrap_or("flutter");
+
+    if language == "multi" {
+        return build_multi_app(root, &v);
+    }
+
+    let (tool, args): (&str, &[&str]) = match language {
+        "kotlin" => ("gradle", &["build"]),
+        "swift" => ("swift", &["build"]),
+        _ => ("flutter", &["build"]),
+    };
+    if tool_unavailable(tool) {
+        anyhow::bail!(
+            "'{tool}' not found in PATH — install it first (mg doctor check lists required toolchains)"
+        );
+    }
+    run_allowlisted_tool(root, tool, args)?;
+    mg_ui::success(&format!("App build completed ({language})"));
+    Ok(())
+}
+
+fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
+    let platforms: Vec<String> = v
+        .get("app")
+        .and_then(|a| a.get("platforms"))
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let platforms = if platforms.is_empty() {
+        vec![
+            "android".to_string(),
+            "ios".to_string(),
+            "react-native".to_string(),
+            "flutter".to_string(),
+        ]
+    } else {
+        platforms
+    };
+
+    let mut built = 0;
+    for platform in &platforms {
+        let dir = root.join(platform);
+        if !dir.exists() {
+            mg_ui::warning(&format!(
+                "Platform '{platform}' has no directory — skipping"
+            ));
+            continue;
+        }
+        match platform.as_str() {
+            "android" => {
+                if tool_unavailable("gradle") {
+                    mg_ui::warning("gradle not found — skipping android build");
+                    continue;
+                }
+                run_allowlisted_tool(&dir, "gradle", &["build"])?;
+                built += 1;
+            }
+            "ios" => {
+                if tool_unavailable("swift") {
+                    mg_ui::warning("swift not found — skipping ios build");
+                    continue;
+                }
+                run_allowlisted_tool(&dir, "swift", &["build"])?;
+                built += 1;
+            }
+            "react-native" => {
+                mg_ui::warning(
+                    "react-native build needs npm, which MegaGate policy forbids (§5.2) — skipping; RN resolution is a future track",
+                );
+            }
+            "flutter" => {
+                if tool_unavailable("flutter") {
+                    mg_ui::warning("flutter not found — skipping flutter build");
+                    continue;
+                }
+                run_allowlisted_tool(&dir, "flutter", &["build"])?;
+                built += 1;
+            }
+            other => mg_ui::warning(&format!("Unknown platform '{other}' — skipping")),
+        }
+    }
+    if built == 0 {
+        mg_ui::warning("No platform built (toolchains missing or skipped)");
+    }
+    Ok(())
+}
+
+fn tool_unavailable(tool: &str) -> bool {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(|dir| Path::new(dir).join(tool))
+        .find(|p| p.is_file())
+        .is_none()
 }
 
 fn find_root() -> anyhow::Result<PathBuf> {
@@ -478,8 +588,9 @@ fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::{
-        find_native_engine_crate, map_framework_build_script,
-        reject_external_package_manager_script, resolve_web_build_target, WebBuildTarget,
+        build_multi_app, find_native_engine_crate, map_framework_build_script,
+        reject_external_package_manager_script, resolve_web_build_target, tool_unavailable,
+        WebBuildTarget,
     };
     use mg_config::project::ProjectExecutionConfig;
     use std::{fs, path::Path};
@@ -597,5 +708,27 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("delegates to 'yarn'"));
+    }
+
+    #[test]
+    fn tool_unavailable_false_for_known_tool_in_path() {
+        assert_eq!(tool_unavailable("sh"), false);
+    }
+
+    #[test]
+    fn tool_unavailable_true_for_nonsense_tool() {
+        assert_eq!(tool_unavailable("definitely-not-a-real-tool-mg"), true);
+    }
+
+    #[test]
+    fn build_multi_skips_missing_platform_dir() {
+        let tmp = std::env::temp_dir().join(format!("mg-build-multi-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("mg.toml"), "[app]\nlanguage=\"multi\"\n").unwrap();
+        let v: toml::Value =
+            toml::from_str(&std::fs::read_to_string(tmp.join("mg.toml")).unwrap()).unwrap();
+        build_multi_app(&tmp, &v).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
