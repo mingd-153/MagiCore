@@ -25,6 +25,9 @@ jobs:
         run: cargo fmt --all --check
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  - name: mg-exec allowlist tests
+    run: cargo test -p mg-exec --test run 2>&1
       - name: cargo check
         run: cargo check --all-targets
       - name: module hygiene
