@@ -28,6 +28,7 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
     match ctx.adapter().name() {
         "web" => build_web(&root, ctx.execution(), target).await,
         "app" => build_app(&root).await,
+        "cloud" => build_cloud(&root).await,
         other => bail!("'mg build' not implemented for '{}' core yet", other),
     }
 }
@@ -143,6 +144,64 @@ fn tool_unavailable(tool: &str) -> bool {
         .map(|dir| Path::new(dir).join(tool))
         .find(|p| p.is_file())
         .is_none()
+}
+
+/// Cloud build (06 §4): cdk synth (qua node_modules/.bin — npm-format, như web pattern),
+/// pulumi preview, terraform plan — đều là dry-run (không ghi cloud state).
+/// Fail-closed: toolchain thiếu → cảnh báo, không fail project.
+async fn build_cloud(root: &Path) -> Result<()> {
+    let kind = mg_cloud_adapter::detect_type(root)
+        .ok_or_else(|| anyhow::anyhow!("No cloud framework detected in {}", root.display()))?;
+    match kind {
+        mg_cloud_adapter::CloudType::Cdk => {
+            let bin = root.join("node_modules").join(".bin").join("cdk");
+            if !bin.exists() {
+                mg_ui::warning(
+                    "cdk not installed — run `mg install` first (node_modules/.bin/cdk missing)",
+                );
+                return Ok(());
+            }
+            let args = node_bin_args(root, "cdk", &["synth"])?
+                .into_iter()
+                .map(|a| a.to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+            let local_bin = root.join("node_modules").join(".bin");
+            let env = vec![(
+                "PATH".to_string(),
+                prepend_path(&local_bin)?.to_string_lossy().to_string(),
+            )];
+            info(&format!("cdk synth: node {}", args.join(" ")));
+            let opts = mg_exec::prelude::ExecOptions {
+                cwd: Some(root.to_path_buf()),
+                env,
+                clean_env: true,
+                ..Default::default()
+            };
+            mg_exec::prelude::run_inherited("node", &args, &opts)?;
+        }
+        mg_cloud_adapter::CloudType::Pulumi => {
+            if tool_unavailable("pulumi") {
+                mg_ui::warning("pulumi not found — skipping build (install pulumi CLI first)");
+                return Ok(());
+            }
+            run_allowlisted_tool(root, "pulumi", &["preview"])?;
+        }
+        mg_cloud_adapter::CloudType::Terraform => {
+            if tool_unavailable("terraform") {
+                mg_ui::warning(
+                    "terraform not found — skipping build (install terraform CLI first)",
+                );
+                return Ok(());
+            }
+            run_allowlisted_tool(root, "terraform", &["plan"])?;
+        }
+        mg_cloud_adapter::CloudType::Cloudflare => {
+            mg_ui::warning(
+                "cloudflare workers build/deploy thuộc cicd core (Q12) — cloud core không làm P1",
+            );
+        }
+    }
+    Ok(())
 }
 
 fn find_root() -> anyhow::Result<PathBuf> {
@@ -592,7 +651,7 @@ fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::{
-        build_multi_app, find_native_engine_crate, map_framework_build_script,
+        build_cloud, build_multi_app, find_native_engine_crate, map_framework_build_script,
         reject_external_package_manager_script, resolve_web_build_target, tool_unavailable,
         WebBuildTarget,
     };
@@ -733,6 +792,31 @@ mod tests {
         let v: toml::Value =
             toml::from_str(&std::fs::read_to_string(tmp.join("mg.toml")).unwrap()).unwrap();
         build_multi_app(&tmp, &v).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn build_cloud_warns_skip_when_toolchain_missing() {
+        let tmp = std::env::temp_dir().join(format!("mg-build-cloud-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        // terraform: không có CLI trên máy → cảnh báo, không fail
+        std::fs::write(tmp.join("mg.toml"), "[cloud]\ntype = \"terraform\"\n").unwrap();
+        std::fs::write(tmp.join("main.tf"), "provider \"aws\" {}\n").unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(build_cloud(&tmp)).unwrap();
+        // cdk: node_modules/.bin/cdk thiếu → cảnh báo, không fail
+        std::fs::write(tmp.join("mg.toml"), "[cloud]\ntype = \"cdk\"\n").unwrap();
+        std::fs::write(
+            tmp.join("package.json"),
+            "{\"name\":\"x\",\"dependencies\":{\"aws-cdk-lib\":\"^2.0.0\"}}",
+        )
+        .unwrap();
+        rt.block_on(build_cloud(&tmp)).unwrap();
+        // pulumi: CLI thiếu → cảnh báo, không fail
+        std::fs::write(tmp.join("mg.toml"), "[cloud]\ntype = \"pulumi\"\n").unwrap();
+        std::fs::write(tmp.join("Pulumi.yaml"), "name: x\nruntime: nodejs\n").unwrap();
+        rt.block_on(build_cloud(&tmp)).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

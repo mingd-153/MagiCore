@@ -17,6 +17,7 @@ pub enum CloudType {
     Cdk,
     Pulumi,
     Terraform,
+    Cloudflare,
 }
 
 impl CloudType {
@@ -25,6 +26,7 @@ impl CloudType {
             CloudType::Cdk => "cdk",
             CloudType::Pulumi => "pulumi",
             CloudType::Terraform => "terraform",
+            CloudType::Cloudflare => "cloudflare",
         }
     }
 }
@@ -47,10 +49,14 @@ pub fn detect_type(root: &Path) -> Option<CloudType> {
                     "cdk" => Some(CloudType::Cdk),
                     "pulumi" => Some(CloudType::Pulumi),
                     "terraform" => Some(CloudType::Terraform),
+                    "cloudflare" => Some(CloudType::Cloudflare),
                     _ => None,
                 };
             }
         }
+    }
+    if root.join("wrangler.toml").exists() {
+        return Some(CloudType::Cloudflare);
     }
     if root.join("Pulumi.yaml").exists() {
         return Some(CloudType::Pulumi);
