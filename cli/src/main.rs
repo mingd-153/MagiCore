@@ -242,6 +242,11 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::commands::store::StoreCmd,
     },
+    #[command(about = "Benchmark install (phases + wall-time, C3)")]
+    Bench {
+        #[command(flatten)]
+        args: crate::commands::bench::BenchArgs,
+    },
     #[command(about = "Approve/deny lifecycle scripts per package (T5 trust gate)")]
     Trust {
         #[command(subcommand)]
@@ -261,6 +266,16 @@ pub(crate) enum Commands {
     Telemetry {
         #[command(subcommand)]
         cmd: crate::commands::telemetry::TelemetryCmd,
+    },
+    #[command(about = "Network transparency — liệt kê MỌI kết nối đi ra + reachability")]
+    Network {
+        #[command(subcommand)]
+        cmd: crate::commands::network::NetworkCmd,
+    },
+    #[command(about = "Environment diagnostic (toolchain, store, disk, network)")]
+    Doctor {
+        #[command(subcommand)]
+        cmd: crate::commands::doctor::DoctorCmd,
     },
     #[command(about = "Generate a CycloneDX 1.5 SBOM from the resolved graph")]
     Sbom {

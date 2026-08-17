@@ -135,6 +135,14 @@ fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
         config.features.clone(),
     );
     proj_config.save(project_dir)?;
+    if config.core == "game" {
+        // `mg run` = script runner — game scaffold bổ sung bản ship chuẩn (mg build → cargo run)
+        let scripts = "\n[scripts]\nrun = \"cargo run\"\nbuild = \"cargo build\"\n".to_string();
+        let path = project_dir.join("mg.toml");
+        let mut content = std::fs::read_to_string(&path)?;
+        content.push_str(&scripts);
+        std::fs::write(path, content)?;
+    }
     Ok(())
 }
 

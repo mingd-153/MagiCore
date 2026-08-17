@@ -83,7 +83,8 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
         if ft.is_dir() {
             copy_dir(&from, &to)?;
         } else if ft.is_file() || ft.is_symlink() {
-            std::fs::copy(&from, &to).with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
+            std::fs::copy(&from, &to)
+                .with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
         }
     }
     Ok(())
@@ -98,8 +99,7 @@ fn clear_dir(dst: &Path) -> Result<()> {
         let entry = entry?;
         let p = entry.path();
         if entry.file_type()?.is_dir() {
-            std::fs::remove_dir_all(&p)
-                .with_context(|| format!("remove {}", p.display()))?;
+            std::fs::remove_dir_all(&p).with_context(|| format!("remove {}", p.display()))?;
         } else {
             std::fs::remove_file(&p).with_context(|| format!("remove {}", p.display()))?;
         }
@@ -209,12 +209,15 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             }
             copy_dir(&vstore_root_for(&project_root), &vstore_dst)?;
             println!("backup store → {}", backup_dir.display());
-            println!("  store.db: {} bytes", std::fs::metadata(&db_dst).map(|m| m.len()).unwrap_or(0));
             println!(
-                "  vstore: {} bytes",
-                dir_size(&vstore_dst)
+                "  store.db: {} bytes",
+                std::fs::metadata(&db_dst).map(|m| m.len()).unwrap_or(0)
             );
-            println!("  restore: mg store restore --path {}", backup_dir.display());
+            println!("  vstore: {} bytes", dir_size(&vstore_dst));
+            println!(
+                "  restore: mg store restore --path {}",
+                backup_dir.display()
+            );
             Ok(())
         }
         StoreCmd::Restore { path } => {
@@ -230,7 +233,10 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             // Fail-closed: điểm yếu ghi đè — tự backup trước khi khôi phục
             let safety_backup = default_backup_dir()?;
             let db_dst = store_db_for(&project_root)?;
-            copy_dir(&vstore_root_for(&project_root), &safety_backup.join("vstore"))?;
+            copy_dir(
+                &vstore_root_for(&project_root),
+                &safety_backup.join("vstore"),
+            )?;
             if db_dst.exists() {
                 std::fs::copy(&db_dst, safety_backup.join("store.db"))?;
             }
@@ -243,7 +249,10 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             clear_dir(&vstore_root_for(&project_root))?;
             copy_dir(&vstore_src, &vstore_root_for(&project_root))?;
             println!("restore store ← {}", backup_dir.display());
-            println!("  backup an toàn (trước khi khôi phục): {}", safety_backup.display());
+            println!(
+                "  backup an toàn (trước khi khôi phục): {}",
+                safety_backup.display()
+            );
             Ok(())
         }
     }
