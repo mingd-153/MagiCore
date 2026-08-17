@@ -42,6 +42,16 @@ fn install_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
             tool: "swift".to_string(),
             args: vec!["package".to_string(), "resolve".to_string()],
         },
+        mg_app_adapter::AppLanguage::ReactNative | mg_app_adapter::AppLanguage::ObjC => {
+            InstallCommand {
+                tool: String::new(),
+                args: vec![],
+            }
+        }
+        mg_app_adapter::AppLanguage::Multi => InstallCommand {
+            tool: String::new(),
+            args: vec![],
+        },
     }
 }
 
@@ -59,6 +69,12 @@ fn dev_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
         mg_app_adapter::AppLanguage::Swift => InstallCommand {
             tool: "swift".to_string(),
             args: vec!["run".to_string()],
+        },
+        mg_app_adapter::AppLanguage::ReactNative
+        | mg_app_adapter::AppLanguage::ObjC
+        | mg_app_adapter::AppLanguage::Multi => InstallCommand {
+            tool: String::new(),
+            args: vec![],
         },
     }
 }
@@ -83,11 +99,24 @@ fn run_tool(root: &Path, cmd: &str, args: &[String]) -> Result<()> {
 pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     let root = project_root()?;
     let lang = language(&root)?;
-    let cmd = install_command(lang);
 
     if !packages.is_empty() && dry_run {
         mg_ui::info("[dry-run] ignoring package args — app deps flow through provider tooling");
     }
+
+    if lang == mg_app_adapter::AppLanguage::Multi {
+        return install_multi(&root, dry_run).await;
+    }
+    if matches!(
+        lang,
+        mg_app_adapter::AppLanguage::ReactNative | mg_app_adapter::AppLanguage::ObjC
+    ) {
+        return Err(not_available(
+            "has no install flow yet — react-native/objc resolution is a future track (§5.2 npm policy)",
+        ));
+    }
+
+    let cmd = install_command(lang);
     if dry_run {
         mg_ui::info(&format!(
             "[dry-run] would run: {} {} (install chạy thật khi có tool — bỏ `--dry-run`)",
@@ -101,10 +130,101 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+/// Multi: install từng platform trong subdir; toolchain thiếu → skip cảnh báo.
+async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
+    let (android, ios, flutter) = platform_install_commands();
+    let platforms: [(&str, &Path, InstallCommand); 3] = [
+        ("android", &root.join("android"), android),
+        ("ios", &root.join("ios"), ios),
+        ("flutter", &root.join("flutter"), flutter),
+    ];
+    for (name, dir, cmd) in platforms {
+        if !dir.exists() {
+            mg_ui::info(&format!("Platform '{name}' missing directory — skipping"));
+            continue;
+        }
+        if cmd.tool.is_empty() {
+            continue;
+        }
+        if tool_unavailable(&cmd.tool) {
+            mg_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
+            continue;
+        }
+        if dry_run {
+            mg_ui::info(&format!(
+                "[dry-run] would run in {name}/: {} {}",
+                cmd.tool,
+                cmd.args.join(" ")
+            ));
+            continue;
+        }
+        mg_ui::info(&format!(
+            "Installing {name}: {} {}",
+            cmd.tool,
+            cmd.args.join(" ")
+        ));
+        run_tool(dir, &cmd.tool, &cmd.args)?;
+    }
+    Ok(())
+}
+
+fn tool_unavailable(tool: &str) -> bool {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(|dir| std::path::Path::new(dir).join(tool))
+        .find(|p| p.is_file())
+        .is_none()
+}
+
+/// react-native (npm) + shared (KMP gradle) bỏ qua P1 — xem open question spec C9 §7.
+fn platform_install_commands() -> (InstallCommand, InstallCommand, InstallCommand) {
+    (
+        InstallCommand {
+            tool: "gradle".to_string(),
+            args: vec!["dependencies".to_string()],
+        },
+        InstallCommand {
+            tool: "swift".to_string(),
+            args: vec!["package".to_string(), "resolve".to_string()],
+        },
+        InstallCommand {
+            tool: "flutter".to_string(),
+            args: vec!["pub".to_string(), "get".to_string()],
+        },
+    )
+}
+
 /// `mg dev` — chạy app qua tool theo language.
 pub async fn dev(_dry_run: bool) -> Result<()> {
     let root = project_root()?;
     let lang = language(&root)?;
+    if lang == mg_app_adapter::AppLanguage::Multi {
+        let dir = root.join("flutter");
+        if !dir.exists() {
+            anyhow::bail!(
+                "multi dev P1 targets flutter/ entry — run `mg build` for other platforms"
+            );
+        }
+        let cmd = InstallCommand {
+            tool: "flutter".to_string(),
+            args: vec!["run".to_string()],
+        };
+        mg_ui::info(&format!(
+            "App dev (flutter entry): running `{} {}`...",
+            cmd.tool,
+            cmd.args.join(" ")
+        ));
+        return run_tool(&dir, &cmd.tool, &cmd.args);
+    }
+    if matches!(
+        lang,
+        mg_app_adapter::AppLanguage::ReactNative | mg_app_adapter::AppLanguage::ObjC
+    ) {
+        return Err(not_available(
+            "has no dev flow yet — react-native/objc targets are scaffold-only in P1",
+        ));
+    }
     let cmd = dev_command(lang);
     mg_ui::info(&format!(
         "App dev: running `{} {}`...",

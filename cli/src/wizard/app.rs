@@ -25,6 +25,10 @@ impl AppWizard {
             prompt: "\n  Select app language:".to_string(),
             kind: QuestionKind::Select {
                 options: vec![
+                    Answer::new(
+                        "Multi-platform (KMP shared + android/ios/react-native/flutter)",
+                        "multi",
+                    ),
                     Answer::new("Flutter (dart)", "flutter"),
                     Answer::new("Kotlin (gradle)", "kotlin"),
                     Answer::new("Swift (SPM)", "swift"),

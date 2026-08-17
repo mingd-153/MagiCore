@@ -136,11 +136,13 @@ pub struct AiConfig {
     pub framework: String,
 }
 
-/// App core config — `[app] language` (flutter/kotlin/swift).
+/// App core config — `[app] language` (flutter/kotlin/swift/multi) + platforms (multi).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     #[serde(default)]
     pub language: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub platforms: Vec<String>,
 }
 
 /// CICD core config — `[cicd] provider` (github-actions/cloudflare/aws/gcp/argocd).
@@ -297,11 +299,28 @@ impl ProjectConfig {
             None
         };
         let app = if ecosystem == "app" {
+            let language = frameworks
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "flutter".to_string());
+            let platforms = if language == "multi" {
+                let rest: Vec<String> = frameworks.get(1..).map(|f| f.to_vec()).unwrap_or_default();
+                if rest.is_empty() {
+                    vec![
+                        "android".to_string(),
+                        "ios".to_string(),
+                        "react-native".to_string(),
+                        "flutter".to_string(),
+                    ]
+                } else {
+                    rest
+                }
+            } else {
+                Vec::new()
+            };
             Some(AppConfig {
-                language: frameworks
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "flutter".to_string()),
+                language,
+                platforms,
             })
         } else {
             None
@@ -358,6 +377,9 @@ impl ProjectConfig {
 
     /// Detect ecosystem from project files (fallback if no mg.toml)
     pub fn auto_detect(project_root: &Path) -> Option<String> {
+        if project_root.join("mg.toml").exists() {
+            return Self::read_to_string_ecosystem(project_root);
+        }
         if project_root.join("package.json").exists() {
             return Some("web".to_string());
         }
@@ -367,7 +389,22 @@ impl ProjectConfig {
         if project_root.join("pyproject.toml").exists() {
             return Some("ai".to_string());
         }
+        if project_root.join("pubspec.yaml").exists() {
+            return Some("app".to_string());
+        }
+        if project_root.join("Package.swift").exists() {
+            return Some("app".to_string());
+        }
         None
+    }
+
+    /// Read `[ecosystem]` from an existing mg.toml (multi/app/adapter config priority).
+    fn read_to_string_ecosystem(project_root: &Path) -> Option<String> {
+        let content = std::fs::read_to_string(project_root.join("mg.toml")).ok()?;
+        let v: toml::Value = toml::from_str(&content).ok()?;
+        v.get("ecosystem")
+            .and_then(|e| e.as_str())
+            .map(String::from)
     }
 
     /// Find project root by looking for mg.toml, package.json, or Cargo.toml.
