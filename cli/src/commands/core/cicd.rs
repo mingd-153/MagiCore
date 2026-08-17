@@ -158,21 +158,109 @@ struct DeployCommand {
     args: Vec<String>,
 }
 
+/// Một target trong `[deploy] targets` (07 §3).
+#[derive(Debug, serde::Deserialize)]
+struct DeployTarget {
+    provider: String,
+    #[serde(default)]
+    stack: String,
+    #[serde(default)]
+    region: String,
+}
+
+/// Đọc `[deploy] targets` từ mg.toml — None = không có target, dùng provider detect.
+fn deploy_targets(root: &std::path::Path) -> Result<Option<Vec<DeployTarget>>> {
+    let content = match std::fs::read_to_string(root.join("mg.toml")) {
+        Ok(c) => c,
+        Err(_) => return Ok(None),
+    };
+    let v: toml::Value = toml::from_str(&content)?;
+    let targets = v
+        .get("deploy")
+        .and_then(|d| d.get("targets"))
+        .and_then(|t| t.as_array())
+        .filter(|arr| !arr.is_empty())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.clone().try_into().ok())
+                .collect::<Vec<DeployTarget>>()
+        });
+    Ok(targets)
+}
+
+/// Lệnh deploy cho 1 target (dry_run=false khi --run).
+fn target_deploy_command(target: &DeployTarget, dry_run: bool) -> Result<DeployCommand> {
+    match target.provider.as_str() {
+        "cloudflare" => Ok(DeployCommand {
+            tool: "wrangler",
+            args: if dry_run {
+                vec!["deploy".to_string(), "--dry-run".to_string()]
+            } else {
+                vec!["deploy".to_string()]
+            },
+        }),
+        "gcp" | "google" => Ok(DeployCommand {
+            tool: "gcloud",
+            args: if dry_run {
+                vec!["app".to_string(), "deploy".to_string(), "--no-promote".to_string()]
+            } else {
+                vec!["app".to_string(), "deploy".to_string()]
+            },
+        }),
+        "aws" => {
+            // Dry-run: validate template (không deploy). Thật: cloudformation deploy.
+            if target.stack.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "aws target thiếu `stack` trong [deploy] targets — ví dụ: stack = \"my-infra\""
+                ));
+            }
+            let template = format!("{}.yaml", target.stack);
+            if dry_run {
+                Ok(DeployCommand {
+                    tool: "aws",
+                    args: vec![
+                        "cloudformation".to_string(),
+                        "validate-template".to_string(),
+                        "--template-body".to_string(),
+                        format!("file://{template}"),
+                    ],
+                })
+            } else {
+                let mut args = vec![
+                    "cloudformation".to_string(),
+                    "deploy".to_string(),
+                    "--stack-name".to_string(),
+                    target.stack.clone(),
+                    "--template-body".to_string(),
+                    format!("file://{template}"),
+                ];
+                if !target.region.is_empty() {
+                    args.extend(["--region".to_string(), target.region.clone()]);
+                }
+                Ok(DeployCommand { tool: "aws", args })
+            }
+        }
+        other => Err(not_available(&format!(
+            "deploy target '{other}' chưa có adapter — hỗ trợ aws | cloudflare | gcp"
+        ))),
+    }
+}
+
 fn deploy_command(provider: mg_cicd_adapter::CicdProvider) -> Result<DeployCommand> {
     match provider {
         mg_cicd_adapter::CicdProvider::Cloudflare => Ok(DeployCommand {
             tool: "wrangler",
-            args: vec!["deploy".to_string()],
+            args: vec!["deploy".to_string(), "--dry-run".to_string()],
         }),
         mg_cicd_adapter::CicdProvider::Gcp => Ok(DeployCommand {
             tool: "gcloud",
-            args: vec!["app".to_string(), "deploy".to_string()],
+            args: vec!["app".to_string(), "deploy".to_string(), "--no-promote".to_string()],
         }),
         mg_cicd_adapter::CicdProvider::GithubActions => Err(not_available(
             "github-actions is CI-only — push to trigger; no local deploy command.",
         )),
         mg_cicd_adapter::CicdProvider::Aws => Err(not_available(
-            "aws deploy needs a target (s3 bucket/pipeline) — configure target then use `mg exec aws ...`.",
+            "aws deploy needs a target (s3 bucket/pipeline) — configure [deploy] targets then run `mg deploy`.",
         )),
         mg_cicd_adapter::CicdProvider::Argocd => Err(not_available(
             "argocd runs server-side (GitOps) — commit + push to trigger sync; no local deploy command.",
@@ -182,25 +270,39 @@ fn deploy_command(provider: mg_cicd_adapter::CicdProvider) -> Result<DeployComma
 
 pub async fn deploy(run: bool) -> Result<()> {
     let root = std::env::current_dir()?;
-    let provider = provider_config()?;
-    let cmd = deploy_command(provider)?;
+    let targets = deploy_targets(&root)?;
+    let commands: Vec<DeployCommand> = if let Some(targets) = targets {
+        targets
+            .iter()
+            .map(|target| target_deploy_command(target, !run))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        let provider = provider_config()?;
+        vec![deploy_command(provider)?]
+    };
 
-    if !run {
-        mg_ui::info(&format!(
-            "[dry-run] would run: {} {} (deploy chạy thật cần `mg deploy --run`)",
-            cmd.tool,
-            cmd.args.join(" ")
-        ));
-        return Ok(());
+    if commands.is_empty() {
+        anyhow::bail!("không có deploy target — thêm [deploy] targets vào mg.toml");
     }
-    mg_ui::info(&format!("Deploying: {} {}", cmd.tool, cmd.args.join(" ")));
+
     let opts = mg_exec::prelude::ExecOptions {
         cwd: Some(root.clone()),
         log_path: Some(root.join(".megagate").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run_inherited(cmd.tool, &cmd.args, &opts)?;
+    for cmd in &commands {
+        if !run {
+            mg_ui::info(&format!(
+                "[dry-run] would run: {} {} (deploy chạy thật cần `mg deploy --run`)",
+                cmd.tool,
+                cmd.args.join(" ")
+            ));
+            continue;
+        }
+        mg_ui::info(&format!("Deploying: {} {}", cmd.tool, cmd.args.join(" ")));
+        mg_exec::prelude::run_inherited(cmd.tool, &cmd.args, &opts)?;
+    }
     Ok(())
 }
 
@@ -218,6 +320,12 @@ pub async fn dev(_dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+fn verb_hint(verb: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "'{verb}' không áp dụng cho cicd core (07 §4) — dùng `mg ci generate`, `mg verify`, hoặc `mg deploy` (dry-run mặc định). Provider CLI thay thế: wrangler / gcloud / aws (exec passthrough)."
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn add(
     packages: Vec<String>,
@@ -230,27 +338,19 @@ pub async fn add(
     _global: bool,
 ) -> Result<()> {
     let _ = packages;
-    Err(not_available(
-        "has no package manager — deploy through `mg deploy` (dry-run default).",
-    ))
+    Err(verb_hint("add"))
 }
 pub async fn remove(_packages: Vec<String>) -> Result<()> {
-    Err(not_available("has no package manager."))
+    Err(verb_hint("remove"))
 }
 pub async fn list() -> Result<()> {
-    Err(not_available(
-        "has no packages — preview deploy with `mg deploy`.",
-    ))
+    Err(verb_hint("list"))
 }
 pub async fn update(_packages: Vec<String>, _install: bool) -> Result<()> {
-    Err(not_available(
-        "has no package manager — update via provider CLI (wrangler/aws/gh/gcloud).",
-    ))
+    Err(verb_hint("update"))
 }
 pub async fn install(_packages: Vec<String>, _dry_run: bool) -> Result<()> {
-    Err(not_available(
-        "has no dependencies to install — run `mg deploy` instead.",
-    ))
+    Err(verb_hint("install"))
 }
 
 pub mod create {
@@ -280,14 +380,42 @@ mod tests {
     fn cloudflare_deploy_command() {
         let cmd = deploy_command(mg_cicd_adapter::CicdProvider::Cloudflare).expect("cloudflare ok");
         assert_eq!(cmd.tool, "wrangler");
-        assert_eq!(cmd.args, vec!["deploy"]);
+        assert_eq!(cmd.args, vec!["deploy", "--dry-run"]);
     }
 
     #[test]
     fn gcp_deploy_command() {
         let cmd = deploy_command(mg_cicd_adapter::CicdProvider::Gcp).expect("gcp ok");
         assert_eq!(cmd.tool, "gcloud");
-        assert_eq!(cmd.args, vec!["app", "deploy"]);
+        assert_eq!(cmd.args, vec!["app", "deploy", "--no-promote"]);
+    }
+
+    #[test]
+    fn target_deploy_commands() {
+        let cf = DeployTarget {
+            provider: "cloudflare".into(),
+            stack: String::new(),
+            region: String::new(),
+        };
+        assert_eq!(
+            target_deploy_command(&cf, true).unwrap().args,
+            vec!["deploy", "--dry-run"]
+        );
+        let aws = DeployTarget {
+            provider: "aws".into(),
+            stack: "my-infra".into(),
+            region: "ap-southeast-1".into(),
+        };
+        let cmd = target_deploy_command(&aws, false).unwrap();
+        assert_eq!(cmd.tool, "aws");
+        assert!(cmd.args.iter().any(|a| a == "my-infra"));
+        assert!(cmd.args.iter().any(|a| a == "ap-southeast-1"));
+        let no_stack = DeployTarget {
+            provider: "aws".into(),
+            stack: String::new(),
+            region: String::new(),
+        };
+        assert!(target_deploy_command(&no_stack, true).is_err());
     }
 
     #[test]
