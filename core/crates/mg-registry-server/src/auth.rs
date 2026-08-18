@@ -198,32 +198,40 @@ pub fn extract_auth(headers: &HeaderMap) -> Option<(String, String)> {
     None
 }
 
-/// Auth middleware — dùng qua route_layer + Extension (không có State trong route_layer)
+/// Auth middleware — dùng qua route_layer + Extension (không có State trong route_layer).
+/// Trả 401 kèm WWW-Authenticate challenge (chuẩn OCI/Docker): client Basic/Bearer
+/// đọc challenge rồi gửi credential — thiếu header khiến oras/pip từ chối retry.
 pub async fn auth_middleware(
     axum::extract::Extension(auth): axum::extract::Extension<Arc<AuthService>>,
     request: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Response {
+    use axum::response::IntoResponse;
     // Adduser public (chuẩn npm): tạo credential mới, không cần token sẵn có
     if request.method() == axum::http::Method::PUT && request.uri().path().starts_with("/-/user/") {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
 
     let auth_header = request.headers().get("authorization");
 
     if let Some(auth_value) = auth_header {
-        let auth_str = auth_value.to_str().map_err(|_| StatusCode::BAD_REQUEST)?;
+        let auth_str = match auth_value.to_str() {
+            Ok(s) => s,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
 
         if let Some(token) = auth_str.strip_prefix("Bearer ") {
             if let Some(user) = auth.verify_token(token) {
                 let mut request = request;
                 request.extensions_mut().insert(user);
-                return Ok(next.run(request).await);
+                return next.run(request).await;
             }
         } else if let Some(encoded) = auth_str.strip_prefix("Basic ") {
             if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-                let decoded_str =
-                    String::from_utf8(decoded).map_err(|_| StatusCode::BAD_REQUEST)?;
+                let decoded_str = match String::from_utf8(decoded) {
+                    Ok(s) => s,
+                    Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+                };
                 let mut parts = decoded_str.splitn(2, ':');
                 if let (Some(_user), Some(pass)) = (parts.next(), parts.next()) {
                     // pip/shared registry clients gửi Basic auth — admin token cũng chấp nhận
@@ -238,20 +246,32 @@ pub async fn auth_middleware(
                                 password: None,
                                 email: None,
                             });
-                            return Ok(next.run(request).await);
+                            return next.run(request).await;
                         }
                     }
                     if let Some(stored_user) = auth.verify_password(_user, pass) {
                         let mut request = request;
                         request.extensions_mut().insert(stored_user);
-                        return Ok(next.run(request).await);
+                        return next.run(request).await;
                     }
                 }
             }
         }
     }
 
-    Err(StatusCode::UNAUTHORIZED)
+    unauthorized_response()
+}
+
+/// 401 kèm WWW-Authenticate challenge (chuẩn OCI/Docker).
+pub fn unauthorized_response() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header(
+            "WWW-Authenticate",
+            "Basic realm=\"megagate-registry\", Bearer realm=\"megagate-registry\"",
+        )
+        .body(axum::body::Body::empty())
+        .expect("static 401 response")
 }
 
 /// Optional auth - extract user if present

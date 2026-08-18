@@ -7085,6 +7085,7 @@ package_count = 0
             shared
                 .path()
                 .join("metadata")
+                .join(reg_key(&format!("http://{addr}")))
                 .join("react")
                 .join("metadata.json"),
         )
@@ -7198,6 +7199,7 @@ package_count = 0
                 Some("\"react-v1\"".to_string()),
                 current_unix_secs().saturating_sub(metadata_ttl_secs() + 1),
                 None,
+                &format!("http://{addr}"),
             )
             .unwrap();
 
@@ -7218,7 +7220,7 @@ package_count = 0
         assert!(hits_after_first >= 1);
         assert_eq!(hits.load(Ordering::SeqCst), hits_after_first);
 
-        let cached = cache.read_metadata("react", "https://registry.npmjs.org").unwrap().unwrap();
+        let cached = cache.read_metadata("react", &format!("http://{addr}")).unwrap().unwrap();
         assert!(cached.stale_retry_after.is_some());
         assert!(metadata_record_retry_deferred(&cached));
     }
@@ -7283,6 +7285,7 @@ package_count = 0
                 Some("\"react-v1\"".to_string()),
                 1,
                 None,
+                &format!("http://{addr}"),
             )
             .unwrap();
 
@@ -7336,6 +7339,7 @@ package_count = 0
                 Some("\"react-v1\"".to_string()),
                 1,
                 Some(current_unix_secs().saturating_add(60)),
+                "http://127.0.0.1:9",
             )
             .unwrap();
 
@@ -8890,7 +8894,11 @@ package_count = 0
     }
 
     fn seed_shared_metadata(root: &Path, package: &str, payload: serde_json::Value) {
-        let path = root.join("metadata").join(package).join("metadata.json");
+        let path = root
+            .join("metadata")
+            .join("http___127_0_0_1_9") // khớp reg_key của mock registry url (:9)
+            .join(package)
+            .join("metadata.json");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -8926,6 +8934,12 @@ package_count = 0
         } else {
             std::env::remove_var(key);
         }
+    }
+
+    fn reg_key(url: &str) -> String {
+        url.chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect()
     }
 
     fn env_test_lock() -> &'static Mutex<()> {
