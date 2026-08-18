@@ -447,7 +447,10 @@ pub(crate) enum Commands {
     )]
     InstallGame { packages: Vec<String> },
     #[command(name = "install-ai", about = "Install AI dependencies", hide = true)]
-    InstallAi { packages: Vec<String>, dry_run: bool },
+    InstallAi {
+        packages: Vec<String>,
+        dry_run: bool,
+    },
     #[command(
         name = "install-clo",
         about = "Install cloud dependencies",

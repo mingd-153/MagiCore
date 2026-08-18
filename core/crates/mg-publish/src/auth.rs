@@ -90,10 +90,7 @@ pub fn resolve_auth(
         }
         v
     };
-    if let Some(token) = candidates
-        .iter()
-        .find_map(|c| npmrc.token_for(c).cloned())
-    {
+    if let Some(token) = candidates.iter().find_map(|c| npmrc.token_for(c).cloned()) {
         return Ok(Auth {
             token: Some(token),
             ..Default::default()
@@ -170,8 +167,10 @@ mod tests {
 
     #[test]
     fn basic_from_url_keyed_npmrc() {
-        let npmrc = NpmRc::parse("http://127.0.0.1:4315/:username=u\nhttp://127.0.0.1:4315/:_password=cGFzcw==\n")
-            .unwrap();
+        let npmrc = NpmRc::parse(
+            "http://127.0.0.1:4315/:username=u\nhttp://127.0.0.1:4315/:_password=cGFzcw==\n",
+        )
+        .unwrap();
         let auth = resolve_auth(&npmrc, "http://127.0.0.1:4315", None, None).unwrap();
         assert_eq!(auth.username.as_deref(), Some("u"));
         // _password giữ base64 (npm format — server decode)

@@ -106,9 +106,7 @@ fn tool_command(lang: mg_app_adapter::AppLanguage, verb: &str) -> Option<Install
         (mg_app_adapter::AppLanguage::Flutter, "add") => ("flutter", &["pub", "add"]),
         (mg_app_adapter::AppLanguage::Flutter, "remove") => ("flutter", &["pub", "remove"]),
         (mg_app_adapter::AppLanguage::Flutter, "list") => ("flutter", &["pub", "deps"]),
-        (mg_app_adapter::AppLanguage::Flutter, "update") => {
-            ("flutter", &["pub", "upgrade"])
-        }
+        (mg_app_adapter::AppLanguage::Flutter, "update") => ("flutter", &["pub", "upgrade"]),
         (mg_app_adapter::AppLanguage::Kotlin, "list") => ("gradle", &["dependencies"]),
         (mg_app_adapter::AppLanguage::Swift, "list") => {
             ("swift", &["package", "show-dependencies"])
@@ -266,10 +264,7 @@ async fn install_objc(root: &Path, dry_run: bool) -> Result<()> {
         ));
         return Ok(());
     }
-    mg_ui::info(&format!(
-        "Installing objC: xcodebuild {}",
-        args.join(" ")
-    ));
+    mg_ui::info(&format!("Installing objC: xcodebuild {}", args.join(" ")));
     run_tool(root, "xcodebuild", &args)
 }
 
@@ -303,7 +298,9 @@ fn dev_scheme(root: &Path) -> Option<String> {
 async fn dev_objc(root: &Path, dry_run: bool) -> Result<()> {
     let Some(scheme) = dev_scheme(root) else {
         let Some(proj) = find_xcode_project(root) else {
-            anyhow::bail!("không tìm thấy *.xcworkspace/*.xcodeproj — objC app thiếu Xcode project");
+            anyhow::bail!(
+                "không tìm thấy *.xcworkspace/*.xcodeproj — objC app thiếu Xcode project"
+            );
         };
         anyhow::bail!(
             "objC dev chạy trong Xcode — mở {proj}, hoặc khai [app] dev_scheme = \"<scheme>\" trong mg.toml để `mg dev` chạy xcodebuild build trên simulator"
@@ -386,7 +383,11 @@ pub async fn add(
     let Some(mut cmd) = tool_command(lang, "add") else {
         return Err(manifest_hint(lang, "add"));
     };
-    cmd.args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    cmd.args.extend(
+        packages
+            .iter()
+            .flat_map(|p| p.split_whitespace().map(String::from)),
+    );
     run_tool(&root, &cmd.tool, &cmd.args)?;
     Ok(())
 }
@@ -400,7 +401,11 @@ pub async fn remove(packages: Vec<String>) -> Result<()> {
     let Some(mut cmd) = tool_command(lang, "remove") else {
         return Err(manifest_hint(lang, "remove"));
     };
-    cmd.args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    cmd.args.extend(
+        packages
+            .iter()
+            .flat_map(|p| p.split_whitespace().map(String::from)),
+    );
     run_tool(&root, &cmd.tool, &cmd.args)?;
     Ok(())
 }
@@ -421,7 +426,11 @@ pub async fn update(packages: Vec<String>, _install: bool) -> Result<()> {
     let Some(mut cmd) = tool_command(lang, "update") else {
         return Err(manifest_hint(lang, "update"));
     };
-    cmd.args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    cmd.args.extend(
+        packages
+            .iter()
+            .flat_map(|p| p.split_whitespace().map(String::from)),
+    );
     run_tool(&root, &cmd.tool, &cmd.args)?;
     Ok(())
 }

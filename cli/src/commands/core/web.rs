@@ -681,10 +681,7 @@ async fn install_monorepo_targets(
                         .acquire_owned()
                         .await
                         .map_err(|e| anyhow::anyhow!("failed to acquire install slot: {e}"))?;
-                    mg_ui::info(&format!(
-                        "Installing workspace: {}",
-                        node.path.display()
-                    ));
+                    mg_ui::info(&format!("Installing workspace: {}", node.path.display()));
                     install_web_target_quiet(
                         adapter.as_ref(),
                         &node.path,

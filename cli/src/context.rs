@@ -23,7 +23,7 @@ impl ProjectContext {
         let cwd = std::env::current_dir()
             .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {}", e))?;
         let project_root = ProjectConfig::find_project_root(&cwd);
-Self::load_at(cwd.as_path(), project_root.as_ref(), core_override)
+        Self::load_at(cwd.as_path(), project_root.as_ref(), core_override)
     }
 
     /// Load context anchored at an explicit cwd (workspace mix core: mỗi

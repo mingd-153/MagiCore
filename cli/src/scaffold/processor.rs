@@ -398,7 +398,18 @@ impl Scaffolder {
     }
 
     fn web_templates_root() -> TemplateRoot {
-        TemplateRoot::resolve("web")
+        let root = TemplateRoot::resolve("web");
+        // Workspace disk may hold only a partial templates/web (e.g. shared
+        // partials) while the full tree lives in the registry cache — prefer
+        // the source that actually has the shared base contract.
+        if root.exists("shared") {
+            return root;
+        }
+        let cached = TemplateRoot::disk(crate::commands::template::templates_cache_dir().join("web"));
+        if cached.exists("shared") {
+            return cached;
+        }
+        root
     }
 
     fn framework(config: &ScaffoldConfig) -> String {

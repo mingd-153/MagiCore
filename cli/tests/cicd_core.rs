@@ -7,7 +7,10 @@ fn test_deploy_without_cicd_project_fails() {
     // Không có mg.toml → deploy rơi về cloud core (lỗi khác) → cần project cicd rõ ràng.
     let (ok, out) = common::mg_in(&dir, &["deploy"]);
     assert!(!ok, "deploy outside any project must fail");
-    assert!(out.contains("cloud"), "expected a detection error, got: {out}");
+    assert!(
+        out.contains("cloud"),
+        "expected a detection error, got: {out}"
+    );
 
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(

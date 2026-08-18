@@ -54,7 +54,11 @@ pub async fn add(
     } else {
         "install".to_string()
     }];
-    args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    args.extend(
+        packages
+            .iter()
+            .flat_map(|p| p.split_whitespace().map(String::from)),
+    );
     run_ai_tool(&root, tool, &args)?;
     Ok(())
 }
@@ -92,11 +96,7 @@ fn run_ai_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Result<()
     Ok(())
 }
 
-fn run_ai_tool_capture(
-    root: &std::path::Path,
-    tool: &str,
-    args: &[String],
-) -> Result<String> {
+fn run_ai_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) -> Result<String> {
     let opts = mg_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".megagate").join("exec.log")),
@@ -122,7 +122,11 @@ pub async fn remove(packages: Vec<String>) -> Result<()> {
     if tool == "pip" {
         args.push("-y".to_string());
     }
-    args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    args.extend(
+        packages
+            .iter()
+            .flat_map(|p| p.split_whitespace().map(String::from)),
+    );
     run_ai_tool(&root, tool, &args)?;
     Ok(())
 }
@@ -150,7 +154,9 @@ pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
                 run_ai_tool(&root, tool, &["sync".to_string()])?;
             }
         } else {
-            mg_ui::info("Chạy `pip list --outdated` để xem bản mới — không tự upgrade lock bằng pip.");
+            mg_ui::info(
+                "Chạy `pip list --outdated` để xem bản mới — không tự upgrade lock bằng pip.",
+            );
             run_ai_tool(&root, tool, &["list".to_string(), "--outdated".to_string()])?;
         }
         return Ok(());
@@ -160,7 +166,11 @@ pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
     } else {
         vec!["install".to_string(), "--upgrade".to_string()]
     };
-    args.extend(packages.iter().flat_map(|p| p.split_whitespace().map(String::from)));
+    args.extend(
+        packages
+            .iter()
+            .flat_map(|p| p.split_whitespace().map(String::from)),
+    );
     if tool == "uv" {
         args = vec!["lock".to_string()];
         for p in packages.iter().flat_map(|p| p.split_whitespace()) {

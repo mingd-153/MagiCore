@@ -24,7 +24,12 @@ fn lib_adapter() -> Arc<dyn PackageAdapter> {
         None,
     )
     .ok()
-    .map(|ctx| (ctx.config.registries.first().map(|r| r.url.clone()), ctx.config.registries.first().and_then(|r| r.token.clone())))
+    .map(|ctx| {
+        (
+            ctx.config.registries.first().map(|r| r.url.clone()),
+            ctx.config.registries.first().and_then(|r| r.token.clone()),
+        )
+    })
     .map(|(u, t)| {
         (
             u.or_else(|| std::env::var("MEGAGATE_LIB_REGISTRY_URL").ok()),
