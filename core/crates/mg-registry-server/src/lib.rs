@@ -16,8 +16,10 @@ pub type AppState = (
     std::sync::Arc<crate::auth::AuthService>,
 );
 
-/// Start the registry server (used by bin `mg-registry` and `mg registry serve`)
+/// Start the registry server (used by bin `mg-registry` và `mg registry serve`)
 /// rate_limit_rps: số request/giây/IP cho phép (0 = tắt)
+/// upstream: registry URL để proxy GET-miss (ITEM 4). None = private-only.
+/// storage: "local" hoặc "s3://bucket/prefix" (ITEM 5).
 pub async fn serve(
     host: String,
     port: u16,
@@ -25,8 +27,13 @@ pub async fn serve(
     admin_token: Option<String>,
     max_body_size: usize,
     rate_limit_rps: usize,
+    upstream: Option<String>,
+    storage: Option<String>,
 ) -> anyhow::Result<()> {
-    let store = std::sync::Arc::new(storage::RegistryStore::new(&store_dir).await?);
+    let mut store = storage::RegistryStore::new(&store_dir).await?;
+    store.set_upstream(upstream);
+    store.set_backend(storage.as_deref())?;
+    let store = std::sync::Arc::new(store);
     let auth_service = std::sync::Arc::new(auth::AuthService::new(admin_token, store.clone()));
     // Nạp user persist từ DB (10-task-plan Phase 3)
     auth_service.load_from_db().await?;

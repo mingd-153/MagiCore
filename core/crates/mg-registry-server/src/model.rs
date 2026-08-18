@@ -4,6 +4,31 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// npmjs đưa `"deprecated": false` (không null) — chấp nhận bool/string/null
+fn de_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct OptStr;
+    impl<'de> serde::Deserialize<'de> for OptStr {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            #[derive(serde::Deserialize)]
+            #[serde(untagged)]
+            enum V {
+                S(String),
+                B(bool),
+            }
+            match V::deserialize(deserializer)? {
+                V::S(_) | V::B(_) => Ok(OptStr),
+            }
+        }
+    }
+    Ok(Option::<OptStr>::deserialize(deserializer)?.map(|_| String::new()))
+}
+
 /// Package metadata in registry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
@@ -39,6 +64,7 @@ pub struct PackageVersion {
     pub types: Option<String>,
     pub exports: Option<serde_json::Value>,
     pub publish_config: Option<PublishConfig>,
+    #[serde(default, deserialize_with = "de_optional_string")]
     pub deprecated: Option<String>,
     pub license: Option<String>,
     pub keywords: Option<Vec<String>>,
@@ -58,8 +84,11 @@ pub struct DistInfo {
     pub integrity: String, // sha512-...
     pub shasum: String,    // sha1
     pub tarball: String,   // URL to tarball
+    #[serde(rename = "fileCount", default)]
     pub file_count: Option<u32>,
+    #[serde(rename = "unpackedSize", default)]
     pub unpacked_size: Option<u64>,
+    #[serde(default)]
     pub signatures: Option<Vec<Signature>>,
 }
 

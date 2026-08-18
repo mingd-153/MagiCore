@@ -24,6 +24,9 @@ notify = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2"] }
+object_store = { workspace = true }
+futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
@@ -45,6 +48,10 @@ tower = "0.5"
 [[test]]
 name = "registry"
 path = "test/registry.rs"
+
+[[test]]
+name = "proxy_parse"
+path = "test/proxy_parse.rs"
 
 [lints]
 workspace = true

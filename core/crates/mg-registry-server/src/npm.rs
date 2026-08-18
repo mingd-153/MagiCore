@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Json, Response},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use serde::Deserialize;
@@ -50,6 +50,7 @@ pub fn routes() -> Router<AppState> {
             get(get_dist_tags_scoped),
         )
         .route("/-/user/:name", put(adduser).delete(delete_user))
+        .route("/-/user/token/:token", delete(revoke_token))
         .route("/-/whoami", get(whoami))
         .route("/-/v1/search", get(search))
         .route("/-/v1/publish", post(batch_publish))
@@ -299,6 +300,24 @@ async fn download_tarball(
                         );
                         return Ok(resp.into_response());
                     }
+                    // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
+                    if let Ok(Some(data)) = store.fetch_upstream_tarball(&v.dist.tarball).await {
+                        let _ = store.put_blob(digest, &data).await;
+                        let mut resp = axum::response::Response::new(axum::body::Body::from(data));
+                        resp.headers_mut().insert(
+                            axum::http::header::CONTENT_TYPE,
+                            HeaderValue::from_static("application/octet-stream"),
+                        );
+                        resp.headers_mut().insert(
+                            "content-disposition",
+                            HeaderValue::from_str(&format!(
+                                "attachment; filename=\"{}\"",
+                                filename
+                            ))
+                            .unwrap(),
+                        );
+                        return Ok(resp.into_response());
+                    }
                 }
             }
         }
@@ -449,6 +468,8 @@ struct AddUserBody {
     email: Option<String>,
     #[serde(default)]
     scopes: Vec<String>,
+    #[serde(default)]
+    role: Option<String>,
 }
 
 async fn adduser(
@@ -457,11 +478,15 @@ async fn adduser(
     Json(body): Json<AddUserBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let name = name.strip_prefix("org.couchdb.user:").unwrap_or(&name);
-    // ponytail: scopes tin client, đủ cho registry nội bộ; admin cấp scope khi cần chặt
+    let role = body
+        .role
+        .as_deref()
+        .map(crate::auth::UserRole::from_str)
+        .unwrap_or(crate::auth::UserRole::Publisher);
     let user = crate::auth::User {
         name: name.to_string(),
         is_admin: false,
-        role: crate::auth::UserRole::Publisher,
+        role,
         scopes: body.scopes,
         password: Some(body.password),
         email: body.email,
@@ -521,6 +546,25 @@ async fn delete_user(
         .unwrap_or(&name)
         .to_string();
     if !auth.remove_user(&name).await.unwrap_or(false) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// ITEM 6: revoke token — chỉ admin (admin_token)
+async fn revoke_token(
+    State((_, auth)): State<AppState>,
+    Path(token): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, StatusCode> {
+    let caller = headers
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "));
+    if !matches!(auth.admin_token.as_deref(), Some(t) if Some(t) == caller) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if !auth.remove_token(&token).await.unwrap_or(false) {
         return Err(StatusCode::NOT_FOUND);
     }
     Ok(StatusCode::NO_CONTENT)

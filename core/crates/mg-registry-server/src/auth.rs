@@ -78,6 +78,15 @@ impl AuthService {
         Ok(removed)
     }
 
+    /// Revoke token (ITEM 6) — xóa cache + DB theo token
+    pub async fn remove_token(&self, token: &str) -> Result<bool> {
+        let removed = self.store.delete_user_by_token(token).await?;
+        if removed {
+            self.users.lock().unwrap().remove(token);
+        }
+        Ok(removed)
+    }
+
     /// Xác thực username + password (Basic auth)
     pub fn verify_password(&self, username: &str, password: &str) -> Option<User> {
         self.users

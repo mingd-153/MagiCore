@@ -41,15 +41,18 @@ pub fn create_adapter(
         ecosystem,
         registry_url,
         token,
+        &[],
     )
 }
 
 /// Tạo adapter gắn với project root rõ ràng (mix core: workspace target).
+/// `fallbacks`: (url, token) chain — chỉ dùng khi primary 404/network/5xx.
 pub fn create_adapter_for(
     root: &std::path::Path,
     ecosystem: &Ecosystem,
     registry_url: Option<&str>,
     token: Option<&str>,
+    fallbacks: &[(String, Option<String>)],
 ) -> anyhow::Result<Arc<dyn PackageAdapter>> {
     if let Some(plugin) = mg_plugin::global().get(*ecosystem) {
         if let Some(adapter) = plugin.as_adapter() {
@@ -60,9 +63,10 @@ pub fn create_adapter_for(
     let adapter: Arc<dyn PackageAdapter> = match ecosystem {
         #[cfg(feature = "web")]
         Ecosystem::Web => Arc::new(match (registry_url, token) {
-            (Some(url), _) => mg_web_adapter::WebAdapter::with_registry_and_token(
+            (Some(url), _) => mg_web_adapter::WebAdapter::with_registry_chain(
                 url.to_string(),
                 token.map(str::to_string),
+                fallbacks.to_vec(),
             ),
             _ => mg_web_adapter::WebAdapter::new(),
         }),
@@ -110,9 +114,10 @@ pub fn create_adapter_for(
         Ecosystem::Hardware => anyhow::bail!("'hardware' core is not included in this build."),
         #[cfg(feature = "lib")]
         Ecosystem::Lib => Arc::new(
-            mg_lib_adapter::adapter_for(root,
+            mg_lib_adapter::adapter_for_with_chain(root,
                 registry_url.map(str::to_string),
                 token.map(str::to_string),
+                fallbacks,
             )
             .ok_or_else(|| anyhow::anyhow!("Cannot detect a lib project here (missing mg.toml/lib marker)."))?,
         ),

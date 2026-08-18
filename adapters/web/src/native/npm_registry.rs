@@ -38,6 +38,10 @@ pub struct DistInfo {
 pub struct NpmRegistry {
     registry_url: String,
     token: Option<String>,
+    /// Multi-registry fallback chain (ITEM 1): fetch metadata từ registry kế
+    /// tiếp khi primary 404/network/5xx — KHÔNG fallback khi 401/403 (auth
+    /// fail = fail-closed, không leak package từ registry khác).
+    fallbacks: Vec<(String, Option<String>)>,
 }
 
 pub enum DownloadedTarball {
@@ -54,6 +58,19 @@ fn network_profile_enabled() -> bool {
         .map(|value| value.trim().to_ascii_lowercase())
         .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
+}
+
+/// 401/403 = auth fail — KHÔNG fallback sang registry khác (fail-closed).
+fn is_auth_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .find_map(|cause| {
+            cause
+                .downcast_ref::<reqwest::Error>()
+                .and_then(|re| re.status())
+        })
+        .is_some_and(|status| {
+            status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN
+        })
 }
 
 fn network_profile_log(kind: &str, target: &str, message: &str) {
@@ -118,6 +135,7 @@ impl NpmRegistry {
         Self {
             registry_url: registry_url.to_string(),
             token: None,
+            fallbacks: Vec::new(),
         }
     }
 
@@ -125,15 +143,43 @@ impl NpmRegistry {
         Self {
             registry_url: registry_url.to_string(),
             token,
+            fallbacks: Vec::new(),
         }
     }
 
-    fn with_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        if let Some(token) = &self.token {
-            req.header("Authorization", format!("Bearer {token}"))
-        } else {
-            req
+    /// Primary + fallback chain. Fallback entries: (url, token).
+    pub fn new_with_chain(
+        registry_url: &str,
+        token: Option<String>,
+        fallbacks: Vec<(String, Option<String>)>,
+    ) -> Self {
+        Self {
+            registry_url: registry_url.to_string(),
+            token,
+            fallbacks,
         }
+    }
+
+    fn chain(&self) -> Vec<(String, Option<String>)> {
+        let mut chain = vec![(self.registry_url.clone(), self.token.clone())];
+        chain.extend(self.fallbacks.iter().cloned());
+        chain
+    }
+
+    fn with_auth(&self, req: reqwest::RequestBuilder, url: &str) -> reqwest::RequestBuilder {
+        if let Some(token) = &self.token {
+            let rh = reqwest::Url::parse(&self.registry_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned));
+            let rh: Option<&str> = rh.as_deref();
+            let url_host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned));
+            if url_host.as_deref() == rh {
+                return req.header("Authorization", format!("Bearer {token}"));
+            }
+        }
+        req
     }
 
     pub fn auth_token(&self) -> Option<&str> {
@@ -149,29 +195,53 @@ impl NpmRegistry {
         &self,
         package: &str,
     ) -> Result<(PackageMetadata, Option<String>)> {
-        let url = format!("{}/{}", self.registry_url, package);
         let client = global_http_client();
+        let chain = self.chain();
+        let mut last_err: Option<anyhow::Error> = None;
 
-        with_retry("metadata", package, move || {
-            let resp_future = client.get(&url);
-            let metadata_future = async move {
-                let resp = self
-                    .with_auth(resp_future)
-                    .header("Accept", "application/vnd.npm.install-v1+json")
-                    .send()
-                    .await?
-                    .error_for_status()?;
-                let etag = resp
-                    .headers()
-                    .get("etag")
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_owned);
-                let metadata: PackageMetadata = resp.json().await?;
-                Ok((metadata, etag))
-            };
-            metadata_future
-        })
-        .await
+        for (url, token) in chain {
+            let endpoint = format!("{}/{}", url.trim_end_matches('/'), package);
+            let endpoint_for_closure = endpoint.clone();
+            let token_for_closure = token.clone();
+            let result = with_retry("metadata", package, move || {
+                let resp_future = client.get(&endpoint_for_closure);
+                let token_owned = token_for_closure.clone();
+                let metadata_future = async move {
+                    let req = if let Some(tok) = token_owned.as_deref() {
+                        resp_future.header("Authorization", format!("Bearer {tok}"))
+                    } else {
+                        resp_future
+                    };
+                    let resp = req
+                        .header("Accept", "application/vnd.npm.install-v1+json")
+                        .send()
+                        .await?
+                        .error_for_status()?;
+                    let etag = resp
+                        .headers()
+                        .get("etag")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned);
+                    let metadata: PackageMetadata = resp.json().await?;
+                    Ok((metadata, etag))
+                };
+                metadata_future
+            })
+            .await;
+
+            match result {
+                Ok(ok) => return Ok(ok),
+                Err(e) => {
+                    if is_auth_error(&e) {
+                        return Err(e);
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(last_err
+            .unwrap_or_else(|| anyhow::anyhow!("no registry configured for metadata fetch")))
     }
 
     pub async fn fetch_metadata_conditional(
@@ -184,7 +254,7 @@ impl NpmRegistry {
 
         with_retry("metadata-conditional", package, move || {
             let mut req = self
-                .with_auth(global_http_client().get(&url))
+                .with_auth(global_http_client().get(&url), &url)
                 .header("Accept", "application/vnd.npm.install-v1+json");
             if let Some(ref etag_val) = etag_owned {
                 req = req.header("If-None-Match", etag_val);
@@ -216,7 +286,7 @@ impl NpmRegistry {
     pub async fn download_tarball(&self, url: &str) -> Result<Vec<u8>> {
         with_retry("tarball", url, || async {
             let resp = self
-                .with_auth(global_http_client().get(url))
+                .with_auth(global_http_client().get(url), &url)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -245,7 +315,7 @@ impl NpmRegistry {
                 tokio::fs::create_dir_all(parent).await?;
             }
             let resp = self
-                .with_auth(batch_http_client().get(url))
+                .with_auth(batch_http_client().get(url), &url)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -283,7 +353,7 @@ impl NpmRegistry {
             }
 
             let resp = self
-                .with_auth(batch_http_client().get(url))
+                .with_auth(batch_http_client().get(url), &url)
                 .send()
                 .await?
                 .error_for_status()?;

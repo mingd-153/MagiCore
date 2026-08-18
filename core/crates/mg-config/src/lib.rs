@@ -1,3 +1,4 @@
+pub mod chain;
 pub mod hooks;
 pub mod npmrc;
 pub mod project;

@@ -451,27 +451,40 @@ impl WebAdapter {
     pub fn new() -> Self {
         let registry_url = effective_registry_url(DEFAULT_NPM_REGISTRY);
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, None, shared_cache)
+        Self::build(registry_url, None, Vec::new(), shared_cache)
     }
     pub fn with_registry(registry_url: String) -> Self {
         let registry_url = effective_registry_url(&registry_url);
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, None, shared_cache)
+        Self::build(registry_url, None, Vec::new(), shared_cache)
     }
     pub fn with_registry_and_token(registry_url: String, token: Option<String>) -> Self {
         let registry_url = effective_registry_url(&registry_url);
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, token, shared_cache)
+        Self::build(registry_url, token, Vec::new(), shared_cache)
+    }
+    /// Multi-registry chain (ITEM 1): primary + fallbacks (url, token).
+    /// Mỗi fallback chỉ dùng khi primary 404/network/5xx — auth fail thì dừng.
+    pub fn with_registry_chain(
+        primary: String,
+        token: Option<String>,
+        fallbacks: Vec<(String, Option<String>)>,
+    ) -> Self {
+        let primary = effective_registry_url(&primary);
+        let shared_cache = SharedWebCache::discover();
+        Self::build(primary, token, fallbacks, shared_cache)
     }
 
     fn build(
         registry_url: String,
         token: Option<String>,
+        fallbacks: Vec<(String, Option<String>)>,
         shared_cache: Option<SharedWebCache>,
     ) -> Self {
-        let provider = Arc::new(NpmDependencyProvider::new(
+        let provider = Arc::new(NpmDependencyProvider::new_with_chain(
             &registry_url,
             token,
+            fallbacks,
             shared_cache.clone(),
         ));
         Self {
@@ -491,6 +504,7 @@ impl WebAdapter {
         Self::build(
             registry_url,
             None,
+            Vec::new(),
             Some(SharedWebCache { root: shared_root }),
         )
     }
@@ -587,7 +601,7 @@ fn effective_registry_url(default: &str) -> String {
         .unwrap_or_else(|| default.to_string());
     if !url.starts_with("https://") && !allow_insecure_loopback_url(&url) {
         panic!(
-            "registry URL must use HTTPS: '{url}' (set MEGAGATE_WEB_REGISTRY_URL to an HTTPS URL)"
+            "registry URL must use HTTPS: '{url}' (loopback http://127.0.0.1/localhost được phép)"
         );
     }
     validate_registry_allowed(&url);
@@ -595,43 +609,14 @@ fn effective_registry_url(default: &str) -> String {
 }
 
 fn allow_insecure_loopback_url(url: &str) -> bool {
-    #[cfg(test)]
-    {
-        let Ok(parsed) = url::Url::parse(url) else {
-            return false;
-        };
-        if parsed.scheme() != "http" {
-            return false;
-        }
-        return matches!(
-            parsed.host_str(),
-            Some("127.0.0.1") | Some("localhost") | Some("::1")
-        );
-    }
-
-    #[cfg(not(test))]
-    {
-        let flag = std::env::var("MEGAGATE_WEB_ALLOW_INSECURE_LOCALHOST")
-            .ok()
-            .map(|value| value.trim().to_ascii_lowercase())
-            .unwrap_or_default();
-        let enabled = matches!(flag.as_str(), "1" | "true" | "yes" | "on");
-        if !enabled {
-            return false;
-        }
-
-        let Ok(parsed) = url::Url::parse(url) else {
-            return false;
-        };
-        if parsed.scheme() != "http" {
-            return false;
-        }
-
-        matches!(
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    parsed.scheme() == "http"
+        && matches!(
             parsed.host_str(),
             Some("127.0.0.1") | Some("localhost") | Some("::1")
         )
-    }
 }
 
 fn validate_registry_allowed(url: &str) {
@@ -2048,8 +2033,17 @@ struct NpmDependencyProvider {
 }
 impl NpmDependencyProvider {
     fn new(url: &str, token: Option<String>, shared_cache: Option<SharedWebCache>) -> Self {
+        Self::new_with_chain(url, token, Vec::new(), shared_cache)
+    }
+
+    fn new_with_chain(
+        url: &str,
+        token: Option<String>,
+        fallbacks: Vec<(String, Option<String>)>,
+        shared_cache: Option<SharedWebCache>,
+    ) -> Self {
         Self {
-            registry: native::npm_registry::NpmRegistry::new_with_token(url, token),
+            registry: native::npm_registry::NpmRegistry::new_with_chain(url, token, fallbacks),
             metadata_cache: MetadataCache::new(),
             metadata_locks: DashMap::new(),
             registry_cache: RegistryCache::new(),
@@ -7920,7 +7914,7 @@ package_count = 0
             }],
         };
 
-        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None, None);
+        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None, vec![], None);
         let err = adapter
             .install(&graph, dir.path(), InstallOptions::default())
             .await
@@ -7989,7 +7983,7 @@ package_count = 0
             ],
         };
 
-        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None, None);
+        let adapter = WebAdapter::build("http://127.0.0.1:9".into(), None, vec![], None);
         let _err = adapter
             .install(&graph, dir.path(), InstallOptions::default())
             .await

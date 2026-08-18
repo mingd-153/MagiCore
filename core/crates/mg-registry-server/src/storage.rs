@@ -42,6 +42,133 @@ fn digest_hex_path(digest: &str) -> (String, String) {
 pub struct RegistryStore {
     db: Pool<Sqlite>,
     blobs_dir: PathBuf,
+    upstream: Option<Upstream>,
+    backend: BlobBackend,
+}
+
+/// Blob storage backend (ITEM 5): Local FS hoặc S3-compatible (object_store).
+pub enum BlobBackend {
+    Local(PathBuf),
+    S3(std::sync::Arc<object_store::aws::AmazonS3>),
+}
+
+use object_store::ObjectStore as _;
+
+impl BlobBackend {
+    /// "local" hoặc "s3://bucket/prefix"
+    pub fn parse(spec: Option<&str>, local_dir: &Path) -> Result<Self> {
+        match spec {
+            None | Some("local") => Ok(BlobBackend::Local(local_dir.to_path_buf())),
+            Some(s3) => {
+                let store = object_store::aws::AmazonS3Builder::from_env()
+                    .with_url(s3)
+                    .build()
+                    .context("build S3 backend from env (AWS_ACCESS_KEY_ID/SECRET/REGION)")?;
+                Ok(BlobBackend::S3(std::sync::Arc::new(store)))
+            }
+        }
+    }
+
+    async fn put(&self, key: &str, data: &[u8]) -> Result<()> {
+        match self {
+            BlobBackend::Local(dir) => {
+                let path = dir.join(key);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).await?;
+                }
+                let mut file = fs::File::create(&path).await?;
+                file.write_all(data).await?;
+                file.flush().await?;
+                Ok(())
+            }
+            BlobBackend::S3(store) => {
+                let _ = store
+                    .put(
+                        &object_store::path::Path::from(key.to_string()),
+                        object_store::PutPayload::from(data.to_vec()),
+                    )
+                    .await
+                    .context("S3 put")?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        match self {
+            BlobBackend::Local(dir) => {
+                let path = dir.join(key);
+                match fs::read(&path).await {
+                    Ok(data) => Ok(Some(data)),
+                    Err(_) => Ok(None),
+                }
+            }
+            BlobBackend::S3(store) => {
+                let resp = store
+                    .get(&object_store::path::Path::from(key.to_string()))
+                    .await;
+                match resp {
+                    Ok(r) => Ok(Some(r.bytes().await.context("S3 get bytes")?.to_vec())),
+                    Err(object_store::Error::NotFound { .. }) => Ok(None),
+                    Err(e) => Err(anyhow::anyhow!(e)),
+                }
+            }
+        }
+    }
+
+    async fn exists(&self, key: &str) -> Result<bool> {
+        match self {
+            BlobBackend::Local(dir) => Ok(dir.join(key).exists()),
+            BlobBackend::S3(store) => {
+                match store
+                    .head(&object_store::path::Path::from(key.to_string()))
+                    .await
+                {
+                    Ok(_) => Ok(true),
+                    Err(object_store::Error::NotFound { .. }) => Ok(false),
+                    Err(e) => Err(anyhow::anyhow!(e)),
+                }
+            }
+        }
+    }
+}
+
+/// Upstream proxy (ITEM 4): GET miss → fetch từ registry upstream → cache local.
+pub struct Upstream {
+    base: String,
+    client: reqwest::Client,
+}
+
+impl Upstream {
+    pub fn new(base: String) -> Self {
+        Self {
+            base: base.trim_end_matches('/').to_string(),
+            client: reqwest::Client::builder()
+                .user_agent("megagate-registry/0.1")
+                .build()
+                .unwrap_or_default(),
+        }
+    }
+
+    async fn fetch_json(&self, name: &str) -> Result<Option<serde_json::Value>> {
+        let url = format!("{}/{}", self.base, name);
+        let resp = self.client.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+        Ok(Some(resp.json().await?))
+    }
+
+    async fn fetch_bytes(&self, url: &str) -> Result<Option<Vec<u8>>> {
+        let resp = self.client.get(url).send().await?;
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+        Ok(Some(resp.bytes().await?.to_vec()))
+    }
 }
 
 impl RegistryStore {
@@ -67,7 +194,9 @@ impl RegistryStore {
 
         let store = Self {
             db: pool,
-            blobs_dir,
+            blobs_dir: blobs_dir.clone(),
+            upstream: None,
+            backend: BlobBackend::Local(blobs_dir),
         };
 
         store.init_schema().await?;
@@ -200,6 +329,17 @@ impl RegistryStore {
 
     // === Package operations ===
 
+    /// Cấu hình upstream proxy (ITEM 4). None = registry đóng (private-only).
+    pub fn set_upstream(&mut self, upstream: Option<String>) {
+        self.upstream = upstream.map(Upstream::new);
+    }
+
+    /// Cấu hình blob backend (ITEM 5): "local" hoặc "s3://bucket/prefix".
+    pub fn set_backend(&mut self, spec: Option<&str>) -> Result<()> {
+        self.backend = BlobBackend::parse(spec, &self.blobs_dir)?;
+        Ok(())
+    }
+
     pub async fn get_package(&self, name: &str) -> Result<Option<crate::model::Package>> {
         let row = sqlx::query(
             r#"
@@ -225,6 +365,18 @@ impl RegistryStore {
             let versions = self.get_package_versions(name).await?;
             pkg.versions = versions;
             Ok(Some(pkg))
+        } else if let Some(upstream) = &self.upstream {
+            // ITEM 4: miss → fetch upstream → cache local (private store giữ public mirror)
+            match upstream.fetch_json(name).await {
+                Ok(Some(json)) => match serde_json::from_value::<crate::model::Package>(json) {
+                    Ok(pkg) => {
+                        let _ = self.put_package(&pkg).await;
+                        Ok(Some(pkg))
+                    }
+                    Err(_) => Ok(None),
+                },
+                _ => Ok(None),
+            }
         } else {
             Ok(None)
         }
@@ -335,12 +487,8 @@ impl RegistryStore {
 
     pub async fn put_blob(&self, digest: &str, data: &[u8]) -> Result<()> {
         let (p1, p2) = digest_hex_path(digest);
-        let path = self.blobs_dir.join(&p1).join(&p2);
-        fs::create_dir_all(path.parent().unwrap()).await?;
-
-        let mut file = fs::File::create(&path).await?;
-        file.write_all(data).await?;
-        file.flush().await?;
+        let key = format!("{p1}/{p2}");
+        self.backend.put(&key, data).await?;
 
         sqlx::query(
             r#"
@@ -351,7 +499,7 @@ impl RegistryStore {
         )
         .bind(digest)
         .bind(data.len() as i64)
-        .bind(path.to_string_lossy().to_string())
+        .bind(key)
         .execute(&self.db)
         .await?;
 
@@ -365,20 +513,46 @@ impl RegistryStore {
             .await?;
 
         if let Some(row) = row {
-            let path: String = row.get("path");
-            let data = fs::read(path).await?;
-            Ok(Some(data))
+            let key: String = row.get("path");
+            self.backend.get(&key).await
         } else {
             Ok(None)
         }
     }
 
+    /// Fetch tarball từ upstream (ITEM 4). None khi chưa cấu hình upstream,
+    /// URL không cùng host upstream (chống SSRF) hoặc miss.
+    pub async fn fetch_upstream_tarball(&self, tarball_url: &str) -> Result<Option<Vec<u8>>> {
+        let Some(upstream) = &self.upstream else {
+            return Ok(None);
+        };
+        let same_host = reqwest::Url::parse(tarball_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+            .zip(
+                reqwest::Url::parse(&upstream.base)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_owned)),
+            )
+            .is_some_and(|(a, b)| a == b);
+        if !same_host {
+            return Ok(None);
+        }
+        upstream.fetch_bytes(tarball_url).await
+    }
+
     pub async fn blob_exists(&self, digest: &str) -> Result<bool> {
-        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blobs WHERE digest = ?")
+        let row = sqlx::query("SELECT path FROM blobs WHERE digest = ?")
             .bind(digest)
-            .fetch_one(&self.db)
+            .fetch_optional(&self.db)
             .await?;
-        Ok(count > 0)
+        match row {
+            Some(r) => {
+                let key: String = r.get("path");
+                self.backend.exists(&key).await
+            }
+            None => Ok(false),
+        }
     }
 
     // === OCI operations ===
@@ -797,6 +971,15 @@ impl RegistryStore {
     pub async fn delete_user_by_name(&self, name: &str) -> Result<bool> {
         let res = sqlx::query("DELETE FROM users WHERE name = ?")
             .bind(name)
+            .execute(&self.db)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Revoke token (ITEM 6) — xóa user theo token
+    pub async fn delete_user_by_token(&self, token: &str) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM users WHERE token = ?")
+            .bind(token)
             .execute(&self.db)
             .await?;
         Ok(res.rows_affected() > 0)
