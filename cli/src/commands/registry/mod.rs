@@ -30,6 +30,13 @@ pub enum RegistryCmd {
         max_body_size: usize,
         #[arg(long, default_value = "0", help = "rate limit (req/s/IP), 0 = off")]
         rate_limit: usize,
+        #[arg(long, help = "upstream registry URL — GET-miss proxy + cache (ITEM 4)")]
+        upstream: Option<String>,
+        #[arg(
+            long,
+            help = "blob storage: \"local\" hoặc \"s3://bucket/prefix\" (ITEM 5)"
+        )]
+        storage: Option<String>,
     },
     /// Manage registry users
     User {
@@ -47,12 +54,26 @@ pub enum UserCmd {
         password: Option<String>,
         #[arg(long = "scope", help = "package scope patterns, vd: @megagate/*")]
         scopes: Vec<String>,
+        #[arg(
+            long,
+            default_value = "publisher",
+            help = "role: viewer|publisher|admin (ITEM 6)"
+        )]
+        role: String,
         #[arg(long, default_value = DEFAULT_REGISTRY)]
         registry: String,
     },
     /// Delete a user (requires admin token)
     Rm {
         name: String,
+        #[arg(long, default_value = DEFAULT_REGISTRY)]
+        registry: String,
+        #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
+        admin_token: Option<String>,
+    },
+    /// Revoke an access token (requires admin token)
+    Revoke {
+        token: String,
         #[arg(long, default_value = DEFAULT_REGISTRY)]
         registry: String,
         #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
@@ -69,6 +90,8 @@ pub async fn run(args: RegistryArgs) -> Result<()> {
             admin_token,
             max_body_size,
             rate_limit,
+            upstream,
+            storage,
         } => {
             let _ = tracing_subscriber::fmt()
                 .with_env_filter(
@@ -82,6 +105,8 @@ pub async fn run(args: RegistryArgs) -> Result<()> {
                 admin_token,
                 max_body_size,
                 rate_limit,
+                upstream,
+                storage,
             )
             .await
         }
@@ -90,13 +115,19 @@ pub async fn run(args: RegistryArgs) -> Result<()> {
                 name,
                 password,
                 scopes,
+                role,
                 registry,
-            } => user_add(&name, password, &scopes, &registry).await,
+            } => user_add(&name, password, &scopes, &role, &registry).await,
             UserCmd::Rm {
                 name,
                 registry,
                 admin_token,
             } => user_rm(&name, &registry, admin_token).await,
+            UserCmd::Revoke {
+                token,
+                registry,
+                admin_token,
+            } => revoke_token(&token, &registry, admin_token).await,
         },
     }
 }
@@ -105,6 +136,7 @@ async fn user_add(
     name: &str,
     password: Option<String>,
     scopes: &[String],
+    role: &str,
     registry: &str,
 ) -> Result<()> {
     let password = match password {
@@ -123,8 +155,13 @@ async fn user_add(
         registry.trim_end_matches('/'),
         name
     );
-    let body =
-        serde_json::json!({ "name": name, "password": password, "email": "", "scopes": scopes });
+    let body = serde_json::json!({
+        "name": name,
+        "password": password,
+        "email": "",
+        "scopes": scopes,
+        "role": role
+    });
     let client = reqwest::Client::new();
     let resp = client.put(&url).json(&body).send().await?;
     let status = resp.status();
@@ -167,5 +204,27 @@ async fn user_rm(name: &str, registry: &str, admin_token: Option<String>) -> Res
         bail!("Delete user failed: {}", status);
     }
     println!("User {} deleted", name);
+    Ok(())
+}
+
+async fn revoke_token(token: &str, registry: &str, admin_token: Option<String>) -> Result<()> {
+    let Some(admin) = admin_token else {
+        bail!("Admin token required (--admin-token or MEGAGATE_REGISTRY_ADMIN_TOKEN)");
+    };
+    let url = format!("{}/-/user/token/{}", registry.trim_end_matches('/'), token);
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(&url)
+        .header("Authorization", format!("Bearer {}", admin))
+        .send()
+        .await?;
+    let status = resp.status();
+    if status.as_u16() == 404 {
+        bail!("Token {} not found (đã revoke?)", token);
+    }
+    if !status.is_success() {
+        bail!("Revoke token failed: {}", status);
+    }
+    println!("Token revoked");
     Ok(())
 }

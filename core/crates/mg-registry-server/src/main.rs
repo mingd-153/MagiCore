@@ -32,6 +32,14 @@ struct Args {
     #[arg(long, default_value = "0")]
     rate_limit: usize,
 
+    /// Upstream registry URL to proxy GET-miss (ITEM 4). None = private-only
+    #[arg(long)]
+    upstream: Option<String>,
+
+    /// Blob storage: "local" hoặc "s3://bucket/prefix" (ITEM 5)
+    #[arg(long)]
+    storage: Option<String>,
+
     /// Log level
     #[arg(long, default_value = "info")]
     log_level: String,
@@ -54,6 +62,8 @@ async fn main() -> Result<()> {
         args.admin_token,
         args.max_body_size,
         args.rate_limit,
+        args.upstream,
+        args.storage,
     )
     .await
 }

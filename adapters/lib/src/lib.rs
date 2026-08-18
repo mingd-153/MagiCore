@@ -169,10 +169,19 @@ impl LibAdapter {
         registry_url: Option<String>,
         token: Option<String>,
     ) -> Self {
+        Self::for_language_with_chain(language, registry_url, token, &[])
+    }
+
+    fn for_language_with_chain(
+        language: LibLanguage,
+        registry_url: Option<String>,
+        token: Option<String>,
+        fallbacks: &[(String, Option<String>)],
+    ) -> Self {
         let web = if language == LibLanguage::Ts {
             Some(match (registry_url, token) {
                 (Some(url), token) => {
-                    mg_web_adapter::WebAdapter::with_registry_and_token(url, token)
+                    mg_web_adapter::WebAdapter::with_registry_chain(url, token, fallbacks.to_vec())
                 }
                 (None, _) => mg_web_adapter::WebAdapter::new(),
             })
@@ -605,6 +614,22 @@ pub fn adapter_for(
 ) -> Option<LibAdapter> {
     let language = detect_language(root)?;
     Some(LibAdapter::for_language(language, registry_url, token))
+}
+
+/// Chain version (ITEM 1): primary + fallbacks (url, token).
+pub fn adapter_for_with_chain(
+    root: &Path,
+    registry_url: Option<String>,
+    token: Option<String>,
+    fallbacks: &[(String, Option<String>)],
+) -> Option<LibAdapter> {
+    let language = detect_language(root)?;
+    Some(LibAdapter::for_language_with_chain(
+        language,
+        registry_url,
+        token,
+        fallbacks,
+    ))
 }
 
 #[cfg(test)]

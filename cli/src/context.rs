@@ -37,23 +37,26 @@ impl ProjectContext {
         let ecosystem = Ecosystem::from_str(&config.ecosystem)
             .ok_or_else(|| anyhow::anyhow!("Unknown ecosystem: '{}'", config.ecosystem))?;
 
-        // Registry override từ mg.toml [registry] (url + token) — ưu tiên env
-        let registry_entry = config.registries.iter().find(|r| {
-            !r.url.contains("registry.npmjs.org")
-                || std::env::var("MEGAGATE_WEB_REGISTRY_URL").is_ok()
-        });
-        let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL")
-            .ok()
-            .or_else(|| registry_entry.map(|r| r.url.clone()));
-        let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN")
-            .ok()
-            .or_else(|| registry_entry.and_then(|r| r.token.clone()));
+        // Registry chain hợp nhất (ITEM 2): env override → mg.toml [[registries]]
+        // (priority) → .npmrc registry= → npmjs default. entry 0 = primary.
+        let chain = mg_config::chain::registry_chain(Some(&root), Some(&config));
+        let primary = chain
+            .first()
+            .map(|r| r.url.clone())
+            .ok_or_else(|| anyhow::anyhow!("no registry configured"))?;
+        let primary_token = chain.first().and_then(|r| r.token.clone());
+        let fallbacks: Vec<(String, Option<String>)> = chain
+            .iter()
+            .skip(1)
+            .map(|r| (r.url.clone(), r.token.clone()))
+            .collect();
 
         let adapter = crate::factory::create_adapter_for(
             &root,
             &ecosystem,
-            registry_url.as_deref(),
-            token.as_deref(),
+            Some(&primary),
+            primary_token.as_deref(),
+            &fallbacks,
         )?;
         Ok(Self {
             root,

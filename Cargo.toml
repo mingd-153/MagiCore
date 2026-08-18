@@ -49,6 +49,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2"] }
 url = "2.5"
+object_store = { version = "0.11", features = ["aws"] }
 axum = { version = "0.7", features = ["ws", "multipart"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compression-full"] }
 notify = "6.1"

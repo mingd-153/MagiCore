@@ -35,23 +35,37 @@ pub async fn run(
             info("Applying requested packages to each detected workspace.");
         }
 
-        for workspace in workspaces {
-            info(&format!("Installing workspace: {}", workspace.display()));
-            // Mix core (Q23): detect core riêng cho từng project — không dùng
-            // adapter của root (root có thể không thuộc core nào).
-            let ctx = crate::context::ProjectContext::load_for_dir(&workspace)?;
-            let adapter = ctx.adapter();
-            install_into_root(
-                adapter,
-                &workspace,
-                &packages,
-                ignore_scripts,
-                allow_scripts,
-            )
-            .await?;
+        // ITEM 7: install workspace song song (buffered 4), lỗi 1 project không chặn repo
+        use futures_util::StreamExt;
+        let results: Vec<Result<()>> = futures_util::stream::iter(workspaces)
+            .map(|workspace| {
+                let packages = &packages;
+                async move {
+                    info(&format!("Installing workspace: {}", workspace.display()));
+                    // Mix core (Q23): detect core riêng cho từng project — không dùng
+                    // adapter của root (root có thể không thuộc core nào).
+                    let ctx = crate::context::ProjectContext::load_for_dir(&workspace)?;
+                    let adapter = ctx.adapter();
+                    install_into_root(adapter, &workspace, packages, ignore_scripts, allow_scripts)
+                        .await
+                }
+            })
+            .buffered(4)
+            .collect()
+            .await;
+
+        let mut failed = 0usize;
+        for result in results {
+            if let Err(e) = result {
+                failed += 1;
+                mg_ui::error(&format!("Workspace install failed: {e:#}"));
+            }
         }
 
         mg_ui::blank_line();
+        if failed > 0 {
+            anyhow::bail!("{failed} workspace(s) failed to install");
+        }
         success("Workspace dependencies installed");
         return Ok(());
     }
