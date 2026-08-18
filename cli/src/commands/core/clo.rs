@@ -245,7 +245,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mg-clo-bin-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("node_modules").join(".bin")).unwrap();
-        std::fs::write(dir.join("node_modules").join(".bin").join("cdk"), "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            dir.join("node_modules").join(".bin").join("cdk"),
+            "#!/bin/sh\n",
+        )
+        .unwrap();
         assert!(bin_resolved_path(&dir, "cdk").unwrap().is_file());
         assert!(bin_resolved_path(&dir, "pulumi").is_none());
         assert!(bin_resolved_path(&dir, "terraform").is_none());

@@ -47,10 +47,24 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         fallback
     };
 
+    // Only pin workspace templates when the tree actually holds template
+    // content — the repo may keep just placeholder READMEs and rely on the
+    // registry cache (~/.mg/templates).
+    let template_disk = workspace_root.join("templates");
+    let template_contract = template_disk
+        .join("web")
+        .join("frontend")
+        .join("react-vite")
+        .join("template.toml")
+        .is_file();
+
+    if template_contract {
+        command.env("MEGAGATE_TEMPLATE_DIR", template_disk);
+    }
+
     let output = command
         .args(args)
         .current_dir(cwd)
-        .env("MEGAGATE_TEMPLATE_DIR", workspace_root.join("templates"))
         .output()
         .expect("failed to run mg");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();

@@ -29,12 +29,20 @@ fn union_first_wins_prefers_root() {
         std::fs::create_dir_all(dir).unwrap();
     }
 
-    write_lockfile(&root, &lock(vec![("react", "18.2.0"), ("lodash", "4.17.21")])).unwrap();
+    write_lockfile(
+        &root,
+        &lock(vec![("react", "18.2.0"), ("lodash", "4.17.21")]),
+    )
+    .unwrap();
     write_lockfile(&app1, &lock(vec![("react", "18.2.0"), ("axios", "1.7.0")])).unwrap();
     write_lockfile(&app2, &lock(vec![("react", "18.3.1")])).unwrap();
 
     let versions = existing_versions_from(&[&root, &app1, &app2]).unwrap();
-    assert_eq!(versions.get("react"), Some(&"18.2.0".to_string()), "root lock first wins");
+    assert_eq!(
+        versions.get("react"),
+        Some(&"18.2.0".to_string()),
+        "root lock first wins"
+    );
     assert_eq!(versions.get("lodash"), Some(&"4.17.21".to_string()));
     assert_eq!(versions.get("axios"), Some(&"1.7.0".to_string()));
     assert_eq!(versions.len(), 3);

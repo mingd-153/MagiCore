@@ -24,7 +24,7 @@ impl TemplateRoot {
         }
 
         let disk = workspace_root().join("templates").join(rel);
-        if disk.is_dir() {
+        if disk.is_dir() && has_template_contract(&disk) {
             return TemplateRoot::disk(disk);
         }
 
@@ -75,4 +75,24 @@ pub fn workspace_root() -> PathBuf {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
+
+/// True when a template dir holds real template content (a `template.toml`
+/// contract anywhere below). Workspace trees holding only doc placeholders
+/// (README files, e.g. the scaffold-structure docs) must not shadow the
+/// registry cache.
+fn has_template_contract(dir: &Path) -> bool {
+    if dir.join("template.toml").is_file() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() && has_template_contract(&path) {
+            return true;
+        }
+    }
+    false
 }

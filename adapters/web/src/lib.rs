@@ -2859,7 +2859,14 @@ impl SharedWebCache {
         etag: Option<String>,
         registry_url: &str,
     ) -> Result<(), DependencyError> {
-        self.write_metadata_record(package, metadata, etag, current_unix_secs(), None, registry_url)
+        self.write_metadata_record(
+            package,
+            metadata,
+            etag,
+            current_unix_secs(),
+            None,
+            registry_url,
+        )
     }
 
     fn write_metadata_record(
@@ -2979,7 +2986,12 @@ async fn load_metadata_by_name_with_fallback(
                 }
                 Ok(Some((metadata, new_etag))) => {
                     if let Some(shared_cache) = shared_cache {
-                        let _ = shared_cache.write_metadata(package, &metadata, Some(new_etag), &registry_url);
+                        let _ = shared_cache.write_metadata(
+                            package,
+                            &metadata,
+                            Some(new_etag),
+                            &registry_url,
+                        );
                     }
                     return Ok(Arc::new(metadata));
                 }
@@ -7220,7 +7232,10 @@ package_count = 0
         assert!(hits_after_first >= 1);
         assert_eq!(hits.load(Ordering::SeqCst), hits_after_first);
 
-        let cached = cache.read_metadata("react", &format!("http://{addr}")).unwrap().unwrap();
+        let cached = cache
+            .read_metadata("react", &format!("http://{addr}"))
+            .unwrap()
+            .unwrap();
         assert!(cached.stale_retry_after.is_some());
         assert!(metadata_record_retry_deferred(&cached));
     }

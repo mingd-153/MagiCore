@@ -357,7 +357,9 @@ fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand
             repair,
         }),
         Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
-        Commands::InstallAi { packages, dry_run } => Some(CoreCommand::InstallAi { packages, dry_run }),
+        Commands::InstallAi { packages, dry_run } => {
+            Some(CoreCommand::InstallAi { packages, dry_run })
+        }
         Commands::InstallClo { packages } => Some(CoreCommand::InstallClo {
             packages,
             dry_run: false,

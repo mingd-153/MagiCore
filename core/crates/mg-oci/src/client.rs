@@ -215,7 +215,11 @@ impl OciClient {
             // thành file có tên (artifact không title → oras skip pull layer).
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 desc = desc.with_annotations(
-                    [("org.opencontainers.image.title".to_string(), name.to_string())].into(),
+                    [(
+                        "org.opencontainers.image.title".to_string(),
+                        name.to_string(),
+                    )]
+                    .into(),
                 );
             }
             layer_descriptors.push(desc);

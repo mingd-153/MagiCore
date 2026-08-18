@@ -248,7 +248,11 @@ fn target_deploy_command(target: &DeployTarget, dry_run: bool) -> Result<DeployC
         "gcp" | "google" => Ok(DeployCommand {
             tool: "gcloud",
             args: if dry_run {
-                vec!["app".to_string(), "deploy".to_string(), "--no-promote".to_string()]
+                vec![
+                    "app".to_string(),
+                    "deploy".to_string(),
+                    "--no-promote".to_string(),
+                ]
             } else {
                 vec!["app".to_string(), "deploy".to_string()]
             },

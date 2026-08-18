@@ -746,7 +746,9 @@ impl TryFrom<Commands> for DispatchCommand {
                 repair,
             }),
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
-            Commands::InstallAi { packages, dry_run } => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
+            Commands::InstallAi { packages, dry_run } => {
+                SomeCore(CoreCommand::InstallAi { packages, dry_run })
+            }
             Commands::InstallClo { packages } => SomeCore(CoreCommand::InstallClo {
                 packages,
                 dry_run: false,

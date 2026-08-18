@@ -50,15 +50,11 @@ async fn build_game(root: &Path) -> Result<()> {
     match engine {
         Some(mg_game_adapter::GameEngine::Bevy) => build_rust(root),
         Some(mg_game_adapter::GameEngine::Godot) => {
-            mg_ui::warning(
-                "godot export build là P2 (03 §4) — dùng editor export; bỏ qua build",
-            );
+            mg_ui::warning("godot export build là P2 (03 §4) — dùng editor export; bỏ qua build");
             Ok(())
         }
         Some(mg_game_adapter::GameEngine::Unity) => {
-            mg_ui::warning(
-                "unity batchmode build là P1 chưa mở — scaffold-only; bỏ qua build",
-            );
+            mg_ui::warning("unity batchmode build là P1 chưa mở — scaffold-only; bỏ qua build");
             Ok(())
         }
         Some(mg_game_adapter::GameEngine::Unreal) => {
@@ -161,9 +157,7 @@ async fn build_hardware(root: &Path) -> Result<()> {
 /// Fail-closed: platform thiếu toolchain → cảnh báo + skip, không fail cả project.
 async fn build_app(root: &Path) -> Result<()> {
     let mg_toml = std::fs::read_to_string(root.join("mg.toml")).ok();
-    let v: Option<toml::Value> = mg_toml
-        .as_deref()
-        .and_then(|cfg| toml::from_str(cfg).ok());
+    let v: Option<toml::Value> = mg_toml.as_deref().and_then(|cfg| toml::from_str(cfg).ok());
     let language = v
         .as_ref()
         .and_then(|v| v.get("app"))
@@ -793,8 +787,8 @@ fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::{
-        build_cloud, build_game, build_iot, build_lib, build_multi_app,
-        find_native_engine_crate, map_framework_build_script, reject_external_package_manager_script,
+        build_cloud, build_game, build_iot, build_lib, build_multi_app, find_native_engine_crate,
+        map_framework_build_script, reject_external_package_manager_script,
         resolve_web_build_target, tool_unavailable, WebBuildTarget,
     };
     use mg_config::project::ProjectExecutionConfig;
@@ -980,8 +974,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("mg.toml"), "ecosystem = \"iot\"\n").unwrap();
-        std::fs::write(tmp.join("platformio.ini"), "[env:esp32dev]\nplatform = espressif32\n")
-            .unwrap();
+        std::fs::write(
+            tmp.join("platformio.ini"),
+            "[env:esp32dev]\nplatform = espressif32\n",
+        )
+        .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(build_iot(&tmp)).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);
@@ -993,8 +990,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("mg.toml"), "ecosystem = \"lib\"\n").unwrap();
-        std::fs::write(tmp.join("package.json"), "{\"name\":\"x\",\"version\":\"0.1.0\"}")
-            .unwrap();
+        std::fs::write(
+            tmp.join("package.json"),
+            "{\"name\":\"x\",\"version\":\"0.1.0\"}",
+        )
+        .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(build_lib(&tmp)).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);

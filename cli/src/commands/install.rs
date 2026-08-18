@@ -197,7 +197,14 @@ pub(crate) async fn install_into_root_ws(
     ignore_scripts: bool,
     allow_scripts: bool,
 ) -> Result<()> {
-    install_into_root(adapter, project_root, packages, ignore_scripts, allow_scripts).await
+    install_into_root(
+        adapter,
+        project_root,
+        packages,
+        ignore_scripts,
+        allow_scripts,
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
