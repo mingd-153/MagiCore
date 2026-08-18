@@ -210,7 +210,14 @@ impl OciClient {
             let data = std::fs::read(path)?;
             let digest = self.push_blob(repo, &data).await?;
             let size = data.len() as i64;
-            let desc = OciDescriptor::new(media_type.to_string(), size, digest);
+            let mut desc = OciDescriptor::new(media_type.to_string(), size, digest);
+            // Chuẩn OCI image spec: title annotation trên layer để oras/docker pull
+            // thành file có tên (artifact không title → oras skip pull layer).
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                desc = desc.with_annotations(
+                    [("org.opencontainers.image.title".to_string(), name.to_string())].into(),
+                );
+            }
             layer_descriptors.push(desc);
         }
 

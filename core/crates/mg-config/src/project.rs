@@ -415,6 +415,8 @@ impl ProjectConfig {
         if from.join("mg.toml").exists()
             || from.join("package.json").exists()
             || from.join("Cargo.toml").exists()
+            || from.join("Package.swift").exists()
+            || from.join("pyproject.toml").exists()
         {
             return Some(from.to_path_buf());
         }

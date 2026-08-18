@@ -160,16 +160,22 @@ async fn build_hardware(root: &Path) -> Result<()> {
 /// C9 — build app: single framework passthrough hoặc multi-platform (shared + platforms).
 /// Fail-closed: platform thiếu toolchain → cảnh báo + skip, không fail cả project.
 async fn build_app(root: &Path) -> Result<()> {
-    let cfg = std::fs::read_to_string(root.join("mg.toml"))?;
-    let v: toml::Value = toml::from_str(&cfg)?;
+    let mg_toml = std::fs::read_to_string(root.join("mg.toml")).ok();
+    let v: Option<toml::Value> = mg_toml
+        .as_deref()
+        .and_then(|cfg| toml::from_str(cfg).ok());
     let language = v
-        .get("app")
+        .as_ref()
+        .and_then(|v| v.get("app"))
         .and_then(|a| a.get("language"))
         .and_then(|l| l.as_str())
+        .or_else(|| infer_app_language(root))
         .unwrap_or("flutter");
 
     if language == "multi" {
-        return build_multi_app(root, &v);
+        if let Some(v) = v {
+            return build_multi_app(root, &v);
+        }
     }
 
     let (tool, args): (&str, &[&str]) = match language {
@@ -185,6 +191,18 @@ async fn build_app(root: &Path) -> Result<()> {
     run_allowlisted_tool(root, tool, args)?;
     mg_ui::success(&format!("App build completed ({language})"));
     Ok(())
+}
+
+fn infer_app_language(root: &Path) -> Option<&'static str> {
+    if root.join("Package.swift").exists() {
+        Some("swift")
+    } else if root.join("settings.gradle.kts").exists() || root.join("build.gradle.kts").exists() {
+        Some("kotlin")
+    } else if root.join("pubspec.yaml").exists() {
+        Some("flutter")
+    } else {
+        None
+    }
 }
 
 fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
