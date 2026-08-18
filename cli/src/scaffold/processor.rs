@@ -405,7 +405,8 @@ impl Scaffolder {
         if root.exists("shared") {
             return root;
         }
-        let cached = TemplateRoot::disk(crate::commands::template::templates_cache_dir().join("web"));
+        let cached =
+            TemplateRoot::disk(crate::commands::template::templates_cache_dir().join("web"));
         if cached.exists("shared") {
             return cached;
         }
@@ -846,7 +847,7 @@ impl Scaffolder {
                 Self::write_file(
                     &target.join("package.json"),
                     &format!(
-                        "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\"\n}}\n",
+                        "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": {{\"typescript\": \"^5\"}}\n}}\n",
                         slugify(name)
                     ),
                 )?;
@@ -1985,6 +1986,12 @@ mod tests {
             );
             let native = std::fs::read_to_string(out.join(manifest)).unwrap();
             assert!(native.contains(marker), "{language} marker");
+            if language == "ts" {
+                assert!(
+                    native.contains("\"typescript\": \"^5\""),
+                    "ts scaffold devDeps typescript"
+                );
+            }
         }
         let py_src = root
             .path()
