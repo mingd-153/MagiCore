@@ -752,16 +752,57 @@ mod tests {
             Cli::try_parse_from(["mg", "config", "set", "x", "1", "--local"]).unwrap();
         match set.command.unwrap() {
             Commands::Config { cmd, local } => match cmd {
-                crate::commands::config::ConfigCmd::Set { key, value } => {
+                crate::commands::config::ConfigCmd::Set { key, value, toml } => {
                     assert_eq!(key, "x");
                     assert_eq!(value, "1");
                     assert!(local);
+                    assert!(!toml); // mặc định không phải toml
                 }
                 _ => panic!("expected config set"),
             },
             _ => panic!("expected config command"),
         }
+
+        // mg config set --toml
+        let set_toml =
+            Cli::try_parse_from(["mg", "config", "set", "ecosystem", "web", "--toml"]).unwrap();
+        match set_toml.command.unwrap() {
+            Commands::Config { cmd, .. } => match cmd {
+                crate::commands::config::ConfigCmd::Set { key, value, toml } => {
+                    assert_eq!(key, "ecosystem");
+                    assert_eq!(value, "web");
+                    assert!(toml);
+                }
+                _ => panic!("expected config set --toml"),
+            },
+            _ => panic!("expected config command"),
+        }
+
+        // mg config unset
+        let unset = Cli::try_parse_from(["mg", "config", "unset", "registry"]).unwrap();
+        match unset.command.unwrap() {
+            Commands::Config { cmd, .. } => match cmd {
+                crate::commands::config::ConfigCmd::Unset { key, .. } => {
+                    assert_eq!(key, "registry");
+                }
+                _ => panic!("expected config unset"),
+            },
+            _ => panic!("expected config command"),
+        }
+
+        // mg config list --local
+        let list = Cli::try_parse_from(["mg", "config", "list", "--local"]).unwrap();
+        match list.command.unwrap() {
+            Commands::Config { cmd, .. } => match cmd {
+                crate::commands::config::ConfigCmd::List { local } => {
+                    assert!(local);
+                }
+                _ => panic!("expected config list"),
+            },
+            _ => panic!("expected config command"),
+        }
     }
+
 
     #[test]
     fn test_stage_parses_dir_flag() {

@@ -1,5 +1,6 @@
 pub mod add;
 pub mod dev;
+pub mod dev_port;
 pub mod create;
 pub mod install;
 pub mod list;
