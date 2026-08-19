@@ -1,0 +1,10 @@
+# Chống phình build context (sys-mg/17 §6)
+target/
+_archive/
+sys-mg/
+.git/
+.gitignore
+*.md
+!deploy/docker/registry.env.example
+node_modules/
+.DS_Store
