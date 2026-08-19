@@ -440,6 +440,7 @@ pub(crate) enum Commands {
     #[command(name = "install-ai", alias = "i-ai", about = "Install AI dependencies", hide = true)]
     InstallAi {
         packages: Vec<String>,
+        #[arg(long)]
         dry_run: bool,
     },
     #[command(
