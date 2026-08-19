@@ -19,6 +19,7 @@ pub mod import;
 pub mod install;
 pub mod login;
 pub mod model;
+pub mod mcp;
 pub mod network;
 pub mod optimizer;
 pub mod outdated;

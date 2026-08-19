@@ -157,5 +157,6 @@ pub async fn dispatch_common(
         CommonCommand::Sbom { output } => commands::sbom::run(core, output).await,
         CommonCommand::Template { cmd } => commands::template::run(cmd).await,
         CommonCommand::Workspace { cmd } => commands::workspace::run(cmd).await,
+        CommonCommand::Mcp => commands::mcp::run().await,
     }
 }
