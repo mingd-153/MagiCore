@@ -351,7 +351,7 @@ impl Scaffolder {
         let cfg = WEB_FRAMEWORKS
             .iter()
             .find(|f| f.name == framework)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported web framework '{framework}'"))?;
+            .ok_or_else(|| crate::error::unsupported_web_framework(&framework))?;
 
         let frameworks = match cfg.base {
             Some(base) => vec![base.to_string(), framework.clone()],
@@ -371,7 +371,7 @@ impl Scaffolder {
     pub fn scaffold(config: &ScaffoldConfig) -> Result<PathBuf> {
         let target = Self::target_dir(config);
         if target.exists() {
-            anyhow::bail!("Directory '{}' already exists", target.display());
+            return Err(crate::error::dir_already_exists(&target));
         }
 
         std::fs::create_dir_all(&target)?;
@@ -481,7 +481,7 @@ impl Scaffolder {
                 }
             }
             "lib" => super::processors::lib::LibProcessor::files(target, &name, &framework),
-            other => anyhow::bail!("Unsupported core '{}'", other),
+            other => return Err(crate::error::unsupported_scaffold_core(other)),
         }
     }
 
@@ -563,7 +563,7 @@ impl Scaffolder {
         };
 
         if !dir.exists("") {
-            anyhow::bail!("Web template path '{}' does not exist", dir.logical_rel());
+            return Err(crate::error::web_template_path_missing(&dir.logical_rel()));
         }
 
         Ok(dir)
@@ -637,15 +637,14 @@ impl Scaffolder {
             "monorepo" => {
                 layers = Self::monorepo_layer_stack(&root, config, vec![layers.pop().unwrap()])?;
             }
-            other => anyhow::bail!("Unsupported web mode '{other}'"),
+            other => return Err(crate::error::unsupported_web_mode(other)),
         }
 
         for layer in &layers {
             if !layer.exists("") {
-                anyhow::bail!(
-                    "Web template layer '{}' does not exist",
-                    layer.logical_rel()
-                );
+                return Err(crate::error::web_template_layer_missing(
+                    &layer.logical_rel(),
+                ));
             }
         }
 
@@ -673,16 +672,16 @@ impl Scaffolder {
                 let be = fullstack_backend_framework(combined).to_string();
                 let fe = fullstack_frontend_framework(combined).to_string();
                 if be.is_empty() || fe.is_empty() {
-                    anyhow::bail!(
-                        "Unsupported fullstack framework '{combined}' for composited web scaffold"
-                    );
+                    return Err(crate::error::unsupported_fullstack_framework(
+                        &combined,
+                    ));
                 }
                 (fe, be)
             }
-            _ => anyhow::bail!("Web scaffold needs a frontend and backend framework"),
+            _ => return Err(crate::error::web_scaffold_needs_fe_be()),
         };
         let backend_language = infer_backend_language(&backend)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported monorepo backend '{backend}'"))?;
+            .ok_or_else(|| crate::error::unsupported_monorepo_backend(&backend))?;
         let frontend_leaf = root.join("monorepo").join("frontend").join(&frontend);
         Self::ensure_web_layer_ready(
             &frontend_leaf,
@@ -738,11 +737,10 @@ impl Scaffolder {
             return Ok(());
         }
 
-        anyhow::bail!(
-            "Scaffold for {} is not implemented yet at '{}'",
-            label,
-            layer.logical_rel()
-        )
+        return Err(crate::error::scaffold_not_implemented(
+            &label,
+            &layer.logical_rel(),
+        ));
     }
 
     /// Layer scaffold của core non-web: `templates/{core}/{framework}` (Q13).
@@ -760,10 +758,9 @@ impl Scaffolder {
         framework: &str,
     ) -> Result<()> {
         let Some(manifest) = TemplateManifest::load(layer)? else {
-            anyhow::bail!(
-                "Template layer '{}' missing template.toml",
-                layer.logical_rel()
-            );
+            return Err(crate::error::template_layer_missing_manifest(
+                &layer.logical_rel(),
+            ));
         };
         let context = CoreTemplateContext::new(config, name, framework);
         let active_features: HashSet<&str> = config_feature_set(&context.features);
@@ -777,22 +774,20 @@ impl Scaffolder {
         for file in &active_files {
             let target_path = render_core_target_path(&file.target, &context);
             if !seen_targets.insert(target_path.clone()) {
-                anyhow::bail!(
-                    "Duplicate template target '{}' in '{}'",
-                    file.target,
-                    layer.logical_rel()
-                );
+                return Err(crate::error::duplicate_template_target(
+                    &file.target,
+                    &layer.logical_rel(),
+                ));
             }
         }
 
         for file in active_files {
             let source_rel = format!("sources/{}", file.source);
             if !layer.exists(&source_rel) {
-                anyhow::bail!(
-                    "Template source '{}' does not exist in '{}'",
-                    file.source,
-                    layer.logical_rel()
-                );
+                return Err(crate::error::template_source_missing(
+                    &file.source,
+                    &layer.logical_rel(),
+                ));
             }
             let target_path = render_core_target_path(&file.target, &context);
             let bytes = layer.read(&source_rel)?;
@@ -807,10 +802,9 @@ impl Scaffolder {
                 }
                 Err(_) => {
                     if !file.required_context.is_empty() {
-                        anyhow::bail!(
-                            "Binary template source '{}' cannot declare template context",
-                            layer.label(&source_rel)
-                        );
+                        return Err(crate::error::binary_source_with_context(
+                            &layer.label(&source_rel),
+                        ));
                     }
                     Self::write_bytes(&target.join(&target_path), &bytes)?;
                 }
@@ -851,22 +845,20 @@ impl Scaffolder {
         for file in &active_files {
             let target_path = render_target_path(&file.target, context);
             if !seen_targets.insert(target_path.clone()) {
-                anyhow::bail!(
-                    "Duplicate template target '{}' in '{}'",
-                    file.target,
-                    layer.logical_rel()
-                );
+                return Err(crate::error::duplicate_template_target(
+                    &file.target,
+                    &layer.logical_rel(),
+                ));
             }
         }
 
         for file in active_files {
             let source_rel = format!("sources/{}", file.source);
             if !layer.exists(&source_rel) {
-                anyhow::bail!(
-                    "Template source '{}' does not exist in '{}'",
-                    file.source,
-                    layer.logical_rel()
-                );
+                return Err(crate::error::template_source_missing(
+                    &file.source,
+                    &layer.logical_rel(),
+                ));
             }
 
             let target_path = render_target_path(&file.target, context);
@@ -882,10 +874,9 @@ impl Scaffolder {
                 }
                 Err(_) => {
                     if !file.required_context.is_empty() {
-                        anyhow::bail!(
-                            "Binary template source '{}' cannot declare template context",
-                            layer.label(&source_rel)
-                        );
+                        return Err(crate::error::binary_source_with_context(
+                            &layer.label(&source_rel),
+                        ));
                     }
                     Self::write_bytes(&target.join(&target_path), &bytes)?;
                 }
@@ -1139,28 +1130,25 @@ impl WebTemplateContext {
 
         for token in &used {
             if !declared.contains(token.as_str()) {
-                anyhow::bail!(
-                    "Template token '{}' in '{}' is not declared in template.toml",
+                return Err(crate::error::template_token_undeclared(
                     token,
-                    source
-                );
+                    source,
+                ));
             }
             if self.value(token).is_none() {
-                anyhow::bail!(
-                    "Template token '{}' in '{}' is not supported by the Rust compiler context",
+                return Err(crate::error::template_token_unsupported(
                     token,
-                    source
-                );
+                    source,
+                ));
             }
         }
 
         for key in required_context {
             if self.value(key).is_none() {
-                anyhow::bail!(
-                    "Template context '{}' required by '{}' is not supported by the Rust compiler context",
+                return Err(crate::error::template_context_unsupported(
                     key,
-                    source
-                );
+                    source,
+                ));
             }
         }
 
@@ -1227,28 +1215,25 @@ impl CoreTemplateContext {
 
         for token in &used {
             if !declared.contains(token.as_str()) {
-                anyhow::bail!(
-                    "Template token '{}' in '{}' is not declared in template.toml",
+                return Err(crate::error::template_token_undeclared(
                     token,
-                    source
-                );
+                    source,
+                ));
             }
             if self.value(token).is_none() {
-                anyhow::bail!(
-                    "Template token '{}' in '{}' is not supported by the Rust compiler context",
+                return Err(crate::error::template_token_unsupported(
                     token,
-                    source
-                );
+                    source,
+                ));
             }
         }
 
         for key in required_context {
             if self.value(key).is_none() {
-                anyhow::bail!(
-                    "Template context '{}' required by '{}' is not supported by the Rust compiler context",
+                return Err(crate::error::template_context_unsupported(
                     key,
-                    source
-                );
+                    source,
+                ));
             }
         }
 
@@ -1296,7 +1281,9 @@ impl TemplateManifest {
             if !layer.exists("sources") {
                 return Ok(None);
             }
-            anyhow::bail!("Missing template manifest '{}'", layer.logical_rel());
+            return Err(crate::error::template_manifest_missing(
+                &layer.logical_rel(),
+            ));
         }
 
         let contents = String::from_utf8(layer.read("template.toml")?)?;

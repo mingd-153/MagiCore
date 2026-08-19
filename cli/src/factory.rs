@@ -37,7 +37,7 @@ pub fn create_adapter(
 ) -> anyhow::Result<Arc<dyn PackageAdapter>> {
     create_adapter_for(
         &std::env::current_dir()
-            .map_err(|e| anyhow::anyhow!("failed to resolve current directory: {e}"))?,
+            .map_err(|e| crate::error::cwd_deleted(&e))?,
         ecosystem,
         registry_url,
         token,
@@ -71,47 +71,47 @@ pub fn create_adapter_for(
             _ => mg_web_adapter::WebAdapter::new(),
         }),
         #[cfg(not(feature = "web"))]
-        Ecosystem::Web => anyhow::bail!("'web' core is not included in this build."),
+        Ecosystem::Web => return Err(crate::error::core_not_in_build("web")),
         #[cfg(feature = "game")]
         Ecosystem::Game => Arc::new(
             mg_game_adapter::adapter_for(root)
-                .ok_or_else(|| anyhow::anyhow!("Cannot detect a game project here (missing mg.toml/project.godot/manifest.json/.uproject)."))?,
+                .ok_or_else(|| crate::error::detect_core_failed("game"))?,
         ),
         #[cfg(not(feature = "game"))]
-        Ecosystem::Game => anyhow::bail!("'game' core is not included in this build."),
+        Ecosystem::Game => return Err(crate::error::core_not_in_build("game")),
         Ecosystem::Ai => Arc::new(
             mg_ai_adapter::adapter_for(root)
-                .ok_or_else(|| anyhow::anyhow!("Cannot detect an ai project here (missing mg.toml [ai] framework / pyproject [tool.megagate] framework)."))?,
+                .ok_or_else(|| crate::error::detect_core_failed("ai"))?,
         ),
         #[cfg(feature = "clo")]
         Ecosystem::Cloud => Arc::new(
             mg_cloud_adapter::adapter_for(root)
-                .ok_or_else(|| anyhow::anyhow!("Cannot detect a cloud project here (missing mg.toml/Pulumi.yaml/*.tf/cdk package.json)."))?,
+                .ok_or_else(|| crate::error::detect_core_failed("clo"))?,
         ),
         #[cfg(not(feature = "clo"))]
-        Ecosystem::Cloud => anyhow::bail!("'cloud' core is not included in this build."),
+        Ecosystem::Cloud => return Err(crate::error::core_not_in_build("clo")),
         Ecosystem::Cicd => Arc::new(
             mg_cicd_adapter::adapter_for(root)
-                .ok_or_else(|| anyhow::anyhow!("Cannot detect a cicd project here (missing mg.toml/wrangler.toml/argocd/.github/workflows)."))?,
+                .ok_or_else(|| crate::error::detect_core_failed("cicd"))?,
         ),
         #[cfg(feature = "iot")]
         Ecosystem::Iot => Arc::new(
             mg_iot_adapter::adapter_for(root)
-                .ok_or_else(|| anyhow::anyhow!("Cannot detect an iot project here (missing mg.toml/platformio.ini/west.yml)."))?,
+                .ok_or_else(|| crate::error::detect_core_failed("iot"))?,
         ),
         #[cfg(not(feature = "iot"))]
-        Ecosystem::Iot => anyhow::bail!("'iot' core is not included in this build."),
+        Ecosystem::Iot => return Err(crate::error::core_not_in_build("iot")),
         Ecosystem::App => Arc::new(
             mg_app_adapter::adapter_for(root)
-                .ok_or_else(|| anyhow::anyhow!("Cannot detect an app project here (missing mg.toml/pubspec.yaml/build.gradle/Package.swift)."))?,
+                .ok_or_else(|| crate::error::detect_core_failed("app"))?,
         ),
         #[cfg(feature = "hardware")]
         Ecosystem::Hardware => Arc::new(
             mg_hardware_adapter::adapter_for(root)
-                .ok_or_else(|| anyhow::anyhow!("Cannot detect a hardware project here (missing mg.toml with ecosystem = \"hardware\")."))?,
+                .ok_or_else(|| crate::error::detect_core_failed("hardware"))?,
         ),
         #[cfg(not(feature = "hardware"))]
-        Ecosystem::Hardware => anyhow::bail!("'hardware' core is not included in this build."),
+        Ecosystem::Hardware => return Err(crate::error::core_not_in_build("hardware")),
         #[cfg(feature = "lib")]
         Ecosystem::Lib => Arc::new(
             mg_lib_adapter::adapter_for_with_chain(root,
@@ -119,10 +119,10 @@ pub fn create_adapter_for(
                 token.map(str::to_string),
                 fallbacks,
             )
-            .ok_or_else(|| anyhow::anyhow!("Cannot detect a lib project here (missing mg.toml/lib marker)."))?,
+            .ok_or_else(|| crate::error::detect_core_failed("lib"))?,
         ),
         #[cfg(not(feature = "lib"))]
-        Ecosystem::Lib => anyhow::bail!("'lib' core is not included in this build."),
+        Ecosystem::Lib => return Err(crate::error::core_not_in_build("lib")),
     };
 
     // Đăng ký plugin vào registry global — lần gọi sau dispatch qua registry.
