@@ -26,41 +26,96 @@ create/
 
 ---
 
-## 🚀 Cách Chạy Lệnh CLI
+## 🚀 Hướng Dẫn Chi Tiết Lệnh Tạo Dự Án (9 Cores & Đa Ngôn Ngữ)
 
-### 1. Web Core (FE / BE / Fullstack)
+### 1. 🌐 Web Core (FE, BE Đa Ngôn Ngữ & Fullstack)
 ```bash
-# Frontend
-mg create-web vite my-vite-app -- --template react-ts
-# Fullstack Next.js
+# Frontend (React, Vue, Svelte, Astro qua Vite/Astro)
+mg create-web vite my-react-app -- --template react-ts
+mg create-web astro my-astro-blog
+
+# Backend Đa Ngôn Ngữ:
+mg create-web spring-boot my-java-api      # Java (Spring Boot)
+mg create-web django my-django-api         # Python (Django)
+mg create-web fastapi my-fastapi-api       # Python (FastAPI)
+mg create-web dotnet my-dotnet-api         # C# (.NET WebAPI)
+mg create-web gin my-go-api                # Go (Gin)
+mg create-web actix my-rust-api            # Rust (Actix-web)
+mg create-web nestjs my-nest-api           # Node/TS (NestJS)
+
+# Fullstack:
 mg create-web nextjs@latest my-next-app --ts --tailwind
-# Backend NestJS / Spring Boot / Django
-mg create-web nestjs my-nest-api
-mg create-web spring-boot my-spring-api
-mg create-web django my-django-api
+mg create-web nuxt my-nuxt-app
 ```
 
-### 2. App Core (Mobile / Desktop / Backend)
+### 2. 📱 App Core (Mobile, Desktop, Backend)
 ```bash
-# Flutter
-mg create-app flutter my_mobile_app --org com.megagate
-# Desktop Tauri
-mg create-app tauri my_desktop_app
-# Kotlin Android / Swift iOS
+# Mobile Client (Flutter, React Native, Native Kotlin/Swift)
+mg create-app flutter my_flutter_app --org com.megagate
+mg create-app react-native my_rn_app
 mg create-app kotlin my_android_app
 mg create-app swift my_ios_app
+
+# Desktop / Cross-Platform GUI
+mg create-app tauri my_tauri_desktop
+mg create-app maui my_dotnet_maui_app
+
+# App Backend Services
+mg create-app spring-boot my_app_backend
+mg create-app ktor my_ktor_backend
+mg create-app go-grpc my_grpc_backend
 ```
 
-### 3. AI Core
+### 3. 🤖 AI Core (Agent & Model Context Protocol)
 ```bash
 mg create-ai mcp-server my-mcp-server
 mg create-ai python-agent my-agent
+mg create-ai langchain-app my-ai-app
 ```
 
-### 4. Game Core
+### 4. 🎮 Game Core (Bevy, Godot, Unity, Unreal)
 ```bash
-mg create-game bevy my-bevy-game
-mg create-game godot my-godot-game
+mg create-game bevy my-bevy-game --2d       # Rust (Bevy)
+mg create-game godot my-godot-game          # Godot Engine
+mg create-game unity my-unity-game          # Unity (C#)
+mg create-game unreal my-unreal-game        # Unreal (C++)
+```
+
+### 5. ☁️ Cloud Core (IaC & Cloud Backends)
+```bash
+mg create-clo cdk my-cdk-infra --language typescript
+mg create-clo pulumi my-pulumi-infra --template aws-typescript
+mg create-clo terraform my-tf-infra
+mg create-clo gin-go my-cloud-microservice
+mg create-clo cloudflare my-worker
+```
+
+### 6. 🔌 IoT / Embedded Core (Rust, PlatformIO, Zephyr)
+```bash
+mg create-iot esp32 my-esp-device --board esp32c3
+mg create-iot platformio my-arduino-node --board uno
+mg create-iot zephyr my-arm-firmware
+```
+
+### 7. 🔄 CI/CD Core
+```bash
+mg create-cicd github-actions
+mg create-cicd argocd
+```
+
+### 8. 📚 Lib Core (Thư Viện Đa Ngôn Ngữ)
+```bash
+mg create-lib ts my-typescript-lib
+mg create-lib rust my-rust-crate
+mg create-lib python my-python-package
+mg create-lib go my-go-module
+mg create-lib java my-java-library
+mg create-lib dotnet my-dotnet-classlib
+```
+
+### 9. ⚙️ Hardware Core
+```bash
+mg create-hardware bench-profile my-hw-profile
 ```
 
 ---

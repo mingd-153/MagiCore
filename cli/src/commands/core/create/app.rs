@@ -16,3 +16,8 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     mg_ui::success("App project created. Run `mg install` or `mg dev` next.");
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "test/app.rs"]
+mod tests;
+

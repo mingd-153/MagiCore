@@ -16,3 +16,8 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     mg_ui::success("Cloud project created. Run `mg add-clo <pkg>` or `mg install-clo` next.");
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "test/clo.rs"]
+mod tests;
+
