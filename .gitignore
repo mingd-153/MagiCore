@@ -85,6 +85,8 @@ mg-bench-*
 *REPORT*.md
 *SUMMARY*.md
 *REVIEW*.md
+*Checklist*.md
+*ProgressReport*.md
 report-v2-changes.md
 ARCHITECTURE_AUDIT.md
 SECURITY_AUDIT.md
@@ -92,8 +94,11 @@ MEGAGATE_P2_REPORT.md
 OPTIMIZATION_SUMMARY.md
 CODEBASE_REVIEW.md
 REPORT.md
+scripts/notes/
+docs/specs/megaGate*.md
+docs/specs/core-*.md
+docs/specs/*plan*.md
+docs/guides/
 
-# Doc .md trong thư mục con (cấp 1) — không commit doc rải rác
-/*/*.md
-!.github/PULL_REQUEST_TEMPLATE.md
-!scripts/notes/*.md
+# Allow README.md files across directories
+!**/README.md
