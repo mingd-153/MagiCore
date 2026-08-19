@@ -117,13 +117,24 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     let mut failed = 0usize;
     let original_cwd = cwd;
     for ws in &workspaces {
+        // T4 core-aware: nếu --core flag không có, đọc .mg.core marker của workspace này.
+        // Ưu tiên: CLI --core > marker file > None.
+        let ws_core: Option<String> = if core.is_some() {
+            core.map(|s| s.to_string())
+        } else {
+            // Đọc marker .mg.core trong workspace folder
+            read_core_marker(ws)
+        };
+        let ws_core_str = ws_core.as_deref();
+
         mg_ui::info(&format!(
-            "== {name} → {}",
-            ws.display()
+            "== {name} → {} (core: {})",
+            ws.display(),
+            ws_core_str.unwrap_or("auto")
         ));
         let result = (|| async {
             std::env::set_current_dir(ws)?;
-            dispatch_command(command.clone(), core, false).await
+            dispatch_command(command.clone(), ws_core_str, false).await
         })()
         .await;
         if let Err(e) = result {
@@ -142,8 +153,28 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     Ok(())
 }
 
+/// Đọc nội dung `.mg.core` marker file trong thư mục `dir` — trả về tên core nếu hợp lệ.
+/// Format: 1 dòng plain text = tên core (có thể có comment `# ...` sau tên).
+fn read_core_marker(dir: &PathBuf) -> Option<String> {
+    let marker = dir.join(mg_config::project::ProjectConfig::CORE_MARKER_FILE);
+    let content = std::fs::read_to_string(marker).ok()?;
+    // Lấy dòng đầu, bỏ comment
+    let first_line = content.lines().next()?.trim();
+    let core_name = first_line
+        .split('#')
+        .next()?
+        .trim();
+    if core_name.is_empty() {
+        None
+    } else {
+        Some(core_name.to_string())
+    }
+}
+
 
 fn recursive_supported(command: &Commands) -> bool {
+    // T4: mở rộng danh sách lệnh hỗ trợ --recursive (pnpm -r parity)
+    // Thêm: Build, Run, Audit, Outdated, Dev (core-aware per workspace)
     matches!(
         command,
         Commands::Publish { .. }
@@ -152,6 +183,11 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::Remove { .. }
             | Commands::Update { .. }
             | Commands::List
+            | Commands::Build { .. }
+            | Commands::Run { .. }
+            | Commands::Audit { .. }
+            | Commands::Outdated { .. }
+            | Commands::Dev { .. }
             | Commands::InstallWeb { .. }
             | Commands::InstallGame { .. }
             | Commands::InstallAi { .. }
@@ -383,20 +419,69 @@ mod tests {
     }
 
     #[test]
-    fn recursive_is_rejected_instead_of_silently_ignored() {
-        let err = reject_unsupported_recursive(Some(&Commands::Install {
-            packages: Vec::new(),
+    fn recursive_is_rejected_for_unsupported_commands() {
+        // Init không có trong recursive_supported → phải bị reject.
+        let err = reject_unsupported_recursive(Some(&Commands::Init {
+            template: None,
+            signature: None,
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("--recursive is not implemented for 'init' yet"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn recursive_supported_includes_build_run_audit_outdated_dev() {
+        // T4: xác nhận các lệnh mới được mở rộng recursive support
+        assert!(recursive_supported(&Commands::Build { target: None }));
+        assert!(recursive_supported(&Commands::Audit { fix: false }));
+        assert!(recursive_supported(&Commands::Outdated { json: false }));
+        assert!(recursive_supported(&Commands::Dev {
+            host: None,
+            port: None,
+            clear: false,
+        }));
+    }
+
+    #[test]
+    fn recursive_supported_includes_install_and_add() {
+        // Existing commands vẫn supported sau T4
+        assert!(recursive_supported(&Commands::Install {
+            packages: vec![],
             frozen: false,
             ignore_scripts: false,
             allow_scripts: false,
             prefer_dedupe: false,
             repair: false,
             dry_run: false,
-        }))
-        .unwrap_err();
+        }));
+        assert!(recursive_supported(&Commands::List));
+    }
 
-        assert!(err
-            .to_string()
-            .contains("--recursive is not implemented for 'install' yet"));
+    #[test]
+    fn read_core_marker_parses_plain_and_comment() {
+        // T4: đọc .mg.core marker với/không có comment
+        let dir = std::env::temp_dir().join(format!("mg_test_marker_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Plain value
+        std::fs::write(dir.join(".mg.core"), "web\n").unwrap();
+        assert_eq!(read_core_marker(&dir), Some("web".to_string()));
+
+        // With comment
+        std::fs::write(dir.join(".mg.core"), "ai # generated by mg init\n").unwrap();
+        assert_eq!(read_core_marker(&dir), Some("ai".to_string()));
+
+        // Empty → None
+        std::fs::write(dir.join(".mg.core"), "# just a comment\n").unwrap();
+        assert_eq!(read_core_marker(&dir), None);
+
+        // Missing file → None
+        std::fs::remove_file(dir.join(".mg.core")).unwrap();
+        assert_eq!(read_core_marker(&dir), None);
+
+        std::fs::remove_dir(&dir).ok();
     }
 }

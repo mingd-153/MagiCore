@@ -152,6 +152,11 @@ fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
         config.features.clone(),
     );
     proj_config.save(project_dir)?;
+    // T9a: Tự động ghi .mg.core marker cùng lúc với mg.toml.
+    // Đảm bảo auto_detect ưu tiên marker → đúng core cho mọi lệnh core-aware.
+    if let Err(e) = ProjectConfig::write_core_marker_at(project_dir, &config.core) {
+        mg_ui::warning(&format!("Could not write {} marker: {e}", ProjectConfig::CORE_MARKER_FILE));
+    }
     if config.core == "game" {
         // `mg run` = script runner — game scaffold bổ sung bản ship chuẩn (mg build → cargo run)
         let scripts = "\n[scripts]\nrun = \"cargo run\"\nbuild = \"cargo build\"\n".to_string();
