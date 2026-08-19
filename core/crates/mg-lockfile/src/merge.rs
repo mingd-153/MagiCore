@@ -9,9 +9,53 @@
 //! - Workspaces are merged by path the same way.
 //! - Direct/dev flags are recomputed by the caller from the manifest after
 //!   merge; here we keep "direct if any side says direct".
+//! - Automatic resolution of Git Conflict Markers (`<<<<<<<`, `=======`, `>>>>>>>`).
 
-use crate::{LockPackage, Lockfile, WorkspaceLock};
+use crate::{serialization, LockPackage, Lockfile, WorkspaceLock};
 use std::collections::BTreeMap;
+
+/// Parses and auto-resolves git conflict markers in a raw lockfile text when possible.
+/// (Deno `merge_conflict_sides` & PNPM merge model).
+pub fn resolve_git_conflict_markers(content: &str) -> Option<Lockfile> {
+    if !content.contains("<<<<<<<") || !content.contains("=======") || !content.contains(">>>>>>>") {
+        return None;
+    }
+
+    let mut ours_lines = Vec::new();
+    let mut theirs_lines = Vec::new();
+    let mut in_ours = false;
+    let mut in_theirs = false;
+
+    for line in content.lines() {
+        if line.starts_with("<<<<<<<") {
+            in_ours = true;
+            in_theirs = false;
+        } else if line.starts_with("=======") {
+            in_ours = false;
+            in_theirs = true;
+        } else if line.starts_with(">>>>>>>") {
+            in_ours = false;
+            in_theirs = false;
+        } else if in_ours {
+            ours_lines.push(line);
+        } else if in_theirs {
+            theirs_lines.push(line);
+        } else {
+            ours_lines.push(line);
+            theirs_lines.push(line);
+        }
+    }
+
+    let ours_str = ours_lines.join("\n");
+    let theirs_str = theirs_lines.join("\n");
+
+    let ours_lock = serialization::from_toml::<Lockfile>(&ours_str).ok()?;
+    let theirs_lock = serialization::from_toml::<Lockfile>(&theirs_str).ok()?;
+
+    // Use empty base for 3-way merge synthesis between the two branches
+    let base_lock = Lockfile::new(&ours_lock.core, &ours_lock.mode);
+    merge3(&base_lock, &ours_lock, &theirs_lock).ok()
+}
 
 #[derive(Debug)]
 pub struct MergeConflict {

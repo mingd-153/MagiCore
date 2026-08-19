@@ -4,6 +4,8 @@
 //!
 //! Modules: paths (standard paths), os, symlink, shell, perms, reflink.
 
+pub mod fs_semaphore;
 pub mod paths;
 pub mod reflink;
+pub use fs_semaphore::{global_fs_write_semaphore, MAX_CONCURRENT_FS_WRITES};
 pub mod prelude {}
