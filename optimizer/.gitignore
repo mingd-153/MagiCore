@@ -1,6 +1,0 @@
-.DS_Store
-.megagate/cache
-.megagate/tmp
-.env
-.env.local
-target

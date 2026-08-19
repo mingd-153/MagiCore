@@ -116,6 +116,9 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     let name = command_name(&command);
     let mut failed = 0usize;
     let original_cwd = cwd;
+    let is_build_cmd = matches!(command, Commands::Build { .. });
+    let mut ws_composite_hashes: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+
     for ws in &workspaces {
         // T4 core-aware: nếu --core flag không có, đọc .mg.core marker của workspace này.
         // Ưu tiên: CLI --core > marker file > None.
@@ -126,6 +129,25 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
             read_core_marker(ws)
         };
         let ws_core_str = ws_core.as_deref();
+
+        let ws_name = crate::commands::install::workspace_package_name(ws)
+            .unwrap_or_else(|| ws.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+
+        if is_build_cmd {
+            if let Ok((should_rebuild, src_hash, comp_hash)) =
+                mg_workspace::check_package_build_freshness(ws, &ws_composite_hashes)
+            {
+                if !should_rebuild {
+                    mg_ui::info(&format!(
+                        "⚡ [cached] {} (core: {}) — source & deps unchanged",
+                        ws.display(),
+                        ws_core_str.unwrap_or("auto")
+                    ));
+                    ws_composite_hashes.insert(ws_name.clone(), comp_hash);
+                    continue;
+                }
+            }
+        }
 
         mg_ui::info(&format!(
             "== {name} → {} (core: {})",
@@ -143,6 +165,14 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
                 "{name} failed in '{}': {e:#}",
                 ws.display()
             ));
+        } else if is_build_cmd {
+            if let Ok(src_hash) = mg_workspace::compute_package_source_hash(ws) {
+                if let Ok(cache) =
+                    mg_workspace::save_package_build_cache(ws, src_hash, ws_composite_hashes.clone())
+                {
+                    ws_composite_hashes.insert(ws_name, cache.composite_hash);
+                }
+            }
         }
     }
     std::env::set_current_dir(&original_cwd)?;

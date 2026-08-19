@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "description": "Universal package manager with multi-core runtime",
+  "homepage": "https://github.com/mingd-153/MegaGate",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/mingd-153/MegaGate/releases/download/v0.2.0/megagate-Windows-X64.zip",
+      "hash": "UPDATE_ME",
+      "bin": "mg.exe"
+    },
+    "arm64": {
+      "url": "https://github.com/mingd-153/MegaGate/releases/download/v0.2.0/megagate-Windows-ARM64.zip",
+      "hash": "UPDATE_ME",
+      "bin": "mg.exe"
+    }
+  },
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/mingd-153/MegaGate/releases/download/v$version/megagate-Windows-X64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/mingd-153/MegaGate/releases/download/v$version/megagate-Windows-ARM64.zip"
+      }
+    }
+  }
+}
