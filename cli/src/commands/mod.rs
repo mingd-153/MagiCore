@@ -20,6 +20,7 @@ pub mod install;
 pub mod login;
 pub mod model;
 pub mod network;
+pub mod optimizer;
 pub mod outdated;
 pub mod patch;
 pub mod publish;
