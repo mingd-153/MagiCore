@@ -126,6 +126,20 @@ pub async fn run_install(
         None
     };
     let root_packages = select_root_packages(graph);
+    let all_root_matched = !root_packages.is_empty() && root_packages
+        .par_iter()
+        .all(|pkg| installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id));
+
+    if all_root_matched && opts.force_install.is_empty() && !graph.packages.is_empty() {
+        let all_vstore_matched = graph.packages
+            .par_iter()
+            .all(|pkg| installed_package_matches(&strict_vstore_package_dir(&node_modules, &pkg.id), &pkg.id));
+        if all_vstore_matched {
+            summary.duration_ms = start.elapsed().as_millis() as u64;
+            return Ok(summary);
+        }
+    }
+
     let root_package_versions: std::collections::HashMap<String, PackageId> = root_packages
         .iter()
         .map(|pkg| (pkg.id.name_str().to_string(), pkg.id.clone()))
