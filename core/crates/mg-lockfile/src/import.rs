@@ -36,6 +36,22 @@ pub fn detect_legacy_lockfiles(project_root: &Path) -> Vec<LegacyLockfile> {
         .collect()
 }
 
+/// Phát hiện nguy cơ Trust-Downgrade: Dự án đã có `mg.lock` (bảo mật cao, có checksum & chữ ký BLAKE3)
+/// nhưng lại xuất hiện file lockfile cũ chưa được đồng bộ hoặc bị dev dùng tool cũ ghi đè.
+pub fn check_trust_downgrade_risk(project_root: &Path) -> Option<Vec<&'static str>> {
+    let mg_lock = project_root.join(crate::LOCKFILE_NAME);
+    if !mg_lock.exists() {
+        return None;
+    }
+    let legacy = detect_legacy_lockfiles(project_root);
+    if legacy.is_empty() {
+        None
+    } else {
+        Some(legacy.into_iter().map(|l| l.file_name).collect())
+    }
+}
+
+
 /// Explicitly import a legacy package-manager lockfile found in `project_root`.
 /// Returns `None` when no supported lockfile is present.
 /// Priority when several exist: npm > pnpm > yarn > bun.
@@ -651,4 +667,25 @@ packages:
                 .is_none()
         );
     }
+
+
+    #[test]
+    fn check_trust_downgrade_risk_detects_coexisting_legacy_locks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        // Chưa có mg.lock -> không có risk downgrade
+        assert!(check_trust_downgrade_risk(root).is_none());
+
+        // Tạo mg.lock
+        std::fs::write(root.join(crate::LOCKFILE_NAME), "version = 1\ncore = \"web\"\nmode = \"frontend\"\n").unwrap();
+        // Chỉ có mg.lock -> an toàn
+        assert!(check_trust_downgrade_risk(root).is_none());
+
+        // Xuất hiện pnpm-lock.yaml song song với mg.lock -> phát hiện rủi ro
+        std::fs::write(root.join(PNPM_LOCKFILE), "lockfileVersion: '9.0'").unwrap();
+        let risks = check_trust_downgrade_risk(root).unwrap();
+        assert_eq!(risks, vec![PNPM_LOCKFILE]);
+    }
 }
+
