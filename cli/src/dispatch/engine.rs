@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{bail, Result};
 
 use crate::Cli;
@@ -9,11 +11,24 @@ pub async fn run(cli: Cli) -> Result<()> {
     mg_ui::set_quiet(cli.quiet);
     let core = cli.core.as_deref();
 
+    if let Some(dir) = cli.dir.as_deref() {
+        std::env::set_current_dir(dir).map_err(|e| {
+            crate::error::dir_missing(&dir.display().to_string(), e.to_string())
+        })?;
+    }
+
     if cli.recursive {
-        // Publish đã implement recursive (Phase 1); các lệnh khác bị chặn
-        if !matches!(cli.command, Some(Commands::Publish { .. })) {
-            reject_unsupported_recursive(cli.command.as_ref())?;
+        if let Some(command) = cli.command.as_ref() {
+            if !recursive_supported(command) {
+                reject_unsupported_recursive(Some(command))?;
+            }
+            // Publish recursive là pipeline topo riêng — --filter chưa nối vào đó.
+            if cli.filter.is_some() && matches!(command, Commands::Publish { .. }) {
+                reject_unsupported_filter(command)?;
+            }
         }
+    } else if cli.filter.is_some() {
+        reject_filter_without_recursive()?;
     }
 
     if cli.audit_strict {
@@ -24,13 +39,143 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 
     match cli.command {
-        Some(command) => dispatch_command(command, core, cli.recursive).await,
+        // Publish recursive là pipeline riêng (topo sort) — giữ path cũ,
+        // chỉ bật khi user truyền --recursive.
+        Some(command @ Commands::Publish { .. }) => {
+            dispatch_command(command, core, cli.recursive).await
+        }
+        Some(command) if cli.recursive => {
+            run_recursive(command, core, cli.filter.as_deref()).await
+        }
+        Some(command) => dispatch_command(command, core, false).await,
         None => {
             let cores = crate::factory::available_cores();
             mg_ui::help::print_custom_help(&cores);
             Ok(())
         }
     }
+}
+
+/// Các lệnh workspace-aware khi chạy `--recursive` (pnpm -r parity).
+/// Chạy tuần tự từng workspace, lỗi 1 project không chặn repo (báo tổng cuối).
+async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&str>) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let project_root = mg_config::project::ProjectConfig::find_project_root(&cwd)
+        .ok_or_else(crate::error::project_root_missing)?;
+    let mut workspaces = crate::commands::install::discover_workspace_projects(&project_root)?
+        .ok_or_else(|| {
+            anyhow::anyhow!("--recursive requires megagate.workspace.toml (mode = \"monorepo\")")
+        })?;
+
+    if let Some(pattern) = filter {
+        // Reuse mg-workspace filter matcher (không import PM khác): tên package,
+        // path tương đối (`./apps/*`), scope (`@core/*`).
+        let mut selected: Vec<PathBuf> = Vec::new();
+        for ws in &workspaces {
+            let relative = ws.strip_prefix(&project_root).unwrap_or(ws);
+            let name = crate::commands::install::workspace_package_name(ws)
+                .unwrap_or_else(|| ws.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+            if mg_workspace::filter_matches(pattern, relative, &name) {
+                selected.push(ws.clone());
+            }
+        }
+        if selected.is_empty() {
+            mg_ui::info(&format!("--filter '{pattern}' matched no workspace packages."));
+            return Ok(());
+        }
+        workspaces = selected;
+        mg_ui::info(&format!(
+            "--filter '{pattern}' → {} workspace(s)",
+            workspaces.len()
+        ));
+    }
+
+    if workspaces.is_empty() {
+        bail!("No workspace projects found in this monorepo.");
+    }
+
+    let name = command_name(&command);
+    let mut failed = 0usize;
+    let original_cwd = cwd;
+    for ws in &workspaces {
+        mg_ui::info(&format!(
+            "== {name} → {}",
+            ws.display()
+        ));
+        let result = (|| async {
+            std::env::set_current_dir(ws)?;
+            dispatch_command(command.clone(), core, false).await
+        })()
+        .await;
+        if let Err(e) = result {
+            failed += 1;
+            mg_ui::error(&format!(
+                "{name} failed in '{}': {e:#}",
+                ws.display()
+            ));
+        }
+    }
+    std::env::set_current_dir(&original_cwd)?;
+
+    if failed > 0 {
+        return Err(crate::error::workspace_failed(failed));
+    }
+    Ok(())
+}
+
+fn recursive_supported(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Publish { .. }
+            | Commands::Install { .. }
+            | Commands::Add { .. }
+            | Commands::Remove { .. }
+            | Commands::Update { .. }
+            | Commands::List
+            | Commands::InstallWeb { .. }
+            | Commands::InstallGame { .. }
+            | Commands::InstallAi { .. }
+            | Commands::InstallClo { .. }
+            | Commands::InstallCicd { .. }
+            | Commands::InstallIot { .. }
+            | Commands::InstallApp { .. }
+            | Commands::InstallLib { .. }
+            | Commands::InstallHardware { .. }
+            | Commands::AddWeb { .. }
+            | Commands::AddGame { .. }
+            | Commands::AddAi { .. }
+            | Commands::AddClo { .. }
+            | Commands::AddCicd { .. }
+            | Commands::AddIot { .. }
+            | Commands::AddApp { .. }
+            | Commands::AddLib { .. }
+            | Commands::AddHardware { .. }
+            | Commands::RemoveWeb { .. }
+            | Commands::RemoveGame { .. }
+            | Commands::RemoveAi { .. }
+            | Commands::RemoveClo { .. }
+            | Commands::RemoveCicd { .. }
+            | Commands::RemoveIot { .. }
+            | Commands::RemoveApp { .. }
+            | Commands::RemoveLib { .. }
+            | Commands::UpdateWeb { .. }
+            | Commands::UpdateGame { .. }
+            | Commands::UpdateAi { .. }
+            | Commands::UpdateClo { .. }
+            | Commands::UpdateCicd { .. }
+            | Commands::UpdateIot { .. }
+            | Commands::UpdateApp { .. }
+            | Commands::UpdateLib { .. }
+            | Commands::ListWeb
+            | Commands::ListGame
+            | Commands::ListAi
+            | Commands::ListClo
+            | Commands::ListCicd
+            | Commands::ListIot
+            | Commands::ListApp
+            | Commands::ListLib
+            | Commands::ListHardware
+    )
 }
 
 fn reject_unsupported_recursive(command: Option<&Commands>) -> Result<()> {
@@ -44,6 +189,17 @@ fn reject_unsupported_recursive(command: Option<&Commands>) -> Result<()> {
         "--recursive is not implemented for '{}' yet. Beta safety rule: refusing a silent no-op on workspace commands.",
         command_name(command)
     )
+}
+
+fn reject_unsupported_filter(command: &Commands) -> Result<()> {
+    bail!(
+        "--filter is not wired into '{}' yet (publish recursive pipeline chưa nhận filter). Refusing a silent no-op.",
+        command_name(command)
+    )
+}
+
+fn reject_filter_without_recursive() -> Result<()> {
+    bail!("--filter requires --recursive (it filters workspace targets). Use `mg <cmd> --recursive --filter <glob>`.")
 }
 
 fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {

@@ -32,6 +32,6 @@ pub fn run(core: Option<&str>, command: String, args: Vec<String>) -> Result<()>
         env: vec![("PATH".to_string(), path_env.to_string_lossy().to_string())],
         ..Default::default()
     };
-    mg_exec::prelude::run(&command, &args, &opts)?;
+    mg_exec::prelude::run_inherited(&command, &args, &opts)?;
     Ok(())
 }

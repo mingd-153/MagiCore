@@ -1,4 +1,6 @@
 /// MegaGate CLI - Universal Package Manager
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::Parser;
 
@@ -31,6 +33,14 @@ pub(crate) struct Cli {
     /// Reduce non-essential output for CI and benchmarks
     #[arg(global = true, short = 'q', long)]
     quiet: bool,
+
+    /// Filter workspace targets when --recursive (pnpm --filter parity: `./apps/*`, `@core/*`, exact name)
+    #[arg(global = true, long)]
+    filter: Option<String>,
+
+    /// Run the command from another directory (pnpm -C parity)
+    #[arg(global = true, short = 'C', long)]
+    dir: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Commands>,
