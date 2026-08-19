@@ -23,20 +23,32 @@ pub async fn add(packages: Vec<String>) -> Result<()> {
     let root = project_root()?;
     for pkg in &packages {
         hardware_kind(pkg)?;
-        let spinner = mg_ui::create_spinner(&format!("  Materializing {pkg}..."));
-        shared::materialize_template(&root, pkg).await?;
-        spinner.finish_and_clear();
-        mg_ui::success(&format!("{pkg} scaffolded at ./{pkg}"));
+        if pkg == OPTIMIZER_PKG {
+            // Xác định core hiện tại của project để optimize đúng profile
+            let core = mg_config::project::ProjectConfig::read_core_marker(&root)?
+                .unwrap_or_else(|| "web".to_string());
+            crate::commands::optimizer::optimize_project(&root, &core, false)?;
+        } else {
+            let spinner = mg_ui::create_spinner(&format!("  Materializing {pkg}..."));
+            shared::materialize_template(&root, pkg).await?;
+            spinner.finish_and_clear();
+            mg_ui::success(&format!("{pkg} scaffolded at ./{pkg}"));
+        }
     }
-    shared::install_with_adapter(
-        &*crate::factory::create_adapter(&mg_types::Ecosystem::Hardware, None, None)
-            .expect("hardware adapter always available in hardware core build"),
-        &root,
-        "mg add-hardware",
-        false,
-        mg_types::adapter::InstallOptions::default(),
-    )
-    .await
+    let has_materialized_pkg = packages.iter().any(|pkg| pkg != OPTIMIZER_PKG);
+    if has_materialized_pkg {
+        if let Ok(adapter) = crate::factory::create_adapter(&mg_types::Ecosystem::Hardware, None, None) {
+            shared::install_with_adapter(
+                &*adapter,
+                &root,
+                "mg add-hardware",
+                false,
+                mg_types::adapter::InstallOptions::default(),
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
