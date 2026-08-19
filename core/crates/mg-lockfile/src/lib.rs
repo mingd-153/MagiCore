@@ -169,8 +169,16 @@ pub fn read_lockfile_checked(project_root: &Path) -> anyhow::Result<Option<Lockf
         }
     }
 
-    let lock = serialization::from_toml::<Lockfile>(&contents)
-        .map_err(|err| anyhow::anyhow!("failed to parse lockfile '{}': {}", path.display(), err))?;
+    let lock = match serialization::from_toml::<Lockfile>(&contents) {
+        Ok(lock) => lock,
+        Err(err) => {
+            if let Some(resolved) = merge::resolve_git_conflict_markers(&contents) {
+                resolved
+            } else {
+                return Err(anyhow::anyhow!("failed to parse lockfile '{}': {}", path.display(), err));
+            }
+        }
+    };
     LockfileSigner::verify(&lock)?;
     Ok(Some(lock))
 }
