@@ -94,10 +94,11 @@ MEGAGATE_P2_REPORT.md
 OPTIMIZATION_SUMMARY.md
 CODEBASE_REVIEW.md
 REPORT.md
-scripts/notes/
-docs/specs/megaGate*.md
-docs/specs/core-*.md
-docs/specs/*plan*.md
+# System design docs (working drafts)
+sys-mg/
+
+# Internal specs and docs
+docs/specs/
 docs/guides/
 
 # Allow README.md files across directories
