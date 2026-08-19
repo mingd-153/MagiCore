@@ -4,6 +4,7 @@
 use anyhow::Result;
 
 pub mod ai;
+pub mod ai_docker;
 pub mod app;
 pub mod web;
 pub mod cicd;
