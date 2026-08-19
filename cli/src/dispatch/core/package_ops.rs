@@ -6,86 +6,6 @@ use super::super::types::CoreCommand;
 
 pub async fn dispatch(command: CoreCommand) -> Result<()> {
     match command {
-        #[cfg(all(
-            feature = "web",
-            not(any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            ))
-        ))]
-        CoreCommand::Add {
-            packages,
-            version,
-            dev,
-            global,
-            exact,
-            optional,
-            peer,
-            no_save,
-        } => {
-            commands::core::web::add(
-                packages, version, dev, exact, optional, peer, no_save, global,
-            )
-            .await
-        }
-        #[cfg(all(
-            feature = "web",
-            not(any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            ))
-        ))]
-        CoreCommand::Remove { package } => commands::core::web::remove(package).await,
-        #[cfg(all(
-            feature = "web",
-            not(any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            ))
-        ))]
-        CoreCommand::Update { packages, install } => {
-            commands::core::web::update(packages, install).await
-        }
-        #[cfg(all(
-            feature = "web",
-            not(any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            ))
-        ))]
-        CoreCommand::List => commands::core::web::list().await,
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
         CoreCommand::AddWeb {
             packages,
             dev,
@@ -93,12 +13,14 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             optional,
             peer,
             no_save,
+            install,
             global,
         } => {
-            commands::core::web::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::add::web::add(
+                packages, None, dev, exact, optional, peer, no_save, install, global,
+            )
+            .await
         }
-        #[cfg(feature = "game")]
         CoreCommand::AddGame {
             packages,
             dev,
@@ -108,10 +30,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::game::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::game::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
-        #[cfg(feature = "ai")]
         CoreCommand::AddAi {
             packages,
             dev,
@@ -121,10 +42,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::ai::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::ai::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
-        #[cfg(feature = "clo")]
         CoreCommand::AddClo {
             packages,
             dev,
@@ -134,10 +54,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::clo::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::clo::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
-        #[cfg(feature = "cicd")]
         CoreCommand::AddCicd {
             packages,
             dev,
@@ -147,10 +66,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::cicd::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::cicd::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
-        #[cfg(feature = "iot")]
         CoreCommand::AddIot {
             packages,
             dev,
@@ -160,10 +78,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::iot::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::iot::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
-        #[cfg(feature = "app")]
         CoreCommand::AddApp {
             packages,
             dev,
@@ -173,10 +90,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::app::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::app::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
-        #[cfg(feature = "lib")]
         CoreCommand::AddLib {
             packages,
             dev,
@@ -186,107 +102,54 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::library::add(
+            commands::core::add::library::add(
                 packages, None, dev, exact, optional, peer, no_save, global,
             )
             .await
         }
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        CoreCommand::RemoveWeb { package } => commands::core::web::remove(package).await,
-        #[cfg(feature = "game")]
-        CoreCommand::RemoveGame { package } => commands::core::game::remove(package).await,
-        #[cfg(feature = "ai")]
-        CoreCommand::RemoveAi { package } => commands::core::ai::remove(package).await,
-        #[cfg(feature = "clo")]
-        CoreCommand::RemoveClo { package } => commands::core::clo::remove(package).await,
-        #[cfg(feature = "cicd")]
-        CoreCommand::RemoveCicd { package } => commands::core::cicd::remove(package).await,
-        #[cfg(feature = "iot")]
-        CoreCommand::RemoveIot { package } => commands::core::iot::remove(package).await,
-        #[cfg(feature = "app")]
-        CoreCommand::RemoveApp { package } => commands::core::app::remove(package).await,
-        #[cfg(feature = "lib")]
-        CoreCommand::RemoveLib { package } => commands::core::library::remove(package).await,
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        CoreCommand::ListWeb => commands::core::web::list().await,
-        #[cfg(feature = "game")]
-        CoreCommand::ListGame => commands::core::game::list().await,
-        #[cfg(feature = "ai")]
-        CoreCommand::ListAi => commands::core::ai::list().await,
-        #[cfg(feature = "clo")]
-        CoreCommand::ListClo => commands::core::clo::list().await,
-        #[cfg(feature = "cicd")]
-        CoreCommand::ListCicd => commands::core::cicd::list().await,
-        #[cfg(feature = "iot")]
-        CoreCommand::ListIot => commands::core::iot::list().await,
-        #[cfg(feature = "app")]
-        CoreCommand::ListApp => commands::core::app::list().await,
-        #[cfg(feature = "lib")]
-        CoreCommand::ListLib => commands::core::library::list().await,
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
+        CoreCommand::AddHardware { packages } => commands::core::add::hardware::add(packages).await,
+        CoreCommand::RemoveWeb { packages, install } => {
+            commands::core::remove::web::remove(packages, install).await
+        }
+        CoreCommand::RemoveGame { packages } => commands::core::remove::game::remove(packages).await,
+        CoreCommand::RemoveAi { packages } => commands::core::remove::ai::remove(packages).await,
+        CoreCommand::RemoveClo { packages } => commands::core::remove::clo::remove(packages).await,
+        CoreCommand::RemoveCicd { packages } => commands::core::remove::cicd::remove(packages).await,
+        CoreCommand::RemoveIot { packages } => commands::core::remove::iot::remove(packages).await,
+        CoreCommand::RemoveApp { packages } => commands::core::remove::app::remove(packages).await,
+        CoreCommand::RemoveLib { packages } => commands::core::remove::library::remove(packages).await,
+        CoreCommand::ListWeb => commands::core::list::web::list().await,
+        CoreCommand::ListGame => commands::core::list::game::list().await,
+        CoreCommand::ListAi => commands::core::list::ai::list().await,
+        CoreCommand::ListClo => commands::core::list::clo::list().await,
+        CoreCommand::ListCicd => commands::core::list::cicd::list().await,
+        CoreCommand::ListIot => commands::core::list::iot::list().await,
+        CoreCommand::ListApp => commands::core::list::app::list().await,
+        CoreCommand::ListLib => commands::core::list::library::list().await,
+        CoreCommand::ListHardware => commands::core::list::hardware::list().await,
         CoreCommand::UpdateWeb { packages, install } => {
-            commands::core::web::update(packages, install).await
+            commands::core::update::web::update(packages, install).await
         }
-        #[cfg(feature = "game")]
         CoreCommand::UpdateGame { packages, install } => {
-            commands::core::game::update(packages, install).await
+            commands::core::update::game::update(packages, install).await
         }
-        #[cfg(feature = "ai")]
         CoreCommand::UpdateAi { packages, install } => {
-            commands::core::ai::update(packages, install).await
+            commands::core::update::ai::update(packages, install).await
         }
-        #[cfg(feature = "clo")]
         CoreCommand::UpdateClo { packages, install } => {
-            commands::core::clo::update(packages, install).await
+            commands::core::update::clo::update(packages, install).await
         }
-        #[cfg(feature = "cicd")]
         CoreCommand::UpdateCicd { packages, install } => {
-            commands::core::cicd::update(packages, install).await
+            commands::core::update::cicd::update(packages, install).await
         }
-        #[cfg(feature = "iot")]
         CoreCommand::UpdateIot { packages, install } => {
-            commands::core::iot::update(packages, install).await
+            commands::core::update::iot::update(packages, install).await
         }
-        #[cfg(feature = "app")]
         CoreCommand::UpdateApp { packages, install } => {
-            commands::core::app::update(packages, install).await
+            commands::core::update::app::update(packages, install).await
         }
-        #[cfg(feature = "lib")]
         CoreCommand::UpdateLib { packages, install } => {
-            commands::core::library::update(packages, install).await
+            commands::core::update::library::update(packages, install).await
         }
         _ => unreachable!("non-package command routed to package dispatcher"),
     }

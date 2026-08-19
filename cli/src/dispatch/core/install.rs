@@ -5,97 +5,58 @@ use crate::commands;
 use super::super::types::CoreCommand;
 
 pub fn matches(command: &CoreCommand) -> bool {
-    match command {
-        #[cfg(all(
-            feature = "web",
-            not(any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            ))
-        ))]
-        CoreCommand::Install { .. } => true,
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            )
-        ))]
-        CoreCommand::InstallWeb { .. } => true,
-        #[cfg(feature = "game")]
-        CoreCommand::InstallGame { .. } => true,
-        #[cfg(feature = "ai")]
-        CoreCommand::InstallAi { .. } => true,
-        #[cfg(feature = "clo")]
-        CoreCommand::InstallClo { .. } => true,
-        #[cfg(feature = "cicd")]
-        CoreCommand::InstallCicd { .. } => true,
-        #[cfg(feature = "iot")]
-        CoreCommand::InstallIot { .. } => true,
-        #[cfg(feature = "app")]
-        CoreCommand::InstallApp { .. } => true,
-        #[cfg(feature = "lib")]
-        CoreCommand::InstallLib { .. } => true,
-        _ => false,
-    }
+    matches!(
+        command,
+        CoreCommand::InstallWeb { .. }
+            | CoreCommand::InstallGame { .. }
+            | CoreCommand::InstallAi { .. }
+            | CoreCommand::InstallClo { .. }
+            | CoreCommand::InstallCicd { .. }
+            | CoreCommand::InstallIot { .. }
+            | CoreCommand::InstallApp { .. }
+            | CoreCommand::InstallLib { .. }
+            | CoreCommand::InstallHardware { .. }
+    )
 }
 
 pub async fn dispatch(command: CoreCommand) -> Result<()> {
     match command {
-        #[cfg(all(
-            feature = "web",
-            not(any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
-            ))
-        ))]
-        CoreCommand::Install {
-            packages, frozen, ..
-        } => commands::core::web::install(packages, frozen).await,
-        #[cfg(all(
-            feature = "web",
-            any(
-                feature = "game",
-                feature = "ai",
-                feature = "clo",
-                feature = "cicd",
-                feature = "iot",
-                feature = "app",
-                feature = "lib"
+        CoreCommand::InstallWeb {
+            packages,
+            frozen,
+            ignore_scripts,
+            allow_scripts,
+            prefer_dedupe,
+            repair,
+        } => {
+            commands::core::install::web::install(
+                packages,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+                prefer_dedupe,
+                repair,
             )
-        ))]
-        CoreCommand::InstallWeb { packages, frozen } => {
-            commands::core::web::install(packages, frozen).await
+            .await
         }
-        #[cfg(feature = "game")]
-        CoreCommand::InstallGame { packages } => commands::core::game::install(packages).await,
-        #[cfg(feature = "ai")]
-        CoreCommand::InstallAi { packages } => commands::core::ai::install(packages).await,
-        #[cfg(feature = "clo")]
-        CoreCommand::InstallClo { packages } => commands::core::clo::install(packages).await,
-        #[cfg(feature = "cicd")]
-        CoreCommand::InstallCicd { packages } => commands::core::cicd::install(packages).await,
-        #[cfg(feature = "iot")]
-        CoreCommand::InstallIot { packages } => commands::core::iot::install(packages).await,
-        #[cfg(feature = "app")]
-        CoreCommand::InstallApp { packages } => commands::core::app::install(packages).await,
-        #[cfg(feature = "lib")]
-        CoreCommand::InstallLib { packages } => commands::core::library::install(packages).await,
+        CoreCommand::InstallGame { packages } => commands::core::install::game::install(packages).await,
+        CoreCommand::InstallAi { packages, dry_run } => {
+            commands::core::install::ai::install(packages, dry_run).await
+        }
+        CoreCommand::InstallClo { packages, dry_run } => {
+            commands::core::install::clo::install(packages, dry_run).await
+        }
+        CoreCommand::InstallCicd { packages, dry_run } => {
+            commands::core::install::cicd::install(packages, dry_run).await
+        }
+        CoreCommand::InstallIot { packages } => commands::core::install::iot::install(packages).await,
+        CoreCommand::InstallApp { packages, dry_run } => {
+            commands::core::install::app::install(packages, dry_run).await
+        }
+        CoreCommand::InstallLib { packages } => commands::core::install::library::install(packages).await,
+        CoreCommand::InstallHardware { packages } => {
+            commands::core::install::hardware::install(packages).await
+        }
         _ => unreachable!("non-install command routed to install dispatcher"),
     }
 }

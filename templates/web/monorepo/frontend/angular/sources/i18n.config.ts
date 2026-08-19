@@ -1,1 +1,0 @@
-../../../../frontend/angular/sources/i18n.config.ts

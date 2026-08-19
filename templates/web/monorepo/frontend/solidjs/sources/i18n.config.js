@@ -1,1 +1,0 @@
-../../../../frontend/solidjs/sources/i18n.config.js

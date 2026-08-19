@@ -1,1 +1,0 @@
-../../../../frontend/vanilla/sources/drizzle.config.js

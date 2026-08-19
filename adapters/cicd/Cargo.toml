@@ -1,0 +1,22 @@
+[package]
+name = "mg-cicd-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "CI/CD ecosystem adapter for MegaGate"
+
+[dependencies]
+mg-types = { path = "../../core/crates/mg-types" }
+async-trait.workspace = true
+tokio.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

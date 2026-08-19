@@ -1,5 +1,7 @@
 /// Rate limiting for HTTP requests
-use std::time::Duration;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Rate limiter configuration
 #[derive(Debug, Clone)]
@@ -16,5 +18,61 @@ impl Default for RateLimitConfig {
             max_requests: 100,
             period: Duration::from_secs(60),
         }
+    }
+}
+
+/// Token bucket rate limiter
+#[derive(Debug, Clone)]
+pub struct RateLimiter {
+    config: RateLimitConfig,
+    requests: Arc<Mutex<VecDeque<Instant>>>,
+}
+
+impl RateLimiter {
+    pub fn new(config: RateLimitConfig) -> Self {
+        Self {
+            config,
+            requests: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
+
+    pub async fn wait(&self) {
+        loop {
+            let mut requests = self.requests.lock().unwrap();
+            let now = Instant::now();
+            let cutoff = now - self.config.period;
+
+            // Remove old requests
+            while let Some(&front) = requests.front() {
+                if front < cutoff {
+                    requests.pop_front();
+                } else {
+                    break;
+                }
+            }
+
+            if (requests.len() as u32) < self.config.max_requests {
+                requests.push_back(now);
+                return;
+            }
+
+            // Need to wait
+            let oldest = requests.front().copied().unwrap_or(now);
+            let wait_time = self.config.period - now.duration_since(oldest);
+            drop(requests);
+            tokio::time::sleep(wait_time).await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ratelimit_default_values() {
+        let config = RateLimitConfig::default();
+        assert_eq!(config.max_requests, 100);
+        assert_eq!(config.period, Duration::from_secs(60));
     }
 }

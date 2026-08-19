@@ -8,6 +8,7 @@ pub enum Ecosystem {
     Iot,
     App,
     Lib,
+    Hardware,
 }
 
 impl Ecosystem {
@@ -22,6 +23,7 @@ impl Ecosystem {
             "iot" => Some(Self::Iot),
             "app" => Some(Self::App),
             "lib" => Some(Self::Lib),
+            "hardware" => Some(Self::Hardware),
             _ => None,
         }
     }
@@ -36,6 +38,7 @@ impl Ecosystem {
             Self::Iot => "iot",
             Self::App => "app",
             Self::Lib => "lib",
+            Self::Hardware => "hardware",
         }
     }
 }
@@ -54,6 +57,7 @@ mod tests {
         assert_eq!(Ecosystem::from_str("iot"), Some(Ecosystem::Iot));
         assert_eq!(Ecosystem::from_str("app"), Some(Ecosystem::App));
         assert_eq!(Ecosystem::from_str("lib"), Some(Ecosystem::Lib));
+        assert_eq!(Ecosystem::from_str("hardware"), Some(Ecosystem::Hardware));
     }
 
     #[test]
@@ -77,6 +81,7 @@ mod tests {
         assert_eq!(Ecosystem::Iot.as_str(), "iot");
         assert_eq!(Ecosystem::App.as_str(), "app");
         assert_eq!(Ecosystem::Lib.as_str(), "lib");
+        assert_eq!(Ecosystem::Hardware.as_str(), "hardware");
     }
 
     #[test]
@@ -90,6 +95,7 @@ mod tests {
             Ecosystem::Iot,
             Ecosystem::App,
             Ecosystem::Lib,
+            Ecosystem::Hardware,
         ] {
             let s = variant.as_str();
             assert_eq!(Ecosystem::from_str(s), Some(variant));

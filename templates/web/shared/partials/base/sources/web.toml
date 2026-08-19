@@ -1,4 +1,0 @@
-mode = "{{mode}}"
-frameworks = [{{frameworks}}]
-template = "{{template}}"
-features = [{{features}}]

@@ -1,1 +1,0 @@
-../../../../frontend/react-vite/sources/sentry.client.config.ts

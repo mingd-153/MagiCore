@@ -1,1 +1,0 @@
-../../../react-fastify/sources/client/vite.config.ts

@@ -1,1 +1,0 @@
-../../../../frontend/sveltekit/sources/uno.config.ts

@@ -1,8 +1,0 @@
-import Config
-
-if config_env() == :prod do
-  database_url = System.get_env("DATABASE_URL")
-  if database_url do
-    config :{{name}}, {{pascalCase name}}.Repo, url: database_url
-  end
-end

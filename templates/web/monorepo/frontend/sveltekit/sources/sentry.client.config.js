@@ -1,1 +1,0 @@
-../../../../frontend/sveltekit/sources/sentry.client.config.js

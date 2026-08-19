@@ -1,8 +1,12 @@
+#![allow(dead_code)]
+
 use crate::context::ProjectContext;
 use anyhow::Result;
-use mg_lockfile::{serialization, Lockfile};
-use mg_types::adapter::AddOptions;
-use mg_types::{Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mg_lockfile::Lockfile;
+use mg_types::adapter::{AddOptions, PreparedAdd};
+use mg_types::{
+    DependencySpec, Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
+};
 use mg_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
@@ -12,7 +16,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// mg install — install dependencies for the current project
-pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
+pub async fn run(
+    packages: Vec<String>,
+    core: Option<&str>,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
 
@@ -26,44 +35,98 @@ pub async fn run(packages: Vec<String>, core: Option<&str>) -> Result<()> {
             info("Applying requested packages to each detected workspace.");
         }
 
-        for workspace in workspaces {
-            info(&format!("Installing workspace: {}", workspace.display()));
-            install_into_root(adapter, &workspace, &packages).await?;
+        // ITEM 7: install workspace song song (buffered 4), lỗi 1 project không chặn repo
+        use futures_util::StreamExt;
+        let results: Vec<Result<()>> = futures_util::stream::iter(workspaces)
+            .map(|workspace| {
+                let packages = &packages;
+                async move {
+                    info(&format!("Installing workspace: {}", workspace.display()));
+                    // Mix core (Q23): detect core riêng cho từng project — không dùng
+                    // adapter của root (root có thể không thuộc core nào).
+                    let ctx = crate::context::ProjectContext::load_for_dir(&workspace)?;
+                    let adapter = ctx.adapter();
+                    install_into_root(adapter, &workspace, packages, ignore_scripts, allow_scripts)
+                        .await
+                }
+            })
+            .buffered(4)
+            .collect()
+            .await;
+
+        let mut failed = 0usize;
+        for result in results {
+            if let Err(e) = result {
+                failed += 1;
+                mg_ui::error(&format!("Workspace install failed: {e:#}"));
+            }
         }
 
-        println!();
+        mg_ui::blank_line();
+        if failed > 0 {
+            return Err(crate::error::workspace_failed(failed));
+        }
         success("Workspace dependencies installed");
         return Ok(());
     }
 
-    install_into_root(adapter, ctx.root(), &packages).await
+    install_into_root(
+        adapter,
+        ctx.root(),
+        &packages,
+        ignore_scripts,
+        allow_scripts,
+    )
+    .await
 }
 
 async fn install_into_root(
     adapter: &dyn mg_types::adapter::PackageAdapter,
     project_root: &Path,
     packages: &[String],
+    ignore_scripts: bool,
+    allow_scripts: bool,
 ) -> Result<()> {
+    const MAX_PACKAGES: usize = 50;
+    if packages.len() > MAX_PACKAGES {
+        return Err(crate::error::too_many_packages(packages.len(), "install"));
+    }
+
     let started_at = std::time::Instant::now();
     let add_cmd = match adapter.name() {
         "web" => "mg add".to_string(),
         other => format!("mg add-{other}"),
     };
 
-    if !packages.is_empty() {
-        for pkg in packages {
-            let spinner = create_spinner(&format!("  Adding {}...", pkg));
-
-            let name = mg_types::PackageName::new(pkg)?;
-            let opts = AddOptions::default();
-            adapter.add(project_root, &name, None, opts).await?;
-            spinner.finish_and_clear();
-        }
-    }
-
     let spinner = create_spinner("  Reading project manifest...");
-    let manifest = adapter.parse_manifest(project_root).await?;
+    let mut manifest = adapter.parse_manifest(project_root).await?;
     spinner.finish_and_clear();
+
+    if !packages.is_empty() {
+        for package in packages {
+            let spec = DependencySpec::parse(package)?;
+            let name = spec.name;
+            let range = if spec.range.is_star() {
+                None
+            } else {
+                Some(spec.range)
+            };
+
+            let spinner = create_spinner(&format!("  Adding {}...", package));
+            let PreparedAdd {
+                id: _pkg_id,
+                range: saved_range,
+            } = adapter
+                .prepare_add(project_root, &name, range.as_ref(), AddOptions::default())
+                .await?;
+            spinner.finish_and_clear();
+
+            let saved_spec = DependencySpec::new(name, saved_range);
+            manifest.add_dep(saved_spec, false, false, false);
+        }
+
+        adapter.write_manifest(project_root, &manifest).await?;
+    }
 
     let all_deps: Vec<_> = manifest.all_dependencies().collect();
     if all_deps.is_empty() {
@@ -111,7 +174,15 @@ async fn install_into_root(
     }
 
     let spinner = create_spinner("  Linking packages...");
-    let mut summary = adapter.install(&graph, project_root).await?;
+
+    let opts = mg_types::adapter::InstallOptions {
+        ignore_scripts,
+        allow_scripts,
+        legacy_flat: crate::commands::core::shared::should_use_legacy_flat_layout(adapter.name()),
+        frozen: false,
+        ..Default::default()
+    };
+    let mut summary = adapter.install(&graph, project_root, opts).await?;
     spinner.finish_and_clear();
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
 
@@ -122,9 +193,28 @@ async fn install_into_root(
         "0 B",
     );
 
-    println!();
+    mg_ui::blank_line();
     success("All dependencies installed");
+
     Ok(())
+}
+
+/// Mix core entry (Q23): install 1 workspace project với adapter đúng core.
+pub(crate) async fn install_into_root_ws(
+    adapter: &dyn mg_types::adapter::PackageAdapter,
+    project_root: &Path,
+    packages: &[String],
+    ignore_scripts: bool,
+    allow_scripts: bool,
+) -> Result<()> {
+    install_into_root(
+        adapter,
+        project_root,
+        packages,
+        ignore_scripts,
+        allow_scripts,
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,7 +229,7 @@ struct WorkspaceLayout {
     packages_dir: Option<String>,
 }
 
-fn discover_workspace_projects(project_root: &Path) -> Result<Option<Vec<PathBuf>>> {
+pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<Vec<PathBuf>>> {
     let workspace_path = project_root.join("megagate.workspace.toml");
     if !workspace_path.exists() {
         return Ok(None);
@@ -171,6 +261,14 @@ fn discover_workspace_projects(project_root: &Path) -> Result<Option<Vec<PathBuf
     Ok(Some(workspaces))
 }
 
+/// package.json name (web) — dùng cho --filter match. Non-web fallback: None.
+pub(crate) fn workspace_package_name(project_root: &Path) -> Option<String> {
+    mg_workspace::read_package_manifest(project_root)
+        .ok()
+        .flatten()
+        .map(|m| m.name)
+}
+
 fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result<()> {
     if !root.exists() || !root.is_dir() {
         return Ok(());
@@ -183,7 +281,9 @@ fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result
             continue;
         }
 
-        if path.join("package.json").exists() {
+        // Mix core (Q23): nhận mọi manifest — package.json (web), Cargo.toml
+        // (lib), pyproject.toml (ai), pubspec.yaml (app), mg.toml (mọi core).
+        if mg_config::project::ProjectConfig::auto_detect(&path).is_some() {
             out.push(path);
             continue;
         }
@@ -199,19 +299,35 @@ fn load_locked_graph(
     adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
-    let lock_path = project_root.join("mg.lock");
-    if !lock_path.exists() {
+    let Some(lock) = read_checked_lockfile(project_root)? else {
+        let legacy = mg_lockfile::import::detect_legacy_lockfiles(project_root);
+        if !legacy.is_empty() {
+            let names = legacy
+                .iter()
+                .map(|lock| lock.file_name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            mg_ui::warning(&format!(
+                "Ignoring legacy lockfile(s): {names}. Run an explicit MegaGate lock migration before install if you want to seed mg.lock from them."
+            ));
+        }
         return Ok(None);
-    }
-
-    let contents = std::fs::read_to_string(&lock_path)?;
-    let lock: Lockfile = match serialization::from_toml(&contents) {
-        Ok(lock) => lock,
-        Err(_) => return Ok(None),
     };
 
     let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
-    if lock.core != adapter_name || !state_ok || lock.packages.is_empty() {
+    // Future lockfile versions must not be guessed (npm shrinkwrap.js:1003
+    // model): abort with a clear error instead of silently re-resolving.
+    if lock.version > mg_lockfile::migrate::current_version() {
+        return Err(crate::error::lockfile_newer(
+            lock.version,
+            mg_lockfile::migrate::current_version(),
+        ));
+    }
+    if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
+        return Ok(None);
+    }
+
+    if lock.packages.iter().any(|pkg| pkg.name.is_empty()) {
         return Ok(None);
     }
 
@@ -220,6 +336,10 @@ fn load_locked_graph(
     }
 
     Ok(Some(graph_from_lockfile(&lock)?))
+}
+
+fn read_checked_lockfile(project_root: &std::path::Path) -> Result<Option<Lockfile>> {
+    mg_lockfile::read_lockfile_checked(project_root)
 }
 
 fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
@@ -249,10 +369,15 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
             let deps = pkg
                 .dependencies
                 .iter()
-                .filter_map(|dep| PackageId::parse(dep).ok())
-                .collect();
+                .map(|dep| {
+                    PackageId::parse(dep).map_err(|err| {
+                        crate::error::invalid_dep_id(dep, &pkg.name, &pkg.version, &err)
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
 
             Ok(ResolvedPackage {
+                peer_deps: vec![],
                 id: PackageId::new(name, version),
                 integrity: pkg.integrity.clone().unwrap_or_default(),
                 tarball_url: String::new(),
@@ -269,7 +394,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_lockfile::{LockPackage, ResolutionMeta};
+    use mg_lockfile::{serialization, LockPackage, ResolutionMeta};
     use mg_types::{DependencySpec, Ecosystem, VersionRange};
     use tempfile::tempdir;
 
@@ -299,6 +424,7 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
 
         assert!(lock_matches_manifest(&lock, &manifest));
@@ -330,9 +456,92 @@ mod tests {
             direct: true,
             dev: false,
             dependencies: vec![],
+            peer_deps: vec![],
         });
 
         assert!(!lock_matches_manifest(&lock, &manifest));
+    }
+
+    #[test]
+    fn test_load_locked_graph_rejects_unsupported_lock_version() {
+        let dir = tempdir().unwrap();
+        let mut manifest = Manifest::new("demo", Ecosystem::Web);
+        manifest.add_dep(
+            DependencySpec::new(
+                PackageName::new("tailwindcss").unwrap(),
+                VersionRange::parse("^4.3.0").unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.version = 0;
+        lock.resolution = ResolutionMeta {
+            state: "locked".into(),
+            store: "megagate".into(),
+            package_count: 1,
+        };
+        lock.packages.push(LockPackage {
+            name: "tailwindcss".into(),
+            version: "4.3.2".into(),
+            integrity: None,
+            direct: true,
+            dev: false,
+            dependencies: vec![],
+            peer_deps: vec![],
+        });
+        std::fs::write(
+            dir.path().join("mg.lock"),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+
+        assert!(load_locked_graph(dir.path(), "web", &manifest)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_load_locked_graph_errors_on_checksum_mismatch() {
+        let dir = tempdir().unwrap();
+        let manifest = Manifest::new("demo", Ecosystem::Web);
+        let lock = Lockfile::new("web", "frontend");
+        std::fs::write(
+            dir.path().join("mg.lock"),
+            serialization::to_toml(&lock).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mg.lock.sha256"), "bad").unwrap();
+
+        let err = load_locked_graph(dir.path(), "web", &manifest).unwrap_err();
+
+        assert!(
+            err.to_string().contains("lockfile checksum mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_graph_from_lockfile_rejects_invalid_dependency_id() {
+        let mut lock = Lockfile::new("web", "frontend");
+        lock.packages.push(LockPackage {
+            name: "react".into(),
+            version: "18.2.0".into(),
+            integrity: None,
+            direct: true,
+            dev: false,
+            dependencies: vec!["not-a-package-id".into()],
+            peer_deps: vec![],
+        });
+
+        let err = graph_from_lockfile(&lock).unwrap_err();
+
+        assert!(
+            err.to_string().contains("invalid dependency id"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -366,6 +575,46 @@ packages_dir = "packages"
 
         assert_eq!(workspaces, vec![frontend, contracts]);
         assert!(!workspaces.contains(&backend));
+    }
+
+    #[test]
+    fn test_discover_workspace_projects_mix_cores() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("megagate.workspace.toml"),
+            r#"
+mode = "monorepo"
+[layout]
+apps_dir = "apps"
+packages_dir = "packages"
+"#,
+        )
+        .unwrap();
+
+        let web = dir.path().join("apps/web");
+        fs::create_dir_all(&web).unwrap();
+        fs::write(web.join("package.json"), "{}").unwrap();
+
+        let lib = dir.path().join("packages/rustlib");
+        fs::create_dir_all(&lib.join("src")).unwrap();
+        fs::write(lib.join("Cargo.toml"), "[package]\nname = \"rustlib\"\n").unwrap();
+
+        let ignored = dir.path().join("packages/not-a-project");
+        fs::create_dir_all(&ignored).unwrap();
+        fs::write(ignored.join("notes.txt"), "x").unwrap();
+
+        let mut workspaces = discover_workspace_projects(dir.path()).unwrap().unwrap();
+        workspaces.sort();
+        let normalized: Vec<String> = workspaces
+            .iter()
+            .map(|p| {
+                p.strip_prefix(dir.path())
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(normalized, vec!["apps/web", "packages/rustlib"]);
     }
 
     #[test]

@@ -1,1 +1,0 @@
-../../../../frontend/vanilla/sources/sentry.client.config.ts

@@ -1,1 +1,0 @@
-../../../../../../frontend/astro/sources/src/lib/graphql/schema.ts

@@ -1,1 +1,0 @@
-../../../../frontend/qwik/sources/i18n.config.ts

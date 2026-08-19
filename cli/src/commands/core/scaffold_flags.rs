@@ -9,7 +9,11 @@ pub struct ScaffoldFlags {
     pub name: Option<String>,
     #[arg(long, help = "Target directory")]
     pub dir: Option<String>,
-    #[arg(long, help = "Package manager (npm|pnpm|yarn|bun)")]
+    #[arg(
+        long,
+        hide = true,
+        help = "Deprecated compatibility hint; MegaGate web uses its native installer"
+    )]
     pub pm: Option<String>,
     #[arg(long, help = "Init git repo")]
     pub git: bool,
@@ -103,6 +107,28 @@ pub struct ScaffoldFlags {
     #[arg(long, help = "tRPC server")]
     pub trpc: bool,
 
+    // ── Backend framework — other ecosystems (Rust/Go/Python/Java/PHP) ────
+    #[arg(long, help = "Axum (Rust)")]
+    pub axum: bool,
+    #[arg(long, help = "Actix Web (Rust)")]
+    pub actix_web: bool,
+    #[arg(long, help = "Gin (Go)")]
+    pub gin: bool,
+    #[arg(long, help = "Echo (Go)")]
+    pub echo: bool,
+    #[arg(long, help = "Fiber (Go)")]
+    pub fiber: bool,
+    #[arg(long, help = "FastAPI (Python)")]
+    pub fastapi: bool,
+    #[arg(long, help = "Django (Python)")]
+    pub django: bool,
+    #[arg(long, help = "Flask (Python)")]
+    pub flask: bool,
+    #[arg(long, help = "Quarkus (Java)")]
+    pub quarkus: bool,
+    #[arg(long, help = "Symfony (PHP)")]
+    pub symfony: bool,
+
     // ── Database / ORM ────────────────────────────────────────────
     #[arg(long, help = "Prisma ORM")]
     pub prisma: bool,
@@ -176,7 +202,10 @@ pub struct ScaffoldFlags {
     pub turborepo: bool,
     #[arg(long, help = "Nx")]
     pub nx: bool,
-    #[arg(long, help = "Native npm/pnpm/yarn workspaces")]
+    #[arg(
+        long,
+        help = "MegaGate workspace layout with ecosystem-compatible package manifests"
+    )]
     pub workspaces: bool,
     #[arg(long, help = "Changesets for version/publish management")]
     pub changesets: bool,

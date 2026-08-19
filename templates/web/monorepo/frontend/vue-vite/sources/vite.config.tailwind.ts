@@ -1,1 +1,0 @@
-../../../../frontend/vue-vite/sources/vite.config.tailwind.ts

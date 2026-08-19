@@ -1,8 +1,9 @@
-use base64::Engine;
 use criterion::{criterion_group, criterion_main, Criterion};
-use mg_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mg_types::{
+    adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
+    ResolvedPackage, Version,
+};
 use mg_web_adapter::WebAdapter;
-use sha2::Digest;
 use std::path::Path;
 
 fn pkg_id(name: &str, version: &str) -> PackageId {
@@ -20,6 +21,7 @@ fn seed_cached_tarball(root: &Path, pkg: &PackageId) {
     if let Some(parent) = tarball_path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
+
     let file = std::fs::File::create(&tarball_path).unwrap();
     let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
     let mut builder = tar::Builder::new(encoder);
@@ -40,33 +42,19 @@ fn seed_cached_tarball(root: &Path, pkg: &PackageId) {
     encoder.finish().unwrap();
 }
 
-fn compute_tarball_sri(bytes: &[u8]) -> String {
-    let hash = sha2::Sha512::digest(bytes);
-    format!(
-        "sha512-{}",
-        base64::engine::general_purpose::STANDARD.encode(hash)
-    )
-}
-
-fn make_graph(root: &Path, packages: &[PackageId]) -> ResolvedGraph {
-    let store_root = root.join(".megagate").join("cache").join("web");
-    let cache = mg_store::PackageCache::new(store_root.join("cache")).unwrap();
+fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
     ResolvedGraph {
         packages: packages
             .iter()
             .cloned()
-            .map(|id| {
-                let tarball_path = cache.tarball_path(&id);
-                let bytes =
-                    std::fs::read(&tarball_path).expect("tarball must exist before make_graph");
-                ResolvedPackage {
-                    id,
-                    integrity: compute_tarball_sri(&bytes),
-                    tarball_url: String::new(),
-                    deps: vec![],
-                    direct: true,
-                    dev: false,
-                }
+            .map(|id| ResolvedPackage {
+                id,
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: true,
+                dev: false,
             })
             .collect(),
     }
@@ -86,12 +74,15 @@ fn bench_cached_install_small(c: &mut Criterion) {
                 for pkg in &pkgs {
                     seed_cached_tarball(dir.path(), pkg);
                 }
-                let graph = make_graph(dir.path(), &pkgs);
+                let graph = make_graph(&pkgs);
                 (dir, graph)
             },
             |(dir, graph)| async move {
                 let adapter = WebAdapter::new();
-                adapter.install(&graph, dir.path()).await.unwrap();
+                adapter
+                    .install(&graph, dir.path(), InstallOptions::default())
+                    .await
+                    .unwrap();
             },
         )
     });
@@ -111,12 +102,15 @@ fn bench_cached_install_medium(c: &mut Criterion) {
                 for pkg in &pkgs {
                     seed_cached_tarball(dir.path(), pkg);
                 }
-                let graph = make_graph(dir.path(), &pkgs);
+                let graph = make_graph(&pkgs);
                 (dir, graph)
             },
             |(dir, graph)| async move {
                 let adapter = WebAdapter::new();
-                adapter.install(&graph, dir.path()).await.unwrap();
+                adapter
+                    .install(&graph, dir.path(), InstallOptions::default())
+                    .await
+                    .unwrap();
             },
         )
     });
@@ -138,12 +132,15 @@ fn bench_cached_install_real(c: &mut Criterion) {
                 for pkg in &pkgs {
                     seed_cached_tarball(dir.path(), pkg);
                 }
-                let graph = make_graph(dir.path(), &pkgs);
+                let graph = make_graph(&pkgs);
                 (dir, graph)
             },
             |(dir, graph)| async move {
                 let adapter = WebAdapter::new();
-                adapter.install(&graph, dir.path()).await.unwrap();
+                adapter
+                    .install(&graph, dir.path(), InstallOptions::default())
+                    .await
+                    .unwrap();
             },
         )
     });

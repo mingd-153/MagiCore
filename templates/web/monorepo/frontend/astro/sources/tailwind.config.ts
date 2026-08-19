@@ -1,1 +1,0 @@
-../../../../frontend/astro/sources/tailwind.config.ts

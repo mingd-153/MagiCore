@@ -1,1 +1,0 @@
-../../../../../frontend/nextjs/sources/config/framework.js

@@ -1,21 +1,13 @@
-pub mod shared;
-
-#[cfg(feature = "web")]
+pub mod add;
+pub mod dev;
+pub mod dev_port;
+pub mod create;
+pub mod install;
+pub mod list;
+pub mod remove;
+pub mod update;
 pub mod scaffold_flags;
-#[cfg(feature = "web")]
+/// Core command implementations (sub-ecosystems)
+pub mod shared;
 pub mod web;
 
-#[cfg(feature = "ai")]
-pub mod ai;
-#[cfg(feature = "app")]
-pub mod app;
-#[cfg(feature = "cicd")]
-pub mod cicd;
-#[cfg(feature = "clo")]
-pub mod clo;
-#[cfg(feature = "game")]
-pub mod game;
-#[cfg(feature = "iot")]
-pub mod iot;
-#[cfg(feature = "lib")]
-pub mod library;

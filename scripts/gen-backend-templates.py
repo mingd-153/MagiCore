@@ -90,14 +90,14 @@ CMD ["node", "dist/server.js"]
 FASTIFY_TS_SERVER = """import { app } from "./app.js";
 
 const port = parseInt(process.env.PORT || "3000", 10);
-await app.listen({ host: "0.0.0.0", port });
+await app.listen({ host: "127.0.0.1", port });
 console.log(`Server running on :${port}`);
 """
 
 FASTIFY_JS_SERVER = """import { app } from "./app.js";
 
 const port = parseInt(process.env.PORT || "3000", 10);
-await app.listen({ host: "0.0.0.0", port });
+await app.listen({ host: "127.0.0.1", port });
 console.log(`Server running on :${port}`);
 """
 
@@ -438,7 +438,7 @@ async def health():
     return {"status": "ok"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "3000")))
+    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("PORT", "3000")))
 """,
     "requirements.txt": """fastapi==0.111.0
 uvicorn[standard]==0.29.0

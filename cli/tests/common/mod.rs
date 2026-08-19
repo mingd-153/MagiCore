@@ -17,13 +17,52 @@ pub fn mg_in(dir: &Path, args: &[&str]) -> (bool, String) {
 }
 
 fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
-    let output = Command::new("cargo")
-        .arg("run")
-        .arg("--bin")
-        .arg("mg")
-        .arg("--manifest-path")
-        .arg(format!("{}/../Cargo.toml", MANIFEST))
-        .arg("--")
+    let workspace_manifest = Path::new(MANIFEST).join("../Cargo.toml");
+    let workspace_root = workspace_manifest
+        .parent()
+        .expect("workspace manifest should have a parent");
+    let debug_bin = workspace_root.join("target").join("debug").join("mg");
+
+    let runtime_bin = std::env::var("CARGO_BIN_EXE_mg")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+    let compile_bin = option_env!("CARGO_BIN_EXE_mg")
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+
+    let mut command = if let Some(bin) = runtime_bin.or(compile_bin) {
+        Command::new(bin)
+    } else if debug_bin.exists() {
+        Command::new(debug_bin)
+    } else {
+        let mut fallback = Command::new("cargo");
+        fallback
+            .arg("run")
+            .arg("--bin")
+            .arg("mg")
+            .arg("--manifest-path")
+            .arg(&workspace_manifest)
+            .arg("--");
+        fallback
+    };
+
+    // Only pin workspace templates when the tree actually holds template
+    // content — the repo may keep just placeholder READMEs and rely on the
+    // registry cache (~/.mg/templates).
+    let template_disk = workspace_root.join("templates");
+    let template_contract = template_disk
+        .join("web")
+        .join("frontend")
+        .join("react-vite")
+        .join("template.toml")
+        .is_file();
+
+    if template_contract {
+        command.env("MEGAGATE_TEMPLATE_DIR", template_disk);
+    }
+
+    let output = command
         .args(args)
         .current_dir(cwd)
         .output()
@@ -40,7 +79,16 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
 
 /// Create a temp directory for scaffold testing.
 pub fn work_dir() -> PathBuf {
-    let base = std::env::temp_dir().join(format!("mg-test-{}", std::process::id()));
+    let unique = format!(
+        "mg-test-{}-{:?}-{}",
+        std::process::id(),
+        std::thread::current().id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let base = std::env::temp_dir().join(unique);
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).expect("create work dir");
     base

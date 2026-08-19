@@ -1,9 +1,0 @@
-{
-  "name": "core-web-lab-monorepo-basic",
-  "version": "0.1.0",
-  "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ]
-}

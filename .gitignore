@@ -47,6 +47,8 @@ task/
 *.pem
 .env
 .env.local
+deploy/docker/registry.env
+deploy/docker/data/
 
 # Logs
 logs/
@@ -71,6 +73,48 @@ temp/
 # Debug symbols
 *.dSYM/
 
-# Markdown docs (not allowed in repo unless explicitly requested)
-*.md
+# Benchmark artifacts
+benchmark_brutal_results_*.md
+benchmark_brutal_results_*.json
+benchmark_brutal_results_*.status.tsv
+megagate-bench-*
+mg-brutal-*
+mg-test-*
+mg-bench-*
 
+# ── Internal documentation (local-only, NOT for git) ─────────────────────────
+
+# Internal evaluation docs & audit reports
+*AUDIT*.md
+*REPORT*.md
+*SUMMARY*.md
+*REVIEW*.md
+*Checklist*.md
+*ProgressReport*.md
+report-v2-changes.md
+ARCHITECTURE_AUDIT.md
+SECURITY_AUDIT.md
+MEGAGATE_P2_REPORT.md
+OPTIMIZATION_SUMMARY.md
+CODEBASE_REVIEW.md
+REPORT.md
+
+# System design docs (working drafts — read internally, never push)
+sys-mg/
+
+# Internal specs, guides and notes
+docs/specs/
+docs/guides/
+scripts/notes/
+
+# Per-component internal docs
+cli/docs/
+adapters/*/docs/
+core/crates/*/docs/
+tools/*/docs/
+
+# Allow all public-facing documentation
+!**/README.md
+!README.md
+!CHANGELOG.md
+!CONTRIBUTING.md

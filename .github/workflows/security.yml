@@ -1,0 +1,29 @@
+name: Security
+
+# Task #7: cargo audit + OSV scan (18 §6) — chạy theo lịch + khi Cargo.lock đổi
+on:
+  schedule:
+    - cron: "0 0 * * 1" # thứ 2 hằng tuần
+  push:
+    paths: ["Cargo.lock", "**/Cargo.toml"]
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run audit
+        run: cargo audit --color never
+
+  osv:
+    name: OSV scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google/osv-scanner-action@v1
+        with:
+          fail-on-vuln: true

@@ -48,6 +48,24 @@ impl PackageCache {
         Ok(())
     }
 
+    /// Cache a tarball by linking/copying an existing tarball path.
+    pub fn cache_tarball_from_path(&self, id: &PackageId, source: &std::path::Path) -> Result<()> {
+        let path = self.tarball_path(id);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = path.with_extension("tmp");
+        let _ = std::fs::remove_file(&tmp);
+        match std::fs::hard_link(source, &tmp) {
+            Ok(()) => {}
+            Err(_) => {
+                std::fs::copy(source, &tmp)?;
+            }
+        }
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
     /// Cache metadata JSON
     pub fn cache_metadata(&self, name: &str, data: &[u8]) -> Result<()> {
         let path = self.metadata_path(name);

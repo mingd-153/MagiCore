@@ -6,6 +6,9 @@ use mg_types::error::MgResult;
 use mg_types::package::{DependencySpec, PackageId, PackageName, VersionRange};
 use mg_types::version::Version;
 
+/// Cargo.toml parse/write helpers — shared by lib (rust), game (bevy), iot (esp32-rust) cores.
+pub mod cargo_manifest;
+
 /// BaseAdapter — default implementations for add/remove/list/update.
 ///
 /// Each ecosystem adapter must implement both `PackageAdapter` and `BaseAdapter`.
@@ -118,7 +121,7 @@ pub trait BaseAdapter: PackageAdapter + Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_types::adapter::{AuditReport, InstallSummary, ResolvedGraph};
+    use mg_types::adapter::{AuditReport, InstallOptions, InstallSummary, ResolvedGraph};
     use mg_types::ecosystem::Ecosystem;
     use mg_types::manifest::Manifest;
 
@@ -157,7 +160,12 @@ mod tests {
         async fn fetch(&self, _: &ResolvedGraph) -> MgResult<()> {
             Ok(())
         }
-        async fn install(&self, _: &ResolvedGraph, _: &Path) -> MgResult<InstallSummary> {
+        async fn install(
+            &self,
+            _: &ResolvedGraph,
+            _: &Path,
+            _: InstallOptions,
+        ) -> MgResult<InstallSummary> {
             Ok(InstallSummary::default())
         }
         async fn add(
@@ -235,7 +243,12 @@ mod tests {
         async fn fetch(&self, _: &ResolvedGraph) -> MgResult<()> {
             Ok(())
         }
-        async fn install(&self, _: &ResolvedGraph, _: &Path) -> MgResult<InstallSummary> {
+        async fn install(
+            &self,
+            _: &ResolvedGraph,
+            _: &Path,
+            _: InstallOptions,
+        ) -> MgResult<InstallSummary> {
             Ok(InstallSummary::default())
         }
         async fn add(
@@ -297,7 +310,12 @@ mod tests {
         async fn fetch(&self, _: &ResolvedGraph) -> MgResult<()> {
             Ok(())
         }
-        async fn install(&self, _: &ResolvedGraph, _: &Path) -> MgResult<InstallSummary> {
+        async fn install(
+            &self,
+            _: &ResolvedGraph,
+            _: &Path,
+            _: InstallOptions,
+        ) -> MgResult<InstallSummary> {
             Ok(InstallSummary::default())
         }
         async fn add(
