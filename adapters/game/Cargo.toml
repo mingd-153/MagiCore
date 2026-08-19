@@ -33,4 +33,5 @@ workspace = true
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = { workspace = true }
