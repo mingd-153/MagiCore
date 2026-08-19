@@ -23,7 +23,7 @@ impl ProjectContext {
     ///      pyproject.toml → ai) — ambiguous → Err, không đoán (RULE §9.3)
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()
-            .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {}", e))?;
+            .map_err(|e| crate::error::cwd_deleted(&e))?;
         let project_root = ProjectConfig::find_project_root(&cwd);
         Self::load_at(cwd.as_path(), project_root.as_ref(), core_override)
     }
@@ -37,7 +37,7 @@ impl ProjectContext {
     ) -> anyhow::Result<Self> {
         let (root, config) = Self::resolve_config(cwd, project_root, core_override)?;
         let ecosystem = Ecosystem::from_str(&config.ecosystem)
-            .ok_or_else(|| anyhow::anyhow!("Unknown ecosystem: '{}'", config.ecosystem))?;
+            .ok_or_else(|| crate::error::unknown_ecosystem(&config.ecosystem))?;
 
         // Registry chain hợp nhất (ITEM 2): env override → mg.toml [[registries]]
         // (priority) → .npmrc registry= → npmjs default. entry 0 = primary.
@@ -45,7 +45,7 @@ impl ProjectContext {
         let primary = chain
             .first()
             .map(|r| r.url.clone())
-            .ok_or_else(|| anyhow::anyhow!("no registry configured"))?;
+            .ok_or_else(crate::error::no_registry_configured)?;
         let primary_token = chain.first().and_then(|r| r.token.clone());
         let fallbacks: Vec<(String, Option<String>)> = chain
             .iter()
@@ -116,29 +116,14 @@ impl ProjectContext {
                 return Ok((root.clone(), ProjectConfig::new(name, core)));
             }
 
-            anyhow::bail!(
-                "Cannot detect project type in '{}'. Run {}, {}, or specify {}",
-                root.display(),
-                mg_ui::style_cmd("mg init --template <type>"),
-                mg_ui::style_cmd(&format!(
-                    "mg init --signature <core> ({} more signatures) — write {} to pin it",
-                    ProjectConfig::KNOWN_CORES.len(),
-                    ProjectConfig::CORE_MARKER_FILE,
-                )),
-                mg_ui::style_cmd("--core <type>"),
-            );
+            return Err(crate::error::cannot_detect_project_type(root));
         }
 
         if let Some(core) = core_override {
             return Ok((cwd.to_path_buf(), ProjectConfig::new("project", core)));
         }
 
-        anyhow::bail!(
-            "No MegaGate project found.\n\
-             Run '{}' to create one, or specify {}.",
-            mg_ui::style_cmd("mg init"),
-            mg_ui::style_cmd("--core <type>"),
-        );
+        return Err(crate::error::no_mg_project_root());
     }
 
     fn dir_name(path: &std::path::Path) -> String {

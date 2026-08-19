@@ -749,3 +749,157 @@ pub fn build_toolchain_missing(tool: &str) -> Error {
 pub fn workspace_failed(count: usize) -> Error {
     anyhow!("{count} workspace(s) failed to install")
 }
+
+// ===== context.rs =====
+
+pub fn unknown_ecosystem(ecosystem: &str) -> Error {
+    anyhow!("Unknown ecosystem: '{ecosystem}'")
+}
+
+pub fn no_registry_configured() -> Error {
+    anyhow!("no registry configured")
+}
+
+pub fn cannot_detect_project_type(root: &std::path::Path) -> Error {
+    anyhow!(
+        "Cannot detect project type in '{}'. Run `mg init --template <type>`, \
+         `mg init --signature <core>`, or specify `--core <type>`",
+        root.display()
+    )
+}
+
+pub fn no_mg_project_root() -> Error {
+    anyhow!("No MegaGate project found. Run `mg init` to create one, or specify `--core <type>`.")
+}
+
+// ===== factory.rs =====
+
+pub fn core_not_in_build(core: &str) -> Error {
+    anyhow!("'{core}' core is not included in this build.")
+}
+
+pub fn detect_core_failed(kind: &str) -> Error {
+    let msg = match kind {
+        "game" => "Cannot detect a game project here (missing mg.toml/project.godot/manifest.json/.uproject).",
+        "ai" => "Cannot detect an ai project here (missing mg.toml [ai] framework / pyproject [tool.megagate] framework).",
+        "clo" | "cloud" => "Cannot detect a cloud project here (missing mg.toml/Pulumi.yaml/*.tf/cdk package.json).",
+        "cicd" => "Cannot detect a cicd project here (missing mg.toml/wrangler.toml/argocd/.github/workflows).",
+        "iot" => "Cannot detect an iot project here (missing mg.toml/platformio.ini/west.yml).",
+        "app" => "Cannot detect an app project here (missing mg.toml/pubspec.yaml/build.gradle/Package.swift).",
+        "hardware" => "Cannot detect a hardware project here (missing mg.toml with ecosystem = \"hardware\").",
+        "lib" => "Cannot detect a lib project here (missing mg.toml/lib marker).",
+        _ => "Cannot detect a project here.",
+    };
+    anyhow!(msg)
+}
+
+// ===== bundler/mod.rs =====
+
+pub fn esbuild_failed(msgs: &[String]) -> Error {
+    anyhow!("esbuild failed: {}", msgs.join("\n"))
+}
+
+pub fn link_node_modules_failed(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    err: &dyn std::fmt::Display,
+) -> Error {
+    anyhow!(
+        "failed to link node_modules for build from {} to {}: {}",
+        source.display(),
+        target.display(),
+        err
+    )
+}
+
+// ===== scaffold/processor.rs =====
+
+pub fn unsupported_web_framework(framework: &str) -> Error {
+    anyhow!("Unsupported web framework '{framework}'")
+}
+
+pub fn dir_already_exists(target: &std::path::Path) -> Error {
+    anyhow!("Directory '{}' already exists", target.display())
+}
+
+pub fn unsupported_scaffold_core(core: &str) -> Error {
+    anyhow!("Unsupported core '{core}'")
+}
+
+pub fn web_template_path_missing(dir: &str) -> Error {
+    anyhow!("Web template path '{dir}' does not exist")
+}
+
+pub fn unsupported_web_mode(mode: &str) -> Error {
+    anyhow!("Unsupported web mode '{mode}'")
+}
+
+pub fn web_template_layer_missing(layer: &str) -> Error {
+    anyhow!("Web template layer '{layer}' does not exist")
+}
+
+pub fn unsupported_fullstack_framework(combined: &str) -> Error {
+    anyhow!(
+        "Unsupported fullstack framework '{combined}' for composited web scaffold"
+    )
+}
+
+pub fn web_scaffold_needs_fe_be() -> Error {
+    anyhow!("Web scaffold needs a frontend and backend framework")
+}
+
+pub fn unsupported_monorepo_backend(backend: &str) -> Error {
+    anyhow!("Unsupported monorepo backend '{backend}'")
+}
+
+pub fn scaffold_not_implemented(label: &str, layer: &str) -> Error {
+    anyhow!(
+        "Scaffold for {} is not implemented yet at '{}'",
+        label,
+        layer
+    )
+}
+
+pub fn template_layer_missing_manifest(layer: &str) -> Error {
+    anyhow!("Template layer '{layer}' missing template.toml")
+}
+
+pub fn duplicate_template_target(target: &str, layer: &str) -> Error {
+    anyhow!(
+        "Duplicate template target '{target}' in '{layer}'"
+    )
+}
+
+pub fn template_source_missing(source: &str, layer: &str) -> Error {
+    anyhow!(
+        "Template source '{source}' does not exist in '{layer}'"
+    )
+}
+
+pub fn binary_source_with_context(label: &str) -> Error {
+    anyhow!(
+        "Binary template source '{label}' cannot declare template context"
+    )
+}
+
+pub fn template_token_undeclared(token: &str, source: &str) -> Error {
+    anyhow!(
+        "Template token '{token}' in '{source}' is not declared in template.toml"
+    )
+}
+
+pub fn template_token_unsupported(token: &str, source: &str) -> Error {
+    anyhow!(
+        "Template token '{token}' in '{source}' is not supported by the Rust compiler context"
+    )
+}
+
+pub fn template_context_unsupported(key: &str, source: &str) -> Error {
+    anyhow!(
+        "Template context '{key}' required by '{source}' is not supported by the Rust compiler context"
+    )
+}
+
+pub fn template_manifest_missing(layer: &str) -> Error {
+    anyhow!("Missing template manifest '{layer}'")
+}

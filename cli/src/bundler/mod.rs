@@ -115,7 +115,7 @@ impl Bundler {
                 .iter()
                 .map(|e| e.to_string())
                 .collect();
-            return Err(anyhow::anyhow!("esbuild failed: {}", msgs.join("\n")));
+            return Err(crate::error::esbuild_failed(&msgs));
         }
 
         let total_size: usize = result
@@ -193,12 +193,7 @@ fn link_node_modules_for_build(source: &Path, target: &Path) -> Result<(), anyho
     }
 
     symlink_dir(source, target).map_err(|err| {
-        anyhow::anyhow!(
-            "failed to link node_modules for build from {} to {}: {}",
-            source.display(),
-            target.display(),
-            err
-        )
+        crate::error::link_node_modules_failed(source, target, &err)
     })
 }
 
