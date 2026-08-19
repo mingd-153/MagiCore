@@ -67,7 +67,7 @@ pub struct IotAdapter {
     framework: IotFramework,
 }
 
-fn detect_framework(root: &Path) -> Option<IotFramework> {
+pub fn detect_framework(root: &Path) -> Option<IotFramework> {
     if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {

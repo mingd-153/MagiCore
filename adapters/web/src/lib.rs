@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 
 pub mod audit;
 pub mod cache;
+pub mod cache_daemon;
 pub mod install;
 pub mod layout;
 pub mod lifecycle;

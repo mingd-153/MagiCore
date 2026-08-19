@@ -34,3 +34,9 @@ workspace = true
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tokio = { workspace = true }
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "iot_bench"
+harness = false
