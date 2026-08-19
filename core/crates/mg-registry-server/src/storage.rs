@@ -186,11 +186,26 @@ impl RegistryStore {
             .await
             .context("Failed to connect to SQLite")?;
 
+        // Enable Crash-Atomic WAL mode and performance optimizations
+        sqlx::query("PRAGMA journal_mode = WAL;")
+            .execute(&pool)
+            .await
+            .ok();
+        sqlx::query("PRAGMA synchronous = NORMAL;")
+            .execute(&pool)
+            .await
+            .ok();
+        sqlx::query("PRAGMA busy_timeout = 5000;")
+            .execute(&pool)
+            .await
+            .ok();
+
         // Run migrations
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
             .context("Failed to run migrations")?;
+
 
         let store = Self {
             db: pool,
