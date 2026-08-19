@@ -48,6 +48,18 @@ pub(crate) enum Commands {
     },
     #[command(about = "Update MegaGate CLI to the latest version")]
     SelfUpdate,
+    #[command(about = "Read/write configuration (.npmrc)", alias = "c")]
+    Config {
+        #[command(subcommand)]
+        cmd: crate::commands::config::ConfigCmd,
+        #[arg(long, global = true, help = "read/write project .npmrc instead of ~/.npmrc")]
+        local: bool,
+    },
+    #[command(about = "Stage the package (pack + verify, no upload)")]
+    Stage {
+        #[arg(long, help = "stage a different project directory")]
+        dir: Option<std::path::PathBuf>,
+    },
 
     // ── Common: Publish ──────────────────────────────────────────────
     #[command(about = "Publish package to registry")]
@@ -396,7 +408,7 @@ pub(crate) enum Commands {
 
     // ── Per-core: install-<core> ───────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
-    #[command(name = "install-web", about = "Install web dependencies")]
+    #[command(name = "install-web", alias = "i-web", about = "Install web dependencies")]
     InstallWeb {
         packages: Vec<String>,
         #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
@@ -415,39 +427,44 @@ pub(crate) enum Commands {
     },
     #[command(
         name = "install-game",
+        alias = "i-game",
         about = "Install game dependencies",
         hide = true
     )]
     InstallGame { packages: Vec<String> },
-    #[command(name = "install-ai", about = "Install AI dependencies", hide = true)]
+    #[command(name = "install-ai", alias = "i-ai", about = "Install AI dependencies", hide = true)]
     InstallAi {
         packages: Vec<String>,
         dry_run: bool,
     },
     #[command(
         name = "install-clo",
+        alias = "i-clo",
         about = "Install cloud dependencies",
         hide = true
     )]
     InstallClo { packages: Vec<String> },
     #[command(
         name = "install-cicd",
+        alias = "i-cicd",
         about = "Install CI/CD dependencies",
         hide = true
     )]
     InstallCicd { packages: Vec<String> },
-    #[command(name = "install-iot", about = "Install IoT dependencies", hide = true)]
+    #[command(name = "install-iot", alias = "i-iot", about = "Install IoT dependencies", hide = true)]
     InstallIot { packages: Vec<String> },
-    #[command(name = "install-app", about = "Install app dependencies", hide = true)]
+    #[command(name = "install-app", alias = "i-app", about = "Install app dependencies", hide = true)]
     InstallApp { packages: Vec<String> },
     #[command(
         name = "install-lib",
+        alias = "i-lib",
         about = "Install library dependencies",
         hide = true
     )]
     InstallLib { packages: Vec<String> },
     #[command(
         name = "install-hardware",
+        alias = "i-hardware",
         about = "Install hardware packages (optimizer/bench)",
         hide = true
     )]
@@ -455,7 +472,7 @@ pub(crate) enum Commands {
 
     // ── Per-core: add-<core> ───────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
-    #[command(name = "add-web", about = "Add web dependencies")]
+    #[command(name = "add-web", alias = "a-web", about = "Add web dependencies")]
     AddWeb {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -474,7 +491,7 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    #[command(name = "add-game", about = "Add game dependencies", hide = true)]
+    #[command(name = "add-game", alias = "a-game", about = "Add game dependencies", hide = true)]
     AddGame {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -491,7 +508,7 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    #[command(name = "add-ai", about = "Add AI dependencies", hide = true)]
+    #[command(name = "add-ai", alias = "a-ai", about = "Add AI dependencies", hide = true)]
     AddAi {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -508,7 +525,7 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    #[command(name = "add-clo", about = "Add cloud dependencies", hide = true)]
+    #[command(name = "add-clo", alias = "a-clo", about = "Add cloud dependencies", hide = true)]
     AddClo {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -525,7 +542,7 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    #[command(name = "add-cicd", about = "Add CI/CD dependencies", hide = true)]
+    #[command(name = "add-cicd", alias = "a-cicd", about = "Add CI/CD dependencies", hide = true)]
     AddCicd {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -542,7 +559,7 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    #[command(name = "add-iot", about = "Add IoT dependencies", hide = true)]
+    #[command(name = "add-iot", alias = "a-iot", about = "Add IoT dependencies", hide = true)]
     AddIot {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -559,7 +576,7 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    #[command(name = "add-app", about = "Add app dependencies", hide = true)]
+    #[command(name = "add-app", alias = "a-app", about = "Add app dependencies", hide = true)]
     AddApp {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -576,7 +593,7 @@ pub(crate) enum Commands {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    #[command(name = "add-lib", about = "Add library dependencies", hide = true)]
+    #[command(name = "add-lib", alias = "a-lib", about = "Add library dependencies", hide = true)]
     AddLib {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -595,6 +612,7 @@ pub(crate) enum Commands {
     },
     #[command(
         name = "add-hardware",
+        alias = "a-hardware",
         about = "Add hardware packages (optimizer/bench)",
         hide = true
     )]
@@ -605,27 +623,28 @@ pub(crate) enum Commands {
 
     // ── Per-core: remove-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
-    #[command(name = "remove-web", about = "Remove web dependencies")]
+    #[command(name = "remove-web", alias = "rm-web", about = "Remove web dependencies")]
     RemoveWeb {
         #[arg(required = true)]
         packages: Vec<String>,
         #[arg(long, help = "Only update manifest, do not reinstall dependencies")]
         no_install: bool,
     },
-    #[command(name = "remove-game", about = "Remove game dependencies", hide = true)]
+    #[command(name = "remove-game", alias = "rm-game", about = "Remove game dependencies", hide = true)]
     RemoveGame { packages: Vec<String> },
-    #[command(name = "remove-ai", about = "Remove AI dependencies", hide = true)]
+    #[command(name = "remove-ai", alias = "rm-ai", about = "Remove AI dependencies", hide = true)]
     RemoveAi { packages: Vec<String> },
-    #[command(name = "remove-clo", about = "Remove cloud dependencies", hide = true)]
+    #[command(name = "remove-clo", alias = "rm-clo", about = "Remove cloud dependencies", hide = true)]
     RemoveClo { packages: Vec<String> },
-    #[command(name = "remove-cicd", about = "Remove CI/CD dependencies", hide = true)]
+    #[command(name = "remove-cicd", alias = "rm-cicd", about = "Remove CI/CD dependencies", hide = true)]
     RemoveCicd { packages: Vec<String> },
-    #[command(name = "remove-iot", about = "Remove IoT dependencies", hide = true)]
+    #[command(name = "remove-iot", alias = "rm-iot", about = "Remove IoT dependencies", hide = true)]
     RemoveIot { packages: Vec<String> },
-    #[command(name = "remove-app", about = "Remove app dependencies", hide = true)]
+    #[command(name = "remove-app", alias = "rm-app", about = "Remove app dependencies", hide = true)]
     RemoveApp { packages: Vec<String> },
     #[command(
         name = "remove-lib",
+        alias = "rm-lib",
         about = "Remove library dependencies",
         hide = true
     )]
@@ -633,70 +652,70 @@ pub(crate) enum Commands {
 
     // ── Per-core: list-<core> ──────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
-    #[command(name = "list-web", about = "List web packages")]
+    #[command(name = "list-web", alias = "ls-web", about = "List web packages")]
     ListWeb,
-    #[command(name = "list-game", about = "List game packages", hide = true)]
+    #[command(name = "list-game", alias = "ls-game", about = "List game packages", hide = true)]
     ListGame,
-    #[command(name = "list-ai", about = "List AI packages", hide = true)]
+    #[command(name = "list-ai", alias = "ls-ai", about = "List AI packages", hide = true)]
     ListAi,
-    #[command(name = "list-clo", about = "List cloud packages", hide = true)]
+    #[command(name = "list-clo", alias = "ls-clo", about = "List cloud packages", hide = true)]
     ListClo,
-    #[command(name = "list-cicd", about = "List CI/CD packages", hide = true)]
+    #[command(name = "list-cicd", alias = "ls-cicd", about = "List CI/CD packages", hide = true)]
     ListCicd,
-    #[command(name = "list-iot", about = "List IoT packages", hide = true)]
+    #[command(name = "list-iot", alias = "ls-iot", about = "List IoT packages", hide = true)]
     ListIot,
-    #[command(name = "list-app", about = "List app packages", hide = true)]
+    #[command(name = "list-app", alias = "ls-app", about = "List app packages", hide = true)]
     ListApp,
-    #[command(name = "list-lib", about = "List library packages", hide = true)]
+    #[command(name = "list-lib", alias = "ls-lib", about = "List library packages", hide = true)]
     ListLib,
-    #[command(name = "list-hardware", about = "List hardware packages", hide = true)]
+    #[command(name = "list-hardware", alias = "ls-hardware", about = "List hardware packages", hide = true)]
     ListHardware,
 
     // ── Per-core: update-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
-    #[command(name = "update-web", about = "Update web packages")]
+    #[command(name = "update-web", alias = "up-web", about = "Update web packages")]
     UpdateWeb {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
     },
-    #[command(name = "update-game", about = "Update game packages", hide = true)]
+    #[command(name = "update-game", alias = "up-game", about = "Update game packages", hide = true)]
     UpdateGame {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
     },
-    #[command(name = "update-ai", about = "Update AI packages", hide = true)]
+    #[command(name = "update-ai", alias = "up-ai", about = "Update AI packages", hide = true)]
     UpdateAi {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
     },
-    #[command(name = "update-clo", about = "Update cloud packages", hide = true)]
+    #[command(name = "update-clo", alias = "up-clo", about = "Update cloud packages", hide = true)]
     UpdateClo {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
     },
-    #[command(name = "update-cicd", about = "Update CI/CD packages", hide = true)]
+    #[command(name = "update-cicd", alias = "up-cicd", about = "Update CI/CD packages", hide = true)]
     UpdateCicd {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
     },
-    #[command(name = "update-iot", about = "Update IoT packages", hide = true)]
+    #[command(name = "update-iot", alias = "up-iot", about = "Update IoT packages", hide = true)]
     UpdateIot {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
     },
-    #[command(name = "update-app", about = "Update app packages", hide = true)]
+    #[command(name = "update-app", alias = "up-app", about = "Update app packages", hide = true)]
     UpdateApp {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
     },
-    #[command(name = "update-lib", about = "Update library packages", hide = true)]
+    #[command(name = "update-lib", alias = "up-lib", about = "Update library packages", hide = true)]
     UpdateLib {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
@@ -709,6 +728,68 @@ mod tests {
     use super::*;
     use crate::Cli;
     use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn test_config_parses_get_set_delete_local() {
+        let get = Cli::try_parse_from(["mg", "config", "get", "registry"]).unwrap();
+        match get.command.unwrap() {
+            Commands::Config { cmd, local } => match cmd {
+                crate::commands::config::ConfigCmd::Get { key } => {
+                    assert_eq!(key, "registry");
+                    assert!(!local);
+                }
+                _ => panic!("expected config get"),
+            },
+            _ => panic!("expected config command"),
+        }
+
+        let set =
+            Cli::try_parse_from(["mg", "config", "set", "x", "1", "--local"]).unwrap();
+        match set.command.unwrap() {
+            Commands::Config { cmd, local } => match cmd {
+                crate::commands::config::ConfigCmd::Set { key, value } => {
+                    assert_eq!(key, "x");
+                    assert_eq!(value, "1");
+                    assert!(local);
+                }
+                _ => panic!("expected config set"),
+            },
+            _ => panic!("expected config command"),
+        }
+    }
+
+    #[test]
+    fn test_stage_parses_dir_flag() {
+        let cli = Cli::try_parse_from(["mg", "stage", "--dir", "/tmp/demo"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Stage { dir } => {
+                assert_eq!(dir.as_deref(), Some(std::path::Path::new("/tmp/demo")));
+            }
+            _ => panic!("expected stage command"),
+        }
+    }
+
+    #[test]
+    fn test_per_core_aliases_resolve() {
+        let cmd = Cli::command();
+        for (alias, expected) in [
+            ("i-web", "install-web"),
+            ("a-lib", "add-lib"),
+            ("rm-ai", "remove-ai"),
+            ("up-clo", "update-clo"),
+            ("ls-hardware", "list-hardware"),
+            ("i-hardware", "install-hardware"),
+        ] {
+            let found = cmd
+                .find_subcommand(alias)
+                .unwrap_or_else(|| panic!("alias {alias} not found"));
+            assert_eq!(
+                found.get_name(),
+                expected,
+                "alias {alias} should map to {expected}"
+            );
+        }
+    }
 
     #[test]
     fn test_create_web_accepts_flags() {

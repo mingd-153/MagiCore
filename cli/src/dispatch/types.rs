@@ -33,6 +33,13 @@ pub enum CommonCommand {
         fix: bool,
     },
     SelfUpdate,
+    Config {
+        cmd: crate::commands::config::ConfigCmd,
+        local: bool,
+    },
+    Stage {
+        dir: Option<std::path::PathBuf>,
+    },
     Run {
         script: String,
         args: Vec<String>,
