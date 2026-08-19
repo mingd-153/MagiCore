@@ -80,6 +80,39 @@ pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
     publish_project(&args, &cwd).await
 }
 
+/// `mg stage` — pack project vào .mg-stage/ (không đăng registry).
+/// Kiểm tra nhanh trước khi publish: tarball hợp lệ, files selection đúng.
+pub async fn stage(dir: Option<String>) -> Result<()> {
+    let cwd = dir.map(PathBuf::from).unwrap_or(std::env::current_dir()?);
+    let project_root = ProjectConfig::find_project_root(&cwd)
+        .ok_or_else(crate::error::project_root_missing)?;
+    let project = ProjectConfig::load(&project_root)?
+        .ok_or_else(crate::error::mg_toml_missing)?;
+
+    let entry_prefix = format!("{}-{}", project.name, project.version);
+    let filename = format!(
+        "{}-{}.tgz",
+        project.name.replace(['/', '@'], "-"),
+        project.version
+    );
+    let stage_dir = project_root.join(".mg-stage");
+    fs::create_dir_all(&stage_dir)?;
+    let tarball_path = stage_dir.join(&filename);
+    pack(&project_root, &tarball_path, &entry_prefix)?;
+
+    let size = fs::metadata(&tarball_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    mg_ui::success(&format!(
+        "staged {} ({:.1} KiB) → {}",
+        filename,
+        size as f64 / 1024.0,
+        tarball_path.display()
+    ));
+    mg_ui::info("next: `mg publish` to upload, or `mg publish --dry-run` to verify first");
+    Ok(())
+}
+
 /// Sắp workspace theo topological — package phụ thuộc published trước
 fn topo_sort_workspaces(workspaces: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
     let names: std::collections::HashMap<String, PathBuf> = workspaces

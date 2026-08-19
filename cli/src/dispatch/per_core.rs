@@ -24,6 +24,8 @@ pub fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCom
         Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
         Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
         Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
+        Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
+        Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
         Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
         Commands::Build { target } => Some(CommonCommand::Build { target }),
         Commands::Flash { board, skip_build } => Some(CommonCommand::Flash { board, skip_build }),

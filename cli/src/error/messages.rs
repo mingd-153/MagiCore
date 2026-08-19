@@ -903,3 +903,9 @@ pub fn template_context_unsupported(key: &str, source: &str) -> Error {
 pub fn template_manifest_missing(layer: &str) -> Error {
     anyhow!("Missing template manifest '{layer}'")
 }
+
+// ===== config cmd =====
+
+pub fn config_key_missing(key: &str) -> Error {
+    anyhow!("config key '{key}' not found (checked env, project .npmrc, and ~/.npmrc)")
+}

@@ -117,3 +117,7 @@ fn run_script_timeout() -> Duration {
         .map(Duration::from_secs)
         .unwrap_or(Duration::from_secs(DEFAULT_RUN_SCRIPT_TIMEOUT_SECS))
 }
+
+#[cfg(test)]
+#[path = "test/run.rs"]
+mod tests;

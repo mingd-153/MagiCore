@@ -14,6 +14,12 @@ pub async fn dispatch_common(
         CommonCommand::Init { template, signature } => {
             commands::init::run(template, signature).await
         }
+        CommonCommand::Config { cmd, local } => {
+            commands::config::run(cmd, local).await
+        }
+        CommonCommand::Stage { dir } => {
+            commands::publish::stage(dir.map(|d| d.display().to_string())).await
+        }
         CommonCommand::Dev { host, port, clear } => {
             commands::dev::run(core, host, port, clear).await
         }

@@ -59,6 +59,8 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Outdated { .. } => "outdated",
         Commands::Audit { .. } => "audit",
         Commands::SelfUpdate => "self-update",
+        Commands::Config { .. } => "config",
+        Commands::Stage { .. } => "stage",
         Commands::Publish { .. } => "publish",
         Commands::Patch { .. } => "patch",
         Commands::Dedupe { .. } => "dedupe",

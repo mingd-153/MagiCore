@@ -2,6 +2,7 @@
 pub mod definitions;
 pub mod audit;
 pub mod bench;
+pub mod config;
 pub mod build;
 pub mod cache;
 pub mod core;
