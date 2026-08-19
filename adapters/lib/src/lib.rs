@@ -152,7 +152,7 @@ fn read_pip_allowlist(root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn check_pip_allowed(root: &Path, name: &str) -> MgResult<()> {
+pub fn check_pip_allowed(root: &Path, name: &str) -> MgResult<()> {
     let allowed = read_pip_allowlist(root);
     if allowed.iter().any(|a| a == name) {
         return Ok(());

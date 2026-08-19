@@ -17,6 +17,7 @@ toml.workspace = true
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "ai_bench"

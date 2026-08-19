@@ -14,5 +14,14 @@ tokio.workspace = true
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[bench]]
+name = "app_bench"
+harness = false
+
 [lints]
 workspace = true
