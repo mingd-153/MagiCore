@@ -320,6 +320,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Login { .. } => "login",
         Commands::Registry { .. } => "registry",
         Commands::Model { .. } => "model",
+        Commands::Mcp => "mcp",
         Commands::Dev { .. } => "dev",
         Commands::Run { .. } => "run",
         Commands::Build { .. } => "build",

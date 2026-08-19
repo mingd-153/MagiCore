@@ -144,6 +144,8 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::commands::model::ModelCmd,
     },
+    #[command(about = "Start native Model Context Protocol (MCP) server for AI coding agents")]
+    Mcp,
 
     // ── Engine Commands (In-project, auto-detect core) ───────────────
     #[command(about = "Start the local development server", alias = "dev-web")]

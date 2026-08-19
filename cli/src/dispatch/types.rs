@@ -154,6 +154,7 @@ pub enum CommonCommand {
     Model {
         cmd: crate::commands::model::ModelCmd,
     },
+    Mcp,
 }
 
 #[allow(clippy::large_enum_variant)]
