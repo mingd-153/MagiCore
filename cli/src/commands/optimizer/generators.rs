@@ -84,7 +84,7 @@ pub fn generate_optimizations_for_core(core: &str, hw: &HardwareInfo) -> Vec<Opt
         });
     }
 
-    // 3. AI Core (PyTorch, TensorFlow, OpenMP, MKL & Docker Resource Limits)
+    // 3. AI Core (PyTorch, Token Activation Pruning, KV-Cache Compression, 330B Large Model Sharding)
     if core == "ai" {
         let threads = hw.cpu_cores.max(1);
         files.push(OptimizedConfigFile {
@@ -95,10 +95,13 @@ pub fn generate_optimizations_for_core(core: &str, hw: &HardwareInfo) -> Vec<Opt
                  MKL_NUM_THREADS={threads}\n\
                  TORCH_NUM_THREADS={threads}\n\
                  TOKENIZERS_PARALLELISM=true\n\
-                 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\n",
+                 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\n\
+                 MG_AI_ULTRA_COMPRESSION=1\n\
+                 MG_AI_TOKEN_ACTIVATION_PRUNING=1\n\
+                 MG_AI_KV_CACHE_COMPRESSION=1\n",
                 hw.profile
             ),
-            description: format!("AI compute matrix thread pool ({threads} threads)"),
+            description: format!("AI Ultra-Compression & compute matrix thread pool ({threads} threads)"),
         });
 
         files.push(OptimizedConfigFile {
@@ -112,6 +115,21 @@ pub fn generate_optimizations_for_core(core: &str, hw: &HardwareInfo) -> Vec<Opt
                 (hw.total_memory_gb.saturating_sub(2)).max(2)
             ),
             description: "Docker CPU/Memory limits based on detected physical RAM".to_string(),
+        });
+
+        files.push(OptimizedConfigFile {
+            relative_path: ".mg-optimizer/large_model_sharding.json".to_string(),
+            content: format!(
+                "{{\n\
+                  \"target_architecture\": \"ultra-dense-330b\",\n\
+                  \"sparse_token_budget\": 4096,\n\
+                  \"tensor_parallel_shards\": {},\n\
+                  \"pipeline_parallel_stages\": 1,\n\
+                  \"cpu_offload\": true\n\
+                }}\n",
+                (hw.cpu_cores / 4).max(1)
+            ),
+            description: "Ultra-Large Model (330B/70B) Token Pruning & Sharding Strategy".to_string(),
         });
     }
 
