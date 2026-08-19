@@ -47,6 +47,8 @@ task/
 *.pem
 .env
 .env.local
+deploy/docker/registry.env
+deploy/docker/data/
 
 # Logs
 logs/
