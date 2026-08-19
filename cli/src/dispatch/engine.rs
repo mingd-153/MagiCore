@@ -94,6 +94,25 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         bail!("No workspace projects found in this monorepo.");
     }
 
+    // Xây dựng đồ thị phụ thuộc workspace và sắp xếp topo (level-by-level)
+    if let Ok(graph) = mg_workspace::build_workspace_graph(&workspaces) {
+        if let Ok(levels) = mg_workspace::topo_levels(&graph) {
+            let mut ordered = Vec::new();
+            for level in levels {
+                for idx in level {
+                    let node_path = &graph.nodes[idx].path;
+                    if let Some(pos) = workspaces.iter().position(|w| w == node_path) {
+                        ordered.push(workspaces.remove(pos));
+                    }
+                }
+            }
+            // Thêm các workspace còn lại (nếu có)
+            ordered.append(&mut workspaces);
+            workspaces = ordered;
+        }
+    }
+
+
     let name = command_name(&command);
     let mut failed = 0usize;
     let original_cwd = cwd;
@@ -122,6 +141,7 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     }
     Ok(())
 }
+
 
 fn recursive_supported(command: &Commands) -> bool {
     matches!(
@@ -305,6 +325,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::UpdateIot { .. } => "update-iot",
         Commands::UpdateApp { .. } => "update-app",
         Commands::UpdateLib { .. } => "update-lib",
+        Commands::Import { .. } => "import",
     }
 }
 

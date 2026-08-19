@@ -16,3 +16,8 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     mg_ui::success("IoT project created. Run `mg add-iot <pkg>` or `mg install-iot` next.");
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "test/iot.rs"]
+mod tests;
+

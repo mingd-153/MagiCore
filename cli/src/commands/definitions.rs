@@ -60,6 +60,11 @@ pub(crate) enum Commands {
         #[arg(long, help = "stage a different project directory")]
         dir: Option<std::path::PathBuf>,
     },
+    #[command(about = "Import legacy lockfile (package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock) to mg.lock")]
+    Import {
+        #[arg(long, help = "Target project directory to import")]
+        dir: Option<std::path::PathBuf>,
+    },
 
     // ── Common: Publish ──────────────────────────────────────────────
     #[command(about = "Publish package to registry")]

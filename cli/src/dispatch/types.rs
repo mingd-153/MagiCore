@@ -40,6 +40,9 @@ pub enum CommonCommand {
     Stage {
         dir: Option<std::path::PathBuf>,
     },
+    Import {
+        dir: Option<std::path::PathBuf>,
+    },
     Run {
         script: String,
         args: Vec<String>,
@@ -394,6 +397,9 @@ impl TryFrom<Commands> for DispatchCommand {
                 exact,
                 page,
             }),
+            Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
+            Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
+            Commands::Import { dir } => Some(CommonCommand::Import { dir }),
             Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
             Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
             Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),

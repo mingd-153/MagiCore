@@ -248,3 +248,20 @@ fn filter_double_star() {
     ));
     assert!(!filter_matches("./packages/**", Path::new("apps/app"), "x"));
 }
+
+#[test]
+fn filter_name_wildcard_patterns() {
+    assert!(filter_matches("*-service", Path::new("any"), "user-service"));
+    assert!(filter_matches("*-service", Path::new("any"), "auth-service"));
+    assert!(!filter_matches("*-service", Path::new("any"), "user-client"));
+    assert!(filter_matches("mg-*", Path::new("any"), "mg-workspace"));
+    assert!(filter_matches("*", Path::new("any"), "anything"));
+    assert!(filter_matches("**", Path::new("any"), "anything"));
+}
+
+#[test]
+fn filter_scoped_double_star() {
+    assert!(filter_matches("@plugins/**", Path::new("x"), "@plugins/auth"));
+    assert!(filter_matches("@plugins/**", Path::new("x"), "@plugins/core/db"));
+}
+

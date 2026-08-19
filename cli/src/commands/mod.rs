@@ -15,6 +15,7 @@ pub mod exec;
 pub mod hooks;
 pub mod info;
 pub mod init;
+pub mod import;
 pub mod install;
 pub mod login;
 pub mod model;

@@ -1,25 +1,54 @@
 //! Filter — glob match tên package (`@core/*`) hoặc path tương đối (`./apps/*`).
 
 /// Match 1 node có khớp filter không.
-/// - `./apps/*` / `apps/*`: match path tương đối (globbing chỉ 1 cấp sau wildcard `*`)
-/// - `@core/*`: match prefix tên scoped package
+/// - `./apps/*` / `apps/*`: match path tương đối (globbing 1 cấp sau wildcard `*`)
+/// - `./packages/**` / `packages/**`: match path tương đối đa cấp
+/// - `@core/*` / `@core/**`: match prefix tên scoped package
+/// - `*` hoặc `**`: match tất cả
 /// - tên đầy đủ: match chính xác
 pub fn filter_matches(filter: &str, relative_path: &std::path::Path, name: &str) -> bool {
-    // Scoped package prefix: @core/*
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+
+    // Match all wildcards
+    if filter == "*" || filter == "**" {
+        return true;
+    }
+
+    // Scoped package prefix: @core/* hoặc @core/**
     if filter.starts_with('@') {
+        if let Some(scope) = filter.strip_suffix("/**") {
+            return name == scope || name.starts_with(&format!("{scope}/"));
+        }
         if let Some(scope) = filter.strip_suffix("/*") {
             return name == scope || name.starts_with(&format!("{scope}/"));
         }
         return filter == name;
     }
-    // Path-style: ./apps/* hoặc apps/*
+
+    // Path-style: ./apps/* hoặc apps/* hoặc apps/**
     let path_part = filter.strip_prefix("./").unwrap_or(filter);
-    if path_part.contains('/') {
-        return glob_match_path(path_part, relative_path);
+    if path_part.contains('/') || path_part.starts_with('*') {
+        if glob_match_path(path_part, relative_path) {
+            return true;
+        }
     }
-    // Exact name
+
+    // Name-style wildcard (e.g. `*-app`, `core-*`)
+    if filter.contains('*') {
+        let pattern_parts: Vec<&str> = filter.split('*').collect();
+        if pattern_parts.len() == 2 {
+            let (prefix, suffix) = (pattern_parts[0], pattern_parts[1]);
+            return name.starts_with(prefix) && name.ends_with(suffix);
+        }
+    }
+
+    // Exact name match
     name == filter
 }
+
 
 /// Glob đơn giản: `*` = 1 segment; `**` = nhiều segment.
 fn glob_match_path(pattern: &str, path: &std::path::Path) -> bool {
