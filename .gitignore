@@ -80,16 +80,18 @@ mg-brutal-*
 mg-test-*
 mg-bench-*
 
-# Internal docs (benchmark audit logs, lab reports)
-templates/web/.docs/WEB_BENCHMARK_CLI_AUDIT_LOG_*.md
-tools/core-web-lab/
-
-
-# System design docs (working drafts)
-sys-mg/
-
-# PM analysis clones — không commit source clone về
-PMs/*
+# Internal evaluation docs & audit reports (ignored from git)
+*AUDIT*.md
+*REPORT*.md
+*SUMMARY*.md
+*REVIEW*.md
+report-v2-changes.md
+ARCHITECTURE_AUDIT.md
+SECURITY_AUDIT.md
+MEGAGATE_P2_REPORT.md
+OPTIMIZATION_SUMMARY.md
+CODEBASE_REVIEW.md
+REPORT.md
 
 # Doc .md trong thư mục con (cấp 1) — không commit doc rải rác
 /*/*.md
