@@ -29,11 +29,15 @@ impl AppWizard {
                         "Multi-platform (KMP shared + android/ios/react-native/flutter)",
                         "multi",
                     ),
-                    Answer::new("Flutter (dart)", "flutter"),
-                    Answer::new("Kotlin (gradle)", "kotlin"),
-                    Answer::new("Swift (SPM)", "swift"),
+                    Answer::new("Flutter (Dart)", "flutter"),
+                    Answer::new("React Native (TypeScript)", "react-native"),
+                    Answer::new("Tauri (Rust + Web Desktop)", "tauri"),
+                    Answer::new("Kotlin (Android / Gradle)", "kotlin"),
+                    Answer::new("Swift (iOS / SPM)", "swift"),
+                    Answer::new(".NET MAUI (C# Cross-platform)", "maui"),
                 ],
             },
         }
+
     }
 }

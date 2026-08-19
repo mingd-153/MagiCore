@@ -265,3 +265,46 @@ fn filter_scoped_double_star() {
     assert!(filter_matches("@plugins/**", Path::new("x"), "@plugins/core/db"));
 }
 
+#[test]
+fn polyglot_manifest_reading_supports_rust_python_web() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // 1. Rust crate
+    let rust_dir = root.join("crates/core-lib");
+    std::fs::create_dir_all(&rust_dir).unwrap();
+    std::fs::write(
+        rust_dir.join("Cargo.toml"),
+        r#"[package]
+name = "core-lib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+serde = "1.0"
+"#,
+    )
+    .unwrap();
+
+    let rust_manifest = mg_workspace::read_package_manifest(&rust_dir).unwrap().unwrap();
+    assert_eq!(rust_manifest.name, "core-lib");
+    assert_eq!(rust_manifest.dependencies.get("common").unwrap(), "workspace:*");
+
+    // 2. Python package
+    let py_dir = root.join("services/ai-agent");
+    std::fs::create_dir_all(&py_dir).unwrap();
+    std::fs::write(
+        py_dir.join("pyproject.toml"),
+        r#"[project]
+name = "ai-agent"
+version = "0.1.0"
+"#,
+    )
+    .unwrap();
+
+    let py_manifest = mg_workspace::read_package_manifest(&py_dir).unwrap().unwrap();
+    assert_eq!(py_manifest.name, "ai-agent");
+}
+
+
