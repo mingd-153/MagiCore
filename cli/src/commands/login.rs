@@ -75,7 +75,7 @@ pub async fn run(args: LoginArgs) -> Result<()> {
     let json: serde_json::Value = serde_json::from_str(&text)?;
     let token = json["token"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("No token in response: {}", text))?;
+        .ok_or_else(|| crate::error::no_token_in_response(&text))?;
 
     let host = url::Url::parse(&registry)
         .and_then(|u| Ok(u.host_str().unwrap_or("").to_string()))
@@ -84,7 +84,7 @@ pub async fn run(args: LoginArgs) -> Result<()> {
     let npmrc_path = if args.local {
         std::env::current_dir()?.join(".npmrc")
     } else {
-        PathBuf::from(dirs::home_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?)
+        PathBuf::from(dirs::home_dir().ok_or_else(crate::error::no_home_dir)?)
             .join(".npmrc")
     };
 

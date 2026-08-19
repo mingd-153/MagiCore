@@ -11,22 +11,24 @@ pub async fn dispatch_common(
     recursive: bool,
 ) -> Result<()> {
     match command {
-        CommonCommand::Init { template } => commands::init::run(template).await,
+        CommonCommand::Init { template, signature } => {
+            commands::init::run(template, signature).await
+        }
         CommonCommand::Dev { host, port, clear } => {
             commands::dev::run(core, host, port, clear).await
         }
         CommonCommand::Build { target } => commands::build::run(core, target).await,
         CommonCommand::Flash { board, skip_build } => {
-            commands::core::iot::flash(board.as_deref(), skip_build).await
+            commands::core::dev::iot::flash(board.as_deref(), skip_build).await
         }
         CommonCommand::Deploy { run } => {
             match super::types::detect_ecosystem().ok().flatten().as_deref() {
-                Some("cicd") => commands::core::cicd::deploy(run).await,
-                _ => commands::core::clo::deploy(run).await,
+                Some("cicd") => commands::core::dev::cicd::deploy(run).await,
+                _ => commands::core::dev::clo::deploy(run).await,
             }
         }
-        CommonCommand::CiGenerate => commands::core::cicd::ci_generate(),
-        CommonCommand::Verify => commands::core::cicd::verify().await,
+        CommonCommand::CiGenerate => commands::core::dev::cicd::ci_generate(),
+        CommonCommand::Verify => commands::core::dev::cicd::verify().await,
         CommonCommand::Start => commands::start::run(core).await,
         CommonCommand::Exec { command, args } => commands::exec::run(core, command, args),
         CommonCommand::Info { package, json } => commands::info::run(package, json).await,

@@ -64,7 +64,7 @@ pub async fn run(
 
         mg_ui::blank_line();
         if failed > 0 {
-            anyhow::bail!("{failed} workspace(s) failed to install");
+            return Err(crate::error::workspace_failed(failed));
         }
         success("Workspace dependencies installed");
         return Ok(());
@@ -89,11 +89,7 @@ async fn install_into_root(
 ) -> Result<()> {
     const MAX_PACKAGES: usize = 50;
     if packages.len() > MAX_PACKAGES {
-        anyhow::bail!(
-            "Too many packages ({}). Maximum per install command is {}.",
-            packages.len(),
-            MAX_PACKAGES
-        );
+        return Err(crate::error::too_many_packages(packages.len(), "install"));
     }
 
     let started_at = std::time::Instant::now();
@@ -314,12 +310,10 @@ fn load_locked_graph(
     // Future lockfile versions must not be guessed (npm shrinkwrap.js:1003
     // model): abort with a clear error instead of silently re-resolving.
     if lock.version > mg_lockfile::migrate::current_version() {
-        anyhow::bail!(
-            "mg.lock version {} is newer than this version of mg (supports up to {}). \
-             Upgrade mg to read this lockfile.",
+        return Err(crate::error::lockfile_newer(
             lock.version,
-            mg_lockfile::migrate::current_version()
-        );
+            mg_lockfile::migrate::current_version(),
+        ));
     }
     if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
         return Ok(None);
@@ -369,13 +363,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
                 .iter()
                 .map(|dep| {
                     PackageId::parse(dep).map_err(|err| {
-                        anyhow::anyhow!(
-                            "invalid dependency id '{}' in lockfile package '{}@{}': {}",
-                            dep,
-                            pkg.name,
-                            pkg.version,
-                            err
-                        )
+                        crate::error::invalid_dep_id(dep, &pkg.name, &pkg.version, &err)
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;

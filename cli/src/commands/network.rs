@@ -158,14 +158,14 @@ mod tests {
     #[test]
     fn outbound_connections_stable_and_unique() {
         let all = outbound_connections();
-        assert!(all.len() >= 4, "phải có ít nhất 4 host mặc định");
+        assert!(all.len() >= 4, "must have at least 4 default hosts");
         let mut hosts: Vec<&str> = all.iter().map(|c| c.host.as_str()).collect();
         hosts.sort();
         hosts.dedup();
-        assert_eq!(hosts.len(), all.len(), "host phải unique");
+        assert_eq!(hosts.len(), all.len(), "hosts must be unique");
         for c in &all {
-            assert!(c.port == 443 || c.port == 80, "port phải 443/80");
-            assert!(!c.purpose.is_empty(), "phải có purpose");
+            assert!(c.port == 443 || c.port == 80, "port must be 443/80");
+            assert!(!c.purpose.is_empty(), "must have a purpose");
         }
     }
 

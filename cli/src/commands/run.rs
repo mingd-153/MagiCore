@@ -32,20 +32,12 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
         }
     }
 
-    anyhow::bail!(
-        "Script '{}' not found. Define it in 'mg.toml' under [scripts] or in 'package.json'.",
-        script
-    )
+    return Err(crate::error::script_not_found(&script));
 }
 
 fn reject_external_package_manager_script(cmd: &str, manifest_path: &Path) -> Result<()> {
     if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(cmd) {
-        anyhow::bail!(
-            "Script '{}' in '{}' delegates to forbidden package manager '{}'. Core-web task execution must not bounce through another package manager.",
-            cmd,
-            manifest_path.display(),
-            pm
-        );
+        return Err(crate::error::forbidden_pm_script(cmd, manifest_path, pm));
     }
 
     Ok(())
@@ -79,7 +71,7 @@ fn execute_task_with_bin(
     bin_path: Option<PathBuf>,
 ) -> Result<()> {
     let invocation = mg_exec::allowlist::parse_script_invocation(cmd)
-        .map_err(|e| anyhow::anyhow!("Unsupported script '{}': {}", script_name, e))?;
+        .map_err(|e| crate::error::unsupported_script(script_name, &e))?;
     let program = invocation.program;
     let mut script_args = invocation.args;
     script_args.extend(args.iter().cloned());

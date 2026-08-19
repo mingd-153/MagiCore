@@ -34,7 +34,7 @@ tên-folder/
 
 - `docs/` là nơi duy nhất ghi báo cáo tiến độ + checklist của folder đó.
 - docs/ is the single place for progress reports + checklists.
-- `test/` là nơi duy nhất đặt test của folder — **CẤM `#[cfg(test)]` inline trong `src/`** (xem §5).
+- `test/` là nơi duy nhất đặt test của folder — **CẤM `#[cfg(test)] mod tests` inline trong file `src/*.rs`** (xem §5).
 - Ví dụ: `core/crates/mg-exec/docs/Checklist.md`, `adapters/game/test/`, `cli/docs/ProgressReport.md`.
 - Tên folder phải là **lowercase** (`docs/` không phải `DOCS/`).
 
@@ -88,14 +88,15 @@ Mọi việc làm đều thuộc 1 trong 3 loại — ghi rõ ở đầu Progres
 
 | Loại | Phạm vi | Bắt buộc khi |
 |---|---|---|
-| **TEST RIÊNG** | Test của folder/crate đó — **bắt buộc đặt tại `<folder>/test/`** (integration test, không `#[cfg(test)]` trong `src/`) | Mỗi task trong folder |
+| **TEST RIÊNG** | Test của folder/crate đó — **bắt buộc đặt tại `<folder>/test/`** (không `#[cfg(test)] mod tests` inline trong file `src/*.rs`) | Mỗi task trong folder |
 | **TEST CHUNG** | Toàn workspace + E2E (`cargo test --workspace`, `tests/e2e/`) | Mỗi task, trước khi báo cáo |
 
 Quy tắc:
 - Test RIÊNG trước (nhanh, cụ thể), rồi TEST CHUNG (đảm bảo không phá phần khác).
 - Non-trivial logic: BẮT BUỘC có ≥1 test (ponytail rule). Chạy test trong bước 3 — không báo cáo "code xong" khi test chưa pass.
-- **CẤM đặt test trong `src/`** (không dùng `#[cfg(test)] mod tests` inline). Mọi test phải nằm ở `<folder>/test/`.
-  - Rust: test files đặt trong `test/`, khai báo target trong `Cargo.toml` (`[[test]] name = "..." path = "test/...rs"`) nếu crate dùng thư mục `test/` thay vì `tests/`.
+- **CẤM `#[cfg(test)] mod tests { ... }` inline trong file `src/*.rs`** — block test phải tách ra file riêng tại `<folder>/test/`. Mọi test phải nằm ở `<folder>/test/`.
+  - Rust (module test — binary crate cli, giữ quyền truy cập private items): file gốc `src/<folder>/<core>.rs` khai báo **1 dòng duy nhất** `#[cfg(test)] #[path = "test/<core>.rs"] mod tests;`, block test (KHÔNG có `mod tests {` wrapper — chỉ nội dung bên trong) đặt tại `src/<folder>/test/<core>.rs`. `use super::*` vẫn hoạt động vì module `tests` vẫn là con của file gốc.
+  - Integration test (crate riêng): test files đặt trong `test/`, khai báo target trong `Cargo.toml` (`[[test]] name = "..." path = "test/...rs"`) nếu crate dùng thư mục `test/` thay vì `tests/`.
   - Với crate có sẵn `tests/` (chuẩn Cargo): giữ nguyên — `tests/` cũng là vị trí hợp lệ cho integration test. Điểm mấu chốt: test KHÔNG nằm chung với code production trong `src/`.
 - Tóm tắt: production code trong `src/`; test trong `test/` (hoặc `tests/` chuẩn Cargo) — tách bạch.
 
@@ -132,6 +133,8 @@ Quy tắc:
 - EN mô tả kỹ thuật; VI mô tả ý nghĩa/ngữ cảnh (không dịch nguyên văn lặp lại).
 - File mới: header 2 dòng song ngữ: mô tả file (EN) + mục đích (VI).
 - Chỉ comment ý nghĩa thật — không comment tầm thường (`// increment i`).
+- **Lỗi CLI TẬP TRUNG**: mọi error message của CLI định nghĩa tại `cli/src/error/messages.rs` (hàm trả `anyhow::Error`) — file command KHÔNG viết bail!/anyhow! message mới inline, chỉ gọi `crate::error::<tên>()` (hoặc `with_context` để giữ chain lỗi gốc). Thêm lỗi mới → thêm hàm trong messages.rs.
+- **OUTPUT toàn repo tiếng Anh**: mọi thứ in ra console/terminal (println/info/warning/error/bail/panic/assert message) bằng tiếng Anh — cấm tiếng Việt trong output (2026-08-19 user bắt buộc).
 - **Console/log/panic/error messages: ENGLISH ONLY** — messages hiển thị ra terminal, log file, CLI output đều bằng tiếng Anh.
 
 ---

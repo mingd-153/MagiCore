@@ -75,13 +75,13 @@ impl PackageAdapter for HardwareAdapter {
         _opts: AddOptions,
     ) -> MgResult<PackageId> {
         Err(mg_types::MgError::Other(
-            "hardware packages (optimizer/bench) được materialize bởi `mg add-hardware <pkg>` — không qua registry".to_string(),
+            "hardware packages (optimizer/bench) are materialized by `mg add-hardware <pkg>` — not via the registry".to_string(),
         ))
     }
 
     async fn remove(&self, _project_root: &Path, _name: &PackageName) -> MgResult<()> {
         Err(mg_types::MgError::Other(
-            "hardware packages không qua registry — xóa thủ công folder optimizer/bench"
+            "hardware packages do not go through the registry — remove the optimizer/bench folder manually"
                 .to_string(),
         ))
     }
@@ -141,7 +141,7 @@ mod tests {
         std::fs::write(game_dir.join("mg.toml"), "ecosystem = \"game\"\n").unwrap();
         assert!(
             adapter_for(&game_dir).is_some(),
-            "add-ons cross-core: có thể add optimizer/bench vào project game"
+            "cross-core add-ons: optimizer/bench can be added to a game project"
         );
     }
 

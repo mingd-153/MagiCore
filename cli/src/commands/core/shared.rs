@@ -1,12 +1,13 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
 use colored::Colorize;
 use mg_lockfile::{LockPackage, Lockfile};
 use mg_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
 use mg_types::{
-    adapter::PreparedAdd, DependencySpec, Manifest, PackageId, PackageName, ResolvedGraph,
-    ResolvedPackage, Version,
+    adapter::PreparedAdd, DependencySpec, Ecosystem, Manifest, PackageId, PackageName,
+    ResolvedGraph, ResolvedPackage, Version,
 };
 use mg_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
@@ -45,11 +46,7 @@ pub async fn add(
 ) -> Result<()> {
     const MAX_PACKAGES: usize = 50;
     if packages.len() > MAX_PACKAGES {
-        anyhow::bail!(
-            "Too many packages ({}). Maximum per add command is {}.",
-            packages.len(),
-            MAX_PACKAGES
-        );
+        return Err(crate::error::too_many_packages(packages.len(), "add"));
     }
     let total = packages.len();
     let group = if peer {
@@ -218,11 +215,7 @@ pub async fn remove(
 ) -> Result<()> {
     const MAX_PACKAGES: usize = 50;
     if packages.len() > MAX_PACKAGES {
-        anyhow::bail!(
-            "Too many packages ({}). Maximum per remove command is {}.",
-            packages.len(),
-            MAX_PACKAGES
-        );
+        return Err(crate::error::too_many_packages(packages.len(), "remove"));
     }
     info(&format!("Removing {} package(s)...", packages.len()));
     let parse_started_at = std::time::Instant::now();
@@ -502,10 +495,7 @@ pub(crate) async fn prepare_install_execution(
     } else {
         if frozen {
             let cmd = install_command_for_adapter(adapter);
-            anyhow::bail!(
-                "--frozen: mg.lock is missing or does not match package.json.\n\
-                 Run '{cmd}' to generate an up-to-date lockfile."
-            );
+            return Err(crate::error::frozen_lock_missing(&cmd));
         }
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
         let resolve_started_at = std::time::Instant::now();
@@ -535,15 +525,12 @@ async fn enforce_audit_strict_policy(
     }
 
     if adapter.name() != "web" {
-        anyhow::bail!(
-            "--audit-strict is only implemented for the web core right now; refusing to claim policy parity for '{}'",
-            adapter.name()
-        );
+        return Err(crate::error::audit_strict_web_only(adapter.name()));
     }
 
     #[cfg(not(feature = "web"))]
     {
-        anyhow::bail!("--audit-strict requires the web core registry adapter, which is not included in this build");
+        return Err(crate::error::audit_strict_no_web_adapter());
     }
 
     #[cfg(feature = "web")]
@@ -566,19 +553,14 @@ async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
         let metadata = registry.fetch_metadata(pkg.id.name_str()).await?;
         if let Some(published_at) = metadata.time.get(&pkg.id.version().to_string()) {
             let published = OffsetDateTime::parse(published_at, &Rfc3339).map_err(|err| {
-                anyhow::anyhow!(
-                    "failed to parse published time for '{}@{}': {}",
-                    pkg.id.name_str(),
-                    pkg.id.version(),
-                    err
-                )
+                crate::error::audit_parse_time_failed(pkg.id.name_str(), &pkg.id.version().to_string(), &err)
             })?;
             if published > quarantine_cutoff {
-                anyhow::bail!(
-                    "--audit-strict blocked '{}@{}' because it was published within the last 24 hours ({published_at})",
+                return Err(crate::error::audit_recent_blocked(
                     pkg.id.name_str(),
-                    pkg.id.version(),
-                );
+                    &pkg.id.version().to_string(),
+                    published_at,
+                ));
             }
         }
     }
@@ -600,7 +582,7 @@ async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
     )?;
     let response = client.post(advisory_url).json(&body).send().await?;
     if !response.status().is_success() {
-        anyhow::bail!("--audit-strict advisory API returned {}", response.status());
+        return Err(crate::error::audit_api_status(&response.status()));
     }
     let advisories: serde_json::Value = response.json().await?;
     if let Some(map) = advisories.as_object() {
@@ -614,12 +596,11 @@ async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
                         let title = advisory["title"]
                             .as_str()
                             .unwrap_or("unknown vulnerability");
-                        anyhow::bail!(
-                            "--audit-strict blocked '{}' due to {} advisory: {}",
+                        return Err(crate::error::audit_advisory_blocked(
                             pkg_name,
                             severity.as_str(),
-                            title
-                        );
+                            title,
+                        ));
                     }
                 }
             }
@@ -771,12 +752,10 @@ fn load_locked_graph(
     // Future lockfile versions must not be guessed (npm shrinkwrap.js:1003
     // model): abort with a clear error instead of silently re-resolving.
     if lock.version > mg_lockfile::migrate::current_version() {
-        anyhow::bail!(
-            "mg.lock version {} is newer than this version of mg (supports up to {}). \
-             Upgrade mg to read this lockfile.",
+        return Err(crate::error::lockfile_newer(
             lock.version,
-            mg_lockfile::migrate::current_version()
-        );
+            mg_lockfile::migrate::current_version(),
+        ));
     }
     if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
         return Ok(None);
@@ -880,13 +859,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
                 .iter()
                 .map(|dep| {
                     PackageId::parse(dep).map_err(|err| {
-                        anyhow::anyhow!(
-                            "invalid dependency id '{}' in lockfile package '{}@{}': {}",
-                            dep,
-                            pkg.name,
-                            pkg.version,
-                            err
-                        )
+                        crate::error::invalid_dep_id(dep, &pkg.name, &pkg.version, &err)
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -904,300 +877,6 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
     Ok(ResolvedGraph { packages })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mg_lockfile::{serialization, LockPackage, ResolutionMeta};
-    use mg_types::{DependencySpec, Ecosystem, VersionRange};
-
-    #[test]
-    fn test_lock_matches_manifest_when_versions_satisfy_ranges() {
-        let mut manifest = Manifest::new("demo", Ecosystem::Web);
-        manifest.add_dep(
-            DependencySpec::new(
-                PackageName::new("tailwindcss").unwrap(),
-                VersionRange::parse("^4.3.0").unwrap(),
-            ),
-            false,
-            false,
-            false,
-        );
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.resolution = ResolutionMeta {
-            state: "locked".into(),
-            store: "megagate".into(),
-            package_count: 1,
-        };
-        lock.packages.push(LockPackage {
-            name: "tailwindcss".into(),
-            version: "4.3.2".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
-            dependencies: vec![],
-            peer_deps: vec![],
-        });
-        assert!(lock_matches_manifest(&lock, &manifest));
-    }
-
-    #[test]
-    fn test_lock_matches_manifest_rejects_stale_version() {
-        let mut manifest = Manifest::new("demo", Ecosystem::Web);
-        manifest.add_dep(
-            DependencySpec::new(
-                PackageName::new("tailwindcss").unwrap(),
-                VersionRange::parse("^5.0.0").unwrap(),
-            ),
-            false,
-            false,
-            false,
-        );
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.resolution = ResolutionMeta {
-            state: "locked".into(),
-            store: "megagate".into(),
-            package_count: 1,
-        };
-        lock.packages.push(LockPackage {
-            name: "tailwindcss".into(),
-            version: "4.3.2".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
-            dependencies: vec![],
-            peer_deps: vec![],
-        });
-        assert!(!lock_matches_manifest(&lock, &manifest));
-    }
-
-    #[test]
-    fn test_read_checked_lockfile_errors_on_checksum_mismatch() {
-        let root = tempfile::tempdir().unwrap();
-        let lock = Lockfile::new("web", "frontend");
-        std::fs::write(
-            root.path().join("mg.lock"),
-            serialization::to_toml(&lock).unwrap(),
-        )
-        .unwrap();
-        std::fs::write(root.path().join("mg.lock.sha256"), "bad").unwrap();
-
-        let err = read_checked_lockfile(root.path()).unwrap_err();
-
-        assert!(
-            err.to_string().contains("lockfile checksum mismatch"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_graph_from_lockfile_rejects_invalid_dependency_id() {
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.packages.push(LockPackage {
-            name: "react".into(),
-            version: "18.2.0".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
-            dependencies: vec!["not-a-package-id".into()],
-            peer_deps: vec![],
-        });
-
-        let err = graph_from_lockfile(&lock).unwrap_err();
-
-        assert!(
-            err.to_string().contains("invalid dependency id"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_load_locked_graph_ignores_legacy_pm_lockfile() {
-        let root = tempfile::tempdir().unwrap();
-        let mut manifest = Manifest::new("demo", Ecosystem::Web);
-        manifest.add_dep(
-            DependencySpec::new(
-                PackageName::new("left-pad").unwrap(),
-                VersionRange::parse("^1.3.0").unwrap(),
-            ),
-            false,
-            false,
-            false,
-        );
-        std::fs::write(
-            root.path().join("package-lock.json"),
-            r#"{
-  "name": "demo",
-  "lockfileVersion": 3,
-  "packages": {
-    "": { "name": "demo", "dependencies": { "left-pad": "^1.3.0" } },
-    "node_modules/left-pad": { "version": "1.3.0", "integrity": "sha512-abc" }
-  }
-}"#,
-        )
-        .unwrap();
-
-        let graph = load_locked_graph(root.path(), "web", &manifest).unwrap();
-
-        assert!(graph.is_none());
-        assert!(
-            !root.path().join("mg.lock").exists(),
-            "legacy lockfiles must not become mg.lock without an explicit migration command"
-        );
-    }
-
-    #[test]
-    fn test_load_locked_graph_fails_closed_on_future_version() {
-        let root = tempfile::tempdir().unwrap();
-        let manifest = Manifest::new("demo", Ecosystem::Web);
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.version = 99;
-        lock.resolution = ResolutionMeta {
-            state: "locked".into(),
-            store: "megagate".into(),
-            package_count: 0,
-        };
-        std::fs::write(
-            root.path().join("mg.lock"),
-            serialization::to_toml(&lock).unwrap(),
-        )
-        .unwrap();
-
-        let err = load_locked_graph(root.path(), "web", &manifest).unwrap_err();
-        assert!(
-            err.to_string().contains("newer than this version"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_load_pruned_locked_graph_keeps_only_reachable_packages() {
-        let root = tempfile::tempdir().unwrap();
-        let mut manifest = Manifest::new("demo", Ecosystem::Web);
-        manifest.add_dep(
-            DependencySpec::new(
-                PackageName::new("react").unwrap(),
-                VersionRange::parse("^18.0.0").unwrap(),
-            ),
-            false,
-            false,
-            false,
-        );
-
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.resolution = ResolutionMeta {
-            state: "locked".into(),
-            store: "megagate".into(),
-            package_count: 4,
-        };
-        lock.packages.push(LockPackage {
-            name: "react".into(),
-            version: "18.3.1".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
-            dependencies: vec!["loose-envify@1.4.0".into()],
-            peer_deps: vec![],
-        });
-        lock.packages.push(LockPackage {
-            name: "loose-envify".into(),
-            version: "1.4.0".into(),
-            integrity: None,
-            direct: false,
-            dev: false,
-            dependencies: vec![],
-            peer_deps: vec![],
-        });
-        lock.packages.push(LockPackage {
-            name: "zod".into(),
-            version: "4.4.3".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
-            dependencies: vec![],
-            peer_deps: vec![],
-        });
-        lock.packages.push(LockPackage {
-            name: "orphan".into(),
-            version: "1.0.0".into(),
-            integrity: None,
-            direct: false,
-            dev: false,
-            dependencies: vec![],
-            peer_deps: vec![],
-        });
-        std::fs::write(
-            root.path().join("mg.lock"),
-            serialization::to_toml(&lock).unwrap(),
-        )
-        .unwrap();
-
-        let graph = load_pruned_locked_graph(root.path(), "web", &manifest)
-            .unwrap()
-            .unwrap();
-        let names = graph
-            .packages
-            .iter()
-            .map(|pkg| pkg.id.name_str().to_string())
-            .collect::<std::collections::BTreeSet<_>>();
-
-        assert!(names.contains("react"));
-        assert!(names.contains("loose-envify"));
-        assert!(!names.contains("zod"));
-        assert!(!names.contains("orphan"));
-    }
-
-    #[test]
-    fn test_build_delta_manifest_keeps_dependency_group() {
-        let manifest = Manifest::new("demo", Ecosystem::Web);
-        let added = vec![AddedPackage {
-            id: PackageId::parse("vitest@3.2.1").unwrap(),
-            dev: true,
-            optional: false,
-            peer: false,
-        }];
-
-        let delta = build_delta_manifest(&manifest, &added).unwrap();
-
-        assert!(delta.dependencies.is_empty());
-        assert_eq!(delta.dev_dependencies.len(), 1);
-        assert_eq!(delta.dev_dependencies[0].name.as_str(), "vitest");
-        assert_eq!(delta.dev_dependencies[0].range.as_str(), "=3.2.1");
-    }
-
-    #[test]
-    fn test_merge_graphs_promotes_existing_transitive_to_direct() {
-        let dep_id = PackageId::parse("zod@4.4.3").unwrap();
-        let base = ResolvedGraph {
-            packages: vec![ResolvedPackage {
-                id: dep_id.clone(),
-                integrity: String::new(),
-                tarball_url: String::new(),
-                deps: vec![],
-                peer_deps: vec![],
-                direct: false,
-                dev: false,
-            }],
-        };
-        let delta = ResolvedGraph {
-            packages: vec![ResolvedPackage {
-                id: dep_id,
-                integrity: "sha512-test".into(),
-                tarball_url: "https://registry.example/zod.tgz".into(),
-                deps: vec![],
-                peer_deps: vec![],
-                direct: true,
-                dev: true,
-            }],
-        };
-
-        let merged = merge_graphs(base, delta);
-
-        assert_eq!(merged.packages.len(), 1);
-        assert!(merged.packages[0].direct);
-        assert!(merged.packages[0].dev);
-        assert_eq!(merged.packages[0].integrity, "sha512-test");
-    }
-}
 
 fn link_name(package: &str) -> &str {
     if package.contains('/') {
@@ -1209,9 +888,9 @@ fn link_name(package: &str) -> &str {
 
 pub async fn link(adapter: &dyn PackageAdapter, root: &Path, package: Option<&str>) -> Result<()> {
     if adapter.name() != "web" {
-        anyhow::bail!("link only supported for web core");
+        return Err(crate::error::link_web_only());
     }
-    let pkg = package.ok_or_else(|| anyhow::anyhow!("Usage: mg link <package>"))?;
+    let pkg = package.ok_or_else(crate::error::link_usage)?;
     info(&format!("Linking {}...", pkg));
 
     let node_modules = root.join("node_modules");
@@ -1219,7 +898,7 @@ pub async fn link(adapter: &dyn PackageAdapter, root: &Path, package: Option<&st
     let link_path = node_modules.join(name);
 
     if link_path.exists() {
-        anyhow::bail!("{} already exists in node_modules", name);
+        return Err(crate::error::link_exists(&name));
     }
 
     std::fs::create_dir_all(&node_modules)?;
@@ -1236,15 +915,15 @@ pub async fn unlink(
     package: Option<&str>,
 ) -> Result<()> {
     if adapter.name() != "web" {
-        anyhow::bail!("unlink only supported for web core");
+        return Err(crate::error::unlink_web_only());
     }
-    let pkg = package.ok_or_else(|| anyhow::anyhow!("Usage: mg unlink <package>"))?;
+    let pkg = package.ok_or_else(crate::error::unlink_usage)?;
     info(&format!("Unlinking {}...", pkg));
 
     let name = link_name(pkg);
     let link_path = root.join("node_modules").join(name);
     if !link_path.exists() {
-        anyhow::bail!("{} is not linked in node_modules", name);
+        return Err(crate::error::unlink_not_linked(&name));
     }
 
     let meta = std::fs::symlink_metadata(&link_path)?;
@@ -1260,12 +939,12 @@ pub async fn unlink(
 
 pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Result<()> {
     if adapter.name() != "web" {
-        anyhow::bail!("why only supported for web core");
+        return Err(crate::error::why_web_only());
     }
 
     let lock_path = root.join("mg.lock");
     if !lock_path.exists() {
-        anyhow::bail!("mg.lock not found — run 'mg install' first");
+        return Err(crate::error::lock_missing_install());
     }
 
     let content = std::fs::read_to_string(&lock_path)?;
@@ -1330,7 +1009,7 @@ fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {
         if path.exists() {
             return Ok(path.canonicalize()?);
         }
-        anyhow::bail!("local package path not found: {}", path.display());
+        return Err(crate::error::local_path_not_found(&path));
     }
 
     // Check local node_modules
@@ -1346,11 +1025,7 @@ fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {
         }
     }
 
-    anyhow::bail!(
-        "package '{}' not found in local node_modules or MegaGate global package roots.\n\
-         Use 'mg install' to install it first, provide a local path, or configure MEGAGATE_GLOBAL_PACKAGE_ROOT.",
-        package
-    )
+    Err(crate::error::pkg_not_found_local(package))
 }
 
 fn megagate_global_package_roots() -> Vec<PathBuf> {
@@ -1384,3 +1059,156 @@ pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
         None => false,
     }
 }
+
+// ── Core helpers chung (Phase 7 v5 — user chốt 2026-08-19: LỆNH = folder, CORE = file con) ──
+// Mỗi lệnh folder (add/, install/, ...) tái dùng project_root + adapter của core ở đây,
+// thay vì duplic per file. Message giữ từng core để không mất context lỗi.
+
+/// project_root của core — seeded từ find_project_root (mg.toml/.mg.core/package.json...).
+pub fn core_project_root(core: &str) -> Result<PathBuf> {
+    let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
+    let root = find_project_root(&cwd)?
+        .ok_or_else(|| crate::error::no_mg_project_found(core))?;
+    Ok(root)
+}
+
+/// Adapter của core — wrapper factory (expect giữ fail-closed như từng core cũ).
+pub fn core_adapter(eco: &Ecosystem) -> Arc<dyn PackageAdapter> {
+    crate::factory::create_adapter(eco, None, None)
+        .expect("core adapter always available in this core build")
+}
+
+/// game: materialize optimizer template + hook dep (bevy). Dùng chung add/install game.
+pub async fn game_optimizer_template(root: &PathBuf) -> Result<()> {
+    materialize_template(root, OPTIMIZER_PKG).await?;
+    game_hook_optimizer_dep(root)
+}
+
+/// game: thêm dep path `mg-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
+fn game_hook_optimizer_dep(root: &PathBuf) -> Result<()> {
+    let manifest = root.join("Cargo.toml");
+    if !manifest.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&manifest)?;
+    let mut v: toml::Value = toml::from_str(&content)?;
+    let deps = v["dependencies"]
+        .as_table_mut()
+        .ok_or_else(crate::error::cargo_toml_no_deps)?;
+    if deps.contains_key("mg-optimizer") {
+        return Ok(());
+    }
+    deps.insert(
+        "mg-optimizer".to_string(),
+        toml::Value::Table(toml::map::Map::from_iter([(
+            "path".to_string(),
+            toml::Value::String("./optimizer".to_string()),
+        )])),
+    );
+    std::fs::write(&manifest, toml::to_string_pretty(&v)?)?;
+    Ok(())
+}
+
+// ── ai helpers (Phase 7 v5) ───────────────────────────────────────────────────
+
+/// ai project root — detect qua mg_ai_adapter (không dùng find_project_root).
+pub fn ai_project_root() -> Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+    mg_ai_adapter::adapter_for(&cwd)
+        .map(|_| cwd.clone())
+        .ok_or_else(crate::error::ai_project_not_detected)
+}
+
+/// ai: chọn tool theo lock — uv.lock → uv, requirements.lock → pip, mặc định uv nếu có, else pip.
+pub fn ai_pick_tool(root: &std::path::Path) -> &'static str {
+    if root.join("uv.lock").exists() {
+        "uv"
+    } else if root.join("requirements.lock").exists() {
+        "pip"
+    } else if ai_tool_uv_available() {
+        "uv"
+    } else {
+        "pip"
+    }
+}
+
+fn ai_tool_uv_available() -> bool {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(|dir| PathBuf::from(dir).join("uv"))
+        .any(|p| p.is_file())
+}
+
+pub fn ai_run_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Result<()> {
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".megagate").join("exec.log")),
+        clean_env: true,
+        ..Default::default()
+    };
+    mg_exec::prelude::run_inherited(tool, args, &opts)
+        .map_err(|e| crate::error::tool_failed(tool, &e))?;
+    Ok(())
+}
+
+pub fn ai_run_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) -> Result<String> {
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".megagate").join("exec.log")),
+        clean_env: true,
+        ..Default::default()
+    };
+    let report = mg_exec::prelude::run(tool, args, &opts)
+        .map_err(|e| crate::error::tool_failed(tool, &e))?;
+    Ok(report.stdout_tail)
+}
+
+/// ai: entry script qua python3 (Q20, allowlist §5.1) — `mg dev` ai.
+pub async fn ai_dev(_dry_run: bool) -> Result<()> {
+    let root = ai_project_root()?;
+    let framework = mg_ai_adapter::adapter_for(&root)
+        .ok_or_else(|| crate::error::no_ai_framework(&root))?;
+    let script = framework.framework.entry_script().to_string();
+
+    let opts = mg_exec::prelude::ExecOptions {
+        cwd: Some(root.clone()),
+        log_path: Some(root.join(".megagate").join("exec.log")),
+        clean_env: true,
+        ..Default::default()
+    };
+    let cmd = "python3".to_string();
+    mg_ui::info(&format!("AI dev: running `{} {}`...", cmd, script));
+    mg_exec::prelude::run_inherited(&cmd, &[script], &opts)
+        .map_err(|e| crate::error::python3_failed(&e))?;
+    Ok(())
+}
+
+/// Hardware core — optimizer/bench packages (shared cho game/ai/cloud).
+/// Không có native package manager: packages được materialize từ templates/hardware/.
+pub const OPTIMIZER_PKG: &str = "optimizer";
+pub const BENCH_PKG: &str = "bench";
+
+pub async fn materialize_template(root: &std::path::PathBuf, framework: &str) -> anyhow::Result<()> {
+    let target_dir = root.join(framework);
+    if target_dir.exists() {
+        return Ok(()); // đã có — không ghi đè
+    }
+    // Registry-first: fetch layer hardware/<framework> nếu chưa có; fetch fail →
+    // scaffold bên dưới bail rõ ràng (hardware không có fallback procedural).
+    crate::commands::template::ensure_layer(&format!("hardware/{framework}")).await;
+    let config = crate::wizard::engine::ScaffoldConfig {
+        core: "hardware".to_string(),
+        sub_type: String::new(),
+        frameworks: vec![framework.to_string()],
+        project_name: target_dir.to_string_lossy().to_string(),
+        features: vec![],
+        template_dir: std::path::PathBuf::new(),
+    };
+    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "test/shared.rs"]
+mod tests;

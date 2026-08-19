@@ -123,7 +123,7 @@ fn dir_size(path: &Path) -> u64 {
 pub async fn run(args: DedupeArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("Project root not found — run mg init"))?;
+        .ok_or_else(crate::error::project_root_missing)?;
 
     let mg_lock = project_root.join("mg.lock");
     if !mg_lock.exists() {

@@ -13,7 +13,7 @@ fn removes_private_and_publish_config() {
     );
     assert!(
         sanitize(m, "", "").is_err(),
-        "private: true phải chặn publish"
+        "private: true must block publish"
     );
 }
 

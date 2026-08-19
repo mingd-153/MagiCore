@@ -40,5 +40,9 @@ path = "test/project.rs"
 name = "test_hooks"
 path = "test/hooks.rs"
 
+[[test]]
+name = "test_core_marker"
+path = "test/core_marker.rs"
+
 [lints]
 workspace = true

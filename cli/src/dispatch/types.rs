@@ -9,6 +9,7 @@ pub enum DispatchCommand {
 pub enum CommonCommand {
     Init {
         template: Option<String>,
+        signature: Option<String>,
     },
     Dev {
         host: Option<String>,
@@ -370,7 +371,9 @@ impl TryFrom<Commands> for DispatchCommand {
         use DispatchCommand::{Common as SomeCommon, Core as SomeCore};
 
         let common_cmd = match command.clone() {
-            Commands::Init { template } => Some(CommonCommand::Init { template }),
+            Commands::Init { template, signature } => {
+            Some(CommonCommand::Init { template, signature })
+        }
             Commands::Dev { host, port, clear } => Some(CommonCommand::Dev { host, port, clear }),
             Commands::Info { package, json } => Some(CommonCommand::Info { package, json }),
             Commands::Search {
@@ -955,6 +958,13 @@ impl TryFrom<Commands> for DispatchCommand {
 
 pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
     let cwd = std::env::current_dir()?;
+
+    // 0. Try core signature marker (.mg.core) — T9a, ưu tiên cao nhất
+    if let Some(root) = mg_config::project::ProjectConfig::find_project_root(&cwd) {
+        if let Ok(Some(core)) = mg_config::project::ProjectConfig::read_core_marker(&root) {
+            return Ok(Some(core));
+        }
+    }
 
     // 1. Try mg.toml
     let mg_toml = cwd.join("mg.toml");

@@ -58,7 +58,7 @@ pub fn handle(cmd: HooksCmd) -> Result<()> {
 pub fn run_event(root: &Path, event: &str) -> Result<()> {
     hooks::run_hooks(root, event).map_err(|e| {
         // fail-closed: hook fail → command fail (21 §9)
-        anyhow::anyhow!("hook {event} failed: {e}")
+        crate::error::hook_failed(event, &e)
     })
 }
 

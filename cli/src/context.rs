@@ -15,10 +15,12 @@ pub struct ProjectContext {
 
 impl ProjectContext {
     /// Load context, optionally with explicit `--core` override.
-    /// Priority:
+    /// Priority (T9a — chữ kí chống nhầm core):
     ///   1. `--core` flag
-    ///   2. `mg.toml` (saved by `mg init`)
-    ///   3. auto_detect (package.json → web, Cargo.toml → lib, pyproject.toml → ai)
+    ///   2. `.mg.core` marker (signature file)
+    ///   3. `mg.toml` (saved by `mg init` — marker đồng bộ ecosystem)
+    ///   4. auto_detect signature files (package.json → web, Cargo.toml → lib,
+    ///      pyproject.toml → ai) — ambiguous → Err, không đoán (RULE §9.3)
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()
             .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {}", e))?;
@@ -77,15 +79,34 @@ impl ProjectContext {
         core_override: Option<&str>,
     ) -> anyhow::Result<(PathBuf, ProjectConfig)> {
         if let Some(root) = project_root {
+            // T9a: marker là chữ kí có quyền cao nhất (sau --core). Marker sai
+            // (core không hợp lệ) → Err fail-closed, không đoán core khác.
+            let marker_core = ProjectConfig::read_core_marker(root)?;
+
             if let Some(mut cfg) = ProjectConfig::load(root)? {
                 if let Some(core) = core_override {
                     cfg.ecosystem = core.to_string();
+                } else if let Some(marker) = &marker_core {
+                    // Marker sửa tay đổi core → marker thắng (chữ kí dev chủ động).
+                    if cfg.ecosystem != marker[..] {
+                        cfg.ecosystem = marker.clone();
+                    }
                 }
                 return Ok((root.clone(), cfg));
             }
 
-            if let Some(eco) = ProjectConfig::auto_detect(root) {
+            if let Some(eco) = ProjectConfig::detect_core(root)? {
                 let eco = core_override.unwrap_or(&eco);
+                // T9a: tự ghi marker khi vừa detect từ signature — lần sau
+                // không còn phụ thuộc thứ tự file (cảnh báo rõ ràng).
+                if marker_core.is_none() && core_override.is_none() {
+                    ProjectConfig::write_core_marker_at(root, eco)?;
+                    mg_ui::warning(&format!(
+                        "No '{}' found — auto-marking project as core '{}'. Edit the file to change core.",
+                        ProjectConfig::CORE_MARKER_FILE,
+                        eco,
+                    ));
+                }
                 let name = Self::dir_name(root);
                 return Ok((root.clone(), ProjectConfig::new(name, eco)));
             }
@@ -96,9 +117,14 @@ impl ProjectContext {
             }
 
             anyhow::bail!(
-                "Cannot detect project type in '{}'. Run {} or specify {}",
+                "Cannot detect project type in '{}'. Run {}, {}, or specify {}",
                 root.display(),
-                mg_ui::style_cmd("mg init"),
+                mg_ui::style_cmd("mg init --template <type>"),
+                mg_ui::style_cmd(&format!(
+                    "mg init --signature <core> ({} more signatures) — write {} to pin it",
+                    ProjectConfig::KNOWN_CORES.len(),
+                    ProjectConfig::CORE_MARKER_FILE,
+                )),
                 mg_ui::style_cmd("--core <type>"),
             );
         }

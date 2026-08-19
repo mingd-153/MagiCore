@@ -34,7 +34,7 @@ pub enum RegistryCmd {
         upstream: Option<String>,
         #[arg(
             long,
-            help = "blob storage: \"local\" hoặc \"s3://bucket/prefix\" (ITEM 5)"
+            help = "blob storage: \"local\" or \"s3://bucket/prefix\" (ITEM 5)"
         )]
         storage: Option<String>,
     },
@@ -172,7 +172,7 @@ async fn user_add(
     let json: serde_json::Value = serde_json::from_str(&text)?;
     let token = json["token"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("No token in response: {}", text))?;
+        .ok_or_else(|| crate::error::no_token_in_response(&text))?;
     println!("User {} created. Token: {}", name, token);
     println!(
         "Set it in .npmrc via: mg login --username {} --password <pw>",
@@ -220,7 +220,7 @@ async fn revoke_token(token: &str, registry: &str, admin_token: Option<String>) 
         .await?;
     let status = resp.status();
     if status.as_u16() == 404 {
-        bail!("Token {} not found (đã revoke?)", token);
+        return Err(crate::error::token_not_found(token));
     }
     if !status.is_success() {
         bail!("Revoke token failed: {}", status);

@@ -192,7 +192,7 @@ impl PackageAdapter for GameAdapter {
             }
             GameEngine::Godot | GameEngine::Unreal => Ok(InstallSummary::default()),
             GameEngine::Unity => Err(mg_types::MgError::Other(
-                "unity install qua UPM CLI (Read-and-Verify) là P2 — chờ spike (03 §7 Q1)"
+                "unity install via UPM CLI (Read-and-Verify) is P2 — awaiting spike (03 §7 Q1)"
                     .to_string(),
             )),
         }
@@ -223,11 +223,11 @@ impl PackageAdapter for GameAdapter {
                     .unwrap_or_else(|| placeholder_id(name, range)))
             }
             GameEngine::Godot | GameEngine::Unreal => Err(mg_types::MgError::Other(format!(
-                "'{}' has no package manager — game assets manage ngoài dependency graph (03 §4)",
+                "'{}' has no package manager — game assets are managed outside the dependency graph (03 §4)",
                 self.engine.as_str()
             ))),
             GameEngine::Unity => Err(mg_types::MgError::Other(
-                "unity add qua UPM CLI (Read-and-Verify) là P2 — chờ spike (03 §7 Q1)".to_string(),
+                "unity add via UPM CLI (Read-and-Verify) is P2 — awaiting spike (03 §7 Q1)".to_string(),
             )),
         }
     }
@@ -247,7 +247,7 @@ impl PackageAdapter for GameAdapter {
                 self.engine.as_str()
             ))),
             GameEngine::Unity => Err(mg_types::MgError::Other(
-                "unity UPM remove là P2".to_string(),
+                "unity UPM remove is P2".to_string(),
             )),
         }
     }
@@ -271,7 +271,7 @@ impl PackageAdapter for GameAdapter {
                 self.engine.as_str()
             ))),
             GameEngine::Unity => Err(mg_types::MgError::Other(
-                "unity UPM update là P2".to_string(),
+                "unity UPM update is P2".to_string(),
             )),
         }
     }

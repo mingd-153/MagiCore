@@ -35,7 +35,7 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
         "hardware" => build_hardware(&root).await,
         "ai" => {
             mg_ui::warning(
-                "ai core không có build artifact (05 §7 — agent chạy qua `mg run`/`mg dev`); bỏ qua",
+                "ai core has no build artifact (05 §7 — agents run via `mg run`/`mg dev`); skipped",
             );
             Ok(())
         }
@@ -50,19 +50,19 @@ async fn build_game(root: &Path) -> Result<()> {
     match engine {
         Some(mg_game_adapter::GameEngine::Bevy) => build_rust(root),
         Some(mg_game_adapter::GameEngine::Godot) => {
-            mg_ui::warning("godot export build là P2 (03 §4) — dùng editor export; bỏ qua build");
+            mg_ui::warning("godot export build is P2 (03 §4) — use the editor to export; build skipped");
             Ok(())
         }
         Some(mg_game_adapter::GameEngine::Unity) => {
-            mg_ui::warning("unity batchmode build là P1 chưa mở — scaffold-only; bỏ qua build");
+            mg_ui::warning("unity batchmode build is P1, not opened yet — scaffold-only; build skipped");
             Ok(())
         }
         Some(mg_game_adapter::GameEngine::Unreal) => {
-            mg_ui::warning("unreal build là P2 (03 §4) — scaffold-only; bỏ qua build");
+            mg_ui::warning("unreal build is P2 (03 §4) — scaffold-only; build skipped");
             Ok(())
         }
         None => {
-            mg_ui::warning("không detect được game engine (project.godot/Cargo.toml/.uproject)");
+            mg_ui::warning("could not detect a game engine (project.godot/Cargo.toml/.uproject)");
             Ok(())
         }
     }
@@ -94,7 +94,7 @@ async fn build_iot(root: &Path) -> Result<()> {
         }
         return build_rust(root);
     }
-    mg_ui::warning("không detect được iot framework (platformio.ini/west.yml/Cargo.toml)");
+    mg_ui::warning("could not detect an iot framework (platformio.ini/west.yml/Cargo.toml)");
     Ok(())
 }
 
@@ -110,11 +110,8 @@ async fn build_lib(root: &Path) -> Result<()> {
             return Ok(());
         }
         info("Building python lib: python -m build");
-        return run_allowlisted_tool(root, "python", &["-m", "build"]).map_err(|e| {
-            anyhow::anyhow!(
-                "python -m build failed: {e} — cài `pip install build` trong project này trước"
-            )
-        });
+        return run_allowlisted_tool(root, "python", &["-m", "build"])
+            .map_err(|e| crate::error::python_build_failed(&e));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
     if tsc.exists() {
@@ -136,7 +133,7 @@ async fn build_lib(root: &Path) -> Result<()> {
         };
         return mg_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
     }
-    mg_ui::warning("ts lib cần `mg install` trước (node_modules/.bin/tsc missing)");
+    mg_ui::warning("ts lib requires `mg install` first (node_modules/.bin/tsc missing)");
     Ok(())
 }
 
@@ -149,7 +146,7 @@ async fn build_hardware(root: &Path) -> Result<()> {
         }
         return run_allowlisted_tool(root, "pio", &["run"]);
     }
-    mg_ui::warning("không detect được hardware framework (platformio.ini missing)");
+    mg_ui::warning("could not detect a hardware framework (platformio.ini missing)");
     Ok(())
 }
 
@@ -178,9 +175,7 @@ async fn build_app(root: &Path) -> Result<()> {
         _ => ("flutter", &["build"]),
     };
     if tool_unavailable(tool) {
-        anyhow::bail!(
-            "'{tool}' not found in PATH — install it first (mg doctor check lists required toolchains)"
-        );
+        return Err(crate::error::build_toolchain_missing(tool));
     }
     run_allowlisted_tool(root, tool, args)?;
     mg_ui::success(&format!("App build completed ({language})"));
@@ -287,7 +282,7 @@ fn tool_unavailable(tool: &str) -> bool {
 /// Fail-closed: toolchain thiếu → cảnh báo, không fail project.
 async fn build_cloud(root: &Path) -> Result<()> {
     let kind = mg_cloud_adapter::detect_type(root)
-        .ok_or_else(|| anyhow::anyhow!("No cloud framework detected in {}", root.display()))?;
+        .ok_or_else(|| crate::error::no_framework_detected("cloud", &root))?;
     match kind {
         mg_cloud_adapter::CloudType::Cdk => {
             let bin = root.join("node_modules").join(".bin").join("cdk");
@@ -332,9 +327,7 @@ async fn build_cloud(root: &Path) -> Result<()> {
             run_allowlisted_tool(root, "terraform", &["plan"])?;
         }
         mg_cloud_adapter::CloudType::Cloudflare => {
-            mg_ui::warning(
-                "cloudflare workers build/deploy thuộc cicd core (Q12) — cloud core không làm P1",
-            );
+            return Err(crate::error::cloudflare_build_in_cicd_core());
         }
     }
     Ok(())
@@ -345,7 +338,7 @@ fn find_root() -> anyhow::Result<PathBuf> {
     if let Some(root) = mg_config::project::ProjectConfig::find_project_root(&cwd) {
         return Ok(root);
     }
-    anyhow::bail!("No project found (no mg.toml, package.json, or Cargo.toml)")
+    return Err(crate::error::no_project_found_build());
 }
 
 fn build_rust(root: &Path) -> Result<()> {
@@ -667,7 +660,7 @@ fn prepend_path(local_bin: &Path) -> Result<OsString> {
     let current = std::env::var_os("PATH").unwrap_or_default();
     let mut parts = vec![local_bin.as_os_str().to_os_string()];
     parts.extend(std::env::split_paths(&current).map(|path| path.into_os_string()));
-    std::env::join_paths(parts).map_err(|err| anyhow::anyhow!(err))
+    std::env::join_paths(parts).map_err(|err| crate::error::join_paths(&err))
 }
 
 fn find_entry_point(root: &Path) -> Result<PathBuf> {

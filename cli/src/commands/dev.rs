@@ -1,4 +1,3 @@
-use anyhow::bail;
 use mg_ui::info;
 
 use crate::context::ProjectContext;
@@ -6,13 +5,13 @@ use crate::context::ProjectContext;
 /// Lệnh dev cho từng engine game (Q15/Q20): bevy → cargo run; godot → mở editor.
 fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
     let adapter = mg_game_adapter::adapter_for(root)
-        .ok_or_else(|| anyhow::anyhow!("No game engine detected in {}", root.display()))?;
+        .ok_or_else(|| crate::error::no_framework_detected("game engine", &root))?;
     match adapter.engine() {
         "bevy" => Ok(("cargo".to_string(), vec!["run".to_string()])),
         "godot" => {
             let path = root
                 .to_str()
-                .ok_or_else(|| anyhow::anyhow!("project path is not valid UTF-8"))?;
+                .ok_or_else(crate::error::path_not_utf8)?;
             Ok((
                 "godot".to_string(),
                 vec![
@@ -26,7 +25,7 @@ fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<Strin
         "unity" => {
             let path = root
                 .to_str()
-                .ok_or_else(|| anyhow::anyhow!("project path is not valid UTF-8"))?;
+                .ok_or_else(crate::error::path_not_utf8)?;
             Ok((
                 "unity".to_string(),
                 vec!["-projectPath".to_string(), path.to_string()],
@@ -44,13 +43,9 @@ fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<Strin
                     })
                 })
                 .unwrap_or_else(|| "Game.uproject".to_string());
-            Err(anyhow::anyhow!(
-                "unreal dev chạy trong Unreal Editor (engine binary đặt tên theo version, không có PATH chuẩn) — mở {uproject} bằng editor, hoặc cài UnrealBuildTool và chạy build trực tiếp. Run `mg build` + editor để chạy."
-            ))
+            Err(crate::error::unreal_editor_dev(&uproject))
         }
-        other => Err(anyhow::anyhow!(
-            "'mg dev' cho engine '{other}' chưa có lệnh — dùng editor của engine để chạy"
-        )),
+        other => Err(crate::error::dev_no_command_for_engine(other)),
     }
 }
 
@@ -73,7 +68,7 @@ pub async fn run(
             if clear {
                 info("--clear is delegated to the selected web framework when supported.");
             }
-            crate::commands::core::web::dev_at_root(&root, Some(host), port).await
+            crate::commands::core::dev::web::dev_at_root(&root, Some(host), port).await
         }
         "game" => {
             let (cmd, args) = game_dev_command(&root)?;
@@ -90,11 +85,9 @@ pub async fn run(
             ));
             mg_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
                 if cmd == "godot" {
-                    anyhow::anyhow!(
-                        "godot failed: {e} — install the Godot editor first (https://godotengine.org) and ensure `godot` is in PATH"
-                    )
+                    crate::error::godot_failed(&e)
                 } else {
-                    anyhow::anyhow!("{} failed: {e}", cmd)
+                    crate::error::tool_failed(&cmd, &e)
                 }
             })?;
             Ok(())
@@ -110,32 +103,30 @@ pub async fn run(
             info(&format!("IoT dev: running `{} {}`...", cmd, args.join(" ")));
             mg_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
                 if cmd == "espflash" {
-                    anyhow::anyhow!(
-                        "espflash failed: {e} — install espflash first (`cargo install espflash`) and ensure it is in PATH"
-                    )
+                    crate::error::espflash_failed(&e)
                 } else {
-                    anyhow::anyhow!("{} failed: {e}", cmd)
+                    crate::error::tool_failed(&cmd, &e)
                 }
             })?;
             Ok(())
         }
         "cloud" => {
-            crate::commands::core::clo::dev(false).await?;
+            crate::commands::core::dev::clo::dev(false).await?;
             Ok(())
         }
         "cicd" => {
-            crate::commands::core::cicd::dev(false).await?;
+            crate::commands::core::dev::cicd::dev(false).await?;
             Ok(())
         }
         "app" => {
-            crate::commands::core::app::dev(false).await?;
+            crate::commands::core::dev::app::dev(false).await?;
             Ok(())
         }
         "ai" => {
-            crate::commands::core::ai::dev(false).await?;
+            crate::commands::core::dev::ai::dev(false).await?;
             Ok(())
         }
-        other => bail!("'mg dev' Engine is not implemented for the '{other}' core yet"),
+        other => Err(crate::error::dev_core_not_implemented(other)),
     }
 }
 
@@ -143,12 +134,12 @@ pub async fn run(
 /// platformio/zephyr → passthrough tới tool của framework (P1).
 fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
     let adapter = mg_iot_adapter::adapter_for(root)
-        .ok_or_else(|| anyhow::anyhow!("No IoT framework detected in {}", root.display()))?;
+        .ok_or_else(|| crate::error::no_framework_detected("IoT", &root))?;
     match adapter.framework() {
         "esp32-rust" => Ok(("espflash".to_string(), vec!["monitor".to_string()])),
         "platformio" => Ok(("pio".to_string(), vec!["run".to_string()])),
         "zephyr" => Ok(("west".to_string(), vec!["build".to_string()])),
-        other => bail!("'mg dev' for '{other}' iot framework is not implemented yet"),
+        other => Err(crate::error::dev_iot_framework_not_implemented(other)),
     }
 }
 

@@ -106,15 +106,12 @@ async fn publish_all() -> Result<()> {
         .join("templates")
         .join("web");
     if !root.is_dir() {
-        bail!("templates/web không tồn tại trên disk: {}", root.display());
+        return Err(crate::error::web_templates_missing(&root));
     }
     let mut layers: Vec<PathBuf> = Vec::new();
     collect_web_layers(&root, &mut layers);
     if layers.is_empty() {
-        bail!(
-            "Không tìm thấy layer web nào có template.toml+sources trong {}",
-            root.display()
-        );
+        return Err(crate::error::no_web_layer_found(&root));
     }
     for layer in &layers {
         let rel = layer
@@ -224,12 +221,7 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
     }
     let meta_resp = req.send().await?;
     if !meta_resp.status().is_success() {
-        bail!(
-            "Template '{}' not found at {} (HTTP {}) — chạy mg template publish trước",
-            name,
-            registry,
-            meta_resp.status()
-        );
+        return Err(crate::error::template_not_published(&name, meta_resp.status().as_u16()));
     }
     let meta: serde_json::Value = meta_resp.json().await?;
 
@@ -237,11 +229,11 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
     let version = meta
         .pointer(&format!("/dist-tags/{tag}"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Registry response missing dist-tags/{tag}"))?;
+        .ok_or_else(|| crate::error::registry_missing_field(&format!("dist-tags/{tag}")))?;
     let tarball_url = meta
         .pointer(&format!("/versions/{version}/dist/tarball"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Registry response missing dist.tarball"))?;
+        .ok_or_else(|| crate::error::registry_missing_field("dist.tarball"))?;
 
     let bytes = {
         let mut treq = client.get(tarball_url);

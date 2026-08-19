@@ -1,5 +1,5 @@
 use crate::commands::core::scaffold_flags::ScaffoldFlags;
-use crate::commands::core::web::{enrich_web_project_manifest, parse_framework_request};
+use crate::commands::core::create::web::{enrich_web_project_manifest, parse_framework_request};
 use crate::factory;
 use crate::scaffold::Scaffolder;
 use crate::wizard::engine::{Answer, Question, QuestionKind, ScaffoldConfig, WizardEngine};
@@ -10,7 +10,24 @@ use mg_ui::{print_banner, print_next_steps, section};
 use std::path::{Path, PathBuf};
 
 /// mg init — create a new project with mg.toml
-pub async fn run(template: Option<String>) -> Result<()> {
+///
+/// `--signature <core>`: chỉ ghi marker `.mg.core` cho project HIỆN TẠI
+/// (không wizard, không scaffold) — dùng khi auto-detect ambiguous hoặc
+/// muốn đổi core project cũ (T9a).
+pub async fn run(template: Option<String>, signature: Option<String>) -> Result<()> {
+    if let Some(core) = signature {
+        let cwd = std::env::current_dir()
+            .map_err(|e| crate::error::cwd_deleted(&e))?;
+        let root = ProjectConfig::find_project_root(&cwd).unwrap_or(cwd);
+        ProjectConfig::write_core_marker_at(&root, &core)?;
+        mg_ui::success(&format!(
+            "Core signature '{}' written to {}/{}",
+            core,
+            root.display(),
+            ProjectConfig::CORE_MARKER_FILE,
+        ));
+        return Ok(());
+    }
     print_banner();
 
     if let Some(t) = template {
@@ -111,7 +128,7 @@ pub async fn run(template: Option<String>) -> Result<()> {
 /// để mg.toml nằm ở root và list-hardware detect được package.
 async fn init_hardware(config: &ScaffoldConfig) -> Result<PathBuf> {
     let root = std::env::current_dir()
-        .map_err(|e| anyhow::anyhow!("failed to resolve current working directory: {e}"))?
+        .map_err(|e| crate::error::cwd_deleted(&e))?
         .join(&config.project_name);
     std::fs::create_dir_all(&root)?;
     let framework = config
@@ -119,7 +136,7 @@ async fn init_hardware(config: &ScaffoldConfig) -> Result<PathBuf> {
         .first()
         .map(|s| s.as_str())
         .unwrap_or("optimizer");
-    crate::commands::core::hardware::materialize_template(&root, framework).await?;
+    crate::commands::core::shared::materialize_template(&root, framework).await?;
     Ok(root)
 }
 

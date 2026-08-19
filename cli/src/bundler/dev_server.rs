@@ -169,7 +169,7 @@ impl MgDevServer {
         };
         let bind_addr = format!("{}:{}", bind_host, self.config.port);
         info!(
-            "🚀 MgDevServer (Native ESM) đang lắng nghe tại http://{}:{}",
+            "🚀 MgDevServer (Native ESM) listening at http://{}:{}",
             self.config.host, self.config.port
         );
 

@@ -26,40 +26,40 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             project_name,
             flags,
         } => {
-            commands::core::web::run_create_with_options(&framework, &project_name, Some(flags))
+            commands::core::create::web::run_create_with_options(&framework, &project_name, Some(flags))
                 .await
         }
         CoreCommand::CreateGame {
             framework,
             project_name,
-        } => commands::core::game::create::run(&framework, &project_name).await,
+        } => commands::core::create::game::run(&framework, &project_name).await,
         CoreCommand::CreateAi {
             framework,
             project_name,
-        } => commands::core::ai::create::run(&framework, &project_name).await,
+        } => commands::core::create::ai::run(&framework, &project_name).await,
         CoreCommand::CreateClo {
             framework,
             project_name,
-        } => commands::core::clo::create::run(&framework, &project_name).await,
+        } => commands::core::create::clo::run(&framework, &project_name).await,
         CoreCommand::CreateCicd {
             framework,
             project_name,
-        } => commands::core::cicd::create::run(&framework, &project_name).await,
+        } => commands::core::create::cicd::run(&framework, &project_name).await,
         CoreCommand::CreateIot {
             framework,
             project_name,
-        } => commands::core::iot::create::run(&framework, &project_name).await,
+        } => commands::core::create::iot::run(&framework, &project_name).await,
         CoreCommand::CreateApp {
             framework,
             project_name,
-        } => commands::core::app::create::run(&framework, &project_name).await,
+        } => commands::core::create::app::run(&framework, &project_name).await,
         CoreCommand::CreateLib { project_name } => {
-            commands::core::library::create::run(&project_name).await
+            commands::core::create::library::run(&project_name).await
         }
         CoreCommand::CreateHardware {
             framework,
             project_name,
-        } => commands::core::hardware::create::run(&framework, &project_name).await,
+        } => commands::core::create::hardware::run(&framework, &project_name).await,
         _ => unreachable!("non-create command routed to create dispatcher"),
     }
 }

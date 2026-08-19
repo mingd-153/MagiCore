@@ -18,7 +18,7 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
     #[cfg(not(feature = "web"))]
     {
         let _ = (core, json);
-        anyhow::bail!("outdated currently requires the web core registry adapter, which is not included in this build");
+        return Err(crate::error::outdated_no_web_adapter());
     }
 
     #[cfg(feature = "web")]

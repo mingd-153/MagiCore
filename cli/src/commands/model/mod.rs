@@ -109,7 +109,7 @@ async fn cas_pull(source: &str) -> Result<()> {
     };
     save_manifest(&manifest)?;
     println!(
-        "pulled {} → CAS ({} bytes, manifest tại {})",
+        "pulled {} → CAS ({} bytes, manifest at {})",
         manifest.name,
         manifest.total_bytes,
         model_manifest_path(&manifest.name).display()
@@ -142,10 +142,10 @@ async fn pull_hf(
     };
 
     let url = format!("https://huggingface.co/{org}/{model}/resolve/main/{file}");
-    let resp = reqwest::get(&url).await.context("HF request thất bại")?;
+    let resp = reqwest::get(&url).await.with_context(|| crate::error::hf_request_failed())?;
     if !resp.status().is_success() {
         bail!(
-            "HF download failed: {} ({url}) — nguồn không xác định, không ghi store",
+            "HF download failed: {} ({url}) — unknown source, not written to store",
             resp.status()
         );
     }
@@ -166,7 +166,7 @@ async fn pull_oci(
     oci: &str,
 ) -> Result<(String, Vec<String>, u64)> {
     let (registry, rest) = oci.split_once('/').ok_or_else(|| {
-        anyhow::anyhow!("invalid oci source '{oci}' — use `oci://registry/repo:tag`")
+        crate::error::invalid_oci_source(oci)
     })?;
     let (repo, tag) = match rest.rsplit_once(':') {
         Some((r, t)) if !r.is_empty() && !t.is_empty() => (r, t),
@@ -182,7 +182,7 @@ async fn pull_oci(
     let manifest = c
         .pull_manifest(repo, tag)
         .await
-        .context("pull manifest thất bại (registry đã chạy? `mg registry serve`)")?;
+        .with_context(|| crate::error::pull_manifest_failed())?;
 
     let mut blobs = Vec::new();
     let mut total = 0u64;
@@ -239,7 +239,7 @@ fn remove_local(name: &str) -> Result<()> {
         );
     }
     let manifest: ModelManifest = serde_json::from_str(&std::fs::read_to_string(&path)?)
-        .context("parse manifest thất bại")?;
+        .with_context(|| crate::error::parse_manifest_failed())?;
 
     let all: Vec<ModelManifest> = read_manifests_in(model_manifest_dir());
     let others: Vec<&str> = all
@@ -255,7 +255,7 @@ fn remove_local(name: &str) -> Result<()> {
         }
         let hash = mg_store::cas::IntegrityHash::from_hash_str(blob, false);
         if let Err(e) = store.remove(&hash) {
-            eprintln!("warning: không xoá được blob {blob}: {e}");
+            eprintln!("warning: failed to remove blob {blob}: {e}");
         }
     }
     std::fs::remove_file(&path)?;
@@ -373,12 +373,10 @@ pub async fn run(args: ModelArgs) -> Result<()> {
 /// GGUF quantize qua python passthrough (A4, sys-mg/05 §4)
 fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
     if target != "q4_k_m" && target != "q8_0" {
-        anyhow::bail!(
-            "target không hỗ trợ: {target} (dùng q4_k_m hoặc q8_0; awq cần GPU toolchain)"
-        );
+        return Err(crate::error::unsupported_quantize_target(&target));
     }
     if !std::path::Path::new(path).exists() {
-        anyhow::bail!("file không tồn tại: {path}");
+        return Err(crate::error::file_not_found(std::path::Path::new(path)));
     }
     let out = match output {
         Some(o) => o.to_string(),
@@ -393,18 +391,16 @@ fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
         Err(_) => false,
     };
     if !python_ok {
-        anyhow::bail!(
-            "llama_cpp chưa cài — cài thử: `uv pip install llama-cpp-python` rồi chạy lại (A4: passthrough, không bundles llama-cpp-2)"
-        );
+        return Err(crate::error::llama_cpp_missing());
     }
     let status = std::process::Command::new("python3")
         .args(["-m", "llama_cpp.quantize", path, &out, target])
         .status()?;
     if !status.success() {
-        anyhow::bail!("llama_cpp.quantize fail (exit {:?})", status.code());
+        return Err(crate::error::llama_quantize_failed(status.code()));
     }
     println!("quantized: {} ({target})", out);
-    println!("push lên registry: mg model push {out} --repo ai/<name> (variant nén)");
+    println!("push to registry: mg model push {out} --repo ai/<name> (compressed variant)");
     Ok(())
 }
 
@@ -429,18 +425,18 @@ async fn push(
     for p in &paths {
         let path = Path::new(p);
         if !path.exists() {
-            bail!("path không tồn tại: {p}");
+            return Err(crate::error::path_not_found(std::path::Path::new(&p)));
         }
         if path.is_dir() {
             // thư mục: liệt kê file con trực tiếp (không đệ quy sâu)
             let mut files: Vec<PathBuf> = std::fs::read_dir(path)
-                .with_context(|| format!("đọc thư mục {p}"))?
+                .with_context(|| format!("reading directory {p}"))?
                 .filter_map(|e| e.ok().map(|e| e.path()))
                 .filter(|f| f.is_file())
                 .collect();
             files.sort();
             if files.is_empty() {
-                bail!("thư mục không có file: {p}");
+                return Err(crate::error::dir_has_no_files(std::path::Path::new(&p)));
             }
             for f in files {
                 names.insert(
@@ -475,7 +471,7 @@ async fn push(
     let pushed = c
         .push_model(repo, tag, &config, &layers)
         .await
-        .context("push model thất bại — server đã chạy chưa? (mg registry serve)")?;
+        .with_context(|| crate::error::push_model_failed())?;
     println!(
         "pushed {repo}:{pushed} ({registry}) — {} layer(s)",
         layers.len()
@@ -502,15 +498,15 @@ async fn pull(
     let manifest = c
         .pull_manifest(repo, tag)
         .await
-        .context("pull manifest thất bại")?;
+        .with_context(|| crate::error::parse_manifest_failed())?;
 
     // Tên file gốc nằm trong annotations của config blob (OciImageConfig)
     let config_data = c
         .pull_blob(repo, &manifest.config.digest)
         .await
-        .context("pull config blob thất bại")?;
+        .with_context(|| crate::error::parse_manifest_failed())?;
     let config: OciImageConfig =
-        serde_json::from_slice(&config_data).context("parse config blob thất bại")?;
+        serde_json::from_slice(&config_data).with_context(|| crate::error::parse_manifest_failed())?;
     let names: HashMap<String, String> = config.annotations.unwrap_or_default();
 
     let out_dir = Path::new(output);
@@ -549,7 +545,7 @@ async fn pull(
 
 async fn list(registry: &str, token: Option<String>) -> Result<()> {
     let c = client(registry, token)?;
-    let repos = c.list_repositories().await.context("catalog thất bại")?;
+    let repos = c.list_repositories().await.with_context(|| crate::error::catalog_failed())?;
     for repo in repos {
         let tags = c.list_tags(&repo).await.unwrap_or_default();
         println!("{repo}: {}", tags.join(", "));
