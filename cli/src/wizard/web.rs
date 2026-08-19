@@ -105,9 +105,19 @@ impl WebWizard {
                             ],
                         },
                     }]),
+                    Answer::new("C# (.NET)", "dotnet").with_questions(vec![Question {
+                        prompt: "\n  Select framework:".to_string(),
+                        kind: QuestionKind::Select {
+                            options: vec![
+                                Answer::new("ASP.NET Core WebAPI", "dotnet-webapi"),
+                                Answer::new("ASP.NET Core Minimal API", "dotnet-minimal"),
+                            ],
+                        },
+                    }]),
                 ],
             },
         }]);
+
 
         let fullstack = Answer::new("Fullstack", "fullstack").with_questions(vec![Question {
             prompt: "\n  Select stack:".to_string(),

@@ -111,9 +111,6 @@ pub fn build_workspace_graph(targets: &[PathBuf]) -> anyhow::Result<WorkspaceGra
         std::collections::HashMap::new();
 
     for path in targets {
-        if !path.join("package.json").exists() {
-            continue;
-        }
         if let Some(manifest) = read_package_manifest(path)? {
             let index = nodes.len();
             name_to_index.insert(manifest.name.clone(), index);
@@ -124,6 +121,7 @@ pub fn build_workspace_graph(targets: &[PathBuf]) -> anyhow::Result<WorkspaceGra
             });
         }
     }
+
 
     let mut edges = Vec::new();
     for (from_index, node) in nodes.iter().enumerate() {
