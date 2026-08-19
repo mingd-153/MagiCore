@@ -26,11 +26,11 @@ fn pack_produces_deterministic_tarball() {
 
     let d1 = fs::read(&out1).unwrap();
     let d2 = fs::read(&out2).unwrap();
-    assert_eq!(d1, d2, "cùng input phải sinh byte-identical tarball");
+    assert_eq!(d1, d2, "same input must produce byte-identical tarballs");
 
     assert_eq!(r1.shasum, r2.shasum);
     assert_eq!(r1.integrity, r2.integrity);
-    assert!(r1.shasum.len() == 40, "sha1 hex 40 ký tự");
+    assert!(r1.shasum.len() == 40, "sha1 hex must be 40 characters");
     assert!(r1.integrity.starts_with("sha512-"));
     assert!(r1.size > 0);
     assert_eq!(r1.unpacked_size, 39); // package.json (30) + src/index.js (9) = 39

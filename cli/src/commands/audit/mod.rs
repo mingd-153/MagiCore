@@ -19,7 +19,7 @@ pub async fn run(core: Option<&str>, fix: bool) -> Result<()> {
         return web::audit(ctx.adapter(), ctx.root(), fix).await;
     }
     if fix {
-        anyhow::bail!("audit --fix is only supported for the web core");
+        return Err(crate::error::audit_fix_web_only());
     }
 
     // Convert adapter name to Ecosystem
@@ -33,7 +33,7 @@ pub async fn run(core: Option<&str>, fix: bool) -> Result<()> {
         "app" => Ecosystem::App,
         "lib" => Ecosystem::Lib,
         "hardware" => Ecosystem::Hardware,
-        other => anyhow::bail!("Unknown core: {}", other),
+        other => return Err(crate::error::unknown_core(other)),
     };
 
     execute_audit(&ecosystem).await
@@ -42,7 +42,7 @@ pub async fn run(core: Option<&str>, fix: bool) -> Result<()> {
 pub async fn execute_audit(ecosystem: &Ecosystem) -> Result<()> {
     match ecosystem {
         Ecosystem::Hardware => hardware::audit().await,
-        Ecosystem::Web => anyhow::bail!("web audit requires project adapter context"),
+        Ecosystem::Web => Err(crate::error::web_audit_needs_context()),
         Ecosystem::Game => game::audit().await,
         Ecosystem::Ai => ai::audit().await,
         Ecosystem::Cloud => clo::audit().await,

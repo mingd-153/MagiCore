@@ -159,7 +159,7 @@ fn prune_unreferenced(project_root: &Path, dry_run: bool) -> Result<PruneReport>
 pub async fn run(cmd: StoreCmd) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("Project root not found — run mg init"))?;
+        .ok_or_else(crate::error::project_root_missing)?;
 
     match cmd {
         StoreCmd::Prune { dry_run, json } => {
@@ -226,7 +226,7 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             let vstore_src = backup_dir.join("vstore");
             if !db_src.exists() && !vstore_src.exists() {
                 bail!(
-                    "backup không hợp lệ: {} (thiếu store.db và vstore)",
+                    "invalid backup: {} (missing store.db and vstore)",
                     backup_dir.display()
                 );
             }
@@ -250,7 +250,7 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             copy_dir(&vstore_src, &vstore_root_for(&project_root))?;
             println!("restore store ← {}", backup_dir.display());
             println!(
-                "  backup an toàn (trước khi khôi phục): {}",
+                "  safe backup (before restore): {}",
                 safety_backup.display()
             );
             Ok(())

@@ -263,7 +263,7 @@ impl PackageAdapter for IotAdapter {
                 Ok(placeholder_id(name, range))
             }
             IotFramework::Zephyr => Err(mg_types::MgError::Other(
-                "zephyr deps quản lý qua west.yml (passthrough west update) — mg add zephyr chưa hỗ trợ P1 (04 §4)".to_string(),
+                "zephyr deps are managed via west.yml (passthrough west update) — mg add for zephyr is not supported yet, P1 (04 §4)".to_string(),
             )),
         }
     }
@@ -291,7 +291,7 @@ impl PackageAdapter for IotAdapter {
                 Ok(())
             }
             IotFramework::Zephyr => Err(mg_types::MgError::Other(
-                "zephyr deps quản lý qua west.yml".to_string(),
+                "zephyr deps are managed via west.yml".to_string(),
             )),
         }
     }

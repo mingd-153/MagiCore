@@ -16,7 +16,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             install,
             global,
         } => {
-            commands::core::web::add(
+            commands::core::add::web::add(
                 packages, None, dev, exact, optional, peer, no_save, install, global,
             )
             .await
@@ -30,7 +30,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::game::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::game::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
         CoreCommand::AddAi {
@@ -42,7 +42,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::ai::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::ai::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
         CoreCommand::AddClo {
@@ -54,7 +54,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::clo::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::clo::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
         CoreCommand::AddCicd {
@@ -66,7 +66,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::cicd::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::cicd::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
         CoreCommand::AddIot {
@@ -78,7 +78,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::iot::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::iot::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
         CoreCommand::AddApp {
@@ -90,7 +90,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::app::add(packages, None, dev, exact, optional, peer, no_save, global)
+            commands::core::add::app::add(packages, None, dev, exact, optional, peer, no_save, global)
                 .await
         }
         CoreCommand::AddLib {
@@ -102,54 +102,54 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::library::add(
+            commands::core::add::library::add(
                 packages, None, dev, exact, optional, peer, no_save, global,
             )
             .await
         }
-        CoreCommand::AddHardware { packages } => commands::core::hardware::add(packages).await,
+        CoreCommand::AddHardware { packages } => commands::core::add::hardware::add(packages).await,
         CoreCommand::RemoveWeb { packages, install } => {
-            commands::core::web::remove(packages, install).await
+            commands::core::remove::web::remove(packages, install).await
         }
-        CoreCommand::RemoveGame { packages } => commands::core::game::remove(packages).await,
-        CoreCommand::RemoveAi { packages } => commands::core::ai::remove(packages).await,
-        CoreCommand::RemoveClo { packages } => commands::core::clo::remove(packages).await,
-        CoreCommand::RemoveCicd { packages } => commands::core::cicd::remove(packages).await,
-        CoreCommand::RemoveIot { packages } => commands::core::iot::remove(packages).await,
-        CoreCommand::RemoveApp { packages } => commands::core::app::remove(packages).await,
-        CoreCommand::RemoveLib { packages } => commands::core::library::remove(packages).await,
-        CoreCommand::ListWeb => commands::core::web::list().await,
-        CoreCommand::ListGame => commands::core::game::list().await,
-        CoreCommand::ListAi => commands::core::ai::list().await,
-        CoreCommand::ListClo => commands::core::clo::list().await,
-        CoreCommand::ListCicd => commands::core::cicd::list().await,
-        CoreCommand::ListIot => commands::core::iot::list().await,
-        CoreCommand::ListApp => commands::core::app::list().await,
-        CoreCommand::ListLib => commands::core::library::list().await,
-        CoreCommand::ListHardware => commands::core::hardware::list().await,
+        CoreCommand::RemoveGame { packages } => commands::core::remove::game::remove(packages).await,
+        CoreCommand::RemoveAi { packages } => commands::core::remove::ai::remove(packages).await,
+        CoreCommand::RemoveClo { packages } => commands::core::remove::clo::remove(packages).await,
+        CoreCommand::RemoveCicd { packages } => commands::core::remove::cicd::remove(packages).await,
+        CoreCommand::RemoveIot { packages } => commands::core::remove::iot::remove(packages).await,
+        CoreCommand::RemoveApp { packages } => commands::core::remove::app::remove(packages).await,
+        CoreCommand::RemoveLib { packages } => commands::core::remove::library::remove(packages).await,
+        CoreCommand::ListWeb => commands::core::list::web::list().await,
+        CoreCommand::ListGame => commands::core::list::game::list().await,
+        CoreCommand::ListAi => commands::core::list::ai::list().await,
+        CoreCommand::ListClo => commands::core::list::clo::list().await,
+        CoreCommand::ListCicd => commands::core::list::cicd::list().await,
+        CoreCommand::ListIot => commands::core::list::iot::list().await,
+        CoreCommand::ListApp => commands::core::list::app::list().await,
+        CoreCommand::ListLib => commands::core::list::library::list().await,
+        CoreCommand::ListHardware => commands::core::list::hardware::list().await,
         CoreCommand::UpdateWeb { packages, install } => {
-            commands::core::web::update(packages, install).await
+            commands::core::update::web::update(packages, install).await
         }
         CoreCommand::UpdateGame { packages, install } => {
-            commands::core::game::update(packages, install).await
+            commands::core::update::game::update(packages, install).await
         }
         CoreCommand::UpdateAi { packages, install } => {
-            commands::core::ai::update(packages, install).await
+            commands::core::update::ai::update(packages, install).await
         }
         CoreCommand::UpdateClo { packages, install } => {
-            commands::core::clo::update(packages, install).await
+            commands::core::update::clo::update(packages, install).await
         }
         CoreCommand::UpdateCicd { packages, install } => {
-            commands::core::cicd::update(packages, install).await
+            commands::core::update::cicd::update(packages, install).await
         }
         CoreCommand::UpdateIot { packages, install } => {
-            commands::core::iot::update(packages, install).await
+            commands::core::update::iot::update(packages, install).await
         }
         CoreCommand::UpdateApp { packages, install } => {
-            commands::core::app::update(packages, install).await
+            commands::core::update::app::update(packages, install).await
         }
         CoreCommand::UpdateLib { packages, install } => {
-            commands::core::library::update(packages, install).await
+            commands::core::update::library::update(packages, install).await
         }
         _ => unreachable!("non-package command routed to package dispatcher"),
     }

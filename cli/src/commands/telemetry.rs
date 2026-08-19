@@ -22,11 +22,11 @@ pub fn handle(cmd: TelemetryCmd) -> Result<()> {
         TelemetryCmd::Status => {
             println!(
                 "telemetry: {} (MEGAGATE_TELEMETRY={})",
-                if enabled { "ON" } else { "OFF (mặc định)" },
+                if enabled { "ON" } else { "OFF (default)" },
                 std::env::var("MEGAGATE_TELEMETRY").unwrap_or_default()
             );
             if enabled {
-                println!("  queue không gửi đi đâu — chỉ ghi local khi flush");
+                println!("  queue sends nowhere — writes locally on flush only");
             }
         }
         TelemetryCmd::Log => {
@@ -39,7 +39,7 @@ pub fn handle(cmd: TelemetryCmd) -> Result<()> {
                     println!("{line}");
                 }
             } else {
-                println!("no telemetry events (chưa bật hoặc chưa ghi)");
+                println!("no telemetry events (not enabled or nothing recorded)");
             }
         }
         TelemetryCmd::On | TelemetryCmd::Off => {
@@ -56,7 +56,7 @@ pub fn handle(cmd: TelemetryCmd) -> Result<()> {
             lines.push(format!("MEGAGATE_TELEMETRY={}", if on { "1" } else { "0" }));
             std::fs::write(&env_file, lines.join("\n") + "\n")?;
             println!(
-                "telemetry: {} (thêm dòng vào ~/.config/megagate/env — shell prompt phải source nó; mặc định OFF nếu không có gì)"
+                "telemetry: {} (add a line to ~/.config/megagate/env — the shell prompt must source it; default OFF if absent)"
                 ,
                 if on { "ON" } else { "OFF" }
             );

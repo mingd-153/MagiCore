@@ -1,4 +1,5 @@
 /// CLI command implementations
+pub mod definitions;
 pub mod audit;
 pub mod bench;
 pub mod build;

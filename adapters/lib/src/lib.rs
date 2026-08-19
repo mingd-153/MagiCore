@@ -721,7 +721,7 @@ mod tests {
         let err = check_pip_allowed(&dir, "requests").unwrap_err();
         assert!(
             err.to_string().contains("pip_allowed_packages"),
-            "rõ cách sửa"
+            "see how to fix"
         );
     }
 
@@ -784,7 +784,7 @@ mod tests {
         let err = adapter.update(&dir, None).await.unwrap_err();
         assert!(
             err.to_string().contains("update-all"),
-            "pip update-all bị chặn fail-closed"
+            "pip update-all is blocked fail-closed"
         );
     }
 

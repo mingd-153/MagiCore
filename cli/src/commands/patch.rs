@@ -40,9 +40,9 @@ pub enum PatchCmd {
 pub async fn run(args: PatchArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("Project root not found — run mg init"))?;
+        .ok_or_else(crate::error::project_root_missing)?;
     let mut project = ProjectConfig::load(&project_root)?
-        .ok_or_else(|| anyhow::anyhow!("mg.toml not found — run mg init"))?;
+        .ok_or_else(crate::error::mg_toml_missing)?;
 
     match args.cmd {
         PatchCmd::Add {

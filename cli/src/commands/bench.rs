@@ -8,10 +8,10 @@ use clap::Args;
 #[derive(Args, Debug, Clone)]
 pub struct BenchArgs {
     /// Packages để add + install (như mg install)
-    #[arg(help = "package@version (nhiều package)")]
+    #[arg(help = "package@version (multiple packages)")]
     packages: Vec<String>,
 
-    #[arg(long, help = "ép resolve mới (bỏ lockfile)")]
+    #[arg(long, help = "force fresh resolve (skip lockfile)")]
     no_lock: bool,
 }
 

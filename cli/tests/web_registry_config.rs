@@ -2,6 +2,10 @@
 #[allow(dead_code)]
 mod web_registry_config;
 
+#[path = "../src/error/messages.rs"]
+#[allow(dead_code)]
+mod error;
+
 #[test]
 fn builds_search_endpoint_from_default_base() {
     let url = web_registry_config::search_endpoint(

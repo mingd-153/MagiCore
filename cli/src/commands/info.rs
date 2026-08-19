@@ -13,7 +13,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
     #[cfg(not(feature = "web"))]
     {
         let _ = (package, json);
-        anyhow::bail!("package info currently requires the web core registry adapter, which is not included in this build");
+        return Err(crate::error::info_no_web_adapter());
     }
 
     #[cfg(feature = "web")]
@@ -23,7 +23,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
 
         let meta = match registry.fetch_metadata(&package).await {
             Ok(m) => m,
-            Err(e) => anyhow::bail!("Could not fetch package info from registry: {}", e),
+            Err(e) => return Err(crate::error::registry_fetch_failed(&package, &e)),
         };
 
         let local_version = detect_local_version(&package);

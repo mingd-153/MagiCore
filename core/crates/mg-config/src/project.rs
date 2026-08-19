@@ -372,30 +372,139 @@ impl ProjectConfig {
         let path = project_root.join("mg.toml");
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
+        self.write_core_marker(project_root)?;
         Ok(())
     }
 
-    /// Detect ecosystem from project files (fallback if no mg.toml)
-    pub fn auto_detect(project_root: &Path) -> Option<String> {
-        if project_root.join("mg.toml").exists() {
-            return Self::read_to_string_ecosystem(project_root);
+    // ── Core signature marker (T9a — chống nhầm core, user 2026-08-19) ──
+    // Marker file luôn đi kèm mg.toml; sinh trong save() — mọi path (init,
+    // wizard, create-*) nhận marker tự động.
+
+    /// Core signature marker file name (const tập trung — RULE §12).
+    pub const CORE_MARKER_FILE: &str = ".mg.core";
+
+    /// Core names accepted by the marker (chuẩn hóa "cloud" → "clo").
+    pub const KNOWN_CORES: &[&str] = &[
+        "web", "game", "ai", "clo", "cicd", "iot", "app", "lib", "hardware",
+    ];
+
+    /// Canonicalize a core name (trim, lowercase, alias mapping).
+    fn canonical_core(name: &str) -> String {
+        let n = name.trim().to_ascii_lowercase();
+        if n == "cloud" {
+            "clo".to_string()
+        } else {
+            n
         }
+    }
+
+    fn is_known_core(name: &str) -> bool {
+        Self::KNOWN_CORES.contains(&name)
+    }
+
+    /// Read core marker from project root.
+    ///
+    /// - None: marker file does not exist.
+    /// - Err: marker exists but the core name is unknown/empty (fail-closed —
+    ///   never guess a wrong core from a broken signature).
+    pub fn read_core_marker(project_root: &Path) -> Result<Option<String>, anyhow::Error> {
+        let path = project_root.join(Self::CORE_MARKER_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)?;
+        let first_line = content
+            .lines()
+            .next()
+            .map(|l| l.split('#').next().unwrap_or("").trim())
+            .unwrap_or("");
+        let core = Self::canonical_core(first_line);
+        if core.is_empty() || !Self::is_known_core(&core) {
+            anyhow::bail!(
+                "'{}' has an invalid core signature '{}'. Expected one of: {}. Fix the file or run 'mg init --signature <core>'.",
+                path.display(),
+                first_line,
+                Self::KNOWN_CORES.join(", "),
+            );
+        }
+        Ok(Some(core))
+    }
+
+    /// Write core marker file (1 line plain text + optional comment).
+    pub fn write_core_marker(&self, project_root: &Path) -> Result<(), anyhow::Error> {
+        Self::write_core_marker_at(project_root, &self.ecosystem)
+    }
+
+    /// Write marker for an arbitrary core name (dùng cho `mg init --signature`).
+    pub fn write_core_marker_at(
+        project_root: &Path,
+        core: &str,
+    ) -> Result<(), anyhow::Error> {
+        let canonical = Self::canonical_core(core);
+        if !Self::is_known_core(&canonical) {
+            anyhow::bail!(
+                "Unknown core '{}'. Expected one of: {}.",
+                core,
+                Self::KNOWN_CORES.join(", "),
+            );
+        }
+        std::fs::create_dir_all(project_root)?;
+        let path = project_root.join(Self::CORE_MARKER_FILE);
+        std::fs::write(path, format!("{canonical}\n"))?;
+        Ok(())
+    }
+
+    /// Collect distinct cores detected from project signature files.
+    fn detect_signatures(project_root: &Path) -> Vec<String> {
+        let mut cores: Vec<String> = Vec::new();
         if project_root.join("package.json").exists() {
-            return Some("web".to_string());
+            cores.push("web".to_string());
         }
         if project_root.join("Cargo.toml").exists() {
-            return Some("lib".to_string());
+            cores.push("lib".to_string());
         }
         if project_root.join("pyproject.toml").exists() {
-            return Some("ai".to_string());
+            cores.push("ai".to_string());
         }
         if project_root.join("pubspec.yaml").exists() {
-            return Some("app".to_string());
+            cores.push("app".to_string());
         }
         if project_root.join("Package.swift").exists() {
-            return Some("app".to_string());
+            cores.push("app".to_string());
         }
-        None
+        cores.sort();
+        cores.dedup();
+        cores
+    }
+
+    /// Detect ecosystem with T9a priority: marker → mg.toml → signatures.
+    ///
+    /// Err = ambiguous: multiple signature files pointing at different cores
+    /// and no marker (fail-closed — never guess, RULE §9.3).
+    pub fn detect_core(project_root: &Path) -> Result<Option<String>, anyhow::Error> {
+        if let Some(marker) = Self::read_core_marker(project_root)? {
+            return Ok(Some(marker));
+        }
+        if project_root.join("mg.toml").exists() {
+            return Ok(Self::read_to_string_ecosystem(project_root));
+        }
+        let signatures = Self::detect_signatures(project_root);
+        match signatures.len() {
+            0 => Ok(None),
+            1 => Ok(Some(signatures[0].clone())),
+            _ => anyhow::bail!(
+                "Ambiguous project core in '{}': multiple signatures ({}) but no '{}'. Run 'mg init --signature <core>' to mark the core explicitly.",
+                project_root.display(),
+                signatures.join(", "),
+                Self::CORE_MARKER_FILE,
+            ),
+        }
+    }
+
+    /// Legacy detect (kept for tests): detect_core result flattened, marker
+    /// first, else mg.toml, else first signature. Luồng mới dùng detect_core.
+    pub fn auto_detect(project_root: &Path) -> Option<String> {
+        Self::detect_core(project_root).ok().flatten()
     }
 
     /// Read `[ecosystem]` from an existing mg.toml (multi/app/adapter config priority).
@@ -407,12 +516,15 @@ impl ProjectConfig {
             .map(String::from)
     }
 
-    /// Find project root by looking for mg.toml, package.json, or Cargo.toml.
+    /// Find project root by looking for mg.toml / .mg.core / package.json /
+    /// Cargo.toml.
     ///
-    /// - `mg.toml` checked in CWD and ALL parent directories (monorepo support).
-    /// - `package.json` / `Cargo.toml` checked in CWD ONLY.
+    /// - `mg.toml` + `.mg.core` checked in CWD and ALL parent directories
+    ///   (monorepo support — T9a signature leo parent).
+    /// - `package.json` / `Cargo.toml` etc. checked in CWD ONLY.
     pub fn find_project_root(from: &Path) -> Option<PathBuf> {
-        if from.join("mg.toml").exists()
+        if from.join(Self::CORE_MARKER_FILE).exists()
+            || from.join("mg.toml").exists()
             || from.join("package.json").exists()
             || from.join("Cargo.toml").exists()
             || from.join("Package.swift").exists()
@@ -423,7 +535,7 @@ impl ProjectConfig {
 
         let mut current = from.parent();
         while let Some(dir) = current {
-            if dir.join("mg.toml").exists() {
+            if dir.join(Self::CORE_MARKER_FILE).exists() || dir.join("mg.toml").exists() {
                 return Some(dir.to_path_buf());
             }
             current = dir.parent();

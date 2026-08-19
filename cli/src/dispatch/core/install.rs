@@ -29,7 +29,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             prefer_dedupe,
             repair,
         } => {
-            commands::core::web::install(
+            commands::core::install::web::install(
                 packages,
                 frozen,
                 ignore_scripts,
@@ -39,23 +39,23 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             )
             .await
         }
-        CoreCommand::InstallGame { packages } => commands::core::game::install(packages).await,
+        CoreCommand::InstallGame { packages } => commands::core::install::game::install(packages).await,
         CoreCommand::InstallAi { packages, dry_run } => {
-            commands::core::ai::install(packages, dry_run).await
+            commands::core::install::ai::install(packages, dry_run).await
         }
         CoreCommand::InstallClo { packages, dry_run } => {
-            commands::core::clo::install(packages, dry_run).await
+            commands::core::install::clo::install(packages, dry_run).await
         }
         CoreCommand::InstallCicd { packages, dry_run } => {
-            commands::core::cicd::install(packages, dry_run).await
+            commands::core::install::cicd::install(packages, dry_run).await
         }
-        CoreCommand::InstallIot { packages } => commands::core::iot::install(packages).await,
+        CoreCommand::InstallIot { packages } => commands::core::install::iot::install(packages).await,
         CoreCommand::InstallApp { packages, dry_run } => {
-            commands::core::app::install(packages, dry_run).await
+            commands::core::install::app::install(packages, dry_run).await
         }
-        CoreCommand::InstallLib { packages } => commands::core::library::install(packages).await,
+        CoreCommand::InstallLib { packages } => commands::core::install::library::install(packages).await,
         CoreCommand::InstallHardware { packages } => {
-            commands::core::hardware::install(packages).await
+            commands::core::install::hardware::install(packages).await
         }
         _ => unreachable!("non-install command routed to install dispatcher"),
     }

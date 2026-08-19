@@ -26,7 +26,7 @@ pub fn advisory_bulk_endpoint(base: &str) -> Result<String> {
 pub fn join_registry_path(base: &str, path: &str) -> Result<Url> {
     let mut url = Url::parse(base).with_context(|| format!("invalid registry URL: {base}"))?;
     if url.scheme() != "https" && !is_loopback_host(url.host_str()) {
-        anyhow::bail!("registry URL must use HTTPS unless it targets localhost");
+        return Err(crate::error::registry_url_https());
     }
     let base_path = url.path().trim_end_matches('/');
     let path = path.trim_start_matches('/');
