@@ -1,1 +1,0 @@
-../../../../frontend/nuxt/sources/vite.config.tailwind.js

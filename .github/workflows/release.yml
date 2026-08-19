@@ -1,86 +1,136 @@
-name: MegaGate Release
+name: Release
 
 on:
   push:
     tags:
       - "v*"
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: ${{ matrix.package }} / ${{ matrix.target-label }}
+  build-release:
+    name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            target-label: Linux-X64
-          - os: ubuntu-24.04-arm
+            artifact_name: megagate-Linux-X64.tar.gz
+            use_cross: false
+            is_windows: false
+
+          # Linux ARM64
+          - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            target-label: Linux-ARM64
+            artifact_name: megagate-Linux-ARM64.tar.gz
+            use_cross: true
+            is_windows: false
+
+          # macOS Apple Silicon (ARM64)
           - os: macos-latest
             target: aarch64-apple-darwin
-            target-label: macOS-ARM64
-          - os: macos-latest
+            artifact_name: megagate-macOS-ARM64.tar.gz
+            use_cross: false
+            is_windows: false
+
+          # macOS Intel (x86_64)
+          - os: macos-13
             target: x86_64-apple-darwin
-            target-label: macOS-X64
+            artifact_name: megagate-macOS-X64.tar.gz
+            use_cross: false
+            is_windows: false
+
+          # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            target-label: Windows-X64
-        package: [megagate, megagate-web]
-    steps:
-      - uses: actions/checkout@v4
+            artifact_name: megagate-Windows-X64.zip
+            use_cross: false
+            is_windows: true
 
-      - name: Install Rust (${{ matrix.target }})
+          # Windows ARM64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact_name: megagate-Windows-ARM64.zip
+            use_cross: false
+            is_windows: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build release binary
-        shell: bash
-        run: cargo run -p mg-dist -- build ${{ matrix.package }} --target ${{ matrix.target }}
+      - name: Install Cross (if cross-compiling on Linux)
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Package archive
-        shell: bash
+      - name: Build Binary (Standard)
+        if: ${{ !matrix.use_cross }}
+        run: cargo build --release --target ${{ matrix.target }} --bin mg
+
+      - name: Build Binary (Cross)
+        if: matrix.use_cross
+        run: cross build --release --target ${{ matrix.target }} --bin mg
+
+      # Package Unix (.tar.gz)
+      - name: Package Unix Archive
+        if: ${{ !matrix.is_windows }}
         run: |
-          pkg="${{ matrix.package }}"
-          label="${{ matrix.target-label }}"
-          cd "dist/$pkg"
-          target_dir=$(ls -d */ | head -1)
-          mv "$target_dir" "$pkg"
-          tar czf "../${pkg}-${label}.tar.gz" "$pkg/"
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/mg dist/
+          cd dist
+          tar -czvf "../${{ matrix.artifact_name }}" mg
+          cd ..
+          shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
 
-      - name: Upload release asset
+      # Package Windows (.zip)
+      - name: Package Windows Archive
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/mg.exe" -Destination "dist/"
+          Compress-Archive -Path "dist/mg.exe" -DestinationPath "${{ matrix.artifact_name }}" -Force
+          $hash = (Get-FileHash -Path "${{ matrix.artifact_name }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.artifact_name }}" | Out-File -FilePath "${{ matrix.artifact_name }}.sha256" -Encoding ascii
+
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-assets
-          path: dist/*.tar.gz
-          retention-days: 7
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
 
-  release:
-    name: Publish GitHub Release
-    needs: [build]
+  publish-github-release:
+    name: Create GitHub Release
+    needs: build-release
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Download all release assets
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-assets
-          path: dist/assets
+          path: release-assets
+          merge-multiple: true
 
-      - name: Create Release
+      - name: Display downloaded release assets
+        run: ls -la release-assets
+
+      - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          name: MegaGate ${{ github.ref_name }}
+          files: release-assets/*
           draft: false
-          prerelease: false
-          files: dist/assets/*
-          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
+          generate_release_notes: false
+          body_path: CHANGELOG.md

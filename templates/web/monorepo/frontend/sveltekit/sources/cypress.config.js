@@ -1,1 +1,0 @@
-../../../../frontend/sveltekit/sources/cypress.config.js

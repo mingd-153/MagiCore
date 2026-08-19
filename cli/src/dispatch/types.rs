@@ -9,10 +9,12 @@ pub enum DispatchCommand {
 pub enum CommonCommand {
     Init {
         template: Option<String>,
+        signature: Option<String>,
     },
     Dev {
         host: Option<String>,
         port: Option<u16>,
+        clear: bool,
     },
     Info {
         package: String,
@@ -27,165 +29,208 @@ pub enum CommonCommand {
     Outdated {
         json: bool,
     },
-    Audit,
+    Audit {
+        fix: bool,
+    },
+    SelfUpdate,
+    Config {
+        cmd: crate::commands::config::ConfigCmd,
+        local: bool,
+    },
+    Stage {
+        dir: Option<std::path::PathBuf>,
+    },
+    Import {
+        dir: Option<std::path::PathBuf>,
+    },
+    Run {
+        script: String,
+        args: Vec<String>,
+    },
+    Build {
+        target: Option<String>,
+    },
+    Flash {
+        board: Option<String>,
+        skip_build: bool,
+    },
+    Deploy {
+        run: bool,
+    },
+    CiGenerate,
+    Verify,
+    Start,
+    Exec {
+        command: String,
+        args: Vec<String>,
+    },
+    Dlx {
+        package: String,
+        args: Vec<String>,
+    },
+    Cache {
+        action: String,
+        target: String,
+        yes: bool,
+        dry_run: bool,
+    },
+    Link {
+        package: Option<String>,
+    },
+    Unlink {
+        package: Option<String>,
+    },
+    Why {
+        package: String,
+    },
+    Publish {
+        tag: Option<String>,
+        access: Option<String>,
+        dry_run: bool,
+        json: bool,
+        otp: Option<String>,
+        force: bool,
+        ignore_scripts: bool,
+        no_git_checks: bool,
+        publish_branch: Option<String>,
+        batch: bool,
+        report_summary: bool,
+        patch: bool,
+        minor: bool,
+        major: bool,
+        registry: Option<String>,
+        token: Option<String>,
+    },
+    Patch {
+        cmd: crate::commands::patch::PatchCmd,
+    },
+    Dedupe {
+        dry_run: bool,
+        prefer_latest: bool,
+        json: bool,
+    },
+    Store {
+        cmd: crate::commands::store::StoreCmd,
+    },
+    Bench {
+        args: crate::commands::bench::BenchArgs,
+    },
+    Trust {
+        cmd: crate::commands::trust::TrustCmd,
+    },
+    Hooks {
+        cmd: crate::commands::hooks::HooksCmd,
+    },
+    Docs {
+        output: Option<std::path::PathBuf>,
+    },
+    Telemetry {
+        cmd: crate::commands::telemetry::TelemetryCmd,
+    },
+    Network {
+        cmd: crate::commands::network::NetworkCmd,
+    },
+    Doctor {
+        cmd: crate::commands::doctor::DoctorCmd,
+    },
+    Sbom {
+        output: Option<String>,
+    },
+    Template {
+        cmd: crate::commands::template::TemplateCmd,
+    },
+    Workspace {
+        cmd: crate::commands::workspace::WorkspaceCmd,
+    },
+    Login {
+        registry: Option<String>,
+        username: Option<String>,
+        password: Option<String>,
+        local: bool,
+    },
+    Registry {
+        cmd: crate::commands::registry::RegistryCmd,
+    },
+    Model {
+        cmd: crate::commands::model::ModelCmd,
+    },
+    Mcp,
 }
 
 #[allow(clippy::large_enum_variant)]
 pub enum CoreCommand {
-    #[cfg(all(
-        feature = "web",
-        not(any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        ))
-    ))]
-    Install { packages: Vec<String>, frozen: bool },
-    #[cfg(all(
-        feature = "web",
-        not(any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        ))
-    ))]
-    Add {
-        packages: Vec<String>,
-        version: Option<String>,
-        dev: bool,
-        global: bool,
-        exact: bool,
-        optional: bool,
-        peer: bool,
-        no_save: bool,
-    },
-    #[cfg(all(
-        feature = "web",
-        not(any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        ))
-    ))]
-    Remove { package: String },
-    #[cfg(all(
-        feature = "web",
-        not(any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        ))
-    ))]
-    Update {
-        packages: Vec<String>,
-        install: bool,
-    },
-    #[cfg(all(
-        feature = "web",
-        not(any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        ))
-    ))]
-    List,
-    #[cfg(feature = "web")]
     CreateWeb {
         framework: String,
         project_name: String,
         flags: crate::commands::core::scaffold_flags::ScaffoldFlags,
     },
-    #[cfg(feature = "game")]
     CreateGame {
         framework: String,
         project_name: String,
     },
-    #[cfg(feature = "ai")]
     CreateAi {
         framework: String,
         project_name: String,
     },
-    #[cfg(feature = "clo")]
     CreateClo {
         framework: String,
         project_name: String,
     },
-    #[cfg(feature = "cicd")]
     CreateCicd {
         framework: String,
         project_name: String,
     },
-    #[cfg(feature = "iot")]
     CreateIot {
         framework: String,
         project_name: String,
     },
-    #[cfg(feature = "app")]
     CreateApp {
         framework: String,
         project_name: String,
     },
-    #[cfg(feature = "lib")]
-    CreateLib { project_name: String },
-    #[cfg(all(
-        feature = "web",
-        any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        )
-    ))]
-    InstallWeb { packages: Vec<String>, frozen: bool },
-    #[cfg(feature = "game")]
-    InstallGame { packages: Vec<String> },
-    #[cfg(feature = "ai")]
-    InstallAi { packages: Vec<String> },
-    #[cfg(feature = "clo")]
-    InstallClo { packages: Vec<String> },
-    #[cfg(feature = "cicd")]
-    InstallCicd { packages: Vec<String> },
-    #[cfg(feature = "iot")]
-    InstallIot { packages: Vec<String> },
-    #[cfg(feature = "app")]
-    InstallApp { packages: Vec<String> },
-    #[cfg(feature = "lib")]
-    InstallLib { packages: Vec<String> },
-    #[cfg(all(
-        feature = "web",
-        any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        )
-    ))]
+    CreateLib {
+        project_name: String,
+    },
+    CreateHardware {
+        framework: String,
+        project_name: String,
+    },
+    InstallWeb {
+        packages: Vec<String>,
+        frozen: bool,
+        ignore_scripts: bool,
+        allow_scripts: bool,
+        prefer_dedupe: bool,
+        repair: bool,
+    },
+    InstallGame {
+        packages: Vec<String>,
+    },
+    InstallAi {
+        packages: Vec<String>,
+        dry_run: bool,
+    },
+    InstallClo {
+        packages: Vec<String>,
+        dry_run: bool,
+    },
+    InstallCicd {
+        packages: Vec<String>,
+        dry_run: bool,
+    },
+    InstallIot {
+        packages: Vec<String>,
+    },
+    InstallApp {
+        packages: Vec<String>,
+        dry_run: bool,
+    },
+    InstallLib {
+        packages: Vec<String>,
+    },
+    InstallHardware {
+        packages: Vec<String>,
+    },
     AddWeb {
         packages: Vec<String>,
         dev: bool,
@@ -193,9 +238,9 @@ pub enum CoreCommand {
         optional: bool,
         peer: bool,
         no_save: bool,
+        install: bool,
         global: bool,
     },
-    #[cfg(feature = "game")]
     AddGame {
         packages: Vec<String>,
         dev: bool,
@@ -205,7 +250,6 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
-    #[cfg(feature = "ai")]
     AddAi {
         packages: Vec<String>,
         dev: bool,
@@ -215,7 +259,6 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
-    #[cfg(feature = "clo")]
     AddClo {
         packages: Vec<String>,
         dev: bool,
@@ -225,7 +268,6 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
-    #[cfg(feature = "cicd")]
     AddCicd {
         packages: Vec<String>,
         dev: bool,
@@ -235,7 +277,6 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
-    #[cfg(feature = "iot")]
     AddIot {
         packages: Vec<String>,
         dev: bool,
@@ -245,7 +286,6 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
-    #[cfg(feature = "app")]
     AddApp {
         packages: Vec<String>,
         dev: bool,
@@ -255,7 +295,6 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
-    #[cfg(feature = "lib")]
     AddLib {
         packages: Vec<String>,
         dev: bool,
@@ -265,262 +304,245 @@ pub enum CoreCommand {
         no_save: bool,
         global: bool,
     },
-    #[cfg(all(
-        feature = "web",
-        any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        )
-    ))]
-    RemoveWeb { package: String },
-    #[cfg(feature = "game")]
-    RemoveGame { package: String },
-    #[cfg(feature = "ai")]
-    RemoveAi { package: String },
-    #[cfg(feature = "clo")]
-    RemoveClo { package: String },
-    #[cfg(feature = "cicd")]
-    RemoveCicd { package: String },
-    #[cfg(feature = "iot")]
-    RemoveIot { package: String },
-    #[cfg(feature = "app")]
-    RemoveApp { package: String },
-    #[cfg(feature = "lib")]
-    RemoveLib { package: String },
-    #[cfg(all(
-        feature = "web",
-        any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        )
-    ))]
+    AddHardware {
+        packages: Vec<String>,
+    },
+    RemoveWeb {
+        packages: Vec<String>,
+        install: bool,
+    },
+    RemoveGame {
+        packages: Vec<String>,
+    },
+    RemoveAi {
+        packages: Vec<String>,
+    },
+    RemoveClo {
+        packages: Vec<String>,
+    },
+    RemoveCicd {
+        packages: Vec<String>,
+    },
+    RemoveIot {
+        packages: Vec<String>,
+    },
+    RemoveApp {
+        packages: Vec<String>,
+    },
+    RemoveLib {
+        packages: Vec<String>,
+    },
     ListWeb,
-    #[cfg(feature = "game")]
     ListGame,
-    #[cfg(feature = "ai")]
     ListAi,
-    #[cfg(feature = "clo")]
     ListClo,
-    #[cfg(feature = "cicd")]
     ListCicd,
-    #[cfg(feature = "iot")]
     ListIot,
-    #[cfg(feature = "app")]
     ListApp,
-    #[cfg(feature = "lib")]
     ListLib,
-    #[cfg(all(
-        feature = "web",
-        any(
-            feature = "game",
-            feature = "ai",
-            feature = "clo",
-            feature = "cicd",
-            feature = "iot",
-            feature = "app",
-            feature = "lib"
-        )
-    ))]
+    ListHardware,
     UpdateWeb {
         packages: Vec<String>,
         install: bool,
     },
-    #[cfg(feature = "game")]
     UpdateGame {
         packages: Vec<String>,
         install: bool,
     },
-    #[cfg(feature = "ai")]
     UpdateAi {
         packages: Vec<String>,
         install: bool,
     },
-    #[cfg(feature = "clo")]
     UpdateClo {
         packages: Vec<String>,
         install: bool,
     },
-    #[cfg(feature = "cicd")]
     UpdateCicd {
         packages: Vec<String>,
         install: bool,
     },
-    #[cfg(feature = "iot")]
     UpdateIot {
         packages: Vec<String>,
         install: bool,
     },
-    #[cfg(feature = "app")]
     UpdateApp {
         packages: Vec<String>,
         install: bool,
     },
-    #[cfg(feature = "lib")]
     UpdateLib {
         packages: Vec<String>,
         install: bool,
     },
 }
 
-impl From<Commands> for DispatchCommand {
-    fn from(command: Commands) -> Self {
+impl TryFrom<Commands> for DispatchCommand {
+    type Error = anyhow::Error;
+
+    fn try_from(command: Commands) -> Result<Self, Self::Error> {
         use DispatchCommand::{Common as SomeCommon, Core as SomeCore};
 
-        match command {
-            Commands::Init { template } => SomeCommon(CommonCommand::Init { template }),
-            Commands::Dev { host, port } => SomeCommon(CommonCommand::Dev { host, port }),
-            Commands::Info { package, json } => SomeCommon(CommonCommand::Info { package, json }),
+        let common_cmd = match command.clone() {
+            Commands::Init { template, signature } => {
+            Some(CommonCommand::Init { template, signature })
+        }
+            Commands::Dev { host, port, clear } => Some(CommonCommand::Dev { host, port, clear }),
+            Commands::Info { package, json } => Some(CommonCommand::Info { package, json }),
             Commands::Search {
                 query,
                 json,
                 exact,
                 page,
-            } => SomeCommon(CommonCommand::Search {
+            } => Some(CommonCommand::Search {
                 query,
                 json,
                 exact,
                 page,
             }),
-            Commands::Outdated { json } => SomeCommon(CommonCommand::Outdated { json }),
-            Commands::Audit => SomeCommon(CommonCommand::Audit),
-            #[cfg(all(
-                feature = "web",
-                not(any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                ))
-            ))]
-            Commands::Install {
-                packages, frozen, ..
-            } => SomeCore(CoreCommand::Install { packages, frozen }),
-            #[cfg(all(
-                feature = "web",
-                not(any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                ))
-            ))]
-            Commands::Add {
-                packages,
-                version,
-                dev,
-                global,
-                exact,
-                optional,
-                peer,
-                no_save,
-            } => SomeCore(CoreCommand::Add {
-                packages,
-                version,
-                dev,
-                global,
-                exact,
-                optional,
-                peer,
-                no_save,
+            Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
+            Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
+            Commands::Import { dir } => Some(CommonCommand::Import { dir }),
+            Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
+            Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
+            Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
+            Commands::Publish {
+                tag,
+                access,
+                dry_run,
+                json,
+                otp,
+                force,
+                ignore_scripts,
+                no_git_checks,
+                publish_branch,
+                batch,
+                report_summary,
+                patch,
+                minor,
+                major,
+                registry,
+                token,
+            } => Some(CommonCommand::Publish {
+                tag,
+                access,
+                dry_run,
+                json,
+                otp,
+                force,
+                ignore_scripts,
+                no_git_checks,
+                publish_branch,
+                batch,
+                report_summary,
+                patch,
+                minor,
+                major,
+                registry,
+                token,
             }),
-            #[cfg(all(
-                feature = "web",
-                not(any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                ))
-            ))]
-            Commands::Remove { package } => SomeCore(CoreCommand::Remove { package }),
-            #[cfg(all(
-                feature = "web",
-                not(any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                ))
-            ))]
-            Commands::Update { packages, install } => {
-                SomeCore(CoreCommand::Update { packages, install })
+            Commands::Patch { cmd } => Some(CommonCommand::Patch { cmd }),
+            Commands::Dedupe {
+                dry_run,
+                prefer_latest,
+                json,
+            } => Some(CommonCommand::Dedupe {
+                dry_run,
+                prefer_latest,
+                json,
+            }),
+            Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
+            Commands::Bench { args } => Some(CommonCommand::Bench { args }),
+            Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
+            Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
+            Commands::Docs { output } => Some(CommonCommand::Docs { output }),
+            Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
+            Commands::Network { cmd } => Some(CommonCommand::Network { cmd }),
+            Commands::Doctor { cmd } => Some(CommonCommand::Doctor { cmd }),
+            Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
+            Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
+            Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
+            Commands::Login {
+                registry,
+                username,
+                password,
+                local,
+            } => Some(CommonCommand::Login {
+                registry,
+                username,
+                password,
+                local,
+            }),
+            Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
+            Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
+            Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
+            Commands::Build { target } => Some(CommonCommand::Build { target }),
+            Commands::Flash { board, skip_build } => {
+                Some(CommonCommand::Flash { board, skip_build })
             }
-            #[cfg(all(
-                feature = "web",
-                not(any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                ))
-            ))]
-            Commands::List => SomeCore(CoreCommand::List),
-            // ── Bare commands (multi-core: auto-detect from .megagate/) ──
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
+            Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),
+            Commands::CiGenerate => Some(CommonCommand::CiGenerate),
+            Commands::Verify => Some(CommonCommand::Verify),
+            Commands::Start => Some(CommonCommand::Start),
+            Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
+            Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
+            Commands::Cache {
+                action,
+                target,
+                yes,
+                dry_run,
+            } => Some(CommonCommand::Cache {
+                action,
+                target,
+                yes,
+                dry_run,
+            }),
+            Commands::Link { package } => Some(CommonCommand::Link { package }),
+            Commands::Unlink { package } => Some(CommonCommand::Unlink { package }),
+            Commands::Why { package } => Some(CommonCommand::Why { package }),
+            _ => None,
+        };
+
+        if let Some(cmd) = common_cmd {
+            return Ok(SomeCommon(cmd));
+        }
+
+        Ok(match command {
+            // ── Bare commands (auto-detect from .megagate/) ──
             Commands::Install {
-                packages, frozen, ..
+                packages,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+                prefer_dedupe,
+                repair,
+                dry_run,
             } => {
-                let ecosystem = detect_ecosystem();
+                let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::InstallWeb { packages, frozen }),
+                    Some("web") => SomeCore(CoreCommand::InstallWeb {
+                        packages,
+                        frozen,
+                        ignore_scripts,
+                        allow_scripts,
+                        prefer_dedupe,
+                        repair,
+                    }),
                     Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
-                    Some("ai") => SomeCore(CoreCommand::InstallAi { packages }),
-                    Some("clo") => SomeCore(CoreCommand::InstallClo { packages }),
-                    Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages }),
+                    Some("ai") => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
+                    Some("clo") => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
+                    Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages, dry_run }),
                     Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
-                    Some("app") => SomeCore(CoreCommand::InstallApp { packages }),
+                    Some("app") => SomeCore(CoreCommand::InstallApp { packages, dry_run }),
                     Some("lib") => SomeCore(CoreCommand::InstallLib { packages }),
-                    _ => SomeCore(CoreCommand::InstallWeb { packages, frozen }),
+                    _ => SomeCore(CoreCommand::InstallWeb {
+                        packages,
+                        frozen,
+                        ignore_scripts,
+                        allow_scripts,
+                        prefer_dedupe,
+                        repair,
+                    }),
                 }
             }
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
             Commands::Add {
                 packages,
                 dev,
@@ -529,9 +551,10 @@ impl From<Commands> for DispatchCommand {
                 optional,
                 peer,
                 no_save,
+                no_install,
                 ..
             } => {
-                let ecosystem = detect_ecosystem();
+                let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
                     Some("web") => SomeCore(CoreCommand::AddWeb {
                         packages,
@@ -540,6 +563,7 @@ impl From<Commands> for DispatchCommand {
                         optional,
                         peer,
                         no_save,
+                        install: !no_install,
                         global,
                     }),
                     Some("game") => SomeCore(CoreCommand::AddGame {
@@ -612,50 +636,36 @@ impl From<Commands> for DispatchCommand {
                         optional,
                         peer,
                         no_save,
+                        install: !no_install,
                         global,
                     }),
                 }
             }
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
-            Commands::Remove { package } => {
-                let ecosystem = detect_ecosystem();
+            Commands::Remove {
+                packages,
+                no_install,
+            } => {
+                let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::RemoveWeb { package }),
-                    Some("game") => SomeCore(CoreCommand::RemoveGame { package }),
-                    Some("ai") => SomeCore(CoreCommand::RemoveAi { package }),
-                    Some("clo") => SomeCore(CoreCommand::RemoveClo { package }),
-                    Some("cicd") => SomeCore(CoreCommand::RemoveCicd { package }),
-                    Some("iot") => SomeCore(CoreCommand::RemoveIot { package }),
-                    Some("app") => SomeCore(CoreCommand::RemoveApp { package }),
-                    Some("lib") => SomeCore(CoreCommand::RemoveLib { package }),
-                    _ => SomeCore(CoreCommand::RemoveWeb { package }),
+                    Some("web") => SomeCore(CoreCommand::RemoveWeb {
+                        packages,
+                        install: !no_install,
+                    }),
+                    Some("game") => SomeCore(CoreCommand::RemoveGame { packages }),
+                    Some("ai") => SomeCore(CoreCommand::RemoveAi { packages }),
+                    Some("clo") => SomeCore(CoreCommand::RemoveClo { packages }),
+                    Some("cicd") => SomeCore(CoreCommand::RemoveCicd { packages }),
+                    Some("iot") => SomeCore(CoreCommand::RemoveIot { packages }),
+                    Some("app") => SomeCore(CoreCommand::RemoveApp { packages }),
+                    Some("lib") => SomeCore(CoreCommand::RemoveLib { packages }),
+                    _ => SomeCore(CoreCommand::RemoveWeb {
+                        packages,
+                        install: !no_install,
+                    }),
                 }
             }
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
             Commands::List => {
-                let ecosystem = detect_ecosystem();
+                let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
                     Some("web") => SomeCore(CoreCommand::ListWeb),
                     Some("game") => SomeCore(CoreCommand::ListGame),
@@ -665,23 +675,12 @@ impl From<Commands> for DispatchCommand {
                     Some("iot") => SomeCore(CoreCommand::ListIot),
                     Some("app") => SomeCore(CoreCommand::ListApp),
                     Some("lib") => SomeCore(CoreCommand::ListLib),
+                    Some("hardware") => SomeCore(CoreCommand::ListHardware),
                     _ => SomeCore(CoreCommand::ListWeb),
                 }
             }
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
             Commands::Update { packages, install } => {
-                let ecosystem = detect_ecosystem();
+                let ecosystem = detect_ecosystem()?;
                 match ecosystem.as_deref() {
                     Some("web") => SomeCore(CoreCommand::UpdateWeb { packages, install }),
                     Some("game") => SomeCore(CoreCommand::UpdateGame { packages, install }),
@@ -694,7 +693,6 @@ impl From<Commands> for DispatchCommand {
                     _ => SomeCore(CoreCommand::UpdateWeb { packages, install }),
                 }
             }
-            #[cfg(feature = "web")]
             Commands::CreateWeb {
                 framework,
                 project_name,
@@ -704,7 +702,6 @@ impl From<Commands> for DispatchCommand {
                 project_name,
                 flags,
             }),
-            #[cfg(feature = "game")]
             Commands::CreateGame {
                 framework,
                 project_name,
@@ -712,7 +709,6 @@ impl From<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            #[cfg(feature = "ai")]
             Commands::CreateAi {
                 framework,
                 project_name,
@@ -720,7 +716,6 @@ impl From<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            #[cfg(feature = "clo")]
             Commands::CreateClo {
                 framework,
                 project_name,
@@ -728,7 +723,6 @@ impl From<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            #[cfg(feature = "cicd")]
             Commands::CreateCicd {
                 framework,
                 project_name,
@@ -736,7 +730,6 @@ impl From<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            #[cfg(feature = "iot")]
             Commands::CreateIot {
                 framework,
                 project_name,
@@ -744,7 +737,6 @@ impl From<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            #[cfg(feature = "app")]
             Commands::CreateApp {
                 framework,
                 project_name,
@@ -752,51 +744,42 @@ impl From<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            #[cfg(feature = "lib")]
             Commands::CreateLib { project_name } => {
                 SomeCore(CoreCommand::CreateLib { project_name })
             }
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
-            Commands::InstallWeb { packages, frozen } => {
-                SomeCore(CoreCommand::InstallWeb { packages, frozen })
-            }
-            #[cfg(feature = "game")]
+            Commands::InstallWeb {
+                packages,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+                prefer_dedupe,
+                repair,
+            } => SomeCore(CoreCommand::InstallWeb {
+                packages,
+                frozen,
+                ignore_scripts,
+                allow_scripts,
+                prefer_dedupe,
+                repair,
+            }),
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
-            #[cfg(feature = "ai")]
-            Commands::InstallAi { packages } => SomeCore(CoreCommand::InstallAi { packages }),
-            #[cfg(feature = "clo")]
-            Commands::InstallClo { packages } => SomeCore(CoreCommand::InstallClo { packages }),
-            #[cfg(feature = "cicd")]
-            Commands::InstallCicd { packages } => SomeCore(CoreCommand::InstallCicd { packages }),
-            #[cfg(feature = "iot")]
+            Commands::InstallAi { packages, dry_run } => {
+                SomeCore(CoreCommand::InstallAi { packages, dry_run })
+            }
+            Commands::InstallClo { packages } => SomeCore(CoreCommand::InstallClo {
+                packages,
+                dry_run: false,
+            }),
+            Commands::InstallCicd { packages } => SomeCore(CoreCommand::InstallCicd {
+                packages,
+                dry_run: false,
+            }),
             Commands::InstallIot { packages } => SomeCore(CoreCommand::InstallIot { packages }),
-            #[cfg(feature = "app")]
-            Commands::InstallApp { packages } => SomeCore(CoreCommand::InstallApp { packages }),
-            #[cfg(feature = "lib")]
+            Commands::InstallApp { packages } => SomeCore(CoreCommand::InstallApp {
+                packages,
+                dry_run: false,
+            }),
             Commands::InstallLib { packages } => SomeCore(CoreCommand::InstallLib { packages }),
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
             Commands::AddWeb {
                 packages,
                 dev,
@@ -804,6 +787,7 @@ impl From<Commands> for DispatchCommand {
                 optional,
                 peer,
                 no_save,
+                no_install,
                 global,
             } => SomeCore(CoreCommand::AddWeb {
                 packages,
@@ -812,9 +796,9 @@ impl From<Commands> for DispatchCommand {
                 optional,
                 peer,
                 no_save,
+                install: !no_install,
                 global,
             }),
-            #[cfg(feature = "game")]
             Commands::AddGame {
                 packages,
                 dev,
@@ -832,7 +816,6 @@ impl From<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            #[cfg(feature = "ai")]
             Commands::AddAi {
                 packages,
                 dev,
@@ -850,7 +833,6 @@ impl From<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            #[cfg(feature = "clo")]
             Commands::AddClo {
                 packages,
                 dev,
@@ -868,7 +850,6 @@ impl From<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            #[cfg(feature = "cicd")]
             Commands::AddCicd {
                 packages,
                 dev,
@@ -886,7 +867,6 @@ impl From<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            #[cfg(feature = "iot")]
             Commands::AddIot {
                 packages,
                 dev,
@@ -904,7 +884,6 @@ impl From<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            #[cfg(feature = "app")]
             Commands::AddApp {
                 packages,
                 dev,
@@ -922,7 +901,6 @@ impl From<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            #[cfg(feature = "lib")]
             Commands::AddLib {
                 packages,
                 dev,
@@ -940,153 +918,168 @@ impl From<Commands> for DispatchCommand {
                 no_save,
                 global,
             }),
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
-            Commands::RemoveWeb { package } => SomeCore(CoreCommand::RemoveWeb { package }),
-            #[cfg(feature = "game")]
-            Commands::RemoveGame { package } => SomeCore(CoreCommand::RemoveGame { package }),
-            #[cfg(feature = "ai")]
-            Commands::RemoveAi { package } => SomeCore(CoreCommand::RemoveAi { package }),
-            #[cfg(feature = "clo")]
-            Commands::RemoveClo { package } => SomeCore(CoreCommand::RemoveClo { package }),
-            #[cfg(feature = "cicd")]
-            Commands::RemoveCicd { package } => SomeCore(CoreCommand::RemoveCicd { package }),
-            #[cfg(feature = "iot")]
-            Commands::RemoveIot { package } => SomeCore(CoreCommand::RemoveIot { package }),
-            #[cfg(feature = "app")]
-            Commands::RemoveApp { package } => SomeCore(CoreCommand::RemoveApp { package }),
-            #[cfg(feature = "lib")]
-            Commands::RemoveLib { package } => SomeCore(CoreCommand::RemoveLib { package }),
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
+            Commands::RemoveWeb {
+                packages,
+                no_install,
+            } => SomeCore(CoreCommand::RemoveWeb {
+                packages,
+                install: !no_install,
+            }),
+            Commands::RemoveGame { packages } => SomeCore(CoreCommand::RemoveGame { packages }),
+            Commands::RemoveAi { packages } => SomeCore(CoreCommand::RemoveAi { packages }),
+            Commands::RemoveClo { packages } => SomeCore(CoreCommand::RemoveClo { packages }),
+            Commands::RemoveCicd { packages } => SomeCore(CoreCommand::RemoveCicd { packages }),
+            Commands::RemoveIot { packages } => SomeCore(CoreCommand::RemoveIot { packages }),
+            Commands::RemoveApp { packages } => SomeCore(CoreCommand::RemoveApp { packages }),
+            Commands::RemoveLib { packages } => SomeCore(CoreCommand::RemoveLib { packages }),
             Commands::ListWeb => SomeCore(CoreCommand::ListWeb),
-            #[cfg(feature = "game")]
             Commands::ListGame => SomeCore(CoreCommand::ListGame),
-            #[cfg(feature = "ai")]
             Commands::ListAi => SomeCore(CoreCommand::ListAi),
-            #[cfg(feature = "clo")]
             Commands::ListClo => SomeCore(CoreCommand::ListClo),
-            #[cfg(feature = "cicd")]
             Commands::ListCicd => SomeCore(CoreCommand::ListCicd),
-            #[cfg(feature = "iot")]
             Commands::ListIot => SomeCore(CoreCommand::ListIot),
-            #[cfg(feature = "app")]
             Commands::ListApp => SomeCore(CoreCommand::ListApp),
-            #[cfg(feature = "lib")]
             Commands::ListLib => SomeCore(CoreCommand::ListLib),
-            #[cfg(all(
-                feature = "web",
-                any(
-                    feature = "game",
-                    feature = "ai",
-                    feature = "clo",
-                    feature = "cicd",
-                    feature = "iot",
-                    feature = "app",
-                    feature = "lib"
-                )
-            ))]
+            Commands::ListHardware => SomeCore(CoreCommand::ListHardware),
             Commands::UpdateWeb { packages, install } => {
                 SomeCore(CoreCommand::UpdateWeb { packages, install })
             }
-            #[cfg(feature = "game")]
             Commands::UpdateGame { packages, install } => {
                 SomeCore(CoreCommand::UpdateGame { packages, install })
             }
-            #[cfg(feature = "ai")]
             Commands::UpdateAi { packages, install } => {
                 SomeCore(CoreCommand::UpdateAi { packages, install })
             }
-            #[cfg(feature = "clo")]
             Commands::UpdateClo { packages, install } => {
                 SomeCore(CoreCommand::UpdateClo { packages, install })
             }
-            #[cfg(feature = "cicd")]
             Commands::UpdateCicd { packages, install } => {
                 SomeCore(CoreCommand::UpdateCicd { packages, install })
             }
-            #[cfg(feature = "iot")]
             Commands::UpdateIot { packages, install } => {
                 SomeCore(CoreCommand::UpdateIot { packages, install })
             }
-            #[cfg(feature = "app")]
             Commands::UpdateApp { packages, install } => {
                 SomeCore(CoreCommand::UpdateApp { packages, install })
             }
-            #[cfg(feature = "lib")]
             Commands::UpdateLib { packages, install } => {
                 SomeCore(CoreCommand::UpdateLib { packages, install })
             }
-        }
+            _ => unreachable!("Common commands should be handled by the first match block"),
+        })
     }
 }
 
-/// Detect the project ecosystem (core type) from the current working directory.
-///
-/// Priority:
-///   1. `.megagate/project.toml` — ecosystem field
-///   2. Auto-detect: `package.json` → web, `Cargo.toml` → lib, `pyproject.toml` → ai
-#[cfg(all(
-    feature = "web",
-    any(
-        feature = "game",
-        feature = "ai",
-        feature = "clo",
-        feature = "cicd",
-        feature = "iot",
-        feature = "app",
-        feature = "lib"
-    )
-))]
-fn detect_ecosystem() -> Option<String> {
-    let cwd = std::env::current_dir().ok()?;
+pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
+    let cwd = std::env::current_dir()?;
 
-    // 1. Try .megagate/project.toml
-    let megagate_path = cwd.join(".megagate").join("project.toml");
-    if megagate_path.exists() {
-        let content = std::fs::read_to_string(megagate_path).ok()?;
-        for line in content.lines() {
-            let line = line.trim();
-            if let Some(val) = line.strip_prefix("ecosystem = \"") {
-                if let Some(eco) = val.strip_suffix('"') {
-                    if !eco.is_empty() {
-                        return Some(eco.to_string());
+    // 0. Try core signature marker (.mg.core) — T9a, ưu tiên cao nhất
+    if let Some(root) = mg_config::project::ProjectConfig::find_project_root(&cwd) {
+        if let Ok(Some(core)) = mg_config::project::ProjectConfig::read_core_marker(&root) {
+            return Ok(Some(core));
+        }
+    }
+
+    // 1. Try mg.toml
+    let mg_toml = cwd.join("mg.toml");
+    if mg_toml.exists() {
+        if let Ok(cfg) = mg_config::project::ProjectConfig::load(&cwd) {
+            if let Some(cfg) = cfg {
+                if !cfg.ecosystem.is_empty() {
+                    return Ok(Some(cfg.ecosystem));
+                }
+            }
+        }
+    }
+
+    // 2. Try mg.lock
+    let lock_path = cwd.join("mg.lock");
+    if lock_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&lock_path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if let Some(val) = line.strip_prefix("core = \"") {
+                    if let Some(eco) = val.strip_suffix('"') {
+                        if !eco.is_empty() {
+                            return Ok(Some(eco.to_string()));
+                        }
                     }
                 }
             }
         }
     }
 
-    // 2. Auto-detect
-    if cwd.join("package.json").exists() {
-        return Some("web".to_string());
-    }
-    if cwd.join("Cargo.toml").exists() {
-        return Some("lib".to_string());
-    }
-    if cwd.join("pyproject.toml").exists() {
-        return Some("ai".to_string());
+    // 3. Try Native Manifest Injection (package.json, Cargo.toml, pyproject.toml)
+    let package_json_path = cwd.join("package.json");
+    if package_json_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&package_json_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(eco) = v
+                    .get("megagate")
+                    .and_then(|m| m.get("core"))
+                    .and_then(|c| c.as_str())
+                {
+                    return Ok(Some(eco.to_string()));
+                }
+            }
+        }
     }
 
-    None
+    let cargo_toml_path = cwd.join("Cargo.toml");
+    if cargo_toml_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
+            if let Ok(v) = toml::from_str::<toml::Value>(&content) {
+                if let Some(eco) = v
+                    .get("package")
+                    .and_then(|p| p.get("metadata"))
+                    .and_then(|m| m.get("megagate"))
+                    .and_then(|mg| mg.get("core"))
+                    .and_then(|c| c.as_str())
+                {
+                    return Ok(Some(eco.to_string()));
+                }
+            }
+        }
+    }
+
+    let pyproject_toml_path = cwd.join("pyproject.toml");
+    if pyproject_toml_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&pyproject_toml_path) {
+            if let Ok(v) = toml::from_str::<toml::Value>(&content) {
+                if let Some(eco) = v
+                    .get("tool")
+                    .and_then(|t| t.get("megagate"))
+                    .and_then(|mg| mg.get("core"))
+                    .and_then(|c| c.as_str())
+                {
+                    return Ok(Some(eco.to_string()));
+                }
+            }
+        }
+    }
+
+    // 4. Interactive prompt for missing ecosystem
+    if package_json_path.exists() || cargo_toml_path.exists() || pyproject_toml_path.exists() {
+        let items = crate::factory::available_cores();
+        let display_items: Vec<&str> = items.iter().map(|(_, label)| *label).collect();
+
+        mg_ui::blank_line();
+        mg_ui::info("MegaGate detected a project without a bound core.");
+        let selected_idx = mg_ui::prompt::select(
+            "Which ecosystem does this project belong to?",
+            &display_items,
+        )?;
+        let selected_core = items[selected_idx].0;
+
+        let cfg = mg_config::project::ProjectConfig::new(
+            cwd.file_name().unwrap_or_default().to_string_lossy(),
+            selected_core,
+        );
+        cfg.save(&cwd)?;
+        mg_ui::info("Saved core binding to mg.toml");
+
+        return Ok(Some(selected_core.to_string()));
+    }
+
+    Ok(None)
 }

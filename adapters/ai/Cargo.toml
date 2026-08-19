@@ -8,6 +8,20 @@ authors.workspace = true
 description = "AI ecosystem adapter for MegaGate"
 
 [dependencies]
+mg-types = { path = "../../core/crates/mg-types" }
+async-trait.workspace = true
+tokio.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[bench]]
+name = "ai_bench"
+harness = false
 
 [lints]
 workspace = true

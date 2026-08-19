@@ -1,1 +1,0 @@
-../../../../frontend/remix/sources/sentry.client.config.js

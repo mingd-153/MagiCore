@@ -1,1 +1,0 @@
-../../../../frontend/sveltekit/sources/tailwind.config.ts

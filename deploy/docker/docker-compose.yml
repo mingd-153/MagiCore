@@ -1,0 +1,83 @@
+# MegaGate — Docker Compose
+# Runs mg-registry-server + optional mg CLI sidecar.
+#
+# Quick start:
+#   cp registry.env.example registry.env          # fill in secrets
+#   docker compose up -d
+#   docker compose logs -f registry
+#
+# Production (with Nginx TLS):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+name: megagate
+
+services:
+  # ── Registry server ────────────────────────────────────────────────────────
+  registry:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.registry
+    image: megagate/registry-server:latest
+    container_name: mg-registry
+    restart: unless-stopped
+    ports:
+      - "${MEGAGATE_REGISTRY_PORT:-8080}:8080"
+    volumes:
+      - registry-data:/data
+    env_file:
+      - registry.env
+    environment:
+      MEGAGATE_REGISTRY_HOST: "0.0.0.0"
+      MEGAGATE_REGISTRY_PORT: "8080"
+      MEGAGATE_REGISTRY_STORE_DIR: "/data"
+      MEGAGATE_LOG_LEVEL: "${MEGAGATE_LOG_LEVEL:-info}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v2/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - mg-internal
+
+  # ── mg CLI sidecar (one-shot) ──────────────────────────────────────────────
+  # Usage:  docker compose run --rm mg-cli mg publish ./my-pkg
+  mg-cli:
+    image: megagate/cli:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: mg-cli
+    profiles:
+      - cli
+    depends_on:
+      registry:
+        condition: service_healthy
+    environment:
+      MG_REGISTRY: "http://registry:8080"
+      MG_AUTH_TOKEN: "${MG_AUTH_TOKEN:-}"
+    volumes:
+      - "${HOST_WORKSPACE:-./workspace}:/workspace:rw"
+    working_dir: /workspace
+    entrypoint: ["/usr/local/bin/mg"]
+    networks:
+      - mg-internal
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  registry-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: "${REGISTRY_DATA_PATH:-./data}"
+      o: bind
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  mg-internal:
+    driver: bridge

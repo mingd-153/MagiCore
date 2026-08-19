@@ -1,1 +1,0 @@
-../../../../frontend/nextjs/sources/drizzle.config.ts

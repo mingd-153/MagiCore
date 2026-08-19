@@ -1,167 +1,131 @@
-use mg_types::adapter::PackageAdapter;
-/// Adapter factory — creates the right adapter based on ecosystem + feature flags.
-/// Each core has a feature gate so single-core builds don't link unused crates.
-use mg_types::Ecosystem;
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuildShape {
-    SingleCore,
-    MultiCore,
-}
+use mg_plugin::Plugin;
+use mg_types::adapter::PackageAdapter;
+use mg_types::Ecosystem;
 
 /// Available cores in this build (for init menu filtering)
 pub fn available_cores() -> Vec<(&'static str, &'static str)> {
-    let mut cores: Vec<(&'static str, &'static str)> = Vec::new();
-    macro_rules! push_core {
-        ($feature:expr, $short:expr, $label:expr) => {
-            if cfg!(feature = $feature) {
-                cores.push(($short, $label));
-            }
-        };
-    }
-    push_core!("web", "web", "🌐  Web application");
-    push_core!("game", "game", "🎮  Game");
-    push_core!("ai", "ai", "🤖  AI agent / ML project");
-    push_core!("clo", "clo", "☁️   Cloud infrastructure");
-    push_core!("cicd", "cicd", "🔄  CI/CD pipeline");
-    push_core!("iot", "iot", "🔌  IoT / Embedded device");
-    push_core!("app", "app", "📱  Mobile / Desktop app");
-    push_core!("lib", "lib", "📦  Library");
+    let mut cores = Vec::new();
+    #[cfg(feature = "web")]
+    cores.push(("web", "🌐  Web application"));
+    #[cfg(feature = "lib")]
+    cores.push(("lib", "📚  Library (ts / rust / python)"));
+    #[cfg(feature = "game")]
+    cores.push(("game", "🎮  Game (bevy / godot / unity / unreal)"));
+    #[cfg(feature = "iot")]
+    cores.push(("iot", "📡  IoT (esp32-rust / platformio / zephyr)"));
+    #[cfg(feature = "hardware")]
+    cores.push((
+        "hardware",
+        "⚙️  Hardware (optimizer/bench — GPU/CPU acceleration)",
+    ));
     cores
 }
 
-pub fn available_core_names() -> Vec<&'static str> {
-    available_cores()
-        .into_iter()
-        .map(|(short, _)| short)
-        .collect()
+/// Create an adapter for the given ecosystem — dispatch qua PluginRegistry
+/// (T3): registry có plugin → dùng plugin (adapter back-ref); miss → tạo như
+/// cũ + đăng ký global (lần sau dùng registry).
+///
+/// ponytail: 1 tiến trình cli = 1 registry config cố định (mg.toml/env) — bỏ
+/// qua so khớp url/token khi reuse; nếu sau này chạy multi-config trong 1
+/// tiến trình thì thêm check.
+pub fn create_adapter(
+    ecosystem: &Ecosystem,
+    registry_url: Option<&str>,
+    token: Option<&str>,
+) -> anyhow::Result<Arc<dyn PackageAdapter>> {
+    create_adapter_for(
+        &std::env::current_dir()
+            .map_err(|e| crate::error::cwd_deleted(&e))?,
+        ecosystem,
+        registry_url,
+        token,
+        &[],
+    )
 }
 
-pub fn build_shape() -> BuildShape {
-    if available_cores().len() == 1 {
-        BuildShape::SingleCore
-    } else {
-        BuildShape::MultiCore
+/// Tạo adapter gắn với project root rõ ràng (mix core: workspace target).
+/// `fallbacks`: (url, token) chain — chỉ dùng khi primary 404/network/5xx.
+pub fn create_adapter_for(
+    root: &std::path::Path,
+    ecosystem: &Ecosystem,
+    registry_url: Option<&str>,
+    token: Option<&str>,
+    fallbacks: &[(String, Option<String>)],
+) -> anyhow::Result<Arc<dyn PackageAdapter>> {
+    if let Some(plugin) = mg_plugin::global().get(*ecosystem) {
+        if let Some(adapter) = plugin.as_adapter() {
+            return Ok(adapter);
+        }
     }
-}
 
-pub fn is_single_core_build() -> bool {
-    matches!(build_shape(), BuildShape::SingleCore)
-}
+    let adapter: Arc<dyn PackageAdapter> = match ecosystem {
+        #[cfg(feature = "web")]
+        Ecosystem::Web => Arc::new(match (registry_url, token) {
+            (Some(url), _) => mg_web_adapter::WebAdapter::with_registry_chain(
+                url.to_string(),
+                token.map(str::to_string),
+                fallbacks.to_vec(),
+            ),
+            _ => mg_web_adapter::WebAdapter::new(),
+        }),
+        #[cfg(not(feature = "web"))]
+        Ecosystem::Web => return Err(crate::error::core_not_in_build("web")),
+        #[cfg(feature = "game")]
+        Ecosystem::Game => Arc::new(
+            mg_game_adapter::adapter_for(root)
+                .ok_or_else(|| crate::error::detect_core_failed("game"))?,
+        ),
+        #[cfg(not(feature = "game"))]
+        Ecosystem::Game => return Err(crate::error::core_not_in_build("game")),
+        Ecosystem::Ai => Arc::new(
+            mg_ai_adapter::adapter_for(root)
+                .ok_or_else(|| crate::error::detect_core_failed("ai"))?,
+        ),
+        #[cfg(feature = "clo")]
+        Ecosystem::Cloud => Arc::new(
+            mg_cloud_adapter::adapter_for(root)
+                .ok_or_else(|| crate::error::detect_core_failed("clo"))?,
+        ),
+        #[cfg(not(feature = "clo"))]
+        Ecosystem::Cloud => return Err(crate::error::core_not_in_build("clo")),
+        Ecosystem::Cicd => Arc::new(
+            mg_cicd_adapter::adapter_for(root)
+                .ok_or_else(|| crate::error::detect_core_failed("cicd"))?,
+        ),
+        #[cfg(feature = "iot")]
+        Ecosystem::Iot => Arc::new(
+            mg_iot_adapter::adapter_for(root)
+                .ok_or_else(|| crate::error::detect_core_failed("iot"))?,
+        ),
+        #[cfg(not(feature = "iot"))]
+        Ecosystem::Iot => return Err(crate::error::core_not_in_build("iot")),
+        Ecosystem::App => Arc::new(
+            mg_app_adapter::adapter_for(root)
+                .ok_or_else(|| crate::error::detect_core_failed("app"))?,
+        ),
+        #[cfg(feature = "hardware")]
+        Ecosystem::Hardware => Arc::new(
+            mg_hardware_adapter::adapter_for(root)
+                .ok_or_else(|| crate::error::detect_core_failed("hardware"))?,
+        ),
+        #[cfg(not(feature = "hardware"))]
+        Ecosystem::Hardware => return Err(crate::error::core_not_in_build("hardware")),
+        #[cfg(feature = "lib")]
+        Ecosystem::Lib => Arc::new(
+            mg_lib_adapter::adapter_for_with_chain(root,
+                registry_url.map(str::to_string),
+                token.map(str::to_string),
+                fallbacks,
+            )
+            .ok_or_else(|| crate::error::detect_core_failed("lib"))?,
+        ),
+        #[cfg(not(feature = "lib"))]
+        Ecosystem::Lib => return Err(crate::error::core_not_in_build("lib")),
+    };
 
-/// Create an adapter for the given ecosystem.
-/// Returns an error if the core is not available in this build.
-pub fn create_adapter(ecosystem: &Ecosystem) -> anyhow::Result<Box<dyn PackageAdapter>> {
-    match ecosystem {
-        Ecosystem::Web => create_web_adapter(),
-        Ecosystem::Game => create_game_adapter(),
-        Ecosystem::Ai => create_ai_adapter(),
-        Ecosystem::Cloud => create_clo_adapter(),
-        Ecosystem::Cicd => create_cicd_adapter(),
-        Ecosystem::Iot => create_iot_adapter(),
-        Ecosystem::App => create_app_adapter(),
-        Ecosystem::Lib => create_lib_adapter(),
-    }
-}
-
-// ─── Per-core constructors ──────────────────────────────────────────
-
-#[cfg(feature = "web")]
-fn create_web_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    Ok(Box::new(mg_web_adapter::WebAdapter::new()))
-}
-#[cfg(not(feature = "web"))]
-fn create_web_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!("Web core not available in this build. Install: brew install megagate (full) or megagate-web")
-}
-
-#[cfg(feature = "game")]
-fn create_game_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'game' core is under development. Only the 'web' core is available in this release."
-    )
-}
-#[cfg(not(feature = "game"))]
-fn create_game_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'game' core is under development. Only the 'web' core is available in this release."
-    )
-}
-
-#[cfg(feature = "ai")]
-fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'ai' core is under development. Only the 'web' core is available in this release."
-    )
-}
-#[cfg(not(feature = "ai"))]
-fn create_ai_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'ai' core is under development. Only the 'web' core is available in this release."
-    )
-}
-
-#[cfg(feature = "clo")]
-fn create_clo_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'cloud' core is under development. Only the 'web' core is available in this release."
-    )
-}
-#[cfg(not(feature = "clo"))]
-fn create_clo_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'cloud' core is under development. Only the 'web' core is available in this release."
-    )
-}
-
-#[cfg(feature = "cicd")]
-fn create_cicd_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'cicd' core is under development. Only the 'web' core is available in this release."
-    )
-}
-#[cfg(not(feature = "cicd"))]
-fn create_cicd_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'cicd' core is under development. Only the 'web' core is available in this release."
-    )
-}
-
-#[cfg(feature = "iot")]
-fn create_iot_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'iot' core is under development. Only the 'web' core is available in this release."
-    )
-}
-#[cfg(not(feature = "iot"))]
-fn create_iot_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'iot' core is under development. Only the 'web' core is available in this release."
-    )
-}
-
-#[cfg(feature = "app")]
-fn create_app_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'app' core is under development. Only the 'web' core is available in this release."
-    )
-}
-#[cfg(not(feature = "app"))]
-fn create_app_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'app' core is under development. Only the 'web' core is available in this release."
-    )
-}
-
-#[cfg(feature = "lib")]
-fn create_lib_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'lib' core is under development. Only the 'web' core is available in this release."
-    )
-}
-#[cfg(not(feature = "lib"))]
-fn create_lib_adapter() -> anyhow::Result<Box<dyn PackageAdapter>> {
-    anyhow::bail!(
-        "'lib' core is under development. Only the 'web' core is available in this release."
-    )
+    // Đăng ký plugin vào registry global — lần gọi sau dispatch qua registry.
+    let _ = mg_plugin::register(Plugin::from_adapter(adapter.clone()));
+    Ok(adapter)
 }

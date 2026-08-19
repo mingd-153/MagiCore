@@ -1,1 +1,0 @@
-../../../../frontend/nuxt/sources/tailwind.config.ts

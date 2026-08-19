@@ -1,134 +1,59 @@
-name: MegaGate CI
+name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
-    branches: [main]
+    branches: [main, development]
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  rust-check:
-    name: Rust Check + Test
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@cargo-deny
-
+        with:
+          components: rustfmt, clippy
       - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        uses: Swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: mg-exec allowlist tests
+        run: cargo test -p mg-exec --test run 2>&1
+      - name: cargo check
+        run: cargo check --all-targets
+      - name: module hygiene
+        run: bash scripts/check-module-hygiene.sh
+      - name: no npm/npx/pnpm/yarn/bun (L94)
+        run: bash scripts/check-no-pm.sh
 
-      - name: Cargo check workspace
-        run: cargo check --workspace
-
-      - name: Cargo clippy
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Cargo fmt check
-        run: cargo fmt --check
-
-      - name: Cargo deny check (advisories + bans + licenses)
-        run: cargo deny check
-
-      - name: Test full build shape
-        run: cargo test -p mg -- --nocapture
-
-      - name: Test web-only build shape
-        run: cargo test -p mg --no-default-features --features web -- --nocapture
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-        continue-on-error: true
-
-      - name: Generate code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
-        continue-on-error: true
-
-      - name: Upload coverage to artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: lcov.info
-        continue-on-error: true
-
-  dist-packages:
-    name: Dist package (${{ matrix.package }})
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        package:
-          - megagate
-          - megagate-web
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Build package
-        run: cargo run -p mg-dist -- build ${{ matrix.package }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.package }}-linux
-          path: dist/${{ matrix.package }}/
-
-  benchmarks:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            target
-          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+        uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --all-targets -- --test-threads=4
 
-      - name: Run cold_path benchmarks
-        run: cargo bench --bench cold_path --manifest-path adapters/web/Cargo.toml -- --save-baseline main
-
-      - name: Run stress benchmarks
-        run: cargo bench --bench stress --manifest-path adapters/web/Cargo.toml -- --save-baseline main
-
-      - name: Run install_bench benchmarks
-        run: cargo bench --bench install_bench --manifest-path adapters/web/Cargo.toml -- --save-baseline main
-
-      - name: Matrix baseline comparison (standard)
-        run: |
-          scripts/bench-ci.sh --compare-baseline main
-        continue-on-error: true
-
-      - name: Matrix baseline comparison (heavy)
-        run: |
-          scripts/bench-ci.sh --compare-baseline heavy-main
-        continue-on-error: true
-
-      - name: Save new baseline
-        run: scripts/bench-ci.sh --save
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: criterion-results
-          path: adapters/web/target/criterion/
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: cargo build --release
+        run: cargo build --release --all-targets

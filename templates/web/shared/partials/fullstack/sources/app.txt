@@ -1,2 +1,0 @@
-MegaGate fullstack scaffold
-framework={{framework}}

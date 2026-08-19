@@ -1,5 +1,0 @@
-{
-  "name": "@project/app",
-  "private": true,
-  "workspaces": ["client", "server"]
-}

@@ -1,1 +1,0 @@
-../../../../frontend/astro/sources/drizzle.config.js

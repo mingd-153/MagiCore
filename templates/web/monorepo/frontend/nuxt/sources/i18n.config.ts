@@ -1,1 +1,0 @@
-../../../../frontend/nuxt/sources/i18n.config.ts

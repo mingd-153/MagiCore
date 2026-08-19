@@ -1,1 +1,0 @@
-../../../../frontend/remix/sources/cypress.config.ts
