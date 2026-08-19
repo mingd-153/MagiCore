@@ -909,3 +909,9 @@ pub fn template_manifest_missing(layer: &str) -> Error {
 pub fn config_key_missing(key: &str) -> Error {
     anyhow!("config key '{key}' not found (checked env, project .npmrc, and ~/.npmrc)")
 }
+
+// ===== global flags =====
+
+pub fn dir_missing(dir: &str, cause: String) -> Error {
+    anyhow!("cannot change to directory '{dir}': {cause}")
+}

@@ -261,6 +261,14 @@ pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<
     Ok(Some(workspaces))
 }
 
+/// package.json name (web) — dùng cho --filter match. Non-web fallback: None.
+pub(crate) fn workspace_package_name(project_root: &Path) -> Option<String> {
+    mg_workspace::read_package_manifest(project_root)
+        .ok()
+        .flatten()
+        .map(|m| m.name)
+}
+
 fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result<()> {
     if !root.exists() || !root.is_dir() {
         return Ok(());
