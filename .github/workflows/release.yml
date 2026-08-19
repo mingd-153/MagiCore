@@ -131,5 +131,6 @@ jobs:
         with:
           files: release-assets/*
           draft: false
-          prerelease: false
-          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
+          generate_release_notes: false
+          body_path: CHANGELOG.md

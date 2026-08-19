@@ -113,6 +113,8 @@ adapters/*/docs/
 core/crates/*/docs/
 tools/*/docs/
 
-# Allow README.md in subdirectories (public-facing) but ignore root README.md
+# Allow all public-facing documentation
 !**/README.md
-/README.md
+!README.md
+!CHANGELOG.md
+!CONTRIBUTING.md
