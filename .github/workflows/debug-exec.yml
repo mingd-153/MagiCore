@@ -20,7 +20,7 @@ jobs:
         run: |
           sudo apt-get update -y -q && sudo apt-get install -y -q strace
           trap 'echo "===TRACE==="; tail -80 /tmp/trace.log' EXIT
-          strace -f -e trace=kill,killpg,setpgid,setsid -o /tmp/trace.log \
+          strace -f -e trace=kill,setpgid,setsid -o /tmp/trace.log \
             cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool -- --nocapture 2>&1
           echo "TEST_EXIT=$?"
           echo "===TRACE==="
