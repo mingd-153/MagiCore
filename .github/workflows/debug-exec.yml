@@ -12,13 +12,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: strace the timeout test
-        run: |
-          which strace || sudo apt-get install -y strace >/dev/null 2>&1
-          strace -f -e trace=kill,tgkill,setpgid,setsid -o /tmp/strace.log cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1 || true
-          echo "=== STRACE TAIL ==="
-          tail -60 /tmp/strace.log
+      - name: test 1st (full compile)
+        run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
+      - name: test 2nd (cached artifacts)
+        run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
+      - name: test 3rd (cached artifacts)
+        run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
