@@ -1,6 +1,8 @@
 //! Tests for T9 — OS-aware simulator selector (`mg dev app`).
 
-use super::{detect_target_platform, find_ios_simulator, TargetPlatform};
+#[cfg(target_os = "macos")]
+use super::find_ios_simulator;
+use super::{detect_target_platform, TargetPlatform};
 
 #[test]
 fn detect_target_platform_returns_valid_variant() {
