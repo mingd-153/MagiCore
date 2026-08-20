@@ -365,44 +365,11 @@ pub async fn dev(dry_run: bool) -> Result<()> {
         }
 
         mg_app_adapter::AppLanguage::ReactNative => {
-            // React Native: theo platform
-            let rn_cmd = match &platform {
-                TargetPlatform::IosSimulator => {
-                    let udid = find_ios_simulator();
-                    if !dry_run {
-                        if let Some(ref u) = udid {
-                            boot_simulator(u).ok();
-                        }
-                    }
-                    InstallCommand {
-                        tool: "npm".to_string(),
-                        args: vec!["run".to_string(), "ios".to_string()],
-                    }
-                }
-                TargetPlatform::Android => InstallCommand {
-                    tool: "npm".to_string(),
-                    args: vec!["run".to_string(), "android".to_string()],
-                },
-            };
-            if dry_run {
-                mg_ui::info(&format!(
-                    "[dry-run] would run: {} {}",
-                    rn_cmd.tool,
-                    rn_cmd.args.join(" ")
-                ));
-                return Ok(());
-            }
-            mg_ui::info(&format!(
-                "App dev (React Native/{}): {} {}",
-                match platform {
-                    TargetPlatform::IosSimulator => "iOS",
-                    TargetPlatform::Android => "Android",
-                },
-                rn_cmd.tool,
-                rn_cmd.args.join(" ")
-            ));
-            run_tool(&root, &rn_cmd.tool, rn_cmd.args.as_slice())?;
-            Ok(())
+            let _ = platform;
+            let _ = dry_run;
+            Err(crate::error::app_not_available(
+                "react-native dev is blocked in beta until the MegaGate-native app runner is available",
+            ))
         }
 
         mg_app_adapter::AppLanguage::Multi => {

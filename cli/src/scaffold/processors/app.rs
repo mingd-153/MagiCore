@@ -132,7 +132,8 @@ impl AppProcessor {
             "#import \"ObjcBridge.h\"\n\n@implementation MGShared\n+ (NSString *)hello {\n    return @\"hello from MegaGate shared (objc)\";\n}\n@end\n",
         )?;
 
-        // react-native/ — js entry (scripts.android/ios: `mg dev` chạy qua npm run — C9)
+        // react-native/ — JS entry kept as scaffold data.
+        // Dữ liệu scaffold vẫn có RN, nhưng runner MegaGate không được gọi npm.
         write_file(
             &target.join("react-native").join("package.json"),
             &format!(

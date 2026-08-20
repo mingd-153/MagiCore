@@ -24,15 +24,29 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all --check
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: mg-exec allowlist tests
-        run: cargo test -p mg-exec --test run 2>&1
+        run: cargo test -p mg-exec --test test_run 2>&1
+      - name: single-core web CLI surface
+        run: cargo test -p mg --no-default-features --features web test_single_core_create_alias_parses --quiet
       - name: cargo check
-        run: cargo check --all-targets
+        run: cargo check --workspace --all-targets --locked
       - name: module hygiene
         run: bash scripts/check-module-hygiene.sh
       - name: no npm/npx/pnpm/yarn/bun (L94)
         run: bash scripts/check-no-pm.sh
+      - name: release hash updater syntax
+        run: bash -n scripts/update-release-hashes.sh
+      - name: package manifests syntax
+        run: |
+          ruby -c packaging/homebrew/megagate.rb
+          ruby -c packaging/homebrew/megagate-web.rb
+          python3 -m json.tool packaging/scoop/megagate.json >/dev/null
+          python3 -m json.tool packaging/scoop/megagate-web.json >/dev/null
+      - name: internal specs stay ignored
+        run: |
+          git check-ignore -q docs/specs/megaGateChangeLog.md
+          git check-ignore -q docs/specs/preGitCICDHardening20260820.md
 
   test:
     name: Test
@@ -44,7 +58,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --all-targets -- --test-threads=4
+        run: cargo test --all-targets --locked -- --test-threads=4
 
   build:
     name: Build Release
@@ -56,4 +70,4 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: cargo build --release
-        run: cargo build --release --all-targets
+        run: cargo build --release --all-targets --locked

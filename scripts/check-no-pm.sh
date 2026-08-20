@@ -2,7 +2,6 @@
 # L94: cấm gọi npm/npx/pnpm/yarn/bun trong code runtime (allowlist 00-index §5).
 # Exception hợp lệ (không phải code path runtime):
 #   - FORBIDDEN_TOOLS / allowlist.rs (định nghĩa lệnh cấm)
-#   - C9 RN exception trong cli/src/commands/build.rs:256 (npm install subdir RN)
 #   - adapters/web/benches/compare.rs (benchmark tham chiếu PM khác — không chạy trong product)
 set -euo pipefail
 
@@ -11,7 +10,6 @@ cd "$ROOT"
 
 BAD=$(grep -rnE '\b(npm|npx|pnpm|yarn|bun)\b' cli/src adapters core --include='*.rs' \
   | grep -vE 'tests/|/tests|benches/|allowlist.rs|FORBIDDEN_TOOLS|npmrc|npm_registry|npm-format|npmjs' \
-  | grep -vE 'run_allowlisted_tool\(&dir, "npm", &\["install"\]\)' \
   | grep -E 'Command::new|run_allowlisted_tool|\.run\(|exec::{2}|process::Command' || true)
 
 if [ -n "$BAD" ]; then

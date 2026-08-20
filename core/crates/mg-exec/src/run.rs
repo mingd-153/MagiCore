@@ -132,12 +132,9 @@ fn execute_command(
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    // C9: npm/npx chỉ được phép trong react-native subdir của project app multi.
-    let scoped_exempt: &[&str] = if crate::allowlist::is_react_native_subdir(Some(&cwd)) {
-        &["npm", "npx"]
-    } else {
-        &[]
-    };
+    // Forbidden PM tools stay blocked in every cwd.
+    // PM ngoài bị chặn tuyệt đối, không còn ngoại lệ React Native.
+    let scoped_exempt: &[&str] = &[];
 
     if opts.dry_run {
         // dry-run: in lệnh, không chạy, vẫn ghi audit với exit_code 0 + dry_run flag (§5.5)

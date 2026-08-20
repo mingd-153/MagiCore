@@ -3,6 +3,7 @@ use mg_ui::info;
 use crate::context::ProjectContext;
 
 /// Lệnh dev cho từng engine game (Q15/Q20): bevy → cargo run; godot → mở editor.
+#[cfg(feature = "game")]
 fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
     let adapter = mg_game_adapter::adapter_for(root)
         .ok_or_else(|| crate::error::no_framework_detected("game engine", root))?;
@@ -66,6 +67,7 @@ pub async fn run(
             }
             crate::commands::core::dev::web::dev_at_root(&root, Some(host), port).await
         }
+        #[cfg(feature = "game")]
         "game" => {
             let (cmd, args) = game_dev_command(&root)?;
             let opts = mg_exec::prelude::ExecOptions {
@@ -88,6 +90,9 @@ pub async fn run(
             })?;
             Ok(())
         }
+        #[cfg(not(feature = "game"))]
+        "game" => Err(crate::error::core_not_in_build("game")),
+        #[cfg(feature = "iot")]
         "iot" => {
             let (cmd, args) = iot_dev_command(&root)?;
             let opts = mg_exec::prelude::ExecOptions {
@@ -106,28 +111,43 @@ pub async fn run(
             })?;
             Ok(())
         }
+        #[cfg(not(feature = "iot"))]
+        "iot" => Err(crate::error::core_not_in_build("iot")),
+        #[cfg(feature = "clo")]
         "cloud" => {
             crate::commands::core::dev::clo::dev(false).await?;
             Ok(())
         }
+        #[cfg(not(feature = "clo"))]
+        "cloud" => Err(crate::error::core_not_in_build("clo")),
+        #[cfg(feature = "cicd")]
         "cicd" => {
             crate::commands::core::dev::cicd::dev(false).await?;
             Ok(())
         }
+        #[cfg(not(feature = "cicd"))]
+        "cicd" => Err(crate::error::core_not_in_build("cicd")),
+        #[cfg(feature = "app")]
         "app" => {
             crate::commands::core::dev::app::dev(false).await?;
             Ok(())
         }
+        #[cfg(not(feature = "app"))]
+        "app" => Err(crate::error::core_not_in_build("app")),
+        #[cfg(feature = "ai")]
         "ai" => {
             crate::commands::core::dev::ai::dev(false).await?;
             Ok(())
         }
+        #[cfg(not(feature = "ai"))]
+        "ai" => Err(crate::error::core_not_in_build("ai")),
         other => Err(crate::error::dev_core_not_implemented(other)),
     }
 }
 
 /// Lệnh dev cho từng framework IoT (Q16/Q20): esp32-rust → espflash monitor;
 /// platformio/zephyr → passthrough tới tool của framework (P1).
+#[cfg(feature = "iot")]
 fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
     let adapter = mg_iot_adapter::adapter_for(root)
         .ok_or_else(|| crate::error::no_framework_detected("IoT", root))?;
@@ -139,7 +159,7 @@ fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "game", feature = "iot"))]
 mod tests {
     use super::*;
 

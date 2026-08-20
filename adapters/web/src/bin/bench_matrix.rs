@@ -28,6 +28,10 @@ struct ScenarioMeasurement {
     node_modules_files: usize,
     node_modules_bytes: u64,
     hardlinked_files: usize,
+    #[serde(default)]
+    cache_files: usize,
+    #[serde(default)]
+    cache_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +45,12 @@ struct NodeModulesStats {
     files: usize,
     bytes: u64,
     hardlinked_files: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TreeStats {
+    files: usize,
+    bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,7 +205,12 @@ fn run_fixture_matrix(
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
-            Ok((elapsed, summary.bytes_from_cache, stats))
+            Ok((
+                elapsed,
+                summary.bytes_from_cache,
+                stats,
+                TreeStats::default(),
+            ))
         })
     })?;
 
@@ -222,7 +237,12 @@ fn run_fixture_matrix(
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
-            Ok((elapsed, summary.bytes_from_cache, stats))
+            Ok((
+                elapsed,
+                summary.bytes_from_cache,
+                stats,
+                TreeStats::default(),
+            ))
         })
     })?;
 
@@ -245,7 +265,12 @@ fn run_fixture_matrix(
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
-            Ok((elapsed, summary.bytes_from_cache, stats))
+            Ok((
+                elapsed,
+                summary.bytes_from_cache,
+                stats,
+                TreeStats::default(),
+            ))
         })
     })?;
 
@@ -269,7 +294,12 @@ fn run_fixture_matrix(
                 ))?;
                 let elapsed = started.elapsed().as_secs_f64() * 1000.0;
                 let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
-                Ok((elapsed, summary.bytes_from_cache, stats))
+                Ok((
+                    elapsed,
+                    summary.bytes_from_cache,
+                    stats,
+                    TreeStats::default(),
+                ))
             })
         })?;
 
@@ -297,9 +327,65 @@ fn run_fixture_matrix(
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
-            Ok((elapsed, summary.bytes_from_cache, stats))
+            Ok((
+                elapsed,
+                summary.bytes_from_cache,
+                stats,
+                TreeStats::default(),
+            ))
         })
     })?;
+
+    let repeated_cache_growth =
+        measure_scenario(&scenario_name("repeated-cache-growth"), runs, || {
+            let shared = tempfile::tempdir()?;
+            seed_shared_tarballs(
+                shared.path(),
+                &fixture.graph.packages,
+                fixture.files_per_package,
+            )?;
+            let dir = tempfile::tempdir()?;
+            write_package_json(dir.path(), &fixture.direct_dependencies)?;
+            with_isolated_shared_cache(rt, Some(shared.path()), || {
+                let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+                for _ in 0..2 {
+                    rt.block_on(adapter.install(
+                        &fixture.graph,
+                        dir.path(),
+                        mg_types::adapter::InstallOptions::default(),
+                    ))?;
+                    let node_modules = dir.path().join("node_modules");
+                    if node_modules.exists() {
+                        std::fs::remove_dir_all(&node_modules)?;
+                    }
+                }
+                let before = inspect_tree(shared.path())?;
+                let started = Instant::now();
+                let mut last_summary = None;
+                for idx in 0..12 {
+                    let summary = rt.block_on(adapter.install(
+                        &fixture.graph,
+                        dir.path(),
+                        mg_types::adapter::InstallOptions::default(),
+                    ))?;
+                    last_summary = Some(summary);
+                    let node_modules = dir.path().join("node_modules");
+                    if idx < 11 && node_modules.exists() {
+                        std::fs::remove_dir_all(node_modules)?;
+                    }
+                }
+                let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                let summary =
+                    last_summary.ok_or_else(|| anyhow::anyhow!("repeated install did not run"))?;
+                let after = inspect_tree(shared.path())?;
+                let cache_growth = TreeStats {
+                    files: after.files.saturating_sub(before.files),
+                    bytes: after.bytes.saturating_sub(before.bytes),
+                };
+                let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
+                Ok((elapsed, summary.bytes_from_cache, stats, cache_growth))
+            })
+        })?;
 
     Ok(vec![
         cold_local_cache.with_packages(fixture.graph.packages.len()),
@@ -307,6 +393,7 @@ fn run_fixture_matrix(
         cold_online.with_packages(fixture.graph.packages.len()),
         shared_cache_bootstrap.with_packages(fixture.graph.packages.len()),
         offline_cached.with_packages(fixture.graph.packages.len()),
+        repeated_cache_growth.with_packages(fixture.graph.packages.len()),
     ])
 }
 
@@ -316,6 +403,7 @@ struct ScenarioAccumulator {
     samples_ms: Vec<f64>,
     bytes_from_cache: u64,
     stats: NodeModulesStats,
+    cache_stats: TreeStats,
 }
 
 struct RegistryFixture {
@@ -346,6 +434,8 @@ impl ScenarioAccumulator {
             node_modules_files: self.stats.files,
             node_modules_bytes: self.stats.bytes,
             hardlinked_files: self.stats.hardlinked_files,
+            cache_files: self.cache_stats.files,
+            cache_bytes: self.cache_stats.bytes,
         }
     }
 }
@@ -356,7 +446,7 @@ fn measure_scenario<F>(
     mut run_once: F,
 ) -> anyhow::Result<ScenarioAccumulator>
 where
-    F: FnMut() -> anyhow::Result<(f64, u64, NodeModulesStats)>,
+    F: FnMut() -> anyhow::Result<(f64, u64, NodeModulesStats, TreeStats)>,
 {
     let mut samples_ms = Vec::with_capacity(runs);
     let mut last_bytes_from_cache = 0u64;
@@ -365,12 +455,14 @@ where
         bytes: 0,
         hardlinked_files: 0,
     };
+    let mut last_cache_stats = TreeStats::default();
 
     for _ in 0..runs {
-        let (sample_ms, bytes_from_cache, stats) = run_once()?;
+        let (sample_ms, bytes_from_cache, stats, cache_stats) = run_once()?;
         samples_ms.push(sample_ms);
         last_bytes_from_cache = bytes_from_cache;
         last_stats = stats;
+        last_cache_stats = cache_stats;
     }
 
     Ok(ScenarioAccumulator {
@@ -378,6 +470,7 @@ where
         samples_ms,
         bytes_from_cache: last_bytes_from_cache,
         stats: last_stats,
+        cache_stats: last_cache_stats,
     })
 }
 
@@ -860,6 +953,24 @@ fn inspect_node_modules(root: &Path) -> anyhow::Result<NodeModulesStats> {
     })
 }
 
+fn inspect_tree(root: &Path) -> anyhow::Result<TreeStats> {
+    if !root.exists() {
+        return Ok(TreeStats::default());
+    }
+
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        files += 1;
+        bytes += entry.metadata()?.len();
+    }
+
+    Ok(TreeStats { files, bytes })
+}
+
 fn baseline_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".benchmarks")
@@ -876,7 +987,7 @@ fn current_unix_secs() -> u64 {
 fn print_report(scenarios: &[ScenarioMeasurement]) {
     println!("Benchmark matrix (install/materialization only)");
     println!(
-        "{:<24} {:>4} {:>10} {:>10} {:>10} {:>10} {:>10} {:>12} {:>10} {:>10} {:>10}",
+        "{:<24} {:>4} {:>10} {:>10} {:>10} {:>10} {:>10} {:>12} {:>10} {:>10} {:>10} {:>10} {:>10}",
         "scenario",
         "runs",
         "median",
@@ -887,11 +998,13 @@ fn print_report(scenarios: &[ScenarioMeasurement]) {
         "cache-bytes",
         "files",
         "nm-bytes",
-        "hardlinks"
+        "hardlinks",
+        "cache-files",
+        "cache-bytes"
     );
     for scenario in scenarios {
         println!(
-            "{:<24} {:>4} {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>12} {:>10} {:>10} {:>10}",
+            "{:<24} {:>4} {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>8.2}ms {:>12} {:>10} {:>10} {:>10} {:>10} {:>10}",
             scenario.name,
             scenario.runs,
             scenario.median_ms,
@@ -903,6 +1016,8 @@ fn print_report(scenarios: &[ScenarioMeasurement]) {
             scenario.node_modules_files,
             scenario.node_modules_bytes,
             scenario.hardlinked_files,
+            scenario.cache_files,
+            scenario.cache_bytes,
         );
     }
 }

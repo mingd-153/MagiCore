@@ -520,9 +520,9 @@ impl TryFrom<Commands> for DispatchCommand {
                 repair,
                 dry_run,
             } => {
-                let ecosystem = detect_ecosystem()?;
-                match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::InstallWeb {
+                let ecosystem = require_detected_ecosystem("install", detect_ecosystem()?)?;
+                match ecosystem.as_str() {
+                    "web" => SomeCore(CoreCommand::InstallWeb {
                         packages,
                         frozen,
                         ignore_scripts,
@@ -530,21 +530,14 @@ impl TryFrom<Commands> for DispatchCommand {
                         prefer_dedupe,
                         repair,
                     }),
-                    Some("game") => SomeCore(CoreCommand::InstallGame { packages }),
-                    Some("ai") => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
-                    Some("clo") => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
-                    Some("cicd") => SomeCore(CoreCommand::InstallCicd { packages, dry_run }),
-                    Some("iot") => SomeCore(CoreCommand::InstallIot { packages }),
-                    Some("app") => SomeCore(CoreCommand::InstallApp { packages, dry_run }),
-                    Some("lib") => SomeCore(CoreCommand::InstallLib { packages }),
-                    _ => SomeCore(CoreCommand::InstallWeb {
-                        packages,
-                        frozen,
-                        ignore_scripts,
-                        allow_scripts,
-                        prefer_dedupe,
-                        repair,
-                    }),
+                    "game" => SomeCore(CoreCommand::InstallGame { packages }),
+                    "ai" => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
+                    "clo" => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
+                    "cicd" => SomeCore(CoreCommand::InstallCicd { packages, dry_run }),
+                    "iot" => SomeCore(CoreCommand::InstallIot { packages }),
+                    "app" => SomeCore(CoreCommand::InstallApp { packages, dry_run }),
+                    "lib" => SomeCore(CoreCommand::InstallLib { packages }),
+                    other => return Err(crate::error::unknown_core(other)),
                 }
             }
             Commands::Add {
@@ -558,9 +551,9 @@ impl TryFrom<Commands> for DispatchCommand {
                 no_install,
                 ..
             } => {
-                let ecosystem = detect_ecosystem()?;
-                match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::AddWeb {
+                let ecosystem = require_detected_ecosystem("add", detect_ecosystem()?)?;
+                match ecosystem.as_str() {
+                    "web" => SomeCore(CoreCommand::AddWeb {
                         packages,
                         dev,
                         exact,
@@ -570,7 +563,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         install: !no_install,
                         global,
                     }),
-                    Some("game") => SomeCore(CoreCommand::AddGame {
+                    "game" => SomeCore(CoreCommand::AddGame {
                         packages,
                         dev,
                         exact,
@@ -579,7 +572,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         no_save,
                         global,
                     }),
-                    Some("ai") => SomeCore(CoreCommand::AddAi {
+                    "ai" => SomeCore(CoreCommand::AddAi {
                         packages,
                         dev,
                         exact,
@@ -588,7 +581,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         no_save,
                         global,
                     }),
-                    Some("clo") => SomeCore(CoreCommand::AddClo {
+                    "clo" => SomeCore(CoreCommand::AddClo {
                         packages,
                         dev,
                         exact,
@@ -597,7 +590,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         no_save,
                         global,
                     }),
-                    Some("cicd") => SomeCore(CoreCommand::AddCicd {
+                    "cicd" => SomeCore(CoreCommand::AddCicd {
                         packages,
                         dev,
                         exact,
@@ -606,7 +599,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         no_save,
                         global,
                     }),
-                    Some("iot") => SomeCore(CoreCommand::AddIot {
+                    "iot" => SomeCore(CoreCommand::AddIot {
                         packages,
                         dev,
                         exact,
@@ -615,7 +608,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         no_save,
                         global,
                     }),
-                    Some("app") => SomeCore(CoreCommand::AddApp {
+                    "app" => SomeCore(CoreCommand::AddApp {
                         packages,
                         dev,
                         exact,
@@ -624,7 +617,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         no_save,
                         global,
                     }),
-                    Some("lib") => SomeCore(CoreCommand::AddLib {
+                    "lib" => SomeCore(CoreCommand::AddLib {
                         packages,
                         dev,
                         exact,
@@ -633,68 +626,56 @@ impl TryFrom<Commands> for DispatchCommand {
                         no_save,
                         global,
                     }),
-                    _ => SomeCore(CoreCommand::AddWeb {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        install: !no_install,
-                        global,
-                    }),
+                    other => return Err(crate::error::unknown_core(other)),
                 }
             }
             Commands::Remove {
                 packages,
                 no_install,
             } => {
-                let ecosystem = detect_ecosystem()?;
-                match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::RemoveWeb {
+                let ecosystem = require_detected_ecosystem("remove", detect_ecosystem()?)?;
+                match ecosystem.as_str() {
+                    "web" => SomeCore(CoreCommand::RemoveWeb {
                         packages,
                         install: !no_install,
                     }),
-                    Some("game") => SomeCore(CoreCommand::RemoveGame { packages }),
-                    Some("ai") => SomeCore(CoreCommand::RemoveAi { packages }),
-                    Some("clo") => SomeCore(CoreCommand::RemoveClo { packages }),
-                    Some("cicd") => SomeCore(CoreCommand::RemoveCicd { packages }),
-                    Some("iot") => SomeCore(CoreCommand::RemoveIot { packages }),
-                    Some("app") => SomeCore(CoreCommand::RemoveApp { packages }),
-                    Some("lib") => SomeCore(CoreCommand::RemoveLib { packages }),
-                    _ => SomeCore(CoreCommand::RemoveWeb {
-                        packages,
-                        install: !no_install,
-                    }),
+                    "game" => SomeCore(CoreCommand::RemoveGame { packages }),
+                    "ai" => SomeCore(CoreCommand::RemoveAi { packages }),
+                    "clo" => SomeCore(CoreCommand::RemoveClo { packages }),
+                    "cicd" => SomeCore(CoreCommand::RemoveCicd { packages }),
+                    "iot" => SomeCore(CoreCommand::RemoveIot { packages }),
+                    "app" => SomeCore(CoreCommand::RemoveApp { packages }),
+                    "lib" => SomeCore(CoreCommand::RemoveLib { packages }),
+                    other => return Err(crate::error::unknown_core(other)),
                 }
             }
             Commands::List => {
-                let ecosystem = detect_ecosystem()?;
-                match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::ListWeb),
-                    Some("game") => SomeCore(CoreCommand::ListGame),
-                    Some("ai") => SomeCore(CoreCommand::ListAi),
-                    Some("clo") => SomeCore(CoreCommand::ListClo),
-                    Some("cicd") => SomeCore(CoreCommand::ListCicd),
-                    Some("iot") => SomeCore(CoreCommand::ListIot),
-                    Some("app") => SomeCore(CoreCommand::ListApp),
-                    Some("lib") => SomeCore(CoreCommand::ListLib),
-                    Some("hardware") => SomeCore(CoreCommand::ListHardware),
-                    _ => SomeCore(CoreCommand::ListWeb),
+                let ecosystem = require_detected_ecosystem("list", detect_ecosystem()?)?;
+                match ecosystem.as_str() {
+                    "web" => SomeCore(CoreCommand::ListWeb),
+                    "game" => SomeCore(CoreCommand::ListGame),
+                    "ai" => SomeCore(CoreCommand::ListAi),
+                    "clo" => SomeCore(CoreCommand::ListClo),
+                    "cicd" => SomeCore(CoreCommand::ListCicd),
+                    "iot" => SomeCore(CoreCommand::ListIot),
+                    "app" => SomeCore(CoreCommand::ListApp),
+                    "lib" => SomeCore(CoreCommand::ListLib),
+                    "hardware" => SomeCore(CoreCommand::ListHardware),
+                    other => return Err(crate::error::unknown_core(other)),
                 }
             }
             Commands::Update { packages, install } => {
-                let ecosystem = detect_ecosystem()?;
-                match ecosystem.as_deref() {
-                    Some("web") => SomeCore(CoreCommand::UpdateWeb { packages, install }),
-                    Some("game") => SomeCore(CoreCommand::UpdateGame { packages, install }),
-                    Some("ai") => SomeCore(CoreCommand::UpdateAi { packages, install }),
-                    Some("clo") => SomeCore(CoreCommand::UpdateClo { packages, install }),
-                    Some("cicd") => SomeCore(CoreCommand::UpdateCicd { packages, install }),
-                    Some("iot") => SomeCore(CoreCommand::UpdateIot { packages, install }),
-                    Some("app") => SomeCore(CoreCommand::UpdateApp { packages, install }),
-                    Some("lib") => SomeCore(CoreCommand::UpdateLib { packages, install }),
-                    _ => SomeCore(CoreCommand::UpdateWeb { packages, install }),
+                let ecosystem = require_detected_ecosystem("update", detect_ecosystem()?)?;
+                match ecosystem.as_str() {
+                    "web" => SomeCore(CoreCommand::UpdateWeb { packages, install }),
+                    "game" => SomeCore(CoreCommand::UpdateGame { packages, install }),
+                    "ai" => SomeCore(CoreCommand::UpdateAi { packages, install }),
+                    "clo" => SomeCore(CoreCommand::UpdateClo { packages, install }),
+                    "cicd" => SomeCore(CoreCommand::UpdateCicd { packages, install }),
+                    "iot" => SomeCore(CoreCommand::UpdateIot { packages, install }),
+                    "app" => SomeCore(CoreCommand::UpdateApp { packages, install }),
+                    "lib" => SomeCore(CoreCommand::UpdateLib { packages, install }),
+                    other => return Err(crate::error::unknown_core(other)),
                 }
             }
             Commands::CreateWeb {
@@ -972,6 +953,10 @@ impl TryFrom<Commands> for DispatchCommand {
             _ => unreachable!("Common commands should be handled by the first match block"),
         })
     }
+}
+
+fn require_detected_ecosystem(verb: &str, ecosystem: Option<String>) -> anyhow::Result<String> {
+    ecosystem.ok_or_else(|| crate::error::bare_core_not_detected(verb))
 }
 
 pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
