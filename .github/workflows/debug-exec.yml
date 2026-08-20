@@ -12,9 +12,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: single test
-        run: cargo test -p mg-exec --test test_run command_timeout -- --nocapture --exact 2>&1
-      - name: full suite
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: mg-exec allowlist tests
         run: cargo test -p mg-exec --test test_run 2>&1
-      - name: full suite 2
-        run: cargo test -p mg-exec --test test_run 2>&1
+        timeout-minutes: 2
+      - name: single-core web CLI surface
+        run: cargo test -p mg --no-default-features --features web test_single_core_create_alias_parses --quiet
+      - name: cargo check
+        run: cargo check --workspace --all-targets --locked
