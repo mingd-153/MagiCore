@@ -12,9 +12,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: full suite
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: mg-exec allowlist tests
         run: cargo test -p mg-exec --test test_run 2>&1
-      - name: full suite run2
+      - name: mg-exec allowlist tests run2
         run: cargo test -p mg-exec --test test_run 2>&1
-      - name: full suite run3
+      - name: mg-exec allowlist tests run3
         run: cargo test -p mg-exec --test test_run 2>&1
