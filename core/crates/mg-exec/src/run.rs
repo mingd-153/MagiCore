@@ -448,18 +448,18 @@ fn configure_process_isolation(_command: &mut Command) {}
 
 #[cfg(unix)]
 fn terminate_process_tree(root_pid: u32) {
-    let process_group = format!("-{root_pid}");
-    let _ = Command::new("kill")
-        .args(["-TERM", &process_group])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    std::thread::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS));
-    let _ = Command::new("kill")
-        .args(["-KILL", &process_group])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    if let Ok(pid) = (root_pid as i32).try_into() {
+        let pgid: i32 = -pid;
+        unsafe {
+            libc::kill(pgid, libc::SIGTERM);
+            libc::kill(pid, libc::SIGTERM);
+        }
+        std::thread::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS));
+        unsafe {
+            libc::kill(pgid, libc::SIGKILL);
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
 }
 
 #[cfg(not(unix))]
