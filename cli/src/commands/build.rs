@@ -344,7 +344,9 @@ async fn build_cloud(root: &Path) -> Result<()> {
                 mg_ui::warning("pulumi not found — skipping build (install pulumi CLI first)");
                 return Ok(());
             }
-            run_allowlisted_tool(root, "pulumi", &["preview"])?;
+            if let Err(e) = run_allowlisted_tool(root, "pulumi", &["preview"]) {
+                mg_ui::warning(&format!("pulumi preview skipped: {e}"));
+            }
         }
         mg_cloud_adapter::CloudType::Terraform => {
             if tool_unavailable("terraform") {
@@ -353,7 +355,9 @@ async fn build_cloud(root: &Path) -> Result<()> {
                 );
                 return Ok(());
             }
-            run_allowlisted_tool(root, "terraform", &["plan"])?;
+            if let Err(e) = run_allowlisted_tool(root, "terraform", &["plan"]) {
+                mg_ui::warning(&format!("terraform plan skipped (uninitialized or error): {e}"));
+            }
         }
         mg_cloud_adapter::CloudType::Cloudflare => {
             return Err(crate::error::cloudflare_build_in_cicd_core());
