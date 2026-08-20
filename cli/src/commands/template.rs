@@ -175,8 +175,8 @@ async fn publish(args: TemplatePublishArgs) -> Result<()> {
         .join(format!("{}.tgz", name.replace('/', "-")));
     let pack_result = mg_pack::tarball::pack(&layer, &tarball_path, &format!("{name}-{version}"))?;
 
-    let npmrc = NpmRc::load(Path::new("."))?;
-    let auth = resolve_auth(&npmrc, &registry, None, None)?;
+    let npmrc = NpmRc::load(Path::new(".")).unwrap_or_default();
+    let auth = resolve_auth(&npmrc, &registry, None, None).unwrap_or_default();
     if auth.is_empty() {
         let host = url::Url::parse(&registry)
             .map(|u| u.host_str().unwrap_or_default().to_string())
