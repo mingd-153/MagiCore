@@ -155,7 +155,9 @@ fn collect_layers_under(root: &Path, out: &mut Vec<PathBuf>) {
 /// `mg-create-<core>-<name>` trên registry (mg-pack tarball + npm PUT).
 async fn publish(args: TemplatePublishArgs) -> Result<()> {
     let rel = layer_rel(&args.core, &args.name);
-    let layer = crate::scaffold::template_root::TemplateRoot::resolve(&rel).path().to_path_buf();
+    let layer = crate::scaffold::template_root::TemplateRoot::resolve(&rel)
+        .path()
+        .to_path_buf();
     if !layer.join("template.toml").is_file() || !layer.join("sources").is_dir() {
         bail!(
             "Template layer '{}' missing template.toml/sources",
