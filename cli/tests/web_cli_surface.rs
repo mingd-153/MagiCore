@@ -70,6 +70,24 @@ fn test_add_web_accepts_flags() {
 }
 
 #[test]
+fn test_bare_add_without_detected_core_fails_closed() {
+    let dir = common::work_dir();
+    let (ok, out) = common::mg_in(&dir, &["add", "zod", "--no-install"]);
+    assert!(!ok, "bare add should fail without core context\n{out}");
+    assert!(
+        out.contains("could not detect a MegaGate core"),
+        "bare add should explain missing core context\n{out}"
+    );
+}
+
+#[test]
+fn test_bare_add_with_core_flag_keeps_single_core_path() {
+    let (ok, out) = common::mg(&["--core", "web", "add", "--help"]);
+    assert!(ok, "mg --core web add --help failed\n{out}");
+    assert!(out.contains("--no-install"), "should mention --no-install");
+}
+
+#[test]
 fn test_remove_web_accepts_multiple_packages() {
     let (ok, out) = common::mg(&["remove-web", "--help"]);
     assert!(ok, "remove-web --help failed\n{out}");

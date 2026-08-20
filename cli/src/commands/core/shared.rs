@@ -1109,6 +1109,7 @@ fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
 // ── ai helpers (Phase 7 v5) ───────────────────────────────────────────────────
 
 /// ai project root — detect qua mg_ai_adapter (không dùng find_project_root).
+#[cfg(feature = "ai")]
 pub fn ai_project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     mg_ai_adapter::adapter_for(&cwd)
@@ -1162,6 +1163,7 @@ pub fn ai_run_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) 
 }
 
 /// ai: entry script qua python3 (Q20, allowlist §5.1) — `mg dev` ai.
+#[cfg(feature = "ai")]
 pub async fn ai_dev(_dry_run: bool) -> Result<()> {
     let root = ai_project_root()?;
     let framework =

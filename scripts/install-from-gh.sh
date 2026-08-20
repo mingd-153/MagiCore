@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Install mg binary from GitHub release.
 # Usage: curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install-from-gh.sh | bash
-# Or:  ./scripts/install-from-gh.sh [--package megagate-web] [--version v0.1.0] [--dir /usr/local/bin]
+# Or:  ./scripts/install-from-gh.sh [--package megagate|megagate-web] [--version v0.1.0] [--dir /usr/local/bin]
 # Local test: ./scripts/install-from-gh.sh --archive dist/megagate-web-macOS-ARM64.tar.gz --dir /tmp/mg-bin
 set -euo pipefail
 
 REPO="mingd-153/MegaGate"
-PKG="megagate-web"
+PKG="megagate"
 VERSION="latest"
 INSTALL_DIR="/usr/local/bin"
 ARCHIVE=""

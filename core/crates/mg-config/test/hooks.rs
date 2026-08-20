@@ -20,7 +20,7 @@ fn hooks_failure_fails_command() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("mg.hooks.toml"),
-        "hooks = { \"post-publish\" = [\"exit 3\"] }\n",
+        "hooks = { \"post-publish\" = [\"false\"] }\n",
     )
     .unwrap();
     let err = run_hooks(dir.path(), "post-publish").unwrap_err();
@@ -37,4 +37,28 @@ fn hooks_list_events() {
     .unwrap();
     let hooks = list_hooks(dir.path()).unwrap();
     assert!(hooks.contains_key("pre-install"));
+}
+
+#[test]
+fn hooks_reject_shell_chaining() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mg.hooks.toml"),
+        "hooks = { \"pre-install\" = [\"echo ok && npm install\"] }\n",
+    )
+    .unwrap();
+    let err = run_hooks(dir.path(), "pre-install").unwrap_err();
+    assert!(err.to_string().contains("shell control operator"));
+}
+
+#[test]
+fn hooks_reject_package_manager_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mg.hooks.toml"),
+        "hooks = { \"pre-install\" = [\"npm install\"] }\n",
+    )
+    .unwrap();
+    let err = run_hooks(dir.path(), "pre-install").unwrap_err();
+    assert!(err.to_string().contains("forbidden"));
 }

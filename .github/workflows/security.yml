@@ -18,6 +18,8 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Run audit
         run: cargo audit --color never
+      - name: Verify lockfile is reproducible
+        run: cargo check --workspace --locked
 
   osv:
     name: OSV scanner

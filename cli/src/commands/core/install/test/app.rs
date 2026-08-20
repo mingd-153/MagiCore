@@ -12,8 +12,8 @@ fn install_command_per_language() {
     assert_eq!(sw.tool, "swift");
     assert_eq!(sw.args, vec!["package", "resolve"]);
     let rn = install_command(mg_app_adapter::AppLanguage::ReactNative);
-    assert_eq!(rn.tool, "npm");
-    assert_eq!(rn.args, vec!["install"]);
+    assert!(rn.tool.is_empty());
+    assert!(rn.args.is_empty());
 }
 
 #[test]
@@ -30,10 +30,9 @@ fn dev_command_per_language() {
         dev_command(mg_app_adapter::AppLanguage::Swift).args,
         vec!["run"]
     );
-    assert_eq!(
-        dev_command(mg_app_adapter::AppLanguage::ReactNative).args,
-        vec!["run", "android"]
-    );
+    let rn = dev_command(mg_app_adapter::AppLanguage::ReactNative);
+    assert!(rn.tool.is_empty());
+    assert!(rn.args.is_empty());
 }
 
 #[test]

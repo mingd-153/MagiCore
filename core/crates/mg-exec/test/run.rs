@@ -290,7 +290,7 @@ fn inherited_project_binary_rejects_script_that_references_forbidden_pm() {
 }
 
 #[test]
-fn npm_allowed_only_inside_react_native_subdir() {
+fn npm_is_blocked_even_inside_react_native_subdir() {
     let base = std::env::temp_dir().join(format!("mgexec-rn-{}", std::process::id()));
     let rn = base.join("react-native");
     let _ = fs::remove_dir_all(&base);
@@ -309,8 +309,8 @@ fn npm_allowed_only_inside_react_native_subdir() {
     };
     let err = run_inherited("npm", &["install".to_string()], &opts).unwrap_err();
     assert!(
-        !err.to_string().contains("forbidden"),
-        "npm inside react-native subdir must pass allowlist, got: {err}"
+        err.to_string().contains("permanently forbidden"),
+        "npm inside react-native subdir must stay blocked, got: {err}"
     );
 
     let outside = ExecOptions {
@@ -319,7 +319,7 @@ fn npm_allowed_only_inside_react_native_subdir() {
     };
     let err = run_inherited("npm", &["install".to_string()], &outside).unwrap_err();
     assert!(
-        err.to_string().contains("forbidden"),
+        err.to_string().contains("permanently forbidden"),
         "npm outside react-native subdir must be rejected, got: {err}"
     );
 

@@ -54,6 +54,7 @@ pub fn create_adapter_for(
     token: Option<&str>,
     fallbacks: &[(String, Option<String>)],
 ) -> anyhow::Result<Arc<dyn PackageAdapter>> {
+    let _ = root;
     if let Some(plugin) = mg_plugin::global().get(*ecosystem) {
         if let Some(adapter) = plugin.as_adapter() {
             return Ok(adapter);
@@ -79,10 +80,13 @@ pub fn create_adapter_for(
         ),
         #[cfg(not(feature = "game"))]
         Ecosystem::Game => return Err(crate::error::core_not_in_build("game")),
+        #[cfg(feature = "ai")]
         Ecosystem::Ai => Arc::new(
             mg_ai_adapter::adapter_for(root)
                 .ok_or_else(|| crate::error::detect_core_failed("ai"))?,
         ),
+        #[cfg(not(feature = "ai"))]
+        Ecosystem::Ai => return Err(crate::error::core_not_in_build("ai")),
         #[cfg(feature = "clo")]
         Ecosystem::Cloud => Arc::new(
             mg_cloud_adapter::adapter_for(root)
@@ -90,10 +94,13 @@ pub fn create_adapter_for(
         ),
         #[cfg(not(feature = "clo"))]
         Ecosystem::Cloud => return Err(crate::error::core_not_in_build("clo")),
+        #[cfg(feature = "cicd")]
         Ecosystem::Cicd => Arc::new(
             mg_cicd_adapter::adapter_for(root)
                 .ok_or_else(|| crate::error::detect_core_failed("cicd"))?,
         ),
+        #[cfg(not(feature = "cicd"))]
+        Ecosystem::Cicd => return Err(crate::error::core_not_in_build("cicd")),
         #[cfg(feature = "iot")]
         Ecosystem::Iot => Arc::new(
             mg_iot_adapter::adapter_for(root)
@@ -101,10 +108,13 @@ pub fn create_adapter_for(
         ),
         #[cfg(not(feature = "iot"))]
         Ecosystem::Iot => return Err(crate::error::core_not_in_build("iot")),
+        #[cfg(feature = "app")]
         Ecosystem::App => Arc::new(
             mg_app_adapter::adapter_for(root)
                 .ok_or_else(|| crate::error::detect_core_failed("app"))?,
         ),
+        #[cfg(not(feature = "app"))]
+        Ecosystem::App => return Err(crate::error::core_not_in_build("app")),
         #[cfg(feature = "hardware")]
         Ecosystem::Hardware => Arc::new(
             mg_hardware_adapter::adapter_for(root)

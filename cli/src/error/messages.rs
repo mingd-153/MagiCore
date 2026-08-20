@@ -178,6 +178,13 @@ pub fn unknown_core(core: &str) -> Error {
     anyhow!("Unknown core '{core}'")
 }
 
+/// bare package command needs an explicit or detected core
+pub fn bare_core_not_detected(verb: &str) -> Error {
+    anyhow!(
+        "`mg {verb}` could not detect a MegaGate core in this project. Use `mg --core <core> {verb}` or the explicit command such as `mg {verb}-web`."
+    )
+}
+
 /// chưa chạy mg init
 pub fn project_root_missing() -> Error {
     anyhow!("Project root not found — run mg init")
@@ -245,7 +252,7 @@ pub fn app_tool_failed(cmd: &str, e: &dyn std::fmt::Display) -> Error {
 }
 
 /// verb không có CLI passthrough cho language
-pub fn manifest_hint(verb: &str, lang: &mg_app_adapter::AppLanguage, file: &str) -> Error {
+pub fn manifest_hint(verb: &str, lang: &str, file: &str) -> Error {
     anyhow!("'{verb}' for {lang:?} has no CLI passthrough — edit {file} then run `mg install`.")
 }
 

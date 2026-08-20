@@ -5,13 +5,21 @@
 
 use anyhow::Result;
 
+#[cfg(feature = "ai")]
 pub mod ai;
+#[cfg(feature = "app")]
 pub mod app;
+#[cfg(feature = "cicd")]
 pub mod cicd;
+#[cfg(feature = "clo")]
 pub mod clo;
+#[cfg(feature = "game")]
 pub mod game;
+#[cfg(feature = "hardware")]
 pub mod hardware;
+#[cfg(feature = "iot")]
 pub mod iot;
+#[cfg(feature = "lib")]
 pub mod library;
 pub mod web;
 
@@ -26,14 +34,38 @@ pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> 
             web::run_create_with_options(framework, project_name, Some(flags)).await
         }
 
+        #[cfg(feature = "app")]
         "app" => app::run(framework, project_name).await,
+        #[cfg(not(feature = "app"))]
+        "app" => Err(crate::error::core_not_in_build("app")),
+        #[cfg(feature = "game")]
         "game" => game::run(framework, project_name).await,
+        #[cfg(not(feature = "game"))]
+        "game" => Err(crate::error::core_not_in_build("game")),
+        #[cfg(feature = "ai")]
         "ai" => ai::run(framework, project_name).await,
+        #[cfg(not(feature = "ai"))]
+        "ai" => Err(crate::error::core_not_in_build("ai")),
+        #[cfg(feature = "clo")]
         "clo" => clo::run(framework, project_name).await,
+        #[cfg(not(feature = "clo"))]
+        "clo" => Err(crate::error::core_not_in_build("clo")),
+        #[cfg(feature = "iot")]
         "iot" => iot::run(framework, project_name).await,
+        #[cfg(not(feature = "iot"))]
+        "iot" => Err(crate::error::core_not_in_build("iot")),
+        #[cfg(feature = "cicd")]
         "cicd" => cicd::run(framework, project_name).await,
+        #[cfg(not(feature = "cicd"))]
+        "cicd" => Err(crate::error::core_not_in_build("cicd")),
+        #[cfg(feature = "lib")]
         "lib" | "library" => library::run(project_name).await,
+        #[cfg(not(feature = "lib"))]
+        "lib" | "library" => Err(crate::error::core_not_in_build("lib")),
+        #[cfg(feature = "hardware")]
         "hardware" => hardware::run(framework, project_name).await,
+        #[cfg(not(feature = "hardware"))]
+        "hardware" => Err(crate::error::core_not_in_build("hardware")),
         other => return Err(crate::error::unknown_core(other)),
     };
 

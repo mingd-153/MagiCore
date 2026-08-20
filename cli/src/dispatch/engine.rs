@@ -397,7 +397,7 @@ fn command_name(command: &Commands) -> &'static str {
 }
 
 async fn dispatch_command(command: Commands, core: Option<&str>, recursive: bool) -> Result<()> {
-    match crate::dispatch::per_core::command_to_dispatch(command, core) {
+    match crate::dispatch::per_core::command_to_dispatch(command, core)? {
         DispatchCommand::Common(cmd) => super::common::dispatch_common(cmd, core, recursive).await,
         DispatchCommand::Core(cmd) => super::core::dispatch_core(cmd).await,
     }

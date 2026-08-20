@@ -2,7 +2,10 @@ use crate::dispatch::bare;
 use crate::dispatch::types::{detect_ecosystem, CommonCommand, CoreCommand, DispatchCommand};
 use crate::Commands;
 
-pub fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCommand {
+pub fn command_to_dispatch(
+    command: Commands,
+    core: Option<&str>,
+) -> anyhow::Result<DispatchCommand> {
     use DispatchCommand::{Common as SomeCommon, Core as SomeCore};
 
     // Check if it's a common command first
@@ -130,7 +133,7 @@ pub fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCom
     };
 
     if let Some(cmd) = common_cmd {
-        return SomeCommon(cmd);
+        return Ok(SomeCommon(cmd));
     }
 
     let explicit_core_cmd = match command.clone() {
@@ -417,22 +420,23 @@ pub fn command_to_dispatch(command: Commands, core: Option<&str>) -> DispatchCom
     };
 
     if let Some(cmd) = explicit_core_cmd {
-        return SomeCore(cmd);
+        return Ok(SomeCore(cmd));
     }
 
     let ecosystem = core
         .map(|s| s.to_string())
         .or_else(|| detect_ecosystem().ok().flatten());
 
-    match command {
+    let dispatch = match command {
         Commands::Install { .. }
         | Commands::Add { .. }
         | Commands::Remove { .. }
         | Commands::Update { .. }
-        | Commands::List => match bare::bare_core_command(command, ecosystem) {
+        | Commands::List => match bare::bare_core_command(command, ecosystem)? {
             DispatchCommand::Core(cmd) => SomeCore(cmd),
             DispatchCommand::Common(_) => unreachable!("bare verbs are core commands"),
         },
         _ => unreachable!("Unhandled command"),
-    }
+    };
+    Ok(dispatch)
 }
