@@ -50,7 +50,6 @@ pub fn reflink_clone(source: &Path, target: &Path) -> Result<(), ReflinkError> {
 /// empty/truncated — caller should remove an existing target first.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn reflink_clone(source: &Path, target: &Path) -> Result<(), ReflinkError> {
-    use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
     let src = std::ffi::CString::new(source.as_os_str().as_bytes()).map_err(|_| {
         ReflinkError::Other(io::Error::new(
@@ -88,11 +87,15 @@ pub fn reflink_clone(source: &Path, target: &Path) -> Result<(), ReflinkError> {
     } else {
         let err = io::Error::last_os_error();
         match err.raw_os_error() {
-            Some(libc::EXDEV)
-            | Some(libc::EOPNOTSUPP)
-            | Some(libc::ENOTSUP)
-            | Some(libc::EINVAL)
-            | Some(libc::ENOSYS) => Err(ReflinkError::NotSupported(err)),
+            Some(code)
+                if code == libc::EXDEV
+                    || code == libc::EOPNOTSUPP
+                    || code == libc::ENOTSUP
+                    || code == libc::EINVAL
+                    || code == libc::ENOSYS =>
+            {
+                Err(ReflinkError::NotSupported(err))
+            }
             _ => Err(ReflinkError::Other(err)),
         }
     }
