@@ -356,7 +356,9 @@ async fn build_cloud(root: &Path) -> Result<()> {
                 return Ok(());
             }
             if let Err(e) = run_allowlisted_tool(root, "terraform", &["plan"]) {
-                mg_ui::warning(&format!("terraform plan skipped (uninitialized or error): {e}"));
+                mg_ui::warning(&format!(
+                    "terraform plan skipped (uninitialized or error): {e}"
+                ));
             }
         }
         mg_cloud_adapter::CloudType::Cloudflare => {
