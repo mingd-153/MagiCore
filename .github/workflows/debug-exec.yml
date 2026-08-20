@@ -13,15 +13,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: mg-exec allowlist tests
         run: cargo test -p mg-exec --test test_run 2>&1
       - name: mg-exec allowlist tests run2
         run: cargo test -p mg-exec --test test_run 2>&1
-      - name: mg-exec allowlist tests run3
-        run: cargo test -p mg-exec --test test_run 2>&1
-# trigger-4
