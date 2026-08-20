@@ -16,9 +16,11 @@ jobs:
           components: clippy
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: ps dump
-        run: ps -eo pid,ppid,pgid,sid,comm,args --sort=pid | tail -40
-      - name: command_timeout test only
-        run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
-      - name: ps dump after
-        run: ps -eo pid,ppid,pgid,sid,comm,args --sort=pid | tail -40
+      - name: timeout test with watchdog
+        run: |
+          (for i in $(seq 1 2000); do ps -eo pid,ppid,pgid,sid,comm,args --sort=pid | grep -E "(test_run|sleep|timeout-bin|cargo|cargo test|bash -e)" >> /tmp/watch.log; sleep 0.02; done) &
+          WATCHER=$!
+          cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
+          kill $WATCHER 2>/dev/null
+          echo "=== WATCHLOG ==="
+          sort -u /tmp/watch.log | head -80
