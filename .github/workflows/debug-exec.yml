@@ -1,0 +1,20 @@
+name: Debug Exec Cancel
+
+on:
+  push:
+    branches: [debug/exec-cancel]
+
+jobs:
+  repro:
+    name: Reproduce
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: single test
+        run: cargo test -p mg-exec --test test_run command_timeout -- --nocapture --exact 2>&1
+      - name: full suite
+        run: cargo test -p mg-exec --test test_run 2>&1
+      - name: full suite 2
+        run: cargo test -p mg-exec --test test_run 2>&1
