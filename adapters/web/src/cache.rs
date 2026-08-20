@@ -1,15 +1,16 @@
 //! `cache.rs` — Shared Web Cache, Metadata LRU Cache and CAS management for WebAdapter.
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use lru::LruCache;
-use mg_store::{Layout, PackageCache};
 use mg_resolver::DependencyError;
+use mg_store::{Layout, PackageCache};
 use mg_types::{
     adapter::{ResolvedGraph, ResolvedPackage},
-    MgError, MgResult, PackageId, PackageName,
+    MgError, MgResult, PackageName,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -39,14 +40,23 @@ impl MetadataCache {
             .unwrap_or(METADATA_CACHE_TTL_SECS);
         Self {
             cache: Mutex::new(LruCache::new(
-                std::num::NonZeroUsize::new(max_entries).unwrap(),
+                NonZeroUsize::new(max_entries).unwrap_or(NonZeroUsize::MIN),
             )),
             ttl: Duration::from_secs(ttl_secs),
         }
     }
 
+    fn guard(
+        &self,
+    ) -> MutexGuard<'_, LruCache<String, (Arc<native::npm_registry::PackageMetadata>, Instant)>>
+    {
+        self.cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn get(&self, key: &str) -> Option<Arc<native::npm_registry::PackageMetadata>> {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.guard();
         if let Some((meta, instant)) = cache.get(key) {
             if instant.elapsed() < self.ttl {
                 return Some(Arc::clone(meta));
@@ -58,8 +68,14 @@ impl MetadataCache {
     }
 
     pub fn insert(&self, key: String, meta: Arc<native::npm_registry::PackageMetadata>) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.guard();
         cache.put(key, (meta, Instant::now()));
+    }
+}
+
+impl Default for MetadataCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -230,7 +246,11 @@ impl SharedWebCache {
         self.root.join("resolutions").join(format!("{key}.json"))
     }
 
-    pub fn read_resolution(&self, key: &str, registry_url: &str) -> MgResult<Option<ResolvedGraph>> {
+    pub fn read_resolution(
+        &self,
+        key: &str,
+        registry_url: &str,
+    ) -> MgResult<Option<ResolvedGraph>> {
         let path = self.resolution_path(key);
         if !path.exists() {
             return Ok(None);
@@ -562,7 +582,10 @@ pub fn prune_project_local_cache(layout: &Layout) {
     let _ = prune_old_files_under(&layout.root().join("resolutions"), max_age);
 }
 
-pub fn prune_unlinked_old_cas_files_under(root: &Path, max_age: std::time::Duration) -> MgResult<()> {
+pub fn prune_unlinked_old_cas_files_under(
+    root: &Path,
+    max_age: std::time::Duration,
+) -> MgResult<()> {
     if !root.exists() {
         return Ok(());
     }

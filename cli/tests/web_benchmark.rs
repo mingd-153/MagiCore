@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 // ponytail: coarse scaffold speed benchmarks, tighten thresholds when infra improves.
 
 mod common;

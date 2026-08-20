@@ -20,4 +20,3 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
 #[cfg(test)]
 #[path = "test/iot.rs"]
 mod tests;
-

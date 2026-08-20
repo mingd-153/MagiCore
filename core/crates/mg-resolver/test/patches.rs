@@ -1,6 +1,6 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for patch apply engine — test riêng tại test/ (RULE §5)
 use mg_resolver::patches::{apply_patch, verify_patch_integrity};
-use tempfile;
 
 #[test]
 fn apply_simple_patch() {

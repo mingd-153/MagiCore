@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-cicd-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_provider (7 providers × 2 paths), adapter_for, PackageAdapter trait.
 
@@ -176,7 +177,10 @@ async fn add_fails_closed_with_error_mentioning_deploy() {
     std::fs::write(dir.join("wrangler.toml"), "name = \"w\"\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let name = PackageName::new("my-service").unwrap();
-    let err = a.add(&dir, &name, None, AddOptions::default()).await.unwrap_err();
+    let err = a
+        .add(&dir, &name, None, AddOptions::default())
+        .await
+        .unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("deploy") || msg.contains("cicd"),

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use mg_lib_adapter::{adapter_for, check_pip_allowed};
 use mg_types::adapter::PackageAdapter;
 use std::path::PathBuf;

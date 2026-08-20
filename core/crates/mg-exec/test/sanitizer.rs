@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Sanitizer tests — args nhạy cảm REDACTED trước khi vào audit log (00-index §5.4)
 //! (A13: token/password/key/authToken → [REDACTED]; secret không bao giờ vào log)
 

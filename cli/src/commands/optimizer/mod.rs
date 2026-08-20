@@ -16,7 +16,9 @@ pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<
 
     let files = generators::generate_optimizations_for_core(core, &hw);
     if files.is_empty() {
-        mg_ui::info(&format!("No specific hardware optimizations needed for `{core}` core."));
+        mg_ui::info(&format!(
+            "No specific hardware optimizations needed for `{core}` core."
+        ));
         return Ok(());
     }
 

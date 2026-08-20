@@ -4,20 +4,20 @@ use anyhow::Result;
 
 pub mod ai;
 pub mod app;
-pub mod web;
 pub mod cicd;
 pub mod clo;
 pub mod game;
+pub mod hardware;
 pub mod iot;
 pub mod library;
-pub mod hardware;
+pub mod web;
 
 pub async fn run(core: &str) -> Result<()> {
     match core {
         "game" => game::list().await,
         "ai" => ai::list().await,
         "web" => web::list().await,
-                "clo" => clo::list().await,
+        "clo" => clo::list().await,
         "cicd" => cicd::list().await,
         "iot" => iot::list().await,
         "app" => app::list().await,

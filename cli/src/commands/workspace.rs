@@ -22,8 +22,8 @@ pub enum WorkspaceCmd {
 /// mg workspace list — in graph tại project root.
 pub async fn run(cmd: WorkspaceCmd) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(crate::error::project_root_missing)?;
+    let project_root =
+        ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
 
     match cmd {
         WorkspaceCmd::List { filter, json } => list(&project_root, filter.as_deref(), json),
@@ -80,10 +80,7 @@ fn list(project_root: &Path, filter: Option<&str>, json: bool) -> Result<()> {
                 })
             })
             .collect();
-        println!(
-            "{}",
-            serde_json::json!({ "nodes": nodes, "edges": edges }).to_string()
-        );
+        println!("{}", serde_json::json!({ "nodes": nodes, "edges": edges }));
         return Ok(());
     }
 

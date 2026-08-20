@@ -6,10 +6,10 @@ use anyhow::Result;
 pub mod ai;
 pub mod ai_docker;
 pub mod app;
-pub mod web;
 pub mod cicd;
 pub mod clo;
 pub mod iot;
+pub mod web;
 
 /// Run `mg dev <core>` — lookup port từ bảng, kiểm tra conflict, dispatch đến file con.
 ///

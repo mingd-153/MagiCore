@@ -382,9 +382,13 @@ impl TryFrom<Commands> for DispatchCommand {
         use DispatchCommand::{Common as SomeCommon, Core as SomeCore};
 
         let common_cmd = match command.clone() {
-            Commands::Init { template, signature } => {
-            Some(CommonCommand::Init { template, signature })
-        }
+            Commands::Init {
+                template,
+                signature,
+            } => Some(CommonCommand::Init {
+                template,
+                signature,
+            }),
             Commands::Dev { host, port, clear } => Some(CommonCommand::Dev { host, port, clear }),
             Commands::Info { package, json } => Some(CommonCommand::Info { package, json }),
             Commands::Search {
@@ -983,11 +987,9 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
     // 1. Try mg.toml
     let mg_toml = cwd.join("mg.toml");
     if mg_toml.exists() {
-        if let Ok(cfg) = mg_config::project::ProjectConfig::load(&cwd) {
-            if let Some(cfg) = cfg {
-                if !cfg.ecosystem.is_empty() {
-                    return Ok(Some(cfg.ecosystem));
-                }
+        if let Ok(Some(cfg)) = mg_config::project::ProjectConfig::load(&cwd) {
+            if !cfg.ecosystem.is_empty() {
+                return Ok(Some(cfg.ecosystem));
             }
         }
     }

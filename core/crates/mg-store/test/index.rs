@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! T6 store-index tests: msgpack roundtrip, corrupt-rebuild, isolated upsert,
 //! prune safety. Test riêng tại test/ (RULE §5).
 

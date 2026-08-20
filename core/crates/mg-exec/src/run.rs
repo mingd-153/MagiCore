@@ -21,7 +21,7 @@ pub fn process_tree_guard_available() -> bool {
 }
 
 /// Tùy chọn chạy — dry_run in lệnh không chạy (00 §5.5); log_path để ghi audit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecOptions {
     pub dry_run: bool,
     /// Đường dẫn file audit (vd `<project>/.megagate/exec.log`) — None = không ghi.
@@ -36,20 +36,6 @@ pub struct ExecOptions {
     pub clean_env: bool,
     /// Không áp timeout — dùng cho dev server chạy dài, vẫn giữ guard process.
     pub disable_timeout: bool,
-}
-
-impl Default for ExecOptions {
-    fn default() -> Self {
-        Self {
-            dry_run: false,
-            log_path: None,
-            cwd: None,
-            timeout: None,
-            env: Vec::new(),
-            clean_env: false,
-            disable_timeout: false,
-        }
-    }
 }
 
 /// Kết quả chạy — args trong report ĐÃ redact (không lộ secret).
@@ -192,7 +178,7 @@ fn execute_command(
     }
 
     let _shadow_path = if opts.clean_env {
-        let shadow_path = ShadowPath::create(&scoped_exempt)?;
+        let shadow_path = ShadowPath::create(scoped_exempt)?;
         let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
         command.env_clear();
         for (key, value) in &opts.env {
@@ -216,7 +202,7 @@ fn execute_command(
     } else {
         Some(opts.timeout.unwrap_or_else(default_timeout))
     };
-    let outcome = wait_with_timeout(child, timeout, opts.clean_env, &scoped_exempt, mode)?;
+    let outcome = wait_with_timeout(child, timeout, opts.clean_env, scoped_exempt, mode)?;
     let duration_ms = start.elapsed().as_millis() as u64;
     let exit_code = outcome.status.code().unwrap_or(-1);
 
@@ -259,7 +245,7 @@ impl ShadowPath {
         std::fs::create_dir_all(&dir)?;
 
         for tool in FORBIDDEN_TOOLS {
-            if !scoped_exempt.contains(&tool) {
+            if !scoped_exempt.contains(tool) {
                 write_blocker(&dir, tool)?;
             }
         }

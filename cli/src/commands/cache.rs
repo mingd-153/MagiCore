@@ -293,8 +293,8 @@ fn prune(entries: &[CacheEntry], yes: bool, dry_run: bool, core: Option<&str>) -
             );
         } else {
             println!(
-                "skip\t{}\t{}",
-                entry.label, "prune is only implemented for --core web cache"
+                "skip\t{}\tprune is only implemented for --core web cache",
+                entry.label
             );
         }
     }
@@ -325,11 +325,11 @@ fn prune_web_shared_unpinned_package_roots(root: &Path) -> Result<usize> {
 }
 
 fn prune_web_project_cache(root: &Path, dry_run: bool) -> Result<WebProjectPruneStats> {
-    let mut stats = WebProjectPruneStats::default();
-    stats.cas_files = prune_cas_blobs_under(&root.join("cas"), root, dry_run)?;
-    stats.tarball_files = prune_files_under(&root.join("cache"), dry_run)?;
-    stats.resolution_files = prune_files_under(&root.join("resolutions"), dry_run)?;
-    Ok(stats)
+    Ok(WebProjectPruneStats {
+        cas_files: prune_cas_blobs_under(&root.join("cas"), root, dry_run)?,
+        tarball_files: prune_files_under(&root.join("cache"), dry_run)?,
+        resolution_files: prune_files_under(&root.join("resolutions"), dry_run)?,
+    })
 }
 
 /// Prune CAS blobs using the SQLite refcount (slice 5 of T1): a blob is
@@ -456,9 +456,9 @@ fn file_has_no_external_hardlinks(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        return std::fs::metadata(path)
+        std::fs::metadata(path)
             .map(|metadata| metadata.nlink() <= 1)
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
 
     #[cfg(not(unix))]
@@ -840,7 +840,7 @@ mod tests {
         std::fs::create_dir_all(live_link.parent().unwrap()).unwrap();
         std::fs::write(&blob, b"blob").unwrap();
         std::fs::hard_link(&blob, &live_link).unwrap();
-        std::fs::write(&web.join("store.db"), b"not a sqlite db").unwrap();
+        std::fs::write(web.join("store.db"), b"not a sqlite db").unwrap();
 
         let pruned = prune_web_project_cache(&web, false).unwrap();
 

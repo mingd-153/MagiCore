@@ -192,9 +192,8 @@ fn link_node_modules_for_build(source: &Path, target: &Path) -> Result<(), anyho
         std::fs::create_dir_all(parent)?;
     }
 
-    symlink_dir(source, target).map_err(|err| {
-        crate::error::link_node_modules_failed(source, target, &err)
-    })
+    symlink_dir(source, target)
+        .map_err(|err| crate::error::link_node_modules_failed(source, target, &err))
 }
 
 #[cfg(unix)]
@@ -267,7 +266,11 @@ pub async fn process_assets(config: &BundlerConfig) -> Result<(), anyhow::Error>
     });
     materialize_index_html(&root, config)?;
 
-    let public_dir = config.entry.parent().unwrap().join("public");
+    let public_dir = config
+        .entry
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("public");
     if public_dir.exists() {
         let dst = config.output_dir.join("public");
         copy_dir_all(&public_dir, &dst)?;
@@ -295,9 +298,7 @@ fn materialize_index_html(root: &Path, config: &BundlerConfig) -> Result<(), any
                 format!("src='/{relative_entry}'"),
                 format!("src='{relative_entry}'"),
             ] {
-                let replacement = pattern
-                    .replace(&relative_entry, &bundle_name)
-                    .replace(&format!("/{bundle_name}"), &format!("/{bundle_name}"));
+                let replacement = pattern.replace(&relative_entry, &bundle_name);
                 html = html.replace(&pattern, &replacement);
             }
         }

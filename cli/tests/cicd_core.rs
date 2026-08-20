@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 // CICD core command surface: deploy multi-target + verb hints (offline tests).
 mod common;
 

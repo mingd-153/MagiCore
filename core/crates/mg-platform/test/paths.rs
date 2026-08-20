@@ -1,6 +1,6 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-platform paths — test riêng tại test/ (RULE §5)
 use mg_platform::paths::{GlobalPaths, ProjectPaths};
-use tempfile;
 
 #[test]
 fn project_paths_computes_correctly() {

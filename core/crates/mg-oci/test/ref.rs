@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! OciRef parse tests — test riêng tại test/ (RULE §5)
 //! (Kiểm parse repo:tag, repo@digest, mặc định latest, input rỗng)
 

@@ -1,5 +1,6 @@
+#![allow(clippy::unwrap_used)]
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use mg_ai_adapter::{detect_framework, AiAdapter, AiFramework};
+use mg_ai_adapter::{detect_framework, AiFramework};
 use std::fs;
 use tempfile::tempdir;
 

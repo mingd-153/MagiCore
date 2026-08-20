@@ -30,8 +30,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::add::game::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::add::game::add(
+                packages, None, dev, exact, optional, peer, no_save, global,
+            )
+            .await
         }
         CoreCommand::AddAi {
             packages,
@@ -42,8 +44,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::add::ai::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::add::ai::add(
+                packages, None, dev, exact, optional, peer, no_save, global,
+            )
+            .await
         }
         CoreCommand::AddClo {
             packages,
@@ -54,8 +58,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::add::clo::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::add::clo::add(
+                packages, None, dev, exact, optional, peer, no_save, global,
+            )
+            .await
         }
         CoreCommand::AddCicd {
             packages,
@@ -66,8 +72,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::add::cicd::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::add::cicd::add(
+                packages, None, dev, exact, optional, peer, no_save, global,
+            )
+            .await
         }
         CoreCommand::AddIot {
             packages,
@@ -78,8 +86,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::add::iot::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::add::iot::add(
+                packages, None, dev, exact, optional, peer, no_save, global,
+            )
+            .await
         }
         CoreCommand::AddApp {
             packages,
@@ -90,8 +100,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             global,
         } => {
-            commands::core::add::app::add(packages, None, dev, exact, optional, peer, no_save, global)
-                .await
+            commands::core::add::app::add(
+                packages, None, dev, exact, optional, peer, no_save, global,
+            )
+            .await
         }
         CoreCommand::AddLib {
             packages,
@@ -111,13 +123,19 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         CoreCommand::RemoveWeb { packages, install } => {
             commands::core::remove::web::remove(packages, install).await
         }
-        CoreCommand::RemoveGame { packages } => commands::core::remove::game::remove(packages).await,
+        CoreCommand::RemoveGame { packages } => {
+            commands::core::remove::game::remove(packages).await
+        }
         CoreCommand::RemoveAi { packages } => commands::core::remove::ai::remove(packages).await,
         CoreCommand::RemoveClo { packages } => commands::core::remove::clo::remove(packages).await,
-        CoreCommand::RemoveCicd { packages } => commands::core::remove::cicd::remove(packages).await,
+        CoreCommand::RemoveCicd { packages } => {
+            commands::core::remove::cicd::remove(packages).await
+        }
         CoreCommand::RemoveIot { packages } => commands::core::remove::iot::remove(packages).await,
         CoreCommand::RemoveApp { packages } => commands::core::remove::app::remove(packages).await,
-        CoreCommand::RemoveLib { packages } => commands::core::remove::library::remove(packages).await,
+        CoreCommand::RemoveLib { packages } => {
+            commands::core::remove::library::remove(packages).await
+        }
         CoreCommand::ListWeb => commands::core::list::web::list().await,
         CoreCommand::ListGame => commands::core::list::game::list().await,
         CoreCommand::ListAi => commands::core::list::ai::list().await,

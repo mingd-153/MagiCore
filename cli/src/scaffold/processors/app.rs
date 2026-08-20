@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{write_file, slugify};
+use super::{slugify, write_file};
 
 pub struct AppProcessor;
 
@@ -164,5 +164,4 @@ impl AppProcessor {
 
         Ok(())
     }
-
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! PluginRegistry tests — RULE §5 (test/ ngoài src/).
 
 use mg_plugin::Plugin;

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 // Workspace shared lock seeding: existing_versions_from union first-wins.
 use mg_lockfile::{existing_versions_from, write_lockfile, LockPackage, Lockfile};
 use std::collections::HashMap;
@@ -57,7 +58,7 @@ fn missing_roots_are_ignored() {
     let versions = existing_versions_from(&[&empty]).unwrap();
     assert!(versions.is_empty());
 
-    let mut app = base.path().join("app");
+    let app = base.path().join("app");
     std::fs::create_dir_all(&app).unwrap();
     write_lockfile(&app, &lock(vec![("is-number", "7.0.0")])).unwrap();
     let versions = existing_versions_from(&[&empty, &app]).unwrap();

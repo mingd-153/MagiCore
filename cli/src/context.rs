@@ -22,8 +22,7 @@ impl ProjectContext {
     ///   4. auto_detect signature files (package.json → web, Cargo.toml → lib,
     ///      pyproject.toml → ai) — ambiguous → Err, không đoán (RULE §9.3)
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
-        let cwd = std::env::current_dir()
-            .map_err(|e| crate::error::cwd_deleted(&e))?;
+        let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
         let project_root = ProjectConfig::find_project_root(&cwd);
         Self::load_at(cwd.as_path(), project_root.as_ref(), core_override)
     }
@@ -123,7 +122,7 @@ impl ProjectContext {
             return Ok((cwd.to_path_buf(), ProjectConfig::new("project", core)));
         }
 
-        return Err(crate::error::no_mg_project_root());
+        Err(crate::error::no_mg_project_root())
     }
 
     fn dir_name(path: &std::path::Path) -> String {

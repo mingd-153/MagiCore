@@ -1,5 +1,6 @@
+#![allow(clippy::unwrap_used)]
 #![cfg(test)]
-use mg-ui;
+use mg_ui;
 
 // Basic skeleton test - crate compiles and can be imported
 #[test]

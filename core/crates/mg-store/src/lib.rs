@@ -1,6 +1,8 @@
-/// Package store and cache management for MegaGate
-///
-/// Content-addressable storage, package caching, and tarball extraction.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+//! Package store and cache management for MegaGate
+//!
+//! Content-addressable storage, package caching, and tarball extraction.
+
 pub mod cache;
 pub mod cas;
 pub mod database;

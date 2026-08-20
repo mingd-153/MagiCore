@@ -1,11 +1,11 @@
 //! `provider.rs` — `NpmDependencyProvider` implementation for `mg-resolver`.
 
-use std::sync::Arc;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures_util::stream::{self, StreamExt};
 use mg_resolver::{DependencyError, DependencyProvider, RegistryCache, ResolvedDep};
 use mg_types::{PackageId, PackageName, Version, VersionRange};
+use std::sync::Arc;
 
 use crate::cache::{
     load_metadata_with_fallback, metadata_concurrency_limit, MetadataCache, SharedWebCache,

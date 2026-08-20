@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use console::style;
 /// Terminal UI components for MegaGate
 ///

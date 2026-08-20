@@ -596,7 +596,7 @@ packages_dir = "packages"
         fs::write(web.join("package.json"), "{}").unwrap();
 
         let lib = dir.path().join("packages/rustlib");
-        fs::create_dir_all(&lib.join("src")).unwrap();
+        fs::create_dir_all(lib.join("src")).unwrap();
         fs::write(lib.join("Cargo.toml"), "[package]\nname = \"rustlib\"\n").unwrap();
 
         let ignored = dir.path().join("packages/not-a-project");

@@ -39,7 +39,9 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             )
             .await
         }
-        CoreCommand::InstallGame { packages } => commands::core::install::game::install(packages).await,
+        CoreCommand::InstallGame { packages } => {
+            commands::core::install::game::install(packages).await
+        }
         CoreCommand::InstallAi { packages, dry_run } => {
             commands::core::install::ai::install(packages, dry_run).await
         }
@@ -49,11 +51,15 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         CoreCommand::InstallCicd { packages, dry_run } => {
             commands::core::install::cicd::install(packages, dry_run).await
         }
-        CoreCommand::InstallIot { packages } => commands::core::install::iot::install(packages).await,
+        CoreCommand::InstallIot { packages } => {
+            commands::core::install::iot::install(packages).await
+        }
         CoreCommand::InstallApp { packages, dry_run } => {
             commands::core::install::app::install(packages, dry_run).await
         }
-        CoreCommand::InstallLib { packages } => commands::core::install::library::install(packages).await,
+        CoreCommand::InstallLib { packages } => {
+            commands::core::install::library::install(packages).await
+        }
         CoreCommand::InstallHardware { packages } => {
             commands::core::install::hardware::install(packages).await
         }

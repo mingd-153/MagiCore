@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for npmrc parser — test riêng đặt tại test/ (RULE §5)
 use mg_config::npmrc::NpmRc;
 

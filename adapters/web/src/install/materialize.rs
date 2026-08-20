@@ -13,8 +13,8 @@ use walkdir::WalkDir;
 use crate::cache::SharedWebCache;
 use crate::install::bin::{is_executable, set_executable};
 use crate::install::extract::{
-    ensure_extracted_package_root, materialized_package_matches,
-    read_extracted_package_marker, write_materialized_package_marker,
+    ensure_extracted_package_root, materialized_package_matches, read_extracted_package_marker,
+    write_materialized_package_marker,
 };
 use crate::lockfile::installed_package_matches;
 use crate::profile::MaterializationProfile;
@@ -29,7 +29,7 @@ pub fn hardlink_thread_count() -> usize {
 
 pub fn default_hardlink_threads() -> usize {
     std::thread::available_parallelism()
-        .map(|n| n.get().min(6).max(1))
+        .map(|n| n.get().clamp(1, 6))
         .unwrap_or(2)
 }
 
@@ -42,9 +42,8 @@ pub fn hardlink_pool() -> MgResult<&'static rayon::ThreadPool> {
             .build()
             .map_err(|err| err.to_string())
     });
-    pool.as_ref().map_err(|err| {
-        MgError::Other(format!("failed to initialize hardlink thread pool: {err}"))
-    })
+    pool.as_ref()
+        .map_err(|err| MgError::Other(format!("failed to initialize hardlink thread pool: {err}")))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -546,6 +545,7 @@ pub fn graph_without_packages(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn materialize_strict_layout(
     node_modules: &Path,
     graph: &ResolvedGraph,
@@ -758,6 +758,7 @@ pub fn materialization_package_root(
     )))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn materialize_nested_dependencies(
     package_dir: &Path,
     pkg: &ResolvedPackage,

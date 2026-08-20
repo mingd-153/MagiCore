@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use mg_lockfile::{
     serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
 };
@@ -178,10 +178,9 @@ fn install_hint_command() -> &'static str {
 /// Find project root for web commands
 fn project_root() -> Result<std::path::PathBuf> {
     let started_at = std::time::Instant::now();
-    let cwd = std::env::current_dir()
-        .map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = shared::find_project_root(&cwd)?
-        .ok_or_else(|| crate::error::no_mg_project_found("web"))?;
+    let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
+    let root =
+        shared::find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found("web"))?;
     web_command_profile_mark("project_root", started_at);
     Ok(root)
 }
@@ -460,10 +459,10 @@ fn detect_dev_target(project_root: &Path) -> Result<PathBuf> {
         return Ok(project_root.to_path_buf());
     }
 
-    return Err(crate::error::web_no_dev_target(
-        &project_root,
-        &install_hint_command(),
-    ));
+    Err(crate::error::web_no_dev_target(
+        project_root,
+        install_hint_command(),
+    ))
 }
 
 fn workspace_frontend_dir(project_root: &Path) -> Result<PathBuf> {
@@ -543,7 +542,7 @@ fn is_workspace_monorepo(config: &WorkspaceConfig) -> bool {
 }
 
 fn discover_monorepo_install_targets(project_root: &Path) -> Result<Vec<PathBuf>> {
-    mg_workspace::discover_workspace_targets(project_root).map_err(Into::into)
+    mg_workspace::discover_workspace_targets(project_root)
 }
 
 #[derive(Debug, Deserialize)]
@@ -596,7 +595,7 @@ fn link_monorepo_workspace_packages(project_root: &Path, targets: &[PathBuf]) ->
                 return Err(crate::error::web_workspace_dep_missing(
                     &dep_name,
                     &target,
-                    &project_root,
+                    project_root,
                 ));
             };
 
@@ -657,8 +656,8 @@ async fn install_monorepo_targets(
 
     if !package_targets.is_empty() {
         let graph = mg_workspace::build_workspace_graph(&package_targets)?;
-        let levels = mg_workspace::topo_levels(&graph)
-            .map_err(|e| crate::error::topo_order_failed(&e))?;
+        let levels =
+            mg_workspace::topo_levels(&graph).map_err(|e| crate::error::topo_order_failed(&e))?;
 
         let concurrency = monorepo_install_concurrency(&package_targets);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
@@ -1008,7 +1007,7 @@ fn build_dev_launch(
 
     let tokens: Vec<&str> = script.split_whitespace().collect();
     if tokens.is_empty() {
-        return Err(crate::error::web_empty_dev_script(&project_root));
+        return Err(crate::error::web_empty_dev_script(project_root));
     }
 
     match tokens.as_slice() {
@@ -1159,13 +1158,16 @@ fn build_dev_launch(
             args: rest.iter().map(OsString::from).collect(),
             envs: vec![],
         }),
-        _ => return Err(crate::error::web_unsupported_dev_script(&script, &project_root)),
+        _ => Err(crate::error::web_unsupported_dev_script(
+            &script,
+            project_root,
+        )),
     }
 }
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
     if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(script) {
-        return Err(crate::error::web_forbidden_pm(script, &manifest_path, pm));
+        return Err(crate::error::web_forbidden_pm(script, manifest_path, pm));
     }
     Ok(())
 }
@@ -1322,7 +1324,7 @@ fn infer_native_dev_launch(
         });
     }
 
-    return Err(crate::error::web_no_dev_entrypoint(&project_root));
+    Err(crate::error::web_no_dev_entrypoint(project_root))
 }
 
 fn env_host_port_pairs(host: Option<String>, port: Option<u16>) -> Vec<(OsString, OsString)> {
@@ -1432,7 +1434,7 @@ fn native_install_target(project_root: &Path) -> Result<()> {
         return run_native_install(project_root, "composer", &["install"]);
     }
 
-    return Err(crate::error::web_no_install_flow(&project_root));
+    Err(crate::error::web_no_install_flow(project_root))
 }
 
 fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Result<()> {
@@ -1624,11 +1626,11 @@ fn resolve_local_bin(project_root: &Path, bin_name: &str) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    return Err(crate::error::web_missing_executable(
-        &bin_name,
-        &install_hint_command(),
-        &project_root,
-    ));
+    Err(crate::error::web_missing_executable(
+        bin_name,
+        install_hint_command(),
+        project_root,
+    ))
 }
 
 fn local_bin_candidates(bin_dir: &Path, bin_name: &str) -> Vec<PathBuf> {
@@ -1816,7 +1818,7 @@ fn resolve_framework(pos: Option<&str>, flags: &ScaffoldFlags) -> Result<String>
     } else if flags.remix {
         Ok("remix".into())
     } else {
-        return Err(crate::error::no_framework_specified());
+        Err(crate::error::no_framework_specified())
     }
 }
 
@@ -3340,9 +3342,8 @@ fn scaffold_baseline_version(package: &str) -> Option<&'static str> {
 async fn resolve_primary_version(request: &FrameworkRequest) -> Result<String> {
     match request.version.as_deref() {
         Some("latest") | None => {
-            let pkg = framework_primary_package(&request.normalized).ok_or_else(|| {
-                crate::error::no_primary_package(&request.normalized)
-            })?;
+            let pkg = framework_primary_package(&request.normalized)
+                .ok_or_else(|| crate::error::no_primary_package(&request.normalized))?;
             fetch_npm_latest_version(&pkg).await
         }
         Some(version) => Ok(version.to_string()),

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 //! Visual QA tests — scaffold frontend framework, start dev server, screenshot via Playwright.
 //! Run: cargo test --test visual_qa -- --ignored
 //! Requires: node + npx playwright installed.
@@ -149,7 +151,7 @@ export default defineConfig({
 }
 
 fn run_framework_test(framework: &str, port: u16) {
-    let dir = format!("target/.vqa-base");
+    let dir = "target/.vqa-base".to_string();
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
@@ -159,6 +161,7 @@ fn run_framework_test(framework: &str, port: u16) {
     wait_for_server(port, Duration::from_secs(30));
     run_playwright_tests(framework, port);
     child.kill().ok();
+    let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
 }
 

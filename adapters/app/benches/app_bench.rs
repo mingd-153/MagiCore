@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mg_app_adapter::{detect_language, AppLanguage};
 use std::fs;

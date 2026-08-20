@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for tarball builder — test riêng tại test/ (RULE §5)
 use mg_pack::tarball::pack;
 use std::fs;

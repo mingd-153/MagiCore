@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 #![cfg(test)]
 use mg_http::HttpClient;
 

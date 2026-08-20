@@ -5,18 +5,18 @@ use crate::commands;
 use super::super::types::CoreCommand;
 
 pub fn matches(command: &CoreCommand) -> bool {
-    match command {
-        CoreCommand::CreateWeb { .. } => true,
-        CoreCommand::CreateGame { .. } => true,
-        CoreCommand::CreateAi { .. } => true,
-        CoreCommand::CreateClo { .. } => true,
-        CoreCommand::CreateCicd { .. } => true,
-        CoreCommand::CreateIot { .. } => true,
-        CoreCommand::CreateApp { .. } => true,
-        CoreCommand::CreateLib { .. } => true,
-        CoreCommand::CreateHardware { .. } => true,
-        _ => false,
-    }
+    matches!(
+        command,
+        CoreCommand::CreateWeb { .. }
+            | CoreCommand::CreateGame { .. }
+            | CoreCommand::CreateAi { .. }
+            | CoreCommand::CreateClo { .. }
+            | CoreCommand::CreateCicd { .. }
+            | CoreCommand::CreateIot { .. }
+            | CoreCommand::CreateApp { .. }
+            | CoreCommand::CreateLib { .. }
+            | CoreCommand::CreateHardware { .. }
+    )
 }
 
 pub async fn dispatch(command: CoreCommand) -> Result<()> {
@@ -26,8 +26,12 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             project_name,
             flags,
         } => {
-            commands::core::create::web::run_create_with_options(&framework, &project_name, Some(flags))
-                .await
+            commands::core::create::web::run_create_with_options(
+                &framework,
+                &project_name,
+                Some(flags),
+            )
+            .await
         }
         CoreCommand::CreateGame {
             framework,

@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-game-adapter — game ecosystem adapter (MegaGate)
 //! (bevy → orchestrate cargo Q10; godot → scaffold-only + mg dev editor; unity → UPM P2; unreal → scaffold-only)
 //! (ponytail: unity mg add/install qua UPM CLI Read-and-Verify là P2 — chờ spike 03 §7 Q1)
@@ -72,7 +73,7 @@ pub fn detect_engine(root: &Path) -> Option<GameEngine> {
         .read_dir()
         .ok()?
         .filter_map(|e| e.ok())
-        .any(|e| e.path().extension().map_or(false, |x| x == "uproject"))
+        .any(|e| e.path().extension().is_some_and(|x| x == "uproject"))
     {
         return Some(GameEngine::Unreal);
     }
@@ -100,7 +101,7 @@ fn manifest_is_game(root: &Path) -> bool {
         || root.join("Cargo.toml").exists()
         || root.read_dir().ok().is_some_and(|rd| {
             rd.filter_map(|e| e.ok())
-                .any(|e| e.path().extension().map_or(false, |x| x == "uproject"))
+                .any(|e| e.path().extension().is_some_and(|x| x == "uproject"))
         })
     {
         return true;

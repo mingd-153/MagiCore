@@ -1,12 +1,17 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 //! `adapters/web/src/lib.rs` — Web ecosystem adapter for MegaGate.
 //!
 //! Provides the primary WebAdapter orchestrating resolution, installation,
 //! manifest editing, security audits, and lifecycle hooks for npm/web projects.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 
 use async_trait::async_trait;
 use mg_adapter_base::BaseAdapter;
@@ -44,11 +49,10 @@ pub use manifest::PackageJson;
 
 use crate::audit::{allow_insecure_loopback_url, run_audit, run_audit_fix};
 use crate::cache::{download_concurrency_limit, resolve_prefetch_enabled, SharedWebCache};
-use crate::install::download::{package_tarball_url, prepare_verified_tarball_for_cache};
+use crate::install::download::package_tarball_url;
 use crate::install::extract::tarball_prefetch_lock;
 use crate::install::run_install;
-use crate::lockfile::{build_graph_from_lockfile, lockfile_satisfies_manifest, project_cache_dir,
-    write_web_lockfile_with_state};
+use crate::lockfile::{build_graph_from_lockfile, lockfile_satisfies_manifest, project_cache_dir};
 use crate::manifest::{parse_manifest, write_manifest};
 use crate::profile::ResolveProfile;
 use crate::provider::NpmDependencyProvider;
@@ -203,6 +207,20 @@ impl WebAdapter {
     pub fn preferred_saved_range(current: &VersionRange, latest: &str) -> MgResult<VersionRange> {
         crate::update::preferred_saved_range(current, latest)
     }
+
+    fn existing_versions_guard(&self) -> MutexGuard<'_, std::collections::HashMap<String, String>> {
+        self.existing_versions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn prefetch_handle_guard(
+        &self,
+    ) -> MutexGuard<'_, Option<tokio::task::JoinHandle<MgResult<u64>>>> {
+        self.prefetch_handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 pub fn effective_registry_url(default: &str) -> String {
@@ -309,13 +327,9 @@ impl PackageAdapter for WebAdapter {
     fn set_existing_versions(&self, versions: std::collections::HashMap<String, String>) {
         let parsed: std::collections::HashMap<String, Version> = versions
             .iter()
-            .filter_map(|(name, v)| {
-                Version::parse(v)
-                    .ok()
-                    .map(|ver| (name.clone(), ver))
-            })
+            .filter_map(|(name, v)| Version::parse(v).ok().map(|ver| (name.clone(), ver)))
             .collect();
-        *self.existing_versions.lock().unwrap() = versions;
+        *self.existing_versions_guard() = versions;
         self.resolver.set_existing_versions(parsed);
     }
 
@@ -443,9 +457,8 @@ impl PackageAdapter for WebAdapter {
                         .iter()
                         .filter_map(|(name, spec)| {
                             let constraint = VersionRange::parse(spec).ok()?;
-                            let source = self
-                                .provider
-                                .source_package_name(&PackageName::new(name.as_str()).unwrap());
+                            let dep_name = PackageName::new(name.as_str()).ok()?;
+                            let source = self.provider.source_package_name(&dep_name);
                             resolution_index
                                 .get(source.as_str())
                                 .and_then(|candidates| {
@@ -561,7 +574,7 @@ impl PackageAdapter for WebAdapter {
         if resolve_prefetch_enabled() {
             if let Some(shared_cache) = self.shared_cache.clone() {
                 let registry_url = self.registry_url.clone();
-                *self.prefetch_handle.lock().unwrap() = Some(spawn_tarball_download(
+                *self.prefetch_handle_guard() = Some(spawn_tarball_download(
                     shared_cache,
                     packages.clone(),
                     registry_url,
@@ -615,7 +628,7 @@ impl PackageAdapter for WebAdapter {
         project_root: &Path,
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        let prefetch_handle = self.prefetch_handle.lock().unwrap().take();
+        let prefetch_handle = self.prefetch_handle_guard().take();
         run_install(
             &self.registry_url,
             self.provider.registry.auth_token(),
@@ -692,11 +705,7 @@ impl PackageAdapter for WebAdapter {
         run_audit(project_root, &self.registry_url).await
     }
 
-    async fn audit_fix(
-        &self,
-        project_root: &Path,
-        vulnerable: &[PackageId],
-    ) -> MgResult<usize> {
+    async fn audit_fix(&self, project_root: &Path, vulnerable: &[PackageId]) -> MgResult<usize> {
         run_audit_fix(project_root, vulnerable, |m| async move {
             self.resolve(&m).await
         })
@@ -744,7 +753,9 @@ pub fn spawn_tarball_download(
                 let cache2 = cache.clone();
                 match tokio::task::spawn_blocking(move || {
                     let mut pkg = pkg;
-                    if let Err(e) = crate::install::download::prepare_verified_tarball_for_cache(&mut pkg, &bytes) {
+                    if let Err(e) = crate::install::download::prepare_verified_tarball_for_cache(
+                        &mut pkg, &bytes,
+                    ) {
                         eprintln!("[megagate] prefetch integrity failed for {id}: {e}");
                     } else if let Err(e) = cache2.cache_tarball(&pkg.id, &bytes) {
                         eprintln!("[megagate] prefetch cache write failed for {id}: {e}");

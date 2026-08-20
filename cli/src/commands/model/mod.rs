@@ -142,7 +142,9 @@ async fn pull_hf(
     };
 
     let url = format!("https://huggingface.co/{org}/{model}/resolve/main/{file}");
-    let resp = reqwest::get(&url).await.with_context(|| crate::error::hf_request_failed())?;
+    let resp = reqwest::get(&url)
+        .await
+        .with_context(crate::error::hf_request_failed)?;
     if !resp.status().is_success() {
         bail!(
             "HF download failed: {} ({url}) — unknown source, not written to store",
@@ -165,9 +167,9 @@ async fn pull_oci(
     store: &mg_store::cas::ContentStore,
     oci: &str,
 ) -> Result<(String, Vec<String>, u64)> {
-    let (registry, rest) = oci.split_once('/').ok_or_else(|| {
-        crate::error::invalid_oci_source(oci)
-    })?;
+    let (registry, rest) = oci
+        .split_once('/')
+        .ok_or_else(|| crate::error::invalid_oci_source(oci))?;
     let (repo, tag) = match rest.rsplit_once(':') {
         Some((r, t)) if !r.is_empty() && !t.is_empty() => (r, t),
         _ => (rest, "latest"),
@@ -182,7 +184,7 @@ async fn pull_oci(
     let manifest = c
         .pull_manifest(repo, tag)
         .await
-        .with_context(|| crate::error::pull_manifest_failed())?;
+        .with_context(crate::error::pull_manifest_failed)?;
 
     let mut blobs = Vec::new();
     let mut total = 0u64;
@@ -239,7 +241,7 @@ fn remove_local(name: &str) -> Result<()> {
         );
     }
     let manifest: ModelManifest = serde_json::from_str(&std::fs::read_to_string(&path)?)
-        .with_context(|| crate::error::parse_manifest_failed())?;
+        .with_context(crate::error::parse_manifest_failed)?;
 
     let all: Vec<ModelManifest> = read_manifests_in(model_manifest_dir());
     let others: Vec<&str> = all
@@ -373,7 +375,7 @@ pub async fn run(args: ModelArgs) -> Result<()> {
 /// GGUF quantize qua python passthrough (A4, sys-mg/05 §4)
 fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
     if target != "q4_k_m" && target != "q8_0" {
-        return Err(crate::error::unsupported_quantize_target(&target));
+        return Err(crate::error::unsupported_quantize_target(target));
     }
     if !std::path::Path::new(path).exists() {
         return Err(crate::error::file_not_found(std::path::Path::new(path)));
@@ -441,14 +443,18 @@ async fn push(
             for f in files {
                 names.insert(
                     digest_of(&f).await?,
-                    f.file_name().unwrap().to_string_lossy().into_owned(),
+                    f.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "layer.bin".to_string()),
                 );
                 layers.push((f, MODEL_MEDIA_TYPE.to_string()));
             }
         } else {
             names.insert(
                 digest_of(path).await?,
-                path.file_name().unwrap().to_string_lossy().into_owned(),
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "layer.bin".to_string()),
             );
             layers.push((path.to_path_buf(), MODEL_MEDIA_TYPE.to_string()));
         }
@@ -471,7 +477,7 @@ async fn push(
     let pushed = c
         .push_model(repo, tag, &config, &layers)
         .await
-        .with_context(|| crate::error::push_model_failed())?;
+        .with_context(crate::error::push_model_failed)?;
     println!(
         "pushed {repo}:{pushed} ({registry}) — {} layer(s)",
         layers.len()
@@ -498,15 +504,15 @@ async fn pull(
     let manifest = c
         .pull_manifest(repo, tag)
         .await
-        .with_context(|| crate::error::parse_manifest_failed())?;
+        .with_context(crate::error::parse_manifest_failed)?;
 
     // Tên file gốc nằm trong annotations của config blob (OciImageConfig)
     let config_data = c
         .pull_blob(repo, &manifest.config.digest)
         .await
-        .with_context(|| crate::error::parse_manifest_failed())?;
+        .with_context(crate::error::parse_manifest_failed)?;
     let config: OciImageConfig =
-        serde_json::from_slice(&config_data).with_context(|| crate::error::parse_manifest_failed())?;
+        serde_json::from_slice(&config_data).with_context(crate::error::parse_manifest_failed)?;
     let names: HashMap<String, String> = config.annotations.unwrap_or_default();
 
     let out_dir = Path::new(output);
@@ -521,9 +527,8 @@ async fn pull(
             .map(|s| {
                 Path::new(s)
                     .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| default_name.clone())
             })
             .unwrap_or(default_name);
         let data = c
@@ -545,7 +550,10 @@ async fn pull(
 
 async fn list(registry: &str, token: Option<String>) -> Result<()> {
     let c = client(registry, token)?;
-    let repos = c.list_repositories().await.with_context(|| crate::error::catalog_failed())?;
+    let repos = c
+        .list_repositories()
+        .await
+        .with_context(crate::error::catalog_failed)?;
     for repo in repos {
         let tags = c.list_tags(&repo).await.unwrap_or_default();
         println!("{repo}: {}", tags.join(", "));

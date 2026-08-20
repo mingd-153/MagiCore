@@ -43,7 +43,10 @@ impl RateLimiter {
 
     /// Kiểm tra + tăng bộ đếm cho client; false = vượt giới hạn
     pub fn allow(&self, client: &str) -> bool {
-        let mut windows = self.windows.lock().unwrap();
+        let mut windows = self
+            .windows
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
         let state = windows.entry(client.to_string()).or_insert(WindowState {
             started: now,

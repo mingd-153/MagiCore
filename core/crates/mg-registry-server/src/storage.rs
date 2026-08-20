@@ -12,11 +12,12 @@ use tokio::io::AsyncWriteExt;
 /// Hex fragment của digest để làm path component an toàn.
 /// - "sha512-<b64>": decode base64 → hex
 /// - chuỗi hex thuần (vd "sha256:<hex>", hoặc hex không prefix): dùng trực tiếp
+///
 /// (Không slice raw b64 — b64 có thể bắt đầu `/`/`+` khiến Path::join tạo path
 /// tuyệt đối, vd join("/+") → "/+/..." → tạo thư mục ở root → 500.)
 fn digest_hex_path(digest: &str) -> (String, String) {
     let body = digest
-        .rfind(|c: char| c == '-' || c == ':')
+        .rfind(['-', ':'])
         .map(|i| &digest[i + 1..])
         .unwrap_or(digest);
     let bytes = if body.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -205,7 +206,6 @@ impl RegistryStore {
             .run(&pool)
             .await
             .context("Failed to run migrations")?;
-
 
         let store = Self {
             db: pool,
@@ -541,11 +541,11 @@ impl RegistryStore {
         let Some(upstream) = &self.upstream else {
             return Ok(None);
         };
-        let same_host = reqwest::Url::parse(tarball_url)
+        let same_host = url::Url::parse(tarball_url)
             .ok()
             .and_then(|u| u.host_str().map(str::to_owned))
             .zip(
-                reqwest::Url::parse(&upstream.base)
+                url::Url::parse(&upstream.base)
                     .ok()
                     .and_then(|u| u.host_str().map(str::to_owned)),
             )
@@ -676,12 +676,15 @@ impl RegistryStore {
     }
 
     pub async fn put_oci_blob(&self, repo: &str, digest: &str, data: &[u8]) -> Result<()> {
-        let repo_dir = self.blobs_dir.join("oci").join(&repo);
+        let repo_dir = self.blobs_dir.join("oci").join(repo);
         fs::create_dir_all(&repo_dir).await?;
 
         let (p1, p2) = digest_hex_path(digest);
         let path = repo_dir.join(&p1).join(&p2);
-        fs::create_dir_all(path.parent().unwrap()).await?;
+        let parent = path
+            .parent()
+            .context("OCI blob path has no parent directory")?;
+        fs::create_dir_all(parent).await?;
 
         let mut file = fs::File::create(&path).await?;
         file.write_all(data).await?;
@@ -768,7 +771,10 @@ impl RegistryStore {
         let repo_dir = self.blobs_dir.join("oci").join(to_repo);
         let (p1, p2) = digest_hex_path(digest);
         let dest = repo_dir.join(&p1).join(&p2);
-        fs::create_dir_all(dest.parent().unwrap()).await?;
+        let parent = dest
+            .parent()
+            .context("mounted OCI blob path has no parent directory")?;
+        fs::create_dir_all(parent).await?;
         if !dest.exists() {
             fs::copy(&src_path, &dest).await?;
         }
@@ -945,7 +951,7 @@ impl RegistryStore {
                 crate::auth::User {
                     name: row.get("name"),
                     is_admin: row.get("is_admin"),
-                    role: crate::auth::UserRole::from_str(&role),
+                    role: role.parse::<crate::auth::UserRole>().unwrap_or_default(),
                     scopes,
                     password: row.get("password"),
                     email: row.get("email"),
@@ -1051,7 +1057,7 @@ impl RegistryStore {
         .bind(&file.version)
         .bind(&file.filename)
         .bind(&file.digest)
-        .bind(file.size as i64)
+        .bind(file.size)
         .bind(&file.requires_python)
         .execute(&self.db)
         .await?;

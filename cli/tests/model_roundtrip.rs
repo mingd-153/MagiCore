@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 //! Integration test: mg model push/pull roundtrip qua registry server thật
 //! (Test roundtrip: push file → pull về → content khớp; fail-closed không token)
 

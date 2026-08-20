@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for ProjectConfig — test riêng tại test/ (RULE §5)
 use mg_config::project::ProjectConfig;
 use std::path::PathBuf;

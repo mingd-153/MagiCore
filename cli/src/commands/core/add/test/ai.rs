@@ -2,7 +2,10 @@ use super::*;
 
 #[test]
 fn add_args_uv_uses_add() {
-    let args = add_args(&["requests".to_string(), "uvicorn[standard]".to_string()], "uv");
+    let args = add_args(
+        &["requests".to_string(), "uvicorn[standard]".to_string()],
+        "uv",
+    );
     assert_eq!(args, vec!["add", "requests", "uvicorn[standard]"]);
 }
 

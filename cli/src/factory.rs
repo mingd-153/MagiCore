@@ -5,6 +5,7 @@ use mg_types::adapter::PackageAdapter;
 use mg_types::Ecosystem;
 
 /// Available cores in this build (for init menu filtering)
+#[allow(clippy::vec_init_then_push)]
 pub fn available_cores() -> Vec<(&'static str, &'static str)> {
     let mut cores = Vec::new();
     #[cfg(feature = "web")]
@@ -36,8 +37,7 @@ pub fn create_adapter(
     token: Option<&str>,
 ) -> anyhow::Result<Arc<dyn PackageAdapter>> {
     create_adapter_for(
-        &std::env::current_dir()
-            .map_err(|e| crate::error::cwd_deleted(&e))?,
+        &std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?,
         ecosystem,
         registry_url,
         token,
@@ -114,7 +114,8 @@ pub fn create_adapter_for(
         Ecosystem::Hardware => return Err(crate::error::core_not_in_build("hardware")),
         #[cfg(feature = "lib")]
         Ecosystem::Lib => Arc::new(
-            mg_lib_adapter::adapter_for_with_chain(root,
+            mg_lib_adapter::adapter_for_with_chain(
+                root,
                 registry_url.map(str::to_string),
                 token.map(str::to_string),
                 fallbacks,

@@ -481,7 +481,7 @@ impl Scaffolder {
                 }
             }
             "lib" => super::processors::lib::LibProcessor::files(target, &name, &framework),
-            other => return Err(crate::error::unsupported_scaffold_core(other)),
+            other => Err(crate::error::unsupported_scaffold_core(other)),
         }
     }
 
@@ -495,15 +495,7 @@ impl Scaffolder {
         Self::materialize_web_templates(target, config, &layers)
     }
 
-
-
-
-
-
-
     /// C9 — multi-platform: shared Kotlin (KMP) + android/ios (swift+objc)/react-native/flutter.
-
-
     fn write_file(path: &Path, content: &str) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -635,7 +627,10 @@ impl Scaffolder {
                 }
             }
             "monorepo" => {
-                layers = Self::monorepo_layer_stack(&root, config, vec![layers.pop().unwrap()])?;
+                let leaf = layers
+                    .pop()
+                    .ok_or_else(|| crate::error::scaffold_not_implemented("web", "monorepo"))?;
+                layers = Self::monorepo_layer_stack(&root, config, vec![leaf])?;
             }
             other => return Err(crate::error::unsupported_web_mode(other)),
         }
@@ -672,9 +667,7 @@ impl Scaffolder {
                 let be = fullstack_backend_framework(combined).to_string();
                 let fe = fullstack_frontend_framework(combined).to_string();
                 if be.is_empty() || fe.is_empty() {
-                    return Err(crate::error::unsupported_fullstack_framework(
-                        &combined,
-                    ));
+                    return Err(crate::error::unsupported_fullstack_framework(combined));
                 }
                 (fe, be)
             }
@@ -737,10 +730,10 @@ impl Scaffolder {
             return Ok(());
         }
 
-        return Err(crate::error::scaffold_not_implemented(
-            &label,
+        Err(crate::error::scaffold_not_implemented(
+            label,
             &layer.logical_rel(),
-        ));
+        ))
     }
 
     /// Layer scaffold của core non-web: `templates/{core}/{framework}` (Q13).
@@ -1130,25 +1123,16 @@ impl WebTemplateContext {
 
         for token in &used {
             if !declared.contains(token.as_str()) {
-                return Err(crate::error::template_token_undeclared(
-                    token,
-                    source,
-                ));
+                return Err(crate::error::template_token_undeclared(token, source));
             }
             if self.value(token).is_none() {
-                return Err(crate::error::template_token_unsupported(
-                    token,
-                    source,
-                ));
+                return Err(crate::error::template_token_unsupported(token, source));
             }
         }
 
         for key in required_context {
             if self.value(key).is_none() {
-                return Err(crate::error::template_context_unsupported(
-                    key,
-                    source,
-                ));
+                return Err(crate::error::template_context_unsupported(key, source));
             }
         }
 
@@ -1215,25 +1199,16 @@ impl CoreTemplateContext {
 
         for token in &used {
             if !declared.contains(token.as_str()) {
-                return Err(crate::error::template_token_undeclared(
-                    token,
-                    source,
-                ));
+                return Err(crate::error::template_token_undeclared(token, source));
             }
             if self.value(token).is_none() {
-                return Err(crate::error::template_token_unsupported(
-                    token,
-                    source,
-                ));
+                return Err(crate::error::template_token_unsupported(token, source));
             }
         }
 
         for key in required_context {
             if self.value(key).is_none() {
-                return Err(crate::error::template_context_unsupported(
-                    key,
-                    source,
-                ));
+                return Err(crate::error::template_context_unsupported(key, source));
             }
         }
 

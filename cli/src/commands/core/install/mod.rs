@@ -4,13 +4,13 @@ use anyhow::Result;
 
 pub mod ai;
 pub mod app;
-pub mod web;
 pub mod cicd;
 pub mod clo;
 pub mod game;
+pub mod hardware;
 pub mod iot;
 pub mod library;
-pub mod hardware;
+pub mod web;
 
 pub async fn run(core: &str, packages: Vec<String>) -> Result<()> {
     // Tự động tối ưu hóa phần cứng và quản lý profile trong .mg-optimizer/ khi user install core

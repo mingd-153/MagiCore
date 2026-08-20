@@ -64,7 +64,7 @@ pub async fn run(package: String, args: Vec<String>) -> Result<()> {
 
     if !bin_path.exists() {
         // Try to find any executable in the package bin dir
-        return Err(crate::error::dlx_no_binary(&bin_name, &pkg_name));
+        return Err(crate::error::dlx_no_binary(bin_name, pkg_name));
     }
 
     mg_ui::info(&format!("$ {} {}", bin_path.display(), args.join(" ")));

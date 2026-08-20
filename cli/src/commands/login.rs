@@ -4,7 +4,6 @@
 use anyhow::{bail, Result};
 use clap::Args;
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
 
 use mg_config::npmrc::NpmRc;
 
@@ -78,13 +77,14 @@ pub async fn run(args: LoginArgs) -> Result<()> {
         .ok_or_else(|| crate::error::no_token_in_response(&text))?;
 
     let host = url::Url::parse(&registry)
-        .and_then(|u| Ok(u.host_str().unwrap_or("").to_string()))
+        .map(|u| u.host_str().unwrap_or("").to_string())
         .unwrap_or_else(|_| registry.trim_end_matches('/').to_string());
 
     let npmrc_path = if args.local {
         std::env::current_dir()?.join(".npmrc")
     } else {
-        PathBuf::from(dirs::home_dir().ok_or_else(crate::error::no_home_dir)?)
+        dirs::home_dir()
+            .ok_or_else(crate::error::no_home_dir)?
             .join(".npmrc")
     };
 

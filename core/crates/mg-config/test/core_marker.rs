@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! T9a core signature marker tests — chữ kí chống nhầm core (user 2026-08-19).
 //! Covers: write/read marker, save() auto-writes marker, detect priority,
 //! ambiguous fail-closed, find_project_root marker propagation.
@@ -7,7 +8,8 @@ use std::fs;
 use std::path::PathBuf;
 
 fn tmp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-config-marker-{}-{}", name, std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("mg-config-marker-{}-{}", name, std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -34,7 +36,11 @@ fn read_marker_roundtrip_and_cloud_alias() {
     let dir = project("alias-cloud");
     ProjectConfig::write_core_marker_at(&dir, "cloud").unwrap();
     let core = ProjectConfig::read_core_marker(&dir).unwrap();
-    assert_eq!(core.as_deref(), Some("clo"), "cloud must canonicalize to clo");
+    assert_eq!(
+        core.as_deref(),
+        Some("clo"),
+        "cloud must canonicalize to clo"
+    );
 }
 
 #[test]
@@ -55,7 +61,10 @@ fn detect_core_priority_marker_over_signature() {
     assert_eq!(marker.trim(), "web");
     // ngay cả khi thêm signature khác core — marker vẫn thắng
     fs::write(dir.join("package.json"), "{}").unwrap();
-    assert_eq!(ProjectConfig::detect_core(&dir).unwrap().as_deref(), Some("web"));
+    assert_eq!(
+        ProjectConfig::detect_core(&dir).unwrap().as_deref(),
+        Some("web")
+    );
 }
 
 #[test]
@@ -101,7 +110,11 @@ fn find_project_root_sees_marker_in_parent() {
     let dir = tmp_dir("find-root");
     let inner = dir.join("a/b/c");
     fs::create_dir_all(&inner).unwrap();
-    assert_eq!(ProjectConfig::find_project_root(&inner), None, "no marker yet");
+    assert_eq!(
+        ProjectConfig::find_project_root(&inner),
+        None,
+        "no marker yet"
+    );
     fs::write(dir.join(ProjectConfig::CORE_MARKER_FILE), "iot\n").unwrap();
     assert_eq!(
         ProjectConfig::find_project_root(&inner),

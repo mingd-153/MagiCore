@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for auth resolution — test riêng tại test/ (RULE §5)
 use mg_config::npmrc::NpmRc;
 use mg_config::registry::Registry;

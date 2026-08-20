@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Allowlist tests — check tool cho phép/cấm/ngoài danh sách (00-index §5.1, §5.2)
 //! (kiểm tra allowlist bất biến + forbidden npm family)
 

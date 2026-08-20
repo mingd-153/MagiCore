@@ -226,8 +226,7 @@ pub fn build_graph_from_lockfile(
         else {
             return Ok(None);
         };
-        let version =
-            Version::parse(&lp.version).map_err(|e| MgError::Other(e.to_string()))?;
+        let version = Version::parse(&lp.version).map_err(|e| MgError::Other(e.to_string()))?;
         let deps: Vec<PackageId> = lp
             .dependencies
             .iter()

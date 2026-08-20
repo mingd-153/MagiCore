@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-cicd-adapter — CI/CD ecosystem adapter (MegaGate)
 //! (Q12: CI + deploy đa cloud — GitHub Actions, Cloudflare, AWS, GCP, ArgoCD.
 //!  Không có package manager riêng: add/remove/update fail-closed; deploy/exec qua CLI provider)
