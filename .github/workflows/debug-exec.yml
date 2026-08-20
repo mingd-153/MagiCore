@@ -24,3 +24,4 @@ jobs:
         run: cargo test -p mg-exec --test test_run 2>&1
       - name: mg-exec allowlist tests run3
         run: cargo test -p mg-exec --test test_run 2>&1
+# trigger-4
