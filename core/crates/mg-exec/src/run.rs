@@ -448,19 +448,64 @@ fn configure_process_isolation(_command: &mut Command) {}
 
 #[cfg(unix)]
 fn terminate_process_tree(root_pid: u32) {
-    let pid_str = root_pid.to_string();
-    let pgid_str = format!("-{root_pid}");
-    let _ = Command::new("kill")
-        .args(["-TERM", &pgid_str, &pid_str])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    // Không spawn `kill -TERM -{pgid}`: trên GH Runner pgid resolver đánh
+    // trúng process group của job → SIGTERM toàn job (exit 143/canceled).
+    // Walk /proc theo ppid và giết từng pid cụ thể — không đụng ngoài cây.
+    let mut frontier = vec![root_pid];
+    let mut all = Vec::new();
+    while let Some(pid) = frontier.pop() {
+        all.push(pid);
+        frontier.extend(child_pids(pid));
+    }
+    all.reverse();
+    for &pid in &all {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
     std::thread::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS));
-    let _ = Command::new("kill")
-        .args(["-KILL", &pgid_str, &pid_str])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    for &pid in &all {
+        let _ = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+#[cfg(unix)]
+fn child_pids(ppid: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.bytes().any(|b| !b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{name}/stat")) else {
+            continue;
+        };
+        let Some((_, rest)) = stat.split_once(')') else {
+            continue;
+        };
+        let mut fields = rest.split_whitespace();
+        let _state = fields.next();
+        let Some(ppid_field) = fields.next().and_then(|f| f.parse::<i32>().ok()) else {
+            continue;
+        };
+        if ppid_field == ppid as i32 {
+            if let Ok(pid) = name.parse::<u32>() {
+                out.push(pid);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(not(unix))]
