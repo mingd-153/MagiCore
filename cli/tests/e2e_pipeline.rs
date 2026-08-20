@@ -8,7 +8,7 @@ mod common;
 
 use std::fs;
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
@@ -26,16 +26,44 @@ fn free_port() -> Option<u16> {
 fn spawn_server(store_dir: &Path, port: u16) -> Child {
     let workspace_manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
     let workspace_root = workspace_manifest.parent().unwrap();
-    let bin = workspace_root
+    let debug_bin = workspace_root
         .join("target")
         .join("debug")
         .join("mg-registry");
-    assert!(
-        bin.exists(),
-        "mg-registry binary missing — build the workspace first"
-    );
-    Command::new(bin)
-        .arg("--port")
+    let release_bin = workspace_root
+        .join("target")
+        .join("release")
+        .join("mg-registry");
+
+    let runtime_bin = std::env::var("CARGO_BIN_EXE_mg-registry")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| p.exists());
+    let compile_bin = option_env!("CARGO_BIN_EXE_mg-registry")
+        .map(PathBuf::from)
+        .filter(|p| p.exists());
+
+    let mut cmd = if let Some(bin) = runtime_bin.or(compile_bin) {
+        Command::new(bin)
+    } else if debug_bin.exists() {
+        Command::new(debug_bin)
+    } else if release_bin.exists() {
+        Command::new(release_bin)
+    } else {
+        let mut fallback = Command::new("cargo");
+        fallback
+            .arg("run")
+            .arg("-p")
+            .arg("mg-registry-server")
+            .arg("--bin")
+            .arg("mg-registry")
+            .arg("--manifest-path")
+            .arg(&workspace_manifest)
+            .arg("--");
+        fallback
+    };
+
+    cmd.arg("--port")
         .arg(port.to_string())
         .arg("--store-dir")
         .arg(store_dir)
@@ -100,6 +128,19 @@ url = "http://127.0.0.1:{port}"
         r#"{"name":"consumer","version":"0.0.1","type":"module"}"#,
     )
     .unwrap();
+    fs::write(
+        consumer.join("mg.toml"),
+        format!(
+            r#"name = "e2e-consumer"
+ecosystem = "web"
+
+[[registries]]
+name = "e2e"
+url = "http://127.0.0.1:{port}"
+"#
+        ),
+    )
+    .unwrap();
 
     // 2. server
     eprintln!("[e2e] step 2: spawn server port={port}");
@@ -107,11 +148,34 @@ url = "http://127.0.0.1:{port}"
     wait_ready(port);
 
     let root = workspace_root();
-    let mg = root.join("target").join("debug").join("mg");
-    assert!(mg.exists(), "mg binary missing — build first");
+    let debug_mg = root.join("target").join("debug").join("mg");
+    let release_mg = root.join("target").join("release").join("mg");
+    let runtime_mg = std::env::var("CARGO_BIN_EXE_mg")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| p.exists());
+    let compile_mg = option_env!("CARGO_BIN_EXE_mg")
+        .map(PathBuf::from)
+        .filter(|p| p.exists());
 
     let run = |cwd: &Path, args: &[&str], envs: &[(&str, &str)]| {
-        let mut cmd = Command::new(&mg);
+        let mut cmd = if let Some(bin) = runtime_mg.as_ref().or(compile_mg.as_ref()) {
+            Command::new(bin)
+        } else if debug_mg.exists() {
+            Command::new(&debug_mg)
+        } else if release_mg.exists() {
+            Command::new(&release_mg)
+        } else {
+            let mut fallback = Command::new("cargo");
+            fallback
+                .arg("run")
+                .arg("-p")
+                .arg("mg")
+                .arg("--manifest-path")
+                .arg(root.join("Cargo.toml"))
+                .arg("--");
+            fallback
+        };
         cmd.current_dir(cwd)
             .args(args)
             .env("MEGAGATE_TEMPLATE_DIR", root.join("templates"));
