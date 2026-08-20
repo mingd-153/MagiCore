@@ -60,8 +60,19 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: cargo test
         run: cargo test --workspace --locked --exclude mg -- --test-threads=4
+      - name: Seed template registry (local server, no external token)
+        run: |
+          ./target/debug/mg-registry --host 127.0.0.1 --port 4315 --store-dir /tmp/mg-reg-store >/tmp/mg-reg.log 2>&1 &
+          SRV=$!
+          trap 'kill $SRV' EXIT
+          for i in $(seq 1 15); do curl -sf -o /dev/null http://127.0.0.1:4315/ && break || sleep 1; done
+          mkdir -p /tmp/mg-tpl && git archive 1b69dd0^ templates | tar -x -C /tmp/mg-tpl
+          MEGAGATE_TEMPLATE_DIR=/tmp/mg-tpl/templates MG_NPM_REGISTRY=http://127.0.0.1:4315 cargo run -p mg -- template publish-all
       - name: cargo test (mg, skip benchmarks)
-        run: cargo test -p mg --locked -- --test-threads=4 --skip bench_
+        run: mkdir -p /tmp/mg-empty-cache && cargo test -p mg --locked -- --test-threads=4 --skip bench_
+        env:
+          MG_NPM_REGISTRY: http://127.0.0.1:4315
+          MG_TEMPLATES_DIR: /tmp/mg-empty-cache
 
   build:
     name: Build Release
