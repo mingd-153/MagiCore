@@ -69,6 +69,17 @@ jobs:
           trap 'kill $SRV' EXIT
           for i in $(seq 1 15); do curl -sf -o /dev/null http://127.0.0.1:4315/ && break || sleep 1; done
           mkdir -p /tmp/mg-tpl && git archive 1b69dd0^ templates | tar -x -C /tmp/mg-tpl
+          python3 - <<'EOF'
+import tomllib, pathlib
+root = pathlib.Path('/tmp/mg-tpl/templates')
+for tpl in root.rglob('template.toml'):
+    for f in tomllib.loads(tpl.read_text()).get('files', []):
+        src = tpl.parent / f['source']
+        if not src.exists():
+            src.parent.mkdir(parents=True, exist_ok=True)
+            src.touch()
+            print('placeholder:', src.relative_to(root))
+EOF
           MEGAGATE_TEMPLATE_DIR=/tmp/mg-tpl/templates MG_NPM_REGISTRY=http://127.0.0.1:4315 cargo run -p mg -- template publish-all
           mkdir -p /tmp/mg-empty-cache
           MG_NPM_REGISTRY=http://127.0.0.1:4315 MG_TEMPLATES_DIR=/tmp/mg-empty-cache cargo test -p mg --locked -- --test-threads=4 --skip bench_
