@@ -1,17 +1,17 @@
+#![allow(clippy::unwrap_used)]
 #![cfg(test)]
 use mg_http::TlsConfig;
 use mg_oci::client::OciClient;
 
 #[test]
 fn crate_compiles() {
-    assert!(true);
+    let tls = TlsConfig::default();
+    assert!(tls.ca_bundle.is_none());
 }
 
 #[test]
 fn client_new_creates_instance() {
     let _client = OciClient::new("http://localhost:4315", None).unwrap();
-    // Just verify the client was created successfully
-    assert!(true);
 }
 
 #[test]

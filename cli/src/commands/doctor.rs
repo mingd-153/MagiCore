@@ -138,7 +138,10 @@ pub fn report() -> Result<DoctorReport> {
                 code: "ERR_TOOLCHAIN_MISSING",
                 severity: "WARNING",
                 message: format!("Core tool '{}' is not installed or not in PATH.", t.name),
-                fix_command: Some(format!("Install '{}' via system package manager (brew/apt/winget)", t.name)),
+                fix_command: Some(format!(
+                    "Install '{}' via system package manager (brew/apt/winget)",
+                    t.name
+                )),
             });
             suggested_actions.push(format!("Please install {}", t.name));
         }
@@ -149,7 +152,10 @@ pub fn report() -> Result<DoctorReport> {
         detected_issues.push(DiagnosticIssue {
             code: "ERR_STORE_READONLY",
             severity: "CRITICAL",
-            message: format!("MegaGate global store '{}' is not writable.", store_dir.display()),
+            message: format!(
+                "MegaGate global store '{}' is not writable.",
+                store_dir.display()
+            ),
             fix_command: Some(format!("chmod -R 755 {}", store_dir.display())),
         });
         suggested_actions.push(format!("Fix write permissions on {}", store_dir.display()));
@@ -160,7 +166,10 @@ pub fn report() -> Result<DoctorReport> {
         detected_issues.push(DiagnosticIssue {
             code: "WARN_LOW_DISK_SPACE",
             severity: "WARNING",
-            message: format!("Low disk space: only {} MB free.", disk_free_bytes / (1024 * 1024)),
+            message: format!(
+                "Low disk space: only {} MB free.",
+                disk_free_bytes / (1024 * 1024)
+            ),
             fix_command: Some("mg store prune --all".to_string()),
         });
         suggested_actions.push("Run `mg store prune --all` to reclaim disk space".to_string());
@@ -217,10 +226,17 @@ pub fn handle(cmd: DoctorCmd) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&rep)?);
         }
         DoctorCmd::Check { json: false, fix } => {
-            println!("MegaGate Doctor (v0.3.0) — Environment Health: {}", rep.health_status);
+            println!(
+                "MegaGate Doctor (v0.3.0) — Environment Health: {}",
+                rep.health_status
+            );
             println!("─────────────────────────────────────────────────────────────");
             for t in &rep.toolchain {
-                let mark = if t.path.is_some() { "  ✓ OK  " } else { "  ✗ MISS" };
+                let mark = if t.path.is_some() {
+                    "  ✓ OK  "
+                } else {
+                    "  ✗ MISS"
+                };
                 println!(
                     "{mark} {:<10} {:<12} {}",
                     t.name,

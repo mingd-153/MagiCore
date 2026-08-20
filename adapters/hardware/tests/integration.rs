@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-hardware-adapter — sát với src/lib.rs
 //! Kiểm thử: adapter_for (detect qua mg.toml ecosystem), list, audit, PackageAdapter trait.
 
@@ -140,7 +141,9 @@ async fn add_fails_for_hardware_adapter() {
     let dir = tmp("add-fail");
     std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let name = PackageName::new("hal-crate").unwrap();
-    let result = HardwareAdapter.add(&dir, &name, None, AddOptions::default()).await;
+    let result = HardwareAdapter
+        .add(&dir, &name, None, AddOptions::default())
+        .await;
     assert!(result.is_err(), "hardware adapter must block direct add");
 }
 

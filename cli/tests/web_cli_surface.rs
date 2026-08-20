@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 // CLI surface tests: single-core vs multi-core commands.
 // Multi-core build (all features enabled) → only create-web/add-web/remove-web/list-web exist.
 

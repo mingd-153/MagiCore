@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-iot-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_framework (ESP32-Rust, PlatformIO, Zephyr), board mapping, PackageAdapter trait.
 
@@ -98,7 +99,10 @@ async fn platformio_add_delegates_to_pio_tool() {
         Err(e) => {
             let msg = e.to_string();
             assert!(
-                msg.contains("pio") || msg.contains("No such") || msg.contains("not found") || msg.contains("os error"),
+                msg.contains("pio")
+                    || msg.contains("No such")
+                    || msg.contains("not found")
+                    || msg.contains("os error"),
                 "unexpected error: {msg}"
             );
         }
@@ -111,7 +115,10 @@ async fn zephyr_add_fails_closed_directing_to_west_yml() {
     std::fs::write(dir.join("west.yml"), "manifest:\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let name = PackageName::new("lvgl").unwrap();
-    let err = a.add(&dir, &name, None, AddOptions::default()).await.unwrap_err();
+    let err = a
+        .add(&dir, &name, None, AddOptions::default())
+        .await
+        .unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("zephyr") || msg.contains("west.yml") || msg.contains("prj.conf"),

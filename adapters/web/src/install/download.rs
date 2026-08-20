@@ -11,12 +11,9 @@ use mg_types::{MgError, MgResult, PackageId};
 use crate::audit::{allow_insecure_loopback_url, is_tarball_url_trusted};
 use crate::cache::{download_concurrency_limit, SharedWebCache};
 use crate::install::extract::{
-    ensure_extracted_package_root, ensure_extracted_package_root_from_bytes,
-    tarball_prefetch_lock,
+    ensure_extracted_package_root, ensure_extracted_package_root_from_bytes, tarball_prefetch_lock,
 };
-use crate::lockfile::{
-    compute_sha512_b64, compute_tarball_integrity, strict_integrity_enforced,
-};
+use crate::lockfile::{compute_sha512_b64, compute_tarball_integrity, strict_integrity_enforced};
 use crate::native;
 use crate::profile::{PipelineProfile, TarballFetchResult, TarballPayload};
 
@@ -263,8 +260,7 @@ pub async fn get_tarball_bytes(
                 pkg.integrity = computed_integrity;
             }
             if let Some(parent) = final_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| MgError::Store(e.to_string()))?;
+                std::fs::create_dir_all(parent).map_err(|e| MgError::Store(e.to_string()))?;
             }
             std::fs::rename(&temp_path, &final_path).map_err(|e| {
                 MgError::Store(format!(
@@ -409,9 +405,7 @@ pub async fn prefetch_tarballs(
     }
 
     while let Some(joined) = downloads.join_next().await {
-        match joined
-            .map_err(|e| MgError::Other(format!("download task failed: {e}")))??
-        {
+        match joined.map_err(|e| MgError::Other(format!("download task failed: {e}")))?? {
             PrefetchOutcome::CacheHit(bytes) => {
                 bytes_from_cache += bytes;
             }
@@ -447,8 +441,7 @@ pub async fn prefetch_tarballs(
                 }
                 let final_path = cache.tarball_path(&pkg.id);
                 if let Some(parent) = final_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| MgError::Store(e.to_string()))?;
+                    std::fs::create_dir_all(parent).map_err(|e| MgError::Store(e.to_string()))?;
                 }
                 std::fs::rename(&temp_path, &final_path).map_err(|e| {
                     MgError::Store(format!(

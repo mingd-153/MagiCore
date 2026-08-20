@@ -39,10 +39,10 @@ pub enum PatchCmd {
 
 pub async fn run(args: PatchArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(crate::error::project_root_missing)?;
-    let mut project = ProjectConfig::load(&project_root)?
-        .ok_or_else(crate::error::mg_toml_missing)?;
+    let project_root =
+        ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
+    let mut project =
+        ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mg_toml_missing)?;
 
     match args.cmd {
         PatchCmd::Add {
@@ -88,7 +88,7 @@ async fn add_patch(
     let version_range = range
         .map(|r| mg_types::VersionRange::parse(&r))
         .transpose()?
-        .unwrap_or_else(|| mg_types::VersionRange::parse("*").unwrap());
+        .unwrap_or_else(mg_types::VersionRange::star);
 
     let spec = PatchSpec::new(package.to_string(), version_range, dest_name, integrity);
 

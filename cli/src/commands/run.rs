@@ -32,7 +32,7 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
         }
     }
 
-    return Err(crate::error::script_not_found(&script));
+    Err(crate::error::script_not_found(&script))
 }
 
 fn reject_external_package_manager_script(cmd: &str, manifest_path: &Path) -> Result<()> {

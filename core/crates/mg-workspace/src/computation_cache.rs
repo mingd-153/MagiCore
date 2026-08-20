@@ -101,10 +101,7 @@ fn walk_and_collect_hashes(
 }
 
 /// Tính composite hash từ source_hash và dependencies' hashes
-pub fn compute_composite_hash(
-    source_hash: &str,
-    dep_hashes: &BTreeMap<String, String>,
-) -> String {
+pub fn compute_composite_hash(source_hash: &str, dep_hashes: &BTreeMap<String, String>) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(source_hash.as_bytes());

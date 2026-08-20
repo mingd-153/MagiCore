@@ -50,11 +50,15 @@ async fn build_game(root: &Path) -> Result<()> {
     match engine {
         Some(mg_game_adapter::GameEngine::Bevy) => build_rust(root),
         Some(mg_game_adapter::GameEngine::Godot) => {
-            mg_ui::warning("godot export build is P2 (03 §4) — use the editor to export; build skipped");
+            mg_ui::warning(
+                "godot export build is P2 (03 §4) — use the editor to export; build skipped",
+            );
             Ok(())
         }
         Some(mg_game_adapter::GameEngine::Unity) => {
-            mg_ui::warning("unity batchmode build is P1, not opened yet — scaffold-only; build skipped");
+            mg_ui::warning(
+                "unity batchmode build is P1, not opened yet — scaffold-only; build skipped",
+            );
             Ok(())
         }
         Some(mg_game_adapter::GameEngine::Unreal) => {
@@ -282,7 +286,7 @@ fn tool_unavailable(tool: &str) -> bool {
 /// Fail-closed: toolchain thiếu → cảnh báo, không fail project.
 async fn build_cloud(root: &Path) -> Result<()> {
     let kind = mg_cloud_adapter::detect_type(root)
-        .ok_or_else(|| crate::error::no_framework_detected("cloud", &root))?;
+        .ok_or_else(|| crate::error::no_framework_detected("cloud", root))?;
     match kind {
         mg_cloud_adapter::CloudType::Cdk => {
             let bin = root.join("node_modules").join(".bin").join("cdk");
@@ -338,7 +342,7 @@ fn find_root() -> anyhow::Result<PathBuf> {
     if let Some(root) = mg_config::project::ProjectConfig::find_project_root(&cwd) {
         return Ok(root);
     }
-    return Err(crate::error::no_project_found_build());
+    Err(crate::error::no_project_found_build())
 }
 
 fn build_rust(root: &Path) -> Result<()> {
@@ -904,12 +908,12 @@ mod tests {
 
     #[test]
     fn tool_unavailable_false_for_known_tool_in_path() {
-        assert_eq!(tool_unavailable("sh"), false);
+        assert!(!tool_unavailable("sh"));
     }
 
     #[test]
     fn tool_unavailable_true_for_nonsense_tool() {
-        assert_eq!(tool_unavailable("definitely-not-a-real-tool-mg"), true);
+        assert!(tool_unavailable("definitely-not-a-real-tool-mg"));
     }
 
     #[test]

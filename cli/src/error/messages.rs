@@ -40,7 +40,12 @@ pub fn no_web_layer_found(dir: &std::path::Path) -> Error {
 
 /// template publish required before fetch
 pub fn template_not_published(url: &str, http: u16) -> Error {
-    anyhow!("Template '{}' not found at {} (HTTP {}) — run `mg template publish` first", url, url, http)
+    anyhow!(
+        "Template '{}' not found at {} (HTTP {}) — run `mg template publish` first",
+        url,
+        url,
+        http
+    )
 }
 
 /// HF request failed
@@ -105,16 +110,12 @@ pub fn lib_no_test_runner() -> Error {
 
 /// deploy target missing `stack` in [deploy] targets
 pub fn deploy_target_missing_stack() -> Error {
-    anyhow!(
-        "aws target is missing `stack` in [deploy] targets — example: stack = \"my-infra\""
-    )
+    anyhow!("aws target is missing `stack` in [deploy] targets — example: stack = \"my-infra\"")
 }
 
 /// deploy target adapter unknown
 pub fn deploy_target_unknown(other: &str) -> Error {
-    anyhow!(
-        "deploy target '{other}' has no adapter — supported: aws | cloudflare | gcp"
-    )
+    anyhow!("deploy target '{other}' has no adapter — supported: aws | cloudflare | gcp")
 }
 
 /// no deploy targets configured
@@ -212,9 +213,7 @@ pub fn lockfile_newer(version: u32, supported: u32) -> Error {
 
 /// dependency id trong lockfile không parse được
 pub fn invalid_dep_id(dep: &str, name: &str, version: &str, e: &dyn std::fmt::Display) -> Error {
-    anyhow!(
-        "invalid dependency id '{dep}' in lockfile package '{name}@{version}': {e}"
-    )
+    anyhow!("invalid dependency id '{dep}' in lockfile package '{name}@{version}': {e}")
 }
 
 /// package không thấy local/global
@@ -242,16 +241,12 @@ pub fn no_app_language(root: &std::path::Path) -> Error {
 }
 
 pub fn app_tool_failed(cmd: &str, e: &dyn std::fmt::Display) -> Error {
-    anyhow!(
-        "{cmd} failed: {e} — install the tool first and ensure it is in PATH"
-    )
+    anyhow!("{cmd} failed: {e} — install the tool first and ensure it is in PATH")
 }
 
 /// verb không có CLI passthrough cho language
 pub fn manifest_hint(verb: &str, lang: &mg_app_adapter::AppLanguage, file: &str) -> Error {
-    anyhow!(
-        "'{verb}' for {lang:?} has no CLI passthrough — edit {file} then run `mg install`."
-    )
+    anyhow!("'{verb}' for {lang:?} has no CLI passthrough — edit {file} then run `mg install`.")
 }
 
 pub fn xcode_project_missing(root: &std::path::Path) -> Error {
@@ -301,9 +296,7 @@ pub fn audit_strict_no_web_adapter() -> Error {
 }
 
 pub fn audit_parse_time_failed(name: &str, version: &str, e: &dyn std::fmt::Display) -> Error {
-    anyhow!(
-        "failed to parse published time for '{name}@{version}': {e}"
-    )
+    anyhow!("failed to parse published time for '{name}@{version}': {e}")
 }
 
 pub fn audit_recent_blocked(name: &str, version: &str, published_at: &str) -> Error {
@@ -317,9 +310,7 @@ pub fn audit_api_status(status: &reqwest::StatusCode) -> Error {
 }
 
 pub fn audit_advisory_blocked(pkg: &str, severity: &str, title: &str) -> Error {
-    anyhow!(
-        "--audit-strict blocked '{pkg}' due to {severity} advisory: {title}"
-    )
+    anyhow!("--audit-strict blocked '{pkg}' due to {severity} advisory: {title}")
 }
 
 pub fn link_web_only() -> Error {
@@ -373,9 +364,7 @@ pub fn no_ai_framework(root: &std::path::Path) -> Error {
 }
 
 pub fn python3_failed(e: &dyn std::fmt::Display) -> Error {
-    anyhow!(
-        "python3 failed: {e} — install Python 3.11+ and ensure `python3` is in PATH"
-    )
+    anyhow!("python3 failed: {e} — install Python 3.11+ and ensure `python3` is in PATH")
 }
 
 // ===== dev.rs =====
@@ -391,9 +380,7 @@ pub fn unreal_editor_dev(uproject: &str) -> Error {
 }
 
 pub fn dev_no_command_for_engine(engine: &str) -> Error {
-    anyhow!(
-        "'mg dev' has no command for engine '{engine}' — use the engine editor to run it"
-    )
+    anyhow!("'mg dev' has no command for engine '{engine}' — use the engine editor to run it")
 }
 
 pub fn godot_failed(e: &dyn std::fmt::Display) -> Error {
@@ -495,9 +482,7 @@ pub fn invalid_oci_source(oci: &str) -> Error {
 }
 
 pub fn unsupported_quantize_target(target: &str) -> Error {
-    anyhow!(
-        "unsupported target: {target} (use q4_k_m or q8_0; awq needs a GPU toolchain)"
-    )
+    anyhow!("unsupported target: {target} (use q4_k_m or q8_0; awq needs a GPU toolchain)")
 }
 
 pub fn llama_cpp_missing() -> Error {
@@ -513,9 +498,7 @@ pub fn llama_quantize_failed(code: Option<i32>) -> Error {
 // ===== audit =====
 
 pub fn audit_not_implemented(core: &str) -> Error {
-    anyhow!(
-        "{core} audit is not implemented yet; refusing to report a fake clean audit"
-    )
+    anyhow!("{core} audit is not implemented yet; refusing to report a fake clean audit")
 }
 
 pub fn audit_fix_web_only() -> Error {
@@ -548,9 +531,7 @@ pub fn unsupported_script(script: &str, e: &dyn std::fmt::Display) -> Error {
 // ===== dlx.rs =====
 
 pub fn dlx_no_binary(bin: &str, pkg: &str) -> Error {
-    anyhow!(
-        "dlx: no binary '{bin}' found for package '{pkg}'. Is it an executable package?"
-    )
+    anyhow!("dlx: no binary '{bin}' found for package '{pkg}'. Is it an executable package?")
 }
 
 // ===== hooks.rs =====
@@ -693,7 +674,11 @@ pub fn web_no_dev_target(root: &std::path::Path, hint: &str) -> Error {
     )
 }
 
-pub fn web_workspace_dep_missing(dep: &str, target: &std::path::Path, root: &std::path::Path) -> Error {
+pub fn web_workspace_dep_missing(
+    dep: &str,
+    target: &std::path::Path,
+    root: &std::path::Path,
+) -> Error {
     anyhow!(
         "workspace dependency '{dep}' referenced by '{}' was not found under '{}'",
         target.display(),
@@ -702,7 +687,10 @@ pub fn web_workspace_dep_missing(dep: &str, target: &std::path::Path, root: &std
 }
 
 pub fn web_empty_dev_script(root: &std::path::Path) -> Error {
-    anyhow!("Empty dev script in '{}'", root.join("package.json").display())
+    anyhow!(
+        "Empty dev script in '{}'",
+        root.join("package.json").display()
+    )
 }
 
 pub fn web_unsupported_dev_script(script: &str, root: &std::path::Path) -> Error {
@@ -743,7 +731,9 @@ pub fn web_missing_executable(bin: &str, hint: &str, root: &std::path::Path) -> 
 // ===== build.rs / install.rs =====
 
 pub fn build_toolchain_missing(tool: &str) -> Error {
-    anyhow!("'{tool}' not found in PATH — install it first (mg doctor check lists required toolchains)")
+    anyhow!(
+        "'{tool}' not found in PATH — install it first (mg doctor check lists required toolchains)"
+    )
 }
 
 pub fn workspace_failed(count: usize) -> Error {
@@ -839,9 +829,7 @@ pub fn web_template_layer_missing(layer: &str) -> Error {
 }
 
 pub fn unsupported_fullstack_framework(combined: &str) -> Error {
-    anyhow!(
-        "Unsupported fullstack framework '{combined}' for composited web scaffold"
-    )
+    anyhow!("Unsupported fullstack framework '{combined}' for composited web scaffold")
 }
 
 pub fn web_scaffold_needs_fe_be() -> Error {
@@ -865,33 +853,23 @@ pub fn template_layer_missing_manifest(layer: &str) -> Error {
 }
 
 pub fn duplicate_template_target(target: &str, layer: &str) -> Error {
-    anyhow!(
-        "Duplicate template target '{target}' in '{layer}'"
-    )
+    anyhow!("Duplicate template target '{target}' in '{layer}'")
 }
 
 pub fn template_source_missing(source: &str, layer: &str) -> Error {
-    anyhow!(
-        "Template source '{source}' does not exist in '{layer}'"
-    )
+    anyhow!("Template source '{source}' does not exist in '{layer}'")
 }
 
 pub fn binary_source_with_context(label: &str) -> Error {
-    anyhow!(
-        "Binary template source '{label}' cannot declare template context"
-    )
+    anyhow!("Binary template source '{label}' cannot declare template context")
 }
 
 pub fn template_token_undeclared(token: &str, source: &str) -> Error {
-    anyhow!(
-        "Template token '{token}' in '{source}' is not declared in template.toml"
-    )
+    anyhow!("Template token '{token}' in '{source}' is not declared in template.toml")
 }
 
 pub fn template_token_unsupported(token: &str, source: &str) -> Error {
-    anyhow!(
-        "Template token '{token}' in '{source}' is not supported by the Rust compiler context"
-    )
+    anyhow!("Template token '{token}' in '{source}' is not supported by the Rust compiler context")
 }
 
 pub fn template_context_unsupported(key: &str, source: &str) -> Error {

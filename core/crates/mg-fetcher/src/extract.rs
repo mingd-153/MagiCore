@@ -166,7 +166,10 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
             // prune_cas_blobs_under(), so claim the bare hex).
             // (Khóa refcount = blake3 hex — prune strip đuôi .exec nên claim
             //  đúng hex thuần.)
-            imported.lock().unwrap().insert(hash.hash.clone());
+            imported
+                .lock()
+                .expect("lock poisoned")
+                .insert(hash.hash.clone());
         }
 
         Ok(())
@@ -174,7 +177,7 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
 
     if let Some((db, project_root)) = claim {
         let mut conn = std::collections::HashSet::new();
-        std::mem::swap(&mut conn, &mut imported.lock().unwrap());
+        std::mem::swap(&mut conn, &mut imported.lock().expect("lock poisoned"));
         for name in conn {
             let _ = db.cas_claim(project_root, &name).map_err(|e| {
                 // Fail-soft: refcount is an optimization; prune's nlink net

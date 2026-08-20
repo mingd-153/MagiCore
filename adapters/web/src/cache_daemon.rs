@@ -1,7 +1,7 @@
 //! In-Memory Caching Daemon for sub-millisecond warm installs
-use std::sync::{Arc, Mutex, OnceLock};
-use std::collections::HashMap;
 use mg_types::PackageId;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct MemoryCacheDaemon {
     entries: Mutex<HashMap<String, Arc<[u8]>>>,

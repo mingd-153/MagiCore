@@ -85,7 +85,7 @@ where
     let _new_range = parse_range(parts[2])?;
 
     let mut hunk_lines = Vec::new();
-    while let Some(line) = lines.next() {
+    for line in lines.by_ref() {
         if line.starts_with("@@") || line.starts_with("---") || line.starts_with("+++") {
             // Put back - will be processed in next iteration
             break;

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-game-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_engine (Bevy, Godot, Unity, Unreal), adapter_for, PackageAdapter trait.
 
@@ -18,7 +19,11 @@ fn tmp(tag: &str) -> PathBuf {
 #[test]
 fn detect_godot_via_project_godot() {
     let dir = tmp("godot");
-    std::fs::write(dir.join("project.godot"), "[application]\nconfig/name=\"Demo\"\n").unwrap();
+    std::fs::write(
+        dir.join("project.godot"),
+        "[application]\nconfig/name=\"Demo\"\n",
+    )
+    .unwrap();
     assert_eq!(detect_engine(&dir), Some(GameEngine::Godot));
 }
 
@@ -148,7 +153,10 @@ async fn godot_add_fails_closed_directing_to_editor() {
     std::fs::write(dir.join("project.godot"), "[application]\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let name = PackageName::new("godot-plugin").unwrap();
-    let err = a.add(&dir, &name, None, AddOptions::default()).await.unwrap_err();
+    let err = a
+        .add(&dir, &name, None, AddOptions::default())
+        .await
+        .unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("godot") || msg.contains("Asset Library") || msg.contains("dev"),
@@ -167,7 +175,10 @@ async fn unity_add_fails_closed_directing_to_upm() {
     .unwrap();
     let a = adapter_for(&dir).unwrap();
     let name = PackageName::new("com.unity.cinemachine").unwrap();
-    let err = a.add(&dir, &name, None, AddOptions::default()).await.unwrap_err();
+    let err = a
+        .add(&dir, &name, None, AddOptions::default())
+        .await
+        .unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("unity") || msg.contains("Packages/manifest.json") || msg.contains("UPM"),

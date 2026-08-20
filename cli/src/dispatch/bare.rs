@@ -1,5 +1,5 @@
-use crate::Commands;
 use crate::dispatch::types::{detect_ecosystem, CoreCommand, DispatchCommand};
+use crate::Commands;
 
 /// Bare verb commands (install/add/remove/update/list) → CoreCommand theo --core hoặc detect_ecosystem.
 pub fn bare_core_command(command: Commands, ecosystem: Option<String>) -> DispatchCommand {

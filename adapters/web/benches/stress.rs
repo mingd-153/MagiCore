@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use criterion::{criterion_group, criterion_main, Criterion};
 use mg_types::{
     adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
@@ -151,7 +152,7 @@ fn bench_concurrent_install(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 let pkg = pkg_id("react", "18.2.0");
-                let graph = Arc::new(make_graph(&[pkg.clone()]));
+                let graph = Arc::new(make_graph(std::slice::from_ref(&pkg)));
                 let d1 = Arc::new(tempfile::tempdir().unwrap());
                 let d2 = Arc::new(tempfile::tempdir().unwrap());
                 make_tarball(d1.path(), &pkg, 3);
@@ -271,7 +272,7 @@ fn bench_reinstall_changed(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 let pkg = pkg_id("reinstalled-pkg", "1.0.0");
-                let graph = make_graph(&[pkg.clone()]);
+                let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball_with_files(dir.path(), &pkg, &[("version.txt", b"v1")]);
                 let adapter = mg_web_adapter::WebAdapter::new();
@@ -354,7 +355,7 @@ fn bench_clean_reinstall(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 let pkg = pkg_id("clean-reinstall", "1.0.0");
-                let graph = make_graph(&[pkg.clone()]);
+                let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
                 let adapter = mg_web_adapter::WebAdapter::new();

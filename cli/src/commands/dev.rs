@@ -5,13 +5,11 @@ use crate::context::ProjectContext;
 /// Lệnh dev cho từng engine game (Q15/Q20): bevy → cargo run; godot → mở editor.
 fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
     let adapter = mg_game_adapter::adapter_for(root)
-        .ok_or_else(|| crate::error::no_framework_detected("game engine", &root))?;
+        .ok_or_else(|| crate::error::no_framework_detected("game engine", root))?;
     match adapter.engine() {
         "bevy" => Ok(("cargo".to_string(), vec!["run".to_string()])),
         "godot" => {
-            let path = root
-                .to_str()
-                .ok_or_else(crate::error::path_not_utf8)?;
+            let path = root.to_str().ok_or_else(crate::error::path_not_utf8)?;
             Ok((
                 "godot".to_string(),
                 vec![
@@ -23,9 +21,7 @@ fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<Strin
         }
         // unity: mở editor GUI qua CLI (fail-closed nếu unity không có trong PATH).
         "unity" => {
-            let path = root
-                .to_str()
-                .ok_or_else(crate::error::path_not_utf8)?;
+            let path = root.to_str().ok_or_else(crate::error::path_not_utf8)?;
             Ok((
                 "unity".to_string(),
                 vec!["-projectPath".to_string(), path.to_string()],
@@ -134,7 +130,7 @@ pub async fn run(
 /// platformio/zephyr → passthrough tới tool của framework (P1).
 fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
     let adapter = mg_iot_adapter::adapter_for(root)
-        .ok_or_else(|| crate::error::no_framework_detected("IoT", &root))?;
+        .ok_or_else(|| crate::error::no_framework_detected("IoT", root))?;
     match adapter.framework() {
         "esp32-rust" => Ok(("espflash".to_string(), vec!["monitor".to_string()])),
         "platformio" => Ok(("pio".to_string(), vec!["run".to_string()])),

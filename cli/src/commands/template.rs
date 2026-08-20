@@ -113,10 +113,13 @@ async fn publish_all() -> Result<()> {
     if layers.is_empty() {
         return Err(crate::error::no_web_layer_found(&root));
     }
+    let root_parent = root.parent().ok_or_else(crate::error::no_mg_project_root)?;
     for layer in &layers {
         let rel = layer
-            .strip_prefix(root.parent().unwrap())
-            .unwrap()
+            .strip_prefix(root_parent)
+            .map_err(|_| {
+                crate::error::web_template_path_missing(&root_parent.display().to_string())
+            })?
             .to_string_lossy()
             .replace('\\', "/");
         // rel = "web/frontend/react-vite" → publish với name = rel đầy đủ
@@ -221,7 +224,10 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
     }
     let meta_resp = req.send().await?;
     if !meta_resp.status().is_success() {
-        return Err(crate::error::template_not_published(&name, meta_resp.status().as_u16()));
+        return Err(crate::error::template_not_published(
+            &name,
+            meta_resp.status().as_u16(),
+        ));
     }
     let meta: serde_json::Value = meta_resp.json().await?;
 

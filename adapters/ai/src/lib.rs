@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-ai-adapter — AI ecosystem adapter (MegaGate)
 //! (Q11/Q20: model pull → CAS store; dev chạy main qua python3. Không resolver
 //!  riêng — deps qua pip (allowlist §5.1), mg không quản lý virtualenv)

@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-lib-adapter — library ecosystem adapter (MegaGate)
 //! (ts → delegate WebAdapter npm-format; rust → orchestrate cargo Q10; python → pip passthrough)
 //! (ponytail: rust/python version resolution = placeholder 0.1.0 khi dry; add khi save chạy tool native)
@@ -19,6 +20,8 @@ enum LibLanguage {
     Rust,
     Python,
 }
+
+type ManifestProbe = fn(&Path) -> Option<String>;
 
 pub struct LibAdapter {
     language: LibLanguage,
@@ -73,7 +76,7 @@ fn manifest_is_lib(root: &Path) -> bool {
             }
         }
     }
-    let probes: [(&Path, fn(&Path) -> Option<String>); 3] = [
+    let probes: [(&Path, ManifestProbe); 3] = [
         (&root.join("package.json"), probe_package_json),
         (&root.join("Cargo.toml"), probe_cargo_toml),
         (&root.join("pyproject.toml"), probe_pyproject),

@@ -65,7 +65,7 @@ impl ChunkedUploader {
         // Extract upload_id từ URL: .../blobs/uploads/{id}
         let upload_id = location
             .split('/')
-            .last()
+            .next_back()
             .ok_or_else(|| anyhow::anyhow!("invalid Location: {}", location))?
             .to_string();
         Ok(upload_id)
@@ -186,6 +186,7 @@ impl ChunkedUploader {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]

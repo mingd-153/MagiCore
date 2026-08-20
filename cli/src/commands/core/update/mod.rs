@@ -4,19 +4,19 @@ use anyhow::Result;
 
 pub mod ai;
 pub mod app;
-pub mod web;
 pub mod cicd;
 pub mod clo;
 pub mod game;
 pub mod iot;
 pub mod library;
+pub mod web;
 
 pub async fn run(core: &str, packages: Vec<String>, install: bool) -> Result<()> {
     match core {
         "game" => game::update(packages, install).await,
         "ai" => ai::update(packages, install).await,
         "web" => web::update(packages, install).await,
-                "clo" => clo::update(packages, install).await,
+        "clo" => clo::update(packages, install).await,
         "cicd" => cicd::update(packages, install).await,
         "iot" => iot::update(packages, install).await,
         "app" => app::update(packages, install).await,

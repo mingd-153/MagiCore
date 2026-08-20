@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 // CAS refcount claim wiring test (T1 slice 4-5): extraction imports blobs
 // into the store and claims each one under the project key.
 // (Test wiring claim refcount CAS (T1 slice 4-5): extract import blob vào

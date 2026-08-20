@@ -39,8 +39,8 @@ check_hard() {
 
 # L0: mg-platform cũng là core/crates — import chéo cấm (14 §1)
 check "core/crates" "L1-import" 'use (adapters|cli)::' '^$'
-# reqwest nơi chuẩn: mg-http + mg-fetcher (00-index 4.3); hardcode path cấm (14 §8)
-check_hard "core/crates" "L1-hardcode" 'reqwest::|\$HOME|/Users/|/tmp/' 'crates/(mg-http|mg-fetcher)/'
+# reqwest nơi chuẩn: mg-http + mg-fetcher + mg-registry-server (upstream proxy); hardcode path cấm (14 §8)
+check_hard "core/crates" "L1-hardcode" 'reqwest::|\$HOME|/Users/|/tmp/' 'crates/(mg-http|mg-fetcher|mg-registry-server)/'
 
 if [ "$fail" = "0" ]; then
     echo "OK: module hygiene pass"

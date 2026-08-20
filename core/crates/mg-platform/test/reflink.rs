@@ -1,8 +1,8 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-platform reflink — test riêng tại test/ (RULE §5)
 //! (Reflink clone: copy-on-write trên APFS/FICLONE, fallback NotSupported đúng đường)
 use mg_platform::reflink::{reflink_clone, ReflinkError};
 use std::io::Write;
-use tempfile;
 
 #[test]
 fn reflink_clone_creates_identical_content() {

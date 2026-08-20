@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 
-use super::super::shared;
 use super::super::dev::clo as clo_tools;
+use super::super::shared;
 use mg_types::Ecosystem;
 
 pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {

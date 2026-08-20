@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-publish — publish client (MegaGate)
 //! Publishes tarballs to the private registry with auth + retry.
 //! (Client publish: tarball + auth + retry — sys-mg/01)

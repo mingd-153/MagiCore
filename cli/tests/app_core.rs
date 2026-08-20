@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 // App core command surface: add/remove/list/update passthrough guards (offline tests).
 mod common;
 

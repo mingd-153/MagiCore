@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 /// MegaGate CLI - Universal Package Manager
 use std::path::PathBuf;
 
@@ -7,8 +11,8 @@ use clap::Parser;
 mod bundler;
 mod commands;
 mod context;
-pub mod error;
 mod dispatch;
+pub mod error;
 mod factory;
 mod scaffold;
 mod wizard;

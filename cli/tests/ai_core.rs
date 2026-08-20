@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 // AI core command surface: remove/list/update real passthrough guards (offline tests).
 mod common;
 

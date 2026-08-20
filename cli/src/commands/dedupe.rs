@@ -43,8 +43,8 @@ fn merged_lockfile(lock: &mg_lockfile::Lockfile) -> (mg_lockfile::Lockfile, usiz
     let mut new_packages = Vec::new();
     for pkg in &lock.packages {
         let key = (pkg.name.clone(), pkg.version.clone());
-        if !seen.contains_key(&key) {
-            seen.insert(key, true);
+        if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(key) {
+            e.insert(true);
             new_packages.push(pkg.clone());
         } else {
             merged += 1;
@@ -122,8 +122,8 @@ fn dir_size(path: &Path) -> u64 {
 
 pub async fn run(args: DedupeArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(crate::error::project_root_missing)?;
+    let project_root =
+        ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
 
     let mg_lock = project_root.join("mg.lock");
     if !mg_lock.exists() {

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for ignore parser — test riêng tại test/ (RULE §5)
 use mg_pack::ignore::select_files;
 use std::fs;

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 #[path = "../src/commands/web_registry_config.rs"]
 #[allow(dead_code)]
 mod web_registry_config;

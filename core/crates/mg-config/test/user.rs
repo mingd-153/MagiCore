@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for UserConfig — test riêng tại test/ (RULE §5)
 use mg_config::user::UserConfig;
 

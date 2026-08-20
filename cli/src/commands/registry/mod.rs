@@ -98,16 +98,16 @@ pub async fn run(args: RegistryArgs) -> Result<()> {
                     EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
                 )
                 .try_init(); // main.rs đã init global — không panic nếu set rồi
-            mg_registry_server::serve(
+            mg_registry_server::serve(mg_registry_server::RegistryServerConfig {
                 host,
                 port,
                 store_dir,
                 admin_token,
                 max_body_size,
-                rate_limit,
+                rate_limit_rps: rate_limit,
                 upstream,
                 storage,
-            )
+            })
             .await
         }
         RegistryCmd::User { cmd } => match cmd {

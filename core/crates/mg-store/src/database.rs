@@ -416,7 +416,7 @@ impl Database {
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            if best.as_ref().map_or(true, |b| v > *b) {
+            if best.as_ref().is_none_or(|b| v > *b) {
                 best = Some(v);
             }
         }

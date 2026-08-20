@@ -17,6 +17,7 @@ where
         {
             #[derive(serde::Deserialize)]
             #[serde(untagged)]
+            #[allow(dead_code)]
             enum V {
                 S(String),
                 B(bool),

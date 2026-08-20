@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use mg_types::{adapter::InstallOptions, PackageAdapter};
 /// Compare MegaGate vs npm / pnpm / bun on the same packages.
 /// Usage: cargo bench -p mg-web-adapter --bench compare
@@ -160,7 +161,7 @@ fn measure_disk(dir: &std::path::Path) -> String {
 fn main() {
     println!("╔══════════════════════════════════════════════════════════════╗");
     println!("║     Package Manager Comparison                             ║");
-    println!("║     Packages: {}", format!("{:<48}", PACKAGES.join(", ")));
+    println!("║     Packages: {:<48}", PACKAGES.join(", "));
     println!("╚══════════════════════════════════════════════════════════════╝");
     println!();
 

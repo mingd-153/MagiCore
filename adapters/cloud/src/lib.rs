@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-cloud-adapter — cloud ecosystem adapter (MegaGate)
 //! (cdk/pulumi → delegate WebAdapter npm-format, KHÔNG gọi npm — policy §5.2;
 //!  terraform → exec passthrough terraform init/plan/apply, allowlist §5.1)

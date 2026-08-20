@@ -75,8 +75,13 @@ pub fn find_ios_simulator() -> Option<String> {
             if !name.to_lowercase().contains("iphone") {
                 continue;
             }
-            let avail = dev.get("isAvailable").and_then(|v| v.as_bool()).unwrap_or(false);
-            if !avail { continue; }
+            let avail = dev
+                .get("isAvailable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !avail {
+                continue;
+            }
             let udid = dev.get("udid").and_then(|v| v.as_str())?;
             let state = dev.get("state").and_then(|v| v.as_str()).unwrap_or("");
             if state == "Booted" {
@@ -87,7 +92,9 @@ pub fn find_ios_simulator() -> Option<String> {
                 any_available_udid = Some(udid.to_string());
             }
         }
-        if booted_udid.is_some() { break; }
+        if booted_udid.is_some() {
+            break;
+        }
     }
     booted_udid.or(any_available_udid)
 }
@@ -111,7 +118,8 @@ fn android_emulator_running() -> bool {
         .output()
         .map(|out| {
             let s = String::from_utf8_lossy(&out.stdout);
-            s.lines().any(|l| l.contains("emulator") || l.contains("device"))
+            s.lines()
+                .any(|l| l.contains("emulator") || l.contains("device"))
         })
         .unwrap_or(false)
 }
@@ -162,8 +170,7 @@ fn flutter_dev_command(platform: &TargetPlatform, dry_run: bool) -> InstallComma
 /// Trên macOS vẫn chạy Android bình thường qua emulator.
 fn kotlin_dev_command(root: &Path) -> InstallCommand {
     // Kiểm tra có gradlew không (Gradle wrapper — chuẩn Android)
-    let has_gradlew = root.join("gradlew").exists()
-        || root.join("android/gradlew").exists();
+    let has_gradlew = root.join("gradlew").exists() || root.join("android/gradlew").exists();
     let gradle_bin = if has_gradlew { "./gradlew" } else { "gradle" };
     InstallCommand {
         tool: gradle_bin.to_string(),
@@ -222,7 +229,10 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
             "build".to_string(),
         ];
         if dry_run {
-            mg_ui::info(&format!("[dry-run] would run: xcodebuild {}", args.join(" ")));
+            mg_ui::info(&format!(
+                "[dry-run] would run: xcodebuild {}",
+                args.join(" ")
+            ));
             return Ok(());
         }
         mg_ui::info(&format!("App dev (ObjC): xcodebuild {}", args.join(" ")));
@@ -249,10 +259,16 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
             "run".to_string(),
         ];
         if dry_run {
-            mg_ui::info(&format!("[dry-run] would run: xcodebuild {}", args.join(" ")));
+            mg_ui::info(&format!(
+                "[dry-run] would run: xcodebuild {}",
+                args.join(" ")
+            ));
             return Ok(());
         }
-        mg_ui::info(&format!("App dev (Swift/Xcode): xcodebuild {}", args.join(" ")));
+        mg_ui::info(&format!(
+            "App dev (Swift/Xcode): xcodebuild {}",
+            args.join(" ")
+        ));
         return run_tool(root, "xcodebuild", &args);
     }
 
@@ -299,7 +315,11 @@ pub async fn dev(dry_run: bool) -> Result<()> {
         mg_app_adapter::AppLanguage::Flutter => {
             let cmd = flutter_dev_command(&platform, dry_run);
             if dry_run {
-                mg_ui::info(&format!("[dry-run] would run: {} {}", cmd.tool, cmd.args.join(" ")));
+                mg_ui::info(&format!(
+                    "[dry-run] would run: {} {}",
+                    cmd.tool,
+                    cmd.args.join(" ")
+                ));
                 return Ok(());
             }
             mg_ui::info(&format!("Running: {} {}", cmd.tool, cmd.args.join(" ")));
@@ -307,13 +327,9 @@ pub async fn dev(dry_run: bool) -> Result<()> {
             Ok(())
         }
 
-        mg_app_adapter::AppLanguage::Swift => {
-            dev_ios(&root, true, dry_run).await
-        }
+        mg_app_adapter::AppLanguage::Swift => dev_ios(&root, true, dry_run).await,
 
-        mg_app_adapter::AppLanguage::ObjC => {
-            dev_ios(&root, false, dry_run).await
-        }
+        mg_app_adapter::AppLanguage::ObjC => dev_ios(&root, false, dry_run).await,
 
         mg_app_adapter::AppLanguage::Kotlin => {
             // Kotlin = Android-only (không phân biệt OS host)
@@ -332,9 +348,17 @@ pub async fn dev(dry_run: bool) -> Result<()> {
             if android_emulator_running() {
                 // Đọc applicationId từ mg.toml nếu có
                 let app_id = read_app_id(&root).unwrap_or_else(|| "com.example.app".to_string());
-                mg_ui::info(&format!("Launching app: adb shell am start -n {app_id}/.MainActivity"));
+                mg_ui::info(&format!(
+                    "Launching app: adb shell am start -n {app_id}/.MainActivity"
+                ));
                 let _ = std::process::Command::new("adb")
-                    .args(["shell", "am", "start", "-n", &format!("{app_id}/.MainActivity")])
+                    .args([
+                        "shell",
+                        "am",
+                        "start",
+                        "-n",
+                        &format!("{app_id}/.MainActivity"),
+                    ])
                     .status();
             }
             Ok(())
@@ -352,10 +376,7 @@ pub async fn dev(dry_run: bool) -> Result<()> {
                     }
                     InstallCommand {
                         tool: "npm".to_string(),
-                        args: vec![
-                            "run".to_string(),
-                            "ios".to_string(),
-                        ],
+                        args: vec!["run".to_string(), "ios".to_string()],
                     }
                 }
                 TargetPlatform::Android => InstallCommand {
@@ -373,7 +394,10 @@ pub async fn dev(dry_run: bool) -> Result<()> {
             }
             mg_ui::info(&format!(
                 "App dev (React Native/{}): {} {}",
-                match platform { TargetPlatform::IosSimulator => "iOS", TargetPlatform::Android => "Android" },
+                match platform {
+                    TargetPlatform::IosSimulator => "iOS",
+                    TargetPlatform::Android => "Android",
+                },
                 rn_cmd.tool,
                 rn_cmd.args.join(" ")
             ));
@@ -391,13 +415,15 @@ pub async fn dev(dry_run: bool) -> Result<()> {
             if dry_run {
                 mg_ui::info(&format!(
                     "[dry-run] would run: {} {} (in flutter/)",
-                    cmd.tool, cmd.args.join(" ")
+                    cmd.tool,
+                    cmd.args.join(" ")
                 ));
                 return Ok(());
             }
             mg_ui::info(&format!(
                 "App dev (Multi → flutter/): {} {}",
-                cmd.tool, cmd.args.join(" ")
+                cmd.tool,
+                cmd.args.join(" ")
             ));
             run_tool(&flutter_dir, &cmd.tool, cmd.args.as_slice())?;
             Ok(())

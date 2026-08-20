@@ -51,7 +51,6 @@ pub fn check_trust_downgrade_risk(project_root: &Path) -> Option<Vec<&'static st
     }
 }
 
-
 /// Explicitly import a legacy package-manager lockfile found in `project_root`.
 /// Returns `None` when no supported lockfile is present.
 /// Priority when several exist: npm > pnpm > yarn > bun.
@@ -668,7 +667,6 @@ packages:
         );
     }
 
-
     #[test]
     fn check_trust_downgrade_risk_detects_coexisting_legacy_locks() {
         let dir = tempfile::tempdir().unwrap();
@@ -678,7 +676,11 @@ packages:
         assert!(check_trust_downgrade_risk(root).is_none());
 
         // Tạo mg.lock
-        std::fs::write(root.join(crate::LOCKFILE_NAME), "version = 1\ncore = \"web\"\nmode = \"frontend\"\n").unwrap();
+        std::fs::write(
+            root.join(crate::LOCKFILE_NAME),
+            "version = 1\ncore = \"web\"\nmode = \"frontend\"\n",
+        )
+        .unwrap();
         // Chỉ có mg.lock -> an toàn
         assert!(check_trust_downgrade_risk(root).is_none());
 
@@ -688,4 +690,3 @@ packages:
         assert_eq!(risks, vec![PNPM_LOCKFILE]);
     }
 }
-

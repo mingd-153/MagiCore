@@ -825,7 +825,7 @@ mod tests {
         #[async_trait]
         impl DependencyProvider for CP {
             async fn get_versions(&self, _: &PackageName) -> Result<Vec<Version>, DependencyError> {
-                Ok(vec!["3.4.0", "3.5.0", "4.0.0"]
+                Ok(["3.4.0", "3.5.0", "4.0.0"]
                     .iter()
                     .map(|s| Version::parse(s).unwrap())
                     .collect())
@@ -852,7 +852,7 @@ mod tests {
         #[async_trait]
         impl DependencyProvider for EP {
             async fn get_versions(&self, _: &PackageName) -> Result<Vec<Version>, DependencyError> {
-                Ok(vec!["1.0.0", "1.0.1"]
+                Ok(["1.0.0", "1.0.1"]
                     .iter()
                     .map(|s| Version::parse(s).unwrap())
                     .collect())
@@ -936,7 +936,7 @@ mod tests {
         #[async_trait]
         impl DependencyProvider for NP {
             async fn get_versions(&self, _: &PackageName) -> Result<Vec<Version>, DependencyError> {
-                Ok(vec!["1.0.0", "2.0.0"]
+                Ok(["1.0.0", "2.0.0"]
                     .iter()
                     .map(|s| Version::parse(s).unwrap())
                     .collect())
@@ -960,7 +960,7 @@ mod tests {
         #[async_trait]
         impl DependencyProvider for PP {
             async fn get_versions(&self, _: &PackageName) -> Result<Vec<Version>, DependencyError> {
-                Ok(vec!["4.4.3", "4.5.0-canary.20260504T180558"]
+                Ok(["4.4.3", "4.5.0-canary.20260504T180558"]
                     .iter()
                     .map(|s| Version::parse(s).unwrap())
                     .collect())

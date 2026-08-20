@@ -1,15 +1,17 @@
 //! `update.rs` — Update dependencies to latest matching or newer versions for WebAdapter.
 
-use std::path::Path;
 use mg_types::adapter::UpdatedPackage;
 use mg_types::{MgError, MgResult, PackageName, Version, VersionRange};
+use std::path::Path;
 
 use crate::lockfile::read_web_lockfile_checked;
 use crate::manifest::{parse_manifest, write_manifest};
 use crate::native;
 use crate::provider::NpmDependencyProvider;
 
-pub fn preferred_registry_version(metadata: &native::npm_registry::PackageMetadata) -> Option<String> {
+pub fn preferred_registry_version(
+    metadata: &native::npm_registry::PackageMetadata,
+) -> Option<String> {
     let stable_max = metadata
         .versions
         .keys()
@@ -44,7 +46,12 @@ pub fn preferred_saved_range(current: &VersionRange, latest: &str) -> MgResult<V
         format!("^{latest}")
     } else if raw.starts_with('~') {
         format!("~{latest}")
-    } else if raw == "*" || raw.is_empty() || raw.starts_with(">=") || raw.starts_with('>') || raw.starts_with("<=") {
+    } else if raw == "*"
+        || raw.is_empty()
+        || raw.starts_with(">=")
+        || raw.starts_with('>')
+        || raw.starts_with("<=")
+    {
         format!("^{latest}")
     } else {
         latest.to_string()

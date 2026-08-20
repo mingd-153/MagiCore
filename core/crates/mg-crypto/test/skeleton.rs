@@ -1,5 +1,6 @@
+#![allow(clippy::unwrap_used)]
 #![cfg(test)]
-use mg-crypto;
+use mg_crypto;
 
 // Basic skeleton test - crate compiles and can be imported
 #[test]

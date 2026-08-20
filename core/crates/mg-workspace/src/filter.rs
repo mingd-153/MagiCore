@@ -30,10 +30,10 @@ pub fn filter_matches(filter: &str, relative_path: &std::path::Path, name: &str)
 
     // Path-style: ./apps/* hoặc apps/* hoặc apps/**
     let path_part = filter.strip_prefix("./").unwrap_or(filter);
-    if path_part.contains('/') || path_part.starts_with('*') {
-        if glob_match_path(path_part, relative_path) {
-            return true;
-        }
+    if (path_part.contains('/') || path_part.starts_with('*'))
+        && glob_match_path(path_part, relative_path)
+    {
+        return true;
     }
 
     // Name-style wildcard (e.g. `*-app`, `core-*`)
@@ -48,7 +48,6 @@ pub fn filter_matches(filter: &str, relative_path: &std::path::Path, name: &str)
     // Exact name match
     name == filter
 }
-
 
 /// Glob đơn giản: `*` = 1 segment; `**` = nhiều segment.
 fn glob_match_path(pattern: &str, path: &std::path::Path) -> bool {

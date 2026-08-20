@@ -72,7 +72,8 @@ fn toml_value_reads_top_level_key() {
 
 #[test]
 fn toml_value_reads_dot_notation() {
-    let dir = temp_dir_with_mg_toml("[game]\nengine = \"bevy\"\n\n[iot]\nframework = \"esp-idf\"\n");
+    let dir =
+        temp_dir_with_mg_toml("[game]\nengine = \"bevy\"\n\n[iot]\nframework = \"esp-idf\"\n");
     let val = toml_value(&dir.path().join("mg.toml"), "game.engine");
     assert_eq!(val.as_deref(), Some("bevy"));
     let iot_val = toml_value(&dir.path().join("mg.toml"), "iot.framework");

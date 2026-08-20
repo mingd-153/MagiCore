@@ -5,17 +5,12 @@ use crate::package::VersionRange;
 use serde::{Deserialize, Serialize};
 
 /// Patch kind — P1: Diff (apply engine nội bộ); P2: Prebuilt binary
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PatchKind {
+    #[default]
     Diff,
     Prebuilt,
-}
-
-impl Default for PatchKind {
-    fn default() -> Self {
-        Self::Diff
-    }
 }
 
 /// Patch spec lưu trong mg.toml [patches] — chỉ npm-format (web/lib ts)

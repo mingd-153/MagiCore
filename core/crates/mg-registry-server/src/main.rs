@@ -55,15 +55,15 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    mg_registry_server::serve(
-        args.host,
-        args.port,
-        args.store_dir,
-        args.admin_token,
-        args.max_body_size,
-        args.rate_limit,
-        args.upstream,
-        args.storage,
-    )
+    mg_registry_server::serve(mg_registry_server::RegistryServerConfig {
+        host: args.host,
+        port: args.port,
+        store_dir: args.store_dir,
+        admin_token: args.admin_token,
+        max_body_size: args.max_body_size,
+        rate_limit_rps: args.rate_limit,
+        upstream: args.upstream,
+        storage: args.storage,
+    })
     .await
 }

@@ -190,10 +190,7 @@ async fn publish_package(
             attachments.insert(filename.clone(), bytes);
         }
     }
-    let (blob_filename, blob) = match attachments.into_iter().next() {
-        Some(kv) => kv,
-        None => (String::new(), Vec::new()),
-    };
+    let (blob_filename, blob) = attachments.into_iter().next().unwrap_or_default();
     if !blob.is_empty() {
         let mut hasher = Sha512::new();
         hasher.update(&blob);
@@ -249,8 +246,10 @@ async fn publish_package(
             );
             return Err(StatusCode::FORBIDDEN);
         }
-    } else if token.is_some() && auth.verify_token(token.unwrap()).is_none() {
-        return Err(StatusCode::UNAUTHORIZED);
+    } else if let Some(token) = token {
+        if auth.verify_token(token).is_none() {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
     }
 
     store
@@ -266,6 +265,11 @@ async fn publish_package(
         .audit("publish", &pkg.name, version.as_deref(), None)
         .await;
     Ok(Json(pkg))
+}
+
+fn content_disposition(filename: &str) -> Result<HeaderValue, StatusCode> {
+    HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 // === Tarball download ===
@@ -290,14 +294,8 @@ async fn download_tarball(
                             axum::http::header::CONTENT_TYPE,
                             HeaderValue::from_static("application/octet-stream"),
                         );
-                        resp.headers_mut().insert(
-                            "content-disposition",
-                            HeaderValue::from_str(&format!(
-                                "attachment; filename=\"{}\"",
-                                filename
-                            ))
-                            .unwrap(),
-                        );
+                        resp.headers_mut()
+                            .insert("content-disposition", content_disposition(&filename)?);
                         return Ok(resp.into_response());
                     }
                     // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
@@ -308,14 +306,8 @@ async fn download_tarball(
                             axum::http::header::CONTENT_TYPE,
                             HeaderValue::from_static("application/octet-stream"),
                         );
-                        resp.headers_mut().insert(
-                            "content-disposition",
-                            HeaderValue::from_str(&format!(
-                                "attachment; filename=\"{}\"",
-                                filename
-                            ))
-                            .unwrap(),
-                        );
+                        resp.headers_mut()
+                            .insert("content-disposition", content_disposition(&filename)?);
                         return Ok(resp.into_response());
                     }
                 }
@@ -481,7 +473,7 @@ async fn adduser(
     let role = body
         .role
         .as_deref()
-        .map(crate::auth::UserRole::from_str)
+        .and_then(|role| role.parse::<crate::auth::UserRole>().ok())
         .unwrap_or(crate::auth::UserRole::Publisher);
     let user = crate::auth::User {
         name: name.to_string(),

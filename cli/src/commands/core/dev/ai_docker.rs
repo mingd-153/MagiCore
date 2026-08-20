@@ -1,8 +1,8 @@
 //! `ai/docker.rs` — Docker & Docker Compose auto-generator for AI Core.
 
+use crate::commands::optimizer::detect::HardwareInfo;
 use anyhow::Result;
 use std::path::Path;
-use crate::commands::optimizer::detect::HardwareInfo;
 
 /// Tự động sinh `Dockerfile` và `docker-compose.yml` tối ưu cho dự án AI dựa theo phần cứng
 pub fn generate_ai_docker_files(project_root: &Path) -> Result<()> {

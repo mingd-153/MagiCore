@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Hooks tests (mg-config)
 
 use mg_config::hooks::{list_hooks, run_hooks};

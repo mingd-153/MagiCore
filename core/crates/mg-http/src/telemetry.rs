@@ -33,6 +33,12 @@ pub struct Telemetry {
     queue: Mutex<VecDeque<TelemetryEvent>>,
 }
 
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Telemetry {
     pub fn new() -> Self {
         Self {
@@ -44,7 +50,7 @@ impl Telemetry {
         if !enabled() {
             return;
         }
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().expect("lock poisoned");
         if q.len() >= QUEUE_CAP {
             q.pop_front(); // ponytail: queue bounded, drop cũ nhất
         }
@@ -56,7 +62,7 @@ impl Telemetry {
         let dir = default_log_dir();
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("events.jsonl");
-        let q = self.queue.lock().unwrap();
+        let q = self.queue.lock().expect("lock poisoned");
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
