@@ -80,7 +80,8 @@ fn unknown_tool_rejected() {
 
 #[test]
 fn audit_log_written_with_redacted_args() {
-    let log = tmp_dir().join("exec.log");
+    let dir = tmp_dir();
+    let log = dir.join("exec.log");
     let _ = fs::remove_file(&log);
     let opts = ExecOptions {
         dry_run: true,

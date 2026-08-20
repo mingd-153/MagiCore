@@ -86,6 +86,7 @@ thiserror = "2.0"
 anyhow = "1.0"
 futures-util = "0.3"
 regex = "1.11"
+libc = "0.2"
 
 # Bundler (native Rust)
 esbuild-rs = "0.13"
