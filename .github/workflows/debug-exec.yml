@@ -12,9 +12,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: test 1st (full compile)
-        run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
-      - name: test 2nd (cached artifacts)
-        run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
-      - name: test 3rd (cached artifacts)
+        with:
+          components: clippy
+      - name: cargo clippy lib only
+        run: cargo clippy -p mg-exec --lib --locked -- -D warnings
+      - name: command_timeout test
         run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
