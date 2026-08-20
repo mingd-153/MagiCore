@@ -16,9 +16,5 @@ jobs:
           components: clippy
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: wait for clippy process tree death
-        run: sleep 15
-      - name: mg-exec allowlist tests
-        run: cargo test -p mg-exec --test test_run 2>&1
-      - name: mg-exec allowlist tests run2
-        run: cargo test -p mg-exec --test test_run 2>&1
+      - name: command_timeout test only
+        run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
