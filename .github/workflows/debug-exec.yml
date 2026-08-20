@@ -14,8 +14,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: mg-exec allowlist tests
         run: cargo test -p mg-exec --test test_run 2>&1
       - name: mg-exec allowlist tests run2
