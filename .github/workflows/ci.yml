@@ -27,6 +27,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: mg-exec allowlist tests
         run: cargo test -p mg-exec --test test_run 2>&1
+        timeout-minutes: 2
       - name: single-core web CLI surface
         run: cargo test -p mg --no-default-features --features web test_single_core_create_alias_parses --quiet
       - name: cargo check
@@ -58,7 +59,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --all-targets --locked -- --test-threads=4
+        run: cargo test --workspace --locked --exclude mg -- --test-threads=4
+      - name: cargo test (mg, skip benchmarks)
+        run: cargo test -p mg --locked -- --test-threads=4 --skip bench_
 
   build:
     name: Build Release
