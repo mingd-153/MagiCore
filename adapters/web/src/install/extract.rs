@@ -242,7 +242,7 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
         hasher.update(path.as_bytes());
         hasher.update([0]);
         hasher.update(size.to_string().as_bytes());
-        hasher.update([b'\n']);
+        hasher.update(*b"\n");
         unpacked_size = unpacked_size.saturating_add(*size);
     }
 
@@ -297,7 +297,7 @@ pub fn extracted_content_matches(root: &Path, expected: &ExtractedPackageMarker)
         hasher.update(path.as_bytes());
         hasher.update([0]);
         hasher.update(size.to_string().as_bytes());
-        hasher.update([b'\n']);
+        hasher.update(*b"\n");
         unpacked_size = unpacked_size.saturating_add(*size);
     }
 
