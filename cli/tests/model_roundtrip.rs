@@ -27,7 +27,7 @@ impl Drop for ServerGuard {
 fn pick_free_rule_port() -> Option<u16> {
     let mut permission_denied = false;
     for port in PORT_CANDIDATES {
-        match std::net::TcpListener::bind(("localhost", *port)) {
+        match std::net::TcpListener::bind(("127.0.0.1", *port)) {
             Ok(_) => return Some(*port),
             Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
                 permission_denied = true;
