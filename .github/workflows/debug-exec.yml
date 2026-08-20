@@ -16,5 +16,9 @@ jobs:
           components: clippy
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: ps dump
+        run: ps -eo pid,ppid,pgid,sid,comm,args --sort=pid | tail -40
       - name: command_timeout test only
         run: cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1
+      - name: ps dump after
+        run: ps -eo pid,ppid,pgid,sid,comm,args --sort=pid | tail -40
