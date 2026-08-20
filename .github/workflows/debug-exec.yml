@@ -16,13 +16,16 @@ jobs:
           components: clippy
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: timeout test with live watchdog
+      - name: shell kill test
         run: |
-          cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1 &
-          CARGO_PID=$!
-          for i in $(seq 1 300); do
-            ps -eo pid,ppid,pgid,sid,comm,args --sort=pid | grep -E "(test_run|sleep|timeout-bin|cargo|bash -e|ps -eo)" | head -8
-            echo "---"
-            sleep 0.02
-          done
-          wait $CARGO_PID
+          echo "=== before ==="
+          echo "shell pid: $$"
+          sh -c 'sleep 2' &
+          CHILD=$!
+          echo "child pid: $CHILD"
+          sleep 0.05
+          echo "=== kill now: kill -TERM -$CHILD $CHILD ==="
+          kill -TERM -$CHILD $CHILD
+          echo "=== after kill (still alive) ==="
+          sleep 2
+          echo "=== done ==="
