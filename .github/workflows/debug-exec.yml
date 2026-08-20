@@ -16,11 +16,11 @@ jobs:
           components: clippy
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: shell kill test
+      - name: shell kill test with setsid
         run: |
           echo "=== before ==="
           echo "shell pid: $$"
-          sh -c 'sleep 2' &
+          setsid sh -c 'sleep 2' &
           CHILD=$!
           echo "child pid: $CHILD"
           sleep 0.05
