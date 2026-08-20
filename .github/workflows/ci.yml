@@ -69,17 +69,32 @@ jobs:
           trap 'kill $SRV' EXIT
           for i in $(seq 1 15); do curl -sf -o /dev/null http://127.0.0.1:4315/ && break || sleep 1; done
           mkdir -p /tmp/mg-tpl && git archive 1b69dd0^ templates | tar -x -C /tmp/mg-tpl
-          python3 - <<'EOF'
-import tomllib, pathlib
-root = pathlib.Path('/tmp/mg-tpl/templates')
-for tpl in root.rglob('template.toml'):
-    for f in tomllib.loads(tpl.read_text()).get('files', []):
-        src = tpl.parent / f['source']
-        if not src.exists():
-            src.parent.mkdir(parents=True, exist_ok=True)
-            src.touch()
-            print('placeholder:', src.relative_to(root))
-EOF
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const root = "/tmp/mg-tpl/templates";
+            let ok = 0, fail = 0;
+            function walk(d) {
+              for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+                const p = path.join(d, f.name);
+                if (f.isDirectory()) { walk(p); continue; }
+                if (!f.isSymbolicLink()) continue;
+                let tgt = fs.readlinkSync(p);
+                let resolved;
+                if (tgt.startsWith("/")) {
+                  const i = tgt.indexOf("/templates/");
+                  if (i < 0) { fail++; continue; }
+                  resolved = path.join(root, tgt.slice(i + "/templates/".length));
+                } else { resolved = path.resolve(path.dirname(p), tgt); }
+                try { fs.rmSync(p); fs.cpSync(resolved, p, { recursive: true, verbatimSymlinks: false }); ok++; }
+                catch (e) { fail++; }
+              }
+            }
+            walk(root);
+            console.log(`resolved symlinks: ${ok} ok, ${fail} skipped`);
+          '
+          mkdir -p /tmp/mg-tpl/templates/web/backend/php/laravel/sources/storage/logs
+          touch /tmp/mg-tpl/templates/web/backend/php/laravel/sources/storage/logs/.gitkeep
+          printf 'APP_ENV=dev\nAPP_DEBUG=1\nAPP_SECRET=changeme\nAPP_NAME={{project_name}}\n' > /tmp/mg-tpl/templates/web/backend/php/symfony/sources/.env
           MEGAGATE_TEMPLATE_DIR=/tmp/mg-tpl/templates MG_NPM_REGISTRY=http://127.0.0.1:4315 cargo run -p mg -- template publish-all
           mkdir -p /tmp/mg-empty-cache
           MG_NPM_REGISTRY=http://127.0.0.1:4315 MG_TEMPLATES_DIR=/tmp/mg-empty-cache cargo test -p mg --locked -- --test-threads=4 --skip bench_
