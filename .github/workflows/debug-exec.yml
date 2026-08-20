@@ -16,16 +16,9 @@ jobs:
           components: clippy
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: shell kill test with setsid
+      - name: strace the timeout test
         run: |
-          echo "=== before ==="
-          echo "shell pid: $$"
-          setsid sh -c 'sleep 2' &
-          CHILD=$!
-          echo "child pid: $CHILD"
-          sleep 0.05
-          echo "=== kill now: kill -TERM -$CHILD $CHILD ==="
-          kill -TERM -$CHILD $CHILD
-          echo "=== after kill (still alive) ==="
-          sleep 2
-          echo "=== done ==="
+          which strace || sudo apt-get install -y strace >/dev/null 2>&1
+          strace -f -e trace=kill,tgkill,setpgid,setsid -o /tmp/strace.log cargo test -p mg-exec --test test_run command_timeout_kills_hung_tool 2>&1 || true
+          echo "=== STRACE TAIL ==="
+          tail -60 /tmp/strace.log
