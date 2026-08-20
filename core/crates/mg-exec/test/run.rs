@@ -101,7 +101,7 @@ fn audit_log_written_with_redacted_args() {
         "secret must never reach the audit log: {content}"
     );
     assert!(content.contains("[REDACTED]"));
-    let _ = fs::remove_dir_all(tmp_dir());
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -139,6 +139,7 @@ fn command_timeout_kills_hung_tool() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("timed out"));
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
