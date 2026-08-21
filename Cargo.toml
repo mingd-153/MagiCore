@@ -128,5 +128,12 @@ dbg_macro = "warn"
 todo = "warn"
 unwrap_used = "warn"
 
+[profile.release]
+opt-level = "z"          # Optimize for size
+lto = "fat"              # Link-time optimization (aggressive)
+codegen-units = 1        # Single codegen unit (better optimization)
+strip = true             # Remove debug symbols
+panic = "abort"          # Smaller binary
+
 [profile.test]
 opt-level = 1
