@@ -29,6 +29,7 @@ mg-ui = { path = "core/crates/mg-ui" }
 mg-adapter-base = { path = "core/crates/mg-adapter-base" }
 mg-platform = { path = "core/crates/mg-platform" }
 mg-plugin = { path = "core/crates/mg-plugin" }
+mg-search = { path = "core/crates/mg-search" }
 mg-workspace = { path = "core/crates/mg-workspace" }
 mg-pack = { path = "core/crates/mg-pack" }
 mg-publish = { path = "core/crates/mg-publish" }

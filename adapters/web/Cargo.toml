@@ -20,6 +20,7 @@ mg-http = { workspace = true }
 mg-ui = { workspace = true }
 mg-exec = { workspace = true }
 mg-platform = { workspace = true }
+mg-search = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -48,6 +49,7 @@ flate2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
 lru = { workspace = true }
+urlencoding = "2"
 chrono = { workspace = true }
 
 # Parallelism
