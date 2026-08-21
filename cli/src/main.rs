@@ -18,7 +18,7 @@ mod scaffold;
 mod wizard;
 
 #[derive(Parser)]
-#[command(name = "mg")]
+#[command(name = "mga")]
 #[command(about = "MegaGate - Universal Package Manager", long_about = None)]
 #[command(version)]
 pub(crate) struct Cli {

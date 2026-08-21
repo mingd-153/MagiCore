@@ -9,7 +9,7 @@ exclude = ["tools/core-web-lab", "tools/mg-mcp"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/mingd-153/MegaGate"
@@ -127,6 +127,13 @@ unsafe_code = "forbid"
 dbg_macro = "warn"
 todo = "warn"
 unwrap_used = "warn"
+
+[profile.release]
+opt-level = "z"          # Optimize for size
+lto = "fat"              # Link-time optimization (aggressive)
+codegen-units = 1        # Single codegen unit (better optimization)
+strip = true             # Remove debug symbols
+panic = "abort"          # Smaller binary
 
 [profile.test]
 opt-level = 1

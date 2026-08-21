@@ -28,10 +28,10 @@ class Megagate < Formula
   end
 
   def install
-    bin.install "mg"
+    bin.install "mga"
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/mg --version")
+    assert_match version.to_s, shell_output("#{bin}/mga --version")
   end
 end

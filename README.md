@@ -13,7 +13,7 @@
 
 ---
 
-**MegaGate** (`mg`) is a single, fast, opinionated package manager written in Rust that handles **Web (Node.js/NPM), AI frameworks, Cloud IaC, CI/CD pipelines, Game engines, IoT toolchains, Mobile (Flutter/Swift/Kotlin), and Polyglot Libraries** — all with one consistent CLI.
+**MegaGate** (`mga`) is a single, fast, opinionated package manager written in Rust that handles **Web (Node.js/NPM), AI frameworks, Cloud IaC, CI/CD pipelines, Game engines, IoT toolchains, Mobile (Flutter/Swift/Kotlin), and Polyglot Libraries** — all with one consistent CLI.
 
 > **Beta Note:** `v0.3.0-beta.1` is functional and actively used in internal testing. APIs may change before `v1.0`. Please open issues and share feedback!
 
@@ -63,16 +63,16 @@ Download the latest release from [**GitHub Releases →**](https://github.com/mi
 ```bash
 # macOS/Linux
 tar xzf megagate-*.tar.gz
-sudo mv mg /usr/local/bin/
-mg --version
+sudo mv mga /usr/local/bin/
+mga --version
 ```
 
 ### Build from Source
 ```bash
 git clone https://github.com/mingd-153/MegaGate.git
 cd MegaGate
-cargo build --release --bin mg
-# Binary at: target/release/mg
+cargo build --release --bin mga
+# Binary at: target/release/mga
 ```
 > **Requires:** Rust 1.85+
 
@@ -82,35 +82,35 @@ cargo build --release --bin mg
 
 ```bash
 # Create a new web project
-mg create-web my-app --framework react
+mga create-web react@latest my-app --ts
 
 # Install dependencies (auto-detects ecosystem)
-mg install
+mga install
 
 # Add a package
-mg add zod
-mg add -D vitest
+mga add zod
+mga add -D vitest
 
 # Run development server
-mg dev
+mga dev
 
 # Security audit
-mg audit
+mga audit
 
 # Check environment health
-mg doctor
+mga doctor
 ```
 
 ### Monorepo / Workspace
 ```bash
 # Install all packages across the entire monorepo
-mg install --recursive
+mga install --recursive
 
 # Run build in all workspaces
-mg build --recursive
+mga build --recursive
 
 # Filter specific packages
-mg build --recursive --filter "packages/*"
+mga build --recursive --filter "packages/*"
 ```
 
 ---
@@ -126,7 +126,7 @@ Add to your AI IDE config:
 {
   "mcpServers": {
     "megagate": {
-      "command": "mg",
+      "command": "mga",
       "args": ["mcp"]
     }
   }
@@ -138,7 +138,7 @@ Add to your AI IDE config:
 {
   "mcpServers": {
     "megagate": {
-      "command": "mg",
+      "command": "mga",
       "args": ["mcp"]
     }
   }
@@ -183,7 +183,7 @@ MegaGate/
 ## 📋 Commands Reference
 
 ```
-USAGE: mg [OPTIONS] <COMMAND>
+USAGE: mga [OPTIONS] <COMMAND>
 
 COMMON COMMANDS:
   install, i      Install dependencies (auto-detect ecosystem)
@@ -205,8 +205,8 @@ WORKSPACE COMMANDS:
   workspace       Manage monorepo workspaces
 
 MORE:
-  mg --help       Full command reference
-  mg <cmd> --help Per-command help
+  mga --help       Full command reference
+  mga <cmd> --help Per-command help
 ```
 
 ---

@@ -8,7 +8,7 @@ authors.workspace = true
 description = "MegaGate - Universal Package Manager CLI"
 
 [[bin]]
-name = "mg"
+name = "mga"
 path = "src/main.rs"
 
 [dependencies]
