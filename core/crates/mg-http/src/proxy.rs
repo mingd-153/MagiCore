@@ -110,6 +110,7 @@ impl ProxyConfig {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::field_reassign_with_default)]
     use super::*;
 
     #[test]
@@ -128,8 +129,10 @@ mod tests {
 
     #[test]
     fn no_proxy_wildcard() {
-        let mut cfg = ProxyConfig::default();
-        cfg.no_proxy = vec!["*".into()];
+        let cfg = ProxyConfig {
+            no_proxy: vec!["*".into()],
+            ..ProxyConfig::default()
+        };
         assert!(cfg.is_bypassed("http://example.com"));
     }
 }

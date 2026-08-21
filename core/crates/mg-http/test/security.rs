@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! HTTP security config tests — ensure timeout/TLS config is actually wired.
 //! Kiểm chứng cấu hình bảo mật không bị giữ trong struct rồi bỏ qua.
 

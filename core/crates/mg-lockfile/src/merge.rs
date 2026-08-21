@@ -17,7 +17,8 @@ use std::collections::BTreeMap;
 /// Parses and auto-resolves git conflict markers in a raw lockfile text when possible.
 /// (Deno `merge_conflict_sides` & PNPM merge model).
 pub fn resolve_git_conflict_markers(content: &str) -> Option<Lockfile> {
-    if !content.contains("<<<<<<<") || !content.contains("=======") || !content.contains(">>>>>>>") {
+    if !content.contains("<<<<<<<") || !content.contains("=======") || !content.contains(">>>>>>>")
+    {
         return None;
     }
 

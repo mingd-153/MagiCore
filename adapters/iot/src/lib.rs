@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-iot-adapter — IoT ecosystem adapter (MegaGate)
 //! (esp32-rust → orchestrate cargo Q10; platformio/zephyr → exec passthrough; board registry tĩnh P1)
 

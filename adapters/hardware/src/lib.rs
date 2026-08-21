@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-hardware-adapter — hardware ecosystem adapter (MegaGate)
 //! optimizer/bench packages được materialize từ templates/hardware/ bởi CLI
 //! (không có native package manager — giống godot/unreal scaffold-only).

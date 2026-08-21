@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! mg-workspace tests — RULE §5 (test/).
 
 use mg_workspace::{
@@ -251,9 +252,21 @@ fn filter_double_star() {
 
 #[test]
 fn filter_name_wildcard_patterns() {
-    assert!(filter_matches("*-service", Path::new("any"), "user-service"));
-    assert!(filter_matches("*-service", Path::new("any"), "auth-service"));
-    assert!(!filter_matches("*-service", Path::new("any"), "user-client"));
+    assert!(filter_matches(
+        "*-service",
+        Path::new("any"),
+        "user-service"
+    ));
+    assert!(filter_matches(
+        "*-service",
+        Path::new("any"),
+        "auth-service"
+    ));
+    assert!(!filter_matches(
+        "*-service",
+        Path::new("any"),
+        "user-client"
+    ));
     assert!(filter_matches("mg-*", Path::new("any"), "mg-workspace"));
     assert!(filter_matches("*", Path::new("any"), "anything"));
     assert!(filter_matches("**", Path::new("any"), "anything"));
@@ -261,8 +274,16 @@ fn filter_name_wildcard_patterns() {
 
 #[test]
 fn filter_scoped_double_star() {
-    assert!(filter_matches("@plugins/**", Path::new("x"), "@plugins/auth"));
-    assert!(filter_matches("@plugins/**", Path::new("x"), "@plugins/core/db"));
+    assert!(filter_matches(
+        "@plugins/**",
+        Path::new("x"),
+        "@plugins/auth"
+    ));
+    assert!(filter_matches(
+        "@plugins/**",
+        Path::new("x"),
+        "@plugins/core/db"
+    ));
 }
 
 #[test]
@@ -287,9 +308,14 @@ serde = "1.0"
     )
     .unwrap();
 
-    let rust_manifest = mg_workspace::read_package_manifest(&rust_dir).unwrap().unwrap();
+    let rust_manifest = mg_workspace::read_package_manifest(&rust_dir)
+        .unwrap()
+        .unwrap();
     assert_eq!(rust_manifest.name, "core-lib");
-    assert_eq!(rust_manifest.dependencies.get("common").unwrap(), "workspace:*");
+    assert_eq!(
+        rust_manifest.dependencies.get("common").unwrap(),
+        "workspace:*"
+    );
 
     // 2. Python package
     let py_dir = root.join("services/ai-agent");
@@ -303,7 +329,9 @@ version = "0.1.0"
     )
     .unwrap();
 
-    let py_manifest = mg_workspace::read_package_manifest(&py_dir).unwrap().unwrap();
+    let py_manifest = mg_workspace::read_package_manifest(&py_dir)
+        .unwrap()
+        .unwrap();
     assert_eq!(py_manifest.name, "ai-agent");
 }
 
@@ -324,7 +352,8 @@ fn test_computation_caching_roundtrip_and_invalidation() {
     assert!(should_rebuild, "Fresh package must require build");
 
     // 2. Lưu cache sau khi build
-    let saved = mg_workspace::save_package_build_cache(&pkg_root, src_hash, dep_hashes.clone()).unwrap();
+    let saved =
+        mg_workspace::save_package_build_cache(&pkg_root, src_hash, dep_hashes.clone()).unwrap();
     assert_eq!(saved.composite_hash, comp_hash);
 
     // 3. Kiểm tra lại ngay: không đổi file -> should_rebuild = false (⚡ CACHED)
@@ -336,7 +365,10 @@ fn test_computation_caching_roundtrip_and_invalidation() {
     std::fs::write(pkg_root.join("index.ts"), "export const a = 2; // modified").unwrap();
     let (should_rebuild_modified, _, _) =
         mg_workspace::check_package_build_freshness(&pkg_root, &dep_hashes).unwrap();
-    assert!(should_rebuild_modified, "Modified package must trigger rebuild");
+    assert!(
+        should_rebuild_modified,
+        "Modified package must trigger rebuild"
+    );
 
     // 5. Nếu dependency đổi hash -> composite hash đổi -> should_rebuild = true
     let saved_modified = mg_workspace::save_package_build_cache(
@@ -345,13 +377,17 @@ fn test_computation_caching_roundtrip_and_invalidation() {
         dep_hashes.clone(),
     )
     .unwrap();
-    assert_eq!(saved_modified.source_hash, mg_workspace::compute_package_source_hash(&pkg_root).unwrap());
+    assert_eq!(
+        saved_modified.source_hash,
+        mg_workspace::compute_package_source_hash(&pkg_root).unwrap()
+    );
 
     let mut new_dep_hashes = dep_hashes.clone();
     new_dep_hashes.insert("core-utils".to_string(), "hash_xyz_999".to_string());
     let (should_rebuild_dep_changed, _, _) =
         mg_workspace::check_package_build_freshness(&pkg_root, &new_dep_hashes).unwrap();
-    assert!(should_rebuild_dep_changed, "Changed upstream dependency must trigger rebuild");
+    assert!(
+        should_rebuild_dep_changed,
+        "Changed upstream dependency must trigger rebuild"
+    );
 }
-
-

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Dedupe preference tests — DedupePref/PreferExisting + peer merge (02 §2.1)
 //! (Test ưu tiên version có sẵn trong lockfile khi prefer-dedupe)
 use async_trait::async_trait;

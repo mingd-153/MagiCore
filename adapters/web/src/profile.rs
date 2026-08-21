@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -115,6 +116,10 @@ impl TarballPayload {
             Self::CachedPath(_, len) => *len,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 pub struct TarballFetchResult {
@@ -135,6 +140,18 @@ impl PipelineProfile {
             enabled,
             ..Default::default()
         }
+    }
+
+    fn downloads_guard(&self) -> MutexGuard<'_, Vec<(u64, String, u64)>> {
+        self.slowest_downloads
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn extracts_guard(&self) -> MutexGuard<'_, Vec<(u64, String)>> {
+        self.slowest_extracts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn record_download(
@@ -175,20 +192,20 @@ impl PipelineProfile {
         queue_wait_ms: u64,
         io_ms: u64,
     ) {
-        let mut guard = self.slowest_downloads.lock().unwrap();
+        let mut guard = self.downloads_guard();
         guard.push((
             elapsed_ms,
             format!("{} queue_wait={}ms io={}ms", package, queue_wait_ms, io_ms),
             bytes,
         ));
-        guard.sort_by(|a, b| b.0.cmp(&a.0));
+        guard.sort_by_key(|entry| std::cmp::Reverse(entry.0));
         guard.truncate(5);
     }
 
     pub fn record_slowest_extract(&self, package: &PackageId, elapsed_ms: u64) {
-        let mut guard = self.slowest_extracts.lock().unwrap();
+        let mut guard = self.extracts_guard();
         guard.push((elapsed_ms, package.to_string()));
-        guard.sort_by(|a, b| b.0.cmp(&a.0));
+        guard.sort_by_key(|entry| std::cmp::Reverse(entry.0));
         guard.truncate(5);
     }
 
@@ -205,13 +222,13 @@ impl PipelineProfile {
             self.extract_ms_total.load(Ordering::Relaxed),
             self.extract_ms_max.load(Ordering::Relaxed),
         );
-        for (elapsed_ms, package, bytes) in self.slowest_downloads.lock().unwrap().iter() {
+        for (elapsed_ms, package, bytes) in self.downloads_guard().iter() {
             eprintln!(
                 "[megagate:web:pipeline-profile] slow_download package={} elapsed={}ms bytes={}",
                 package, elapsed_ms, bytes
             );
         }
-        for (elapsed_ms, package) in self.slowest_extracts.lock().unwrap().iter() {
+        for (elapsed_ms, package) in self.extracts_guard().iter() {
             eprintln!(
                 "[megagate:web:pipeline-profile] slow_extract package={} elapsed={}ms",
                 package, elapsed_ms

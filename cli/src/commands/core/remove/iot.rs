@@ -10,7 +10,8 @@ use crate::commands::core::shared;
 
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = shared::find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found("iot"))?;
+    let root =
+        shared::find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found("iot"))?;
     Ok(root)
 }
 

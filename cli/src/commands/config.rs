@@ -194,10 +194,7 @@ fn set_toml(key: &str, value: &str) -> Result<()> {
         doc[key] = toml_edit::value(value);
     }
     std::fs::write(&toml_path, doc.to_string())?;
-    mg_ui::success(&format!(
-        "set {key} = {value}  →  {}",
-        toml_path.display()
-    ));
+    mg_ui::success(&format!("set {key} = {value}  →  {}", toml_path.display()));
     Ok(())
 }
 
@@ -327,7 +324,10 @@ fn print_npmrc_file(path: &Path) {
 
 fn env_value(key: &str) -> Option<String> {
     let normalized = key.to_uppercase().replace('-', "_");
-    for candidate in [format!("MG_{normalized}"), format!("npm_config_{normalized}")] {
+    for candidate in [
+        format!("MG_{normalized}"),
+        format!("npm_config_{normalized}"),
+    ] {
         if let Ok(value) = std::env::var(&candidate) {
             return Some(value);
         }

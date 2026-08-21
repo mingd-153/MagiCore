@@ -15,13 +15,7 @@ fn update_args_uv_upgrade_each_package() {
     let args = update_args(&["a b".to_string()], "uv");
     assert_eq!(
         args,
-        vec![
-            "lock",
-            "--upgrade-package",
-            "a",
-            "--upgrade-package",
-            "b"
-        ]
+        vec!["lock", "--upgrade-package", "a", "--upgrade-package", "b"]
     );
 }
 

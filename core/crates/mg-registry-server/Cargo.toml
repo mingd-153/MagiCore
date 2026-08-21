@@ -24,6 +24,7 @@ notify = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+url = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2"] }
 object_store = { workspace = true }
 futures-util = { workspace = true }

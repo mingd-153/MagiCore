@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Registry server tests
 //! (Tests: auth, model serialization, storage init, npm route matching — per RULE §5)
 

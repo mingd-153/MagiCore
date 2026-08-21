@@ -84,10 +84,9 @@ pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
 /// Kiểm tra nhanh trước khi publish: tarball hợp lệ, files selection đúng.
 pub async fn stage(dir: Option<String>) -> Result<()> {
     let cwd = dir.map(PathBuf::from).unwrap_or(std::env::current_dir()?);
-    let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(crate::error::project_root_missing)?;
-    let project = ProjectConfig::load(&project_root)?
-        .ok_or_else(crate::error::mg_toml_missing)?;
+    let project_root =
+        ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
+    let project = ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mg_toml_missing)?;
 
     let entry_prefix = format!("{}-{}", project.name, project.version);
     let filename = format!(
@@ -100,9 +99,7 @@ pub async fn stage(dir: Option<String>) -> Result<()> {
     let tarball_path = stage_dir.join(&filename);
     pack(&project_root, &tarball_path, &entry_prefix)?;
 
-    let size = fs::metadata(&tarball_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let size = fs::metadata(&tarball_path).map(|m| m.len()).unwrap_or(0);
     mg_ui::success(&format!(
         "staged {} ({:.1} KiB) → {}",
         filename,
@@ -235,7 +232,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
         .to_string();
 
     // 7. Files selection
-    let files = select_files(&project_root)?;
+    let files = select_files(project_root)?;
 
     // 8. mg-pack: build tarball (filename dùng unscoped — scoped name chứa '/' làm tempdir join fail)
     let entry_prefix = format!("{}-{}", project.name, new_version);
@@ -246,13 +243,13 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     );
     let temp_dir = tempfile::tempdir()?;
     let tarball_path = temp_dir.path().join(filename);
-    let pack_result = pack(&project_root, &tarball_path, &entry_prefix)?;
+    let pack_result = pack(project_root, &tarball_path, &entry_prefix)?;
 
     // 9. Registry select (01 §2)
-    let registry_url = select_registry(&pkg_json, &project_root, &project, &args)?;
+    let registry_url = select_registry(&pkg_json, project_root, &project, args)?;
 
     // 10. Auth resolution
-    let npmrc = NpmRc::load(&project_root)?;
+    let npmrc = NpmRc::load(project_root)?;
     let config_reg = project.registries.iter().find(|r| r.url == registry_url);
     let auth = resolve_auth(&npmrc, &registry_url, config_reg, args.token.as_deref())?;
 
@@ -279,7 +276,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
             &sanitized.manifest,
             &dep_fields_map,
             &pack_result,
-            &args,
+            args,
         )
         .await?;
     }
@@ -327,7 +324,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     }
 
     // Save updated version to mg.toml + package.json
-    project.save(&project_root)?;
+    project.save(project_root)?;
     if pkg_json_path.exists() {
         fs::write(&pkg_json_path, serde_json::to_string_pretty(&pkg_json)?)?;
     }
@@ -504,7 +501,10 @@ async fn publish_put(
     let mut versions = serde_json::Map::new();
     let mut version_obj = manifest.clone();
     let unscoped = name.rsplit('/').next().unwrap_or(name);
-    version_obj.as_object_mut().unwrap().insert("dist".into(), serde_json::json!({
+    let version_object = version_obj
+        .as_object_mut()
+        .ok_or_else(crate::error::parse_manifest_failed)?;
+    version_object.insert("dist".into(), serde_json::json!({
         "tarball": format!("{}/{}/-/{}-{}.tgz", registry_url.trim_end_matches('/'), name, unscoped, version),
         "shasum": pack_result.shasum,
         "integrity": pack_result.integrity,
@@ -512,18 +512,12 @@ async fn publish_put(
         "unpackedSize": pack_result.unpacked_size,
     }));
     for (k, v) in deps {
-        version_obj
-            .as_object_mut()
-            .unwrap()
-            .insert(k.clone(), v.clone());
+        version_object.insert(k.clone(), v.clone());
     }
 
     // Access field for scoped packages
     if let Some(access) = &args.access {
-        version_obj
-            .as_object_mut()
-            .unwrap()
-            .insert("access".into(), serde_json::Value::String(access.clone()));
+        version_object.insert("access".into(), serde_json::Value::String(access.clone()));
     }
 
     // OTP

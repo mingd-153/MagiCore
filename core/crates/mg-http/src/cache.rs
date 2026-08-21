@@ -34,7 +34,7 @@ impl HttpCache {
     }
 
     pub fn get(&self, key: &str) -> Option<Vec<u8>> {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock().expect("lock poisoned");
         cache.get(key).and_then(|entry| {
             if entry.is_valid() {
                 Some(entry.data.clone())
@@ -45,7 +45,7 @@ impl HttpCache {
     }
 
     pub fn insert(&self, key: String, data: Vec<u8>, ttl: Duration) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock().expect("lock poisoned");
         cache.insert(
             key,
             CacheEntry {

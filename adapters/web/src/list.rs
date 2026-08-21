@@ -1,8 +1,8 @@
 //! `list.rs` — List installed web dependencies in node_modules / lockfile.
 
-use std::path::Path;
 use mg_types::adapter::InstalledPackage;
 use mg_types::{MgResult, PackageId, Version};
+use std::path::Path;
 
 use crate::lockfile::{installed_package_version, read_web_lockfile_checked};
 use crate::manifest::parse_manifest;

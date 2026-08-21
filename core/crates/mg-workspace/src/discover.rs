@@ -122,7 +122,6 @@ pub fn build_workspace_graph(targets: &[PathBuf]) -> anyhow::Result<WorkspaceGra
         }
     }
 
-
     let mut edges = Vec::new();
     for (from_index, node) in nodes.iter().enumerate() {
         for (dep_name, spec) in manifest_deps(&node.manifest) {

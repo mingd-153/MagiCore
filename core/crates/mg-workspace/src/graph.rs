@@ -110,7 +110,10 @@ pub fn read_package_manifest(
                             if t.contains_key("path") {
                                 "workspace:*".to_string()
                             } else {
-                                t.get("version").and_then(|ver| ver.as_str()).unwrap_or("*").to_string()
+                                t.get("version")
+                                    .and_then(|ver| ver.as_str())
+                                    .unwrap_or("*")
+                                    .to_string()
                             }
                         }
                         _ => "*".to_string(),
@@ -155,4 +158,3 @@ pub fn read_package_manifest(
 
     Ok(None)
 }
-

@@ -46,6 +46,7 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "python",
     "unity",
     "upm",
+    "xcodebuild",
 ];
 
 /// Tools cấm vĩnh viễn — format có resolver mg (00-index §5.2) nên wrapper bị cấm.
@@ -72,21 +73,18 @@ pub fn check_tool(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// C9: npm/npx chỉ được phép trong react-native subdir của project multi
-/// (package.json có dependency react-native + cha có mg.toml `[app] language = "multi"`).
-/// Ngoài phạm vi đó, npm vẫn bị cấm như §5.2.
+/// Scoped check kept for callers that pass cwd, but PM tools stay forbidden everywhere.
+/// Kiểm theo cwd vẫn tồn tại để giữ API ổn định; mọi PM ngoài vẫn bị chặn tuyệt đối.
 pub fn check_tool_scoped(name: &str, cwd: Option<&Path>) -> Result<()> {
+    let _ = cwd;
     let name = name.trim();
     if name.is_empty() {
         bail!("tool name is empty");
     }
     let normalized = normalize_script_token(name).unwrap_or_else(|| name.to_ascii_lowercase());
     if FORBIDDEN_TOOLS.contains(&normalized.as_str()) {
-        if is_react_native_subdir(cwd) {
-            return Ok(());
-        }
         bail!(
-            "tool '{name}' is forbidden outside react-native subdirs (C9 scoped exception — run inside <project>/react-native)"
+            "tool '{name}' is permanently forbidden (mg resolver covers its format — use `mg install` instead)"
         );
     }
     if !ALLOWED_TOOLS.contains(&normalized.as_str()) {
@@ -97,7 +95,8 @@ pub fn check_tool_scoped(name: &str, cwd: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-/// True khi cwd (hoặc cha gần nhất có mg.toml) là react-native subdir của project app multi.
+/// Historical detector kept for migration diagnostics only; it no longer grants exec bypass.
+/// Bộ nhận diện cũ chỉ còn phục vụ chẩn đoán migration, không mở khóa chạy PM.
 pub fn is_react_native_subdir(cwd: Option<&Path>) -> bool {
     let Some(cwd) = cwd else { return false };
     let rn_ok = cwd.join("package.json").is_file()

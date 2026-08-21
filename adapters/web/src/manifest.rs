@@ -2,12 +2,10 @@
 //!
 //! Provides `PackageJson` structure, atomic file write utilities, and manifest parse/serialization.
 
-use std::path::Path;
-use mg_types::{
-    DependencySpec, Manifest, MgError, MgResult, PackageName, Version, VersionRange,
-};
+use mg_types::{DependencySpec, Manifest, MgError, MgResult, PackageName, Version, VersionRange};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::path::Path;
 
 /// Ghi file nguyên tử (Atomic write) — tránh lỗi hỏng file khi crash giữa chừng
 pub fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
@@ -139,23 +137,24 @@ pub fn parse_manifest(project_root: &Path) -> MgResult<Manifest> {
             pkg_json.version
         ))
     })?);
-    let parse_deps = |map: Option<std::collections::HashMap<String, String>>| -> MgResult<Vec<DependencySpec>> {
-        match map {
-            Some(deps) => {
-                let mut out = Vec::with_capacity(deps.len());
-                for (name, range) in deps {
-                    if is_workspace_protocol_range(&range) {
-                        continue;
+    let parse_deps =
+        |map: Option<std::collections::HashMap<String, String>>| -> MgResult<Vec<DependencySpec>> {
+            match map {
+                Some(deps) => {
+                    let mut out = Vec::with_capacity(deps.len());
+                    for (name, range) in deps {
+                        if is_workspace_protocol_range(&range) {
+                            continue;
+                        }
+                        let pn = PackageName::new(name)?;
+                        let vr = VersionRange::parse(&range)?;
+                        out.push(DependencySpec::new(pn, vr));
                     }
-                    let pn = PackageName::new(name)?;
-                    let vr = VersionRange::parse(&range)?;
-                    out.push(DependencySpec::new(pn, vr));
+                    Ok(out)
                 }
-                Ok(out)
+                None => Ok(vec![]),
             }
-            None => Ok(vec![]),
-        }
-    };
+        };
     manifest.dependencies = parse_deps(pkg_json.dependencies)?;
     manifest.dev_dependencies = parse_deps(pkg_json.dev_dependencies)?;
     manifest.peer_dependencies = parse_deps(pkg_json.peer_dependencies)?;
@@ -164,12 +163,11 @@ pub fn parse_manifest(project_root: &Path) -> MgResult<Manifest> {
 }
 
 pub fn write_manifest(project_root: &Path, manifest: &Manifest) -> MgResult<()> {
-    let to_map =
-        |deps: &[DependencySpec]| -> std::collections::HashMap<String, String> {
-            deps.iter()
-                .map(|d| (d.name.as_str().to_string(), d.range.to_string()))
-                .collect()
-        };
+    let to_map = |deps: &[DependencySpec]| -> std::collections::HashMap<String, String> {
+        deps.iter()
+            .map(|d| (d.name.as_str().to_string(), d.range.to_string()))
+            .collect()
+    };
     let pkg_path = project_root.join("package.json");
     let fallback_version = manifest
         .version

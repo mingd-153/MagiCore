@@ -47,6 +47,11 @@ impl TemplateRoot {
         self.path.join(rel).exists()
     }
 
+    /// Raw filesystem path of this root (publish source resolution).
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn read(&self, rel: &str) -> Result<Vec<u8>> {
         let full = self.path.join(rel);
         if !full.is_file() {

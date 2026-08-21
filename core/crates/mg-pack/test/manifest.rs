@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for manifest sanitize — test riêng tại test/ (RULE §5)
 use mg_pack::manifest::{dep_fields, sanitize};
 use serde_json::Value;

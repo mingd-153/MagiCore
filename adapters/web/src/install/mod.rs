@@ -5,27 +5,22 @@ pub mod download;
 pub mod extract;
 pub mod materialize;
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
 use mg_store::{ContentStore, Database, Layout, PackageCache};
 use mg_types::adapter::{InstallOptions, InstallSummary, ResolvedGraph, ResolvedPackage};
 use mg_types::{MgError, MgResult, PackageId};
 use rayon::prelude::*;
+use std::path::{Path, PathBuf};
 
-use crate::cache::{
-    prune_project_local_cache, SharedWebCache,
-};
+use crate::cache::{prune_project_local_cache, SharedWebCache};
 use crate::install::bin::rebuild_bin_links;
 use crate::install::download::{pipeline_download_and_extract, prefetch_tarballs};
-use crate::lockfile::installed_package_matches;
 use crate::install::materialize::{
-    extracted_root_for, hardlink_tree, materialize_nested_dependencies,
+    extracted_root_for, graph_without_packages, hardlink_tree, materialize_nested_dependencies,
     materialize_strict_layout, prune_root_install_dirs, repair_dangling_symlinks,
     reset_nested_node_modules, select_root_packages, strict_vstore_package_dir,
-    graph_without_packages,
 };
 use crate::lifecycle::LifecycleRunner;
+use crate::lockfile::installed_package_matches;
 use crate::lockfile::{project_cache_dir, write_web_lockfile_with_state};
 use crate::native;
 use crate::profile::InstallProfile;
@@ -63,6 +58,7 @@ pub fn trust_allows_script(policy: Option<&str>, blanket_scripts: bool) -> bool 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_install(
     registry_url: &str,
     provider_auth_token: Option<&str>,
@@ -84,14 +80,11 @@ pub async fn run_install(
     std::fs::create_dir_all(layout.root())?;
     std::fs::create_dir_all(layout.temp_dir())?;
 
-    let cache = PackageCache::new(layout.cache_dir())
-        .map_err(|e| MgError::Store(e.to_string()))?;
-    let database = Some(
-        Database::open(&layout.db_path())
-            .map_err(|e| MgError::Store(e.to_string()))?,
-    );
-    let default_store = ContentStore::new(layout.cas_dir())
-        .map_err(|e| MgError::Store(e.to_string()))?;
+    let cache = PackageCache::new(layout.cache_dir()).map_err(|e| MgError::Store(e.to_string()))?;
+    let database =
+        Some(Database::open(&layout.db_path()).map_err(|e| MgError::Store(e.to_string()))?);
+    let default_store =
+        ContentStore::new(layout.cas_dir()).map_err(|e| MgError::Store(e.to_string()))?;
     let store = store_override.unwrap_or(&default_store);
     let node_modules = project_root.join("node_modules");
     std::fs::create_dir_all(&node_modules)?;
@@ -126,14 +119,15 @@ pub async fn run_install(
         None
     };
     let root_packages = select_root_packages(graph);
-    let all_root_matched = !root_packages.is_empty() && root_packages
-        .par_iter()
-        .all(|pkg| installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id));
+    let all_root_matched = !root_packages.is_empty()
+        && root_packages.par_iter().all(|pkg| {
+            installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id)
+        });
 
     if all_root_matched && opts.force_install.is_empty() && !graph.packages.is_empty() {
-        let all_vstore_matched = graph.packages
-            .par_iter()
-            .all(|pkg| installed_package_matches(&strict_vstore_package_dir(&node_modules, &pkg.id), &pkg.id));
+        let all_vstore_matched = graph.packages.par_iter().all(|pkg| {
+            installed_package_matches(&strict_vstore_package_dir(&node_modules, &pkg.id), &pkg.id)
+        });
         if all_vstore_matched {
             summary.duration_ms = start.elapsed().as_millis() as u64;
             return Ok(summary);
@@ -444,17 +438,16 @@ pub async fn run_install(
         profile.mark("prepare_extracted_roots", start);
     } else {
         let pipeline_step_started_at = std::time::Instant::now();
-        let (pipeline_bytes, extracted_roots, persist_handles) =
-            pipeline_download_and_extract(
-                &fetch_graph,
-                &already_materialized,
-                active_package_cache,
-                shared_cache.as_ref(),
-                Some(&registry),
-                &layout,
-                store,
-            )
-            .await?;
+        let (pipeline_bytes, extracted_roots, persist_handles) = pipeline_download_and_extract(
+            &fetch_graph,
+            &already_materialized,
+            active_package_cache,
+            shared_cache.as_ref(),
+            Some(&registry),
+            &layout,
+            store,
+        )
+        .await?;
         summary.bytes_from_cache += pipeline_bytes;
         profile.mark_step(
             "pipeline_download_and_extract_step",
@@ -503,9 +496,9 @@ pub async fn run_install(
         );
         let persist_step_started_at = std::time::Instant::now();
         for handle in persist_handles {
-            handle.await.map_err(|e| {
-                MgError::Other(format!("shared cache persist task panicked: {e}"))
-            })?;
+            handle
+                .await
+                .map_err(|e| MgError::Other(format!("shared cache persist task panicked: {e}")))?;
         }
         profile.mark_step("persist_shared_cache_step", persist_step_started_at);
     }
@@ -609,7 +602,10 @@ pub async fn run_install(
 
         for pkg_dir in scripted_packages {
             let project_root = project_root.to_path_buf();
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let Ok(permit) = semaphore.clone().acquire_owned().await else {
+                eprintln!("[megagate] warning: lifecycle semaphore closed");
+                continue;
+            };
             join_set.spawn(async move {
                 let _permit = permit;
                 LifecycleRunner::run_scripts(&pkg_dir, &project_root)
@@ -617,10 +613,10 @@ pub async fn run_install(
         }
 
         while let Some(result) = join_set.join_next().await {
-            if let Err(e) = result {
-                eprintln!("[megagate] warning: lifecycle script task panicked: {}", e);
-            } else if let Err(e) = result.unwrap() {
-                eprintln!("[megagate] warning: lifecycle script error: {}", e);
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => eprintln!("[megagate] warning: lifecycle script error: {}", e),
+                Err(e) => eprintln!("[megagate] warning: lifecycle script task panicked: {}", e),
             }
         }
     }

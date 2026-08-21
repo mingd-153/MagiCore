@@ -7,8 +7,8 @@ use crate::commands::core::shared::{self, BENCH_PKG, OPTIMIZER_PKG};
 
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = shared::find_project_root(&cwd)?
-        .ok_or_else(|| crate::error::no_mg_project_found(""))?;
+    let root =
+        shared::find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found(""))?;
     Ok(root)
 }
 
@@ -37,7 +37,9 @@ pub async fn add(packages: Vec<String>) -> Result<()> {
     }
     let has_materialized_pkg = packages.iter().any(|pkg| pkg != OPTIMIZER_PKG);
     if has_materialized_pkg {
-        if let Ok(adapter) = crate::factory::create_adapter(&mg_types::Ecosystem::Hardware, None, None) {
+        if let Ok(adapter) =
+            crate::factory::create_adapter(&mg_types::Ecosystem::Hardware, None, None)
+        {
             shared::install_with_adapter(
                 &*adapter,
                 &root,

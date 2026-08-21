@@ -1,5 +1,6 @@
+#![allow(clippy::unwrap_used)]
 #![cfg(test)]
-use mg-fetcher;
+use mg_fetcher;
 
 // Basic skeleton test - crate compiles and can be imported
 #[test]

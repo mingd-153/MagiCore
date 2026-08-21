@@ -1,8 +1,8 @@
 //! `audit.rs` — Security audits, supply-chain checks, and advisory query execution for WebAdapter.
 
-use std::path::Path;
 use mg_types::adapter::{AuditReport, Vulnerability, VulnerabilitySeverity};
 use mg_types::{DependencySpec, MgError, MgResult, PackageId, PackageName, Version, VersionRange};
+use std::path::Path;
 
 use crate::lockfile::{read_web_lockfile_checked, write_web_lockfile_with_state};
 use crate::manifest::{parse_manifest, write_manifest};
@@ -135,8 +135,7 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
                         .as_str()
                         .unwrap_or("Unknown vulnerability")
                         .to_string();
-                    let severity_str =
-                        advisory["severity"].as_str().unwrap_or("info").to_string();
+                    let severity_str = advisory["severity"].as_str().unwrap_or("info").to_string();
                     let cve = advisory["cves"]
                         .as_array()
                         .and_then(|cves| cves.first())
@@ -154,10 +153,10 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
                         .unwrap_or("unknown")
                         .to_string();
 
-                    let pkg_name_parsed = PackageName::new(pkg_name.clone())
-                        .unwrap_or_else(|_| PackageName::new("unknown").unwrap());
-                    let ver = Version::parse(&version)
-                        .unwrap_or_else(|_| Version::parse("0.0.0").unwrap());
+                    let Ok(pkg_name_parsed) = PackageName::new(pkg_name.clone()) else {
+                        continue;
+                    };
+                    let ver = Version::parse(&version).unwrap_or_else(|_| Version::new(0, 0, 0));
 
                     vulnerabilities.push(Vulnerability {
                         package: PackageId::new(pkg_name_parsed, ver),

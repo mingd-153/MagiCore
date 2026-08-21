@@ -10,7 +10,8 @@ use axum::{
 };
 use base64::Engine;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::str::FromStr;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::storage::RegistryStore;
 
@@ -26,7 +27,7 @@ impl Clone for AuthService {
     fn clone(&self) -> Self {
         Self {
             admin_token: self.admin_token.clone(),
-            users: Mutex::new(self.users.lock().unwrap().clone()),
+            users: Mutex::new(self.users_guard().clone()),
             scopes: self.scopes.clone(),
             store: self.store.clone(),
         }
@@ -43,10 +44,17 @@ impl AuthService {
         }
     }
 
+    fn users_guard(&self) -> MutexGuard<'_, HashMap<String, User>> {
+        // Recover poisoned auth cache — khôi phục cache auth bị poison thay vì panic registry.
+        self.users
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Nạp user từ DB vào cache — gọi lúc khởi động (10-task-plan: users sống qua restart)
     pub async fn load_from_db(&self) -> Result<()> {
         let rows = self.store.load_users().await?;
-        let mut users = self.users.lock().unwrap();
+        let mut users = self.users_guard();
         users.clear();
         for (token, user) in rows {
             users.insert(token, user);
@@ -56,10 +64,7 @@ impl AuthService {
 
     /// Add a user with token — ghi cả DB (persist) + cache
     pub fn add_user(&self, token: String, user: User) {
-        self.users
-            .lock()
-            .unwrap()
-            .insert(token.clone(), user.clone());
+        self.users_guard().insert(token.clone(), user.clone());
         // fire-and-forget async — lỗi DB không chặn adduser (ghi log)
         let store = self.store.clone();
         tokio::spawn(async move {
@@ -73,7 +78,7 @@ impl AuthService {
     pub async fn remove_user(&self, name: &str) -> Result<bool> {
         let removed = self.store.delete_user_by_name(name).await?;
         if removed {
-            self.users.lock().unwrap().retain(|_, u| u.name != name);
+            self.users_guard().retain(|_, u| u.name != name);
         }
         Ok(removed)
     }
@@ -82,16 +87,14 @@ impl AuthService {
     pub async fn remove_token(&self, token: &str) -> Result<bool> {
         let removed = self.store.delete_user_by_token(token).await?;
         if removed {
-            self.users.lock().unwrap().remove(token);
+            self.users_guard().remove(token);
         }
         Ok(removed)
     }
 
     /// Xác thực username + password (Basic auth)
     pub fn verify_password(&self, username: &str, password: &str) -> Option<User> {
-        self.users
-            .lock()
-            .unwrap()
+        self.users_guard()
             .values()
             // ponytail: scan tuyến tính, đủ cho registry private; index theo name khi scale
             .find(|u| u.name == username && u.password.as_deref() == Some(password))
@@ -112,7 +115,7 @@ impl AuthService {
                 });
             }
         }
-        self.users.lock().unwrap().get(token).cloned()
+        self.users_guard().get(token).cloned()
     }
 
     /// Check if user can access package (scope-based, glob: `@scope/*`, `*`)
@@ -172,16 +175,21 @@ impl UserRole {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
-        match s {
+    pub fn can_publish(&self) -> bool {
+        matches!(self, UserRole::Publisher | UserRole::Admin)
+    }
+}
+
+impl FromStr for UserRole {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let role = match s {
             "publisher" => UserRole::Publisher,
             "admin" => UserRole::Admin,
             _ => UserRole::Viewer,
-        }
-    }
-
-    pub fn can_publish(&self) -> bool {
-        matches!(self, UserRole::Publisher | UserRole::Admin)
+        };
+        Ok(role)
     }
 }
 

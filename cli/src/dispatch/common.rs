@@ -11,33 +11,46 @@ pub async fn dispatch_common(
     recursive: bool,
 ) -> Result<()> {
     match command {
-        CommonCommand::Init { template, signature } => {
-            commands::init::run(template, signature).await
-        }
-        CommonCommand::Config { cmd, local } => {
-            commands::config::run(cmd, local).await
-        }
+        CommonCommand::Init {
+            template,
+            signature,
+        } => commands::init::run(template, signature).await,
+        CommonCommand::Config { cmd, local } => commands::config::run(cmd, local).await,
         CommonCommand::Stage { dir } => {
             commands::publish::stage(dir.map(|d| d.display().to_string())).await
         }
-        CommonCommand::Import { dir } => {
-            commands::import::run(dir).await
-        }
+        CommonCommand::Import { dir } => commands::import::run(dir).await,
         CommonCommand::Dev { host, port, clear } => {
             commands::dev::run(core, host, port, clear).await
         }
         CommonCommand::Build { target } => commands::build::run(core, target).await,
+        #[cfg(feature = "iot")]
         CommonCommand::Flash { board, skip_build } => {
             commands::core::dev::iot::flash(board.as_deref(), skip_build).await
         }
+        #[cfg(not(feature = "iot"))]
+        CommonCommand::Flash { .. } => Err(crate::error::core_not_in_build("iot")),
         CommonCommand::Deploy { run } => {
+            let _ = run;
             match super::types::detect_ecosystem().ok().flatten().as_deref() {
+                #[cfg(feature = "cicd")]
                 Some("cicd") => commands::core::dev::cicd::deploy(run).await,
+                #[cfg(all(not(feature = "cicd"), feature = "clo"))]
+                Some("cicd") => Err(crate::error::core_not_in_build("cicd")),
+                #[cfg(feature = "clo")]
                 _ => commands::core::dev::clo::deploy(run).await,
+                #[cfg(not(feature = "clo"))]
+                _ => Err(crate::error::core_not_in_build("clo")),
             }
         }
+        #[cfg(feature = "cicd")]
         CommonCommand::CiGenerate => commands::core::dev::cicd::ci_generate(),
+        #[cfg(not(feature = "cicd"))]
+        CommonCommand::CiGenerate => Err(crate::error::core_not_in_build("cicd")),
+        #[cfg(feature = "cicd")]
         CommonCommand::Verify => commands::core::dev::cicd::verify().await,
+        #[cfg(not(feature = "cicd"))]
+        CommonCommand::Verify => Err(crate::error::core_not_in_build("cicd")),
         CommonCommand::Start => commands::start::run(core).await,
         CommonCommand::Exec { command, args } => commands::exec::run(core, command, args),
         CommonCommand::Info { package, json } => commands::info::run(package, json).await,

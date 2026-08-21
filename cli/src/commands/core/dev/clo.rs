@@ -1,16 +1,16 @@
 //! `mg dev`/`mg deploy` clo — cloud tooling (terraform/cdk/pulumi) — tách từ core/clo.rs (v5).
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn project_root() -> Result<PathBuf> {
     super::super::shared::core_project_root("clo")
 }
 
 /// Cloud type từ mg.toml `[cloud] type` hoặc manifest probe — dùng cho dev/deploy.
-pub fn cloud_type(root: &PathBuf) -> anyhow::Result<String> {
+pub fn cloud_type(root: &Path) -> anyhow::Result<String> {
     let adapter = mg_cloud_adapter::adapter_for(root)
-        .ok_or_else(|| crate::error::no_framework_detected("cloud", &root))?;
+        .ok_or_else(|| crate::error::no_framework_detected("cloud", root))?;
     Ok(adapter.cloud_type().to_string())
 }
 
@@ -77,7 +77,7 @@ pub fn deploy_command(kind: &str) -> Result<(String, Vec<String>)> {
     }
 }
 
-fn run_tool(root: &PathBuf, cmd: &str, args: &[String]) -> Result<()> {
+fn run_tool(root: &Path, cmd: &str, args: &[String]) -> Result<()> {
     let (resolved, run_cmd): (Option<PathBuf>, String) =
         if let Some(bin) = bin_resolved_path(root, cmd) {
             (Some(bin.clone()), bin.to_string_lossy().to_string())
@@ -89,7 +89,7 @@ fn run_tool(root: &PathBuf, cmd: &str, args: &[String]) -> Result<()> {
         return Err(crate::error::tool_not_installed_project(cmd));
     }
     let opts = mg_exec::prelude::ExecOptions {
-        cwd: Some(root.clone()),
+        cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".megagate").join("exec.log")),
         clean_env: true,
         ..Default::default()

@@ -158,8 +158,8 @@ fn prune_unreferenced(project_root: &Path, dry_run: bool) -> Result<PruneReport>
 /// mg store prune — delete unreferenced packages (02 §2.2).
 pub async fn run(cmd: StoreCmd) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let project_root = ProjectConfig::find_project_root(&cwd)
-        .ok_or_else(crate::error::project_root_missing)?;
+    let project_root =
+        ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
 
     match cmd {
         StoreCmd::Prune { dry_run, json } => {

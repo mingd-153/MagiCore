@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-app-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_language (all 6 paths), adapter_for, PackageAdapter trait methods.
 
@@ -25,7 +26,11 @@ fn detect_flutter_via_pubspec_yaml() {
 #[test]
 fn detect_kotlin_via_build_gradle_kts() {
     let dir = tmp("kotlin-kts");
-    std::fs::write(dir.join("build.gradle.kts"), "plugins { kotlin(\"jvm\") }\n").unwrap();
+    std::fs::write(
+        dir.join("build.gradle.kts"),
+        "plugins { kotlin(\"jvm\") }\n",
+    )
+    .unwrap();
     assert_eq!(detect_language(&dir), Some(AppLanguage::Kotlin));
 }
 
@@ -204,7 +209,10 @@ async fn add_fails_closed_directs_to_tooling() {
     std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let name = PackageName::new("http").unwrap();
-    let err = a.add(&dir, &name, None, AddOptions::default()).await.unwrap_err();
+    let err = a
+        .add(&dir, &name, None, AddOptions::default())
+        .await
+        .unwrap_err();
     let msg = err.to_string();
     // Error message phải hướng dẫn user dùng mg install thay vì add trực tiếp
     assert!(

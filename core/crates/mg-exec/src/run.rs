@@ -21,7 +21,7 @@ pub fn process_tree_guard_available() -> bool {
 }
 
 /// Tùy chọn chạy — dry_run in lệnh không chạy (00 §5.5); log_path để ghi audit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecOptions {
     pub dry_run: bool,
     /// Đường dẫn file audit (vd `<project>/.megagate/exec.log`) — None = không ghi.
@@ -36,20 +36,6 @@ pub struct ExecOptions {
     pub clean_env: bool,
     /// Không áp timeout — dùng cho dev server chạy dài, vẫn giữ guard process.
     pub disable_timeout: bool,
-}
-
-impl Default for ExecOptions {
-    fn default() -> Self {
-        Self {
-            dry_run: false,
-            log_path: None,
-            cwd: None,
-            timeout: None,
-            env: Vec::new(),
-            clean_env: false,
-            disable_timeout: false,
-        }
-    }
 }
 
 /// Kết quả chạy — args trong report ĐÃ redact (không lộ secret).
@@ -146,12 +132,9 @@ fn execute_command(
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    // C9: npm/npx chỉ được phép trong react-native subdir của project app multi.
-    let scoped_exempt: &[&str] = if crate::allowlist::is_react_native_subdir(Some(&cwd)) {
-        &["npm", "npx"]
-    } else {
-        &[]
-    };
+    // Forbidden PM tools stay blocked in every cwd.
+    // PM ngoài bị chặn tuyệt đối, không còn ngoại lệ React Native.
+    let scoped_exempt: &[&str] = &[];
 
     if opts.dry_run {
         // dry-run: in lệnh, không chạy, vẫn ghi audit với exit_code 0 + dry_run flag (§5.5)
@@ -192,7 +175,7 @@ fn execute_command(
     }
 
     let _shadow_path = if opts.clean_env {
-        let shadow_path = ShadowPath::create(&scoped_exempt)?;
+        let shadow_path = ShadowPath::create(scoped_exempt)?;
         let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
         command.env_clear();
         for (key, value) in &opts.env {
@@ -216,7 +199,7 @@ fn execute_command(
     } else {
         Some(opts.timeout.unwrap_or_else(default_timeout))
     };
-    let outcome = wait_with_timeout(child, timeout, opts.clean_env, &scoped_exempt, mode)?;
+    let outcome = wait_with_timeout(child, timeout, opts.clean_env, scoped_exempt, mode)?;
     let duration_ms = start.elapsed().as_millis() as u64;
     let exit_code = outcome.status.code().unwrap_or(-1);
 
@@ -259,7 +242,7 @@ impl ShadowPath {
         std::fs::create_dir_all(&dir)?;
 
         for tool in FORBIDDEN_TOOLS {
-            if !scoped_exempt.contains(&tool) {
+            if !scoped_exempt.contains(tool) {
                 write_blocker(&dir, tool)?;
             }
         }
@@ -465,18 +448,64 @@ fn configure_process_isolation(_command: &mut Command) {}
 
 #[cfg(unix)]
 fn terminate_process_tree(root_pid: u32) {
-    let process_group = format!("-{root_pid}");
-    let _ = Command::new("kill")
-        .args(["-TERM", &process_group])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    // Không spawn `kill -TERM -{pgid}`: trên GH Runner pgid resolver đánh
+    // trúng process group của job → SIGTERM toàn job (exit 143/canceled).
+    // Walk /proc theo ppid và giết từng pid cụ thể — không đụng ngoài cây.
+    let mut frontier = vec![root_pid];
+    let mut all = Vec::new();
+    while let Some(pid) = frontier.pop() {
+        all.push(pid);
+        frontier.extend(child_pids(pid));
+    }
+    all.reverse();
+    for &pid in &all {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
     std::thread::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS));
-    let _ = Command::new("kill")
-        .args(["-KILL", &process_group])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    for &pid in &all {
+        let _ = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+#[cfg(unix)]
+fn child_pids(ppid: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.bytes().any(|b| !b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{name}/stat")) else {
+            continue;
+        };
+        let Some((_, rest)) = stat.split_once(')') else {
+            continue;
+        };
+        let mut fields = rest.split_whitespace();
+        let _state = fields.next();
+        let Some(ppid_field) = fields.next().and_then(|f| f.parse::<i32>().ok()) else {
+            continue;
+        };
+        if ppid_field == ppid as i32 {
+            if let Ok(pid) = name.parse::<u32>() {
+                out.push(pid);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(not(unix))]

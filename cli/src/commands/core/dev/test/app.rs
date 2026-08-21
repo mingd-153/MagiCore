@@ -1,6 +1,8 @@
 //! Tests for T9 — OS-aware simulator selector (`mg dev app`).
 
-use super::{detect_target_platform, find_ios_simulator, TargetPlatform};
+#[cfg(target_os = "macos")]
+use super::find_ios_simulator;
+use super::{detect_target_platform, TargetPlatform};
 
 #[test]
 fn detect_target_platform_returns_valid_variant() {
@@ -20,10 +22,7 @@ fn find_ios_simulator_returns_some_or_none_without_panic() {
     let result = find_ios_simulator();
     if let Some(ref udid) = result {
         // UDID phải dạng hex-dash (8-4-4-4-12)
-        assert!(
-            udid.len() >= 8,
-            "UDID quá ngắn: {udid}"
-        );
+        assert!(udid.len() >= 8, "UDID quá ngắn: {udid}");
     }
     // None cũng hợp lệ (Xcode không cài)
 }

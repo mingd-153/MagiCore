@@ -14,8 +14,7 @@ use tar;
 use walkdir::WalkDir;
 
 use crate::cache::{
-    extracted_package_cache_key, path_to_cache_ref_string, shared_extracted_package_root,
-    ExtractedPackageMarker, SharedWebCache, TarballContentSignature,
+    shared_extracted_package_root, ExtractedPackageMarker, SharedWebCache, TarballContentSignature,
 };
 use crate::lockfile::installed_package_matches;
 use crate::manifest::atomic_write;
@@ -156,7 +155,9 @@ pub fn tarball_content_signature(tarball_bytes: &[u8]) -> MgResult<TarballConten
     tarball_content_signature_from_reader(std::io::Cursor::new(tarball_bytes))
 }
 
-pub fn tarball_content_signature_from_path(tarball_path: &Path) -> MgResult<TarballContentSignature> {
+pub fn tarball_content_signature_from_path(
+    tarball_path: &Path,
+) -> MgResult<TarballContentSignature> {
     let file = std::fs::File::open(tarball_path).map_err(|err| {
         MgError::Other(format!(
             "failed to open tarball '{}' for content signature: {}",
@@ -178,9 +179,8 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
         .entries()
         .map_err(|err| MgError::Other(format!("failed to read tarball entries: {err}")))?
     {
-        let entry = entry.map_err(|err| {
-            MgError::Other(format!("failed to read tarball entry: {err}"))
-        })?;
+        let entry =
+            entry.map_err(|err| MgError::Other(format!("failed to read tarball entry: {err}")))?;
         let entry_type = entry.header().entry_type();
         if entry_type.is_dir() || matches!(entry_type.as_byte(), b'g' | b'x') {
             continue;
@@ -207,9 +207,7 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
         let path = sanitize_tarball_signature_path(
             entry
                 .path()
-                .map_err(|err| {
-                    MgError::Other(format!("failed to read tarball entry path: {err}"))
-                })?
+                .map_err(|err| MgError::Other(format!("failed to read tarball entry path: {err}")))?
                 .as_ref(),
         )?;
         let size = entry.header().size().map_err(|err| {
@@ -244,7 +242,7 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
         hasher.update(path.as_bytes());
         hasher.update([0]);
         hasher.update(size.to_string().as_bytes());
-        hasher.update([b'\n']);
+        hasher.update(*b"\n");
         unpacked_size = unpacked_size.saturating_add(*size);
     }
 
@@ -299,7 +297,7 @@ pub fn extracted_content_matches(root: &Path, expected: &ExtractedPackageMarker)
         hasher.update(path.as_bytes());
         hasher.update([0]);
         hasher.update(size.to_string().as_bytes());
-        hasher.update([b'\n']);
+        hasher.update(*b"\n");
         unpacked_size = unpacked_size.saturating_add(*size);
     }
 
@@ -377,7 +375,10 @@ pub fn read_extracted_package_marker(root: &Path) -> MgResult<Option<ExtractedPa
     Ok(Some(marker))
 }
 
-pub fn write_extracted_package_marker(root: &Path, marker: &ExtractedPackageMarker) -> MgResult<()> {
+pub fn write_extracted_package_marker(
+    root: &Path,
+    marker: &ExtractedPackageMarker,
+) -> MgResult<()> {
     let path = extracted_package_marker_path(root);
     let payload = serde_json::to_vec_pretty(marker).map_err(|err| {
         MgError::Other(format!(

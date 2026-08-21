@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
@@ -12,9 +12,8 @@ pub async fn run(cli: Cli) -> Result<()> {
     let core = cli.core.as_deref();
 
     if let Some(dir) = cli.dir.as_deref() {
-        std::env::set_current_dir(dir).map_err(|e| {
-            crate::error::dir_missing(&dir.display().to_string(), e.to_string())
-        })?;
+        std::env::set_current_dir(dir)
+            .map_err(|e| crate::error::dir_missing(&dir.display().to_string(), e.to_string()))?;
     }
 
     if cli.recursive {
@@ -44,9 +43,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(command @ Commands::Publish { .. }) => {
             dispatch_command(command, core, cli.recursive).await
         }
-        Some(command) if cli.recursive => {
-            run_recursive(command, core, cli.filter.as_deref()).await
-        }
+        Some(command) if cli.recursive => run_recursive(command, core, cli.filter.as_deref()).await,
         Some(command) => dispatch_command(command, core, false).await,
         None => {
             let cores = crate::factory::available_cores();
@@ -73,14 +70,19 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         let mut selected: Vec<PathBuf> = Vec::new();
         for ws in &workspaces {
             let relative = ws.strip_prefix(&project_root).unwrap_or(ws);
-            let name = crate::commands::install::workspace_package_name(ws)
-                .unwrap_or_else(|| ws.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+            let name = crate::commands::install::workspace_package_name(ws).unwrap_or_else(|| {
+                ws.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
             if mg_workspace::filter_matches(pattern, relative, &name) {
                 selected.push(ws.clone());
             }
         }
         if selected.is_empty() {
-            mg_ui::info(&format!("--filter '{pattern}' matched no workspace packages."));
+            mg_ui::info(&format!(
+                "--filter '{pattern}' matched no workspace packages."
+            ));
             return Ok(());
         }
         workspaces = selected;
@@ -112,12 +114,12 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         }
     }
 
-
     let name = command_name(&command);
     let mut failed = 0usize;
     let original_cwd = cwd;
     let is_build_cmd = matches!(command, Commands::Build { .. });
-    let mut ws_composite_hashes: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut ws_composite_hashes: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
 
     for ws in &workspaces {
         // T4 core-aware: nếu --core flag không có, đọc .mg.core marker của workspace này.
@@ -130,11 +132,14 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         };
         let ws_core_str = ws_core.as_deref();
 
-        let ws_name = crate::commands::install::workspace_package_name(ws)
-            .unwrap_or_else(|| ws.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+        let ws_name = crate::commands::install::workspace_package_name(ws).unwrap_or_else(|| {
+            ws.file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        });
 
         if is_build_cmd {
-            if let Ok((should_rebuild, src_hash, comp_hash)) =
+            if let Ok((should_rebuild, _src_hash, comp_hash)) =
                 mg_workspace::check_package_build_freshness(ws, &ws_composite_hashes)
             {
                 if !should_rebuild {
@@ -154,22 +159,21 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
             ws.display(),
             ws_core_str.unwrap_or("auto")
         ));
-        let result = (|| async {
+        let result = async {
             std::env::set_current_dir(ws)?;
             dispatch_command(command.clone(), ws_core_str, false).await
-        })()
+        }
         .await;
         if let Err(e) = result {
             failed += 1;
-            mg_ui::error(&format!(
-                "{name} failed in '{}': {e:#}",
-                ws.display()
-            ));
+            mg_ui::error(&format!("{name} failed in '{}': {e:#}", ws.display()));
         } else if is_build_cmd {
             if let Ok(src_hash) = mg_workspace::compute_package_source_hash(ws) {
-                if let Ok(cache) =
-                    mg_workspace::save_package_build_cache(ws, src_hash, ws_composite_hashes.clone())
-                {
+                if let Ok(cache) = mg_workspace::save_package_build_cache(
+                    ws,
+                    src_hash,
+                    ws_composite_hashes.clone(),
+                ) {
                     ws_composite_hashes.insert(ws_name, cache.composite_hash);
                 }
             }
@@ -185,22 +189,18 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
 
 /// Đọc nội dung `.mg.core` marker file trong thư mục `dir` — trả về tên core nếu hợp lệ.
 /// Format: 1 dòng plain text = tên core (có thể có comment `# ...` sau tên).
-fn read_core_marker(dir: &PathBuf) -> Option<String> {
+fn read_core_marker(dir: &Path) -> Option<String> {
     let marker = dir.join(mg_config::project::ProjectConfig::CORE_MARKER_FILE);
     let content = std::fs::read_to_string(marker).ok()?;
     // Lấy dòng đầu, bỏ comment
     let first_line = content.lines().next()?.trim();
-    let core_name = first_line
-        .split('#')
-        .next()?
-        .trim();
+    let core_name = first_line.split('#').next()?.trim();
     if core_name.is_empty() {
         None
     } else {
         Some(core_name.to_string())
     }
 }
-
 
 fn recursive_supported(command: &Commands) -> bool {
     // T4: mở rộng danh sách lệnh hỗ trợ --recursive (pnpm -r parity)
@@ -397,7 +397,7 @@ fn command_name(command: &Commands) -> &'static str {
 }
 
 async fn dispatch_command(command: Commands, core: Option<&str>, recursive: bool) -> Result<()> {
-    match crate::dispatch::per_core::command_to_dispatch(command, core) {
+    match crate::dispatch::per_core::command_to_dispatch(command, core)? {
         DispatchCommand::Common(cmd) => super::common::dispatch_common(cmd, core, recursive).await,
         DispatchCommand::Core(cmd) => super::core::dispatch_core(cmd).await,
     }
@@ -458,7 +458,8 @@ mod tests {
         }))
         .unwrap_err();
         assert!(
-            err.to_string().contains("--recursive is not implemented for 'init' yet"),
+            err.to_string()
+                .contains("--recursive is not implemented for 'init' yet"),
             "unexpected error: {err}"
         );
     }

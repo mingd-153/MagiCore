@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 // CLI surface tests: single-core vs multi-core commands.
 // Multi-core build (all features enabled) → only create-web/add-web/remove-web/list-web exist.
 
@@ -65,6 +67,24 @@ fn test_add_web_accepts_flags() {
     );
     assert!(out.contains("--dev"), "should mention --dev");
     assert!(out.contains("--global"), "should mention --global");
+}
+
+#[test]
+fn test_bare_add_without_detected_core_fails_closed() {
+    let dir = common::work_dir();
+    let (ok, out) = common::mg_in(&dir, &["add", "zod", "--no-install"]);
+    assert!(!ok, "bare add should fail without core context\n{out}");
+    assert!(
+        out.contains("could not detect a MegaGate core"),
+        "bare add should explain missing core context\n{out}"
+    );
+}
+
+#[test]
+fn test_bare_add_with_core_flag_keeps_single_core_path() {
+    let (ok, out) = common::mg(&["--core", "web", "add", "--help"]);
+    assert!(ok, "mg --core web add --help failed\n{out}");
+    assert!(out.contains("--no-install"), "should mention --no-install");
 }
 
 #[test]

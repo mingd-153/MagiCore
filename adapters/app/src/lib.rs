@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mg-app-adapter — mobile app ecosystem adapter (MegaGate)
 //! (Q18: Kotlin/Flutter/Swift exec passthrough. Không resolver riêng —
 //!  install qua tool theo language: flutter pub get / gradle / swift package resolve)

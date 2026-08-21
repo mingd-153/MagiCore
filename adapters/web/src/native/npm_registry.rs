@@ -286,7 +286,7 @@ impl NpmRegistry {
     pub async fn download_tarball(&self, url: &str) -> Result<Vec<u8>> {
         with_retry("tarball", url, || async {
             let resp = self
-                .with_auth(global_http_client().get(url), &url)
+                .with_auth(global_http_client().get(url), url)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -315,7 +315,7 @@ impl NpmRegistry {
                 tokio::fs::create_dir_all(parent).await?;
             }
             let resp = self
-                .with_auth(batch_http_client().get(url), &url)
+                .with_auth(batch_http_client().get(url), url)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -353,7 +353,7 @@ impl NpmRegistry {
             }
 
             let resp = self
-                .with_auth(batch_http_client().get(url), &url)
+                .with_auth(batch_http_client().get(url), url)
                 .send()
                 .await?
                 .error_for_status()?;

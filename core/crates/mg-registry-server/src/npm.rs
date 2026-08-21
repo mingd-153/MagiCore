@@ -62,9 +62,10 @@ fn scoped_full(scope: &str, name: &str) -> String {
 
 async fn get_package_scoped(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((scope, name)): Path<(String, String)>,
 ) -> Result<Json<Package>, StatusCode> {
-    let result = get_package(State(state), Path(scoped_full(&scope, &name))).await;
+    let result = get_package(State(state), headers, Path(scoped_full(&scope, &name))).await;
     eprintln!(
         "get_package_scoped: scope={} name={} result={:?}",
         scope,
@@ -146,12 +147,31 @@ async fn delete_package_version_scoped(
 
 // === Package fetching ===
 
+/// Rewrite `dist.tarball` theo Host header của request hiện tại — store lưu URL
+/// của registry cũ (host:port lúc publish); đọc từ host/port khác phải trả URL
+/// đúng chỗ này, nếu không client fetch tarball ra registry sai.
+fn rewrite_tarball_host(pkg: &mut Package, host: &str) {
+    for v in pkg.versions.values_mut() {
+        if let Some(filename) = v.dist.tarball.rsplit('/').next() {
+            v.dist.tarball = format!("http://{host}/{}/-/{filename}", pkg.name);
+        }
+    }
+}
+
 async fn get_package(
     State((store, _auth)): State<AppState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Package>, StatusCode> {
     match store.get_package(&name).await {
-        Ok(Some(pkg)) => Ok(Json(pkg)),
+        Ok(Some(mut pkg)) => {
+            let host = headers
+                .get("host")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("localhost");
+            rewrite_tarball_host(&mut pkg, host);
+            Ok(Json(pkg))
+        }
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
             warn!("Failed to get package {}: {}", name, e);
@@ -190,10 +210,7 @@ async fn publish_package(
             attachments.insert(filename.clone(), bytes);
         }
     }
-    let (blob_filename, blob) = match attachments.into_iter().next() {
-        Some(kv) => kv,
-        None => (String::new(), Vec::new()),
-    };
+    let (blob_filename, blob) = attachments.into_iter().next().unwrap_or_default();
     if !blob.is_empty() {
         let mut hasher = Sha512::new();
         hasher.update(&blob);
@@ -232,7 +249,9 @@ async fn publish_package(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Verify auth: fail-closed khi đã cấu hình admin token (registry private)
+    // Verify auth: fail-closed khi đã cấu hình admin token (registry private).
+    // Không cấu hình token → registry mở (dev/private net) → bỏ qua Authorization
+    // header (khách gửi token lạ từ ~/.npmrc không được coi là lý do từ chối).
     let token = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
@@ -249,8 +268,6 @@ async fn publish_package(
             );
             return Err(StatusCode::FORBIDDEN);
         }
-    } else if token.is_some() && auth.verify_token(token.unwrap()).is_none() {
-        return Err(StatusCode::UNAUTHORIZED);
     }
 
     store
@@ -266,6 +283,11 @@ async fn publish_package(
         .audit("publish", &pkg.name, version.as_deref(), None)
         .await;
     Ok(Json(pkg))
+}
+
+fn content_disposition(filename: &str) -> Result<HeaderValue, StatusCode> {
+    HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 // === Tarball download ===
@@ -290,14 +312,8 @@ async fn download_tarball(
                             axum::http::header::CONTENT_TYPE,
                             HeaderValue::from_static("application/octet-stream"),
                         );
-                        resp.headers_mut().insert(
-                            "content-disposition",
-                            HeaderValue::from_str(&format!(
-                                "attachment; filename=\"{}\"",
-                                filename
-                            ))
-                            .unwrap(),
-                        );
+                        resp.headers_mut()
+                            .insert("content-disposition", content_disposition(&filename)?);
                         return Ok(resp.into_response());
                     }
                     // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
@@ -308,14 +324,8 @@ async fn download_tarball(
                             axum::http::header::CONTENT_TYPE,
                             HeaderValue::from_static("application/octet-stream"),
                         );
-                        resp.headers_mut().insert(
-                            "content-disposition",
-                            HeaderValue::from_str(&format!(
-                                "attachment; filename=\"{}\"",
-                                filename
-                            ))
-                            .unwrap(),
-                        );
+                        resp.headers_mut()
+                            .insert("content-disposition", content_disposition(&filename)?);
                         return Ok(resp.into_response());
                     }
                 }
@@ -481,7 +491,7 @@ async fn adduser(
     let role = body
         .role
         .as_deref()
-        .map(crate::auth::UserRole::from_str)
+        .and_then(|role| role.parse::<crate::auth::UserRole>().ok())
         .unwrap_or(crate::auth::UserRole::Publisher);
     let user = crate::auth::User {
         name: name.to_string(),

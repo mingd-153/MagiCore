@@ -16,6 +16,11 @@ Write-Host "║     MegaGate Installer for Windows                          ║"
 Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
+if ($Package -ne "megagate" -and $Package -ne "megagate-web") {
+    Write-Error "Unsupported package: $Package. Expected 'megagate' or 'megagate-web'."
+    exit 1
+}
+
 # Detect Architecture
 $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLower()
 $ArchLabel = switch ($Arch) {
@@ -56,16 +61,8 @@ try {
     Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
 } catch {
     Write-Warning "Could not download GitHub release archive ($DownloadUrl)."
-    Write-Host "Falling back to local build or cargo install..." -ForegroundColor Yellow
-    if (Get-Command cargo -ErrorAction SilentlyContinue) {
-        Write-Host "Running: cargo install --git https://github.com/$Repo mg --locked" -ForegroundColor Green
-        cargo install --git "https://github.com/$Repo" mg --locked
-        Write-Host "MegaGate successfully installed via cargo!" -ForegroundColor Green
-        exit 0
-    } else {
-        Write-Error "Cargo not found. Please install Rust or download prebuilt binary manually."
-        exit 1
-    }
+    Write-Error "Prebuilt release artifact is required. Refusing to fall back to another installer."
+    exit 1
 }
 
 # Verify SHA-256 Checksum

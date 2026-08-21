@@ -8,6 +8,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+const FORBIDDEN_HOOK_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx"];
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct HooksConfig {
     #[serde(default)]
@@ -54,9 +56,13 @@ pub fn run_hooks(project_root: &Path, event: &str) -> Result<()> {
         return Ok(());
     };
     for cmd in cmds {
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
+        let argv = parse_hook_command(cmd)?;
+        let Some((program, args)) = argv.split_first() else {
+            continue;
+        };
+        reject_forbidden_hook_tool(program)?;
+        let status = std::process::Command::new(program)
+            .args(args)
             .current_dir(project_root)
             .status()?;
         if !status.success() {
@@ -64,6 +70,53 @@ pub fn run_hooks(project_root: &Path, event: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn reject_forbidden_hook_tool(program: &str) -> Result<()> {
+    let name = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    if FORBIDDEN_HOOK_TOOLS.contains(&name) {
+        bail!("hook command '{name}' is forbidden; use MegaGate-native commands instead");
+    }
+    Ok(())
+}
+
+fn parse_hook_command(cmd: &str) -> Result<Vec<String>> {
+    if cmd.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = cmd.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => current.push(c),
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, ' ' | '\t' | '\n' | '\r') => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            (None, '&') if matches!(chars.peek(), Some('&')) => {
+                bail!("hook command contains shell control operator '&&', which is not allowed")
+            }
+            (None, '|' | ';' | '<' | '>' | '`' | '$' | '(' | ')') => {
+                bail!("hook command contains shell metacharacter '{ch}', which is not allowed")
+            }
+            (None, c) => current.push(c),
+        }
+    }
+    if quote.is_some() {
+        bail!("hook command has an unterminated quote");
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    Ok(args)
 }
 
 /// List events đã cấu hình (cho `mg hooks list`)

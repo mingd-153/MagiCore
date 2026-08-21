@@ -1,25 +1,25 @@
-/// CLI command implementations
-pub mod definitions;
 pub mod audit;
 pub mod bench;
-pub mod config;
 pub mod build;
 pub mod cache;
+pub mod config;
 pub mod core;
 pub mod dedupe;
+/// CLI command implementations
+pub mod definitions;
 pub mod dev;
 pub mod dlx;
 pub mod docs;
 pub mod doctor;
 pub mod exec;
 pub mod hooks;
+pub mod import;
 pub mod info;
 pub mod init;
-pub mod import;
 pub mod install;
 pub mod login;
-pub mod model;
 pub mod mcp;
+pub mod model;
 pub mod network;
 pub mod optimizer;
 pub mod outdated;

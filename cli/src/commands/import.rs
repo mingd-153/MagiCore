@@ -57,10 +57,7 @@ pub async fn run(project_dir: Option<std::path::PathBuf>) -> Result<()> {
     }
 
     // Extract dev dependencies from package.json
-    if let Some(dev_deps) = pkg_json
-        .get("devDependencies")
-        .and_then(|v| v.as_object())
-    {
+    if let Some(dev_deps) = pkg_json.get("devDependencies").and_then(|v| v.as_object()) {
         for (pkg_name, range) in dev_deps {
             if let Some(r_str) = range.as_str() {
                 if let (Ok(p_name), Ok(v_range)) = (

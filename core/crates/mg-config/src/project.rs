@@ -436,10 +436,7 @@ impl ProjectConfig {
     }
 
     /// Write marker for an arbitrary core name (dùng cho `mg init --signature`).
-    pub fn write_core_marker_at(
-        project_root: &Path,
-        core: &str,
-    ) -> Result<(), anyhow::Error> {
+    pub fn write_core_marker_at(project_root: &Path, core: &str) -> Result<(), anyhow::Error> {
         let canonical = Self::canonical_core(core);
         if !Self::is_known_core(&canonical) {
             anyhow::bail!(

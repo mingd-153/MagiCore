@@ -99,44 +99,43 @@ pub async fn run(cmd: TemplateCmd) -> Result<()> {
     Ok(())
 }
 
-/// Publish toàn bộ layer web có đủ template.toml+sources.
-/// Duyệt templates/web/** — mỗi folder có template.toml + sources thành 1 package.
+/// Publish toàn bộ layer có đủ template.toml+sources, mọi core (web/lib/cicd/...).
+/// Nguồn đọc qua TemplateRoot::resolve (MEGAGATE_TEMPLATE_DIR → workspace disk → cache).
 async fn publish_all() -> Result<()> {
-    let root = crate::scaffold::template_root::workspace_root()
-        .join("templates")
-        .join("web");
-    if !root.is_dir() {
-        return Err(crate::error::web_templates_missing(&root));
+    let root = crate::scaffold::template_root::TemplateRoot::resolve("");
+    let root_path = root.path();
+    if !root_path.is_dir() {
+        return Err(crate::error::web_templates_missing(root_path));
     }
     let mut layers: Vec<PathBuf> = Vec::new();
-    collect_web_layers(&root, &mut layers);
+    collect_layers_under(root_path, &mut layers);
     if layers.is_empty() {
-        return Err(crate::error::no_web_layer_found(&root));
+        return Err(crate::error::no_web_layer_found(root_path));
     }
     for layer in &layers {
         let rel = layer
-            .strip_prefix(root.parent().unwrap())
-            .unwrap()
+            .strip_prefix(root_path)
+            .map_err(|_| crate::error::web_template_path_missing(&root_path.display().to_string()))?
             .to_string_lossy()
             .replace('\\', "/");
-        // rel = "web/frontend/react-vite" → publish với name = rel đầy đủ
-        let name = rel.to_string();
-        let pkg = registry_package_name("web", &name);
-        println!("  publishing {name} (as {pkg})");
+        // rel = "web/frontend/react-vite" → core = segment đầu (web/lib/cicd).
+        let core = rel.split('/').next().unwrap_or("web").to_string();
+        let pkg = registry_package_name(&core, &rel);
+        println!("  publishing {} (as {pkg})", rel);
         publish(TemplatePublishArgs {
-            core: "web".to_string(),
-            name,
+            core,
+            name: rel,
             registry: None,
             version: None,
         })
         .await?;
     }
-    println!("Publish-all done: {} layer web", layers.len());
+    println!("Publish-all done: {} layers across all cores", layers.len());
     Ok(())
 }
 
 /// Thu thập mọi folder có template.toml + sources dưới root (không đệ quy vào leaf đã chứa).
-fn collect_web_layers(root: &Path, out: &mut Vec<PathBuf>) {
+fn collect_layers_under(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -146,7 +145,7 @@ fn collect_web_layers(root: &Path, out: &mut Vec<PathBuf>) {
             if path.join("template.toml").is_file() && path.join("sources").is_dir() {
                 out.push(path);
             } else {
-                collect_web_layers(&path, out);
+                collect_layers_under(&path, out);
             }
         }
     }
@@ -156,9 +155,9 @@ fn collect_web_layers(root: &Path, out: &mut Vec<PathBuf>) {
 /// `mg-create-<core>-<name>` trên registry (mg-pack tarball + npm PUT).
 async fn publish(args: TemplatePublishArgs) -> Result<()> {
     let rel = layer_rel(&args.core, &args.name);
-    let layer = crate::scaffold::template_root::workspace_root()
-        .join("templates")
-        .join(&rel);
+    let layer = crate::scaffold::template_root::TemplateRoot::resolve(&rel)
+        .path()
+        .to_path_buf();
     if !layer.join("template.toml").is_file() || !layer.join("sources").is_dir() {
         bail!(
             "Template layer '{}' missing template.toml/sources",
@@ -176,8 +175,8 @@ async fn publish(args: TemplatePublishArgs) -> Result<()> {
         .join(format!("{}.tgz", name.replace('/', "-")));
     let pack_result = mg_pack::tarball::pack(&layer, &tarball_path, &format!("{name}-{version}"))?;
 
-    let npmrc = NpmRc::load(Path::new("."))?;
-    let auth = resolve_auth(&npmrc, &registry, None, None)?;
+    let npmrc = NpmRc::load(Path::new(".")).unwrap_or_default();
+    let auth = resolve_auth(&npmrc, &registry, None, None).unwrap_or_default();
     if auth.is_empty() {
         let host = url::Url::parse(&registry)
             .map(|u| u.host_str().unwrap_or_default().to_string())
@@ -221,7 +220,10 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
     }
     let meta_resp = req.send().await?;
     if !meta_resp.status().is_success() {
-        return Err(crate::error::template_not_published(&name, meta_resp.status().as_u16()));
+        return Err(crate::error::template_not_published(
+            &name,
+            meta_resp.status().as_u16(),
+        ));
     }
     let meta: serde_json::Value = meta_resp.json().await?;
 

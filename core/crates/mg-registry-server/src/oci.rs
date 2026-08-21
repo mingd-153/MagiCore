@@ -15,6 +15,10 @@ use axum::{
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
+fn header_value(value: &str) -> Result<HeaderValue, StatusCode> {
+    HeaderValue::from_str(value).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 /// OCI routes
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -128,10 +132,8 @@ async fn blob_get(store: &RegistryStore, name: &str, digest: &str) -> Result<Res
                 "sha256:{}",
                 digest.strip_prefix("sha256:").unwrap_or(digest)
             );
-            resp.headers_mut().insert(
-                "docker-content-digest",
-                axum::http::HeaderValue::from_str(&digest_header).unwrap(),
-            );
+            resp.headers_mut()
+                .insert("docker-content-digest", header_value(&digest_header)?);
             Ok(resp.into_response())
         }
         Ok(None) => Err(StatusCode::NOT_FOUND),
@@ -171,13 +173,11 @@ async fn blob_upload_start(
         {
             let mut resp = Response::new(axum::body::Body::from("{}"));
             *resp.status_mut() = StatusCode::CREATED;
-            resp.headers_mut().insert(
-                "docker-content-digest",
-                HeaderValue::from_str(digest).unwrap(),
-            );
+            resp.headers_mut()
+                .insert("docker-content-digest", header_value(digest)?);
             resp.headers_mut().insert(
                 axum::http::header::LOCATION,
-                HeaderValue::from_str(&format!("/v2/{}/blobs/{}", name, digest)).unwrap(),
+                header_value(&format!("/v2/{}/blobs/{}", name, digest))?,
             );
             return Ok(resp);
         }
@@ -198,10 +198,8 @@ async fn blob_upload_start(
         docker_upload_uuid: uuid,
     })
     .into_response();
-    resp.headers_mut().insert(
-        axum::http::header::LOCATION,
-        HeaderValue::from_str(&upload_url).unwrap(),
-    );
+    resp.headers_mut()
+        .insert(axum::http::header::LOCATION, header_value(&upload_url)?);
     Ok(resp)
 }
 
@@ -304,13 +302,11 @@ async fn blob_upload_complete(
 
     let mut resp = Response::new(axum::body::Body::from("{}"));
     *resp.status_mut() = StatusCode::CREATED;
-    resp.headers_mut().insert(
-        "docker-content-digest",
-        HeaderValue::from_str(&computed).unwrap(),
-    );
+    resp.headers_mut()
+        .insert("docker-content-digest", header_value(&computed)?);
     resp.headers_mut().insert(
         axum::http::header::LOCATION,
-        HeaderValue::from_str(&format!("/v2/{}/blobs/{}", name, computed)).unwrap(),
+        header_value(&format!("/v2/{}/blobs/{}", name, computed))?,
     );
     Ok(resp)
 }
@@ -330,10 +326,8 @@ async fn manifest_get(
                 HeaderValue::from_static("application/vnd.oci.image.manifest.v1+json"),
             );
             // Add Docker-Content-Digest (stored digest of the exact bytes pushed)
-            resp.headers_mut().insert(
-                "docker-content-digest",
-                HeaderValue::from_str(&digest).unwrap(),
-            );
+            resp.headers_mut()
+                .insert("docker-content-digest", header_value(&digest)?);
             Ok(resp.into_response())
         }
         Ok(None) => Err(StatusCode::NOT_FOUND),

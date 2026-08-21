@@ -60,7 +60,8 @@ pub fn registry_chain(
 }
 
 fn same_url(a: &str, b: &str) -> bool {
-    a.trim_end_matches('/').eq_ignore_ascii_case(b.trim_end_matches('/'))
+    a.trim_end_matches('/')
+        .eq_ignore_ascii_case(b.trim_end_matches('/'))
 }
 
 fn host_of(url: &str) -> String {
@@ -112,4 +113,3 @@ mod tests {
         assert_eq!(chain[0].url, "https://registry.npmjs.org/");
     }
 }
-

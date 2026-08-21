@@ -1,6 +1,5 @@
 # Rust
 target/
-Cargo.lock
 
 # Test scaffold artifacts
 /test-fw/

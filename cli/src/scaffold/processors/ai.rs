@@ -1,8 +1,8 @@
 //! AI scaffold: Multi-tier Python Agent / LLM Serving / Model Quantization / Memory Sharding.
 
-use std::path::Path;
+use super::{slugify, write_file};
 use anyhow::Result;
-use super::{write_file, slugify};
+use std::path::Path;
 
 pub struct AiProcessor;
 
@@ -78,19 +78,17 @@ impl AiProcessor {
         } else {
             write_file(
                 &target.join("src").join("agent.py"),
-                &format!(
-                    "\"\"\"MegaGate AI High-Performance Agent\"\"\"\n\
+                "\"\"\"MegaGate AI High-Performance Agent\"\"\"\n\
                      from src.compression import UltraModelCompressor\n\n\
                      class AIAgent:\n\
                          def __init__(self):\n\
                              self.compressor = UltraModelCompressor()\n\n\
                          def run(self, prompt: str) -> str:\n\
-                             print(f\"Executing agent with prompt: {{prompt[:50]}}...\")\n\
+                             print(f\"Executing agent with prompt: {prompt[:50]}...\")\n\
                              return \"Agent processed successfully with Ultra-Compression & Token Pruning!\"\n\n\
                      if __name__ == \"__main__\":\n\
                          agent = AIAgent()\n\
-                         print(agent.run(\"Hello MegaGate AI\"))\n"
-                ),
+                         print(agent.run(\"Hello MegaGate AI\"))\n",
             )?;
         }
 

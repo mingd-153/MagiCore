@@ -1,8 +1,8 @@
 //! iot tooling lệnh: `mg flash` (Q16 — esp32-rust P1, platformio/zephyr P2).
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use mg_ui::info;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
@@ -19,7 +19,9 @@ pub async fn flash(board_override: Option<&str>, skip_build: bool) -> Result<()>
         .ok_or_else(|| crate::error::no_framework_detected("IoT", &root))?;
 
     if adapter.framework() != "esp32-rust" {
-        return Err(crate::error::flash_framework_unsupported(adapter.framework()));
+        return Err(crate::error::flash_framework_unsupported(
+            adapter.framework(),
+        ));
     }
 
     let board = board_override
@@ -63,8 +65,7 @@ pub async fn flash(board_override: Option<&str>, skip_build: bool) -> Result<()>
         .ok_or_else(|| crate::error::fw_path_not_utf8(&elf))?;
     info(&format!("Flashing firmware: espflash flash {elf_str}"));
     let flash_args = ["flash", elf_str];
-    run_tool(&root, "espflash", &flash_args)
-        .map_err(|e| crate::error::espflash_failed(&e))
+    run_tool(&root, "espflash", &flash_args).map_err(|e| crate::error::espflash_failed(&e))
 }
 
 /// Board id → chip (tra registry KNOWN_BOARDS).
@@ -77,7 +78,7 @@ fn chip(board: &str) -> String {
 }
 
 /// Tìm binary ELF đã build — ưu tiên target/<triple>/release/<name>.elf, fallback scan.
-fn find_elf(root: &PathBuf, target: &str) -> Result<PathBuf> {
+fn find_elf(root: &Path, target: &str) -> Result<PathBuf> {
     if !root.join("Cargo.toml").exists() {
         bail!("No Cargo.toml found — esp32-rust project missing");
     }
@@ -125,12 +126,14 @@ fn find_elf(root: &PathBuf, target: &str) -> Result<PathBuf> {
         );
     }
     matches.sort();
-    Ok(matches.pop().unwrap())
+    matches
+        .pop()
+        .ok_or_else(|| anyhow!("No firmware artifact was selected"))
 }
 
-fn run_tool(root: &PathBuf, cmd: &str, args: &[&str]) -> Result<()> {
+fn run_tool(root: &Path, cmd: &str, args: &[&str]) -> Result<()> {
     let opts = mg_exec::prelude::ExecOptions {
-        cwd: Some(root.clone()),
+        cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".megagate").join("exec.log")),
         clean_env: true,
         ..Default::default()

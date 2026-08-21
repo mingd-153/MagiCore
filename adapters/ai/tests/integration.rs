@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-ai-adapter — sát với src/lib.rs
 //! Kiểm thử: detect framework, adapter_for, PackageAdapter trait methods.
 
@@ -155,12 +156,13 @@ async fn install_fails_closed_with_descriptive_error() {
     let adapter = adapter_for(&dir).unwrap();
     let manifest = adapter.parse_manifest(&dir).await.unwrap();
     let graph = adapter.resolve(&manifest).await.unwrap();
-    let result = adapter
-        .install(&graph, &dir, Default::default())
-        .await;
+    let result = adapter.install(&graph, &dir, Default::default()).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("pip"), "error message should mention pip: {msg}");
+    assert!(
+        msg.contains("pip"),
+        "error message should mention pip: {msg}"
+    );
 }
 
 #[tokio::test]
@@ -172,7 +174,10 @@ async fn add_fails_closed_with_descriptive_error() {
     let result = adapter.add(&dir, &name, None, AddOptions::default()).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("pip"), "error message should mention pip: {msg}");
+    assert!(
+        msg.contains("pip"),
+        "error message should mention pip: {msg}"
+    );
 }
 
 #[tokio::test]

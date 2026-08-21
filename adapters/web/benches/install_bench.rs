@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use criterion::{criterion_group, criterion_main, Criterion};
 use flate2::write::GzEncoder;
 use flate2::Compression;

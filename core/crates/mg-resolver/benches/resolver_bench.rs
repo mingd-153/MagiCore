@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Benchmarks for dependency resolver and version matching.
 //!
 //! Usage: cargo bench --package mg-resolver

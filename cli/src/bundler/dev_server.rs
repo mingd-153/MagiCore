@@ -81,7 +81,10 @@ fn rewrite_imports(js: &str) -> String {
             || pkg.starts_with('/')
             || pkg.starts_with("@megagate/")
         {
-            return caps.get(0).unwrap().as_str().to_string();
+            return caps
+                .get(0)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
         }
         // Xử lý scoped packages: @org/pkg → @org/pkg (giữ nguyên, chỉ thay separator)
         // Ví dụ: @tanstack/react-query → /@megagate/deps/@tanstack/react-query
@@ -233,10 +236,13 @@ async fn serve_index(State(state): State<ServerState>) -> impl IntoResponse {
 
 /// Phục vụ HMR client script.
 async fn serve_hmr_client() -> impl IntoResponse {
-    Response::builder()
+    match Response::builder()
         .header(header::CONTENT_TYPE, "application/javascript")
         .body(Body::from(HMR_CLIENT_SCRIPT))
-        .unwrap()
+    {
+        Ok(response) => response,
+        Err(_) => Response::new(Body::from(HMR_CLIENT_SCRIPT)),
+    }
 }
 
 /// Phục vụ dependency đã pre-bundled.

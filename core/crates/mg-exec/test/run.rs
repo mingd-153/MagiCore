@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Run tests — dry-run không spawn, audit log ghi args đã REDACTED, exit ≠ 0 bail
 //! (00-index §5.5 dry-run, §5.4 audit, §5.8 fail → bail)
 
@@ -79,7 +80,8 @@ fn unknown_tool_rejected() {
 
 #[test]
 fn audit_log_written_with_redacted_args() {
-    let log = tmp_dir().join("exec.log");
+    let dir = tmp_dir();
+    let log = dir.join("exec.log");
     let _ = fs::remove_file(&log);
     let opts = ExecOptions {
         dry_run: true,
@@ -100,7 +102,7 @@ fn audit_log_written_with_redacted_args() {
         "secret must never reach the audit log: {content}"
     );
     assert!(content.contains("[REDACTED]"));
-    let _ = fs::remove_dir_all(tmp_dir());
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -138,6 +140,7 @@ fn command_timeout_kills_hung_tool() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("timed out"));
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -289,7 +292,7 @@ fn inherited_project_binary_rejects_script_that_references_forbidden_pm() {
 }
 
 #[test]
-fn npm_allowed_only_inside_react_native_subdir() {
+fn npm_is_blocked_even_inside_react_native_subdir() {
     let base = std::env::temp_dir().join(format!("mgexec-rn-{}", std::process::id()));
     let rn = base.join("react-native");
     let _ = fs::remove_dir_all(&base);
@@ -308,8 +311,8 @@ fn npm_allowed_only_inside_react_native_subdir() {
     };
     let err = run_inherited("npm", &["install".to_string()], &opts).unwrap_err();
     assert!(
-        !err.to_string().contains("forbidden"),
-        "npm inside react-native subdir must pass allowlist, got: {err}"
+        err.to_string().contains("permanently forbidden"),
+        "npm inside react-native subdir must stay blocked, got: {err}"
     );
 
     let outside = ExecOptions {
@@ -318,7 +321,7 @@ fn npm_allowed_only_inside_react_native_subdir() {
     };
     let err = run_inherited("npm", &["install".to_string()], &outside).unwrap_err();
     assert!(
-        err.to_string().contains("forbidden"),
+        err.to_string().contains("permanently forbidden"),
         "npm outside react-native subdir must be rejected, got: {err}"
     );
 

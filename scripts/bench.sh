@@ -37,6 +37,14 @@ case "$MODE" in
     echo "── Heavy install/materialization matrix ──"
     cargo run --bin bench_matrix --manifest-path "$BENCH_DIR/Cargo.toml" -- --profile heavy
     ;;
+  cache-growth)
+    echo "── Cache-growth matrix (standard, repeated installs) ──"
+    cargo run --bin bench_matrix --manifest-path "$BENCH_DIR/Cargo.toml" -- --runs 5
+    ;;
+  cache-growth-heavy)
+    echo "── Cache-growth matrix (heavy, repeated installs) ──"
+    cargo run --bin bench_matrix --manifest-path "$BENCH_DIR/Cargo.toml" -- --profile heavy --runs 5
+    ;;
   matrix-baseline)
     echo "── Saving matrix baseline (main) ──"
     cargo run --bin bench_matrix --manifest-path "$BENCH_DIR/Cargo.toml" -- --save-baseline main
@@ -81,7 +89,7 @@ case "$MODE" in
     cargo run --bin bench_matrix --manifest-path "$BENCH_DIR/Cargo.toml" -- --profile heavy
     ;;
   *)
-    echo "Usage: $0 [cold|stress|install|compare|matrix|matrix-heavy|matrix-baseline|matrix-heavy-baseline|matrix-diff|matrix-heavy-diff|baseline|diff|quick|all]"
+    echo "Usage: $0 [cold|stress|install|compare|matrix|matrix-heavy|cache-growth|cache-growth-heavy|matrix-baseline|matrix-heavy-baseline|matrix-diff|matrix-heavy-diff|baseline|diff|quick|all]"
     exit 1
     ;;
 esac

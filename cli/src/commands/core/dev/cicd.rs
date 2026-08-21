@@ -9,8 +9,7 @@ fn not_available(reason: &str) -> anyhow::Error {
 /// `mg ci generate` — sinh file CI theo provider (07 §4).
 /// Workflow: checkout → setup-megagate → mg install → mg verify.
 pub fn ci_generate() -> Result<()> {
-    let root =
-        std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
+    let root = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let provider = provider_config()?;
     match provider {
         mg_cicd_adapter::CicdProvider::GithubActions => {
@@ -96,8 +95,7 @@ workflows:
 /// `mg verify` — chạy chain theo adapter: audit (web P1) → test → build (07 §4).
 /// 1 bước fail → dừng, báo rõ project (workspace recursive P2 — chỉ cwd P1).
 pub async fn verify() -> Result<()> {
-    let root =
-        std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
+    let root = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     mg_ui::info(&format!("[verify] project: {}", root.display()));
 
     let chain = verify_chain(&root)?;
@@ -155,9 +153,8 @@ fn verify_chain(root: &std::path::Path) -> Result<Vec<String>> {
 /// Test step theo core: rust → cargo test; web → package.json scripts.test (không PM wrapper).
 async fn run_test_step(root: &std::path::Path, core: &str) -> Result<()> {
     if core == "web" {
-        let pkg = std::fs::read_to_string(root.join("package.json")).map_err(|_| {
-            crate::error::web_missing_package_json()
-        })?;
+        let pkg = std::fs::read_to_string(root.join("package.json"))
+            .map_err(|_| crate::error::web_missing_package_json())?;
         let v: serde_json::Value = serde_json::from_str(&pkg)?;
         let has_test = v
             .get("scripts")

@@ -16,29 +16,33 @@ pub type AppState = (
     std::sync::Arc<crate::auth::AuthService>,
 );
 
+#[derive(Debug, Clone)]
+pub struct RegistryServerConfig {
+    pub host: String,
+    pub port: u16,
+    pub store_dir: String,
+    pub admin_token: Option<String>,
+    pub max_body_size: usize,
+    pub rate_limit_rps: usize,
+    pub upstream: Option<String>,
+    pub storage: Option<String>,
+}
+
 /// Start the registry server (used by bin `mg-registry` và `mg registry serve`)
 /// rate_limit_rps: số request/giây/IP cho phép (0 = tắt)
 /// upstream: registry URL để proxy GET-miss (ITEM 4). None = private-only.
 /// storage: "local" hoặc "s3://bucket/prefix" (ITEM 5).
-pub async fn serve(
-    host: String,
-    port: u16,
-    store_dir: String,
-    admin_token: Option<String>,
-    max_body_size: usize,
-    rate_limit_rps: usize,
-    upstream: Option<String>,
-    storage: Option<String>,
-) -> anyhow::Result<()> {
-    let mut store = storage::RegistryStore::new(&store_dir).await?;
-    store.set_upstream(upstream);
-    store.set_backend(storage.as_deref())?;
+pub async fn serve(config: RegistryServerConfig) -> anyhow::Result<()> {
+    let mut store = storage::RegistryStore::new(&config.store_dir).await?;
+    store.set_upstream(config.upstream);
+    store.set_backend(config.storage.as_deref())?;
     let store = std::sync::Arc::new(store);
-    let auth_service = std::sync::Arc::new(auth::AuthService::new(admin_token, store.clone()));
+    let auth_service =
+        std::sync::Arc::new(auth::AuthService::new(config.admin_token, store.clone()));
     // Nạp user persist từ DB (10-task-plan Phase 3)
     auth_service.load_from_db().await?;
     let limiter = std::sync::Arc::new(ratelimit::RateLimiter::new(ratelimit::RateLimitConfig {
-        max_requests: rate_limit_rps,
+        max_requests: config.rate_limit_rps,
         window_secs: 1,
     }));
 
@@ -46,7 +50,7 @@ pub async fn serve(
         .merge(npm::routes())
         .merge(oci::routes())
         .merge(pypi::routes())
-        .layer(axum::extract::DefaultBodyLimit::max(max_body_size))
+        .layer(axum::extract::DefaultBodyLimit::max(config.max_body_size))
         .layer(tower_http::cors::CorsLayer::permissive());
 
     // Fail-closed: admin token cấu hình → mọi route yêu cầu Bearer/Basic hợp lệ
@@ -56,14 +60,14 @@ pub async fn serve(
             .layer(axum::Extension(auth_service.clone()));
     }
 
-    if rate_limit_rps > 0 {
+    if config.rate_limit_rps > 0 {
         app = app
             .route_layer(axum::middleware::from_fn(ratelimit::rate_limit_middleware))
             .layer(axum::Extension(limiter));
     }
     let app = app.with_state((store, auth_service));
 
-    let addr: std::net::SocketAddr = format!("{}:{}", host, port).parse()?;
+    let addr: std::net::SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

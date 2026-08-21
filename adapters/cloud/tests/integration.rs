@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for mg-cloud-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_type (4 types × 2 paths), adapter_for, cloud_type helper,
 //! CDK/Pulumi sử dụng WebAdapter delegate, Terraform fail-closed add/remove.
@@ -40,7 +41,11 @@ fn detect_terraform_via_dot_tf_file() {
 #[test]
 fn detect_terraform_via_any_tf_extension() {
     let dir = tmp("tf2");
-    std::fs::write(dir.join("networking.tf"), "resource \"aws_vpc\" \"main\" {}\n").unwrap();
+    std::fs::write(
+        dir.join("networking.tf"),
+        "resource \"aws_vpc\" \"main\" {}\n",
+    )
+    .unwrap();
     assert_eq!(detect_type(&dir), Some(CloudType::Terraform));
 }
 
@@ -189,7 +194,11 @@ async fn install_delegates_to_terraform_binary() {
             let msg = e.to_string();
             // Phải fail vì binary không tồn tại, không phải vì logic sai
             assert!(
-                msg.contains("terraform") || msg.contains("No such") || msg.contains("not found") || msg.contains("exec") || msg.contains("os error"),
+                msg.contains("terraform")
+                    || msg.contains("No such")
+                    || msg.contains("not found")
+                    || msg.contains("exec")
+                    || msg.contains("os error"),
                 "unexpected error: {msg}"
             );
         }
@@ -202,7 +211,10 @@ async fn add_fails_closed_for_terraform() {
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let name = PackageName::new("aws_s3_bucket").unwrap();
-    let err = a.add(&dir, &name, None, AddOptions::default()).await.unwrap_err();
+    let err = a
+        .add(&dir, &name, None, AddOptions::default())
+        .await
+        .unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("terraform") || msg.contains("deploy") || msg.contains("HCL"),

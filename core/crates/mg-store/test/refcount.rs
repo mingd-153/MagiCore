@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Integration tests for CAS blob refcount (slices 4-5 of T1 backing-store).
 //! test riêng tại test/ (RULE §5).
 

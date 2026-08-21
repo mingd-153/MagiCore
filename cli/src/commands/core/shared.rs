@@ -495,7 +495,7 @@ pub(crate) async fn prepare_install_execution(
     } else {
         if frozen {
             let cmd = install_command_for_adapter(adapter);
-            return Err(crate::error::frozen_lock_missing(&cmd));
+            return Err(crate::error::frozen_lock_missing(cmd));
         }
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
         let resolve_started_at = std::time::Instant::now();
@@ -553,7 +553,11 @@ async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
         let metadata = registry.fetch_metadata(pkg.id.name_str()).await?;
         if let Some(published_at) = metadata.time.get(&pkg.id.version().to_string()) {
             let published = OffsetDateTime::parse(published_at, &Rfc3339).map_err(|err| {
-                crate::error::audit_parse_time_failed(pkg.id.name_str(), &pkg.id.version().to_string(), &err)
+                crate::error::audit_parse_time_failed(
+                    pkg.id.name_str(),
+                    &pkg.id.version().to_string(),
+                    &err,
+                )
             })?;
             if published > quarantine_cutoff {
                 return Err(crate::error::audit_recent_blocked(
@@ -670,7 +674,7 @@ async fn try_install_added_packages_from_lock(
 }
 
 fn build_delta_manifest(manifest: &Manifest, added_packages: &[AddedPackage]) -> Result<Manifest> {
-    let mut delta = Manifest::new(&manifest.name, manifest.ecosystem.clone());
+    let mut delta = Manifest::new(&manifest.name, manifest.ecosystem);
     for package in added_packages {
         let mut spec = DependencySpec::new(
             package.id.name().clone(),
@@ -877,7 +881,6 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
     Ok(ResolvedGraph { packages })
 }
 
-
 fn link_name(package: &str) -> &str {
     if package.contains('/') {
         package.rsplit('/').next().unwrap_or(package)
@@ -898,7 +901,7 @@ pub async fn link(adapter: &dyn PackageAdapter, root: &Path, package: Option<&st
     let link_path = node_modules.join(name);
 
     if link_path.exists() {
-        return Err(crate::error::link_exists(&name));
+        return Err(crate::error::link_exists(name));
     }
 
     std::fs::create_dir_all(&node_modules)?;
@@ -923,7 +926,7 @@ pub async fn unlink(
     let name = link_name(pkg);
     let link_path = root.join("node_modules").join(name);
     if !link_path.exists() {
-        return Err(crate::error::unlink_not_linked(&name));
+        return Err(crate::error::unlink_not_linked(name));
     }
 
     let meta = std::fs::symlink_metadata(&link_path)?;
@@ -960,12 +963,7 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Re
     };
 
     mg_ui::blank_line();
-    println!(
-        "{} {}@{}",
-        "📦",
-        package.bold().cyan(),
-        target.version.dimmed()
-    );
+    println!("📦 {}@{}", package.bold().cyan(), target.version.dimmed());
     if target.direct {
         println!("  {} Direct dependency", "├─".green());
     }
@@ -1067,8 +1065,7 @@ pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
 /// project_root của core — seeded từ find_project_root (mg.toml/.mg.core/package.json...).
 pub fn core_project_root(core: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = find_project_root(&cwd)?
-        .ok_or_else(|| crate::error::no_mg_project_found(core))?;
+    let root = find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found(core))?;
     Ok(root)
 }
 
@@ -1079,13 +1076,13 @@ pub fn core_adapter(eco: &Ecosystem) -> Arc<dyn PackageAdapter> {
 }
 
 /// game: materialize optimizer template + hook dep (bevy). Dùng chung add/install game.
-pub async fn game_optimizer_template(root: &PathBuf) -> Result<()> {
+pub async fn game_optimizer_template(root: &Path) -> Result<()> {
     materialize_template(root, OPTIMIZER_PKG).await?;
     game_hook_optimizer_dep(root)
 }
 
 /// game: thêm dep path `mg-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
-fn game_hook_optimizer_dep(root: &PathBuf) -> Result<()> {
+fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
     let manifest = root.join("Cargo.toml");
     if !manifest.exists() {
         return Ok(());
@@ -1112,6 +1109,7 @@ fn game_hook_optimizer_dep(root: &PathBuf) -> Result<()> {
 // ── ai helpers (Phase 7 v5) ───────────────────────────────────────────────────
 
 /// ai project root — detect qua mg_ai_adapter (không dùng find_project_root).
+#[cfg(feature = "ai")]
 pub fn ai_project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     mg_ai_adapter::adapter_for(&cwd)
@@ -1165,10 +1163,11 @@ pub fn ai_run_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) 
 }
 
 /// ai: entry script qua python3 (Q20, allowlist §5.1) — `mg dev` ai.
+#[cfg(feature = "ai")]
 pub async fn ai_dev(_dry_run: bool) -> Result<()> {
     let root = ai_project_root()?;
-    let framework = mg_ai_adapter::adapter_for(&root)
-        .ok_or_else(|| crate::error::no_ai_framework(&root))?;
+    let framework =
+        mg_ai_adapter::adapter_for(&root).ok_or_else(|| crate::error::no_ai_framework(&root))?;
     let script = framework.framework.entry_script().to_string();
 
     let opts = mg_exec::prelude::ExecOptions {
@@ -1189,7 +1188,7 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
 pub const OPTIMIZER_PKG: &str = "optimizer";
 pub const BENCH_PKG: &str = "bench";
 
-pub async fn materialize_template(root: &std::path::PathBuf, framework: &str) -> anyhow::Result<()> {
+pub async fn materialize_template(root: &Path, framework: &str) -> anyhow::Result<()> {
     let target_dir = root.join(framework);
     if target_dir.exists() {
         return Ok(()); // đã có — không ghi đè

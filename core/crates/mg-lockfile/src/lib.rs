@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod import;
 pub mod merge;
 pub mod migrate;
@@ -175,7 +177,11 @@ pub fn read_lockfile_checked(project_root: &Path) -> anyhow::Result<Option<Lockf
             if let Some(resolved) = merge::resolve_git_conflict_markers(&contents) {
                 resolved
             } else {
-                return Err(anyhow::anyhow!("failed to parse lockfile '{}': {}", path.display(), err));
+                return Err(anyhow::anyhow!(
+                    "failed to parse lockfile '{}': {}",
+                    path.display(),
+                    err
+                ));
             }
         }
     };

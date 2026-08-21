@@ -38,28 +38,31 @@ impl RateLimiter {
 
     pub async fn wait(&self) {
         loop {
-            let mut requests = self.requests.lock().unwrap();
-            let now = Instant::now();
-            let cutoff = now - self.config.period;
+            let wait_time = {
+                let mut requests = self.requests.lock().expect("lock poisoned");
+                let now = Instant::now();
+                let cutoff = now - self.config.period;
 
-            // Remove old requests
-            while let Some(&front) = requests.front() {
-                if front < cutoff {
-                    requests.pop_front();
-                } else {
-                    break;
+                // Remove old requests
+                while let Some(&front) = requests.front() {
+                    if front < cutoff {
+                        requests.pop_front();
+                    } else {
+                        break;
+                    }
                 }
-            }
 
-            if (requests.len() as u32) < self.config.max_requests {
-                requests.push_back(now);
-                return;
-            }
+                if (requests.len() as u32) < self.config.max_requests {
+                    requests.push_back(now);
+                    return;
+                }
 
-            // Need to wait
-            let oldest = requests.front().copied().unwrap_or(now);
-            let wait_time = self.config.period - now.duration_since(oldest);
-            drop(requests);
+                // Need to wait
+                let oldest = requests.front().copied().unwrap_or(now);
+                self.config
+                    .period
+                    .saturating_sub(now.duration_since(oldest))
+            };
             tokio::time::sleep(wait_time).await;
         }
     }

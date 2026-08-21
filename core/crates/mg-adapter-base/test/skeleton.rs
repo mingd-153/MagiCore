@@ -1,5 +1,6 @@
+#![allow(clippy::unwrap_used)]
 #![cfg(test)]
-use mg-adapter-base;
+use mg_adapter_base;
 
 // Basic skeleton test - crate compiles and can be imported
 #[test]

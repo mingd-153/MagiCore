@@ -38,10 +38,9 @@ fn install_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
             tool: "swift".to_string(),
             args: vec!["package".to_string(), "resolve".to_string()],
         },
-        // react-native: npm trong subdir RN — C9 scoped exception (npm policy §5.1)
         mg_app_adapter::AppLanguage::ReactNative => InstallCommand {
-            tool: "npm".to_string(),
-            args: vec!["install".to_string()],
+            tool: String::new(),
+            args: vec![],
         },
         mg_app_adapter::AppLanguage::ObjC => InstallCommand {
             tool: String::new(),
@@ -70,8 +69,8 @@ fn dev_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
             args: vec!["run".to_string()],
         },
         mg_app_adapter::AppLanguage::ReactNative => InstallCommand {
-            tool: "npm".to_string(),
-            args: vec!["run".to_string(), "android".to_string()],
+            tool: String::new(),
+            args: vec![],
         },
         mg_app_adapter::AppLanguage::ObjC | mg_app_adapter::AppLanguage::Multi => InstallCommand {
             tool: String::new(),
@@ -116,11 +115,11 @@ pub fn manifest_hint(lang: mg_app_adapter::AppLanguage, verb: &str) -> anyhow::E
         mg_app_adapter::AppLanguage::Flutter => "pubspec.yaml",
         mg_app_adapter::AppLanguage::Kotlin => "android/app/build.gradle(.kts)",
         mg_app_adapter::AppLanguage::Swift => "Package.swift",
-        mg_app_adapter::AppLanguage::ReactNative => "package.json (npm — C9 scoped exception)",
+        mg_app_adapter::AppLanguage::ReactNative => "package.json (MegaGate-native runner pending)",
         mg_app_adapter::AppLanguage::ObjC => "iOS Podfile",
         mg_app_adapter::AppLanguage::Multi => "platform subproject manifest",
     };
-    crate::error::manifest_hint(verb, &lang, file)
+    crate::error::manifest_hint(verb, &format!("{lang:?}"), file)
 }
 
 /// `mg install` — passthrough tool theo language; `--dry-run` in lệnh không chạy.
@@ -166,17 +165,23 @@ async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
         ("ios", root.join("ios"), ios),
         ("flutter", root.join("flutter"), flutter),
     ];
-    let rn = InstallCommand {
-        tool: "npm".to_string(),
-        args: vec!["install".to_string()],
-    };
-    platforms.push(("react-native", root.join("react-native"), rn));
+    platforms.push((
+        "react-native",
+        root.join("react-native"),
+        InstallCommand {
+            tool: String::new(),
+            args: vec![],
+        },
+    ));
     for (name, dir, cmd) in platforms {
         if !dir.exists() {
             mg_ui::info(&format!("Platform '{name}' missing directory — skipping"));
             continue;
         }
         if cmd.tool.is_empty() {
+            mg_ui::warning(&format!(
+                "{name} install is blocked in beta until a MegaGate-native runner is available"
+            ));
             continue;
         }
         if tool_unavailable(&cmd.tool) {
@@ -210,7 +215,8 @@ fn tool_unavailable(tool: &str) -> bool {
         .is_none()
 }
 
-/// react-native (npm, C9 scoped exception) — shared (KMP gradle) chạy qua android gradle build.
+/// Shared app platforms with native allowlisted toolchains only.
+/// Các platform dùng toolchain allowlist; React Native chờ runner native riêng.
 fn platform_install_commands() -> (InstallCommand, InstallCommand, InstallCommand) {
     (
         InstallCommand {

@@ -118,7 +118,6 @@ impl WebWizard {
             },
         }]);
 
-
         let fullstack = Answer::new("Fullstack", "fullstack").with_questions(vec![Question {
             prompt: "\n  Select stack:".to_string(),
             kind: QuestionKind::Select {

@@ -1,5 +1,5 @@
-use crate::commands::core::scaffold_flags::ScaffoldFlags;
 use crate::commands::core::create::web::{enrich_web_project_manifest, parse_framework_request};
+use crate::commands::core::scaffold_flags::ScaffoldFlags;
 use crate::factory;
 use crate::scaffold::Scaffolder;
 use crate::wizard::engine::{Answer, Question, QuestionKind, ScaffoldConfig, WizardEngine};
@@ -16,8 +16,7 @@ use std::path::{Path, PathBuf};
 /// muốn đổi core project cũ (T9a).
 pub async fn run(template: Option<String>, signature: Option<String>) -> Result<()> {
     if let Some(core) = signature {
-        let cwd = std::env::current_dir()
-            .map_err(|e| crate::error::cwd_deleted(&e))?;
+        let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
         let root = ProjectConfig::find_project_root(&cwd).unwrap_or(cwd);
         ProjectConfig::write_core_marker_at(&root, &core)?;
         mg_ui::success(&format!(
@@ -155,7 +154,10 @@ fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
     // T9a: Tự động ghi .mg.core marker cùng lúc với mg.toml.
     // Đảm bảo auto_detect ưu tiên marker → đúng core cho mọi lệnh core-aware.
     if let Err(e) = ProjectConfig::write_core_marker_at(project_dir, &config.core) {
-        mg_ui::warning(&format!("Could not write {} marker: {e}", ProjectConfig::CORE_MARKER_FILE));
+        mg_ui::warning(&format!(
+            "Could not write {} marker: {e}",
+            ProjectConfig::CORE_MARKER_FILE
+        ));
     }
     if config.core == "game" {
         // `mg run` = script runner — game scaffold bổ sung bản ship chuẩn (mg build → cargo run)

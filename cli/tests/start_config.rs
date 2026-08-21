@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 #[path = "../src/commands/start_config.rs"]
 #[allow(dead_code)]
 mod start_config;

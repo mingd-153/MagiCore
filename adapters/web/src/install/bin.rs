@@ -1,9 +1,9 @@
 //! `install/bin.rs` — Node modules .bin link creation and executable handling.
 
-use std::path::{Path, PathBuf};
 use mg_types::adapter::ResolvedPackage;
 use mg_types::{MgError, MgResult};
 use serde::Deserialize;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
