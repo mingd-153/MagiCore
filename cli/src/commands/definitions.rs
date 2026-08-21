@@ -354,9 +354,13 @@ pub(crate) enum Commands {
         ),
         command(visible_alias = "create")
     )]
-    #[command(name = "create-web", about = "Scaffold a new web project")]
+    #[command(name = "create-web", about = "Scaffold a new web project", visible_alias = "cre-w")]
     CreateWeb {
+        /// Framework with optional version (e.g., react@latest, nextjs@14.0.0)
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
         #[command(flatten)]
         flags: crate::commands::core::scaffold_flags::ScaffoldFlags,
@@ -364,58 +368,95 @@ pub(crate) enum Commands {
     #[command(
         name = "create-game",
         about = "Scaffold a new game project",
+        visible_alias = "cre-g",
         hide = true
     )]
     CreateGame {
+        /// Framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
     },
-    #[command(name = "create-ai", about = "Scaffold a new AI project", hide = true)]
+    #[command(name = "create-ai", about = "Scaffold a new AI project", visible_alias = "cre-ai", hide = true)]
     CreateAi {
+        /// Framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
     },
     #[command(
         name = "create-clo",
         about = "Scaffold a new cloud project",
+        visible_alias = "cre-c",
         hide = true
     )]
     CreateClo {
+        /// Framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
     },
     #[command(
         name = "create-cicd",
         about = "Scaffold a new CI/CD project",
+        visible_alias = "cre-ci",
         hide = true
     )]
     CreateCicd {
+        /// Framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
     },
-    #[command(name = "create-iot", about = "Scaffold a new IoT project", hide = true)]
+    #[command(name = "create-iot", about = "Scaffold a new IoT project", visible_alias = "cre-i", hide = true)]
     CreateIot {
+        /// Framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
     },
-    #[command(name = "create-app", about = "Scaffold a new app project", hide = true)]
+    #[command(name = "create-app", about = "Scaffold a new app project", visible_alias = "cre-a", hide = true)]
     CreateApp {
+        /// Framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
     },
     #[command(
         name = "create-lib",
         about = "Scaffold a new library project",
+        visible_alias = "cre-l",
         hide = true
     )]
-    CreateLib { project_name: String },
+    CreateLib {
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
+        project_name: String
+    },
     #[command(
         name = "create-hardware",
         about = "Scaffold hardware packages (optimizer/bench)",
+        visible_alias = "cre-h",
         hide = true
     )]
     CreateHardware {
+        /// Framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
         framework: String,
+        /// Project directory name
+        #[arg(value_name = "PROJECT")]
         project_name: String,
     },
 

@@ -27,7 +27,7 @@ fn scaffold_project(framework: &str, dir: &str) {
             ])
             .current_dir(dir)
             .status()
-            .expect("failed to run mg create-web")
+            .expect("failed to run mga create-web")
             .success(),
         "scaffold {} failed",
         framework
