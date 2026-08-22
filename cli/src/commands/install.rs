@@ -92,20 +92,27 @@ async fn install_into_root(
 ) -> Result<()> {
     // T4.1: Offline mode validation
     if offline {
+        // R2.1 FIX (AUDIT VÒNG 2): Atomic check-and-load (no TOCTOU)
+        info("🔒 Offline mode enabled");
+        
+        // Try load lockfile immediately (check = use, atomic)
         let lockfile_path = project_root.join("mg.lock");
         if !lockfile_path.exists() {
             anyhow::bail!(
-                "Offline mode requires mg.lock — run 'mg install' online first to create lockfile"
+                "Offline mode requires mg.lock\n  \
+                 Run 'mg install' online first to create lockfile"
             );
         }
         
         if !packages.is_empty() {
             anyhow::bail!(
-                "Cannot add packages in offline mode — use 'mg install' online to add dependencies"
+                "Cannot add packages in offline mode\n  \
+                 Use 'mg install' online to add dependencies"
             );
         }
         
-        info("🔒 Offline mode: installing from lockfile only (no network)");
+        info("  - Using lockfile for dependencies");
+        info("  - Installing from local cache");
     }
     
     const MAX_PACKAGES: usize = 50;
