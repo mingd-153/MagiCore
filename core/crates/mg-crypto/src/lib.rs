@@ -1,77 +1,51 @@
-#![cfg_attr(test, allow(clippy::unwrap_used))]
+//! `mg-crypto` — Cryptographic primitives for MegaGate supply chain security
+//! Cryptographic primitives cho bảo mật chuỗi cung ứng MegaGate
+//!
+//! Provides BLAKE3 hashing, Ed25519 signing/verification, keyring management,
+//! and SIMD-accelerated operations.
 
-pub mod checksum;
+pub mod blake3_signer;
+pub mod ed25519_signer;
 pub mod integrity;
+pub mod keyring;
+pub mod simd;
 
-use anyhow::Result;
-use sha2::{Digest, Sha256};
+pub use blake3_signer::{Blake3Hasher, Blake3Hash};
+pub use ed25519_signer::{Ed25519Signer, Ed25519Signature, Ed25519PublicKey};
+pub use integrity::{IntegrityVerifier, SriHash};
+pub use keyring::{Keyring, KeyPair};
+pub use simd::{SimdCapability, detect_simd};
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub enum HashAlgorithm {
-    Sha256,
-    Blake3,
-}
+/// Result type for crypto operations — Kiểu kết quả cho thao tác crypto
+pub type CryptoResult<T> = Result<T, CryptoError>;
 
-pub fn hash(data: &[u8], algorithm: HashAlgorithm) -> Result<String> {
-    Ok(match algorithm {
-        HashAlgorithm::Sha256 => {
-            let mut hasher = Sha256::new();
-            hasher.update(data);
-            hex::encode(hasher.finalize())
-        }
-        HashAlgorithm::Blake3 => hex::encode(blake3::hash(data).as_bytes()),
-    })
-}
+/// Errors for crypto operations — Lỗi cho thao tác crypto
+#[derive(Debug, thiserror::Error)]
+pub enum CryptoError {
+    #[error("Blake3 hash failed: {0}")]
+    Blake3Failed(String),
 
-pub fn verify_hash(data: &[u8], expected: &str, algorithm: HashAlgorithm) -> Result<bool> {
-    Ok(hash(data, algorithm)? == expected)
-}
+    #[error("Ed25519 signing failed: {0}")]
+    SigningFailed(String),
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    #[error("Ed25519 verification failed: {0}")]
+    VerificationFailed(String),
 
-    const HELLO: &[u8] = b"hello";
-    const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    #[error("Keyring operation failed: {0}")]
+    KeyringFailed(String),
 
-    #[test]
-    fn test_hash_sha256_known_vector() {
-        let got = hash(HELLO, HashAlgorithm::Sha256).unwrap();
-        assert_eq!(got, HELLO_SHA256);
-    }
+    #[error("Invalid signature format: {0}")]
+    InvalidSignature(String),
 
-    #[test]
-    fn test_hash_sha256_different_inputs_differ() {
-        let a = hash(b"abc", HashAlgorithm::Sha256).unwrap();
-        let b = hash(b"xyz", HashAlgorithm::Sha256).unwrap();
-        assert_ne!(a, b);
-    }
+    #[error("Invalid public key format: {0}")]
+    InvalidPublicKey(String),
 
-    #[test]
-    fn test_verify_hash_match() {
-        assert!(verify_hash(HELLO, HELLO_SHA256, HashAlgorithm::Sha256).unwrap());
-    }
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 
-    #[test]
-    fn test_verify_hash_mismatch() {
-        assert!(!verify_hash(b"world", HELLO_SHA256, HashAlgorithm::Sha256).unwrap());
-    }
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
 
-    #[test]
-    fn test_hash_blake3_known_vector() {
-        let got = hash(HELLO, HashAlgorithm::Blake3).unwrap();
-        assert_eq!(
-            got,
-            "ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f"
-        );
-    }
-
-    #[test]
-    fn test_hash_empty() {
-        let got = hash(b"", HashAlgorithm::Sha256).unwrap();
-        assert_eq!(
-            got,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
+    #[error("Base64 decode error: {0}")]
+    Base64Error(#[from] base64::DecodeError),
 }

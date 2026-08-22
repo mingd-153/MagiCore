@@ -1,185 +1,156 @@
-/// Integrity verification for packages and files
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+//! Integrity verification (SRI hashes)
+//! Verify tính toàn vẹn (SRI hashes)
 
-/// Integrity information for a package
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Integrity {
-    /// Algorithm used
-    pub algorithm: super::HashAlgorithm,
-    /// Hash value
+use crate::blake3_signer::{Blake3Hash, Blake3Hasher};
+use crate::{CryptoError, CryptoResult};
+
+/// SRI (Subresource Integrity) hash — SRI hash
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SriHash {
+    /// Algorithm (sha256, sha512, blake3) — Thuật toán
+    pub algorithm: String,
+    /// Hash value (base64) — Giá trị hash (base64)
     pub hash: String,
-    /// File size in bytes
-    pub size: u64,
 }
 
-impl Integrity {
-    pub fn new(algorithm: super::HashAlgorithm, hash: String, size: u64) -> Self {
-        Self {
-            algorithm,
-            hash,
-            size,
+impl SriHash {
+    /// Parse SRI hash from string (e.g., "blake3-abc123...")
+    /// Parse SRI hash từ chuỗi
+    pub fn parse(s: &str) -> CryptoResult<Self> {
+        let parts: Vec<&str> = s.split('-').collect();
+        if parts.len() != 2 {
+            return Err(CryptoError::Blake3Failed(format!(
+                "invalid SRI format: {}",
+                s
+            )));
+        }
+        Ok(SriHash {
+            algorithm: parts[0].to_string(),
+            hash: parts[1].to_string(),
+        })
+    }
+
+    /// Convert to SRI string — Chuyển sang chuỗi SRI
+    pub fn to_string(&self) -> String {
+        format!("{}-{}", self.algorithm, self.hash)
+    }
+
+    /// Create BLAKE3 SRI hash — Tạo BLAKE3 SRI hash
+    pub fn from_blake3(hash: &Blake3Hash) -> Self {
+        SriHash {
+            algorithm: "blake3".to_string(),
+            hash: hash.to_base64(),
         }
     }
-
-    /// Verify data matches this integrity
-    pub fn verify(&self, data: &[u8]) -> Result<bool> {
-        if data.len() as u64 != self.size {
-            return Ok(false);
-        }
-        super::verify_hash(data, &self.hash, self.algorithm)
-    }
 }
 
-/// Integrity map for multiple files
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct IntegrityMap {
-    entries: HashMap<String, Integrity>,
-}
+/// Integrity verifier — Integrity verifier
+pub struct IntegrityVerifier;
 
-impl IntegrityMap {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(&mut self, path: String, integrity: Integrity) {
-        self.entries.insert(path, integrity);
-    }
-
-    pub fn get(&self, path: &str) -> Option<&Integrity> {
-        self.entries.get(path)
-    }
-
-    pub fn verify_all(&self, data: &HashMap<String, Vec<u8>>) -> Result<bool> {
-        for (path, integrity) in &self.entries {
-            if let Some(file_data) = data.get(path) {
-                if !integrity.verify(file_data)? {
-                    return Ok(false);
+impl IntegrityVerifier {
+    /// Verify data against SRI hash — Verify dữ liệu với SRI hash
+    pub fn verify(data: &[u8], sri: &SriHash) -> CryptoResult<()> {
+        match sri.algorithm.as_str() {
+            "blake3" => {
+                let actual = Blake3Hasher::hash_bytes(data);
+                let expected = Blake3Hash::from_base64(&sri.hash)?;
+                if actual == expected {
+                    Ok(())
+                } else {
+                    Err(CryptoError::VerificationFailed(format!(
+                        "BLAKE3 hash mismatch: expected {}, got {}",
+                        expected, actual
+                    )))
                 }
-            } else {
-                return Ok(false);
             }
+            "sha256" | "sha512" => Err(CryptoError::Blake3Failed(format!(
+                "algorithm not supported: {} (use blake3)",
+                sri.algorithm
+            ))),
+            _ => Err(CryptoError::Blake3Failed(format!(
+                "unknown algorithm: {}",
+                sri.algorithm
+            ))),
         }
-        Ok(true)
+    }
+
+    /// Verify file against SRI hash — Verify file với SRI hash
+    pub fn verify_file(path: &std::path::Path, sri: &SriHash) -> CryptoResult<()> {
+        let data = std::fs::read(path)?;
+        Self::verify(&data, sri)
+    }
+
+    /// Compute SRI hash for data — Tính SRI hash cho dữ liệu
+    pub fn compute(data: &[u8]) -> SriHash {
+        let hash = Blake3Hasher::hash_bytes(data);
+        SriHash::from_blake3(&hash)
+    }
+
+    /// Compute SRI hash for file — Tính SRI hash cho file
+    pub fn compute_file(path: &std::path::Path) -> CryptoResult<SriHash> {
+        let hash = Blake3Hasher::hash_file(path)?;
+        Ok(SriHash::from_blake3(&hash))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::HashAlgorithm;
-
-    fn make_integrity(data: &[u8]) -> Integrity {
-        let hash = crate::hash(data, HashAlgorithm::Sha256).unwrap();
-        Integrity::new(HashAlgorithm::Sha256, hash, data.len() as u64)
-    }
-
-    // --- Integrity::verify ---
+    use tempfile::NamedTempFile;
+    use std::io::Write;
 
     #[test]
-    fn test_integrity_verify_correct() {
-        let data = b"hello";
-        let integrity = make_integrity(data);
-        assert!(integrity.verify(data).unwrap());
+    fn test_sri_parse() {
+        let sri = SriHash::parse("blake3-YWJjMTIz").unwrap();
+        assert_eq!(sri.algorithm, "blake3");
+        assert_eq!(sri.hash, "YWJjMTIz");
     }
 
     #[test]
-    fn test_integrity_verify_incorrect_data() {
-        let data = b"hello";
-        let integrity = make_integrity(data);
-        assert!(!integrity.verify(b"world").unwrap());
+    fn test_sri_to_string() {
+        let sri = SriHash {
+            algorithm: "blake3".to_string(),
+            hash: "abc123".to_string(),
+        };
+        assert_eq!(sri.to_string(), "blake3-abc123");
     }
 
     #[test]
-    fn test_integrity_verify_size_mismatch() {
-        let data = b"hello";
-        let integrity = make_integrity(data);
-        // Correct data wrong size → false (short-circuit before hash)
-        assert!(!integrity.verify(b"helloo").unwrap());
-        assert!(!integrity.verify(b"hell").unwrap());
+    fn test_compute_and_verify() {
+        let data = b"hello world";
+        let sri = IntegrityVerifier::compute(data);
+
+        assert_eq!(sri.algorithm, "blake3");
+        IntegrityVerifier::verify(data, &sri).unwrap();
     }
 
     #[test]
-    fn test_integrity_verify_tampered_hash_field() {
-        // Correct data but Integrity stores wrong hash
-        let integrity = Integrity::new(HashAlgorithm::Sha256, "0000".into(), 5);
-        assert!(!integrity.verify(b"hello").unwrap());
-    }
+    fn test_verify_mismatch() {
+        let data = b"hello world";
+        let sri = IntegrityVerifier::compute(data);
 
-    // --- IntegrityMap::verify_all ---
-
-    #[test]
-    fn test_integrity_map_verify_all_all_match() {
-        let mut imap = IntegrityMap::new();
-        let mut files = HashMap::new();
-
-        let a_data = b"alpha".to_vec();
-        let b_data = b"beta".to_vec();
-        let a_hash = crate::hash(&a_data, HashAlgorithm::Sha256).unwrap();
-        let b_hash = crate::hash(&b_data, HashAlgorithm::Sha256).unwrap();
-
-        imap.insert(
-            "a.txt".into(),
-            Integrity::new(HashAlgorithm::Sha256, a_hash, 5),
-        );
-        imap.insert(
-            "b.txt".into(),
-            Integrity::new(HashAlgorithm::Sha256, b_hash, 4),
-        );
-        files.insert("a.txt".into(), a_data);
-        files.insert("b.txt".into(), b_data);
-
-        assert!(imap.verify_all(&files).unwrap());
+        let wrong_data = b"wrong data";
+        assert!(IntegrityVerifier::verify(wrong_data, &sri).is_err());
     }
 
     #[test]
-    fn test_integrity_map_verify_all_one_mismatch() {
-        let mut imap = IntegrityMap::new();
-        let mut files = HashMap::new();
+    fn test_compute_file() {
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(b"test content").unwrap();
+        tmpfile.flush().unwrap();
 
-        let a_data = b"alpha".to_vec();
-        let a_hash = crate::hash(&a_data, HashAlgorithm::Sha256).unwrap();
+        let sri = IntegrityVerifier::compute_file(tmpfile.path()).unwrap();
+        assert_eq!(sri.algorithm, "blake3");
 
-        imap.insert(
-            "a.txt".into(),
-            Integrity::new(HashAlgorithm::Sha256, a_hash, 5),
-        );
-        imap.insert(
-            "b.txt".into(),
-            Integrity::new(HashAlgorithm::Sha256, "badhash".into(), 4),
-        );
-        files.insert("a.txt".into(), a_data);
-        files.insert("b.txt".into(), b"beta".to_vec());
-
-        assert!(!imap.verify_all(&files).unwrap());
+        IntegrityVerifier::verify_file(tmpfile.path(), &sri).unwrap();
     }
 
     #[test]
-    fn test_integrity_map_verify_all_missing_file() {
-        let mut imap = IntegrityMap::new();
-        let mut files = HashMap::new();
-
-        let data = b"present".to_vec();
-        let hash = crate::hash(&data, HashAlgorithm::Sha256).unwrap();
-
-        imap.insert(
-            "present.txt".into(),
-            Integrity::new(HashAlgorithm::Sha256, hash.clone(), 7),
-        );
-        imap.insert(
-            "missing.txt".into(),
-            Integrity::new(HashAlgorithm::Sha256, hash, 7),
-        );
-        files.insert("present.txt".into(), data);
-
-        assert!(!imap.verify_all(&files).unwrap());
-    }
-
-    #[test]
-    fn test_integrity_map_verify_all_empty_map() {
-        let imap = IntegrityMap::new();
-        let files = HashMap::new();
-        assert!(imap.verify_all(&files).unwrap());
+    fn test_unsupported_algorithm() {
+        let sri = SriHash {
+            algorithm: "sha256".to_string(),
+            hash: "abc".to_string(),
+        };
+        assert!(IntegrityVerifier::verify(b"data", &sri).is_err());
     }
 }
