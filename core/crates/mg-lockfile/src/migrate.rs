@@ -1,70 +1,109 @@
-//! Lockfile format version migration (npm shrinkwrap.js:1003 model).
-//!
-//! - `version` in mg.lock is a *major* format version: bumping it means the
-//!   on-disk structure changed incompatibly (npm refuses to read future
-//!   lockfiles silently — it fails loud instead).
-//! - `read_lockfile_checked` rejects checksum/signature tampering; here we
-//!   additionally fail closed when the lockfile was written by a *newer* MG:
-//!   never guess a structure we don't understand, never silently re-resolve.
-//! - Older versions are migrated forward step by step when a migration fn
-//!   exists; unknown future versions abort with a clear message.
+//! Lockfile v1 → v2 migration
+//! Migration lockfile v1 → v2
 
-use crate::Lockfile;
+use crate::{Lockfile, LockfileError, LockfileResult, Package};
+use serde::{Deserialize, Serialize};
 
-pub const SUPPORTED_VERSION: u32 = 1;
-
-/// Current supported lockfile version. Bump this (MAJOR) only when the on-disk
-/// structure of `Lockfile` changes incompatibly; all older versions need a
-/// migration entry below to stay readable.
-pub fn current_version() -> u32 {
-    SUPPORTED_VERSION
+/// Lockfile v1 structure (legacy) — Cấu trúc lockfile v1 (legacy)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LockfileV1 {
+    pub version: String,
+    #[serde(rename = "package")]
+    pub packages: Vec<PackageV1>,
 }
 
-/// Validate that we understand the lockfile, migrating older formats forward.
-/// Fail-closed: a lockfile from a *newer* MG (or any version we cannot prove
-/// we understand) is rejected instead of being silently ignored.
-pub fn migrate(lock: &Lockfile) -> anyhow::Result<Lockfile> {
-    if lock.version > SUPPORTED_VERSION {
-        anyhow::bail!(
-            "mg.lock version {} is newer than this version of mg (supports up to {}). \
-             Upgrade mg to read this lockfile.",
-            lock.version,
-            SUPPORTED_VERSION
-        );
-    }
-    if lock.version >= 1 {
-        return Ok(lock.clone());
-    }
-    // version 0: only produced by buggy early drafts; reject rather than guess.
-    anyhow::bail!(
-        "mg.lock version 0 is not supported — regenerate the lockfile with 'mg install'."
-    );
+/// Package v1 structure (no integrity field) — Cấu trúc package v1 (không có integrity)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageV1 {
+    pub name: String,
+    pub version: String,
+    pub resolved: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn migrate_accepts_current_version() {
-        let lock = Lockfile::new("web", "frontend");
-        let out = migrate(&lock).unwrap();
-        assert_eq!(out.version, 1);
+/// Detect lockfile version from TOML string — Phát hiện version lockfile từ chuỗi TOML
+pub fn detect_lockfile_version(toml_str: &str) -> LockfileResult<u8> {
+    // Try to parse version field
+    let parsed: toml::Value = toml::from_str(toml_str)?;
+    
+    let version = parsed
+        .get("version")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| LockfileError::ParseError("missing version field".to_string()))?;
+    
+    match version {
+        "1" => Ok(1),
+        "2" => Ok(2),
+        _ => Err(LockfileError::ParseError(format!(
+            "unknown version: {}",
+            version
+        ))),
     }
+}
 
-    #[test]
-    fn migrate_rejects_future_version_fail_closed() {
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.version = 99;
-        let err = migrate(&lock).unwrap_err();
-        assert!(err.to_string().contains("newer than this version"), "{err}");
+/// Migrate lockfile v1 to v2 — Migrate lockfile v1 sang v2
+pub fn migrate_v1_to_v2(lockfile_v1: LockfileV1) -> LockfileResult<Lockfile> {
+    let mut lockfile_v2 = Lockfile::new();
+    
+    // Migrate packages
+    for pkg_v1 in lockfile_v1.packages {
+        let pkg_v2 = Package {
+            name: pkg_v1.name.clone(),
+            version: pkg_v1.version.clone(),
+            resolved: pkg_v1.resolved.clone(),
+            // Compute integrity from resolved URL (placeholder)
+            // In production, would need to download tarball and hash
+            integrity: format!("blake3-{}", placeholder_hash(&pkg_v1.resolved)),
+            dependencies: pkg_v1.dependencies.clone(),
+        };
+        
+        lockfile_v2.add_package(pkg_v2);
     }
+    
+    Ok(lockfile_v2)
+}
 
-    #[test]
-    fn migrate_rejects_version_zero() {
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.version = 0;
-        let err = migrate(&lock).unwrap_err();
-        assert!(err.to_string().contains("version 0"), "{err}");
+/// Parse lockfile v1 from TOML string — Parse lockfile v1 từ chuỗi TOML
+pub fn parse_lockfile_v1(toml_str: &str) -> LockfileResult<LockfileV1> {
+    let lockfile_v1: LockfileV1 = toml::from_str(toml_str)?;
+    
+    if lockfile_v1.version != "1" {
+        return Err(LockfileError::ParseError(format!(
+            "expected version 1, got {}",
+            lockfile_v1.version
+        )));
     }
+    
+    Ok(lockfile_v1)
+}
+
+/// Auto-upgrade lockfile (v1 → v2) — Tự động nâng cấp lockfile
+pub fn auto_upgrade_lockfile(toml_str: &str) -> LockfileResult<Lockfile> {
+    let version = detect_lockfile_version(toml_str)?;
+    
+    match version {
+        1 => {
+            let lockfile_v1 = parse_lockfile_v1(toml_str)?;
+            migrate_v1_to_v2(lockfile_v1)
+        }
+        2 => crate::parser::parse_lockfile(toml_str),
+        _ => Err(LockfileError::ParseError(format!(
+            "unsupported version: {}",
+            version
+        ))),
+    }
+}
+
+/// Placeholder hash for migration (not cryptographically secure) — Hash placeholder cho migration
+fn placeholder_hash(s: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    let hash = hasher.finish();
+    
+    // Convert to base64-like string (fake)
+    format!("{:016x}", hash)
 }
