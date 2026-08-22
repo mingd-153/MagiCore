@@ -124,6 +124,15 @@ impl Keyring {
 
         let content = serde_json::to_string_pretty(self)?;
         
+        // R1.1 FIX (AUDIT VÒNG 2): Create backup before overwrite
+        if path.exists() {
+            let backup = path.with_extension("json.bak");
+            if let Err(e) = fs::copy(path, &backup) {
+                // Log warning but don't fail (backup is best-effort)
+                eprintln!("⚠ Failed to create keyring backup: {}", e);
+            }
+        }
+        
         // A3 FIX: Atomic write with secure permissions from the start (Unix only)
         #[cfg(unix)]
         {

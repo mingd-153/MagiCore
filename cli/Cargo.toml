@@ -19,6 +19,7 @@ mg-config = { workspace = true }
 mg-resolver = { workspace = true }
 mg-store = { workspace = true }
 mg-lockfile = { workspace = true }
+mg-crypto = { workspace = true }
 mg-fetcher = { workspace = true }
 mg-http = { workspace = true }
 mg-ui = { workspace = true }
@@ -78,6 +79,7 @@ lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
 futures-util = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }
+chrono = { workspace = true }
 
 # Import rewriting + hashing
 regex = { workspace = true }
@@ -113,6 +115,10 @@ hardware = ["mg-hardware-adapter"]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 reqwest = { workspace = true }
+
+[[test]]
+name = "trust_integration"
+path = "test/trust/mod.rs"
 
 [lints]
 workspace = true

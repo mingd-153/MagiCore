@@ -2211,6 +2211,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "blake3",
+ "chrono",
  "clap",
  "clap_complete",
  "colored",
@@ -2228,6 +2229,7 @@ dependencies = [
  "mg-cicd-adapter",
  "mg-cloud-adapter",
  "mg-config",
+ "mg-crypto",
  "mg-exec",
  "mg-fetcher",
  "mg-game-adapter",
@@ -2519,18 +2521,17 @@ dependencies = [
 
 [[package]]
 name = "mg-lockfile"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
- "blake3",
- "hex",
- "mg-types",
+ "chrono",
+ "mg-crypto",
  "serde",
  "serde_json",
- "serde_yaml",
- "sha2",
  "tempfile",
+ "thiserror 1.0.69",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]
@@ -4038,19 +4039,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5052,12 +5040,6 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

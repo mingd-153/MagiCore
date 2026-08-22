@@ -12,7 +12,7 @@ pub mod migrate;
 pub use schema::{Lockfile, LockfileMetadata, Package, SignatureFile, SignerInfo};
 pub use parser::{load_and_verify_lockfile, load_lockfile, parse_lockfile};
 pub use writer::{sign_and_write_lockfile, sign_lockfile_with_default_key, write_lockfile};
-pub use verifier::{verify_lockfile, VerificationStatus};
+pub use verifier::{verify_lockfile, verification_status_message, VerificationStatus};
 pub use migrate::{auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2};
 
 /// Result type for lockfile operations — Kiểu kết quả cho thao tác lockfile

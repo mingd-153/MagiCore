@@ -314,6 +314,9 @@ fn load_locked_graph(
         return Ok(None);
     };
 
+    // T3.5: Auto-verify lockfile signature before install
+    verify_lockfile_if_signed(project_root)?;
+
     let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
     // Future lockfile versions must not be guessed (npm shrinkwrap.js:1003
     // model): abort with a clear error instead of silently re-resolving.
@@ -631,4 +634,35 @@ mode = "single"
 
         assert!(discover_workspace_projects(dir.path()).unwrap().is_none());
     }
+}
+
+/// T3.5: Verify lockfile signature before install (soft fail on unsigned)
+/// T3.5: Verify chữ ký lockfile trước install (soft fail nếu chưa ký)
+fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
+    let lockfile_path = project_root.join("mg.lock");
+    if !lockfile_path.exists() {
+        return Ok(());
+    }
+
+    // T3.6: Enforce policy in CI environment
+    crate::commands::trust::policy::auto_enforce_in_ci(&lockfile_path)?;
+
+    let status = mg_lockfile::verify_lockfile(&lockfile_path)?;
+    
+    match status {
+        mg_lockfile::VerificationStatus::Valid => {
+            mg_ui::success("✓ Lockfile signature valid");
+        }
+        mg_lockfile::VerificationStatus::Unsigned => {
+            mg_ui::warning("⚠ Lockfile not signed — run 'mg trust sign' to sign it");
+        }
+        mg_lockfile::VerificationStatus::Tampered(msg) => {
+            return Err(anyhow::anyhow!("Lockfile tampered: {}", msg));
+        }
+        mg_lockfile::VerificationStatus::InvalidSignature(msg) => {
+            return Err(anyhow::anyhow!("Invalid signature: {}", msg));
+        }
+    }
+    
+    Ok(())
 }
