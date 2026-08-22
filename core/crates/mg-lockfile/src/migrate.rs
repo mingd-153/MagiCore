@@ -52,9 +52,9 @@ pub fn migrate_v1_to_v2(lockfile_v1: LockfileV1) -> LockfileResult<Lockfile> {
             name: pkg_v1.name.clone(),
             version: pkg_v1.version.clone(),
             resolved: pkg_v1.resolved.clone(),
-            // Compute integrity from resolved URL (placeholder)
-            // In production, would need to download tarball and hash
-            integrity: format!("blake3-{}", placeholder_hash(&pkg_v1.resolved)),
+            // L7 FIX: Use BLAKE3 for placeholder (still placeholder but cryptographic)
+            // Production: download tarball and hash, or warn user to re-install
+            integrity: format!("blake3-{}", blake3_placeholder_hash(&pkg_v1.resolved)),
             dependencies: pkg_v1.dependencies.clone(),
         };
         
@@ -95,15 +95,10 @@ pub fn auto_upgrade_lockfile(toml_str: &str) -> LockfileResult<Lockfile> {
     }
 }
 
-/// Placeholder hash for migration (not cryptographically secure) — Hash placeholder cho migration
-fn placeholder_hash(s: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    s.hash(&mut hasher);
-    let hash = hasher.finish();
-    
-    // Convert to base64-like string (fake)
-    format!("{:016x}", hash)
+/// L7 FIX: BLAKE3 placeholder hash for migration (cryptographic, not DefaultHasher)
+/// Still placeholder — production should warn user to re-install packages
+fn blake3_placeholder_hash(s: &str) -> String {
+    use mg_crypto::blake3_signer::Blake3Hasher;
+    let hash = Blake3Hasher::hash_string(s);
+    hash.to_base64()
 }

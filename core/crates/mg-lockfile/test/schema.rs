@@ -92,7 +92,7 @@ key_id = "a1b2c3d4"
 signed_at = "2026-08-21T18:30:00+07:00"
 "#;
     
-    let sig = SignatureFile::from_str(input).unwrap();
+    let sig: SignatureFile = input.parse().unwrap();
     assert_eq!(sig.lockfile_hash, "blake3-abc123");
     assert_eq!(sig.signature, "ed25519-xyz789");
     assert_eq!(sig.key_id, "a1b2c3d4");
@@ -109,7 +109,7 @@ fn test_signature_file_roundtrip() {
     };
     
     let output = sig.to_string();
-    let parsed = SignatureFile::from_str(&output).unwrap();
+    let parsed: SignatureFile = output.parse().unwrap();
     
     assert_eq!(sig, parsed);
 }

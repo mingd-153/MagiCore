@@ -24,6 +24,18 @@ pub fn parse_lockfile(toml_str: &str) -> LockfileResult<Lockfile> {
 
 /// Load lockfile from file — Load lockfile từ file
 pub fn load_lockfile(path: &Path) -> LockfileResult<Lockfile> {
+    // L3 FIX: Limit lockfile size to prevent DoS (max 10MB)
+    const MAX_LOCKFILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+    
+    let metadata = std::fs::metadata(path)?;
+    if metadata.len() > MAX_LOCKFILE_SIZE {
+        return Err(LockfileError::ParseError(format!(
+            "lockfile too large: {} bytes (max {})",
+            metadata.len(),
+            MAX_LOCKFILE_SIZE
+        )));
+    }
+    
     let content = std::fs::read_to_string(path)?;
     parse_lockfile(&content)
 }
@@ -35,10 +47,10 @@ pub fn load_and_verify_lockfile(
 ) -> LockfileResult<Lockfile> {
     // Load lockfile
     let lockfile_bytes = std::fs::read(lockfile_path)?;
-    let lockfile = parse_lockfile(
-        std::str::from_utf8(&lockfile_bytes)
-            .map_err(|e| LockfileError::ParseError(format!("invalid UTF-8: {}", e)))?,
-    )?;
+    // L8 FIX: Graceful UTF-8 handling (không panic)
+    let lockfile_str = std::str::from_utf8(&lockfile_bytes)
+        .map_err(|e| LockfileError::ParseError(format!("invalid UTF-8: {}", e)))?;
+    let lockfile = parse_lockfile(lockfile_str)?;
     
     // Check if signature file exists
     if !signature_path.exists() {
@@ -49,8 +61,8 @@ pub fn load_and_verify_lockfile(
     
     // Load signature file
     let sig_content = std::fs::read_to_string(signature_path)?;
-    let sig_file = SignatureFile::from_str(&sig_content)
-        .map_err(|e| LockfileError::InvalidSignatureFile(e))?;
+    let sig_file: SignatureFile = sig_content.parse()
+        .map_err(LockfileError::InvalidSignatureFile)?;
     
     // Verify lockfile hash
     let current_hash = Blake3Hasher::hash_bytes(&lockfile_bytes);

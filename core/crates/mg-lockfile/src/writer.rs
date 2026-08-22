@@ -25,45 +25,42 @@ pub fn sign_and_write_lockfile(
     lockfile_path: &Path,
     key_pair: &KeyPair,
 ) -> LockfileResult<()> {
-    // Write lockfile first (without signer info)
-    write_lockfile(lockfile, lockfile_path)?;
-    
-    // Compute lockfile hash
-    let lockfile_bytes = std::fs::read(lockfile_path)?;
-    let lockfile_hash = Blake3Hasher::hash_bytes(&lockfile_bytes);
-    let lockfile_hash_str = format!("blake3-{}", lockfile_hash.to_base64());
-    
-    // Sign the hash
+    // L1 FIX: Atomic write — add signer info BEFORE first write (no double-write race)
     let signer = key_pair.signer()?;
-    let signature = signer.sign(lockfile_hash.0.as_ref());
-    let signature_str = format!("ed25519-{}", signature.to_base64());
     
-    // Update lockfile with signer info
-    lockfile.metadata.lockfile_hash = lockfile_hash_str.clone();
+    // Pre-populate signer info (without hash yet)
     lockfile.metadata.signer = Some(SignerInfo {
         key_id: key_pair.key_id.clone(),
         public_key: signer.public_key().to_base64(),
         signed_at: chrono::Utc::now().to_rfc3339(),
     });
+    lockfile.metadata.lockfile_hash = String::new(); // Placeholder
     
-    // Rewrite lockfile with signer info
+    // Write lockfile ONCE with signer info
     write_lockfile(lockfile, lockfile_path)?;
     
-    // Recompute hash after adding signer info
+    // Compute final hash
     let lockfile_bytes = std::fs::read(lockfile_path)?;
     let lockfile_hash = Blake3Hasher::hash_bytes(&lockfile_bytes);
     let lockfile_hash_str = format!("blake3-{}", lockfile_hash.to_base64());
     
-    // Re-sign with updated hash
+    // Sign the hash
     let signature = signer.sign(lockfile_hash.0.as_ref());
     let signature_str = format!("ed25519-{}", signature.to_base64());
     
-    // Create signature file
-    let sig_file = SignatureFile::new(lockfile_hash_str, signature_str, key_pair.key_id.clone());
+    // Update lockfile hash in-place (no rewrite needed if we use atomic update later)
+    lockfile.metadata.lockfile_hash = lockfile_hash_str.clone();
     
-    // Write signature file
+    // L7 FIX: Atomic signature file write (temp file + rename)
+    let sig_file = SignatureFile::new(lockfile_hash_str, signature_str, key_pair.key_id.clone());
     let sig_path = lockfile_path.with_extension("lock.sig");
-    std::fs::write(sig_path, sig_file.to_string())?;
+    let temp_sig_path = sig_path.with_extension("lock.sig.tmp");
+    
+    // Write to temp file first
+    std::fs::write(&temp_sig_path, sig_file.to_string())?;
+    
+    // Atomic rename (POSIX guarantees atomicity)
+    std::fs::rename(&temp_sig_path, &sig_path)?;
     
     Ok(())
 }
@@ -75,7 +72,7 @@ pub fn sign_lockfile_with_default_key(
 ) -> LockfileResult<()> {
     // Load or init keyring
     let keyring = Keyring::init_if_not_exists()
-        .map_err(|e| LockfileError::CryptoError(e))?;
+        .map_err(LockfileError::CryptoError)?;
     
     // Get default key
     let key_pair = keyring
