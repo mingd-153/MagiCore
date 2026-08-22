@@ -9,6 +9,27 @@ license = "MIT"
 [lib]
 path = "src/lib.rs"
 
+# Test modules tách riêng (RULE §5)
+[[test]]
+name = "blake3_signer"
+path = "test/blake3_signer.rs"
+
+[[test]]
+name = "ed25519_signer"
+path = "test/ed25519_signer.rs"
+
+[[test]]
+name = "keyring"
+path = "test/keyring.rs"
+
+[[test]]
+name = "integrity"
+path = "test/integrity.rs"
+
+[[test]]
+name = "simd"
+path = "test/simd.rs"
+
 [[bench]]
 name = "crypto_perf"
 harness = false

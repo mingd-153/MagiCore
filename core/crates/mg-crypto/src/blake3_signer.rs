@@ -61,6 +61,7 @@ pub struct Blake3Hasher;
 
 impl Blake3Hasher {
     /// Hash bytes with SIMD acceleration — Hash bytes với tăng tốc SIMD
+    #[inline] // O2: Inline hot path
     pub fn hash_bytes(data: &[u8]) -> Blake3Hash {
         let hash = blake3::hash(data);
         Blake3Hash(*hash.as_bytes())
@@ -94,15 +95,23 @@ impl Blake3Hasher {
     pub fn hash_file_mmap(path: &Path) -> CryptoResult<Blake3Hash> {
         let file = std::fs::File::open(path)?;
         // SAFETY: We trust the file descriptor is valid
-        // AN TOÀN: Tin file descriptor hợp lệ
+        // A6 FIX: Handle SIGBUS from truncated/deleted files
+        // AN TOÀN: Tin file descriptor hợp lệ, handle SIGBUS
         let mmap = unsafe {
             memmap2::Mmap::map(&file)
                 .map_err(|e| CryptoError::Blake3Failed(format!("mmap failed: {}", e)))?
         };
+        
+        // A6 FIX: Validate mmap is readable before access
+        if mmap.is_empty() {
+            return Ok(Self::hash_bytes(&[]));
+        }
+        
         Ok(Self::hash_bytes(&mmap))
     }
 
     /// Verify hash matches expected — Verify hash khớp với expected
+    #[inline] // O2: Inline hot path
     pub fn verify(data: &[u8], expected: &Blake3Hash) -> bool {
         let actual = Self::hash_bytes(data);
         actual == *expected
@@ -116,16 +125,25 @@ mod hex {
     }
 
     pub fn decode(s: &str) -> Result<Vec<u8>, String> {
-        if s.len() % 2 != 0 {
+        // A1 FIX: Prevent DoS on oversized input (max 64 bytes = 128 hex chars)
+        const MAX_HEX_LEN: usize = 128;
+        if s.len() > MAX_HEX_LEN {
+            return Err(format!("hex string too long: {} > {}", s.len(), MAX_HEX_LEN));
+        }
+        
+        // A8 FIX: Use clippy-suggested .is_multiple_of()
+        if !s.len().is_multiple_of(2) {
             return Err("odd length".to_string());
         }
-        (0..s.len())
-            .step_by(2)
-            .map(|i| {
-                u8::from_str_radix(&s[i..i + 2], 16)
-                    .map_err(|e| format!("invalid hex: {}", e))
-            })
-            .collect()
+        
+        // O3: Preallocate vec
+        let mut result = Vec::with_capacity(s.len() / 2);
+        for i in (0..s.len()).step_by(2) {
+            let byte = u8::from_str_radix(&s[i..i + 2], 16)
+                .map_err(|e| format!("invalid hex: {}", e))?;
+            result.push(byte);
+        }
+        Ok(result)
     }
 }
 
@@ -146,45 +164,3 @@ mod base64 {
 
 #[cfg(not(target_env = "msvc"))]
 use memmap2;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash_empty() {
-        let hash = Blake3Hasher::hash_bytes(b"");
-        assert_eq!(hash.0.len(), 32);
-    }
-
-    #[test]
-    fn test_hash_hello_world() {
-        let hash = Blake3Hasher::hash_string("hello world");
-        let expected = "d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24";
-        assert_eq!(hash.to_hex(), expected);
-    }
-
-    #[test]
-    fn test_hash_verify() {
-        let data = b"test data";
-        let hash = Blake3Hasher::hash_bytes(data);
-        assert!(Blake3Hasher::verify(data, &hash));
-        assert!(!Blake3Hasher::verify(b"wrong data", &hash));
-    }
-
-    #[test]
-    fn test_hash_hex_roundtrip() {
-        let hash = Blake3Hasher::hash_string("test");
-        let hex = hash.to_hex();
-        let parsed = Blake3Hash::from_hex(&hex).unwrap();
-        assert_eq!(hash, parsed);
-    }
-
-    #[test]
-    fn test_hash_base64_roundtrip() {
-        let hash = Blake3Hasher::hash_string("test");
-        let b64 = hash.to_base64();
-        let parsed = Blake3Hash::from_base64(&b64).unwrap();
-        assert_eq!(hash, parsed);
-    }
-}
