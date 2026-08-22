@@ -21,6 +21,7 @@ pub async fn run(
     core: Option<&str>,
     ignore_scripts: bool,
     allow_scripts: bool,
+    offline: bool,  // T4.1: offline mode flag
 ) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
@@ -46,7 +47,7 @@ pub async fn run(
                     // adapter của root (root có thể không thuộc core nào).
                     let ctx = crate::context::ProjectContext::load_for_dir(&workspace)?;
                     let adapter = ctx.adapter();
-                    install_into_root(adapter, &workspace, packages, ignore_scripts, allow_scripts)
+                    install_into_root(adapter, &workspace, packages, ignore_scripts, allow_scripts, offline)
                         .await
                 }
             })
@@ -76,6 +77,7 @@ pub async fn run(
         &packages,
         ignore_scripts,
         allow_scripts,
+        offline,  // T4.1
     )
     .await
 }
@@ -86,7 +88,26 @@ async fn install_into_root(
     packages: &[String],
     ignore_scripts: bool,
     allow_scripts: bool,
+    offline: bool,  // T4.1: offline mode
 ) -> Result<()> {
+    // T4.1: Offline mode validation
+    if offline {
+        let lockfile_path = project_root.join("mg.lock");
+        if !lockfile_path.exists() {
+            anyhow::bail!(
+                "Offline mode requires mg.lock — run 'mg install' online first to create lockfile"
+            );
+        }
+        
+        if !packages.is_empty() {
+            anyhow::bail!(
+                "Cannot add packages in offline mode — use 'mg install' online to add dependencies"
+            );
+        }
+        
+        info("🔒 Offline mode: installing from lockfile only (no network)");
+    }
+    
     const MAX_PACKAGES: usize = 50;
     if packages.len() > MAX_PACKAGES {
         return Err(crate::error::too_many_packages(packages.len(), "install"));
@@ -206,6 +227,7 @@ pub(crate) async fn install_into_root_ws(
     packages: &[String],
     ignore_scripts: bool,
     allow_scripts: bool,
+    offline: bool,  // T4.1
 ) -> Result<()> {
     install_into_root(
         adapter,
@@ -213,6 +235,7 @@ pub(crate) async fn install_into_root_ws(
         packages,
         ignore_scripts,
         allow_scripts,
+        offline,  // T4.1
     )
     .await
 }

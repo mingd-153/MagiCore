@@ -26,7 +26,7 @@ pub async fn handle(args: BenchArgs) -> Result<()> {
         let _ = std::fs::remove_file(&lock);
     }
 
-    crate::commands::install::run(args.packages, None, false, true).await?;
+    crate::commands::install::run(args.packages, None, false, true, false).await?;
 
     let total_ms = started.elapsed().as_millis() as u64;
     eprintln!("[megagate:bench] total={}ms", total_ms);

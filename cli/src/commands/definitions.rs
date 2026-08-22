@@ -238,6 +238,8 @@ pub(crate) enum Commands {
         repair: bool,
         #[arg(long, help = "Print the commands that would run (cloud terraform)")]
         dry_run: bool,
+        #[arg(long, help = "Offline mode: install from cache only, no network (T4.1)")]
+        offline: bool,
     },
     #[command(about = "Manage the local store (prune unreferenced packages)")]
     Store {
