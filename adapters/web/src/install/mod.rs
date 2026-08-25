@@ -5,6 +5,7 @@ pub mod download;
 pub mod extract;
 pub mod link_tree;
 pub mod materialize;
+pub mod package_marker;
 pub mod script_policy;
 
 use mgc_store::{ContentStore, Database, Layout, PackageCache};
