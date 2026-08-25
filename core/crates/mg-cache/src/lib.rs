@@ -153,8 +153,24 @@ impl PackageCache {
 
     /// Compute integrity of a file (public for testing) — Tính integrity file
     pub fn compute_integrity(&self, path: &Path) -> Result<String> {
-        let data = fs::read(path)?;
-        let hash = blake3::hash(&data);
+        // T5.3: Use streaming BLAKE3 (zero-copy for large files)
+        use std::fs::File;
+        use std::io::Read;
+        
+        let mut file = File::open(path)?;
+        let mut hasher = blake3::Hasher::new();
+        
+        // Stream in 64KB chunks (optimal for BLAKE3 SIMD)
+        let mut buffer = vec![0u8; 65536];
+        loop {
+            let n = file.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+        
+        let hash = hasher.finalize();
         Ok(format!("blake3:{}", hash.to_hex()))
     }
     
@@ -162,6 +178,34 @@ impl PackageCache {
     #[doc(hidden)]
     pub fn with_root(root: PathBuf) -> Self {
         Self { root }
+    }
+    
+    /// T5.2: Get multiple packages in parallel (rayon) — Lấy nhiều packages song song
+    pub fn get_packages_parallel(
+        &self,
+        requests: &[(String, String)], // (package_id, expected_integrity)
+    ) -> Result<Vec<PathBuf>> {
+        use rayon::prelude::*;
+        
+        requests
+            .par_iter()
+            .map(|(pkg_id, integrity)| self.get_package(pkg_id, integrity))
+            .collect()
+    }
+    
+    /// T5.2: Store multiple packages in parallel — Lưu nhiều packages song song
+    pub fn store_packages_parallel(
+        &self,
+        requests: &[(String, PathBuf, String)], // (package_id, source, integrity)
+    ) -> Result<Vec<PathBuf>> {
+        use rayon::prelude::*;
+        
+        requests
+            .par_iter()
+            .map(|(pkg_id, source, integrity)| {
+                self.store_package(pkg_id, source, integrity)
+            })
+            .collect()
     }
 }
 

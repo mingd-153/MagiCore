@@ -2319,6 +2319,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "dirs",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

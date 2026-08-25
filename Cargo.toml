@@ -134,8 +134,8 @@ unwrap_used = "warn"
 opt-level = "z"          # Optimize for size
 lto = "fat"              # Link-time optimization (aggressive)
 codegen-units = 1        # Single codegen unit (better optimization)
-strip = true             # Remove debug symbols
-panic = "abort"          # Smaller binary
+strip = true             # Remove debug symbols (T5.4)
+panic = "abort"          # Smaller binary (no unwind) (T5.4)
 
 [profile.test]
 opt-level = 1

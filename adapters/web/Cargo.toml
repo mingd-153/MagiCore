@@ -57,10 +57,14 @@ rayon = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-criterion = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "large_install"
+harness = false
 
 [[bench]]
 name = "install_bench"

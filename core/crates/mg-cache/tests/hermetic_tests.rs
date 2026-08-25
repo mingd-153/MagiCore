@@ -207,3 +207,57 @@ fn test_cache_large_package() {
     let retrieved_data = fs::read(&retrieved).unwrap();
     assert_eq!(retrieved_data.len(), 1024 * 1024);
 }
+
+
+#[test]
+fn test_parallel_store() {
+    // T5.2: Parallel store should be faster than sequential
+    let temp = TempDir::new().unwrap();
+    let cache = PackageCache::with_root(temp.path().to_path_buf());
+
+    // Create 10 fake packages
+    let mut requests = Vec::new();
+    for i in 0..10 {
+        let pkg_file = temp.path().join(format!("pkg{}.tgz", i));
+        fs::write(&pkg_file, format!("package{}", i)).unwrap();
+        let integrity = cache.compute_integrity(&pkg_file).unwrap();
+        requests.push((format!("pkg{}@1.0.0", i), pkg_file, integrity));
+    }
+
+    // Store in parallel
+    let results = cache.store_packages_parallel(&requests).unwrap();
+    assert_eq!(results.len(), 10);
+
+    // All should exist
+    for i in 0..10 {
+        assert!(cache.has_package(&format!("pkg{}@1.0.0", i)));
+    }
+}
+
+#[test]
+fn test_parallel_get() {
+    // T5.2: Parallel get should work correctly
+    let temp = TempDir::new().unwrap();
+    let cache = PackageCache::with_root(temp.path().to_path_buf());
+
+    // Store 10 packages first
+    for i in 0..10 {
+        let pkg_file = temp.path().join(format!("pkg{}.tgz", i));
+        fs::write(&pkg_file, format!("package{}", i)).unwrap();
+        let integrity = cache.compute_integrity(&pkg_file).unwrap();
+        cache
+            .store_package(&format!("pkg{}@1.0.0", i), &pkg_file, &integrity)
+            .unwrap();
+    }
+
+    // Get in parallel
+    let mut requests = Vec::new();
+    for i in 0..10 {
+        let pkg_file = temp.path().join(format!("pkg{}.tgz", i));
+        let integrity = cache.compute_integrity(&pkg_file).unwrap();
+        requests.push((format!("pkg{}@1.0.0", i), integrity));
+    }
+
+    let results = cache.get_packages_parallel(&requests).unwrap();
+    assert_eq!(results.len(), 10);
+}
