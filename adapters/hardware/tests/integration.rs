@@ -2,7 +2,7 @@
 //! Integration tests for mgc-hardware-adapter — sát với src/lib.rs
 //! Kiểm thử: adapter_for (detect qua mgc.toml ecosystem), list, audit, PackageAdapter trait.
 
-use mgc_hardware_adapter::{adapter_for, HardwareAdapter};
+use mgc_hardware_adapter::{adapter_for, generate_sbom, HardwareAdapter};
 use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
 
@@ -155,4 +155,19 @@ async fn remove_fails_for_hardware_adapter() {
     let name = PackageName::new("hal-crate").unwrap();
     let result = HardwareAdapter.remove(&dir, &name).await;
     assert!(result.is_err(), "hardware adapter must block direct remove");
+}
+
+#[test]
+fn generate_sbom_uses_lockfile_v2_fixture() {
+    let mut lockfile = mgc_lockfile::Lockfile::new();
+    lockfile.add_package(mgc_lockfile::Package::new(
+        "test-pkg".to_string(),
+        "1.0.0".to_string(),
+        "https://example.com/test.tgz".to_string(),
+        "blake3:test123".to_string(),
+    ));
+    let json = generate_sbom(&lockfile, mgc_sbom::SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
 }

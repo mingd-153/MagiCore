@@ -2,7 +2,7 @@
 //! Integration tests for mgc-iot-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_framework (ESP32-Rust, PlatformIO, Zephyr), board mapping, PackageAdapter trait.
 
-use mgc_iot_adapter::{adapter_for, detect_framework, IotFramework};
+use mgc_iot_adapter::{adapter_for, detect_framework, generate_sbom, IotFramework};
 use mgc_types::adapter::{AddOptions, PackageAdapter};
 use mgc_types::PackageName;
 use std::path::PathBuf;
@@ -133,4 +133,19 @@ async fn audit_returns_clean_for_iot_project() {
     let a = adapter_for(&dir).unwrap();
     let report = a.audit(&dir).await.unwrap();
     assert_eq!(report.vulnerabilities.len(), 0);
+}
+
+#[test]
+fn generate_sbom_uses_lockfile_v2_fixture() {
+    let mut lockfile = mgc_lockfile::Lockfile::new();
+    lockfile.add_package(mgc_lockfile::Package::new(
+        "test-pkg".to_string(),
+        "1.0.0".to_string(),
+        "https://example.com/test.tgz".to_string(),
+        "blake3:test123".to_string(),
+    ));
+    let json = generate_sbom(&lockfile, mgc_sbom::SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
 }
