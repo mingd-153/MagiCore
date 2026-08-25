@@ -13,6 +13,10 @@ use mg_types::{
 };
 use std::path::{Path, PathBuf};
 
+// W6: SBOM support
+use mg_lockfile::Lockfile;
+use mg_sbom::{SbomGenerator, SbomOptions};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CicdProvider {
     GithubActions,
@@ -214,6 +218,15 @@ impl CicdAdapter {
     }
 }
 
+/// W6: Generate SBOM from lockfile (cicd adapter)
+pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<String> {
+    let generator = SbomGenerator::new(options);
+    generator
+        .generate_json(lockfile)
+        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,3 +315,30 @@ mod tests {
             .is_err());
     }
 }
+
+    #[test]
+    fn test_generate_sbom_cicd() {
+        use mg_lockfile::{LockfileMetadata, Package};
+
+        let lockfile = Lockfile {
+            version: "2".to_string(),
+            metadata: LockfileMetadata {
+                generated_at: "2026-08-21T00:00:00Z".to_string(),
+                generator: "mg/0.4.0".to_string(),
+                lockfile_hash: "abc123".to_string(),
+                signer: None,
+            },
+            packages: vec![Package {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                resolved: "https://example.com/test.tgz".to_string(),
+                integrity: "blake3:test123".to_string(),
+                dependencies: vec![],
+            }],
+        };
+
+        let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
+        assert!(json.contains("CycloneDX"));
+        assert!(json.contains("test-pkg"));
+        assert!(json.contains("1.0.0"));
+    }

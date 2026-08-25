@@ -19,6 +19,7 @@ mg-config = { workspace = true }
 mg-resolver = { workspace = true }
 mg-store = { workspace = true }
 mg-lockfile = { workspace = true }
+mg-sbom = { workspace = true }
 mg-crypto = { workspace = true }
 mg-cache = { workspace = true }
 mg-fetcher = { workspace = true }

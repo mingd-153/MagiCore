@@ -26,6 +26,10 @@ use mg_types::{
 };
 use sha2::{Digest, Sha256};
 
+// W6: SBOM support
+use mg_lockfile::Lockfile;
+use mg_sbom::{SbomGenerator, SbomOptions};
+
 pub mod audit;
 pub mod cache;
 pub mod cache_daemon;
@@ -39,6 +43,15 @@ pub mod native;
 pub mod profile;
 pub mod provider;
 pub mod update;
+
+/// W6: Generate SBOM from lockfile (web adapter)
+pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<String> {
+    let generator = SbomGenerator::new(options);
+    generator
+        .generate_json(lockfile)
+        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+}
+
 
 #[cfg(test)]
 #[path = "test/unit_tests.rs"]

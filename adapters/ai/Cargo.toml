@@ -8,10 +8,11 @@ authors.workspace = true
 description = "AI ecosystem adapter for MegaGate"
 
 [dependencies]
-# Core crates (W1-W5 support)
+# Core crates (W1-W6 support)
 mg-types = { path = "../../core/crates/mg-types" }
 mg-crypto = { workspace = true }
 mg-lockfile = { workspace = true }
+mg-sbom = { workspace = true }
 mg-cache = { workspace = true }
 mg-config = { workspace = true }
 mg-adapter-base = { workspace = true }

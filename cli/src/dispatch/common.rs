@@ -20,6 +20,13 @@ pub async fn dispatch_common(
             commands::publish::stage(dir.map(|d| d.display().to_string())).await
         }
         CommonCommand::Import { dir } => commands::import::run(dir).await,
+        CommonCommand::Sbom {
+            format,
+            output,
+            name,
+            version,
+            dir,
+        } => commands::sbom::run(format, output, name, version, dir).await,
         CommonCommand::Dev { host, port, clear } => {
             commands::dev::run(core, host, port, clear).await
         }

@@ -24,6 +24,7 @@ mg-cache = { path = "core/crates/mg-cache" }
 mg-http = { path = "core/crates/mg-http" }
 mg-fetcher = { path = "core/crates/mg-fetcher" }
 mg-lockfile = { path = "core/crates/mg-lockfile" }
+mg-sbom = { path = "core/crates/mg-sbom" }
 mg-resolver = { path = "core/crates/mg-resolver" }
 mg-store = { path = "core/crates/mg-store" }
 mg-ui = { path = "core/crates/mg-ui" }
@@ -121,6 +122,7 @@ async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 semver = "1.0"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

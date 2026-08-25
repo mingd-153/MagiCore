@@ -2245,6 +2245,7 @@ dependencies = [
  "mg-publish",
  "mg-registry-server",
  "mg-resolver",
+ "mg-sbom",
  "mg-store",
  "mg-types",
  "mg-ui",
@@ -2297,6 +2298,7 @@ dependencies = [
  "mg-config",
  "mg-crypto",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "serde",
  "tempfile",
@@ -2315,6 +2317,7 @@ dependencies = [
  "mg-config",
  "mg-crypto",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "serde",
  "tempfile",
@@ -2347,6 +2350,7 @@ dependencies = [
  "mg-config",
  "mg-crypto",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "serde",
  "tempfile",
@@ -2366,6 +2370,7 @@ dependencies = [
  "mg-crypto",
  "mg-exec",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "mg-web-adapter",
  "serde",
@@ -2457,6 +2462,7 @@ dependencies = [
  "mg-crypto",
  "mg-exec",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "mg-ui",
  "pretty_assertions",
@@ -2481,6 +2487,7 @@ dependencies = [
  "mg-crypto",
  "mg-exec",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "mg-ui",
  "pretty_assertions",
@@ -2534,6 +2541,7 @@ dependencies = [
  "mg-crypto",
  "mg-exec",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "mg-ui",
  "pretty_assertions",
@@ -2558,6 +2566,7 @@ dependencies = [
  "mg-crypto",
  "mg-exec",
  "mg-lockfile",
+ "mg-sbom",
  "mg-types",
  "mg-ui",
  "mg-web-adapter",
@@ -2713,6 +2722,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mg-sbom"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mg-lockfile",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "mg-search"
 version = "0.4.1"
 dependencies = [
@@ -2817,6 +2840,7 @@ dependencies = [
  "mg-lockfile",
  "mg-platform",
  "mg-resolver",
+ "mg-sbom",
  "mg-search",
  "mg-store",
  "mg-types",

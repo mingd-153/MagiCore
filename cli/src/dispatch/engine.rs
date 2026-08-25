@@ -393,6 +393,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::UpdateApp { .. } => "update-app",
         Commands::UpdateLib { .. } => "update-lib",
         Commands::Import { .. } => "import",
+        Commands::Sbom { .. } => "sbom",
     }
 }
 

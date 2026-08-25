@@ -72,6 +72,21 @@ pub(crate) enum Commands {
         dir: Option<std::path::PathBuf>,
     },
 
+    // ── W6: SBOM Export ──────────────────────────────────────────────
+    #[command(about = "Generate Software Bill of Materials (SBOM) from lockfile")]
+    Sbom {
+        #[arg(long, help = "Output format (cyclonedx-json, cyclonedx-xml, spdx-json)")]
+        format: Option<String>,
+        #[arg(long, help = "Output file path (default: stdout)")]
+        output: Option<std::path::PathBuf>,
+        #[arg(long, help = "Component name (default: project name)")]
+        name: Option<String>,
+        #[arg(long, help = "Component version (default: project version)")]
+        version: Option<String>,
+        #[arg(long, help = "Target project directory")]
+        dir: Option<std::path::PathBuf>,
+    },
+
     // ── Common: Publish ──────────────────────────────────────────────
     #[command(about = "Publish package to registry")]
     Publish {

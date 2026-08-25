@@ -43,6 +43,13 @@ pub enum CommonCommand {
     Import {
         dir: Option<std::path::PathBuf>,
     },
+    Sbom {
+        format: Option<String>,
+        output: Option<std::path::PathBuf>,
+        name: Option<String>,
+        version: Option<String>,
+        dir: Option<std::path::PathBuf>,
+    },
     Run {
         script: String,
         args: Vec<String>,
@@ -405,6 +412,19 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
             Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
             Commands::Import { dir } => Some(CommonCommand::Import { dir }),
+            Commands::Sbom {
+                format,
+                output,
+                name,
+                version,
+                dir,
+            } => Some(CommonCommand::Sbom {
+                format,
+                output,
+                name,
+                version,
+                dir,
+            }),
             Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
             Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
             Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
