@@ -1,8 +1,8 @@
-//! `install/download.rs` — Tarball downloading, integrity verification and prefetching.
+//! `install/download.rs` — Tarball downloading and prefetching pipeline.
+//! Integrity verification đã tách sang install/integrity.rs.
 
 use std::sync::Arc;
 
-use base64::Engine;
 use futures_util::stream::{self, StreamExt};
 use mgc_store::{ContentStore, Layout, PackageCache};
 use mgc_types::adapter::ResolvedPackage;
@@ -13,9 +13,16 @@ use crate::cache::{download_concurrency_limit, SharedWebCache};
 use crate::install::extract::{
     ensure_extracted_package_root, ensure_extracted_package_root_from_bytes, tarball_prefetch_lock,
 };
-use crate::lockfile::{compute_sha512_b64, compute_tarball_integrity, strict_integrity_enforced};
+use crate::lockfile::compute_tarball_integrity;
 use crate::native;
 use crate::profile::{PipelineProfile, TarballFetchResult, TarballPayload};
+
+// Re-export integrity helpers để caller/test cũ không đổi import
+// Re-export integrity helpers so old callers/tests don't need to change imports
+pub use crate::install::integrity::{
+    compute_sha256_b64_str, prepare_verified_tarball_for_cache, verify_sri_integrity,
+    verify_tarball_integrity,
+};
 
 pub fn pipeline_task_concurrency_limit(extract_concurrency: usize) -> usize {
     std::env::var("MAGICORE_WEB_PIPELINE_TASK_CONCURRENCY")
@@ -23,97 +30,6 @@ pub fn pipeline_task_concurrency_limit(extract_concurrency: usize) -> usize {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|limit| *limit > 0)
         .unwrap_or_else(|| (download_concurrency_limit() + extract_concurrency).max(1))
-}
-
-pub fn compute_sha256_b64_str(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
-}
-
-pub fn verify_tarball_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
-    verify_sri_integrity(pkg, bytes)
-}
-
-pub fn prepare_verified_tarball_for_cache(pkg: &mut ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
-    if pkg.integrity.is_empty() {
-        pkg.integrity = compute_tarball_integrity(bytes);
-    }
-    verify_tarball_integrity(pkg, bytes)
-}
-
-pub fn verify_sri_integrity(pkg: &ResolvedPackage, bytes: &[u8]) -> MgResult<()> {
-    if pkg.integrity.is_empty() {
-        if strict_integrity_enforced() {
-            return Err(MgError::Other(format!(
-                "strict integrity: '{}' has no SRI integrity field",
-                pkg.id.name_str()
-            )));
-        }
-        return Ok(());
-    }
-
-    let mut has_weak_algorithm = false;
-    let mut has_strong_algorithm = false;
-
-    for entry in pkg.integrity.split_whitespace() {
-        let Some((algorithm, expected)) = entry.split_once('-') else {
-            continue;
-        };
-
-        if matches!(algorithm, "sha1" | "md5") {
-            has_weak_algorithm = true;
-            if strict_integrity_enforced() {
-                return Err(MgError::Other(format!(
-                    "strict integrity: '{}' uses weak hash algorithm '{}' (only sha256/sha512 allowed)",
-                    pkg.id.name_str(),
-                    algorithm
-                )));
-            }
-            eprintln!(
-                "WARNING: Package '{}' uses weak hash algorithm '{}', consider updating",
-                pkg.id.name_str(),
-                algorithm
-            );
-            continue;
-        }
-
-        let actual = match algorithm {
-            "sha256" => {
-                has_strong_algorithm = true;
-                compute_sha256_b64_str(bytes)
-            }
-            "sha512" => {
-                has_strong_algorithm = true;
-                compute_sha512_b64(bytes)
-            }
-            _ => {
-                eprintln!(
-                    "WARNING: Package '{}' uses unknown hash algorithm '{}'",
-                    pkg.id.name_str(),
-                    algorithm
-                );
-                continue;
-            }
-        };
-
-        if actual == expected {
-            return Ok(());
-        }
-    }
-
-    if has_weak_algorithm && !has_strong_algorithm {
-        return Err(MgError::Other(format!(
-            "integrity check failed for '{}': only weak algorithms present (sha1/md5)",
-            pkg.id.name_str()
-        )));
-    }
-
-    Err(MgError::Other(format!(
-        "integrity mismatch for '{}': none of the SRI entries matched",
-        pkg.id.name_str()
-    )))
 }
 
 pub fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
