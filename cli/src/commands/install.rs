@@ -5,9 +5,7 @@ use anyhow::Result;
 use mgc_cache::PackageCache;
 use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, PreparedAdd};
-use mgc_types::{
-    DependencySpec, Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
-};
+use mgc_types::{DependencySpec, Manifest, PackageId, ResolvedGraph, ResolvedPackage, Version};
 use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
@@ -396,7 +394,7 @@ fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result
 
 fn load_locked_graph(
     project_root: &std::path::Path,
-    adapter_name: &str,
+    _adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     let Some(lock) = read_checked_lockfile(project_root)? else {
@@ -474,7 +472,7 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
 mod tests {
     use super::*;
     use mgc_lockfile::Package;
-    use mgc_types::{DependencySpec, Ecosystem, VersionRange};
+    use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
     use tempfile::tempdir;
 
     #[test]

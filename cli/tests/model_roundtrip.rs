@@ -12,7 +12,7 @@ const PORT_CANDIDATES: &[u16] = &[
 const ADMIN: &str = "adm1-test";
 
 fn mgc_bin() -> String {
-    std::env::var("CARGO_BIN_EXE_mg").expect("CARGO_BIN_EXE_mg")
+    std::env::var("CARGO_BIN_EXE_mgc").expect("CARGO_BIN_EXE_mgc")
 }
 
 // ponytail: server con phải tách stdio — nếu không cargo test chờ pipe đóng vô hạn

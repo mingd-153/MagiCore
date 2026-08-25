@@ -2,7 +2,6 @@
 //! main.rs chỉ parse + dispatch; enum ~80 lệnh ở đây (định nghĩa lệnh, không logic).
 
 use clap::Subcommand;
-use std::path::PathBuf;
 
 #[derive(Subcommand, Clone)]
 #[allow(clippy::large_enum_variant)]

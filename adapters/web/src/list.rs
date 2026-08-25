@@ -36,7 +36,7 @@ pub async fn run_list(project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
                 lock.packages
                     .iter()
                     .find(|pkg| pkg.name == dep.name.as_str())
-                    .and_then(|pkg| Some(pkg.integrity.clone()))
+                    .map(|pkg| pkg.integrity.clone())
             });
             let is_direct = lockfile
                 .as_ref()

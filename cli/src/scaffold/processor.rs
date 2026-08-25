@@ -488,11 +488,143 @@ impl Scaffolder {
     fn write_web_files(
         target: &Path,
         config: &ScaffoldConfig,
-        _name: &str,
-        _framework: &str,
+        name: &str,
+        framework: &str,
     ) -> Result<()> {
-        let layers = Self::resolve_web_template_layers(config)?;
-        Self::materialize_web_templates(target, config, &layers)
+        match Self::resolve_web_template_layers(config) {
+            Ok(layers) => Self::materialize_web_templates(target, config, &layers),
+            Err(err) => {
+                if let Some(files) =
+                    crate::scaffold::embedded_kernel::get_embedded_template("web", framework)
+                {
+                    Self::ensure_web_fallback_common_files(target, name, framework)?;
+                    return crate::scaffold::embedded_kernel::materialize_embedded(
+                        target, name, &files,
+                    );
+                }
+                if effective_web_mode(config) == "backend" {
+                    if let Some(language) = infer_backend_language(framework) {
+                        Self::ensure_web_fallback_common_files(target, name, framework)?;
+                        return Self::write_minimal_backend_fallback(
+                            target, name, framework, language,
+                        );
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
+    fn ensure_web_fallback_common_files(target: &Path, name: &str, framework: &str) -> Result<()> {
+        if !target.join(".gitignore").exists() {
+            Self::write_file(
+                &target.join(".gitignore"),
+                &common_gitignore("web", framework),
+            )?;
+        }
+        if !target.join("README.md").exists() {
+            Self::write_file(
+                &target.join("README.md"),
+                &common_readme(name, "web", framework, &[]),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn write_minimal_backend_fallback(
+        target: &Path,
+        name: &str,
+        framework: &str,
+        language: &str,
+    ) -> Result<()> {
+        match language {
+            "rust" => {
+                Self::write_file(
+                    &target.join("Cargo.toml"),
+                    &format!(
+                        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+                        slugify(name)
+                    ),
+                )?;
+                Self::write_file(
+                    &target.join("src/main.rs"),
+                    &format!(
+                        "fn main() {{\n    println!(\"MagiCore {framework} service ready on 127.0.0.1:4315\");\n}}\n"
+                    ),
+                )
+            }
+            "go" => {
+                Self::write_file(
+                    &target.join("go.mod"),
+                    &format!("module {}\n\ngo 1.22\n", slugify(name)),
+                )?;
+                Self::write_file(
+                    &target.join("main.go"),
+                    &format!(
+                        "package main\n\nimport \"fmt\"\n\nfunc main() {{\n\tfmt.Println(\"MagiCore {framework} service ready on 127.0.0.1:4315\")\n}}\n"
+                    ),
+                )
+            }
+            "python" => {
+                Self::write_file(
+                    &target.join("pyproject.toml"),
+                    &format!(
+                        "[project]\nname = \"{}\"\nversion = \"0.1.0\"\ndependencies = []\n",
+                        slugify(name)
+                    ),
+                )?;
+                Self::write_file(
+                    &target.join("main.py"),
+                    &format!("print('MagiCore {framework} service ready on 127.0.0.1:4315')\n"),
+                )
+            }
+            "php" => {
+                Self::write_file(
+                    &target.join("composer.json"),
+                    &format!(
+                        "{{\n  \"name\": \"magicore/{}\",\n  \"type\": \"project\",\n  \"require\": {{}}\n}}\n",
+                        slugify(name)
+                    ),
+                )?;
+                Self::write_file(
+                    &target.join("public/index.php"),
+                    &format!(
+                        "<?php\necho 'MagiCore {framework} service ready on 127.0.0.1:4315';\n"
+                    ),
+                )
+            }
+            "java" => {
+                Self::write_file(
+                    &target.join("pom.xml"),
+                    &format!(
+                        "<project><modelVersion>4.0.0</modelVersion><groupId>dev.magicore</groupId><artifactId>{}</artifactId><version>0.1.0</version></project>\n",
+                        slugify(name)
+                    ),
+                )?;
+                Self::write_file(
+                    &target.join("src/main/java/App.java"),
+                    &format!(
+                        "public class App {{\n  public static void main(String[] args) {{\n    System.out.println(\"MagiCore {framework} service ready on 127.0.0.1:4315\");\n  }}\n}}\n"
+                    ),
+                )
+            }
+            "node" => {
+                Self::write_file(
+                    &target.join("package.json"),
+                    &format!(
+                        "{{\n  \"name\": \"{}\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {{ \"dev\": \"node src/server.js\" }}\n}}\n",
+                        slugify(name)
+                    ),
+                )?;
+                Self::write_file(
+                    &target.join("src/server.js"),
+                    &format!(
+                        "console.log('MagiCore {framework} service ready on 127.0.0.1:4315')\n"
+                    ),
+                )
+            }
+            _ => Err(crate::error::unsupported_scaffold_framework(framework)),
+        }
     }
 
     /// C9 — multi-platform: shared Kotlin (KMP) + android/ios (swift+objc)/react-native/flutter.

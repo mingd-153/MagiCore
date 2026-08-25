@@ -2,6 +2,7 @@
 //! Tests cho module types
 
 use mgc_search::types::*;
+use std::str::FromStr;
 
 #[test]
 fn test_registry_as_str() {
@@ -13,15 +14,15 @@ fn test_registry_as_str() {
 
 #[test]
 fn test_registry_from_str() {
-    assert_eq!(Registry::from_str("npm"), Some(Registry::Npm));
-    assert_eq!(Registry::from_str("NPM"), Some(Registry::Npm));
-    assert_eq!(Registry::from_str("crates"), Some(Registry::Crates));
-    assert_eq!(Registry::from_str("crates.io"), Some(Registry::Crates));
-    assert_eq!(Registry::from_str("go"), Some(Registry::Go));
-    assert_eq!(Registry::from_str("pkg.go.dev"), Some(Registry::Go));
-    assert_eq!(Registry::from_str("pypi"), Some(Registry::PyPI));
-    assert_eq!(Registry::from_str("pip"), Some(Registry::PyPI));
-    assert_eq!(Registry::from_str("unknown"), None);
+    assert_eq!(Registry::from_str("npm"), Ok(Registry::Npm));
+    assert_eq!(Registry::from_str("NPM"), Ok(Registry::Npm));
+    assert_eq!(Registry::from_str("crates"), Ok(Registry::Crates));
+    assert_eq!(Registry::from_str("crates.io"), Ok(Registry::Crates));
+    assert_eq!(Registry::from_str("go"), Ok(Registry::Go));
+    assert_eq!(Registry::from_str("pkg.go.dev"), Ok(Registry::Go));
+    assert_eq!(Registry::from_str("pypi"), Ok(Registry::PyPI));
+    assert_eq!(Registry::from_str("pip"), Ok(Registry::PyPI));
+    assert!(Registry::from_str("unknown").is_err());
 }
 
 #[test]

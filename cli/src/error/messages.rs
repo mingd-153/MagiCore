@@ -833,6 +833,10 @@ pub fn unsupported_scaffold_core(core: &str) -> Error {
     anyhow!("Unsupported core '{core}'")
 }
 
+pub fn unsupported_scaffold_framework(framework: &str) -> Error {
+    anyhow!("Unsupported scaffold framework '{framework}'")
+}
+
 pub fn web_template_path_missing(dir: &str) -> Error {
     anyhow!("Web template path '{dir}' does not exist")
 }

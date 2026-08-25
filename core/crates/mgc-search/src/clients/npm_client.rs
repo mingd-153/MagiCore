@@ -31,15 +31,17 @@ struct NpmPackage {
 #[derive(Debug, Deserialize)]
 struct NpmScore {
     #[serde(rename = "final")]
-    final_score: f64,
+    _final_score: f64,
     detail: NpmScoreDetail,
 }
 
 #[derive(Debug, Deserialize)]
 struct NpmScoreDetail {
     quality: f64,
-    popularity: f64,
-    maintenance: f64,
+    #[serde(rename = "popularity")]
+    _popularity: f64,
+    #[serde(rename = "maintenance")]
+    _maintenance: f64,
 }
 
 /// npm registry search client - usable by web, game, ai, cloud, iot, app, lib, cicd cores

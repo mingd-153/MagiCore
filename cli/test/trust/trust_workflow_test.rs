@@ -6,29 +6,20 @@ use mgc_lockfile::{load_lockfile, sign_and_write_lockfile, verify_lockfile, Veri
 use std::fs;
 use tempfile::TempDir;
 
+use super::fixtures::{
+    cleanup_keyring, test_keyring_path, write_empty_lockfile, write_lockfile_with_package,
+    write_lockfile_with_packages,
+};
+
 #[test]
 fn test_full_trust_workflow() {
     // Setup temp directory
     let temp_dir = TempDir::new().unwrap();
     let lockfile_path = temp_dir.path().join("mgc.lock");
-    let keyring_path = temp_dir.path().join("keyring.json");
+    let keyring_path = test_keyring_path("full-workflow");
 
     // Step 1: Create sample lockfile
-    let lockfile_content = r#"
-version = "2"
-
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-
-[[packages]]
-name = "example"
-version = "1.0.0"
-resolved = "https://registry.example.com/example/-/example-1.0.0.tgz"
-integrity = "sri:blake3:abc123"
-dependencies = {}
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_lockfile_with_package(&lockfile_path, "example", "1.0.0", "sri:blake3:abc123");
 
     // Step 2: Initialize keyring (mgc trust init)
     let key_pair = KeyPair::generate().unwrap();
@@ -54,6 +45,7 @@ dependencies = {}
     // Step 7: Verify tampered lockfile (should fail)
     let status = verify_lockfile(&lockfile_path).unwrap();
     assert!(matches!(status, VerificationStatus::Tampered(_)));
+    cleanup_keyring(&keyring_path);
 }
 
 #[test]
@@ -61,13 +53,7 @@ fn test_unsigned_lockfile() {
     let temp_dir = TempDir::new().unwrap();
     let lockfile_path = temp_dir.path().join("mgc.lock");
 
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_empty_lockfile(&lockfile_path);
 
     // Verify unsigned lockfile (should return Unsigned, not error)
     let status = verify_lockfile(&lockfile_path).unwrap();
@@ -76,8 +62,7 @@ mgc_version = "0.4.0"
 
 #[test]
 fn test_keyring_persistence() {
-    let temp_dir = TempDir::new().unwrap();
-    let keyring_path = temp_dir.path().join("keyring.json");
+    let keyring_path = test_keyring_path("persistence");
 
     // Create and save keyring
     let key_pair = KeyPair::generate().unwrap();
@@ -91,12 +76,12 @@ fn test_keyring_persistence() {
     assert_eq!(loaded_keyring.keys.len(), 1);
     assert_eq!(loaded_keyring.keys[0].key_id, key_id);
     assert_eq!(loaded_keyring.default_key_id, Some(key_id));
+    cleanup_keyring(&keyring_path);
 }
 
 #[test]
 fn test_multiple_keys_in_keyring() {
-    let temp_dir = TempDir::new().unwrap();
-    let keyring_path = temp_dir.path().join("keyring.json");
+    let keyring_path = test_keyring_path("multiple-keys");
 
     // Create keyring with 3 keys
     let mut keyring = Keyring::new();
@@ -114,22 +99,17 @@ fn test_multiple_keys_in_keyring() {
     let loaded = Keyring::load(&keyring_path).unwrap();
     assert_eq!(loaded.keys.len(), 3);
     assert_eq!(loaded.default_key_id, Some(key1_id)); // First key is default
+    cleanup_keyring(&keyring_path);
 }
 
 #[test]
 fn test_sign_with_specific_key() {
     let temp_dir = TempDir::new().unwrap();
     let lockfile_path = temp_dir.path().join("mgc.lock");
-    let keyring_path = temp_dir.path().join("keyring.json");
+    let keyring_path = test_keyring_path("specific-key");
 
     // Create lockfile
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_empty_lockfile(&lockfile_path);
 
     // Create keyring with 2 keys
     let mut keyring = Keyring::new();
@@ -146,6 +126,7 @@ mgc_version = "0.4.0"
     // Verify
     let status = verify_lockfile(&lockfile_path).unwrap();
     assert_eq!(status, VerificationStatus::Valid);
+    cleanup_keyring(&keyring_path);
 }
 
 #[test]
@@ -155,20 +136,7 @@ fn test_e2e_workflow_with_re_sign() {
     let lockfile_path = temp_dir.path().join("mgc.lock");
 
     // Create initial lockfile
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-
-[[packages]]
-name = "pkg-a"
-version = "1.0.0"
-resolved = "https://registry.example.com/pkg-a/-/pkg-a-1.0.0.tgz"
-integrity = "sri:blake3:aaa"
-dependencies = {}
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_lockfile_with_package(&lockfile_path, "pkg-a", "1.0.0", "sri:blake3:aaa");
 
     // Generate key and sign
     let key_pair = KeyPair::generate().unwrap();
@@ -180,27 +148,13 @@ dependencies = {}
     assert_eq!(status, VerificationStatus::Valid);
 
     // User legitimately updates lockfile (add new package)
-    let updated_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-
-[[packages]]
-name = "pkg-a"
-version = "1.0.0"
-resolved = "https://registry.example.com/pkg-a/-/pkg-a-1.0.0.tgz"
-integrity = "sri:blake3:aaa"
-dependencies = {}
-
-[[packages]]
-name = "pkg-b"
-version = "2.0.0"
-resolved = "https://registry.example.com/pkg-b/-/pkg-b-2.0.0.tgz"
-integrity = "sri:blake3:bbb"
-dependencies = {}
-"#;
-    fs::write(&lockfile_path, updated_content).unwrap();
+    write_lockfile_with_packages(
+        &lockfile_path,
+        &[
+            ("pkg-a", "1.0.0", "sri:blake3:aaa"),
+            ("pkg-b", "2.0.0", "sri:blake3:bbb"),
+        ],
+    );
 
     // Old signature should fail
     let status = verify_lockfile(&lockfile_path).unwrap();
@@ -223,13 +177,7 @@ fn test_policy_strict_mode_fails_on_unsigned() {
     let lockfile_path = temp_dir.path().join("mgc.lock");
 
     // Create unsigned lockfile
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_empty_lockfile(&lockfile_path);
 
     // Mock CI environment + strict policy
     env::set_var("CI", "true");
@@ -251,13 +199,7 @@ fn test_signature_file_created() {
     let sig_path = lockfile_path.with_extension("lock.sig");
 
     // Create lockfile
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_empty_lockfile(&lockfile_path);
 
     // Sign
     let key_pair = KeyPair::generate().unwrap();
@@ -268,7 +210,7 @@ mgc_version = "0.4.0"
     assert!(sig_path.exists());
     let sig_content = fs::read_to_string(&sig_path).unwrap();
     assert!(!sig_content.is_empty());
-    assert!(sig_content.contains("version"));
+    assert!(sig_content.contains("lockfile_hash"));
     assert!(sig_content.contains("signature"));
-    assert!(sig_content.contains("signer"));
+    assert!(sig_content.contains("key_id"));
 }

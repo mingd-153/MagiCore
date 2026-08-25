@@ -5,7 +5,7 @@ use std::cell::Cell;
 
 thread_local! {
     /// Thread-local offline mode flag — Cờ offline mode thread-local
-    static OFFLINE_MODE: Cell<bool> = Cell::new(false);
+    static OFFLINE_MODE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Set offline mode for current thread — Đặt offline mode cho thread hiện tại

@@ -112,6 +112,153 @@ export default defineConfig({
 }"#,
             },
         ]),
+        ("web", "vue") | ("web", "vue-vite") => Some(vec![
+            EmbeddedFile {
+                path: "package.json",
+                content: r#"{
+  "name": "{{PROJECT_NAME}}",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0",
+    "vue-tsc": "^2.2.0"
+  }
+}"#,
+            },
+            EmbeddedFile {
+                path: "index.html",
+                content: r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{PROJECT_NAME}}</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>"#,
+            },
+            EmbeddedFile {
+                path: "src/main.ts",
+                content: r#"import { createApp } from 'vue'
+import App from './App.vue'
+
+createApp(App).mount('#app')
+"#,
+            },
+            EmbeddedFile {
+                path: "src/App.vue",
+                content: r#"<script setup lang="ts">
+const projectName = '{{PROJECT_NAME}}'
+</script>
+
+<template>
+  <main>
+    <h1>Welcome to {{ projectName }}</h1>
+    <p>Powered by MagiCore and Vue Vite</p>
+  </main>
+</template>
+"#,
+            },
+            EmbeddedFile {
+                path: "vite.config.ts",
+                content: r#"import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [vue()],
+})
+"#,
+            },
+            EmbeddedFile {
+                path: "tsconfig.json",
+                content: r#"{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "preserve",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue"]
+}"#,
+            },
+        ]),
+        ("web", "express") => Some(vec![
+            EmbeddedFile {
+                path: "package.json",
+                content: r#"{
+  "name": "{{PROJECT_NAME}}",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "express": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.2"
+  }
+}"#,
+            },
+            EmbeddedFile {
+                path: "src/server.ts",
+                content: r#"import express from 'express'
+
+const app = express()
+const port = Number(process.env.PORT ?? 4315)
+
+app.get('/', (_req, res) => {
+  res.json({ message: 'Hello from MagiCore Express!', project: '{{PROJECT_NAME}}' })
+})
+
+app.listen(port, () => {
+  console.log(`Listening on http://127.0.0.1:${port}`)
+})
+"#,
+            },
+            EmbeddedFile {
+                path: "tsconfig.json",
+                content: r#"{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}"#,
+            },
+        ]),
         ("web", "axum") => Some(vec![
             EmbeddedFile {
                 path: "Cargo.toml",

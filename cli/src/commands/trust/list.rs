@@ -26,10 +26,7 @@ pub fn execute() -> anyhow::Result<()> {
     println!("  Location: {}\n", keyring_path.display());
 
     for key in &keyring.keys {
-        let is_default = keyring
-            .default_key_id
-            .as_ref()
-            .map_or(false, |id| id == &key.key_id);
+        let is_default = keyring.default_key_id.as_ref() == Some(&key.key_id);
 
         let marker = if is_default { "*" } else { " " };
 

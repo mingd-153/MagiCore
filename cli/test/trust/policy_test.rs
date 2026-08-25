@@ -6,6 +6,8 @@ use mgc_lockfile::{load_lockfile, sign_and_write_lockfile};
 use std::fs;
 use tempfile::TempDir;
 
+use super::fixtures::write_lockfile_with_package;
+
 // Note: These tests can't directly test auto_enforce_in_ci because it modifies env vars
 // and would interfere with other tests. Instead, we test the logic manually.
 
@@ -55,20 +57,7 @@ fn test_tamper_detection_blocks_install() {
     let lockfile_path = temp_dir.path().join("mgc.lock");
 
     // Create and sign lockfile
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-
-[[packages]]
-name = "safe-pkg"
-version = "1.0.0"
-resolved = "https://registry.example.com/safe-pkg/-/safe-pkg-1.0.0.tgz"
-integrity = "sri:blake3:safe123"
-dependencies = {}
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_lockfile_with_package(&lockfile_path, "safe-pkg", "1.0.0", "sri:blake3:safe123");
 
     let key_pair = KeyPair::generate().unwrap();
     let mut lockfile = load_lockfile(&lockfile_path).unwrap();
@@ -98,20 +87,12 @@ fn test_integrity_hash_protection() {
     let lockfile_path = temp_dir.path().join("mgc.lock");
 
     // Create and sign lockfile with specific integrity hash
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-
-[[packages]]
-name = "pkg-with-hash"
-version = "1.0.0"
-resolved = "https://registry.example.com/pkg-with-hash/-/pkg-with-hash-1.0.0.tgz"
-integrity = "sri:blake3:correcthash123"
-dependencies = {}
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_lockfile_with_package(
+        &lockfile_path,
+        "pkg-with-hash",
+        "1.0.0",
+        "sri:blake3:correcthash123",
+    );
 
     let key_pair = KeyPair::generate().unwrap();
     let mut lockfile = load_lockfile(&lockfile_path).unwrap();
@@ -136,20 +117,7 @@ fn test_version_downgrade_attack() {
     let lockfile_path = temp_dir.path().join("mgc.lock");
 
     // Create lockfile with latest version
-    let lockfile_content = r#"
-version = "2"
-[metadata]
-created_at = "2026-08-21T10:00:00Z"
-mgc_version = "0.4.0"
-
-[[packages]]
-name = "security-lib"
-version = "2.0.0"
-resolved = "https://registry.example.com/security-lib/-/security-lib-2.0.0.tgz"
-integrity = "sri:blake3:v2hash"
-dependencies = {}
-"#;
-    fs::write(&lockfile_path, lockfile_content).unwrap();
+    write_lockfile_with_package(&lockfile_path, "security-lib", "2.0.0", "sri:blake3:v2hash");
 
     let key_pair = KeyPair::generate().unwrap();
     let mut lockfile = load_lockfile(&lockfile_path).unwrap();

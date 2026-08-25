@@ -82,7 +82,7 @@ impl SearchClient for GoSearchClient {
                 name: r
                     .package_path
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or(&r.package_path)
                     .to_string(),
                 registry: Registry::Go,

@@ -23,11 +23,11 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         .expect("workspace manifest should have a parent");
     let debug_bin = workspace_root.join("target").join("debug").join("mgc");
 
-    let runtime_bin = std::env::var("CARGO_BIN_EXE_mg")
+    let runtime_bin = std::env::var("CARGO_BIN_EXE_mgc")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.exists());
-    let compile_bin = option_env!("CARGO_BIN_EXE_mg")
+    let compile_bin = option_env!("CARGO_BIN_EXE_mgc")
         .map(PathBuf::from)
         .filter(|path| path.exists());
 

@@ -150,11 +150,11 @@ url = "http://127.0.0.1:{port}"
     let root = workspace_root();
     let debug_mg = root.join("target").join("debug").join("mgc");
     let release_mg = root.join("target").join("release").join("mgc");
-    let runtime_mg = std::env::var("CARGO_BIN_EXE_mg")
+    let runtime_mg = std::env::var("CARGO_BIN_EXE_mgc")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.exists());
-    let compile_mg = option_env!("CARGO_BIN_EXE_mg")
+    let compile_mg = option_env!("CARGO_BIN_EXE_mgc")
         .map(PathBuf::from)
         .filter(|p| p.exists());
 

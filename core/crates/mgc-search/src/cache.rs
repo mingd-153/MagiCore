@@ -178,7 +178,7 @@ impl SearchCache {
 
         let result = stmt.query_row([package_name], |row| {
             let registry_str: String = row.get(0)?;
-            Ok(Registry::from_str(&registry_str))
+            Ok(Registry::parse(&registry_str))
         });
 
         match result {
@@ -198,10 +198,8 @@ mod tests {
 
     #[test]
     fn test_cache_insert_and_get() {
-        let _temp_dir = tempdir().unwrap();
-        std::env::set_var("HOME", _temp_dir.path());
-
-        let cache = SearchCache::new().unwrap();
+        let temp_dir = tempdir().unwrap();
+        let cache = SearchCache::new_with_path(&temp_dir.path().join("search_cache.db")).unwrap();
 
         let results = vec![SearchResult {
             name: "test".to_string(),
@@ -222,10 +220,8 @@ mod tests {
 
     #[test]
     fn test_track_choice() {
-        let _temp_dir = tempdir().unwrap();
-        std::env::set_var("HOME", _temp_dir.path());
-
-        let cache = SearchCache::new().unwrap();
+        let temp_dir = tempdir().unwrap();
+        let cache = SearchCache::new_with_path(&temp_dir.path().join("search_cache.db")).unwrap();
 
         // Track 3 times
         cache.track_choice("gin", Registry::Go).unwrap();

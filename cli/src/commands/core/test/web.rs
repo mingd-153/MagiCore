@@ -1,5 +1,3 @@
-use super::*;
-
 #[test]
 fn v2_web_lockfile_is_written_with_schema_version_two() {
     let lock = mgc_lockfile::Lockfile::new();

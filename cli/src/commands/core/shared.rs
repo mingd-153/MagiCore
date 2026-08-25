@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-use colored::Colorize;
 use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
 use mgc_types::{
@@ -737,7 +736,7 @@ fn profile_install_mark(label: &str, started_at: std::time::Instant) {
 #[allow(dead_code)]
 fn load_locked_graph(
     project_root: &Path,
-    adapter_name: &str,
+    _adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     let Some(lock) = read_checked_lockfile(project_root)? else {
@@ -877,7 +876,7 @@ pub async fn unlink(
     Ok(())
 }
 
-pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Result<()> {
+pub async fn why(adapter: &dyn PackageAdapter, root: &Path, _package: &str) -> Result<()> {
     if adapter.name() != "web" {
         return Err(crate::error::why_web_only());
     }

@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Search query with project context
 /// Query tìm kiếm kèm context dự án
@@ -63,9 +64,9 @@ impl Registry {
         }
     }
 
-    /// Parse registry from string
-    /// Parse registry từ chuỗi
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse registry from string as an optional value
+    /// Parse registry từ chuỗi theo dạng tùy chọn
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "npm" => Some(Registry::Npm),
             "crates" | "crates.io" => Some(Registry::Crates),
@@ -73,6 +74,14 @@ impl Registry {
             "pypi" | "pip" => Some(Registry::PyPI),
             _ => None,
         }
+    }
+}
+
+impl FromStr for Registry {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Registry::parse(s).ok_or_else(|| format!("unknown registry: {s}"))
     }
 }
 
@@ -150,14 +159,14 @@ mod tests {
 
     #[test]
     fn test_registry_from_str() {
-        assert_eq!(Registry::from_str("npm"), Some(Registry::Npm));
-        assert_eq!(Registry::from_str("NPM"), Some(Registry::Npm));
-        assert_eq!(Registry::from_str("crates.io"), Some(Registry::Crates));
-        assert_eq!(Registry::from_str("go"), Some(Registry::Go));
-        assert_eq!(Registry::from_str("pkg.go.dev"), Some(Registry::Go));
-        assert_eq!(Registry::from_str("pypi"), Some(Registry::PyPI));
-        assert_eq!(Registry::from_str("pip"), Some(Registry::PyPI));
-        assert_eq!(Registry::from_str("unknown"), None);
+        assert_eq!(Registry::from_str("npm"), Ok(Registry::Npm));
+        assert_eq!(Registry::from_str("NPM"), Ok(Registry::Npm));
+        assert_eq!(Registry::from_str("crates.io"), Ok(Registry::Crates));
+        assert_eq!(Registry::from_str("go"), Ok(Registry::Go));
+        assert_eq!(Registry::from_str("pkg.go.dev"), Ok(Registry::Go));
+        assert_eq!(Registry::from_str("pypi"), Ok(Registry::PyPI));
+        assert_eq!(Registry::from_str("pip"), Ok(Registry::PyPI));
+        assert!(Registry::from_str("unknown").is_err());
     }
 
     #[test]
