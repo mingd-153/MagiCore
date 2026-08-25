@@ -1,6 +1,8 @@
 //! MegaGate Package Cache
 //! Cache quản lý packages với integrity verification
 
+pub mod memory;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;

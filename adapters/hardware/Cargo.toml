@@ -35,5 +35,11 @@ anyhow = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "perf_bench"
+harness = false

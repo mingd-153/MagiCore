@@ -30,6 +30,10 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
+name = "perf_bench"
+harness = false
+
+[[bench]]
 name = "app_bench"
 harness = false
 

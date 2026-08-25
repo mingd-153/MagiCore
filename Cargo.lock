@@ -2328,6 +2328,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "dashmap 6.2.1",
  "dirs",
  "rayon",
  "serde",
@@ -2340,6 +2341,7 @@ name = "mg-cicd-adapter"
 version = "0.4.0"
 dependencies = [
  "async-trait",
+ "criterion",
  "mg-adapter-base",
  "mg-cache",
  "mg-config",
@@ -2448,6 +2450,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "criterion",
  "mg-adapter-base",
  "mg-cache",
  "mg-config",
@@ -2471,6 +2474,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "criterion",
  "mg-adapter-base",
  "mg-cache",
  "mg-config",
@@ -2482,6 +2486,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml",
@@ -2546,6 +2551,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "criterion",
  "mg-adapter-base",
  "mg-cache",
  "mg-config",

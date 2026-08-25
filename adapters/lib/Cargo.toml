@@ -39,6 +39,11 @@ semver = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "perf_bench"
+harness = false

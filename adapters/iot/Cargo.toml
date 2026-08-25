@@ -41,5 +41,9 @@ criterion = { workspace = true }
 tempfile = { workspace = true }
 
 [[bench]]
+name = "perf_bench"
+harness = false
+
+[[bench]]
 name = "iot_bench"
 harness = false
