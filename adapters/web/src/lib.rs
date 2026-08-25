@@ -16,7 +16,7 @@ use std::sync::MutexGuard;
 use async_trait::async_trait;
 use mgc_adapter_base::BaseAdapter;
 use mgc_resolver::Resolver as CoreResolver;
-use mgc_store::{ContentStore, Database, Layout};
+use mgc_store::ContentStore;
 use mgc_types::{
     adapter::{
         AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
@@ -35,11 +35,13 @@ pub mod list;
 pub mod lockfile;
 pub mod manifest;
 pub mod native;
+pub mod prefetch;
 pub mod profile;
 pub mod provider;
 pub mod registry_config;
 pub mod resolution_cache;
 pub mod sbom;
+pub mod supply_chain;
 pub mod update;
 
 #[cfg(test)]
@@ -48,6 +50,7 @@ mod tests;
 
 pub use lockfile::{read_web_lockfile, read_web_lockfile_checked};
 pub use manifest::PackageJson;
+pub use prefetch::spawn_tarball_download;
 pub use registry_config::{
     effective_registry_url, validate_registry_allowed, DEFAULT_NPM_REGISTRY,
 };
@@ -55,14 +58,13 @@ pub use resolution_cache::manifest_resolution_cache_key;
 pub use sbom::generate_sbom;
 
 use crate::audit::{run_audit, run_audit_fix};
-use crate::cache::{download_concurrency_limit, resolve_prefetch_enabled, SharedWebCache};
-use crate::install::download::package_tarball_url;
-use crate::install::extract::tarball_prefetch_lock;
+use crate::cache::{resolve_prefetch_enabled, SharedWebCache};
 use crate::install::run_install;
-use crate::lockfile::{build_graph_from_lockfile, lockfile_satisfies_manifest, project_cache_dir};
+use crate::lockfile::{build_graph_from_lockfile, lockfile_satisfies_manifest};
 use crate::manifest::{parse_manifest, write_manifest};
 use crate::profile::ResolveProfile;
 use crate::provider::NpmDependencyProvider;
+use crate::supply_chain::enforce_resolution_supply_chain_guards;
 use crate::update::preferred_registry_version;
 
 pub struct WebAdapter {
@@ -436,77 +438,7 @@ impl PackageAdapter for WebAdapter {
             .collect();
         profile.mark("assemble_resolved_packages", package_started_at);
 
-        let store_min_age = (|| {
-            let cwd = std::env::current_dir().ok()?;
-            let layout = Layout::new(project_cache_dir(&cwd));
-            Database::open(&layout.db_path())
-                .ok()
-                .and_then(|db| db.release_policy("web").ok().flatten())
-        })();
-        let block_new = std::env::var("MAGICORE_SECURITY_24H_BLOCK")
-            .or_else(|_| std::env::var("MGC_AUDIT_STRICT"))
-            .ok()
-            .map(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false)
-            || store_min_age.is_some();
-        let min_age_secs = store_min_age.unwrap_or(86400) as i64;
-        let allow_untrusted = std::env::var("MAGICORE_ALLOW_UNTRUSTED")
-            .ok()
-            .map(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
-        if allow_untrusted {
-            use std::sync::OnceLock;
-            static WARNED: OnceLock<()> = OnceLock::new();
-            WARNED.get_or_init(|| {
-                eprintln!(
-                    "⚠️  [magicore] WARNING: MAGICORE_ALLOW_UNTRUSTED=1 — supply-chain guards\n   \
-                     (24h quarantine + no-downgrade) are BYPASSED for this process."
-                );
-            });
-        }
-        if block_new && !allow_untrusted {
-            for r in &result.resolutions {
-                if let Some(pkg_meta) = metadata.get(r.package_id.name_str()) {
-                    let ver = r.package_id.version().to_string();
-                    if let Err(msg) =
-                        native::npm_registry::check_publish_age(pkg_meta, &ver, min_age_secs)
-                    {
-                        return Err(mgc_types::MgError::Other(msg));
-                    }
-                }
-            }
-        }
-
-        if !allow_untrusted {
-            if let Ok(cwd) = std::env::current_dir() {
-                let layout = Layout::new(project_cache_dir(&cwd));
-                if let Ok(db) = Database::open(&layout.db_path()) {
-                    for r in &result.resolutions {
-                        let id = &r.package_id;
-                        let old = db.latest_installed_version(id.name_str()).ok().flatten();
-                        if let Some(old) = old {
-                            let new_v = id.version();
-                            if *new_v < old {
-                                return Err(mgc_types::MgError::Other(format!(
-                                    "🚨 SECURITY: Downgrade blocked for '{id}' — installed {old}, requested {new_v}.\n   \
-                                     This can regress packages in the CAS store. Use MAGICORE_ALLOW_UNTRUSTED=1 to override."
-                                )));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        enforce_resolution_supply_chain_guards(&result.resolutions, &metadata)?;
 
         if resolve_prefetch_enabled() {
             if let Some(shared_cache) = self.shared_cache.clone() {
@@ -648,71 +580,4 @@ impl PackageAdapter for WebAdapter {
         })
         .await
     }
-}
-
-pub fn spawn_tarball_download(
-    shared_cache: SharedWebCache,
-    packages: Vec<ResolvedPackage>,
-    registry_url: String,
-) -> tokio::task::JoinHandle<MgResult<u64>> {
-    tokio::spawn(async move {
-        let cache = shared_cache
-            .package_cache()
-            .map_err(|e| mgc_types::MgError::Store(e.to_string()))?;
-        let download_sem = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
-        let mut set: tokio::task::JoinSet<MgResult<u64>> = tokio::task::JoinSet::new();
-        for pkg in packages {
-            let cache = cache.clone();
-            let reg = native::npm_registry::NpmRegistry::new(registry_url.as_str());
-            let download_sem = Arc::clone(&download_sem);
-            set.spawn(async move {
-                let id = pkg.id.clone();
-                let lock = tarball_prefetch_lock(&id);
-                let _guard = lock.lock().await;
-                if let Some(bytes) = cache
-                    .get_tarball(&id)
-                    .map_err(|e| mgc_types::MgError::Store(e.to_string()))?
-                {
-                    return Ok(bytes.len() as u64);
-                }
-                let _permit = download_sem.acquire_owned().await.map_err(|e| {
-                    mgc_types::MgError::Other(format!("download semaphore closed: {e}"))
-                })?;
-                let url = package_tarball_url(reg.registry_url(), &pkg);
-                let bytes =
-                    native::npm_registry::batch_download_tarball_with_auth(&url, reg.auth_token())
-                        .await
-                        .map_err(|e| {
-                            mgc_types::MgError::Network(format!("prefetch dl failed: {e}"))
-                        })?;
-                let id = pkg.id.clone();
-                let len = bytes.len() as u64;
-                let cache2 = cache.clone();
-                match tokio::task::spawn_blocking(move || {
-                    let mut pkg = pkg;
-                    if let Err(e) = crate::install::download::prepare_verified_tarball_for_cache(
-                        &mut pkg, &bytes,
-                    ) {
-                        eprintln!("[magicore] prefetch integrity failed for {id}: {e}");
-                    } else if let Err(e) = cache2.cache_tarball(&pkg.id, &bytes) {
-                        eprintln!("[magicore] prefetch cache write failed for {id}: {e}");
-                    }
-                })
-                .await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        eprintln!("[magicore] prefetch spawn_blocking panicked: {e}");
-                    }
-                }
-                Ok(len)
-            });
-        }
-        let mut total = 0u64;
-        while let Some(r) = set.join_next().await {
-            total +=
-                r.map_err(|e| mgc_types::MgError::Other(format!("prefetch task failed: {e}")))??;
-        }
-        Ok::<_, mgc_types::MgError>(total)
-    })
 }
