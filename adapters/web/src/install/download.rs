@@ -1,5 +1,5 @@
-//! `install/download.rs` — Tarball downloading and prefetching pipeline.
-//! Integrity verification đã tách sang install/integrity.rs.
+//! `install/download.rs` — Tarball prefetching and download pipeline orchestration.
+//! URL construction và fetch logic đã tách sang install/fetch.rs.
 
 use std::sync::Arc;
 
@@ -8,14 +8,13 @@ use mgc_store::{ContentStore, Layout, PackageCache};
 use mgc_types::adapter::ResolvedPackage;
 use mgc_types::{MgError, MgResult, PackageId};
 
-use crate::audit::{allow_insecure_loopback_url, is_tarball_url_trusted};
 use crate::cache::{download_concurrency_limit, SharedWebCache};
 use crate::install::extract::{
     ensure_extracted_package_root, ensure_extracted_package_root_from_bytes, tarball_prefetch_lock,
 };
 use crate::lockfile::compute_tarball_integrity;
 use crate::native;
-use crate::profile::{PipelineProfile, TarballFetchResult, TarballPayload};
+use crate::profile::{PipelineProfile, TarballPayload};
 
 // Re-export integrity helpers để caller/test cũ không đổi import
 // Re-export integrity helpers so old callers/tests don't need to change imports
@@ -24,175 +23,16 @@ pub use crate::install::integrity::{
     verify_tarball_integrity,
 };
 
+// Re-export fetch helpers để caller/test cũ không đổi import
+// Re-export fetch helpers so old callers/tests don't need to change imports
+pub use crate::install::fetch::{get_tarball_bytes, package_tarball_url};
+
 pub fn pipeline_task_concurrency_limit(extract_concurrency: usize) -> usize {
     std::env::var("MAGICORE_WEB_PIPELINE_TASK_CONCURRENCY")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|limit| *limit > 0)
         .unwrap_or_else(|| (download_concurrency_limit() + extract_concurrency).max(1))
-}
-
-pub fn package_tarball_url(registry_url: &str, pkg: &ResolvedPackage) -> String {
-    let fallback = |_registry: &str, _pkg: &ResolvedPackage| {
-        format!(
-            "{}/{}/-/{}-{}.tgz",
-            _registry.trim_end_matches('/'),
-            _pkg.id.name_str(),
-            _pkg.id.name().unscoped(),
-            _pkg.id.version()
-        )
-    };
-    if !pkg.tarball_url.is_empty() {
-        if !pkg.tarball_url.starts_with("https://")
-            && !allow_insecure_loopback_url(&pkg.tarball_url)
-        {
-            eprintln!(
-                "WARNING: Tarball URL for '{}' is not HTTPS, using registry fallback",
-                pkg.id.name_str()
-            );
-            return fallback(registry_url, pkg);
-        }
-
-        if !is_tarball_url_trusted(&pkg.tarball_url, registry_url) {
-            eprintln!(
-                "WARNING: Tarball URL for '{}' domain mismatch with registry, using registry fallback",
-                pkg.id.name_str()
-            );
-            return fallback(registry_url, pkg);
-        }
-
-        return pkg.tarball_url.clone();
-    }
-
-    fallback(registry_url, pkg)
-}
-
-pub async fn get_tarball_bytes(
-    pkg: &ResolvedPackage,
-    cache: &PackageCache,
-    shared_package_cache: Option<&PackageCache>,
-    registry_url: Option<&str>,
-    registry_token: Option<&str>,
-    download_sem: &tokio::sync::Semaphore,
-) -> MgResult<TarballFetchResult> {
-    let prefer_shared_cache = shared_package_cache.is_some();
-    if let Some(bytes) = cache
-        .get_tarball(&pkg.id)
-        .map_err(|e| MgError::Store(e.to_string()))?
-    {
-        if verify_tarball_integrity(pkg, &bytes).is_ok() {
-            return Ok(TarballFetchResult {
-                payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
-                queue_wait_ms: 0,
-                io_ms: 0,
-                persist_to_shared_cache: false,
-            });
-        }
-        let _ = std::fs::remove_file(cache.tarball_path(&pkg.id));
-    }
-
-    if let Some(pc) = shared_package_cache {
-        if let Some(bytes) = pc
-            .get_tarball(&pkg.id)
-            .map_err(|e| MgError::Store(e.to_string()))?
-        {
-            if verify_tarball_integrity(pkg, &bytes).is_ok() {
-                if !prefer_shared_cache {
-                    let _ = cache.cache_tarball_from_path(&pkg.id, &pc.tarball_path(&pkg.id));
-                }
-                return Ok(TarballFetchResult {
-                    payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
-                    queue_wait_ms: 0,
-                    io_ms: 0,
-                    persist_to_shared_cache: false,
-                });
-            }
-            let _ = std::fs::remove_file(pc.tarball_path(&pkg.id));
-        }
-    }
-
-    let Some(url) = registry_url else {
-        return Err(MgError::Other(format!(
-            "tarball '{}' not in cache and no registry available",
-            pkg.id
-        )));
-    };
-
-    let queue_started_at = std::time::Instant::now();
-    let _permit = download_sem
-        .acquire()
-        .await
-        .map_err(|e| MgError::Other(format!("download semaphore closed: {e}")))?;
-    let queue_wait_ms = queue_started_at.elapsed().as_millis() as u64;
-    let tarball_url = package_tarball_url(url, pkg);
-    let io_started_at = std::time::Instant::now();
-    let mut pkg = pkg.clone();
-    let final_path = shared_package_cache
-        .map(|pc| pc.tarball_path(&pkg.id))
-        .unwrap_or_else(|| cache.tarball_path(&pkg.id));
-    let temp_path = final_path.with_extension("tmp");
-    let downloaded =
-        native::npm_registry::NpmRegistry::new_with_token(url, registry_token.map(str::to_string))
-            .download_tarball_auto(&tarball_url, &temp_path)
-            .await
-            .map_err(|e| {
-                MgError::Network(format!(
-                    "download failed for '{}': {}",
-                    pkg.id.name_str(),
-                    e
-                ))
-            })?;
-    let io_ms = io_started_at.elapsed().as_millis() as u64;
-    match downloaded {
-        native::npm_registry::DownloadedTarball::Bytes(bytes) => {
-            prepare_verified_tarball_for_cache(&mut pkg, &bytes)?;
-            let persist_to_shared_cache = shared_package_cache.is_some();
-            if !persist_to_shared_cache {
-                cache
-                    .cache_tarball(&pkg.id, &bytes)
-                    .map_err(|e| MgError::Store(e.to_string()))?;
-            }
-            Ok(TarballFetchResult {
-                payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
-                queue_wait_ms,
-                io_ms,
-                persist_to_shared_cache,
-            })
-        }
-        native::npm_registry::DownloadedTarball::Streamed {
-            computed_integrity,
-            bytes_len,
-        } => {
-            if !pkg.integrity.is_empty() && pkg.integrity != computed_integrity {
-                let _ = std::fs::remove_file(&temp_path);
-                return Err(MgError::Other(format!(
-                    "integrity mismatch for '{}': expected '{}', got '{}'",
-                    pkg.id.name_str(),
-                    pkg.integrity,
-                    computed_integrity
-                )));
-            }
-            if pkg.integrity.is_empty() {
-                pkg.integrity = computed_integrity;
-            }
-            if let Some(parent) = final_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| MgError::Store(e.to_string()))?;
-            }
-            std::fs::rename(&temp_path, &final_path).map_err(|e| {
-                MgError::Store(format!(
-                    "failed to promote streamed tarball for '{}': {}",
-                    pkg.id.name_str(),
-                    e
-                ))
-            })?;
-            Ok(TarballFetchResult {
-                payload: TarballPayload::CachedPath(final_path, bytes_len),
-                queue_wait_ms,
-                io_ms,
-                persist_to_shared_cache: false,
-            })
-        }
-    }
 }
 
 pub async fn prefetch_tarballs(

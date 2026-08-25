@@ -3,6 +3,7 @@
 pub mod bin;
 pub mod download;
 pub mod extract;
+pub mod fetch;
 pub mod integrity;
 pub mod link_tree;
 pub mod materialize;
