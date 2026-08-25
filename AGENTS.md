@@ -3,7 +3,8 @@
 - Đọc `RULE.md` trước MỌI task — bắt buộc (workflow 5 bước, naming, song ngữ).
 - Nguồn chân lý: `sys-mgc/11-folder-structure.md` (cây folder) + `sys-mgc/00-index.md` (quyết định).
 - Báo cáo tiếng Việt; code/design không tự ý vượt phase đã duyệt.
-- **BÁO CÁO SAU MỖI LẦN SỬA (BẮT BUỘC, user 2026-08-15):** sau mỗi lần sửa xong (code/design/docs/RULE) → APPEND 1 entry vào `docs/specs/magiCoreChangeLog.md` — ghi: sửa gì, động file nào, RULE đổi gì (nếu có), thời gian ISO. KHÔNG sửa đè entry cũ. RULE thay đổi → cập nhật AGENTS.md/RULE.md + ghi vào changeLog.
+- **BÁO CÁO SAU MỖI LẦN SỬA (BẮT BUỘC, user 2026-08-15):** sau mỗi lần sửa xong (code/design/docs/RULE) → APPEND 1 entry vào `docs/specs/magiCoreChangeLog.md` — ghi: sửa gì, động file nào, RULE đổi gì (nếu có), thời gian ISO. KHÔNG sửa đè entry cũ. RULE thay đổi → cập nhật AGENTS.md/RULE.md + ghi vào changeLog. **Changelog/docs nội bộ là local-only mặc định: không `git add`, không `git add -f`, không commit/push bất kỳ `.md` trong `docs/` nếu user chưa cho phép đúng file đó.**
+- **CORE PARITY (user 2026-08-25):** không dồn năng lực vào mỗi `web`; khi thêm CLI/scaffold/test/quality gate phải cân bằng tối thiểu 4 core chính `web`, `ai`, `app`, `lib` hoặc ghi rõ lý do scope cục bộ.
 - Task rà soát/phân tích/maintain codebase (hoặc user kéo folder vào) → đọc `CODEBASE_REVIEW.md` và tuân theo flow (chờ user kéo folder → index GitNexus → review → báo cáo).
 
 ## Quy trình PHÁT TRIỂN BẮT BUỘC (mandatory — DEFINE → SHIP)

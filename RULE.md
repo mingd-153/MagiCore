@@ -170,6 +170,7 @@ Quy tắc:
 7. Log/in in secret (token/password/OTP) dưới mọi hình thức. Logging secrets in any form.
 8. **Hardcode giá trị có thể config** (đường dẫn, URL, kích thước giới hạn, timeout, registry, cổng...) — mọi giá trị đổi được theo môi trường phải qua config (mgc.toml / env / const tập trung). Hardcoding configurable values is forbidden.
 9. **Test trong `src/`** (không dùng `#[cfg(test)]` inline) — test phải ở `test/` (hoặc `tests/` chuẩn Cargo). Tests in src/ are forbidden.
+10. **Commit tài liệu nội bộ khi chưa được user cho phép rõ từng file.** Internal docs/changelogs/spec notes under `docs/` are private by default: append/update locally when RULE requires evidence, but do not `git add`, `git add -f`, commit, or push any `.md` under `docs/` unless the user explicitly approves that exact file for git.
 
 ---
 
@@ -224,5 +225,16 @@ Mọi cổng mạng dùng trong dự án **bắt buộc chứa đủ 4 chữ s�
 - Port mặc định chính thức của registry: **4315** (mgc-registry). Các service khác chọn hoán vị khác nhau trong 24 số trên — không trùng lặp.
 - CẤM port không đủ 4 chữ số đó (vd: `8080`, `3000`, `18091`, `5432`). Forbidden: any port without all four digits.
 - Violation = redo (§1).
+
+---
+
+## 14. CORE PARITY — CHIA ĐỀU NĂNG LỰC GIỮA CÁC CORE CHÍNH
+
+MagiCore không được phát triển lệch về một core duy nhất. Khi thêm CLI, scaffold, test, docs, hoặc quality gate cho một core chính, agent phải rà tác động parity cho tối thiểu 4 core chính đang cạnh tranh trực tiếp: `web`, `ai`, `app`, `lib` (và mở rộng `game/cloud/iot/cicd/hardware` khi task chạm tới).
+
+- Không ship feature nổi bật chỉ cho `web` nếu cùng pattern có thể áp dụng hợp lý cho `ai`, `app`, `lib`.
+- Nếu buộc phải làm một core trước vì test đang fail hoặc user chỉ định scope, phải ghi rõ đó là fix cục bộ, không coi là định hướng sản phẩm.
+- CLI surface phải ưu tiên mô hình core-neutral: lệnh chung (`mgc init`, `mgc install`, `mgc dev`, `mgc build`) tự nhận core trước; lệnh per-core chỉ là alias/shortcut khi cần.
+- Roadmap và test mới phải cân bằng capability matrix thay vì dồn toàn bộ benchmark/scaffold vào `web`.
 
 ---
