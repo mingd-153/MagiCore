@@ -13,7 +13,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         Some(other) => return Err(crate::error::unknown_hardware_framework(other)),
         None => return Err(crate::error::no_hardware_framework()),
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
+    super::scaffold_and_save_metadata(&config)?;
     mgc_ui::success(&format!(
         "Hardware '{}' scaffolded at '{project_name}'. Run `mgc add-hardware bench` or `mgc bench` to run benchmarks.",
         config.frameworks.first().map(|s| s.as_str()).unwrap_or("")

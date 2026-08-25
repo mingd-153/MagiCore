@@ -13,7 +13,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         // fetch fail → fallback generator procedural sẵn có.
         crate::commands::template::ensure_layer(&format!("game/{fw}")).await;
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
+    super::scaffold_and_save_metadata(&config)?;
     mgc_ui::success("Game project created. Run `mgc add-game <pkg>` or `mgc install-game` next.");
     Ok(())
 }

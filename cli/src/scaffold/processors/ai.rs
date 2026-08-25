@@ -101,7 +101,7 @@ impl AiProcessor {
         // 6. models/README.md hướng dẫn quản lý model CAS
         write_file(
             &target.join("models").join("README.md"),
-            "# AI Models Directory\n\nTải và quản lý mô hình siêu lớn (ví dụ Llama 330B, DeepSeek, Qwen) bằng lệnh MagiCore:\n```bash\nmg model pull hf://org/repo\n```\nCác trọng số mô hình sẽ được lưu trong Store CAS và tự động áp dụng Token Activation Pruning.\n",
+            "# AI Models Directory\n\nTải và quản lý mô hình siêu lớn (ví dụ Llama 330B, DeepSeek, Qwen) bằng lệnh MagiCore:\n```bash\nmgc model pull hf://org/repo\n```\nCác trọng số mô hình sẽ được lưu trong Store CAS và tự động áp dụng Token Activation Pruning.\n",
         )?;
 
         Ok(())

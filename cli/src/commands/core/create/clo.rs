@@ -12,7 +12,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         // Registry-first: fetch layer clo/<fw> nếu chưa có; fetch fail → fallback procedural.
         crate::commands::template::ensure_layer(&format!("clo/{fw}")).await;
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
+    super::scaffold_and_save_metadata(&config)?;
     mgc_ui::success("Cloud project created. Run `mgc add-clo <pkg>` or `mgc install-clo` next.");
     Ok(())
 }

@@ -12,7 +12,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         // Registry-first: fetch layer ai/<fw> nếu chưa có; fetch fail → fallback procedural.
         crate::commands::template::ensure_layer(&format!("ai/{fw}")).await;
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
+    super::scaffold_and_save_metadata(&config)?;
     mgc_ui::success(
         "AI project created. Pull a model with `mgc model pull hf://...` or run `mgc dev`.",
     );

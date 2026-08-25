@@ -1430,11 +1430,7 @@ fn common_readme(name: &str, core: &str, framework: &str, features: &[String]) -
     if !features.is_empty() {
         out.push_str(&format!("- Features: `{}`\n", features.join("`, `")));
     }
-    let next_step = if core == "web" {
-        "Run `mgc install-web` in this directory when the adapter for this core is ready."
-    } else {
-        "Run `mgc install` in this directory when the adapter for this core is ready."
-    };
+    let next_step = "Run `mgc install` in this directory; MagiCore detects the core from `mgc.toml` and `.mgc.core`.";
     out.push_str(&format!("\n## Next\n\n{next_step}\n"));
     out
 }
@@ -1894,7 +1890,7 @@ mod tests {
         assert!(!root_package.contains("mgc web build"));
         assert!(!root_package.contains("mgc web check"));
         let readme = std::fs::read_to_string(out.join("README.md")).unwrap();
-        assert!(readme.contains("mgc install-web"));
+        assert!(readme.contains("mgc install"));
         assert!(out.join("apps").join("frontend").join("README.md").exists());
         assert!(out.join("apps").join("backend").join("README.md").exists());
         assert!(out.join("packages").join("README.md").exists());
