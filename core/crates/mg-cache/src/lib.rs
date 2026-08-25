@@ -7,10 +7,14 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use dashmap::DashMap;
 
 /// Package cache — Cache packages
 pub struct PackageCache {
     root: PathBuf,
+    /// Per-package locks for concurrent access safety — Lock per-package cho an toàn concurrent
+    locks: DashMap<String, Arc<RwLock<()>>>,
 }
 
 /// Cache entry metadata — Metadata entry cache
@@ -37,7 +41,10 @@ impl PackageCache {
             fs::set_permissions(&root, perms)?;
         }
         
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            locks: DashMap::new(),  // O1: Per-package locks
+        })
     }
 
     /// Get default cache directory — Lấy thư mục cache mặc định
@@ -53,6 +60,12 @@ impl PackageCache {
 
     /// Get package from cache (with integrity check) — Lấy package từ cache
     pub fn get_package(&self, package_id: &str, expected_integrity: &str) -> Result<PathBuf> {
+        // O1: Acquire read lock (concurrent reads OK, blocks writes)
+        let lock = self.locks
+            .entry(package_id.to_string())
+            .or_insert_with(|| Arc::new(RwLock::new(())));
+        let _guard = lock.value().read().unwrap();
+        
         let pkg_path = self.package_path(package_id);
         if !pkg_path.exists() {
             anyhow::bail!("Package not in cache: {}", package_id);
@@ -79,6 +92,12 @@ impl PackageCache {
         source: &Path,
         integrity: &str,
     ) -> Result<PathBuf> {
+        // O1: Acquire write lock (exclusive access)
+        let lock = self.locks
+            .entry(package_id.to_string())
+            .or_insert_with(|| Arc::new(RwLock::new(())));
+        let _guard = lock.value().write().unwrap();
+        
         let pkg_dir = self.package_dir(package_id);
         fs::create_dir_all(&pkg_dir)?;
 
@@ -179,7 +198,10 @@ impl PackageCache {
     /// Create cache with custom root (for testing) — Tạo cache với root tùy chỉnh
     #[doc(hidden)]
     pub fn with_root(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            locks: DashMap::new(),
+        }
     }
     
     /// T5.2: Get multiple packages in parallel (rayon) — Lấy nhiều packages song song
@@ -225,9 +247,7 @@ mod tests {
     #[test]
     fn test_cache_store_and_get() {
         let temp = TempDir::new().unwrap();
-        let cache = PackageCache {
-            root: temp.path().to_path_buf(),
-        };
+        let cache = PackageCache::with_root(temp.path().to_path_buf());
 
         // Create fake package
         let pkg_file = temp.path().join("test.tgz");
@@ -247,9 +267,7 @@ mod tests {
     #[test]
     fn test_has_package() {
         let temp = TempDir::new().unwrap();
-        let cache = PackageCache {
-            root: temp.path().to_path_buf(),
-        };
+        let cache = PackageCache::with_root(temp.path().to_path_buf());
 
         assert!(!cache.has_package("react@18.2.0"));
 
@@ -264,9 +282,7 @@ mod tests {
     #[test]
     fn test_integrity_mismatch() {
         let temp = TempDir::new().unwrap();
-        let cache = PackageCache {
-            root: temp.path().to_path_buf(),
-        };
+        let cache = PackageCache::with_root(temp.path().to_path_buf());
 
         let pkg_file = temp.path().join("test.tgz");
         fs::write(&pkg_file, b"original").unwrap();
@@ -287,9 +303,7 @@ mod tests {
     #[test]
     fn test_invalidate_package() {
         let temp = TempDir::new().unwrap();
-        let cache = PackageCache {
-            root: temp.path().to_path_buf(),
-        };
+        let cache = PackageCache::with_root(temp.path().to_path_buf());
 
         let pkg_file = temp.path().join("test.tgz");
         fs::write(&pkg_file, b"data").unwrap();

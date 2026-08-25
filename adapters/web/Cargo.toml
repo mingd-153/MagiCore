@@ -12,6 +12,8 @@ description = "Web ecosystem adapter for MegaGate"
 mg-types = { workspace = true }
 mg-adapter-base = { workspace = true }
 mg-config = { workspace = true }
+mg-crypto = { workspace = true }
+mg-cache = { workspace = true }
 mg-resolver = { workspace = true }
 mg-store = { workspace = true }
 mg-lockfile = { workspace = true }
