@@ -139,7 +139,7 @@ pub fn command_to_dispatch(
         Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
         Commands::Docs { output } => Some(CommonCommand::Docs { output }),
         Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
-        Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
+        Commands::Sbom { format, output, name, version, dir } => Some(CommonCommand::Sbom { format, output, name, version, dir }),
         Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
         Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
         _ => None,
@@ -216,6 +216,7 @@ pub fn command_to_dispatch(
             allow_scripts,
             prefer_dedupe,
             repair,
+            offline,
         } => Some(CoreCommand::InstallWeb {
             packages,
             frozen,
@@ -223,6 +224,7 @@ pub fn command_to_dispatch(
             allow_scripts,
             prefer_dedupe,
             repair,
+            offline,
         }),
         Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
         Commands::InstallAi { packages, dry_run } => {

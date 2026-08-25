@@ -1142,7 +1142,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1454,9 +1454,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.15"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
+checksum = "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1929,7 +1929,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2205,7 +2205,7 @@ dependencies = [
 
 [[package]]
 name = "mg"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2274,7 +2274,7 @@ dependencies = [
 
 [[package]]
 name = "mg-adapter-base"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2289,7 +2289,7 @@ dependencies = [
 
 [[package]]
 name = "mg-ai-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2308,7 +2308,7 @@ dependencies = [
 
 [[package]]
 name = "mg-app-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2327,7 +2327,7 @@ dependencies = [
 
 [[package]]
 name = "mg-cache"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "mg-cicd-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2360,7 +2360,7 @@ dependencies = [
 
 [[package]]
 name = "mg-cloud-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2382,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "mg-config"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "mg-dist"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2426,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "mg-exec"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2435,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "mg-fetcher"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "mg-game-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2476,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "mg-hardware-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "mg-http"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "mg-iot-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "mg-lib-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "mg-oci"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2615,7 +2615,7 @@ dependencies = [
 
 [[package]]
 name = "mg-pack"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2631,7 +2631,7 @@ dependencies = [
 
 [[package]]
 name = "mg-platform"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2642,7 +2642,7 @@ dependencies = [
 
 [[package]]
 name = "mg-plugin"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "mg-types",
@@ -2651,7 +2651,7 @@ dependencies = [
 
 [[package]]
 name = "mg-publish"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2669,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "mg-registry-server"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "mg-resolver"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2723,7 +2723,7 @@ dependencies = [
 
 [[package]]
 name = "mg-sbom"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2737,7 +2737,7 @@ dependencies = [
 
 [[package]]
 name = "mg-search"
-version = "0.4.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "mg-store"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -2792,7 +2792,7 @@ dependencies = [
 
 [[package]]
 name = "mg-types"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2804,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "mg-ui"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "colored",
@@ -2817,7 +2817,7 @@ dependencies = [
 
 [[package]]
 name = "mg-web-adapter"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2863,7 +2863,7 @@ dependencies = [
 
 [[package]]
 name = "mg-workspace"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2990,7 +2990,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3473,7 +3473,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3864,7 +3864,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4641,10 +4641,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5381,7 +5381,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

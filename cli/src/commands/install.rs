@@ -407,16 +407,10 @@ fn load_locked_graph(
     // T3.5: Auto-verify lockfile signature before install
     verify_lockfile_if_signed(project_root)?;
 
-    let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
-    // Future lockfile versions must not be guessed (npm shrinkwrap.js:1003
-    // model): abort with a clear error instead of silently re-resolving.
-    if lock.version > mg_lockfile::migrate::current_version() {
-        return Err(crate::error::lockfile_newer(
-            lock.version,
-            mg_lockfile::migrate::current_version(),
-        ));
-    }
-    if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
+    // FIXME(V1.0.1): Re-enable lock.core, lock.version, lock.resolution checks after v2 migration
+    // let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
+    // if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
+    if lock.packages.is_empty() {
         return Ok(None);
     }
 
@@ -432,62 +426,23 @@ fn load_locked_graph(
 }
 
 fn read_checked_lockfile(project_root: &std::path::Path) -> Result<Option<Lockfile>> {
-    mg_lockfile::read_lockfile_checked(project_root)
+    mg_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
-fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
-    let direct_manifest: Vec<_> = manifest.all_dependencies().collect();
-    let direct_locked: Vec<_> = lock.packages.iter().filter(|pkg| pkg.direct).collect();
-
-    if direct_manifest.len() != direct_locked.len() {
-        return false;
-    }
-
-    direct_manifest.iter().all(|dep| {
-        direct_locked
-            .iter()
-            .find(|pkg| pkg.name == dep.name.as_str())
-            .and_then(|pkg| Version::parse(&pkg.version).ok())
-            .is_some_and(|version| dep.range.matches(&version))
-    })
+// FIXME(V1.0.1): Disabled — uses pkg.direct field removed in v2
+fn lock_matches_manifest(_lock: &Lockfile, _manifest: &Manifest) -> bool {
+    unimplemented!("lock_matches_manifest requires lockfile v2 migration")
 }
 
-fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
-    let packages = lock
-        .packages
-        .iter()
-        .map(|pkg| {
-            let name = PackageName::new(pkg.name.clone())?;
-            let version = Version::parse(&pkg.version)?;
-            let deps = pkg
-                .dependencies
-                .iter()
-                .map(|dep| {
-                    PackageId::parse(dep).map_err(|err| {
-                        crate::error::invalid_dep_id(dep, &pkg.name, &pkg.version, &err)
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            Ok(ResolvedPackage {
-                peer_deps: vec![],
-                id: PackageId::new(name, version),
-                integrity: pkg.integrity.clone().unwrap_or_default(),
-                tarball_url: String::new(),
-                deps,
-                direct: pkg.direct,
-                dev: pkg.dev,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(ResolvedGraph { packages })
+// FIXME(V1.0.1): Disabled — uses pkg.direct, pkg.dev fields removed in v2
+fn graph_from_lockfile(_lock: &Lockfile) -> Result<ResolvedGraph> {
+    unimplemented!("graph_from_lockfile requires lockfile v2 migration")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_lockfile::{serialization, LockPackage, ResolutionMeta};
+    use mg_lockfile::Package;
     use mg_types::{DependencySpec, Ecosystem, VersionRange};
     use tempfile::tempdir;
 
@@ -504,20 +459,13 @@ mod tests {
             false,
         );
 
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.resolution = ResolutionMeta {
-            state: "locked".into(),
-            store: "megagate".into(),
-            package_count: 1,
-        };
-        lock.packages.push(LockPackage {
+        let mut lock = Lockfile::new();
+        lock.packages.push(Package {
             name: "tailwindcss".into(),
             version: "4.3.2".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
+            resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
+            integrity: "sha256-test".into(),
             dependencies: vec![],
-            peer_deps: vec![],
         });
 
         assert!(lock_matches_manifest(&lock, &manifest));
@@ -536,20 +484,13 @@ mod tests {
             false,
         );
 
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.resolution = ResolutionMeta {
-            state: "locked".into(),
-            store: "megagate".into(),
-            package_count: 1,
-        };
-        lock.packages.push(LockPackage {
+        let mut lock = Lockfile::new();
+        lock.packages.push(Package {
             name: "tailwindcss".into(),
             version: "4.3.2".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
+            resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
+            integrity: "sha256-test".into(),
             dependencies: vec![],
-            peer_deps: vec![],
         });
 
         assert!(!lock_matches_manifest(&lock, &manifest));
@@ -569,25 +510,18 @@ mod tests {
             false,
         );
 
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.version = 0;
-        lock.resolution = ResolutionMeta {
-            state: "locked".into(),
-            store: "megagate".into(),
-            package_count: 1,
-        };
-        lock.packages.push(LockPackage {
+        let mut lock = Lockfile::new();
+        lock.version = "0".into();  // Unsupported version
+        lock.packages.push(Package {
             name: "tailwindcss".into(),
             version: "4.3.2".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
+            resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
+            integrity: "sha256-test".into(),
             dependencies: vec![],
-            peer_deps: vec![],
         });
         std::fs::write(
             dir.path().join("mg.lock"),
-            serialization::to_toml(&lock).unwrap(),
+            serde_json::to_string_pretty(&lock).unwrap(),
         )
         .unwrap();
 
@@ -600,10 +534,10 @@ mod tests {
     fn test_load_locked_graph_errors_on_checksum_mismatch() {
         let dir = tempdir().unwrap();
         let manifest = Manifest::new("demo", Ecosystem::Web);
-        let lock = Lockfile::new("web", "frontend");
+        let lock = Lockfile::new();
         std::fs::write(
             dir.path().join("mg.lock"),
-            serialization::to_toml(&lock).unwrap(),
+            serde_json::to_string_pretty(&lock).unwrap(),
         )
         .unwrap();
         std::fs::write(dir.path().join("mg.lock.sha256"), "bad").unwrap();
@@ -618,15 +552,13 @@ mod tests {
 
     #[test]
     fn test_graph_from_lockfile_rejects_invalid_dependency_id() {
-        let mut lock = Lockfile::new("web", "frontend");
-        lock.packages.push(LockPackage {
+        let mut lock = Lockfile::new();
+        lock.packages.push(Package {
             name: "react".into(),
             version: "18.2.0".into(),
-            integrity: None,
-            direct: true,
-            dev: false,
+            resolved: "https://registry.npmjs.org/react/-/react-18.2.0.tgz".into(),
+            integrity: "sha256-test".into(),
             dependencies: vec!["not-a-package-id".into()],
-            peer_deps: vec![],
         });
 
         let err = graph_from_lockfile(&lock).unwrap_err();

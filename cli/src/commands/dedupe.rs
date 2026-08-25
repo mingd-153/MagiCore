@@ -154,7 +154,8 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     if merged > 0 && !args.dry_run {
         // Verify runtime build before committing the merge (02 §5.2).
         let backup = lock_content.clone();
-        mg_lockfile::write_lockfile(&project_root, &new_lock)?;
+        let lock_path = project_root.join("mga.lock");
+        mg_lockfile::write_lockfile(&new_lock, &lock_path)?;
         if let Err(err) = verify_with_build(&project_root, false).await {
             fs::write(&mg_lock, backup)?;
             bail!("merge rolled back — build verification failed: {err}");

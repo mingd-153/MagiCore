@@ -37,7 +37,7 @@ pub async fn run(core: &str, packages: Vec<String>) -> Result<()> {
         "ai" => ai::install(packages, false).await,
         #[cfg(not(feature = "ai"))]
         "ai" => Err(crate::error::core_not_in_build("ai")),
-        "web" => web::install(packages, false, false, false, false, false).await,
+        "web" => web::install(packages, false, false, false, false, false, false).await,
         #[cfg(feature = "clo")]
         "clo" | "cloud" => clo::install(packages, false).await,
         #[cfg(not(feature = "clo"))]

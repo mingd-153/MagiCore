@@ -3,7 +3,7 @@ use super::*;
 use base64::Engine;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
+use mg_lockfile::{Lockfile, Package};
 use mg_resolver::DependencyProvider;
 use mg_store::{Layout, PackageCache};
 use sha2::{Digest, Sha512};
@@ -121,8 +121,8 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
         .exists());
 
     let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "locked");
+    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages.len(), 1);
     assert_eq!(parsed.packages[0].name, "tailwindcss");
     assert_eq!(parsed.packages[0].version, "3.4.0");
@@ -196,7 +196,7 @@ async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
     assert_eq!(dep.range.as_str(), "*");
 
     let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
+    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
     assert!(parsed
         .packages
         .iter()
@@ -447,10 +447,9 @@ async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable(
 #[test]
 fn test_read_web_lockfile_checked_rejects_checksum_mismatch() {
     let dir = tempfile::tempdir().unwrap();
-    let mut lock = Lockfile::new("web", "frontend");
-    lock.resolution.state = "locked".into();
-    let toml = serialization::to_toml(&lock).unwrap();
-    std::fs::write(dir.path().join("mg.lock"), toml).unwrap();
+    let lock = Lockfile::new();
+    let json = serde_json::to_string_pretty(&lock).unwrap();
+    std::fs::write(dir.path().join("mg.lock"), json).unwrap();
     std::fs::write(dir.path().join("mg.lock.sha256"), "not-the-checksum").unwrap();
 
     let err = read_web_lockfile_checked(dir.path()).unwrap_err();
@@ -479,22 +478,21 @@ fn test_pending_scaffold_lockfile_without_checksum_is_allowed() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("mg.lock"),
-        r#"version = 1
-core = "web"
-mode = "frontend"
-frameworks = ["react"]
-
-[resolution]
-state = "pending"
-store = "megagate"
-package_count = 0
-"#,
+        r#"{
+  "version": "2",
+  "metadata": {
+    "generated_at": "2024-01-01T00:00:00Z",
+    "generator": "mg/1.0.0",
+    "lockfile_hash": ""
+  },
+  "package": []
+}"#,
     )
     .unwrap();
 
     let lock = read_web_lockfile_checked(dir.path()).unwrap().unwrap();
-    assert_eq!(lock.resolution.state, "pending");
-    assert_eq!(lock.resolution.package_count, 0);
+    assert_eq!(lock.version, "2");
+    assert_eq!(lock.packages.len(), 0);
 }
 
 #[test]
@@ -1209,30 +1207,21 @@ async fn test_list_prefers_lockfile_state() {
     .unwrap();
     std::fs::write(
         dir.path().join("mg.lock"),
-        serialization::to_toml(&Lockfile {
-            version: 1,
-            core: "web".into(),
-            mode: "frontend".into(),
-            frameworks: vec![],
-            resolution: ResolutionMeta {
-                state: "locked".into(),
-                store: "megagate".into(),
-                package_count: 1,
+        serde_json::json!({
+            "version": "2",
+            "metadata": {
+                "generated_at": "2024-01-01T00:00:00Z",
+                "generator": "mg/1.0.0",
+                "lockfile_hash": ""
             },
-            workspaces: vec![],
-            packages: vec![LockPackage {
-                name: "tailwindcss".into(),
-                version: "4.3.2".into(),
-                integrity: Some("sha256-test".into()),
-                direct: true,
-                dev: false,
-                dependencies: vec![],
-                peer_deps: vec![],
-            }],
-            patches: vec![],
-            sig: None,
-        })
-        .unwrap(),
+            "package": [{
+                "name": "tailwindcss",
+                "version": "4.3.2",
+                "resolved": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz",
+                "integrity": "sha256-test",
+                "dependencies": []
+            }]
+        }).to_string(),
     )
     .unwrap();
 
@@ -1418,9 +1407,9 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
         .exists());
 
     let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "locked");
-    assert_eq!(parsed.resolution.package_count, 2);
+    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
+    assert_eq!(parsed.packages.len(), 2);
 
     let tmp_dir = dir
         .path()
@@ -1731,8 +1720,8 @@ async fn test_install_failure_does_not_materialize_partial_node_modules() {
     assert!(!dir.path().join("node_modules/react").exists());
 
     let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "installing");
+    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages.len(), 2);
 }
 
@@ -1796,8 +1785,8 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
     );
 
     let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "locked");
+    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages[0].version, "4.4.3");
 }
 

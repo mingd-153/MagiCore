@@ -2,6 +2,7 @@
 //! main.rs chỉ parse + dispatch; enum ~80 lệnh ở đây (định nghĩa lệnh, không logic).
 
 use clap::Subcommand;
+use std::path::PathBuf;
 
 #[derive(Subcommand, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -296,11 +297,6 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::commands::doctor::DoctorCmd,
     },
-    #[command(about = "Generate a CycloneDX 1.5 SBOM from the resolved graph")]
-    Sbom {
-        #[arg(short, long, help = "write SBOM to file (default: stdout)")]
-        output: Option<String>,
-    },
     #[command(about = "Manage kernel templates (publish/fetch — registry-backed)")]
     Template {
         #[command(subcommand)]
@@ -499,6 +495,8 @@ pub(crate) enum Commands {
         prefer_dedupe: bool,
         #[arg(long, help = "Re-link dangling symlinks in node_modules")]
         repair: bool,
+        #[arg(long, help = "Use only cached packages, no network requests")]
+        offline: bool,
     },
     #[command(
         name = "install-game",

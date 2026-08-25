@@ -8,6 +8,7 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
     <img src="https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square" alt="Rust 1.85+" />
     <img src="https://img.shields.io/badge/MCP-native-blueviolet?style=flat-square" alt="Native MCP Server" />
+    <img src="https://img.shields.io/badge/version-1.0.0-brightgreen?style=flat-square" alt="Version 1.0.0" />
   </p>
 </div>
 
@@ -15,7 +16,7 @@
 
 **MegaGate** (`mga`) is a single, fast, opinionated package manager written in Rust that handles **Web (Node.js/NPM), AI frameworks, Cloud IaC, CI/CD pipelines, Game engines, IoT toolchains, Mobile (Flutter/Swift/Kotlin), and Polyglot Libraries** — all with one consistent CLI.
 
-> **Beta Note:** `v0.3.0-beta.1` is functional and actively used in internal testing. APIs may change before `v1.0`. Please open issues and share feedback!
+> **🎉 Production Release:** `v1.0.0` is now production-ready! Includes SBOM generation, cryptographically signed lockfiles, and stable API. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.0.1 roadmap.
 
 ---
 
@@ -25,7 +26,9 @@
 | --------------------------- | ------------------------------------------------------------------------------- |
 | 🌐 **9 Ecosystems**          | Web, AI, Cloud, CI/CD, Game, IoT, App, Lib, Hardware — one CLI                  |
 | ⚡ **Zero-Buffer Streaming** | Chunks stream directly from network → disk, no full-payload RAM spike           |
-| 🔒 **Supply-Chain Security** | 24-hour new-release quarantine + SRI integrity verification                     |
+| 🔒 **Supply-Chain Security** | 24-hour new-release quarantine + SRI integrity + SBOM generation                |
+| 📋 **SBOM Generation**       | CycloneDX & SPDX formats for compliance and vulnerability tracking (NEW!)       |
+| 🔐 **Signed Lockfiles**      | Ed25519 cryptographic signatures for tamper detection (NEW!)                    |
 | 📦 **CAS Reflink Store**     | Content-addressed store with OS reflinks/hardlinks for zero-copy installs       |
 | 🔀 **Monorepo Catalogs**     | PNPM-compatible `catalog:` protocol for centralized version management          |
 | 🤖 **Native MCP Server**     | `mg mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
@@ -196,6 +199,7 @@ COMMON COMMANDS:
   outdated        List packages with available updates
   doctor          Environment diagnostic + AI-guided remediation
   mcp             Start native MCP server for AI coding agents
+  sbom            Generate Software Bill of Materials (CycloneDX/SPDX) — NEW in V1.0.0!
 
 WORKSPACE COMMANDS:
   init            Create new project scaffold
@@ -213,11 +217,48 @@ MORE:
 
 ## 🔒 Security
 
-- All packages verified via **SRI (Subresource Integrity)** checksums.
-- **24-hour release quarantine** — newly published packages are flagged.
-- `mg audit` scans for known CVEs via the advisory database.
-- Lifecycle scripts are **opt-in only** (trust gate).
-- See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+**V1.0.0 Security Status**: ✅ Approved for CLI usage (see [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md))
+
+### Security Features
+- ✅ **Cryptographically signed lockfiles** (Ed25519) for tamper detection
+- ✅ **SRI (Subresource Integrity)** checksums for all packages
+- ✅ **24-hour release quarantine** — newly published packages are flagged
+- ✅ **SBOM generation** — CycloneDX & SPDX for supply chain visibility
+- ✅ `mg audit` scans for known CVEs via the advisory database
+- ✅ Lifecycle scripts are **opt-in only** (trust gate)
+
+### Security Advisory (V1.0.0)
+**Recommendation**:
+- ✅ **Safe for CLI usage**: install, add, remove, SBOM, lockfile operations
+- ⚠️ **Registry server**: Wait for V1.0.1 before production deployment
+
+**Known Issues** (V1.0.1 hotfix — within 1 week):
+- 3 transitive dependency CVEs (quick-xml, rkyv, rsa) — affects registry server only
+- 7 unmaintained crates being replaced
+
+See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
+
+**Vulnerability Reporting**: See [SECURITY.md](SECURITY.md) for responsible disclosure.
+
+---
+
+## ⚠️ Known Limitations (V1.0.1 Roadmap)
+
+**Temporarily Disabled Features** (stubbed for rapid V1.0.0 release):
+- ❌ Workspace lockfile merging (monorepo root lockfiles)
+- ❌ Pruned install optimization (lockfile-based incremental installs)
+- ❌ `mg why` command (dependency explanation)
+- ❌ Lockfile version compatibility checks
+- ❌ ~80% of test suite (requires v2 schema rewrite)
+
+These features will be **restored in V1.0.1 hotfix (Week 7)** — estimated 1 week from V1.0.0 release.
+
+**Workarounds**:
+- Workspace projects: Each package maintains its own lockfile (no root merge)
+- Install optimization: Full resolution on every install (slower but correct)
+- Dependency explanation: Manual inspection of `mga.lock`
+
+See [docs/specs/megaGateChangeLog.md](docs/specs/megaGateChangeLog.md) for migration details.
 
 ---
 

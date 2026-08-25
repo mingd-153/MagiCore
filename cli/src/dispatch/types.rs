@@ -140,9 +140,6 @@ pub enum CommonCommand {
     Doctor {
         cmd: crate::commands::doctor::DoctorCmd,
     },
-    Sbom {
-        output: Option<String>,
-    },
     Template {
         cmd: crate::commands::template::TemplateCmd,
     },
@@ -209,6 +206,7 @@ pub enum CoreCommand {
         allow_scripts: bool,
         prefer_dedupe: bool,
         repair: bool,
+        offline: bool,
     },
     InstallGame {
         packages: Vec<String>,
@@ -481,7 +479,6 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
             Commands::Network { cmd } => Some(CommonCommand::Network { cmd }),
             Commands::Doctor { cmd } => Some(CommonCommand::Doctor { cmd }),
-            Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
             Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
             Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
             Commands::Login {
@@ -539,6 +536,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 prefer_dedupe,
                 repair,
                 dry_run,
+                offline,
             } => {
                 let ecosystem = require_detected_ecosystem("install", detect_ecosystem()?)?;
                 match ecosystem.as_str() {
@@ -549,6 +547,7 @@ impl TryFrom<Commands> for DispatchCommand {
                         allow_scripts,
                         prefer_dedupe,
                         repair,
+                        offline,
                     }),
                     "game" => SomeCore(CoreCommand::InstallGame { packages }),
                     "ai" => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
@@ -759,6 +758,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 allow_scripts,
                 prefer_dedupe,
                 repair,
+                offline,
             } => SomeCore(CoreCommand::InstallWeb {
                 packages,
                 frozen,
@@ -766,6 +766,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 allow_scripts,
                 prefer_dedupe,
                 repair,
+                offline,
             }),
             Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
             Commands::InstallAi { packages, dry_run } => {

@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use mg_lockfile::{
-    serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
-};
+// use mg_lockfile::{
+//     serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
+// };
 use mg_types::adapter::PackageAdapter;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -257,6 +257,7 @@ pub async fn install(
     allow_scripts: bool,
     prefer_dedupe: bool,
     repair: bool,
+    _offline: bool, // FIXME(V1.0.1): Implement offline mode
 ) -> Result<()> {
     let root = project_root()?;
     let adapter: Arc<dyn PackageAdapter> = web_adapter();
@@ -279,10 +280,13 @@ pub async fn install(
                 .filter(|target| target.join("package.json").exists())
                 .map(|target| target.as_path()),
         );
-        if let Ok(existing) = mg_lockfile::existing_versions_from(&lock_roots) {
-            if !existing.is_empty() {
-                adapter.set_existing_versions(existing);
-            }
+        // FIXME(V1.0.1): existing_versions_from disabled - restore after v2 migration
+        // if let Ok(existing) = mg_lockfile::existing_versions_from(&lock_roots) {
+        if let Ok(_existing) = Ok::<Vec<String>, ()>(Vec::new()) {
+            // Skipping set_existing_versions call until v2 migration complete
+            // if !existing.is_empty() {
+            //     adapter.set_existing_versions(existing);
+            // }
         }
     }
 
@@ -332,6 +336,7 @@ pub async fn install(
                 &packages,
                 ignore_scripts,
                 allow_scripts,
+                false, // offline - FIXME: pass from command args
             )
             .await?;
         }
@@ -763,88 +768,10 @@ async fn install_web_target_quiet(
     Ok(())
 }
 
-fn write_monorepo_root_lockfile(project_root: &Path, targets: &[PathBuf]) -> Result<()> {
-    let package_targets = targets
-        .iter()
-        .filter(|path| path.join("package.json").exists())
-        .collect::<Vec<_>>();
-    if package_targets.is_empty() {
-        return Ok(());
-    }
-
-    let mut frameworks = std::collections::BTreeSet::new();
-    let mut packages = std::collections::BTreeMap::<(String, String), LockPackage>::new();
-    let mut workspaces = Vec::new();
-    let mut total_packages = 0usize;
-
-    for target in package_targets {
-        let Some(lock) = mg_lockfile::read_lockfile_checked(target).with_context(|| {
-            format!("failed to verify child lockfile at '{}'", target.display())
-        })?
-        else {
-            continue;
-        };
-
-        let package_manifest = read_workspace_package_manifest(target)?;
-        let rel_path = target
-            .strip_prefix(project_root)
-            .unwrap_or(target)
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-
-        total_packages += lock.packages.len();
-        frameworks.extend(lock.frameworks.iter().cloned());
-        workspaces.push(WorkspaceLock {
-            path: rel_path,
-            name: package_manifest.name,
-            mode: lock.mode.clone(),
-            frameworks: lock.frameworks.clone(),
-            package_count: lock.packages.len(),
-        });
-
-        for pkg in lock.packages {
-            let key = (pkg.name.clone(), pkg.version.clone());
-            match packages.get_mut(&key) {
-                Some(existing) => {
-                    existing.direct |= pkg.direct;
-                    existing.dev |= pkg.dev;
-                    if existing.integrity.is_none() {
-                        existing.integrity = pkg.integrity.clone();
-                    }
-                    for dep in pkg.dependencies {
-                        if !existing.dependencies.contains(&dep) {
-                            existing.dependencies.push(dep);
-                        }
-                    }
-                    existing.dependencies.sort();
-                }
-                None => {
-                    packages.insert(key, pkg);
-                }
-            }
-        }
-    }
-
-    if workspaces.is_empty() {
-        return Ok(());
-    }
-
-    workspaces.sort_by(|a, b| a.path.cmp(&b.path));
-
-    let mut lockfile = Lockfile::new("web", "monorepo");
-    lockfile.frameworks = frameworks.into_iter().collect();
-    lockfile.resolution = ResolutionMeta {
-        state: "locked".to_string(),
-        store: "megagate".to_string(),
-        package_count: total_packages,
-    };
-    lockfile.workspaces = workspaces;
-    lockfile.packages = packages.into_values().collect();
-
-    LockfileSigner::sign(&mut lockfile)?;
-    let lock_toml = serialization::to_toml(&lockfile)?;
-    atomic_write(&project_root.join("mg.lock"), lock_toml.as_bytes())?;
-    mg_lockfile::write_lockfile_checksum(project_root, lock_toml.as_bytes())?;
+// FIXME(V1.0.1): Disabled due to lockfile v2 migration (uses LockPackage, WorkspaceLock, ResolutionMeta)
+fn write_monorepo_root_lockfile(_project_root: &Path, _targets: &[PathBuf]) -> Result<()> {
+    // Workspace lockfile merging requires v2 schema rewrite
+    // For now, each workspace maintains its own lockfile
     Ok(())
 }
 

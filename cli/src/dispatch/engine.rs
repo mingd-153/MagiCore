@@ -393,7 +393,6 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::UpdateApp { .. } => "update-app",
         Commands::UpdateLib { .. } => "update-lib",
         Commands::Import { .. } => "import",
-        Commands::Sbom { .. } => "sbom",
     }
 }
 
@@ -417,6 +416,7 @@ mod tests {
             prefer_dedupe: false,
             repair: false,
             dry_run: false,
+            offline: false,
         };
         assert!(reject_unsupported_audit_strict(&install).is_ok());
 
@@ -489,6 +489,7 @@ mod tests {
             prefer_dedupe: false,
             repair: false,
             dry_run: false,
+            offline: false,
         }));
         assert!(recursive_supported(&Commands::List));
     }

@@ -28,6 +28,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             allow_scripts,
             prefer_dedupe,
             repair,
+            offline,
         } => {
             commands::core::install::web::install(
                 packages,
@@ -36,6 +37,7 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
                 allow_scripts,
                 prefer_dedupe,
                 repair,
+                offline,
             )
             .await
         }
