@@ -4,15 +4,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use base64::Engine;
-use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
+use mg_lockfile::{Lockfile, LockfileMetadata, Package};
 use mg_store::{Layout, PackageCache};
 use mg_types::{
     adapter::ResolvedGraph, adapter::ResolvedPackage, Manifest, MgError, MgResult, PackageId,
     PackageName, Version,
 };
 use sha2::{Digest, Sha512};
-
-use crate::manifest::{atomic_write, atomic_write_if_changed};
+use chrono;
 
 pub fn strict_integrity_enforced() -> bool {
     std::env::var("MEGAGATE_STRICT_INTEGRITY").is_ok()
@@ -33,17 +32,13 @@ pub fn compute_tarball_integrity(bytes: &[u8]) -> String {
     format!("sha512-{}", compute_sha512_b64(bytes))
 }
 
-pub fn web_lockfile_matches_graph(lockfile: &Lockfile, graph: &ResolvedGraph, state: &str) -> bool {
-    if lockfile.version != 1
-        || lockfile.core != "web"
-        || lockfile.resolution.state != state
-        || lockfile.resolution.store != "megagate"
-        || lockfile.resolution.package_count != graph.packages.len()
-        || lockfile.packages.len() != graph.packages.len()
-    {
+pub fn web_lockfile_matches_graph(lockfile: &Lockfile, graph: &ResolvedGraph) -> bool {
+    // Check version is "2" (new schema)
+    if lockfile.version != "2" || lockfile.packages.len() != graph.packages.len() {
         return false;
     }
 
+    // Check packages match
     lockfile
         .packages
         .iter()
@@ -51,8 +46,6 @@ pub fn web_lockfile_matches_graph(lockfile: &Lockfile, graph: &ResolvedGraph, st
         .all(|(locked, resolved)| {
             locked.name == resolved.id.name_str()
                 && locked.version == resolved.id.version().to_string()
-                && locked.direct == resolved.direct
-                && locked.dev == resolved.dev
                 && locked.dependencies.len() == resolved.deps.len()
                 && locked
                     .dependencies
@@ -60,7 +53,7 @@ pub fn web_lockfile_matches_graph(lockfile: &Lockfile, graph: &ResolvedGraph, st
                     .zip(resolved.deps.iter())
                     .all(|(left, right)| left == &right.to_string())
                 && (resolved.integrity.is_empty()
-                    || locked.integrity.as_deref() == Some(resolved.integrity.as_str()))
+                    || locked.integrity == resolved.integrity)
         })
 }
 
@@ -83,32 +76,36 @@ pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
 }
 
 pub fn read_web_lockfile_checked(project_root: &Path) -> MgResult<Option<Lockfile>> {
-    let lock = mg_lockfile::read_lockfile_checked(project_root)
-        .map_err(|err| MgError::Other(err.to_string()))?;
-    if let Some(lockfile) = &lock {
-        maybe_warn_missing_lockfile_checksum(project_root, lockfile);
+    let lock_path = project_root.join("mg.lock");
+    if !lock_path.exists() {
+        return Ok(None);
     }
-    Ok(lock)
+
+    let content = std::fs::read_to_string(&lock_path)
+        .map_err(|e| MgError::Other(format!("Failed to read lockfile: {}", e)))?;
+    
+    let lockfile: Lockfile = serde_json::from_str(&content)
+        .map_err(|e| MgError::Other(format!("Failed to parse lockfile: {}", e)))?;
+
+    maybe_warn_missing_lockfile_checksum(project_root, &lockfile);
+    Ok(Some(lockfile))
 }
 
 pub fn maybe_warn_missing_lockfile_checksum(project_root: &Path, lockfile: &Lockfile) {
     if !strict_integrity_enforced()
         || std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_ok()
-        || mg_lockfile::lockfile_checksum_path(project_root).exists()
     {
         return;
     }
 
-    let has_locked_content = lockfile.resolution.state == "locked"
-        || lockfile.resolution.package_count > 0
-        || !lockfile.packages.is_empty();
+    let has_locked_content = !lockfile.packages.is_empty();
     if !has_locked_content {
         return;
     }
 
     static WARNED: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
     let warned = WARNED.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
-    let path = mg_lockfile::lockfile_path(project_root);
+    let path = project_root.join("mg.lock");
     let mut guard = match warned.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -123,17 +120,23 @@ pub fn maybe_warn_missing_lockfile_checksum(project_root: &Path, lockfile: &Lock
 pub fn write_web_lockfile_with_state(
     project_root: &Path,
     graph: &ResolvedGraph,
-    state: &str,
+    _state: &str,
 ) -> MgResult<()> {
     let lock_path = project_root.join("mg.lock");
     let mut lockfile = read_web_lockfile_checked(project_root)?
-        .unwrap_or_else(|| Lockfile::new("web", "frontend"));
+        .unwrap_or_else(|| Lockfile {
+            version: "2".to_string(),
+            metadata: LockfileMetadata {
+                generated_at: chrono::Utc::now().to_rfc3339(),
+                generator: "mg/0.4.0".to_string(),
+                lockfile_hash: String::new(),
+                signer: None,
+            },
+            packages: Vec::new(),
+        });
 
-    if web_lockfile_matches_graph(&lockfile, graph, state) {
-        let checksum_path = mg_lockfile::lockfile_checksum_path(project_root);
-        if checksum_path.exists() {
-            return Ok(());
-        }
+    if web_lockfile_matches_graph(&lockfile, graph) {
+        return Ok(());
     }
 
     let local_layout = Layout::new(project_cache_dir(project_root));
@@ -141,13 +144,11 @@ pub fn write_web_lockfile_with_state(
         .map_err(|e| MgError::Store(e.to_string()))
         .ok();
 
-    lockfile.version = 1;
-    lockfile.core = "web".to_string();
-    lockfile.resolution = ResolutionMeta {
-        state: state.to_string(),
-        store: "megagate".to_string(),
-        package_count: graph.packages.len(),
-    };
+    // Update metadata
+    lockfile.metadata.generated_at = chrono::Utc::now().to_rfc3339();
+    lockfile.metadata.generator = "mg/0.4.0".to_string();
+
+    // Update packages
     lockfile.packages = graph
         .packages
         .iter()
@@ -155,41 +156,33 @@ pub fn write_web_lockfile_with_state(
             let integrity = if pkg.integrity.is_empty() {
                 if let Some(ref cache) = cache {
                     if let Ok(Some(bytes)) = cache.get_tarball(&pkg.id) {
-                        Some(compute_tarball_integrity(&bytes))
+                        compute_tarball_integrity(&bytes)
                     } else {
-                        None
+                        String::new()
                     }
                 } else {
-                    None
+                    String::new()
                 }
             } else {
-                Some(pkg.integrity.clone())
+                pkg.integrity.clone()
             };
-            LockPackage {
+            
+            Package {
                 name: pkg.id.name_str().to_string(),
                 version: pkg.id.version().to_string(),
+                resolved: pkg.tarball_url.clone(),
                 integrity,
-                direct: pkg.direct,
-                dev: pkg.dev,
                 dependencies: pkg.deps.iter().map(ToString::to_string).collect(),
-                peer_deps: pkg.peer_deps.iter().map(ToString::to_string).collect(),
             }
         })
         .collect();
 
-    mg_lockfile::LockfileSigner::sign(&mut lockfile)
-        .map_err(|e| MgError::Other(format!("lockfile signing failed: {e}")))?;
-
-    let toml = serialization::to_toml(&lockfile)?;
-    let lockfile_changed = atomic_write_if_changed(&lock_path, toml.as_bytes())?;
-    let checksum = mg_lockfile::lockfile_checksum(toml.as_bytes());
-    let checksum_path = mg_lockfile::lockfile_checksum_path(project_root);
-    let checksum_changed = std::fs::read_to_string(&checksum_path)
-        .map(|existing| existing.trim() != checksum)
-        .unwrap_or(true);
-    if lockfile_changed || checksum_changed {
-        atomic_write(&checksum_path, checksum.as_bytes())?;
-    }
+    // Write lockfile
+    let json = serde_json::to_string_pretty(&lockfile)
+        .map_err(|e| MgError::Other(format!("JSON serialization failed: {}", e)))?;
+    
+    std::fs::write(&lock_path, json.as_bytes())
+        .map_err(|e| MgError::Other(format!("Failed to write lockfile: {}", e)))?;
 
     Ok(())
 }
@@ -199,14 +192,16 @@ pub fn lockfile_satisfies_manifest(lockfile: &Lockfile, manifest: &Manifest) -> 
         let Some(lp) = lockfile
             .packages
             .iter()
-            .find(|lp| lp.name == dep.name.as_str())
+            .find(|p| p.name == dep.name.as_str())
         else {
             return false;
         };
-        let Ok(ver) = Version::parse(&lp.version) else {
+
+        let Ok(version) = Version::parse(&lp.version) else {
             return false;
         };
-        if !dep.range.matches(&ver) {
+        
+        if !dep.range.matches(&version) {
             return false;
         }
     }
@@ -236,21 +231,13 @@ pub fn build_graph_from_lockfile(
                 Some(PackageId::new(PackageName::new(d).ok()?, v))
             })
             .collect();
-        let peer_deps: Vec<PackageId> = lp
-            .peer_deps
-            .iter()
-            .filter_map(|d| {
-                let dep_pkg = lockfile.packages.iter().find(|lp| lp.name == *d)?;
-                let v = Version::parse(&dep_pkg.version).ok()?;
-                Some(PackageId::new(PackageName::new(d).ok()?, v))
-            })
-            .collect();
+        
         packages.push(ResolvedPackage {
             id: PackageId::new(dep.name.clone(), version),
-            integrity: lp.integrity.clone().unwrap_or_default(),
-            tarball_url: String::new(),
+            integrity: lp.integrity.clone(),
+            tarball_url: lp.resolved.clone(),
             deps,
-            peer_deps,
+            peer_deps: Vec::new(), // peer_deps removed from new schema
             direct: manifest.find_dep(dep.name.as_str()).is_some(),
             dev: manifest.dev_dependencies.iter().any(|d| d.name == dep.name),
         });

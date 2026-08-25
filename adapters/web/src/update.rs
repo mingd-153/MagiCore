@@ -105,7 +105,7 @@ pub async fn run_update(
                 .and_then(|lock| {
                     lock.packages
                         .iter()
-                        .find(|pkg| pkg.direct && pkg.name == dep.name.as_str())
+                        .find(|pkg| pkg.name == dep.name.as_str())
                         .map(|pkg| pkg.version.clone())
                 })
                 .unwrap_or_else(|| dep.range.to_string());

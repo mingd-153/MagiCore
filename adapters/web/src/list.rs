@@ -36,7 +36,7 @@ pub async fn run_list(project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
                 lock.packages
                     .iter()
                     .find(|pkg| pkg.name == dep.name.as_str())
-                    .and_then(|pkg| pkg.integrity.clone())
+                    .and_then(|pkg| Some(pkg.integrity.clone()))
             });
             let is_direct = lockfile
                 .as_ref()
@@ -44,7 +44,12 @@ pub async fn run_list(project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
                     lock.packages
                         .iter()
                         .find(|pkg| pkg.name == dep.name.as_str())
-                        .map(|pkg| pkg.direct)
+                        // direct field not in v2 schema - check if in manifest dependencies
+                        .map(|pkg| {
+                            manifest
+                                .all_dependencies()
+                                .any(|dep| dep.name.as_str() == pkg.name)
+                        })
                         .unwrap_or(true)
                 })
                 .unwrap_or(true);
