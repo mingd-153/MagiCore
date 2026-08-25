@@ -2226,6 +2226,7 @@ dependencies = [
  "mg-adapter-base",
  "mg-ai-adapter",
  "mg-app-adapter",
+ "mg-cache",
  "mg-cicd-adapter",
  "mg-cloud-adapter",
  "mg-config",
@@ -2309,6 +2310,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "mg-cache"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

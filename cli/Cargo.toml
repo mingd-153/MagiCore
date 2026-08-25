@@ -20,6 +20,7 @@ mg-resolver = { workspace = true }
 mg-store = { workspace = true }
 mg-lockfile = { workspace = true }
 mg-crypto = { workspace = true }
+mg-cache = { workspace = true }
 mg-fetcher = { workspace = true }
 mg-http = { workspace = true }
 mg-ui = { workspace = true }

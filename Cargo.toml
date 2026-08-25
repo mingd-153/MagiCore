@@ -20,6 +20,7 @@ authors = ["MegaGate Contributors"]
 mg-types = { path = "core/crates/mg-types" }
 mg-config = { path = "core/crates/mg-config" }
 mg-crypto = { path = "core/crates/mg-crypto" }
+mg-cache = { path = "core/crates/mg-cache" }
 mg-http = { path = "core/crates/mg-http" }
 mg-fetcher = { path = "core/crates/mg-fetcher" }
 mg-lockfile = { path = "core/crates/mg-lockfile" }

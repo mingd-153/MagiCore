@@ -2,6 +2,7 @@
 
 use crate::context::ProjectContext;
 use anyhow::Result;
+use mg_cache::PackageCache;
 use mg_lockfile::Lockfile;
 use mg_types::adapter::{AddOptions, PreparedAdd};
 use mg_types::{
@@ -131,6 +132,36 @@ async fn install_into_root(
                 "Offline mode requires mg.lock\n  \
                  Run 'mg install' online first to create lockfile"
             );
+        }
+        
+        // T4.5: Verify lockfile integrity BEFORE using cache
+        let status = mg_lockfile::verify_lockfile(&lockfile_path)?;
+        match status {
+            mg_lockfile::VerificationStatus::Tampered(msg) => {
+                // T4.5: Invalidate cache on tamper detection
+                info("⚠ Lockfile tampered — invalidating cache");
+                let cache = PackageCache::new()?;
+                // Invalidate all packages in lockfile
+                let lockfile = mg_lockfile::load_lockfile(&lockfile_path)?;
+                for pkg in &lockfile.packages {
+                    let pkg_id = format!("{}@{}", pkg.name, pkg.version);
+                    let _ = cache.invalidate_package(&pkg_id); // Ignore errors (may not exist)
+                }
+                anyhow::bail!(
+                    "Lockfile tampered: {}\n  \
+                     Cache invalidated. Run 'mg trust verify' to inspect.",
+                    msg
+                );
+            }
+            mg_lockfile::VerificationStatus::Unsigned => {
+                info("⚠ Lockfile not signed — run 'mg trust sign' for tamper detection");
+            }
+            mg_lockfile::VerificationStatus::Valid => {
+                info("✓ Lockfile signature valid");
+            }
+            mg_lockfile::VerificationStatus::InvalidSignature(msg) => {
+                anyhow::bail!("Invalid lockfile signature: {}", msg);
+            }
         }
         
         if !packages.is_empty() {
