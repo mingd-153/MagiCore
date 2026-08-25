@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-//! Integration test: mg model push/pull roundtrip qua registry server thật
+//! Integration test: mgc model push/pull roundtrip qua registry server thật
 //! (Test roundtrip: push file → pull về → content khớp; fail-closed không token)
 
 use std::process::{Command, Stdio};
@@ -11,7 +11,7 @@ const PORT_CANDIDATES: &[u16] = &[
 ]; // RULE §13: port contains 4·3·1·5
 const ADMIN: &str = "adm1-test";
 
-fn mg_bin() -> String {
+fn mgc_bin() -> String {
     std::env::var("CARGO_BIN_EXE_mg").expect("CARGO_BIN_EXE_mg")
 }
 
@@ -60,7 +60,7 @@ async fn model_push_pull_roundtrip() {
         return;
     };
     let mut server = ServerGuard(
-        Command::new(mg_bin())
+        Command::new(mgc_bin())
             .args([
                 "registry",
                 "serve",
@@ -111,7 +111,12 @@ async fn model_push_pull_roundtrip() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    let run = |args: &[&str]| Command::new(mg_bin()).args(args).output().expect("run mg");
+    let run = |args: &[&str]| {
+        Command::new(mgc_bin())
+            .args(args)
+            .output()
+            .expect("run mgc")
+    };
 
     // Push không token → fail-closed 401
     let no_token = run(&[

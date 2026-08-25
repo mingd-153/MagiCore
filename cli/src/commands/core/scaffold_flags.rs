@@ -12,7 +12,7 @@ pub struct ScaffoldFlags {
     #[arg(
         long,
         hide = true,
-        help = "Deprecated compatibility hint; MegaGate web uses its native installer"
+        help = "Deprecated compatibility hint; MagiCore web uses its native installer"
     )]
     pub pm: Option<String>,
     #[arg(long, help = "Init git repo")]
@@ -204,7 +204,7 @@ pub struct ScaffoldFlags {
     pub nx: bool,
     #[arg(
         long,
-        help = "MegaGate workspace layout with ecosystem-compatible package manifests"
+        help = "MagiCore workspace layout with ecosystem-compatible package manifests"
     )]
     pub workspaces: bool,
     #[arg(long, help = "Changesets for version/publish management")]

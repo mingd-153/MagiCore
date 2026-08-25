@@ -4,22 +4,22 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use base64::Engine;
-use mg_lockfile::{Lockfile, LockfileMetadata, Package};
-use mg_store::{Layout, PackageCache};
-use mg_types::{
+use chrono;
+use mgc_lockfile::{Lockfile, LockfileMetadata, Package};
+use mgc_store::{Layout, PackageCache};
+use mgc_types::{
     adapter::ResolvedGraph, adapter::ResolvedPackage, Manifest, MgError, MgResult, PackageId,
     PackageName, Version,
 };
 use sha2::{Digest, Sha512};
-use chrono;
 
 pub fn strict_integrity_enforced() -> bool {
-    std::env::var("MEGAGATE_STRICT_INTEGRITY").is_ok()
-        || std::env::var("MG_STRICT_INTEGRITY").is_ok()
+    std::env::var("MAGICORE_STRICT_INTEGRITY").is_ok()
+        || std::env::var("MGC_STRICT_INTEGRITY").is_ok()
 }
 
 pub fn project_cache_dir(project_root: &Path) -> PathBuf {
-    project_root.join(".megagate").join("cache").join("web")
+    project_root.join(".magicore").join("cache").join("web")
 }
 
 pub fn compute_sha512_b64(bytes: &[u8]) -> String {
@@ -52,8 +52,7 @@ pub fn web_lockfile_matches_graph(lockfile: &Lockfile, graph: &ResolvedGraph) ->
                     .iter()
                     .zip(resolved.deps.iter())
                     .all(|(left, right)| left == &right.to_string())
-                && (resolved.integrity.is_empty()
-                    || locked.integrity == resolved.integrity)
+                && (resolved.integrity.is_empty() || locked.integrity == resolved.integrity)
         })
 }
 
@@ -76,14 +75,14 @@ pub fn read_web_lockfile(project_root: &Path) -> Option<Lockfile> {
 }
 
 pub fn read_web_lockfile_checked(project_root: &Path) -> MgResult<Option<Lockfile>> {
-    let lock_path = project_root.join("mg.lock");
+    let lock_path = project_root.join("mgc.lock");
     if !lock_path.exists() {
         return Ok(None);
     }
 
     let content = std::fs::read_to_string(&lock_path)
         .map_err(|e| MgError::Other(format!("Failed to read lockfile: {}", e)))?;
-    
+
     let lockfile: Lockfile = serde_json::from_str(&content)
         .map_err(|e| MgError::Other(format!("Failed to parse lockfile: {}", e)))?;
 
@@ -92,8 +91,7 @@ pub fn read_web_lockfile_checked(project_root: &Path) -> MgResult<Option<Lockfil
 }
 
 pub fn maybe_warn_missing_lockfile_checksum(project_root: &Path, lockfile: &Lockfile) {
-    if !strict_integrity_enforced()
-        || std::env::var("MEGAGATE_WEB_SKIP_LOCKFILE_CHECKSUM").is_ok()
+    if !strict_integrity_enforced() || std::env::var("MAGICORE_WEB_SKIP_LOCKFILE_CHECKSUM").is_ok()
     {
         return;
     }
@@ -105,14 +103,14 @@ pub fn maybe_warn_missing_lockfile_checksum(project_root: &Path, lockfile: &Lock
 
     static WARNED: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
     let warned = WARNED.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
-    let path = project_root.join("mg.lock");
+    let path = project_root.join("mgc.lock");
     let mut guard = match warned.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
     if guard.insert(path) {
         eprintln!(
-            "WARNING: Lockfile checksum file (mg.lock.sha256) not found - cannot verify integrity"
+            "WARNING: Lockfile checksum file (mgc.lock.sha256) not found - cannot verify integrity"
         );
     }
 }
@@ -122,18 +120,17 @@ pub fn write_web_lockfile_with_state(
     graph: &ResolvedGraph,
     _state: &str,
 ) -> MgResult<()> {
-    let lock_path = project_root.join("mg.lock");
-    let mut lockfile = read_web_lockfile_checked(project_root)?
-        .unwrap_or_else(|| Lockfile {
-            version: "2".to_string(),
-            metadata: LockfileMetadata {
-                generated_at: chrono::Utc::now().to_rfc3339(),
-                generator: "mg/0.4.0".to_string(),
-                lockfile_hash: String::new(),
-                signer: None,
-            },
-            packages: Vec::new(),
-        });
+    let lock_path = project_root.join("mgc.lock");
+    let mut lockfile = read_web_lockfile_checked(project_root)?.unwrap_or_else(|| Lockfile {
+        version: "2".to_string(),
+        metadata: LockfileMetadata {
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            generator: "mgc/0.4.0".to_string(),
+            lockfile_hash: String::new(),
+            signer: None,
+        },
+        packages: Vec::new(),
+    });
 
     if web_lockfile_matches_graph(&lockfile, graph) {
         return Ok(());
@@ -146,7 +143,7 @@ pub fn write_web_lockfile_with_state(
 
     // Update metadata
     lockfile.metadata.generated_at = chrono::Utc::now().to_rfc3339();
-    lockfile.metadata.generator = "mg/0.4.0".to_string();
+    lockfile.metadata.generator = "mgc/0.4.0".to_string();
 
     // Update packages
     lockfile.packages = graph
@@ -166,7 +163,7 @@ pub fn write_web_lockfile_with_state(
             } else {
                 pkg.integrity.clone()
             };
-            
+
             Package {
                 name: pkg.id.name_str().to_string(),
                 version: pkg.id.version().to_string(),
@@ -180,7 +177,7 @@ pub fn write_web_lockfile_with_state(
     // Write lockfile
     let json = serde_json::to_string_pretty(&lockfile)
         .map_err(|e| MgError::Other(format!("JSON serialization failed: {}", e)))?;
-    
+
     std::fs::write(&lock_path, json.as_bytes())
         .map_err(|e| MgError::Other(format!("Failed to write lockfile: {}", e)))?;
 
@@ -200,7 +197,7 @@ pub fn lockfile_satisfies_manifest(lockfile: &Lockfile, manifest: &Manifest) -> 
         let Ok(version) = Version::parse(&lp.version) else {
             return false;
         };
-        
+
         if !dep.range.matches(&version) {
             return false;
         }
@@ -231,7 +228,7 @@ pub fn build_graph_from_lockfile(
                 Some(PackageId::new(PackageName::new(d).ok()?, v))
             })
             .collect();
-        
+
         packages.push(ResolvedPackage {
             id: PackageId::new(dep.name.clone(), version),
             integrity: lp.integrity.clone(),

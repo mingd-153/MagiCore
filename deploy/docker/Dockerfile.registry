@@ -1,5 +1,5 @@
-# MegaGate Registry Server — multi-stage build
-# Usage: docker build -f deploy/docker/Dockerfile.registry -t megagate/registry-server .
+# MagiCore Registry Server — multi-stage build
+# Usage: docker build -f deploy/docker/Dockerfile.registry -t magicore/registry-server .
 ARG RUST_IMAGE=docker.io/library/rust:1.85-slim-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 
@@ -17,8 +17,8 @@ COPY adapters/ adapters/
 COPY cli/ cli/
 COPY tools/ tools/
 
-RUN cargo build --release --package mg-registry-server && \
-    cp target/release/mg-registry-server /mg-registry-server
+RUN cargo build --release --package mgc-registry-server && \
+    cp target/release/mgc-registry-server /mgc-registry-server
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM ${RUNTIME_IMAGE}
@@ -28,7 +28,7 @@ RUN apt-get update -qq && apt-get install -y -qq wget ca-certificates \
     && useradd -r -u 10001 -g root mgreg \
     && mkdir -p /data && chown mgreg /data
 
-COPY --from=build /mg-registry-server /usr/local/bin/mg-registry-server
+COPY --from=build /mgc-registry-server /usr/local/bin/mgc-registry-server
 
 USER mgreg
 VOLUME ["/data"]
@@ -36,4 +36,4 @@ EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/v2/ || exit 1
 
-ENTRYPOINT ["mg-registry-server", "--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["mgc-registry-server", "--host", "0.0.0.0", "--port", "8080"]

@@ -8,7 +8,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/update-release-hashes.sh --artifacts <dir> [--verify-only]
 
-Updates or verifies Homebrew/Scoop SHA256 values for MegaGate release assets.
+Updates or verifies Homebrew/Scoop SHA256 values for MagiCore release assets.
 
 Options:
   --artifacts <dir>  Directory containing release artifacts.
@@ -61,7 +61,7 @@ fi
 
 # Repo root override - lets tests verify updates without touching real manifests.
 # Override repo root - cho phep test update tren ban copy, khong cham manifest that.
-repo_root="${MEGAGATE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+repo_root="${MAGICORE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 homebrew_dir="$repo_root/packaging/homebrew"
 scoop_dir="$repo_root/packaging/scoop"
 
@@ -200,38 +200,38 @@ verify_scoop_hash() {
   fi
 }
 
-all_core_homebrew="$homebrew_dir/megagate.rb"
-web_core_homebrew="$homebrew_dir/megagate-web.rb"
-all_core_scoop="$scoop_dir/megagate.json"
-web_core_scoop="$scoop_dir/megagate-web.json"
+all_core_homebrew="$homebrew_dir/magicore.rb"
+web_core_homebrew="$homebrew_dir/magicore-web.rb"
+all_core_scoop="$scoop_dir/magicore.json"
+web_core_scoop="$scoop_dir/magicore-web.json"
 
-megagate_linux_x64_hash="$(artifact_hash "megagate-Linux-X64.tar.gz")"
-megagate_linux_arm64_hash="$(artifact_hash "megagate-Linux-ARM64.tar.gz")"
-megagate_macos_x64_hash="$(artifact_hash "megagate-macOS-X64.tar.gz")"
-megagate_macos_arm64_hash="$(artifact_hash "megagate-macOS-ARM64.tar.gz")"
-megagate_windows_x64_hash="$(artifact_hash "megagate-Windows-X64.zip")"
-megagate_windows_arm64_hash="$(artifact_hash "megagate-Windows-ARM64.zip")"
-megagate_web_linux_x64_hash="$(artifact_hash "megagate-web-Linux-X64.tar.gz")"
-megagate_web_linux_arm64_hash="$(artifact_hash "megagate-web-Linux-ARM64.tar.gz")"
-megagate_web_macos_x64_hash="$(artifact_hash "megagate-web-macOS-X64.tar.gz")"
-megagate_web_macos_arm64_hash="$(artifact_hash "megagate-web-macOS-ARM64.tar.gz")"
-megagate_web_windows_x64_hash="$(artifact_hash "megagate-web-Windows-X64.zip")"
-megagate_web_windows_arm64_hash="$(artifact_hash "megagate-web-Windows-ARM64.zip")"
+magicore_linux_x64_hash="$(artifact_hash "magicore-Linux-X64.tar.gz")"
+magicore_linux_arm64_hash="$(artifact_hash "magicore-Linux-ARM64.tar.gz")"
+magicore_macos_x64_hash="$(artifact_hash "magicore-macOS-X64.tar.gz")"
+magicore_macos_arm64_hash="$(artifact_hash "magicore-macOS-ARM64.tar.gz")"
+magicore_windows_x64_hash="$(artifact_hash "magicore-Windows-X64.zip")"
+magicore_windows_arm64_hash="$(artifact_hash "magicore-Windows-ARM64.zip")"
+magicore_web_linux_x64_hash="$(artifact_hash "magicore-web-Linux-X64.tar.gz")"
+magicore_web_linux_arm64_hash="$(artifact_hash "magicore-web-Linux-ARM64.tar.gz")"
+magicore_web_macos_x64_hash="$(artifact_hash "magicore-web-macOS-X64.tar.gz")"
+magicore_web_macos_arm64_hash="$(artifact_hash "magicore-web-macOS-ARM64.tar.gz")"
+magicore_web_windows_x64_hash="$(artifact_hash "magicore-web-Windows-X64.zip")"
+magicore_web_windows_arm64_hash="$(artifact_hash "magicore-web-Windows-ARM64.zip")"
 
 if [[ "$verify_only" -eq 1 ]]; then
-  verify_homebrew_hash "$all_core_homebrew" "megagate-macOS-ARM64.tar.gz" "$megagate_macos_arm64_hash"
-  verify_homebrew_hash "$all_core_homebrew" "megagate-macOS-X64.tar.gz" "$megagate_macos_x64_hash"
-  verify_homebrew_hash "$all_core_homebrew" "megagate-Linux-ARM64.tar.gz" "$megagate_linux_arm64_hash"
-  verify_homebrew_hash "$all_core_homebrew" "megagate-Linux-X64.tar.gz" "$megagate_linux_x64_hash"
-  verify_scoop_hash "$all_core_scoop" "megagate-Windows-X64.zip" "$megagate_windows_x64_hash"
-  verify_scoop_hash "$all_core_scoop" "megagate-Windows-ARM64.zip" "$megagate_windows_arm64_hash"
+  verify_homebrew_hash "$all_core_homebrew" "magicore-macOS-ARM64.tar.gz" "$magicore_macos_arm64_hash"
+  verify_homebrew_hash "$all_core_homebrew" "magicore-macOS-X64.tar.gz" "$magicore_macos_x64_hash"
+  verify_homebrew_hash "$all_core_homebrew" "magicore-Linux-ARM64.tar.gz" "$magicore_linux_arm64_hash"
+  verify_homebrew_hash "$all_core_homebrew" "magicore-Linux-X64.tar.gz" "$magicore_linux_x64_hash"
+  verify_scoop_hash "$all_core_scoop" "magicore-Windows-X64.zip" "$magicore_windows_x64_hash"
+  verify_scoop_hash "$all_core_scoop" "magicore-Windows-ARM64.zip" "$magicore_windows_arm64_hash"
 
-  verify_homebrew_hash "$web_core_homebrew" "megagate-web-macOS-ARM64.tar.gz" "$megagate_web_macos_arm64_hash"
-  verify_homebrew_hash "$web_core_homebrew" "megagate-web-macOS-X64.tar.gz" "$megagate_web_macos_x64_hash"
-  verify_homebrew_hash "$web_core_homebrew" "megagate-web-Linux-ARM64.tar.gz" "$megagate_web_linux_arm64_hash"
-  verify_homebrew_hash "$web_core_homebrew" "megagate-web-Linux-X64.tar.gz" "$megagate_web_linux_x64_hash"
-  verify_scoop_hash "$web_core_scoop" "megagate-web-Windows-X64.zip" "$megagate_web_windows_x64_hash"
-  verify_scoop_hash "$web_core_scoop" "megagate-web-Windows-ARM64.zip" "$megagate_web_windows_arm64_hash"
+  verify_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-ARM64.tar.gz" "$magicore_web_macos_arm64_hash"
+  verify_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-X64.tar.gz" "$magicore_web_macos_x64_hash"
+  verify_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-ARM64.tar.gz" "$magicore_web_linux_arm64_hash"
+  verify_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-X64.tar.gz" "$magicore_web_linux_x64_hash"
+  verify_scoop_hash "$web_core_scoop" "magicore-web-Windows-X64.zip" "$magicore_web_windows_x64_hash"
+  verify_scoop_hash "$web_core_scoop" "magicore-web-Windows-ARM64.zip" "$magicore_web_windows_arm64_hash"
 
   if grep -R "UPDATE_ME" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
     echo "error: packaging still contains UPDATE_ME placeholders" >&2
@@ -242,18 +242,18 @@ if [[ "$verify_only" -eq 1 ]]; then
   exit 0
 fi
 
-replace_homebrew_hash "$all_core_homebrew" "megagate-macOS-ARM64.tar.gz" "$megagate_macos_arm64_hash"
-replace_homebrew_hash "$all_core_homebrew" "megagate-macOS-X64.tar.gz" "$megagate_macos_x64_hash"
-replace_homebrew_hash "$all_core_homebrew" "megagate-Linux-ARM64.tar.gz" "$megagate_linux_arm64_hash"
-replace_homebrew_hash "$all_core_homebrew" "megagate-Linux-X64.tar.gz" "$megagate_linux_x64_hash"
-replace_scoop_hash "$all_core_scoop" "megagate-Windows-X64.zip" "$megagate_windows_x64_hash"
-replace_scoop_hash "$all_core_scoop" "megagate-Windows-ARM64.zip" "$megagate_windows_arm64_hash"
+replace_homebrew_hash "$all_core_homebrew" "magicore-macOS-ARM64.tar.gz" "$magicore_macos_arm64_hash"
+replace_homebrew_hash "$all_core_homebrew" "magicore-macOS-X64.tar.gz" "$magicore_macos_x64_hash"
+replace_homebrew_hash "$all_core_homebrew" "magicore-Linux-ARM64.tar.gz" "$magicore_linux_arm64_hash"
+replace_homebrew_hash "$all_core_homebrew" "magicore-Linux-X64.tar.gz" "$magicore_linux_x64_hash"
+replace_scoop_hash "$all_core_scoop" "magicore-Windows-X64.zip" "$magicore_windows_x64_hash"
+replace_scoop_hash "$all_core_scoop" "magicore-Windows-ARM64.zip" "$magicore_windows_arm64_hash"
 
-replace_homebrew_hash "$web_core_homebrew" "megagate-web-macOS-ARM64.tar.gz" "$megagate_web_macos_arm64_hash"
-replace_homebrew_hash "$web_core_homebrew" "megagate-web-macOS-X64.tar.gz" "$megagate_web_macos_x64_hash"
-replace_homebrew_hash "$web_core_homebrew" "megagate-web-Linux-ARM64.tar.gz" "$megagate_web_linux_arm64_hash"
-replace_homebrew_hash "$web_core_homebrew" "megagate-web-Linux-X64.tar.gz" "$megagate_web_linux_x64_hash"
-replace_scoop_hash "$web_core_scoop" "megagate-web-Windows-X64.zip" "$megagate_web_windows_x64_hash"
-replace_scoop_hash "$web_core_scoop" "megagate-web-Windows-ARM64.zip" "$megagate_web_windows_arm64_hash"
+replace_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-ARM64.tar.gz" "$magicore_web_macos_arm64_hash"
+replace_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-X64.tar.gz" "$magicore_web_macos_x64_hash"
+replace_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-ARM64.tar.gz" "$magicore_web_linux_arm64_hash"
+replace_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-X64.tar.gz" "$magicore_web_linux_x64_hash"
+replace_scoop_hash "$web_core_scoop" "magicore-web-Windows-X64.zip" "$magicore_web_windows_x64_hash"
+replace_scoop_hash "$web_core_scoop" "magicore-web-Windows-ARM64.zip" "$magicore_web_windows_arm64_hash"
 
 echo "Release hashes updated from $artifacts_dir."

@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use lru::LruCache;
-use mg_resolver::DependencyError;
-use mg_store::{Layout, PackageCache};
-use mg_types::{
+use mgc_resolver::DependencyError;
+use mgc_store::{Layout, PackageCache};
+use mgc_types::{
     adapter::{ResolvedGraph, ResolvedPackage},
     MgError, MgResult, PackageName,
 };
@@ -30,11 +30,11 @@ pub struct MetadataCache {
 
 impl MetadataCache {
     pub fn new() -> Self {
-        let max_entries = std::env::var("MEGAGATE_WEB_METADATA_CACHE_MAX_ENTRIES")
+        let max_entries = std::env::var("MAGICORE_WEB_METADATA_CACHE_MAX_ENTRIES")
             .ok()
             .and_then(|v| v.trim().parse().ok())
             .unwrap_or(MAX_METADATA_CACHE_ENTRIES);
-        let ttl_secs = std::env::var("MEGAGATE_WEB_METADATA_CACHE_TTL_SECS")
+        let ttl_secs = std::env::var("MAGICORE_WEB_METADATA_CACHE_TTL_SECS")
             .ok()
             .and_then(|v| v.trim().parse().ok())
             .unwrap_or(METADATA_CACHE_TTL_SECS);
@@ -144,7 +144,7 @@ pub struct CachedMetadataRecord {
 
 impl SharedWebCache {
     pub fn discover() -> Option<Self> {
-        if let Ok(path) = std::env::var("MEGAGATE_SHARED_CACHE_DIR") {
+        if let Ok(path) = std::env::var("MAGICORE_SHARED_CACHE_DIR") {
             let trimmed = path.trim();
             if !trimmed.is_empty() {
                 let candidate = Self {
@@ -160,7 +160,7 @@ impl SharedWebCache {
 
         dirs::cache_dir().and_then(|root| {
             let candidate = Self {
-                root: root.join("megagate").join("web"),
+                root: root.join("magicore").join("web"),
             };
             if candidate.is_usable() {
                 candidate.maybe_prune_once_per_process();
@@ -176,7 +176,7 @@ impl SharedWebCache {
             return false;
         }
 
-        let probe = self.root.join(".mg-write-probe");
+        let probe = self.root.join(".mgc-write-probe");
         match std::fs::create_dir(&probe) {
             Ok(()) => {
                 let _ = std::fs::remove_dir(&probe);
@@ -471,14 +471,14 @@ pub fn metadata_record_is_usable_stale(record: &CachedMetadataRecord) -> bool {
 }
 
 pub fn metadata_ttl_secs() -> u64 {
-    std::env::var("MEGAGATE_WEB_METADATA_TTL_SECS")
+    std::env::var("MAGICORE_WEB_METADATA_TTL_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(6 * 60 * 60)
 }
 
 pub fn metadata_max_stale_fallback_secs() -> u64 {
-    std::env::var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS")
+    std::env::var("MAGICORE_WEB_METADATA_MAX_STALE_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
@@ -486,7 +486,7 @@ pub fn metadata_max_stale_fallback_secs() -> u64 {
 }
 
 pub fn metadata_stale_retry_ttl_secs() -> u64 {
-    std::env::var("MEGAGATE_WEB_METADATA_STALE_RETRY_TTL_SECS")
+    std::env::var("MAGICORE_WEB_METADATA_STALE_RETRY_TTL_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
@@ -494,7 +494,7 @@ pub fn metadata_stale_retry_ttl_secs() -> u64 {
 }
 
 pub fn shared_cache_prune_interval_secs() -> u64 {
-    std::env::var("MEGAGATE_WEB_CACHE_PRUNE_INTERVAL_SECS")
+    std::env::var("MAGICORE_WEB_CACHE_PRUNE_INTERVAL_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
@@ -502,7 +502,7 @@ pub fn shared_cache_prune_interval_secs() -> u64 {
 }
 
 pub fn download_concurrency_limit() -> usize {
-    std::env::var("MEGAGATE_WEB_DOWNLOAD_CONCURRENCY")
+    std::env::var("MAGICORE_WEB_DOWNLOAD_CONCURRENCY")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|limit| *limit > 0)
@@ -510,7 +510,7 @@ pub fn download_concurrency_limit() -> usize {
 }
 
 pub fn metadata_concurrency_limit() -> usize {
-    std::env::var("MEGAGATE_WEB_METADATA_CONCURRENCY")
+    std::env::var("MAGICORE_WEB_METADATA_CONCURRENCY")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|limit| *limit > 0)
@@ -518,14 +518,14 @@ pub fn metadata_concurrency_limit() -> usize {
 }
 
 pub fn resolve_prefetch_enabled() -> bool {
-    std::env::var("MEGAGATE_WEB_RESOLVE_PREFETCH")
+    std::env::var("MAGICORE_WEB_RESOLVE_PREFETCH")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
 pub fn shared_cache_max_age_secs() -> u64 {
-    std::env::var("MEGAGATE_WEB_CACHE_MAX_AGE_SECS")
+    std::env::var("MAGICORE_WEB_CACHE_MAX_AGE_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ttl| *ttl > 0)
@@ -533,7 +533,7 @@ pub fn shared_cache_max_age_secs() -> u64 {
 }
 
 pub fn shared_cache_max_bytes() -> u64 {
-    std::env::var("MEGAGATE_WEB_CACHE_MAX_BYTES")
+    std::env::var("MAGICORE_WEB_CACHE_MAX_BYTES")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(2 * 1024 * 1024 * 1024)
@@ -681,7 +681,7 @@ pub fn prune_old_package_dirs_under(
         if pinned_package_roots.contains(&canonical_or_original(&dir)) {
             continue;
         }
-        let marker = dir.join(".megagate-package-root.json");
+        let marker = dir.join(".magicore-package-root.json");
         let package_json = dir.join("package.json");
         if marker.exists() || package_json.exists() {
             if path_is_older_than(
@@ -860,7 +860,7 @@ pub fn collect_prunable_package_dirs(
         if pinned_package_roots.contains(&canonical_or_original(path)) {
             continue;
         }
-        let marker = path.join(".megagate-package-root.json");
+        let marker = path.join(".magicore-package-root.json");
         if !marker.exists() {
             continue;
         }

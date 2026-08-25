@@ -8,7 +8,7 @@ use crate::Commands;
 use super::types::DispatchCommand;
 
 pub async fn run(cli: Cli) -> Result<()> {
-    mg_ui::set_quiet(cli.quiet);
+    mgc_ui::set_quiet(cli.quiet);
     let core = cli.core.as_deref();
 
     if let Some(dir) = cli.dir.as_deref() {
@@ -34,7 +34,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         if let Some(command) = cli.command.as_ref() {
             reject_unsupported_audit_strict(command)?;
         }
-        std::env::set_var("MG_AUDIT_STRICT", "1");
+        std::env::set_var("MGC_AUDIT_STRICT", "1");
     }
 
     match cli.command {
@@ -47,7 +47,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(command) => dispatch_command(command, core, false).await,
         None => {
             let cores = crate::factory::available_cores();
-            mg_ui::help::print_custom_help(&cores);
+            mgc_ui::help::print_custom_help(&cores);
             Ok(())
         }
     }
@@ -57,15 +57,15 @@ pub async fn run(cli: Cli) -> Result<()> {
 /// Chạy tuần tự từng workspace, lỗi 1 project không chặn repo (báo tổng cuối).
 async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&str>) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let project_root = mg_config::project::ProjectConfig::find_project_root(&cwd)
+    let project_root = mgc_config::project::ProjectConfig::find_project_root(&cwd)
         .ok_or_else(crate::error::project_root_missing)?;
     let mut workspaces = crate::commands::install::discover_workspace_projects(&project_root)?
         .ok_or_else(|| {
-            anyhow::anyhow!("--recursive requires megagate.workspace.toml (mode = \"monorepo\")")
+            anyhow::anyhow!("--recursive requires magicore.workspace.toml (mode = \"monorepo\")")
         })?;
 
     if let Some(pattern) = filter {
-        // Reuse mg-workspace filter matcher (không import PM khác): tên package,
+        // Reuse mgc-workspace filter matcher (không import PM khác): tên package,
         // path tương đối (`./apps/*`), scope (`@core/*`).
         let mut selected: Vec<PathBuf> = Vec::new();
         for ws in &workspaces {
@@ -75,18 +75,18 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default()
             });
-            if mg_workspace::filter_matches(pattern, relative, &name) {
+            if mgc_workspace::filter_matches(pattern, relative, &name) {
                 selected.push(ws.clone());
             }
         }
         if selected.is_empty() {
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "--filter '{pattern}' matched no workspace packages."
             ));
             return Ok(());
         }
         workspaces = selected;
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "--filter '{pattern}' → {} workspace(s)",
             workspaces.len()
         ));
@@ -97,8 +97,8 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     }
 
     // Xây dựng đồ thị phụ thuộc workspace và sắp xếp topo (level-by-level)
-    if let Ok(graph) = mg_workspace::build_workspace_graph(&workspaces) {
-        if let Ok(levels) = mg_workspace::topo_levels(&graph) {
+    if let Ok(graph) = mgc_workspace::build_workspace_graph(&workspaces) {
+        if let Ok(levels) = mgc_workspace::topo_levels(&graph) {
             let mut ordered = Vec::new();
             for level in levels {
                 for idx in level {
@@ -122,12 +122,12 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         std::collections::BTreeMap::new();
 
     for ws in &workspaces {
-        // T4 core-aware: nếu --core flag không có, đọc .mg.core marker của workspace này.
+        // T4 core-aware: nếu --core flag không có, đọc .mgc.core marker của workspace này.
         // Ưu tiên: CLI --core > marker file > None.
         let ws_core: Option<String> = if core.is_some() {
             core.map(|s| s.to_string())
         } else {
-            // Đọc marker .mg.core trong workspace folder
+            // Đọc marker .mgc.core trong workspace folder
             read_core_marker(ws)
         };
         let ws_core_str = ws_core.as_deref();
@@ -140,10 +140,10 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
 
         if is_build_cmd {
             if let Ok((should_rebuild, _src_hash, comp_hash)) =
-                mg_workspace::check_package_build_freshness(ws, &ws_composite_hashes)
+                mgc_workspace::check_package_build_freshness(ws, &ws_composite_hashes)
             {
                 if !should_rebuild {
-                    mg_ui::info(&format!(
+                    mgc_ui::info(&format!(
                         "⚡ [cached] {} (core: {}) — source & deps unchanged",
                         ws.display(),
                         ws_core_str.unwrap_or("auto")
@@ -154,7 +154,7 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
             }
         }
 
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "== {name} → {} (core: {})",
             ws.display(),
             ws_core_str.unwrap_or("auto")
@@ -166,10 +166,10 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         .await;
         if let Err(e) = result {
             failed += 1;
-            mg_ui::error(&format!("{name} failed in '{}': {e:#}", ws.display()));
+            mgc_ui::error(&format!("{name} failed in '{}': {e:#}", ws.display()));
         } else if is_build_cmd {
-            if let Ok(src_hash) = mg_workspace::compute_package_source_hash(ws) {
-                if let Ok(cache) = mg_workspace::save_package_build_cache(
+            if let Ok(src_hash) = mgc_workspace::compute_package_source_hash(ws) {
+                if let Ok(cache) = mgc_workspace::save_package_build_cache(
                     ws,
                     src_hash,
                     ws_composite_hashes.clone(),
@@ -187,10 +187,10 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     Ok(())
 }
 
-/// Đọc nội dung `.mg.core` marker file trong thư mục `dir` — trả về tên core nếu hợp lệ.
+/// Đọc nội dung `.mgc.core` marker file trong thư mục `dir` — trả về tên core nếu hợp lệ.
 /// Format: 1 dòng plain text = tên core (có thể có comment `# ...` sau tên).
 fn read_core_marker(dir: &Path) -> Option<String> {
-    let marker = dir.join(mg_config::project::ProjectConfig::CORE_MARKER_FILE);
+    let marker = dir.join(mgc_config::project::ProjectConfig::CORE_MARKER_FILE);
     let content = std::fs::read_to_string(marker).ok()?;
     // Lấy dòng đầu, bỏ comment
     let first_line = content.lines().next()?.trim();
@@ -285,7 +285,7 @@ fn reject_unsupported_filter(command: &Commands) -> Result<()> {
 }
 
 fn reject_filter_without_recursive() -> Result<()> {
-    bail!("--filter requires --recursive (it filters workspace targets). Use `mg <cmd> --recursive --filter <glob>`.")
+    bail!("--filter requires --recursive (it filters workspace targets). Use `mgc <cmd> --recursive --filter <glob>`.")
 }
 
 fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
@@ -496,24 +496,24 @@ mod tests {
 
     #[test]
     fn read_core_marker_parses_plain_and_comment() {
-        // T4: đọc .mg.core marker với/không có comment
-        let dir = std::env::temp_dir().join(format!("mg_test_marker_{}", std::process::id()));
+        // T4: đọc .mgc.core marker với/không có comment
+        let dir = std::env::temp_dir().join(format!("mgc_test_marker_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         // Plain value
-        std::fs::write(dir.join(".mg.core"), "web\n").unwrap();
+        std::fs::write(dir.join(".mgc.core"), "web\n").unwrap();
         assert_eq!(read_core_marker(&dir), Some("web".to_string()));
 
         // With comment
-        std::fs::write(dir.join(".mg.core"), "ai # generated by mg init\n").unwrap();
+        std::fs::write(dir.join(".mgc.core"), "ai # generated by mgc init\n").unwrap();
         assert_eq!(read_core_marker(&dir), Some("ai".to_string()));
 
         // Empty → None
-        std::fs::write(dir.join(".mg.core"), "# just a comment\n").unwrap();
+        std::fs::write(dir.join(".mgc.core"), "# just a comment\n").unwrap();
         assert_eq!(read_core_marker(&dir), None);
 
         // Missing file → None
-        std::fs::remove_file(dir.join(".mg.core")).unwrap();
+        std::fs::remove_file(dir.join(".mgc.core")).unwrap();
         assert_eq!(read_core_marker(&dir), None);
 
         std::fs::remove_dir(&dir).ok();

@@ -1,0 +1,33 @@
+[package]
+name = "mgc-resolver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Dependency resolver for MagiCore"
+
+[dependencies]
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+futures-util = { workspace = true }
+mgc-types = { workspace = true }
+mgc-platform = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+# Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
+[[test]]
+name = "test_patches"
+path = "test/patches.rs"
+
+[[test]]
+name = "test_dedupe"
+path = "test/dedupe.rs"

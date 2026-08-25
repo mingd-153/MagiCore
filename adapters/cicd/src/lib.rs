@@ -1,21 +1,21 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! mg-cicd-adapter — CI/CD ecosystem adapter (MegaGate)
+//! mgc-cicd-adapter — CI/CD ecosystem adapter (MagiCore)
 //! (Q12: CI + deploy đa cloud — GitHub Actions, Cloudflare, AWS, GCP, ArgoCD.
 //!  Không có package manager riêng: add/remove/update fail-closed; deploy/exec qua CLI provider)
 
 use async_trait::async_trait;
-use mg_types::adapter::{
+use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
-use mg_types::{
+use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
 };
 use std::path::{Path, PathBuf};
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CicdProvider {
@@ -46,9 +46,9 @@ pub struct CicdAdapter {
     pub provider: CicdProvider,
 }
 
-/// Detect provider — ưu tiên mg.toml `[cicd] provider`, fallback manifest probe.
+/// Detect provider — ưu tiên mgc.toml `[cicd] provider`, fallback manifest probe.
 pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(p) = v
                 .get("cicd")
@@ -90,7 +90,7 @@ pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
 }
 
 fn manifest_is_cicd(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
                 if eco == "cicd" {
@@ -111,8 +111,8 @@ pub fn adapter_for(root: &Path) -> Option<CicdAdapter> {
 }
 
 fn no_package_manager() -> MgResult<()> {
-    Err(mg_types::MgError::Other(
-        "cicd has no package manager — deploy through `mg deploy` (dry-run default)".to_string(),
+    Err(mgc_types::MgError::Other(
+        "cicd has no package manager — deploy through `mgc deploy` (dry-run default)".to_string(),
     ))
 }
 
@@ -223,16 +223,15 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mg-cicd-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mgc-cicd-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmp dir");
         dir
@@ -258,28 +257,28 @@ mod tests {
     }
 
     #[test]
-    fn detect_via_mg_toml_provider() {
+    fn detect_via_mgc_toml_provider() {
         let dir = tmp_dir("cfg");
-        std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"aws\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "[cicd]\nprovider = \"aws\"\n").unwrap();
         assert_eq!(detect_provider(&dir), Some(CicdProvider::Aws));
     }
 
     #[test]
-    fn detect_gitlab_via_mg_toml_and_probe() {
+    fn detect_gitlab_via_mgc_toml_and_probe() {
         let dir = tmp_dir("gl");
-        std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"gitlab\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "[cicd]\nprovider = \"gitlab\"\n").unwrap();
         assert_eq!(detect_provider(&dir), Some(CicdProvider::Gitlab));
-        std::fs::remove_file(dir.join("mg.toml")).unwrap();
+        std::fs::remove_file(dir.join("mgc.toml")).unwrap();
         std::fs::write(dir.join(".gitlab-ci.yml"), "stages: [ci]\n").unwrap();
         assert_eq!(detect_provider(&dir), Some(CicdProvider::Gitlab));
     }
 
     #[test]
-    fn detect_circleci_via_mg_toml_and_probe() {
+    fn detect_circleci_via_mgc_toml_and_probe() {
         let dir = tmp_dir("cc");
-        std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"circleci\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "[cicd]\nprovider = \"circleci\"\n").unwrap();
         assert_eq!(detect_provider(&dir), Some(CicdProvider::CircleCi));
-        std::fs::remove_file(dir.join("mg.toml")).unwrap();
+        std::fs::remove_file(dir.join("mgc.toml")).unwrap();
         std::fs::create_dir_all(dir.join(".circleci")).unwrap();
         std::fs::write(dir.join(".circleci").join("config.yml"), "version: 2.1\n").unwrap();
         assert_eq!(detect_provider(&dir), Some(CicdProvider::CircleCi));
@@ -316,29 +315,29 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_generate_sbom_cicd() {
-        use mg_lockfile::{LockfileMetadata, Package};
+#[test]
+fn test_generate_sbom_cicd() {
+    use mgc_lockfile::{LockfileMetadata, Package};
 
-        let lockfile = Lockfile {
-            version: "2".to_string(),
-            metadata: LockfileMetadata {
-                generated_at: "2026-08-21T00:00:00Z".to_string(),
-                generator: "mg/0.4.0".to_string(),
-                lockfile_hash: "abc123".to_string(),
-                signer: None,
-            },
-            packages: vec![Package {
-                name: "test-pkg".to_string(),
-                version: "1.0.0".to_string(),
-                resolved: "https://example.com/test.tgz".to_string(),
-                integrity: "blake3:test123".to_string(),
-                dependencies: vec![],
-            }],
-        };
+    let lockfile = Lockfile {
+        version: "2".to_string(),
+        metadata: LockfileMetadata {
+            generated_at: "2026-08-21T00:00:00Z".to_string(),
+            generator: "mgc/0.4.0".to_string(),
+            lockfile_hash: "abc123".to_string(),
+            signer: None,
+        },
+        packages: vec![Package {
+            name: "test-pkg".to_string(),
+            version: "1.0.0".to_string(),
+            resolved: "https://example.com/test.tgz".to_string(),
+            integrity: "blake3:test123".to_string(),
+            dependencies: vec![],
+        }],
+    };
 
-        let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
-        assert!(json.contains("CycloneDX"));
-        assert!(json.contains("test-pkg"));
-        assert!(json.contains("1.0.0"));
-    }
+    let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
+}

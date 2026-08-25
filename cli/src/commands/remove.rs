@@ -1,8 +1,8 @@
 use crate::context::ProjectContext;
 use anyhow::Result;
-use mg_ui::{info, style_cmd, success};
+use mgc_ui::{info, style_cmd, success};
 
-/// mg remove — remove a dependency from the project
+/// mgc remove — remove a dependency from the project
 #[allow(dead_code)]
 pub async fn run(package: String, core: Option<&str>) -> Result<()> {
     run_many(vec![package], core).await
@@ -19,14 +19,14 @@ pub async fn run_many(packages: Vec<String>, core: Option<&str>) -> Result<()> {
     ));
 
     for package in &packages {
-        let name = mg_types::PackageName::new(package)?;
+        let name = mgc_types::PackageName::new(package)?;
         adapter.remove(ctx.root(), &name).await?;
         success(&format!("Removed {}", package));
     }
 
     info(&format!(
         "Run '{}' to update lockfile",
-        style_cmd("mg install")
+        style_cmd("mgc install")
     ));
 
     Ok(())

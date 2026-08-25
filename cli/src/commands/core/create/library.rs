@@ -1,4 +1,4 @@
-//! `mg create library` — wizard + scaffold (07 §4).
+//! `mgc create library` — wizard + scaffold (07 §4).
 
 use anyhow::Result;
 
@@ -10,6 +10,6 @@ pub async fn run(project_name: &str) -> Result<()> {
         crate::commands::template::ensure_layer(&format!("lib/{lang}")).await;
     }
     crate::scaffold::processor::Scaffolder::scaffold(&config)?;
-    mg_ui::success("Project created. Next: `mg add-library` or `mg install`.");
+    mgc_ui::success("Project created. Next: `mgc add-library` or `mgc install`.");
     Ok(())
 }

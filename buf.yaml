@@ -1,5 +1,5 @@
 version: v1
-name: buf.build/megagate/megagate
+name: buf.build/magicore/magicore
 deps:
   - buf.build/googleapis/googleapis
 lint:

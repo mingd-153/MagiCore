@@ -527,7 +527,7 @@ impl TryFrom<Commands> for DispatchCommand {
         }
 
         Ok(match command {
-            // ── Bare commands (auto-detect from .megagate/) ──
+            // ── Bare commands (auto-detect from .magicore/) ──
             Commands::Install {
                 packages,
                 frozen,
@@ -983,25 +983,25 @@ fn require_detected_ecosystem(verb: &str, ecosystem: Option<String>) -> anyhow::
 pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
     let cwd = std::env::current_dir()?;
 
-    // 0. Try core signature marker (.mg.core) — T9a, ưu tiên cao nhất
-    if let Some(root) = mg_config::project::ProjectConfig::find_project_root(&cwd) {
-        if let Ok(Some(core)) = mg_config::project::ProjectConfig::read_core_marker(&root) {
+    // 0. Try core signature marker (.mgc.core) — T9a, ưu tiên cao nhất
+    if let Some(root) = mgc_config::project::ProjectConfig::find_project_root(&cwd) {
+        if let Ok(Some(core)) = mgc_config::project::ProjectConfig::read_core_marker(&root) {
             return Ok(Some(core));
         }
     }
 
-    // 1. Try mg.toml
-    let mg_toml = cwd.join("mg.toml");
-    if mg_toml.exists() {
-        if let Ok(Some(cfg)) = mg_config::project::ProjectConfig::load(&cwd) {
+    // 1. Try mgc.toml
+    let mgc_toml = cwd.join("mgc.toml");
+    if mgc_toml.exists() {
+        if let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&cwd) {
             if !cfg.ecosystem.is_empty() {
                 return Ok(Some(cfg.ecosystem));
             }
         }
     }
 
-    // 2. Try mg.lock
-    let lock_path = cwd.join("mg.lock");
+    // 2. Try mgc.lock
+    let lock_path = cwd.join("mgc.lock");
     if lock_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&lock_path) {
             for line in content.lines() {
@@ -1023,7 +1023,7 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
         if let Ok(content) = std::fs::read_to_string(&package_json_path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(eco) = v
-                    .get("megagate")
+                    .get("magicore")
                     .and_then(|m| m.get("core"))
                     .and_then(|c| c.as_str())
                 {
@@ -1040,8 +1040,8 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
                 if let Some(eco) = v
                     .get("package")
                     .and_then(|p| p.get("metadata"))
-                    .and_then(|m| m.get("megagate"))
-                    .and_then(|mg| mg.get("core"))
+                    .and_then(|m| m.get("magicore"))
+                    .and_then(|mgc| mgc.get("core"))
                     .and_then(|c| c.as_str())
                 {
                     return Ok(Some(eco.to_string()));
@@ -1056,8 +1056,8 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
             if let Ok(v) = toml::from_str::<toml::Value>(&content) {
                 if let Some(eco) = v
                     .get("tool")
-                    .and_then(|t| t.get("megagate"))
-                    .and_then(|mg| mg.get("core"))
+                    .and_then(|t| t.get("magicore"))
+                    .and_then(|mgc| mgc.get("core"))
                     .and_then(|c| c.as_str())
                 {
                     return Ok(Some(eco.to_string()));
@@ -1071,20 +1071,20 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
         let items = crate::factory::available_cores();
         let display_items: Vec<&str> = items.iter().map(|(_, label)| *label).collect();
 
-        mg_ui::blank_line();
-        mg_ui::info("MegaGate detected a project without a bound core.");
-        let selected_idx = mg_ui::prompt::select(
+        mgc_ui::blank_line();
+        mgc_ui::info("MagiCore detected a project without a bound core.");
+        let selected_idx = mgc_ui::prompt::select(
             "Which ecosystem does this project belong to?",
             &display_items,
         )?;
         let selected_core = items[selected_idx].0;
 
-        let cfg = mg_config::project::ProjectConfig::new(
+        let cfg = mgc_config::project::ProjectConfig::new(
             cwd.file_name().unwrap_or_default().to_string_lossy(),
             selected_core,
         );
         cfg.save(&cwd)?;
-        mg_ui::info("Saved core binding to mg.toml");
+        mgc_ui::info("Saved core binding to mgc.toml");
 
         return Ok(Some(selected_core.to_string()));
     }

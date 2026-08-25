@@ -1,0 +1,17 @@
+[package]
+name = "mgc-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Plugin architecture: Resolver/Fetcher/Linker/TemplateGenerator/CacheBackend traits + PluginRegistry"
+
+[dependencies]
+mgc-types = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+[[test]]
+name = "registry"
+path = "test/registry.rs"

@@ -1,7 +1,7 @@
 /// deps_bundler.rs — Dependency Pre-bundler cho MgDevServer
 ///
 /// Cơ chế:
-///   1. Khi browser request `/@megagate/deps/react`, `DepsCache::get_or_bundle("react")` được gọi.
+///   1. Khi browser request `/@magicore/deps/react`, `DepsCache::get_or_bundle("react")` được gọi.
 ///   2. Nếu đã có trong in-memory cache → trả về ngay (0ms).
 ///   3. Nếu không, dùng esbuild_rs để bundle dependency đó thành 1 file ESM đơn lẻ.
 ///   4. Lưu kết quả vào in-memory cache (hoặc trên disk ở CompiledCache nếu muốn dùng chung giữa sessions).

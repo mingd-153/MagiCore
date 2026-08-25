@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use clap::Args;
 use std::io::{BufRead, Write};
 
-use mg_config::npmrc::NpmRc;
+use mgc_config::npmrc::NpmRc;
 
 /// Default registry (hardcode warning — OK: default const, overrideable via flag)
 const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org/";

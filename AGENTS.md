@@ -1,9 +1,9 @@
-# AGENTS.md — MegaGate
+# AGENTS.md — MagiCore
 
 - Đọc `RULE.md` trước MỌI task — bắt buộc (workflow 5 bước, naming, song ngữ).
-- Nguồn chân lý: `sys-mg/11-folder-structure.md` (cây folder) + `sys-mg/00-index.md` (quyết định).
+- Nguồn chân lý: `sys-mgc/11-folder-structure.md` (cây folder) + `sys-mgc/00-index.md` (quyết định).
 - Báo cáo tiếng Việt; code/design không tự ý vượt phase đã duyệt.
-- **BÁO CÁO SAU MỖI LẦN SỬA (BẮT BUỘC, user 2026-08-15):** sau mỗi lần sửa xong (code/design/docs/RULE) → APPEND 1 entry vào `docs/specs/megaGateChangeLog.md` — ghi: sửa gì, động file nào, RULE đổi gì (nếu có), thời gian ISO. KHÔNG sửa đè entry cũ. RULE thay đổi → cập nhật AGENTS.md/RULE.md + ghi vào changeLog.
+- **BÁO CÁO SAU MỖI LẦN SỬA (BẮT BUỘC, user 2026-08-15):** sau mỗi lần sửa xong (code/design/docs/RULE) → APPEND 1 entry vào `docs/specs/magiCoreChangeLog.md` — ghi: sửa gì, động file nào, RULE đổi gì (nếu có), thời gian ISO. KHÔNG sửa đè entry cũ. RULE thay đổi → cập nhật AGENTS.md/RULE.md + ghi vào changeLog.
 - Task rà soát/phân tích/maintain codebase (hoặc user kéo folder vào) → đọc `CODEBASE_REVIEW.md` và tuân theo flow (chờ user kéo folder → index GitNexus → review → báo cáo).
 
 ## Quy trình PHÁT TRIỂN BẮT BUỘC (mandatory — DEFINE → SHIP)
@@ -17,7 +17,7 @@ DEFINE → PLAN → BUILD → VERIFY → REVIEW → SHIP
 
 | Bước | Yêu cầu tối thiểu | Skill tương ứng (đã cài) |
 |---|---|---|
-| 1. DEFINE | Spec/PRD rõ trước code: mục tiêu, phạm vi, ràng buộc, reference RULE + sys-mg | `spec-driven-development`, `interview-me` (nếu yêu cầu mập mờ) |
+| 1. DEFINE | Spec/PRD rõ trước code: mục tiêu, phạm vi, ràng buộc, reference RULE + sys-mgc | `spec-driven-development`, `interview-me` (nếu yêu cầu mập mờ) |
 | 2. PLAN | Task nhỏ, atomic, criterion chấp nhận, thứ tự dependency, todo list | `planning-and-task-breakdown` |
 | 3. BUILD | Từng slice nhỏ, test-driven, an toàn (fail-closed + escape hatch), bám RULE | `incremental-implementation`, `test-driven-development`, `source-driven-development`, `security-and-hardening` (khi chạm input/auth/storage) |
 | 4. VERIFY | Chạy test riêng + chung (`cargo test --workspace`), sửa fail, bằng chứng pass | `debugging-and-error-recovery` (khi fail), `browser-testing-with-devtools` (web runtime) |
@@ -35,7 +35,7 @@ Dùng skill tool (`using-agent-skills`) để chọn + thực thi skill đúng b
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **MegaGate** (7060 symbols, 17298 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **MagiCore** (7060 symbols, 17298 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -59,10 +59,10 @@ This project is indexed by GitNexus as **MegaGate** (7060 symbols, 17298 relatio
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/MegaGate/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/MegaGate/clusters` | All functional areas |
-| `gitnexus://repo/MegaGate/processes` | All execution flows |
-| `gitnexus://repo/MegaGate/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/MagiCore/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/MagiCore/clusters` | All functional areas |
+| `gitnexus://repo/MagiCore/processes` | All execution flows |
+| `gitnexus://repo/MagiCore/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

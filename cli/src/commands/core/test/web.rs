@@ -12,8 +12,8 @@ fn lock_scaffold_env() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
-/// Registry-first: template layer cần fetch/cache sẵn (~/.mg/templates hoặc
-/// MG_TEMPLATES_DIR). Máy sạch offline → skip test materialize.
+/// Registry-first: template layer cần fetch/cache sẵn (~/.mgc/templates hoặc
+/// MGC_TEMPLATES_DIR). Máy sạch offline → skip test materialize.
 fn template_layer_ready(rel: &str) -> bool {
     let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
     root.exists("template.toml") && root.exists("sources")
@@ -108,7 +108,7 @@ fn test_validate_flags_rejects_external_package_manager() {
     };
     let err = validate_flags(&flags, "react-vite").unwrap_err();
     assert!(
-        err.to_string().contains("native mg installer"),
+        err.to_string().contains("native mgc installer"),
         "unexpected error: {err}"
     );
 }
@@ -615,13 +615,13 @@ fn test_detect_dev_target_prefers_monorepo_frontend_when_root_script_is_mg() {
         serde_json::json!({
             "name": "root",
             "version": "0.1.0",
-            "scripts": { "dev": "mg --core web dev" }
+            "scripts": { "dev": "mgc --core web dev" }
         })
         .to_string(),
     )
     .unwrap();
     std::fs::write(
-        dir.path().join("megagate.workspace.toml"),
+        dir.path().join("magicore.workspace.toml"),
         r#"
 mode = "monorepo"
 
@@ -673,7 +673,7 @@ fn test_install_targets_cover_fullstack_and_monorepo_children() {
     )
     .unwrap();
     std::fs::write(
-        monorepo.path().join("megagate.workspace.toml"),
+        monorepo.path().join("magicore.workspace.toml"),
         r#"
 mode = "monorepo"
 
@@ -711,7 +711,7 @@ fn test_install_targets_cover_monorepo_native_backend_children() {
     )
     .unwrap();
     std::fs::write(
-        monorepo.path().join("megagate.workspace.toml"),
+        monorepo.path().join("magicore.workspace.toml"),
         r#"
 mode = "monorepo"
 
@@ -741,7 +741,7 @@ fn test_install_targets_detect_workspace_manifest_without_mode_flag() {
     std::fs::write(monorepo.path().join("apps/backend/package.json"), "{}").unwrap();
     std::fs::write(monorepo.path().join("packages/shared/package.json"), "{}").unwrap();
     std::fs::write(
-        monorepo.path().join("megagate.workspace.toml"),
+        monorepo.path().join("magicore.workspace.toml"),
         r#"
 version = 1
 
@@ -861,7 +861,7 @@ fn test_write_monorepo_root_lockfile_aggregates_child_workspace_locks() {
     frontend_lock.frameworks = vec!["react-vite".to_string()];
     frontend_lock.resolution = ResolutionMeta {
         state: "locked".to_string(),
-        store: "megagate".to_string(),
+        store: "magicore".to_string(),
         package_count: 2,
     };
     frontend_lock.packages = vec![
@@ -885,14 +885,14 @@ fn test_write_monorepo_root_lockfile_aggregates_child_workspace_locks() {
         },
     ];
     let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
-    std::fs::write(frontend.join("mg.lock"), &frontend_lock_toml).unwrap();
-    mg_lockfile::write_lockfile_checksum(&frontend, frontend_lock_toml.as_bytes()).unwrap();
+    std::fs::write(frontend.join("mgc.lock"), &frontend_lock_toml).unwrap();
+    mgc_lockfile::write_lockfile_checksum(&frontend, frontend_lock_toml.as_bytes()).unwrap();
 
     let mut shared_lock = Lockfile::new("web", "package");
     shared_lock.frameworks = vec!["library".to_string()];
     shared_lock.resolution = ResolutionMeta {
         state: "locked".to_string(),
-        store: "megagate".to_string(),
+        store: "magicore".to_string(),
         package_count: 1,
     };
     shared_lock.packages = vec![LockPackage {
@@ -905,12 +905,12 @@ fn test_write_monorepo_root_lockfile_aggregates_child_workspace_locks() {
         peer_deps: vec![],
     }];
     let shared_lock_toml = serialization::to_toml(&shared_lock).unwrap();
-    std::fs::write(shared.join("mg.lock"), &shared_lock_toml).unwrap();
-    mg_lockfile::write_lockfile_checksum(&shared, shared_lock_toml.as_bytes()).unwrap();
+    std::fs::write(shared.join("mgc.lock"), &shared_lock_toml).unwrap();
+    mgc_lockfile::write_lockfile_checksum(&shared, shared_lock_toml.as_bytes()).unwrap();
 
     write_monorepo_root_lockfile(monorepo.path(), &[frontend.clone(), shared.clone()]).unwrap();
 
-    let root_lock = std::fs::read_to_string(monorepo.path().join("mg.lock")).unwrap();
+    let root_lock = std::fs::read_to_string(monorepo.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = serialization::from_toml(&root_lock).unwrap();
     assert_eq!(parsed.mode, "monorepo");
     assert_eq!(parsed.workspaces.len(), 2);
@@ -920,7 +920,7 @@ fn test_write_monorepo_root_lockfile_aggregates_child_workspace_locks() {
     assert!(parsed.frameworks.contains(&"react-vite".to_string()));
     assert!(parsed.frameworks.contains(&"library".to_string()));
     assert_eq!(parsed.packages.len(), 3);
-    assert!(monorepo.path().join("mg.lock.sha256").exists());
+    assert!(monorepo.path().join("mgc.lock.sha256").exists());
 }
 
 // #[test]
@@ -949,8 +949,8 @@ fn test_write_monorepo_root_lockfile_rejects_tampered_child_lock() {
         peer_deps: vec![],
     }];
     let frontend_lock_toml = serialization::to_toml(&frontend_lock).unwrap();
-    std::fs::write(frontend.join("mg.lock"), &frontend_lock_toml).unwrap();
-    std::fs::write(frontend.join("mg.lock.sha256"), "not-the-real-checksum").unwrap();
+    std::fs::write(frontend.join("mgc.lock"), &frontend_lock_toml).unwrap();
+    std::fs::write(frontend.join("mgc.lock.sha256"), "not-the-real-checksum").unwrap();
 
     let err = write_monorepo_root_lockfile(monorepo.path(), &[frontend])
         .expect_err("tampered child lockfile must fail monorepo aggregation");
@@ -992,9 +992,9 @@ fn test_native_runtime_env_provides_project_local_go_cache_for_dev() {
     let env = native_runtime_env(dir.path(), Path::new("go")).unwrap();
 
     let env = env.into_iter().collect::<std::collections::HashMap<_, _>>();
-    let go_root = dir.path().join(".megagate/cache/go");
-    let mod_cache = dir.path().join(".megagate/cache/go/pkg/mod");
-    let build_cache = dir.path().join(".megagate/cache/go/build");
+    let go_root = dir.path().join(".magicore/cache/go");
+    let mod_cache = dir.path().join(".magicore/cache/go/pkg/mod");
+    let build_cache = dir.path().join(".magicore/cache/go/build");
     assert_eq!(
         env.get("GOPATH").map(String::as_str),
         Some(go_root.to_string_lossy().as_ref())
@@ -1007,8 +1007,8 @@ fn test_native_runtime_env_provides_project_local_go_cache_for_dev() {
         env.get("GOCACHE").map(String::as_str),
         Some(build_cache.to_string_lossy().as_ref())
     );
-    assert!(dir.path().join(".megagate/cache/go/pkg/mod").exists());
-    assert!(dir.path().join(".megagate/cache/go/build").exists());
+    assert!(dir.path().join(".magicore/cache/go/pkg/mod").exists());
+    assert!(dir.path().join(".magicore/cache/go/build").exists());
 }
 
 // #[test]
@@ -1038,9 +1038,9 @@ fn test_create_web_writes_project_toml_for_monorepo() {
         ))
         .unwrap();
 
-    let mg_toml = project.join("mg.toml");
-    assert!(mg_toml.exists());
-    let contents = std::fs::read_to_string(mg_toml).unwrap();
+    let mgc_toml = project.join("mgc.toml");
+    assert!(mgc_toml.exists());
+    let contents = std::fs::read_to_string(mgc_toml).unwrap();
     assert!(contents.contains("ecosystem = \"web\""));
     assert!(contents.contains("[execution]"));
     assert!(contents.contains("architecture = \"rust-first\""));
@@ -1058,7 +1058,7 @@ fn test_dev_targets_for_fullstack_include_frontend_and_backend() {
         serde_json::json!({
             "name": "root",
             "version": "0.1.0",
-            "scripts": { "dev": "mg --core web dev" }
+            "scripts": { "dev": "mgc --core web dev" }
         })
         .to_string(),
     )

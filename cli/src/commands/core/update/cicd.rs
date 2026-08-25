@@ -1,4 +1,4 @@
-//! `mg update cicd` — bail rõ ràng (cicd không có update).
+//! `mgc update cicd` — bail rõ ràng (cicd không có update).
 
 use anyhow::Result;
 

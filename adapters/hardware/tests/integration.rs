@@ -1,13 +1,13 @@
 #![allow(clippy::unwrap_used)]
-//! Integration tests for mg-hardware-adapter — sát với src/lib.rs
-//! Kiểm thử: adapter_for (detect qua mg.toml ecosystem), list, audit, PackageAdapter trait.
+//! Integration tests for mgc-hardware-adapter — sát với src/lib.rs
+//! Kiểm thử: adapter_for (detect qua mgc.toml ecosystem), list, audit, PackageAdapter trait.
 
-use mg_hardware_adapter::{adapter_for, HardwareAdapter};
-use mg_types::adapter::PackageAdapter;
+use mgc_hardware_adapter::{adapter_for, HardwareAdapter};
+use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-hw-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-hw-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -18,7 +18,7 @@ fn tmp(tag: &str) -> PathBuf {
 #[test]
 fn adapter_for_returns_some_for_hardware_ecosystem() {
     let dir = tmp("hw");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     assert!(adapter_for(&dir).is_some());
 }
 
@@ -26,7 +26,7 @@ fn adapter_for_returns_some_for_hardware_ecosystem() {
 fn adapter_for_returns_some_for_game_ecosystem_cross_core() {
     // hardware optimizer/bench là cross-core add-on — game project cũng supported
     let dir = tmp("game-cross");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"game\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"game\"\n").unwrap();
     assert!(
         adapter_for(&dir).is_some(),
         "cross-core: hardware optimizer can be added to game project"
@@ -34,13 +34,13 @@ fn adapter_for_returns_some_for_game_ecosystem_cross_core() {
 }
 
 #[test]
-fn adapter_for_returns_none_for_dir_without_mg_toml() {
+fn adapter_for_returns_none_for_dir_without_mgc_toml() {
     let dir = tmp("empty");
     assert!(adapter_for(&dir).is_none());
 }
 
 #[test]
-fn adapter_for_returns_none_for_non_mg_ecosystem() {
+fn adapter_for_returns_none_for_non_mgc_ecosystem() {
     let dir = tmp("web-eco");
     // web ecosystem — hardware adapter không detect
     std::fs::write(dir.join("package.json"), r#"{"name":"web"}"#).unwrap();
@@ -58,7 +58,7 @@ fn adapter_name_and_ecosystem() {
 #[test]
 fn can_handle_returns_true_for_hardware_ecosystem() {
     let dir = tmp("ch-true");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     assert!(HardwareAdapter.can_handle(&dir));
 }
 
@@ -73,7 +73,7 @@ fn can_handle_returns_false_for_plain_dir() {
 #[tokio::test]
 async fn list_returns_empty_when_no_optimizer_or_bench() {
     let dir = tmp("list-empty");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let pkgs = HardwareAdapter.list(&dir).await.unwrap();
     assert!(pkgs.is_empty());
 }
@@ -81,7 +81,7 @@ async fn list_returns_empty_when_no_optimizer_or_bench() {
 #[tokio::test]
 async fn list_returns_optimizer_when_folder_exists() {
     let dir = tmp("list-opt");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     std::fs::create_dir_all(dir.join("optimizer")).unwrap();
     let pkgs = HardwareAdapter.list(&dir).await.unwrap();
     assert_eq!(pkgs.len(), 1);
@@ -91,7 +91,7 @@ async fn list_returns_optimizer_when_folder_exists() {
 #[tokio::test]
 async fn list_returns_both_optimizer_and_bench_when_both_exist() {
     let dir = tmp("list-both");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     std::fs::create_dir_all(dir.join("optimizer")).unwrap();
     std::fs::create_dir_all(dir.join("bench")).unwrap();
     let pkgs = HardwareAdapter.list(&dir).await.unwrap();
@@ -104,7 +104,7 @@ async fn list_returns_both_optimizer_and_bench_when_both_exist() {
 #[tokio::test]
 async fn list_ignores_other_directories() {
     let dir = tmp("list-ignore");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     std::fs::create_dir_all(dir.join("optimizer")).unwrap();
     // src/ không phải optimizer hay bench — phải bị bỏ qua
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -117,7 +117,7 @@ async fn list_ignores_other_directories() {
 #[tokio::test]
 async fn audit_returns_clean_for_hardware_project() {
     let dir = tmp("audit");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let report = HardwareAdapter.audit(&dir).await.unwrap();
     assert_eq!(report.vulnerabilities.len(), 0);
 }
@@ -127,7 +127,7 @@ async fn audit_returns_clean_for_hardware_project() {
 #[tokio::test]
 async fn parse_manifest_uses_dir_name() {
     let dir = tmp("my-hardware-project");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let manifest = HardwareAdapter.parse_manifest(&dir).await.unwrap();
     assert!(manifest.name.contains("my-hardware-project"));
 }
@@ -136,10 +136,10 @@ async fn parse_manifest_uses_dir_name() {
 
 #[tokio::test]
 async fn add_fails_for_hardware_adapter() {
-    use mg_types::adapter::AddOptions;
-    use mg_types::PackageName;
+    use mgc_types::adapter::AddOptions;
+    use mgc_types::PackageName;
     let dir = tmp("add-fail");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let name = PackageName::new("hal-crate").unwrap();
     let result = HardwareAdapter
         .add(&dir, &name, None, AddOptions::default())
@@ -149,9 +149,9 @@ async fn add_fails_for_hardware_adapter() {
 
 #[tokio::test]
 async fn remove_fails_for_hardware_adapter() {
-    use mg_types::PackageName;
+    use mgc_types::PackageName;
     let dir = tmp("rem-fail");
-    std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let name = PackageName::new("hal-crate").unwrap();
     let result = HardwareAdapter.remove(&dir, &name).await;
     assert!(result.is_err(), "hardware adapter must block direct remove");

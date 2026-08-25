@@ -1,14 +1,14 @@
 #![allow(clippy::unwrap_used)]
-//! Integration tests for mg-game-adapter — sát với src/lib.rs
+//! Integration tests for mgc-game-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_engine (Bevy, Godot, Unity, Unreal), adapter_for, PackageAdapter trait.
 
-use mg_game_adapter::{adapter_for, detect_engine, GameEngine};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::PackageName;
+use mgc_game_adapter::{adapter_for, detect_engine, GameEngine};
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::PackageName;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-game-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-game-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -57,15 +57,15 @@ fn detect_bevy_via_cargo_toml() {
     assert_eq!(detect_engine(&dir), Some(GameEngine::Bevy));
 }
 
-// ── detect_engine — mg.toml priority ──────────────────────────────────────
+// ── detect_engine — mgc.toml priority ──────────────────────────────────────
 
 #[test]
-fn detect_via_mg_toml_overrides_file_marker() {
-    let dir = tmp("mg-override");
-    // Cargo.toml -> Bevy, mg.toml -> Godot
+fn detect_via_mgc_toml_overrides_file_marker() {
+    let dir = tmp("mgc-override");
+    // Cargo.toml -> Bevy, mgc.toml -> Godot
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "ecosystem = \"game\"\n\n[game]\nengine = \"godot\"\n",
     )
     .unwrap();

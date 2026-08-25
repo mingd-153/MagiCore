@@ -2,7 +2,7 @@
 //!
 //! Provides `PackageJson` structure, atomic file write utilities, and manifest parse/serialization.
 
-use mg_types::{DependencySpec, Manifest, MgError, MgResult, PackageName, Version, VersionRange};
+use mgc_types::{DependencySpec, Manifest, MgError, MgResult, PackageName, Version, VersionRange};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -12,7 +12,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
 
     let tmp_path = dir.join(format!(
-        ".mg-tmp-{}-{}",
+        ".mgc-tmp-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -116,7 +116,7 @@ pub fn parse_manifest(project_root: &Path) -> MgResult<Manifest> {
     let pkg_path = project_root.join("package.json");
     if !pkg_path.exists() {
         return Err(MgError::Other(format!(
-            "No package.json in '{}'. Run 'mg init --template web' first.",
+            "No package.json in '{}'. Run 'mgc init --template web' first.",
             project_root.display()
         )));
     }
@@ -130,7 +130,7 @@ pub fn parse_manifest(project_root: &Path) -> MgResult<Manifest> {
         )));
     }
     let pkg_json: PackageJson = serde_json::from_str(&std::fs::read_to_string(&pkg_path)?)?;
-    let mut manifest = Manifest::new(&pkg_json.name, mg_types::ecosystem::Ecosystem::Web);
+    let mut manifest = Manifest::new(&pkg_json.name, mgc_types::ecosystem::Ecosystem::Web);
     manifest.version = Some(Version::parse(&pkg_json.version).map_err(|_| {
         MgError::Other(format!(
             "invalid version '{}' in package.json",

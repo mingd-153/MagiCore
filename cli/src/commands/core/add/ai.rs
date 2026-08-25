@@ -1,4 +1,4 @@
-//! `mg add` ai — tách từ core/ai.rs (Phase 7 v5). 05 §5: chốt 1 tool theo lock (uv/pip).
+//! `mgc add` ai — tách từ core/ai.rs (Phase 7 v5). 05 §5: chốt 1 tool theo lock (uv/pip).
 
 use anyhow::Result;
 

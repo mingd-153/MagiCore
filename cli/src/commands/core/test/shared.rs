@@ -1,13 +1,13 @@
 use super::*;
 // FIXME(V1.0.1): Re-enable after lockfile v2 migration complete
-// use mg_lockfile::Package;
-use mg_lockfile::Lockfile;
-use mg_types::{DependencySpec, Ecosystem, VersionRange};
+// use mgc_lockfile::Package;
+use mgc_lockfile::Lockfile;
+use mgc_types::{DependencySpec, Ecosystem, VersionRange};
 
 // #[test]
 fn game_hook_optimizer_dep_adds_path_dep_to_bevy_manifest() {
     let dir = std::env::temp_dir().join(format!(
-        "mg-game-hook-{}-{}",
+        "mgc-game-hook-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -23,7 +23,10 @@ fn game_hook_optimizer_dep_adds_path_dep_to_bevy_manifest() {
 
     game_hook_optimizer_dep(&dir).unwrap();
     let after = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
-    assert!(after.contains("mg-optimizer"), "dep must be added: {after}");
+    assert!(
+        after.contains("mgc-optimizer"),
+        "dep must be added: {after}"
+    );
     assert!(after.contains("./optimizer"), "path dep: {after}");
     assert!(
         toml::from_str::<toml::Value>(&after).is_ok(),
@@ -34,7 +37,7 @@ fn game_hook_optimizer_dep_adds_path_dep_to_bevy_manifest() {
     game_hook_optimizer_dep(&dir).unwrap();
     let twice = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
     assert_eq!(
-        twice.matches("mg-optimizer").count(),
+        twice.matches("mgc-optimizer").count(),
         1,
         "no duplicate dep: {twice}"
     );
@@ -45,7 +48,7 @@ fn game_hook_optimizer_dep_adds_path_dep_to_bevy_manifest() {
 // #[test]
 fn game_hook_optimizer_dep_skips_non_cargo_projects() {
     let dir = std::env::temp_dir().join(format!(
-        "mg-game-hook-{}-{}",
+        "mgc-game-hook-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -75,7 +78,7 @@ fn test_lock_matches_manifest_when_versions_satisfy_ranges() {
     let mut lock = Lockfile::new("web", "frontend");
     lock.resolution = ResolutionMeta {
         state: "locked".into(),
-        store: "megagate".into(),
+        store: "magicore".into(),
         package_count: 1,
     };
     lock.packages.push(LockPackage {
@@ -105,7 +108,7 @@ fn test_lock_matches_manifest_rejects_stale_version() {
     let mut lock = Lockfile::new("web", "frontend");
     lock.resolution = ResolutionMeta {
         state: "locked".into(),
-        store: "megagate".into(),
+        store: "magicore".into(),
         package_count: 1,
     };
     lock.packages.push(LockPackage {
@@ -125,11 +128,11 @@ fn test_read_checked_lockfile_errors_on_checksum_mismatch() {
     let root = tempfile::tempdir().unwrap();
     let lock = Lockfile::new("web", "frontend");
     std::fs::write(
-        root.path().join("mg.lock"),
+        root.path().join("mgc.lock"),
         serialization::to_toml(&lock).unwrap(),
     )
     .unwrap();
-    std::fs::write(root.path().join("mg.lock.sha256"), "bad").unwrap();
+    std::fs::write(root.path().join("mgc.lock.sha256"), "bad").unwrap();
 
     let err = read_checked_lockfile(root.path()).unwrap_err();
 
@@ -190,8 +193,8 @@ fn test_load_locked_graph_ignores_legacy_pm_lockfile() {
 
     assert!(graph.is_none());
     assert!(
-        !root.path().join("mg.lock").exists(),
-        "legacy lockfiles must not become mg.lock without an explicit migration command"
+        !root.path().join("mgc.lock").exists(),
+        "legacy lockfiles must not become mgc.lock without an explicit migration command"
     );
 }
 
@@ -203,11 +206,11 @@ fn test_load_locked_graph_fails_closed_on_future_version() {
     lock.version = 99;
     lock.resolution = ResolutionMeta {
         state: "locked".into(),
-        store: "megagate".into(),
+        store: "magicore".into(),
         package_count: 0,
     };
     std::fs::write(
-        root.path().join("mg.lock"),
+        root.path().join("mgc.lock"),
         serialization::to_toml(&lock).unwrap(),
     )
     .unwrap();
@@ -236,7 +239,7 @@ fn test_load_pruned_locked_graph_keeps_only_reachable_packages() {
     let mut lock = Lockfile::new("web", "frontend");
     lock.resolution = ResolutionMeta {
         state: "locked".into(),
-        store: "megagate".into(),
+        store: "magicore".into(),
         package_count: 4,
     };
     lock.packages.push(LockPackage {
@@ -276,7 +279,7 @@ fn test_load_pruned_locked_graph_keeps_only_reachable_packages() {
         peer_deps: vec![],
     });
     std::fs::write(
-        root.path().join("mg.lock"),
+        root.path().join("mgc.lock"),
         serialization::to_toml(&lock).unwrap(),
     )
     .unwrap();

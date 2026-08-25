@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 use criterion::{criterion_group, criterion_main, Criterion};
-use mg_types::{
+use mgc_types::{
     adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
     ResolvedPackage, Version,
 };
@@ -32,9 +32,9 @@ fn write_tar_entry(
 fn make_tarball(dir: &Path, pkg: &PackageId, file_count: usize) {
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    let store_root = dir.join(".megagate").join("cache").join("web");
+    let store_root = dir.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
-    let cache = mg_store::PackageCache::new(store_root.join("cache")).unwrap();
+    let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
     let tarball_path = cache.tarball_path(pkg);
     if let Some(parent) = tarball_path.parent() {
         std::fs::create_dir_all(parent).unwrap();
@@ -64,9 +64,9 @@ fn make_tarball(dir: &Path, pkg: &PackageId, file_count: usize) {
 fn make_tarball_with_files(dir: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) {
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    let store_root = dir.join(".megagate").join("cache").join("web");
+    let store_root = dir.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
-    let cache = mg_store::PackageCache::new(store_root.join("cache")).unwrap();
+    let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
     let tarball_path = cache.tarball_path(pkg);
     if let Some(parent) = tarball_path.parent() {
         std::fs::create_dir_all(parent).unwrap();
@@ -109,7 +109,7 @@ fn make_graph(packages: &[PackageId]) -> ResolvedGraph {
     }
 }
 
-fn install_all(adapter: &mg_web_adapter::WebAdapter, graph: &ResolvedGraph, dir: &Path) {
+fn install_all(adapter: &mgc_web_adapter::WebAdapter, graph: &ResolvedGraph, dir: &Path) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(adapter.install(graph, dir, InstallOptions::default()))
         .unwrap();
@@ -131,7 +131,7 @@ fn bench_large_tree(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mg_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new();
                 install_all(&adapter, &graph, dir.path());
                 for pkg in &pkgs {
                     let f = dir
@@ -165,13 +165,13 @@ fn bench_concurrent_install(c: &mut Criterion) {
                 let dd1 = d1.clone();
                 let dd2 = d2.clone();
                 let h1 = std::thread::spawn(move || {
-                    let adapter = mg_web_adapter::WebAdapter::new();
+                    let adapter = mgc_web_adapter::WebAdapter::new();
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(adapter.install(&g1, dd1.path(), InstallOptions::default()))
                         .unwrap();
                 });
                 let h2 = std::thread::spawn(move || {
-                    let adapter = mg_web_adapter::WebAdapter::new();
+                    let adapter = mgc_web_adapter::WebAdapter::new();
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(adapter.install(&g2, dd2.path(), InstallOptions::default()))
                         .unwrap();
@@ -203,7 +203,7 @@ fn bench_corrupted_metadata(c: &mut Criterion) {
                 let pkg = pkg_id("test-pkg", "1.0.0");
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
-                let adapter = mg_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new();
                 let graph = make_graph(&[pkg]);
                 (dir, graph, adapter)
             },
@@ -240,7 +240,7 @@ fn bench_deep_chain(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mg_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new();
                 install_all(&adapter, &graph, dir.path());
                 for pkg in &pkgs {
                     assert!(dir
@@ -275,7 +275,7 @@ fn bench_reinstall_changed(c: &mut Criterion) {
                 let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball_with_files(dir.path(), &pkg, &[("version.txt", b"v1")]);
-                let adapter = mg_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();
@@ -304,9 +304,9 @@ fn bench_mixed_integrity(c: &mut Criterion) {
                 for pkg in &pkgs {
                     make_tarball(dir.path(), pkg, 2);
                 }
-                let cache = mg_store::PackageCache::new(
+                let cache = mgc_store::PackageCache::new(
                     dir.path()
-                        .join(".megagate")
+                        .join(".magicore")
                         .join("cache")
                         .join("web")
                         .join("cache"),
@@ -327,7 +327,7 @@ fn bench_mixed_integrity(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mg_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let result =
                     rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()));
@@ -358,7 +358,7 @@ fn bench_clean_reinstall(c: &mut Criterion) {
                 let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
-                let adapter = mg_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();

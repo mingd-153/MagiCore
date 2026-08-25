@@ -8,11 +8,11 @@
 /// Browser request                 MgDevServer xử lý
 /// ─────────────────────────────────────────────────────
 /// GET /                        → serve index.html (inject HMR script)
-/// GET /@megagate/hmr.js        → serve HMR client script
-/// GET /@megagate/hmr           → WebSocket endpoint
-/// GET /@megagate/deps/react    → DepsCache: bundle react từ node_modules
+/// GET /@magicore/hmr.js        → serve HMR client script
+/// GET /@magicore/hmr           → WebSocket endpoint
+/// GET /@magicore/deps/react    → DepsCache: bundle react từ node_modules
 /// GET /src/App.tsx             → CompiledCache → esbuild (transpile only)
-///                                + rewrite bare imports → /@megagate/deps/…
+///                                + rewrite bare imports → /@magicore/deps/…
 /// GET /src/App.css             → serve as text/css
 /// GET /public/logo.png         → serve static
 /// ```
@@ -25,15 +25,15 @@
 /// import { motion } from 'framer-motion';
 ///
 /// // Output (sau khi rewrite):
-/// import React from '/@megagate/deps/react';
-/// import { motion } from '/@megagate/deps/framer-motion';
+/// import React from '/@magicore/deps/react';
+/// import { motion } from '/@magicore/deps/framer-motion';
 /// ```
 ///
 /// # Compile Cache
 ///
 /// Mỗi file .ts/.tsx/.jsx được hash bằng Blake3 → tra CompiledCache.
 /// Nếu hit: serve ngay (~0ms). Nếu miss: esbuild transpile → lưu vào cache.
-/// Cache được dùng chung giữa tất cả project trên máy (global ~/.megagate store).
+/// Cache được dùng chung giữa tất cả project trên máy (global ~/.magicore store).
 use crate::bundler::deps_bundler::DepsCache;
 use crate::bundler::hmr::{hmr_ws_handler, HmrManager, HMR_CLIENT_SCRIPT};
 use axum::{
@@ -51,8 +51,8 @@ use tokio::net::TcpListener;
 use tracing::{debug, error, info};
 
 // Regex-based import rewriter — khớp cả ESM static và dynamic imports
-// Ví dụ: import x from 'react' → import x from '/@megagate/deps/react'
-//        import('react') → import('/@megagate/deps/react')
+// Ví dụ: import x from 'react' → import x from '/@magicore/deps/react'
+//        import('react') → import('/@magicore/deps/react')
 static BARE_IMPORT_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
 fn bare_import_re() -> &'static regex::Regex {
@@ -62,14 +62,14 @@ fn bare_import_re() -> &'static regex::Regex {
         //   import 'pkg'        import "pkg"
         //   import('pkg')       import("pkg")
         //   export from 'pkg'
-        // Đường dẫn tương đối/absolute/@megagate được lọc trong rewrite_imports()
+        // Đường dẫn tương đối/absolute/@magicore được lọc trong rewrite_imports()
         regex::Regex::new(
             r#"(?P<keyword>from|import(?:\s*\()|import|export\s+(?:\*|(?:\{[^}]*\}))\s+from)\s*['"](?P<pkg>[^'"]+)['"]"#
         ).expect("invalid bare import regex")
     })
 }
 
-/// Rewrite bare imports trong JS/TS output thành /@megagate/deps/ paths.
+/// Rewrite bare imports trong JS/TS output thành /@magicore/deps/ paths.
 fn rewrite_imports(js: &str) -> String {
     let re = bare_import_re();
     re.replace_all(js, |caps: &regex::Captures| {
@@ -79,7 +79,7 @@ fn rewrite_imports(js: &str) -> String {
         if pkg.starts_with("./")
             || pkg.starts_with("../")
             || pkg.starts_with('/')
-            || pkg.starts_with("@megagate/")
+            || pkg.starts_with("@magicore/")
         {
             return caps
                 .get(0)
@@ -87,12 +87,12 @@ fn rewrite_imports(js: &str) -> String {
                 .unwrap_or_default();
         }
         // Xử lý scoped packages: @org/pkg → @org/pkg (giữ nguyên, chỉ thay separator)
-        // Ví dụ: @tanstack/react-query → /@megagate/deps/@tanstack/react-query
+        // Ví dụ: @tanstack/react-query → /@magicore/deps/@tanstack/react-query
         let is_dynamic = keyword.starts_with("import(");
         if is_dynamic {
-            format!("import('/@megagate/deps/{}')", pkg)
+            format!("import('/@magicore/deps/{}')", pkg)
         } else {
-            format!("{} '/@megagate/deps/{}'", keyword.trim_end(), pkg)
+            format!("{} '/@magicore/deps/{}'", keyword.trim_end(), pkg)
         }
     })
     .to_string()
@@ -109,7 +109,7 @@ pub struct DevServerConfig {
 struct ServerState {
     config: Arc<DevServerConfig>,
     hmr_manager: Arc<HmrManager>,
-    /// Pre-bundling cache cho node_modules (/@megagate/deps/*)
+    /// Pre-bundling cache cho node_modules (/@magicore/deps/*)
     deps_cache: DepsCache,
 }
 
@@ -157,10 +157,10 @@ impl MgDevServer {
             .route("/", get(serve_index))
             .route("/index.html", get(serve_index))
             // HMR client + WebSocket
-            .route("/@megagate/hmr.js", get(serve_hmr_client))
-            .route("/@megagate/hmr", get(hmr_ws_handler))
-            // Dependency pre-bundling: /@megagate/deps/{package}
-            .route("/@megagate/deps/*pkg", get(serve_dep))
+            .route("/@magicore/hmr.js", get(serve_hmr_client))
+            .route("/@magicore/hmr", get(hmr_ws_handler))
+            // Dependency pre-bundling: /@magicore/deps/{package}
+            .route("/@magicore/deps/*pkg", get(serve_dep))
             // Source files: transpile on-the-fly
             .route("/*path", get(serve_source_or_static))
             .with_state(state);
@@ -196,7 +196,7 @@ async fn serve_index(State(state): State<ServerState>) -> impl IntoResponse {
                 .root
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("MegaGate App");
+                .unwrap_or("MagiCore App");
             // Tạo index.html mặc định nếu không có
             let relative_entry = state
                 .config
@@ -223,7 +223,7 @@ async fn serve_index(State(state): State<ServerState>) -> impl IntoResponse {
     };
 
     // Inject HMR script vào <head>
-    let hmr_tag = r#"<script type="module" src="/@megagate/hmr.js"></script>"#;
+    let hmr_tag = r#"<script type="module" src="/@magicore/hmr.js"></script>"#;
     let hmr_tag = format!("{}\n", hmr_tag);
     if let Some(idx) = html.find("</head>") {
         html.insert_str(idx, &hmr_tag);
@@ -246,9 +246,9 @@ async fn serve_hmr_client() -> impl IntoResponse {
 }
 
 /// Phục vụ dependency đã pre-bundled.
-/// Route: GET /@megagate/deps/*pkg
-/// Ví dụ: /@megagate/deps/react → bundle react từ node_modules/react
-///         /@megagate/deps/@tanstack/react-query → scoped package
+/// Route: GET /@magicore/deps/*pkg
+/// Ví dụ: /@magicore/deps/react → bundle react từ node_modules/react
+///         /@magicore/deps/@tanstack/react-query → scoped package
 async fn serve_dep(Path(pkg): Path<String>, State(state): State<ServerState>) -> impl IntoResponse {
     debug!("deps request: {}", pkg);
 
@@ -373,10 +373,10 @@ async fn serve_transpiled(file_path: &std::path::Path, state: &ServerState) -> R
         .to_string();
 
     // 3. Kiểm tra CompiledCache (global, shared giữa projects)
-    let store_root = mg_store::default_store_root();
-    if let Ok(store) = mg_store::cas::ContentStore::new(store_root.clone()) {
+    let store_root = mgc_store::default_store_root();
+    if let Ok(store) = mgc_store::cas::ContentStore::new(store_root.clone()) {
         let compiled_cache = store.compiled_cache();
-        let hash_key = mg_store::cas::IntegrityHash::from_hash_str(&source_hash, false);
+        let hash_key = mgc_store::cas::IntegrityHash::from_hash_str(&source_hash, false);
         if let Ok(Some(cached)) = compiled_cache.get(&hash_key) {
             debug!(
                 "compiled-cache hit: {} ({})",
@@ -425,8 +425,8 @@ async fn serve_transpiled(file_path: &std::path::Path, state: &ServerState) -> R
             r#"
 const __err = `{err_esc}`;
 console.error('[MgDevServer] Build Error:', __err);
-const el = document.getElementById('__mg-error') || document.createElement('div');
-el.id = '__mg-error';
+const el = document.getElementById('__mgc-error') || document.createElement('div');
+el.id = '__mgc-error';
 el.style = 'position:fixed;top:0;left:0;right:0;background:#1a0000;color:#ff6b6b;padding:20px;font-family:monospace;white-space:pre;z-index:99999;border-bottom:2px solid #f00';
 el.textContent = '[MgDevServer Build Error]\n' + __err;
 document.body?.prepend(el);
@@ -444,14 +444,14 @@ document.body?.prepend(el);
         .map(|f| f.data.as_str().to_string())
         .unwrap_or_default();
 
-    // 5. Rewrite bare imports → /@megagate/deps/ paths
+    // 5. Rewrite bare imports → /@magicore/deps/ paths
     let js_with_rewrites = rewrite_imports(&raw_js);
 
     // 6. Lưu vào CompiledCache (global) để projects khác dùng chung
-    if let Ok(store) = mg_store::cas::ContentStore::new(store_root) {
+    if let Ok(store) = mgc_store::cas::ContentStore::new(store_root) {
         let compiled_cache = store.compiled_cache();
-        let hash_key = mg_store::cas::IntegrityHash::from_hash_str(&source_hash, false);
-        let module = mg_store::cas::CompiledModule {
+        let hash_key = mgc_store::cas::IntegrityHash::from_hash_str(&source_hash, false);
+        let module = mgc_store::cas::CompiledModule {
             js: raw_js, // Lưu raw (trước khi rewrite) vì path có thể thay đổi giữa projects
             source_map: None,
         };

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use url::Url;
 
 pub const DEFAULT_WEB_REGISTRY_URL: &str = "https://registry.npmjs.org";
-pub const WEB_REGISTRY_URL_ENV: &str = "MEGAGATE_WEB_REGISTRY_URL";
+pub const WEB_REGISTRY_URL_ENV: &str = "MAGICORE_WEB_REGISTRY_URL";
 
 pub fn web_registry_url() -> String {
     std::env::var(WEB_REGISTRY_URL_ENV).unwrap_or_else(|_| DEFAULT_WEB_REGISTRY_URL.to_string())

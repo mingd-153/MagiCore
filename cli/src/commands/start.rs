@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use axum::Router;
 use colored::Colorize;
-use mg_ui::{info, success};
+use mgc_ui::{info, success};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
 use tower_http::compression::CompressionLayer;
@@ -9,15 +9,15 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::{commands::start_config::resolve_web_start_bind, context::ProjectContext};
 
-/// mg start — MegaGate Native Production Server.
+/// mgc start — MagiCore Native Production Server.
 /// Detects output directory dynamically (dist, build, out) and serves it using Axum.
 pub async fn run(core: Option<&str>) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let root = ctx.root();
 
-    if !mg_ui::is_quiet() {
-        mg_ui::blank_line();
-        println!("🚀 {}", "MegaGate Production Server".bold().magenta());
+    if !mgc_ui::is_quiet() {
+        mgc_ui::blank_line();
+        println!("🚀 {}", "MagiCore Production Server".bold().magenta());
     }
     info(&format!("Project root: {}", root.display()));
     info(&format!("Execution profile: {}", ctx.execution_summary()));
@@ -40,7 +40,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
 
             let dist_dir = match selected_dir {
                 Some(d) => d,
-                None => bail!("Could not find a valid build output directory (checked: dist, build, out, .next, public). Please run 'mg build' first."),
+                None => bail!("Could not find a valid build output directory (checked: dist, build, out, .next, public). Please run 'mgc build' first."),
             };
 
             info(&format!(
@@ -72,7 +72,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
             Ok(())
         }
         other => {
-            bail!("'mg start' Engine is not implemented for the '{other}' core yet")
+            bail!("'mgc start' Engine is not implemented for the '{other}' core yet")
         }
     }
 }

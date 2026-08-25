@@ -84,7 +84,7 @@ def main():
     sid, _ = rpc(None, {
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-03-26", "capabilities": {},
-                   "clientInfo": {"name": "mg-agent", "version": "1"}},
+                   "clientInfo": {"name": "mgc-agent", "version": "1"}},
     })
 
     cmd = sys.argv[1]

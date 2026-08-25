@@ -4,14 +4,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use colored::Colorize;
 // FIXME(V1.0.1): Lockfile v2 migration — LockPackage removed
-// use mg_lockfile::{LockPackage, Lockfile};
-use mg_lockfile::Lockfile;
-use mg_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
-use mg_types::{
+// use mgc_lockfile::{LockPackage, Lockfile};
+use mgc_lockfile::Lockfile;
+use mgc_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
+use mgc_types::{
     adapter::PreparedAdd, DependencySpec, Ecosystem, Manifest, PackageId, PackageName,
     ResolvedGraph, ResolvedPackage, Version,
 };
-use mg_ui::{
+use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
 };
@@ -20,15 +20,15 @@ use time::{format_description::well_known::Rfc3339, Duration as TimeDuration, Of
 
 #[allow(dead_code)]
 pub fn find_project_root(cwd: &Path) -> Result<Option<PathBuf>> {
-    Ok(mg_config::project::ProjectConfig::find_project_root(cwd))
+    Ok(mgc_config::project::ProjectConfig::find_project_root(cwd))
 }
 
 fn install_command_for_adapter(adapter: &dyn PackageAdapter) -> &'static str {
     if adapter.name() == "web" {
-        return "mg install";
+        return "mgc install";
     }
 
-    "mg install"
+    "mgc install"
 }
 
 #[allow(dead_code)]
@@ -60,7 +60,7 @@ pub async fn add(
     } else {
         "dependencies"
     };
-    mg_ui::info(&format!("Adding {} package(s) to {}...", total, group));
+    mgc_ui::info(&format!("Adding {} package(s) to {}...", total, group));
 
     let manifest_before_add = if !no_save {
         let started_at = std::time::Instant::now();
@@ -75,10 +75,10 @@ pub async fn add(
     let mut added_packages = Vec::new();
     let mut changed_any = false;
     for package in packages {
-        let spec = mg_types::DependencySpec::parse(&package)?;
+        let spec = mgc_types::DependencySpec::parse(&package)?;
         let name = spec.name;
         let range = if let Some(v) = version.as_ref() {
-            Some(mg_types::VersionRange::parse(v)?)
+            Some(mgc_types::VersionRange::parse(v)?)
         } else if spec.range.is_star() {
             None
         } else {
@@ -126,23 +126,23 @@ pub async fn add(
                         peer,
                     });
                     if resolved_version == "0.0.0" {
-                        mg_ui::info(&format!(
+                        mgc_ui::info(&format!(
                             "  {}@{} saved to {}",
                             pkg_id.name_str(),
                             requested_range,
                             group
                         ));
                     } else {
-                        mg_ui::info(&format!(
+                        mgc_ui::info(&format!(
                             "  {}@{} added to {}",
                             pkg_id.name_str(),
                             resolved_version,
                             group
                         ));
                     }
-                    mg_ui::success(&format!("Added {}", package));
+                    mgc_ui::success(&format!("Added {}", package));
                 } else {
-                    mg_ui::info(&format!(
+                    mgc_ui::info(&format!(
                         "  {} already present in {}, skipping",
                         pkg_id.name_str(),
                         group
@@ -150,7 +150,7 @@ pub async fn add(
                 }
             }
         } else {
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "  {}@{} checked (--no-save, manifest unchanged)",
                 pkg_id.name_str(),
                 requested_range
@@ -254,7 +254,7 @@ pub async fn remove(
     // FIXME(V1.0.1): load_pruned_locked_graph disabled - restore after v2 migration
     let graph = None;
     if let Some(graph) = graph {
-        info("Using mg.lock for remaining dependency graph.");
+        info("Using mgc.lock for remaining dependency graph.");
         let started_at = std::time::Instant::now();
         let spinner = create_spinner("  Linking packages...");
         let mut summary = adapter
@@ -275,7 +275,7 @@ pub async fn remove(
             summary.duration_ms,
             "0 B",
         );
-        mg_ui::blank_line();
+        mgc_ui::blank_line();
         success("All dependencies installed");
         return Ok(());
     }
@@ -284,7 +284,7 @@ pub async fn remove(
         root,
         install_command_for_adapter(adapter),
         false,
-        mg_types::adapter::InstallOptions {
+        mgc_types::adapter::InstallOptions {
             incremental: true,
             ..Default::default()
         },
@@ -349,7 +349,7 @@ pub async fn update(
                     root,
                     install_command_for_adapter(adapter),
                     false,
-                    mg_types::adapter::InstallOptions {
+                    mgc_types::adapter::InstallOptions {
                         incremental: true,
                         ..Default::default()
                     },
@@ -383,7 +383,7 @@ pub async fn update(
                 root,
                 install_command_for_adapter(adapter),
                 false,
-                mg_types::adapter::InstallOptions {
+                mgc_types::adapter::InstallOptions {
                     incremental: true,
                     ..Default::default()
                 },
@@ -405,7 +405,7 @@ pub async fn install_with_adapter(
     root: &Path,
     add_cmd: &str,
     frozen: bool,
-    opts: mg_types::adapter::InstallOptions,
+    opts: mgc_types::adapter::InstallOptions,
 ) -> Result<()> {
     let command_started_at = std::time::Instant::now();
     let InstallExecution {
@@ -450,7 +450,7 @@ pub async fn install_with_adapter(
         summary.duration_ms,
         "0 B",
     );
-    mg_ui::blank_line();
+    mgc_ui::blank_line();
     success("All dependencies installed");
     profile_install_mark("install_with_adapter_total", command_started_at);
     Ok(())
@@ -458,7 +458,7 @@ pub async fn install_with_adapter(
 
 pub(crate) struct InstallExecution {
     pub graph: ResolvedGraph,
-    pub summary: mg_types::adapter::InstallSummary,
+    pub summary: mgc_types::adapter::InstallSummary,
     pub used_lockfile: bool,
 }
 
@@ -485,7 +485,7 @@ pub(crate) async fn prepare_install_execution(
         }
         return Ok(InstallExecution {
             graph: ResolvedGraph::empty(),
-            summary: mg_types::adapter::InstallSummary::default(),
+            summary: mgc_types::adapter::InstallSummary::default(),
             used_lockfile: false,
         });
     }
@@ -493,7 +493,7 @@ pub(crate) async fn prepare_install_execution(
     let (graph, used_lockfile) = if let Some(graph) =
         load_locked_graph(root, adapter.name(), &manifest)?
     {
-        info("Using mg.lock for install state.");
+        info("Using mgc.lock for install state.");
         profile_install_mark("load_locked_graph", started_at);
         (graph, true)
     } else {
@@ -512,7 +512,7 @@ pub(crate) async fn prepare_install_execution(
     profile_install_mark("prepare_install_execution_total", started_at);
     Ok(InstallExecution {
         graph,
-        summary: mg_types::adapter::InstallSummary {
+        summary: mgc_types::adapter::InstallSummary {
             duration_ms: started_at.elapsed().as_millis() as u64,
             ..Default::default()
         },
@@ -524,7 +524,7 @@ async fn enforce_audit_strict_policy(
     adapter: &dyn PackageAdapter,
     graph: &ResolvedGraph,
 ) -> Result<()> {
-    if std::env::var_os("MG_AUDIT_STRICT").is_none() || graph.packages.is_empty() {
+    if std::env::var_os("MGC_AUDIT_STRICT").is_none() || graph.packages.is_empty() {
         return Ok(());
     }
 
@@ -545,9 +545,9 @@ async fn enforce_audit_strict_policy(
 
 #[cfg(feature = "web")]
 async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
-    use mg_types::adapter::VulnerabilitySeverity;
+    use mgc_types::adapter::VulnerabilitySeverity;
 
-    let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new(
+    let registry = mgc_web_adapter::native::npm_registry::NpmRegistry::new(
         &crate::commands::web_registry_config::web_registry_url(),
     );
     let now = OffsetDateTime::now_utc();
@@ -583,7 +583,7 @@ async fn enforce_web_audit_strict_policy(graph: &ResolvedGraph) -> Result<()> {
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent(format!("megagate/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("magicore/{}", env!("CARGO_PKG_VERSION")))
         .build()?;
     let advisory_url = crate::commands::web_registry_config::advisory_bulk_endpoint(
         &crate::commands::web_registry_config::web_registry_url(),
@@ -671,7 +671,7 @@ async fn try_install_added_packages_from_lock(
         summary.duration_ms,
         "0 B",
     );
-    mg_ui::blank_line();
+    mgc_ui::blank_line();
     success("All dependencies installed");
     profile_install_mark("install_delta_with_lock_total", started_at);
     Ok(true)
@@ -682,7 +682,7 @@ fn build_delta_manifest(manifest: &Manifest, added_packages: &[AddedPackage]) ->
     for package in added_packages {
         let mut spec = DependencySpec::new(
             package.id.name().clone(),
-            mg_types::VersionRange::parse(&format!("={}", package.id.version()))?,
+            mgc_types::VersionRange::parse(&format!("={}", package.id.version()))?,
         );
         spec.dev = package.dev;
         spec.optional = package.optional;
@@ -722,14 +722,14 @@ fn merge_graphs(mut base: ResolvedGraph, delta: ResolvedGraph) -> ResolvedGraph 
 }
 
 fn profile_install_mark(label: &str, started_at: std::time::Instant) {
-    let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+    let enabled = std::env::var("MAGICORE_WEB_PROFILE_INSTALL")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false);
     if enabled {
         eprintln!(
-            "[megagate:web:command-profile] {}={}ms",
+            "[magicore:web:command-profile] {}={}ms",
             label,
             started_at.elapsed().as_millis()
         );
@@ -743,15 +743,15 @@ fn load_locked_graph(
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     let Some(lock) = read_checked_lockfile(project_root)? else {
-        let legacy = mg_lockfile::import::detect_legacy_lockfiles(project_root);
+        let legacy = mgc_lockfile::import::detect_legacy_lockfiles(project_root);
         if !legacy.is_empty() {
             let names = legacy
                 .iter()
                 .map(|lock| lock.file_name)
                 .collect::<Vec<_>>()
                 .join(", ");
-            mg_ui::warning(&format!(
-                "Ignoring legacy lockfile(s): {names}. Run an explicit MegaGate lock migration before install if you want to seed mg.lock from them."
+            mgc_ui::warning(&format!(
+                "Ignoring legacy lockfile(s): {names}. Run an explicit MagiCore lock migration before install if you want to seed mgc.lock from them."
             ));
         }
         return Ok(None);
@@ -772,7 +772,7 @@ fn load_locked_graph(
 }
 
 fn read_checked_lockfile(project_root: &Path) -> Result<Option<Lockfile>> {
-    mg_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
+    mgc_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 // FIXME(V1.0.1): Disabled — uses pkg.direct field removed in v2
@@ -867,7 +867,7 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Re
     if adapter.name() != "web" {
         return Err(crate::error::why_web_only());
     }
-    let lock_path = root.join("mg.lock");
+    let lock_path = root.join("mgc.lock");
     if !lock_path.exists() {
         return Err(crate::error::lock_missing_install());
     }
@@ -895,7 +895,7 @@ fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {
         return Ok(local);
     }
 
-    for global in megagate_global_package_roots() {
+    for global in magicore_global_package_roots() {
         let global_pkg = global.join(package);
         if global_pkg.exists() {
             return Ok(global_pkg);
@@ -905,15 +905,15 @@ fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {
     Err(crate::error::pkg_not_found_local(package))
 }
 
-fn megagate_global_package_roots() -> Vec<PathBuf> {
+fn magicore_global_package_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(path) = std::env::var_os("MEGAGATE_GLOBAL_PACKAGE_ROOT") {
+    if let Some(path) = std::env::var_os("MAGICORE_GLOBAL_PACKAGE_ROOT") {
         roots.push(PathBuf::from(path));
     }
     if let Some(cache_dir) = dirs::cache_dir() {
         roots.push(
             cache_dir
-                .join("megagate")
+                .join("magicore")
                 .join("global")
                 .join("web")
                 .join("node_modules"),
@@ -926,7 +926,7 @@ pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
     if core_type != "web" {
         return false;
     }
-    let env_val = std::env::var("MEGAGATE_WEB_STRICT_LAYOUT")
+    let env_val = std::env::var("MAGICORE_WEB_STRICT_LAYOUT")
         .ok()
         .map(|v| v.trim().to_ascii_lowercase());
     match env_val.as_deref() {
@@ -941,10 +941,10 @@ pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
 // Mỗi lệnh folder (add/, install/, ...) tái dùng project_root + adapter của core ở đây,
 // thay vì duplic per file. Message giữ từng core để không mất context lỗi.
 
-/// project_root của core — seeded từ find_project_root (mg.toml/.mg.core/package.json...).
+/// project_root của core — seeded từ find_project_root (mgc.toml/.mgc.core/package.json...).
 pub fn core_project_root(core: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found(core))?;
+    let root = find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mgc_project_found(core))?;
     Ok(root)
 }
 
@@ -960,7 +960,7 @@ pub async fn game_optimizer_template(root: &Path) -> Result<()> {
     game_hook_optimizer_dep(root)
 }
 
-/// game: thêm dep path `mg-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
+/// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
 fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
     let manifest = root.join("Cargo.toml");
     if !manifest.exists() {
@@ -971,11 +971,11 @@ fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
     let deps = v["dependencies"]
         .as_table_mut()
         .ok_or_else(crate::error::cargo_toml_no_deps)?;
-    if deps.contains_key("mg-optimizer") {
+    if deps.contains_key("mgc-optimizer") {
         return Ok(());
     }
     deps.insert(
-        "mg-optimizer".to_string(),
+        "mgc-optimizer".to_string(),
         toml::Value::Table(toml::map::Map::from_iter([(
             "path".to_string(),
             toml::Value::String("./optimizer".to_string()),
@@ -987,11 +987,11 @@ fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
 
 // ── ai helpers (Phase 7 v5) ───────────────────────────────────────────────────
 
-/// ai project root — detect qua mg_ai_adapter (không dùng find_project_root).
+/// ai project root — detect qua mgc_ai_adapter (không dùng find_project_root).
 #[cfg(feature = "ai")]
 pub fn ai_project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
-    mg_ai_adapter::adapter_for(&cwd)
+    mgc_ai_adapter::adapter_for(&cwd)
         .map(|_| cwd.clone())
         .ok_or_else(crate::error::ai_project_not_detected)
 }
@@ -1018,46 +1018,46 @@ fn ai_tool_uv_available() -> bool {
 }
 
 pub fn ai_run_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Result<()> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run_inherited(tool, args, &opts)
+    mgc_exec::prelude::run_inherited(tool, args, &opts)
         .map_err(|e| crate::error::tool_failed(tool, &e))?;
     Ok(())
 }
 
 pub fn ai_run_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) -> Result<String> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    let report = mg_exec::prelude::run(tool, args, &opts)
+    let report = mgc_exec::prelude::run(tool, args, &opts)
         .map_err(|e| crate::error::tool_failed(tool, &e))?;
     Ok(report.stdout_tail)
 }
 
-/// ai: entry script qua python3 (Q20, allowlist §5.1) — `mg dev` ai.
+/// ai: entry script qua python3 (Q20, allowlist §5.1) — `mgc dev` ai.
 #[cfg(feature = "ai")]
 pub async fn ai_dev(_dry_run: bool) -> Result<()> {
     let root = ai_project_root()?;
     let framework =
-        mg_ai_adapter::adapter_for(&root).ok_or_else(|| crate::error::no_ai_framework(&root))?;
+        mgc_ai_adapter::adapter_for(&root).ok_or_else(|| crate::error::no_ai_framework(&root))?;
     let script = framework.framework.entry_script().to_string();
 
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.clone()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
     let cmd = "python3".to_string();
-    mg_ui::info(&format!("AI dev: running `{} {}`...", cmd, script));
-    mg_exec::prelude::run_inherited(&cmd, &[script], &opts)
+    mgc_ui::info(&format!("AI dev: running `{} {}`...", cmd, script));
+    mgc_exec::prelude::run_inherited(&cmd, &[script], &opts)
         .map_err(|e| crate::error::python3_failed(&e))?;
     Ok(())
 }

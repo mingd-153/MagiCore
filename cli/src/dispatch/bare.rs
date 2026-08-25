@@ -21,7 +21,7 @@ pub fn bare_core_command(
             prefer_dedupe,
             repair,
             dry_run,
-            offline,  // T4.1
+            offline, // T4.1
         } => SomeCore(match require_ecosystem("install", ecosystem.as_deref())? {
             "web" => CoreCommand::InstallWeb {
                 packages,
@@ -30,7 +30,7 @@ pub fn bare_core_command(
                 allow_scripts,
                 prefer_dedupe,
                 repair,
-                offline,  // T4.1
+                offline, // T4.1
             },
             "game" => CoreCommand::InstallGame { packages },
             "ai" => CoreCommand::InstallAi { packages, dry_run },

@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use flate2;
 use hex;
-use mg_fetcher::extract::extract_tarball_to_cas_and_link;
-use mg_store::{ContentStore, Database, Layout};
-use mg_types::adapter::ResolvedPackage;
-use mg_types::{MgError, MgResult, PackageId};
+use mgc_fetcher::extract::extract_tarball_to_cas_and_link;
+use mgc_store::{ContentStore, Database, Layout};
+use mgc_types::adapter::ResolvedPackage;
+use mgc_types::{MgError, MgResult, PackageId};
 use sha2::{Digest, Sha256};
 use tar;
 use walkdir::WalkDir;
@@ -78,7 +78,7 @@ pub fn tarball_prefetch_lock(id: &PackageId) -> Arc<tokio::sync::Mutex<()>> {
 }
 
 pub fn extracted_package_marker_path(root: &Path) -> PathBuf {
-    root.join(".megagate-package-root.json")
+    root.join(".magicore-package-root.json")
 }
 
 pub fn expected_extracted_package_marker_from_bytes(
@@ -451,7 +451,7 @@ impl CasClaimContext {
 }
 
 pub fn extracted_cache_full_validation_enabled() -> bool {
-    std::env::var("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE")
+    std::env::var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
@@ -571,7 +571,7 @@ where
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        parent.join(format!(".mg-extract-{}-{}", pkg.id.name_str(), ts))
+        parent.join(format!(".mgc-extract-{}-{}", pkg.id.name_str(), ts))
     };
     if temp_root.exists() {
         std::fs::remove_dir_all(&temp_root).map_err(|err| {

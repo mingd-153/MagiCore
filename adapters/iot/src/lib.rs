@@ -1,20 +1,20 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! mg-iot-adapter — IoT ecosystem adapter (MegaGate)
+//! mgc-iot-adapter — IoT ecosystem adapter (MagiCore)
 //! (esp32-rust → orchestrate cargo Q10; platformio/zephyr → exec passthrough; board registry tĩnh P1)
 
 use async_trait::async_trait;
-use mg_types::adapter::{
+use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
-use mg_types::{
+use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
 };
 use std::path::{Path, PathBuf};
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IotFramework {
@@ -73,7 +73,7 @@ pub struct IotAdapter {
 }
 
 pub fn detect_framework(root: &Path) -> Option<IotFramework> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
                 if eco != "iot" {
@@ -104,7 +104,7 @@ pub fn detect_framework(root: &Path) -> Option<IotFramework> {
 }
 
 fn manifest_is_iot(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
                 if eco == "iot" {
@@ -122,13 +122,14 @@ fn manifest_is_iot(root: &Path) -> bool {
 }
 
 fn exec_tool(root: &Path, cmd: &str, args: &[String]) -> MgResult<()> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run(cmd, args, &opts).map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+    mgc_exec::prelude::run(cmd, args, &opts)
+        .map_err(|e| mgc_types::MgError::Other(e.to_string()))?;
     Ok(())
 }
 
@@ -140,14 +141,14 @@ fn placeholder_id(name: &PackageName, range: Option<&VersionRange>) -> PackageId
 }
 
 fn cargo_dep_version(root: &Path, name: &PackageName) -> Option<Version> {
-    let manifest = mg_adapter_base::cargo_manifest::parse_manifest(root, Ecosystem::Iot).ok()?;
+    let manifest = mgc_adapter_base::cargo_manifest::parse_manifest(root, Ecosystem::Iot).ok()?;
     manifest
         .find_dep(name.as_str())
         .and_then(|d| d.range.satisfying_version())
 }
 
 fn target_from_manifest(root: &Path) -> Option<String> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(target) = v
                 .get("iot")
@@ -178,7 +179,7 @@ impl PackageAdapter for IotAdapter {
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
         match self.framework {
             IotFramework::Esp32Rust => {
-                mg_adapter_base::cargo_manifest::parse_manifest(project_root, Ecosystem::Iot)
+                mgc_adapter_base::cargo_manifest::parse_manifest(project_root, Ecosystem::Iot)
             }
             IotFramework::Platformio | IotFramework::Zephyr => {
                 let name = project_root
@@ -193,7 +194,7 @@ impl PackageAdapter for IotAdapter {
     async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
         match self.framework {
             IotFramework::Esp32Rust => {
-                mg_adapter_base::cargo_manifest::write_manifest(project_root, manifest)
+                mgc_adapter_base::cargo_manifest::write_manifest(project_root, manifest)
             }
             IotFramework::Platformio | IotFramework::Zephyr => Ok(()),
         }
@@ -267,8 +268,8 @@ impl PackageAdapter for IotAdapter {
                 exec_tool(project_root, "pio", &args)?;
                 Ok(placeholder_id(name, range))
             }
-            IotFramework::Zephyr => Err(mg_types::MgError::Other(
-                "zephyr deps are managed via west.yml (passthrough west update) — mg add for zephyr is not supported yet, P1 (04 §4)".to_string(),
+            IotFramework::Zephyr => Err(mgc_types::MgError::Other(
+                "zephyr deps are managed via west.yml (passthrough west update) — mgc add for zephyr is not supported yet, P1 (04 §4)".to_string(),
             )),
         }
     }
@@ -295,7 +296,7 @@ impl PackageAdapter for IotAdapter {
                 )?;
                 Ok(())
             }
-            IotFramework::Zephyr => Err(mg_types::MgError::Other(
+            IotFramework::Zephyr => Err(mgc_types::MgError::Other(
                 "zephyr deps are managed via west.yml".to_string(),
             )),
         }
@@ -362,7 +363,7 @@ impl IotAdapter {
     }
 
     pub fn board(&self, root: &Path) -> Option<String> {
-        if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+        if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
             if let Ok(v) = toml::from_str::<toml::Value>(&content) {
                 return v
                     .get("iot")
@@ -389,26 +390,25 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tmp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mg-iot-test-{}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mgc-iot-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     #[test]
-    fn detect_esp32_rust_via_mg_toml() {
+    fn detect_esp32_rust_via_mgc_toml() {
         let dir = tmp_dir("esp32");
         std::fs::write(
-            dir.join("mg.toml"),
+            dir.join("mgc.toml"),
             "ecosystem = \"iot\"\n\n[iot]\nframework = \"esp32-rust\"\nboard = \"esp32c3\"\n",
         )
         .unwrap();
@@ -460,29 +460,29 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_generate_sbom_iot() {
-        use mg_lockfile::{LockfileMetadata, Package};
+#[test]
+fn test_generate_sbom_iot() {
+    use mgc_lockfile::{LockfileMetadata, Package};
 
-        let lockfile = Lockfile {
-            version: "2".to_string(),
-            metadata: LockfileMetadata {
-                generated_at: "2026-08-21T00:00:00Z".to_string(),
-                generator: "mg/0.4.0".to_string(),
-                lockfile_hash: "abc123".to_string(),
-                signer: None,
-            },
-            packages: vec![Package {
-                name: "test-pkg".to_string(),
-                version: "1.0.0".to_string(),
-                resolved: "https://example.com/test.tgz".to_string(),
-                integrity: "blake3:test123".to_string(),
-                dependencies: vec![],
-            }],
-        };
+    let lockfile = Lockfile {
+        version: "2".to_string(),
+        metadata: LockfileMetadata {
+            generated_at: "2026-08-21T00:00:00Z".to_string(),
+            generator: "mgc/0.4.0".to_string(),
+            lockfile_hash: "abc123".to_string(),
+            signer: None,
+        },
+        packages: vec![Package {
+            name: "test-pkg".to_string(),
+            version: "1.0.0".to_string(),
+            resolved: "https://example.com/test.tgz".to_string(),
+            integrity: "blake3:test123".to_string(),
+            dependencies: vec![],
+        }],
+    };
 
-        let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
-        assert!(json.contains("CycloneDX"));
-        assert!(json.contains("test-pkg"));
-        assert!(json.contains("1.0.0"));
-    }
+    let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
+}

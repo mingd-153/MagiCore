@@ -19,48 +19,48 @@ jobs:
           # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: megagate-Linux-X64.tar.gz
-            web_artifact_name: megagate-web-Linux-X64.tar.gz
+            artifact_name: magicore-Linux-X64.tar.gz
+            web_artifact_name: magicore-web-Linux-X64.tar.gz
             use_cross: false
             is_windows: false
 
           # Linux ARM64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            artifact_name: megagate-Linux-ARM64.tar.gz
-            web_artifact_name: megagate-web-Linux-ARM64.tar.gz
+            artifact_name: magicore-Linux-ARM64.tar.gz
+            web_artifact_name: magicore-web-Linux-ARM64.tar.gz
             use_cross: true
             is_windows: false
 
           # macOS Apple Silicon (ARM64)
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: megagate-macOS-ARM64.tar.gz
-            web_artifact_name: megagate-web-macOS-ARM64.tar.gz
+            artifact_name: magicore-macOS-ARM64.tar.gz
+            web_artifact_name: magicore-web-macOS-ARM64.tar.gz
             use_cross: false
             is_windows: false
 
           # macOS Intel (x86_64)
           - os: macos-13
             target: x86_64-apple-darwin
-            artifact_name: megagate-macOS-X64.tar.gz
-            web_artifact_name: megagate-web-macOS-X64.tar.gz
+            artifact_name: magicore-macOS-X64.tar.gz
+            web_artifact_name: magicore-web-macOS-X64.tar.gz
             use_cross: false
             is_windows: false
 
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: megagate-Windows-X64.zip
-            web_artifact_name: megagate-web-Windows-X64.zip
+            artifact_name: magicore-Windows-X64.zip
+            web_artifact_name: magicore-web-Windows-X64.zip
             use_cross: false
             is_windows: true
 
           # Windows ARM64
           - os: windows-latest
             target: aarch64-pc-windows-msvc
-            artifact_name: megagate-Windows-ARM64.zip
-            web_artifact_name: megagate-web-Windows-ARM64.zip
+            artifact_name: magicore-Windows-ARM64.zip
+            web_artifact_name: magicore-web-Windows-ARM64.zip
             use_cross: false
             is_windows: true
 
@@ -80,41 +80,41 @@ jobs:
       - name: Build Binaries (Standard)
         if: ${{ !matrix.use_cross && !matrix.is_windows }}
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin mg --no-default-features --features all --locked
-          mkdir -p dist/megagate
-          cp target/${{ matrix.target }}/release/mg dist/megagate/mg
-          cargo build --release --target ${{ matrix.target }} --bin mg --no-default-features --features web --locked
-          mkdir -p dist/megagate-web
-          cp target/${{ matrix.target }}/release/mg dist/megagate-web/mg
+          cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features all --locked
+          mkdir -p dist/magicore
+          cp target/${{ matrix.target }}/release/mgc dist/magicore/mgc
+          cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features web --locked
+          mkdir -p dist/magicore-web
+          cp target/${{ matrix.target }}/release/mgc dist/magicore-web/mgc
 
       - name: Build Binaries (Cross)
         if: matrix.use_cross
         run: |
-          cross build --release --target ${{ matrix.target }} --bin mg --no-default-features --features all --locked
-          mkdir -p dist/megagate
-          cp target/${{ matrix.target }}/release/mg dist/megagate/mg
-          cross build --release --target ${{ matrix.target }} --bin mg --no-default-features --features web --locked
-          mkdir -p dist/megagate-web
-          cp target/${{ matrix.target }}/release/mg dist/megagate-web/mg
+          cross build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features all --locked
+          mkdir -p dist/magicore
+          cp target/${{ matrix.target }}/release/mgc dist/magicore/mgc
+          cross build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features web --locked
+          mkdir -p dist/magicore-web
+          cp target/${{ matrix.target }}/release/mgc dist/magicore-web/mgc
 
       - name: Build Binaries (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin mg --no-default-features --features all --locked
-          New-Item -ItemType Directory -Force -Path dist/megagate | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/mg.exe" -Destination "dist/megagate/mg.exe" -Force
-          cargo build --release --target ${{ matrix.target }} --bin mg --no-default-features --features web --locked
-          New-Item -ItemType Directory -Force -Path dist/megagate-web | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/mg.exe" -Destination "dist/megagate-web/mg.exe" -Force
+          cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features all --locked
+          New-Item -ItemType Directory -Force -Path dist/magicore | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/mgc.exe" -Destination "dist/magicore/mgc.exe" -Force
+          cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features web --locked
+          New-Item -ItemType Directory -Force -Path dist/magicore-web | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/mgc.exe" -Destination "dist/magicore-web/mgc.exe" -Force
 
       # Package Unix (.tar.gz)
       - name: Package Unix Archive
         if: ${{ !matrix.is_windows }}
         run: |
-          tar -C dist/megagate -czvf "${{ matrix.artifact_name }}" mg
+          tar -C dist/magicore -czvf "${{ matrix.artifact_name }}" mgc
           shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
-          tar -C dist/megagate-web -czvf "${{ matrix.web_artifact_name }}" mg
+          tar -C dist/magicore-web -czvf "${{ matrix.web_artifact_name }}" mgc
           shasum -a 256 "${{ matrix.web_artifact_name }}" > "${{ matrix.web_artifact_name }}.sha256"
 
       # Package Windows (.zip)
@@ -122,10 +122,10 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          Compress-Archive -Path "dist/megagate/mg.exe" -DestinationPath "${{ matrix.artifact_name }}" -Force
+          Compress-Archive -Path "dist/magicore/mgc.exe" -DestinationPath "${{ matrix.artifact_name }}" -Force
           $hash = (Get-FileHash -Path "${{ matrix.artifact_name }}" -Algorithm SHA256).Hash.ToLower()
           "$hash  ${{ matrix.artifact_name }}" | Out-File -FilePath "${{ matrix.artifact_name }}.sha256" -Encoding ascii
-          Compress-Archive -Path "dist/megagate-web/mg.exe" -DestinationPath "${{ matrix.web_artifact_name }}" -Force
+          Compress-Archive -Path "dist/magicore-web/mgc.exe" -DestinationPath "${{ matrix.web_artifact_name }}" -Force
           $webHash = (Get-FileHash -Path "${{ matrix.web_artifact_name }}" -Algorithm SHA256).Hash.ToLower()
           "$webHash  ${{ matrix.web_artifact_name }}" | Out-File -FilePath "${{ matrix.web_artifact_name }}.sha256" -Encoding ascii
 
@@ -164,10 +164,10 @@ jobs:
       - name: Stage package manager manifests
         run: |
           mkdir -p release-assets/packaging/homebrew release-assets/packaging/scoop
-          cp packaging/homebrew/megagate.rb release-assets/packaging/homebrew/megagate.rb
-          cp packaging/homebrew/megagate-web.rb release-assets/packaging/homebrew/megagate-web.rb
-          cp packaging/scoop/megagate.json release-assets/packaging/scoop/megagate.json
-          cp packaging/scoop/megagate-web.json release-assets/packaging/scoop/megagate-web.json
+          cp packaging/homebrew/magicore.rb release-assets/packaging/homebrew/magicore.rb
+          cp packaging/homebrew/magicore-web.rb release-assets/packaging/homebrew/magicore-web.rb
+          cp packaging/scoop/magicore.json release-assets/packaging/scoop/magicore.json
+          cp packaging/scoop/magicore-web.json release-assets/packaging/scoop/magicore-web.json
 
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2

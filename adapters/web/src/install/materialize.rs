@@ -3,10 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use mg_platform::reflink::reflink_clone;
-use mg_store::{ContentStore, Layout, PackageCache};
-use mg_types::adapter::{ResolvedGraph, ResolvedPackage};
-use mg_types::{MgError, MgResult, PackageId};
+use mgc_platform::reflink::reflink_clone;
+use mgc_store::{ContentStore, Layout, PackageCache};
+use mgc_types::adapter::{ResolvedGraph, ResolvedPackage};
+use mgc_types::{MgError, MgResult, PackageId};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
@@ -20,7 +20,7 @@ use crate::lockfile::installed_package_matches;
 use crate::profile::MaterializationProfile;
 
 pub fn hardlink_thread_count() -> usize {
-    std::env::var("MEGAGATE_WEB_HARDLINK_THREADS")
+    std::env::var("MAGICORE_WEB_HARDLINK_THREADS")
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|&count| count > 0)
@@ -38,7 +38,7 @@ pub fn hardlink_pool() -> MgResult<&'static rayon::ThreadPool> {
     let pool = POOL.get_or_init(|| {
         rayon::ThreadPoolBuilder::new()
             .num_threads(hardlink_thread_count())
-            .thread_name(|index| format!("mg-web-hardlink-{index}"))
+            .thread_name(|index| format!("mgc-web-hardlink-{index}"))
             .build()
             .map_err(|err| err.to_string())
     });
@@ -53,7 +53,7 @@ pub enum StrictTreeLinkMode {
 }
 
 pub fn strict_tree_link_mode() -> StrictTreeLinkMode {
-    match std::env::var("MEGAGATE_WEB_STRICT_TREE_MODE")
+    match std::env::var("MAGICORE_WEB_STRICT_TREE_MODE")
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase()
@@ -118,7 +118,7 @@ pub fn hardlink_tree_with_profile(
     target_root: &Path,
     profile: Option<&MaterializationProfile>,
 ) -> MgResult<()> {
-    let reflink_enabled = match std::env::var("MEGAGATE_WEB_REFLINK") {
+    let reflink_enabled = match std::env::var("MAGICORE_WEB_REFLINK") {
         Ok(value) => value != "0",
         Err(_) => true,
     };
@@ -200,7 +200,7 @@ pub fn backing_link_file(
                 }
                 return Ok(());
             }
-            Err(mg_platform::reflink::ReflinkError::Other(_)) if target.exists() => {
+            Err(mgc_platform::reflink::ReflinkError::Other(_)) if target.exists() => {
                 std::fs::remove_file(target).map_err(|err| {
                     MgError::Other(format!(
                         "failed to remove existing file '{}' before reflink: {}",
@@ -215,7 +215,7 @@ pub fn backing_link_file(
                     return Ok(());
                 }
             }
-            Err(mg_platform::reflink::ReflinkError::Other(err)) => {
+            Err(mgc_platform::reflink::ReflinkError::Other(err)) => {
                 return Err(MgError::Other(format!(
                     "reflink failed for '{}' -> '{}': {}",
                     source.display(),
@@ -223,7 +223,7 @@ pub fn backing_link_file(
                     err
                 )));
             }
-            Err(mg_platform::reflink::ReflinkError::NotSupported(_)) => {}
+            Err(mgc_platform::reflink::ReflinkError::NotSupported(_)) => {}
         }
     }
 
@@ -423,7 +423,7 @@ pub fn prune_root_install_dirs(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
-        if name == ".bin" || name == ".megagate" {
+        if name == ".bin" || name == ".magicore" {
             continue;
         }
 
@@ -475,7 +475,7 @@ pub fn strict_vstore_package_dir(node_modules: &Path, package_id: &PackageId) ->
 }
 
 pub fn repair_dangling_symlinks(node_modules: &Path) -> MgResult<()> {
-    let vstore_root = node_modules.join(".megagate");
+    let vstore_root = node_modules.join(".magicore");
     let mut fixed = 0usize;
     let mut stack = vec![node_modules.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -514,7 +514,7 @@ pub fn repair_dangling_symlinks(node_modules: &Path) -> MgResult<()> {
         }
     }
     if fixed > 0 {
-        eprintln!("[megagate] repair: re-linked {} dangling symlink(s)", fixed);
+        eprintln!("[magicore] repair: re-linked {} dangling symlink(s)", fixed);
     }
     Ok(())
 }
@@ -526,7 +526,7 @@ pub fn strict_vstore_node_modules_dir(node_modules: &Path, package_id: &PackageI
         package_id.version()
     );
     node_modules
-        .join(".megagate")
+        .join(".magicore")
         .join(vstore_pkg_name)
         .join("node_modules")
 }
@@ -559,7 +559,7 @@ pub fn materialize_strict_layout(
     packages_with_scripts: &mut Vec<std::path::PathBuf>,
     extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
 ) -> MgResult<()> {
-    let virtual_store = node_modules.join(".megagate");
+    let virtual_store = node_modules.join(".magicore");
     if let Err(e) = std::fs::create_dir_all(&virtual_store) {
         return Err(MgError::Other(format!(
             "failed to create virtual store: {}",

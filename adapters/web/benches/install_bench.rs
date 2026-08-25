@@ -2,8 +2,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use mg_types::{adapter::InstallOptions, PackageAdapter, PackageId, PackageName, Version};
-use mg_web_adapter::WebAdapter;
+use mgc_types::{adapter::InstallOptions, PackageAdapter, PackageId, PackageName, Version};
+use mgc_web_adapter::WebAdapter;
 use std::path::Path;
 use tar::{Builder, Header};
 
@@ -14,12 +14,12 @@ fn package_id(name: &str, version: &str) -> PackageId {
     )
 }
 
-fn make_graph(packages: &[PackageId]) -> mg_types::ResolvedGraph {
-    mg_types::ResolvedGraph {
+fn make_graph(packages: &[PackageId]) -> mgc_types::ResolvedGraph {
+    mgc_types::ResolvedGraph {
         packages: packages
             .iter()
             .cloned()
-            .map(|id| mg_types::ResolvedPackage {
+            .map(|id| mgc_types::ResolvedPackage {
                 id,
                 integrity: String::new(),
                 tarball_url: String::new(),
@@ -33,9 +33,9 @@ fn make_graph(packages: &[PackageId]) -> mg_types::ResolvedGraph {
 }
 
 fn seed_cached_tarball(root: &Path, pkg: &PackageId, file_count: usize) {
-    let store_root = root.join(".megagate").join("cache").join("web");
+    let store_root = root.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
-    let cache = mg_store::PackageCache::new(store_root.join("cache")).unwrap();
+    let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
     let tarball_path = cache.tarball_path(pkg);
     if let Some(parent) = tarball_path.parent() {
         std::fs::create_dir_all(parent).unwrap();

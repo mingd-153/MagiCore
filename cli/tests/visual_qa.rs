@@ -2,7 +2,7 @@
 
 //! Visual QA tests — scaffold frontend framework, start dev server, screenshot via Playwright.
 //! Run: cargo test --test visual_qa -- --ignored
-//! Requires: MegaGate deps installed plus `playwright` on PATH or MEGAGATE_PLAYWRIGHT_BIN set.
+//! Requires: MagiCore deps installed plus `playwright` on PATH or MAGICORE_PLAYWRIGHT_BIN set.
 #![allow(dead_code)]
 
 use std::process::{Child, Command, Stdio};
@@ -18,7 +18,7 @@ fn scaffold_project(framework: &str, dir: &str) {
             .args([
                 "run",
                 "--bin",
-                "mg",
+                "mgc",
                 "--",
                 "create-web",
                 framework,
@@ -27,7 +27,7 @@ fn scaffold_project(framework: &str, dir: &str) {
             ])
             .current_dir(dir)
             .status()
-            .expect("failed to run mga create-web")
+            .expect("failed to run mgc create-web")
             .success(),
         "scaffold {} failed",
         framework
@@ -38,12 +38,12 @@ fn install_deps(framework: &str, dir: &str) {
     let pdir = project_dir(dir, framework);
     assert!(
         Command::new("cargo")
-            .args(["run", "--bin", "mg", "--", "install-web"])
+            .args(["run", "--bin", "mgc", "--", "install-web"])
             .current_dir(&pdir)
             .status()
-            .expect("failed to run mg install-web")
+            .expect("failed to run mgc install-web")
             .success(),
-        "mg install-web failed for {}",
+        "mgc install-web failed for {}",
         framework
     );
 }
@@ -54,7 +54,7 @@ fn start_dev_server(framework: &str, dir: &str, port: u16) -> Child {
         .args([
             "run",
             "--bin",
-            "mg",
+            "mgc",
             "--",
             "dev",
             "--host",
@@ -127,7 +127,7 @@ export default defineConfig({
     .unwrap();
     std::fs::create_dir_all(format!("{}/screenshots", spec_dir)).unwrap();
 
-    let playwright = std::env::var("MEGAGATE_PLAYWRIGHT_BIN")
+    let playwright = std::env::var("MAGICORE_PLAYWRIGHT_BIN")
         .or_else(|_| std::env::var("PLAYWRIGHT_BIN"))
         .unwrap_or_else(|_| "playwright".to_string());
     let output = Command::new(playwright)

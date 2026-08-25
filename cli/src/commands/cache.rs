@@ -118,9 +118,9 @@ fn cache_entries(
     if target.includes(CacheTarget::Shared) {
         if let Some(root) = dirs::cache_dir() {
             let shared = match core {
-                Some("web") => root.join("megagate").join("web"),
-                Some(core) => root.join("megagate").join(core),
-                None => root.join("megagate"),
+                Some("web") => root.join("magicore").join("web"),
+                Some(core) => root.join("magicore").join(core),
+                None => root.join("magicore"),
             };
             entries.push(CacheEntry {
                 label: "shared",
@@ -134,9 +134,9 @@ fn cache_entries(
         if let Ok(cwd) = std::env::current_dir() {
             if let Some(root) = crate::commands::core::shared::find_project_root(&cwd)? {
                 let project = match core {
-                    Some("web") => root.join(".megagate").join("cache").join("web"),
-                    Some(core) => root.join(".megagate").join("cache").join(core),
-                    None => root.join(".megagate").join("cache"),
+                    Some("web") => root.join(".magicore").join("cache").join("web"),
+                    Some(core) => root.join(".magicore").join("cache").join(core),
+                    None => root.join(".magicore").join("cache"),
                 };
                 entries.push(CacheEntry {
                     label: "project",
@@ -207,7 +207,7 @@ fn print_status(entries: &[CacheEntry]) -> Result<()> {
             if exists { "exists" } else { "missing" },
             entry.path.display()
         );
-        if entry.label == "shared" && entry.path.ends_with("megagate/web") {
+        if entry.label == "shared" && entry.path.ends_with("magicore/web") {
             let stats = web_shared_cache_stats(&entry.path);
             println!(
                 "shared:web:pinned\t{}\t{} roots\t{} refs",
@@ -220,7 +220,7 @@ fn print_status(entries: &[CacheEntry]) -> Result<()> {
                 human_bytes(stats.unpinned_package_bytes),
                 stats.unpinned_package_roots
             );
-        } else if entry.label == "project" && entry.path.ends_with(".megagate/cache/web") {
+        } else if entry.label == "project" && entry.path.ends_with(".magicore/cache/web") {
             let stats = web_project_cache_stats(&entry.path);
             println!("project:web:cas\t{}\tcas", human_bytes(stats.cas_bytes));
             println!(
@@ -344,7 +344,7 @@ fn prune_cas_blobs_under(cas_root: &Path, store_root: &Path, dry_run: bool) -> R
         return Ok(0);
     }
 
-    let live: HashSet<String> = match mg_store::Database::open(&store_root.join("store.db")) {
+    let live: HashSet<String> = match mgc_store::Database::open(&store_root.join("store.db")) {
         Ok(db) => {
             let mut set = HashSet::new();
             match db.list_cas_live_refs() {
@@ -539,7 +539,7 @@ fn web_shared_package_roots(root: &Path) -> Vec<PathBuf> {
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_dir())
         .map(|entry| entry.path().to_path_buf())
-        .filter(|path| path.join(".megagate-package-root.json").exists())
+        .filter(|path| path.join(".magicore-package-root.json").exists())
         .collect()
 }
 
@@ -708,9 +708,9 @@ mod tests {
             .join("package");
         std::fs::create_dir_all(&pinned).unwrap();
         std::fs::create_dir_all(&unpinned).unwrap();
-        std::fs::write(pinned.join(".megagate-package-root.json"), "{}").unwrap();
+        std::fs::write(pinned.join(".magicore-package-root.json"), "{}").unwrap();
         std::fs::write(pinned.join("index.js"), "react").unwrap();
-        std::fs::write(unpinned.join(".megagate-package-root.json"), "{}").unwrap();
+        std::fs::write(unpinned.join(".magicore-package-root.json"), "{}").unwrap();
         std::fs::write(unpinned.join("index.js"), "zod").unwrap();
 
         let refs = cache.path().join("refs").join("projects");
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn web_project_prune_removes_only_safe_cache_files() {
         let root = tempfile::tempdir().unwrap();
-        let web = root.path().join(".megagate").join("cache").join("web");
+        let web = root.path().join(".magicore").join("cache").join("web");
         let cas_blob = web.join("cas").join("ab").join("live");
         let cas_orphan = web.join("cas").join("cd").join("orphan");
         let tarball = web.join("cache").join("pkg").join("1.0.0.tgz");
@@ -812,7 +812,7 @@ mod tests {
     #[test]
     fn web_project_prune_keeps_refcount_claimed_cas_blobs() {
         let root = tempfile::tempdir().unwrap();
-        let web = root.path().join(".megagate").join("cache").join("web");
+        let web = root.path().join(".magicore").join("cache").join("web");
         let claimed_blob = web.join("cas").join("ab").join("claimed-hash");
         let orphan_blob = web.join("cas").join("cd").join("orphan-hash");
         std::fs::create_dir_all(claimed_blob.parent().unwrap()).unwrap();
@@ -820,7 +820,7 @@ mod tests {
         std::fs::write(&claimed_blob, b"claimed").unwrap();
         std::fs::write(&orphan_blob, b"orphan").unwrap();
 
-        let db = mg_store::Database::open(&web.join("store.db")).unwrap();
+        let db = mgc_store::Database::open(&web.join("store.db")).unwrap();
         db.cas_claim("/proj/demo", "claimed-hash").unwrap();
 
         let pruned = prune_web_project_cache(&web, false).unwrap();
@@ -833,7 +833,7 @@ mod tests {
     #[test]
     fn web_project_prune_corrupt_db_falls_back_to_nlink() {
         let root = tempfile::tempdir().unwrap();
-        let web = root.path().join(".megagate").join("cache").join("web");
+        let web = root.path().join(".magicore").join("cache").join("web");
         let blob = web.join("cas").join("ab").join("blob-hash");
         let live_link = root.path().join("node_modules").join("live");
         std::fs::create_dir_all(blob.parent().unwrap()).unwrap();

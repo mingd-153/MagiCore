@@ -1,4 +1,4 @@
-//! `mg update` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
+//! `mgc update` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
 
 use anyhow::Result;
 

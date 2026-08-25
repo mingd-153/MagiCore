@@ -1,7 +1,7 @@
 //! `update.rs` — Update dependencies to latest matching or newer versions for WebAdapter.
 
-use mg_types::adapter::UpdatedPackage;
-use mg_types::{MgError, MgResult, PackageName, Version, VersionRange};
+use mgc_types::adapter::UpdatedPackage;
+use mgc_types::{MgError, MgResult, PackageName, Version, VersionRange};
 use std::path::Path;
 
 use crate::lockfile::read_web_lockfile_checked;

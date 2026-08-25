@@ -1,7 +1,7 @@
-//! `mg create-<core>` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
+//! `mgc create-<core>` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
 //!
-//! T5: provider = registry starter kit (create-mg-<core>) → fallback local template → wizard.
-//! T9a: sau scaffold, tự ghi `.mg.core` marker tại project folder.
+//! T5: provider = registry starter kit (create-mgc-<core>) → fallback local template → wizard.
+//! T9a: sau scaffold, tự ghi `.mgc.core` marker tại project folder.
 
 use anyhow::Result;
 
@@ -24,7 +24,7 @@ pub mod library;
 pub mod web;
 
 pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> {
-    // T5: Thử fetch starter kit `create-mg-<core>` từ MegaGate registry trước.
+    // T5: Thử fetch starter kit `create-mgc-<core>` từ MagiCore registry trước.
     // Nếu offline / không tìm thấy → fallback vào local template + wizard (hiện hành).
     // (Registry fetch chưa có endpoint thật → fallback ngay, TODO khi registry staging live)
     let result = match core {
@@ -69,7 +69,7 @@ pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> 
         other => return Err(crate::error::unknown_core(other)),
     };
 
-    // T9a: Ghi .mg.core marker tại project_name/ folder sau scaffold thành công.
+    // T9a: Ghi .mgc.core marker tại project_name/ folder sau scaffold thành công.
     // Fail-soft: chỉ warn nếu không ghi được, không block luồng.
     if result.is_ok() {
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -81,11 +81,11 @@ pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> 
         };
         if project_dir.is_dir() {
             if let Err(e) =
-                mg_config::project::ProjectConfig::write_core_marker_at(&project_dir, core)
+                mgc_config::project::ProjectConfig::write_core_marker_at(&project_dir, core)
             {
-                mg_ui::warning(&format!(
+                mgc_ui::warning(&format!(
                     "Could not write {} marker: {e}",
-                    mg_config::project::ProjectConfig::CORE_MARKER_FILE
+                    mgc_config::project::ProjectConfig::CORE_MARKER_FILE
                 ));
             }
         }

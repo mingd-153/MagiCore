@@ -2,10 +2,10 @@
 //! Lệnh trust cho ký và xác minh lockfile
 
 pub mod init;
-pub mod sign;
-pub mod verify;
 pub mod list;
 pub mod policy;
+pub mod sign;
+pub mod verify;
 
 use clap::Subcommand;
 
@@ -18,25 +18,25 @@ pub enum TrustCmd {
         #[arg(long)]
         force: bool,
     },
-    
+
     /// Sign lockfile — Ký lockfile
     Sign {
         /// Lockfile path — Đường dẫn lockfile
-        #[arg(default_value = "mg.lock")]
+        #[arg(default_value = "mgc.lock")]
         lockfile: String,
-        
+
         /// Key ID to use — Key ID để dùng
         #[arg(long)]
         key_id: Option<String>,
     },
-    
+
     /// Verify lockfile — Xác minh lockfile
     Verify {
         /// Lockfile path — Đường dẫn lockfile
-        #[arg(default_value = "mg.lock")]
+        #[arg(default_value = "mgc.lock")]
         lockfile: String,
     },
-    
+
     /// List keys — Liệt kê keys
     List,
 }

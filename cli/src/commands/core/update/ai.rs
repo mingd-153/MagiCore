@@ -1,4 +1,4 @@
-//! `mg update` ai — tách từ core/ai.rs (Phase 7 v5).
+//! `mgc update` ai — tách từ core/ai.rs (Phase 7 v5).
 
 use anyhow::Result;
 
@@ -41,7 +41,7 @@ pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
                 shared::ai_run_tool(&root, tool, &["sync".to_string()])?;
             }
         } else {
-            mg_ui::info(
+            mgc_ui::info(
                 "Run `pip list --outdated` to see newer versions — pip does not auto-upgrade the lock.",
             );
         }

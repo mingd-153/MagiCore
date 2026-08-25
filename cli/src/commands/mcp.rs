@@ -65,7 +65,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                     "tools": {}
                 },
                 "serverInfo": {
-                    "name": "megagate-native-mcp",
+                    "name": "magicore-native-mcp",
                     "version": "0.3.0"
                 }
             })),
@@ -77,8 +77,8 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
             result: Some(json!({
                 "tools": [
                     {
-                        "name": "mg_install",
-                        "description": "Execute MegaGate package installation with CAS reflink/hardlink caching",
+                        "name": "mgc_install",
+                        "description": "Execute MagiCore package installation with CAS reflink/hardlink caching",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -95,7 +95,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         }
                     },
                     {
-                        "name": "mg_add",
+                        "name": "mgc_add",
                         "description": "Add dependencies to the current polyglot project",
                         "inputSchema": {
                             "type": "object",
@@ -114,7 +114,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         }
                     },
                     {
-                        "name": "mg_audit",
+                        "name": "mgc_audit",
                         "description": "Run supply-chain security audit and 24-hour release quarantine checks",
                         "inputSchema": {
                             "type": "object",
@@ -127,7 +127,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         }
                     },
                     {
-                        "name": "mg_workspace_info",
+                        "name": "mgc_workspace_info",
                         "description": "Get monorepo topology, computation build cache and catalog mappings",
                         "inputSchema": {
                             "type": "object",
@@ -147,22 +147,22 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                 .unwrap_or_default();
 
             let tool_res = match tool_name {
-                "mg_install" => json!({
+                "mgc_install" => json!({
                     "content": [{
                         "type": "text",
-                        "text": "MegaGate install completed with CAS zero-copy reflink cache (all packages locked in mg.lock)"
+                        "text": "MagiCore install completed with CAS zero-copy reflink cache (all packages locked in mgc.lock)"
                     }]
                 }),
-                "mg_audit" => json!({
+                "mgc_audit" => json!({
                     "content": [{
                         "type": "text",
                         "text": "Security audit: 0 vulnerabilities found, supply-chain 24h release gate clean."
                     }]
                 }),
-                "mg_workspace_info" => json!({
+                "mgc_workspace_info" => json!({
                     "content": [{
                         "type": "text",
-                        "text": "MegaGate polyglot workspace: 0.3.0. Catalogs and computation caching active."
+                        "text": "MagiCore polyglot workspace: 0.3.0. Catalogs and computation caching active."
                     }]
                 }),
                 _ => json!({

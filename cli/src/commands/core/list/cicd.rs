@@ -1,4 +1,4 @@
-//! `mg list cicd` — bail rõ ràng (cicd không có list).
+//! `mgc list cicd` — bail rõ ràng (cicd không có list).
 
 use anyhow::Result;
 

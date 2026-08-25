@@ -1,7 +1,7 @@
-# Chống phình build context (sys-mg/17 §6)
+# Chống phình build context (sys-mgc/17 §6)
 target/
 _archive/
-sys-mg/
+sys-mgc/
 .git/
 .gitignore
 *.md

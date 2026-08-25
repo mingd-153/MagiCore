@@ -1,0 +1,38 @@
+[package]
+name = "mgc-pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Pack tarball stream P1 (MagiCore)"
+
+[dependencies]
+tar = { workspace = true }
+flate2 = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+ignore = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
+[[test]]
+name = "test_ignore"
+path = "test/ignore.rs"
+
+[[test]]
+name = "test_manifest"
+path = "test/manifest.rs"
+
+[[test]]
+name = "test_tarball"
+path = "test/tarball.rs"
+
+[lints]
+workspace = true

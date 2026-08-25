@@ -1,0 +1,8 @@
+name = "magicore-iot"
+binary = "mgc"
+description = "MagiCore single-core IoT distribution"
+mode = "single-core"
+primary_core = "iot"
+no_default_features = true
+features = ["iot"]
+install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --package magicore-iot"

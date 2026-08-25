@@ -1,21 +1,21 @@
-//! iot tooling lệnh: `mg flash` (Q16 — esp32-rust P1, platformio/zephyr P2).
+//! iot tooling lệnh: `mgc flash` (Q16 — esp32-rust P1, platformio/zephyr P2).
 
 use anyhow::{anyhow, bail, Result};
-use mg_ui::info;
+use mgc_ui::info;
 use std::path::{Path, PathBuf};
 
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let root = crate::commands::core::shared::find_project_root(&cwd)?
-        .ok_or_else(|| crate::error::no_mg_project_found("iot"))?;
+        .ok_or_else(|| crate::error::no_mgc_project_found("iot"))?;
     Ok(root)
 }
 
-/// Build + flash firmware esp32 (Q16). Board đọc từ arg hoặc mg.toml `[iot] board`;
+/// Build + flash firmware esp32 (Q16). Board đọc từ arg hoặc mgc.toml `[iot] board`;
 /// fail-closed nếu không xác định target (00-index §3, 04 §3).
 pub async fn flash(board_override: Option<&str>, skip_build: bool) -> Result<()> {
     let root = project_root()?;
-    let adapter = mg_iot_adapter::adapter_for(&root)
+    let adapter = mgc_iot_adapter::adapter_for(&root)
         .ok_or_else(|| crate::error::no_framework_detected("IoT", &root))?;
 
     if adapter.framework() != "esp32-rust" {
@@ -28,7 +28,7 @@ pub async fn flash(board_override: Option<&str>, skip_build: bool) -> Result<()>
         .map(str::to_string)
         .or_else(|| adapter.board(&root))
         .ok_or_else(|| {
-            let boards = mg_iot_adapter::known_boards()
+            let boards = mgc_iot_adapter::known_boards()
                 .iter()
                 .map(|(id, _, _)| id.as_str())
                 .collect::<Vec<_>>()
@@ -38,9 +38,9 @@ pub async fn flash(board_override: Option<&str>, skip_build: bool) -> Result<()>
 
     let target = adapter
         .target(&root)
-        .or_else(|| mg_iot_adapter::board_target(&board))
+        .or_else(|| mgc_iot_adapter::board_target(&board))
         .ok_or_else(|| {
-            let boards = mg_iot_adapter::known_boards()
+            let boards = mgc_iot_adapter::known_boards()
                 .iter()
                 .map(|(id, _, _)| id.as_str())
                 .collect::<Vec<_>>()
@@ -70,7 +70,7 @@ pub async fn flash(board_override: Option<&str>, skip_build: bool) -> Result<()>
 
 /// Board id → chip (tra registry KNOWN_BOARDS).
 fn chip(board: &str) -> String {
-    mg_iot_adapter::known_boards()
+    mgc_iot_adapter::known_boards()
         .iter()
         .find(|(id, _, _)| id == board)
         .map(|(_, chip, _)| chip.clone())
@@ -132,14 +132,14 @@ fn find_elf(root: &Path, target: &str) -> Result<PathBuf> {
 }
 
 fn run_tool(root: &Path, cmd: &str, args: &[&str]) -> Result<()> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
     let args = args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
-    mg_exec::prelude::run_inherited(cmd, &args, &opts)?;
+    mgc_exec::prelude::run_inherited(cmd, &args, &opts)?;
     Ok(())
 }
 

@@ -14,7 +14,7 @@ pub(crate) enum Commands {
         template: Option<String>,
         #[arg(
             long,
-            help = "Write core signature marker (.mg.core) for the current project, no wizard"
+            help = "Write core signature marker (.mgc.core) for the current project, no wizard"
         )]
         signature: Option<String>,
     },
@@ -47,7 +47,7 @@ pub(crate) enum Commands {
         )]
         fix: bool,
     },
-    #[command(about = "Update MegaGate CLI to the latest version")]
+    #[command(about = "Update MagiCore CLI to the latest version")]
     SelfUpdate,
     #[command(about = "Read/write configuration (.npmrc)", alias = "c")]
     Config {
@@ -66,7 +66,7 @@ pub(crate) enum Commands {
         dir: Option<std::path::PathBuf>,
     },
     #[command(
-        about = "Import legacy lockfile (package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock) to mg.lock"
+        about = "Import legacy lockfile (package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock) to mgc.lock"
     )]
     Import {
         #[arg(long, help = "Target project directory to import")]
@@ -76,7 +76,10 @@ pub(crate) enum Commands {
     // ── W6: SBOM Export ──────────────────────────────────────────────
     #[command(about = "Generate Software Bill of Materials (SBOM) from lockfile")]
     Sbom {
-        #[arg(long, help = "Output format (cyclonedx-json, cyclonedx-xml, spdx-json)")]
+        #[arg(
+            long,
+            help = "Output format (cyclonedx-json, cyclonedx-xml, spdx-json)"
+        )]
         format: Option<String>,
         #[arg(long, help = "Output file path (default: stdout)")]
         output: Option<std::path::PathBuf>,
@@ -124,7 +127,7 @@ pub(crate) enum Commands {
         major: bool,
         #[arg(long, help = "override registry URL")]
         registry: Option<String>,
-        #[arg(long, help = "override token (env MG_NPM_TOKEN recommended)")]
+        #[arg(long, help = "override token (env MGC_NPM_TOKEN recommended)")]
         token: Option<String>,
     },
 
@@ -223,7 +226,7 @@ pub(crate) enum Commands {
         #[arg(last = true)]
         args: Vec<String>,
     },
-    #[command(about = "Inspect or clean MegaGate caches")]
+    #[command(about = "Inspect or clean MagiCore caches")]
     Cache {
         #[arg(value_parser = ["status", "clean", "prune"])]
         action: String,
@@ -239,7 +242,7 @@ pub(crate) enum Commands {
     #[command(about = "Install dependencies (auto-detect core)", alias = "i")]
     Install {
         packages: Vec<String>,
-        #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
+        #[arg(long, help = "Fail if mgc.lock is missing or outdated (CI mode)")]
         frozen: bool,
         #[arg(long, help = "Skip running lifecycle scripts")]
         ignore_scripts: bool,
@@ -254,7 +257,10 @@ pub(crate) enum Commands {
         repair: bool,
         #[arg(long, help = "Print the commands that would run (cloud terraform)")]
         dry_run: bool,
-        #[arg(long, help = "Offline mode: install from cache only, no network (T4.1)")]
+        #[arg(
+            long,
+            help = "Offline mode: install from cache only, no network (T4.1)"
+        )]
         offline: bool,
     },
     #[command(about = "Manage the local store (prune unreferenced packages)")]
@@ -272,7 +278,7 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::commands::trust::TrustCmd,
     },
-    #[command(about = "Run user-defined pre/post scripts (mg.hooks.toml)")]
+    #[command(about = "Run user-defined pre/post scripts (mgc.hooks.toml)")]
     Hooks {
         #[command(subcommand)]
         cmd: crate::commands::hooks::HooksCmd,
@@ -367,7 +373,11 @@ pub(crate) enum Commands {
         ),
         command(visible_alias = "create")
     )]
-    #[command(name = "create-web", about = "Scaffold a new web project", visible_alias = "cre-w")]
+    #[command(
+        name = "create-web",
+        about = "Scaffold a new web project",
+        visible_alias = "cre-w"
+    )]
     CreateWeb {
         /// Framework with optional version (e.g., react@latest, nextjs@14.0.0)
         #[arg(value_name = "FRAMEWORK[@VERSION]")]
@@ -392,7 +402,12 @@ pub(crate) enum Commands {
         #[arg(value_name = "PROJECT")]
         project_name: String,
     },
-    #[command(name = "create-ai", about = "Scaffold a new AI project", visible_alias = "cre-ai", hide = true)]
+    #[command(
+        name = "create-ai",
+        about = "Scaffold a new AI project",
+        visible_alias = "cre-ai",
+        hide = true
+    )]
     CreateAi {
         /// Framework with optional version
         #[arg(value_name = "FRAMEWORK[@VERSION]")]
@@ -429,7 +444,12 @@ pub(crate) enum Commands {
         #[arg(value_name = "PROJECT")]
         project_name: String,
     },
-    #[command(name = "create-iot", about = "Scaffold a new IoT project", visible_alias = "cre-i", hide = true)]
+    #[command(
+        name = "create-iot",
+        about = "Scaffold a new IoT project",
+        visible_alias = "cre-i",
+        hide = true
+    )]
     CreateIot {
         /// Framework with optional version
         #[arg(value_name = "FRAMEWORK[@VERSION]")]
@@ -438,7 +458,12 @@ pub(crate) enum Commands {
         #[arg(value_name = "PROJECT")]
         project_name: String,
     },
-    #[command(name = "create-app", about = "Scaffold a new app project", visible_alias = "cre-a", hide = true)]
+    #[command(
+        name = "create-app",
+        about = "Scaffold a new app project",
+        visible_alias = "cre-a",
+        hide = true
+    )]
     CreateApp {
         /// Framework with optional version
         #[arg(value_name = "FRAMEWORK[@VERSION]")]
@@ -456,7 +481,7 @@ pub(crate) enum Commands {
     CreateLib {
         /// Project directory name
         #[arg(value_name = "PROJECT")]
-        project_name: String
+        project_name: String,
     },
     #[command(
         name = "create-hardware",
@@ -482,7 +507,7 @@ pub(crate) enum Commands {
     )]
     InstallWeb {
         packages: Vec<String>,
-        #[arg(long, help = "Fail if mg.lock is missing or outdated (CI mode)")]
+        #[arg(long, help = "Fail if mgc.lock is missing or outdated (CI mode)")]
         frozen: bool,
         #[arg(long, help = "Skip running lifecycle scripts")]
         ignore_scripts: bool,
@@ -964,7 +989,7 @@ mod tests {
 
     #[test]
     fn test_config_parses_get_set_delete_local() {
-        let get = Cli::try_parse_from(["mg", "config", "get", "registry"]).unwrap();
+        let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         match get.command.unwrap() {
             Commands::Config { cmd, local } => match cmd {
                 crate::commands::config::ConfigCmd::Get { key } => {
@@ -976,7 +1001,7 @@ mod tests {
             _ => panic!("expected config command"),
         }
 
-        let set = Cli::try_parse_from(["mg", "config", "set", "x", "1", "--local"]).unwrap();
+        let set = Cli::try_parse_from(["mgc", "config", "set", "x", "1", "--local"]).unwrap();
         match set.command.unwrap() {
             Commands::Config { cmd, local } => match cmd {
                 crate::commands::config::ConfigCmd::Set { key, value, toml } => {
@@ -990,9 +1015,9 @@ mod tests {
             _ => panic!("expected config command"),
         }
 
-        // mg config set --toml
+        // mgc config set --toml
         let set_toml =
-            Cli::try_parse_from(["mg", "config", "set", "ecosystem", "web", "--toml"]).unwrap();
+            Cli::try_parse_from(["mgc", "config", "set", "ecosystem", "web", "--toml"]).unwrap();
         match set_toml.command.unwrap() {
             Commands::Config { cmd, .. } => match cmd {
                 crate::commands::config::ConfigCmd::Set { key, value, toml } => {
@@ -1005,8 +1030,8 @@ mod tests {
             _ => panic!("expected config command"),
         }
 
-        // mg config unset
-        let unset = Cli::try_parse_from(["mg", "config", "unset", "registry"]).unwrap();
+        // mgc config unset
+        let unset = Cli::try_parse_from(["mgc", "config", "unset", "registry"]).unwrap();
         match unset.command.unwrap() {
             Commands::Config { cmd, .. } => match cmd {
                 crate::commands::config::ConfigCmd::Unset { key, .. } => {
@@ -1017,8 +1042,8 @@ mod tests {
             _ => panic!("expected config command"),
         }
 
-        // mg config list --local
-        let list = Cli::try_parse_from(["mg", "config", "list", "--local"]).unwrap();
+        // mgc config list --local
+        let list = Cli::try_parse_from(["mgc", "config", "list", "--local"]).unwrap();
         match list.command.unwrap() {
             Commands::Config { cmd, .. } => match cmd {
                 crate::commands::config::ConfigCmd::List { local } => {
@@ -1032,7 +1057,7 @@ mod tests {
 
     #[test]
     fn test_stage_parses_dir_flag() {
-        let cli = Cli::try_parse_from(["mg", "stage", "--dir", "/tmp/demo"]).unwrap();
+        let cli = Cli::try_parse_from(["mgc", "stage", "--dir", "/tmp/demo"]).unwrap();
         match cli.command.unwrap() {
             Commands::Stage { dir } => {
                 assert_eq!(dir.as_deref(), Some(std::path::Path::new("/tmp/demo")));
@@ -1066,7 +1091,7 @@ mod tests {
     #[test]
     fn test_create_web_accepts_flags() {
         let cli = Cli::try_parse_from([
-            "mg",
+            "mgc",
             "create-web",
             "react@latest",
             "demo-app",
@@ -1093,7 +1118,7 @@ mod tests {
     #[test]
     fn test_add_web_accepts_multiple_packages() {
         let cli =
-            Cli::try_parse_from(["mg", "add-web", "zod", "lodash", "@types/node", "-D"]).unwrap();
+            Cli::try_parse_from(["mgc", "add-web", "zod", "lodash", "@types/node", "-D"]).unwrap();
 
         match cli.command.unwrap() {
             Commands::AddWeb { packages, dev, .. } => {
@@ -1106,7 +1131,7 @@ mod tests {
 
     #[test]
     fn test_global_quiet_flag_parses() {
-        let cli = Cli::try_parse_from(["mg", "--quiet", "add-web", "zod"]).unwrap();
+        let cli = Cli::try_parse_from(["mgc", "--quiet", "add-web", "zod"]).unwrap();
         assert!(cli.quiet);
         match cli.command.unwrap() {
             Commands::AddWeb { packages, .. } => assert_eq!(packages, vec!["zod"]),
@@ -1116,14 +1141,14 @@ mod tests {
 
     #[test]
     fn test_add_and_remove_accept_no_install() {
-        let add = Cli::try_parse_from(["mg", "add-web", "dayjs", "--no-install"]).unwrap();
+        let add = Cli::try_parse_from(["mgc", "add-web", "dayjs", "--no-install"]).unwrap();
         match add.command.unwrap() {
             Commands::AddWeb { no_install, .. } => assert!(no_install),
             _ => panic!("expected add-web command"),
         }
 
         let remove =
-            Cli::try_parse_from(["mg", "remove-web", "zod", "lodash", "--no-install"]).unwrap();
+            Cli::try_parse_from(["mgc", "remove-web", "zod", "lodash", "--no-install"]).unwrap();
         match remove.command.unwrap() {
             Commands::RemoveWeb {
                 packages,
@@ -1138,7 +1163,7 @@ mod tests {
 
     #[test]
     fn test_install_accepts_script_policy_flags() {
-        let install = Cli::try_parse_from(["mg", "install", "--allow-scripts"]).unwrap();
+        let install = Cli::try_parse_from(["mgc", "install", "--allow-scripts"]).unwrap();
         match install.command.unwrap() {
             Commands::Install {
                 ignore_scripts,
@@ -1152,7 +1177,7 @@ mod tests {
         }
 
         let install_web =
-            Cli::try_parse_from(["mg", "install-web", "--ignore-scripts", "--allow-scripts"])
+            Cli::try_parse_from(["mgc", "install-web", "--ignore-scripts", "--allow-scripts"])
                 .unwrap();
         match install_web.command.unwrap() {
             Commands::InstallWeb {
@@ -1170,7 +1195,7 @@ mod tests {
     #[test]
     fn test_install_accepts_package_specs() {
         let install = Cli::try_parse_from([
-            "mg",
+            "mgc",
             "install",
             "react@latest",
             "zod@^3.22.4",
@@ -1193,7 +1218,7 @@ mod tests {
 
     #[test]
     fn test_cache_command_accepts_status_and_clean_targets() {
-        let status = Cli::try_parse_from(["mg", "cache", "status", "--target", "shared"]).unwrap();
+        let status = Cli::try_parse_from(["mgc", "cache", "status", "--target", "shared"]).unwrap();
         match status.command.unwrap() {
             Commands::Cache {
                 action,
@@ -1209,7 +1234,7 @@ mod tests {
         }
 
         let clean =
-            Cli::try_parse_from(["mg", "cache", "clean", "--target", "build", "--yes"]).unwrap();
+            Cli::try_parse_from(["mgc", "cache", "clean", "--target", "build", "--yes"]).unwrap();
         match clean.command.unwrap() {
             Commands::Cache {
                 action,
@@ -1225,7 +1250,7 @@ mod tests {
         }
 
         let prune =
-            Cli::try_parse_from(["mg", "cache", "prune", "--target", "shared", "--yes"]).unwrap();
+            Cli::try_parse_from(["mgc", "cache", "prune", "--target", "shared", "--yes"]).unwrap();
         match prune.command.unwrap() {
             Commands::Cache {
                 action,
@@ -1243,7 +1268,7 @@ mod tests {
         }
 
         let dry_run =
-            Cli::try_parse_from(["mg", "cache", "prune", "--target", "shared", "--dry-run"])
+            Cli::try_parse_from(["mgc", "cache", "prune", "--target", "shared", "--dry-run"])
                 .unwrap();
         match dry_run.command.unwrap() {
             Commands::Cache {
@@ -1387,7 +1412,7 @@ mod tests {
     ))]
     fn test_single_core_create_alias_parses() {
         let cli =
-            Cli::try_parse_from(["mg", "create", "react@latest", "demo-app", "--ts"]).unwrap();
+            Cli::try_parse_from(["mgc", "create", "react@latest", "demo-app", "--ts"]).unwrap();
 
         match cli.command.unwrap() {
             Commands::CreateWeb {
@@ -1406,7 +1431,7 @@ mod tests {
     #[test]
     fn test_dev_command_accepts_host_and_port() {
         let cli =
-            Cli::try_parse_from(["mg", "dev", "--host", "127.0.0.1", "--port", "4315"]).unwrap();
+            Cli::try_parse_from(["mgc", "dev", "--host", "127.0.0.1", "--port", "4315"]).unwrap();
 
         match cli.command.unwrap() {
             Commands::Dev {
@@ -1423,12 +1448,12 @@ mod tests {
 
     #[test]
     fn test_deploy_defaults_to_dry_run() {
-        let cli = Cli::try_parse_from(["mg", "deploy"]).unwrap();
+        let cli = Cli::try_parse_from(["mgc", "deploy"]).unwrap();
         match cli.command.unwrap() {
             Commands::Deploy { run } => assert!(!run),
             _ => panic!("expected deploy command"),
         }
-        let cli = Cli::try_parse_from(["mg", "deploy", "--run"]).unwrap();
+        let cli = Cli::try_parse_from(["mgc", "deploy", "--run"]).unwrap();
         match cli.command.unwrap() {
             Commands::Deploy { run } => assert!(run),
             _ => panic!("expected deploy command"),
@@ -1437,7 +1462,7 @@ mod tests {
 
     #[test]
     fn test_install_parses_dry_run_flag() {
-        let cli = Cli::try_parse_from(["mg", "install", "--dry-run"]).unwrap();
+        let cli = Cli::try_parse_from(["mgc", "install", "--dry-run"]).unwrap();
         match cli.command.unwrap() {
             Commands::Install { dry_run, .. } => assert!(dry_run),
             _ => panic!("expected install command"),
@@ -1447,7 +1472,7 @@ mod tests {
     #[test]
     fn test_workspace_list_parses_filter_and_json() {
         let cli =
-            Cli::try_parse_from(["mg", "workspace", "list", "--filter", "./apps/*", "--json"])
+            Cli::try_parse_from(["mgc", "workspace", "list", "--filter", "./apps/*", "--json"])
                 .unwrap();
 
         match cli.command.unwrap() {

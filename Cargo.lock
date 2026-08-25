@@ -2204,7 +2204,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg"
+name = "mgc"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2223,34 +2223,34 @@ dependencies = [
  "glob",
  "hex",
  "lightningcss",
- "mg-adapter-base",
- "mg-ai-adapter",
- "mg-app-adapter",
- "mg-cache",
- "mg-cicd-adapter",
- "mg-cloud-adapter",
- "mg-config",
- "mg-crypto",
- "mg-exec",
- "mg-fetcher",
- "mg-game-adapter",
- "mg-hardware-adapter",
- "mg-http",
- "mg-iot-adapter",
- "mg-lib-adapter",
- "mg-lockfile",
- "mg-oci",
- "mg-pack",
- "mg-plugin",
- "mg-publish",
- "mg-registry-server",
- "mg-resolver",
- "mg-sbom",
- "mg-store",
- "mg-types",
- "mg-ui",
- "mg-web-adapter",
- "mg-workspace",
+ "mgc-adapter-base",
+ "mgc-ai-adapter",
+ "mgc-app-adapter",
+ "mgc-cache",
+ "mgc-cicd-adapter",
+ "mgc-cloud-adapter",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-fetcher",
+ "mgc-game-adapter",
+ "mgc-hardware-adapter",
+ "mgc-http",
+ "mgc-iot-adapter",
+ "mgc-lib-adapter",
+ "mgc-lockfile",
+ "mgc-oci",
+ "mgc-pack",
+ "mgc-plugin",
+ "mgc-publish",
+ "mgc-registry-server",
+ "mgc-resolver",
+ "mgc-sbom",
+ "mgc-store",
+ "mgc-types",
+ "mgc-ui",
+ "mgc-web-adapter",
+ "mgc-workspace",
  "mime_guess",
  "notify",
  "regex",
@@ -2273,13 +2273,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-adapter-base"
+name = "mgc-adapter-base"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "mg-types",
- "mg-ui",
+ "mgc-types",
+ "mgc-ui",
  "serde",
  "serde_json",
  "tempfile",
@@ -2288,18 +2288,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-ai-adapter"
+name = "mgc-ai-adapter"
 version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
  "serde",
  "tempfile",
  "tokio",
@@ -2307,18 +2307,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-app-adapter"
+name = "mgc-app-adapter"
 version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
  "serde",
  "tempfile",
  "tokio",
@@ -2326,7 +2326,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-cache"
+name = "mgc-cache"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2340,18 +2340,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-cicd-adapter"
+name = "mgc-cicd-adapter"
 version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
  "serde",
  "tempfile",
  "tokio",
@@ -2359,20 +2359,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-cloud-adapter"
+name = "mgc-cloud-adapter"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-exec",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
- "mg-web-adapter",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-web-adapter",
  "serde",
  "serde_json",
  "tempfile",
@@ -2381,12 +2381,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-config"
+name = "mgc-config"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "dirs",
- "mg-types",
+ "mgc-types",
  "serde",
  "serde_json",
  "tempfile",
@@ -2395,7 +2395,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-crypto"
+name = "mgc-crypto"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2414,7 +2414,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-dist"
+name = "mgc-dist"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2425,7 +2425,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-exec"
+name = "mgc-exec"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2434,13 +2434,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-fetcher"
+name = "mgc-fetcher"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "flate2",
  "futures-util",
- "mg-store",
+ "mgc-store",
  "rayon",
  "reqwest",
  "tar",
@@ -2450,21 +2450,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-game-adapter"
+name = "mgc-game-adapter"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-exec",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
- "mg-ui",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -2475,21 +2475,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-hardware-adapter"
+name = "mgc-hardware-adapter"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-exec",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
- "mg-ui",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -2500,7 +2500,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-http"
+name = "mgc-http"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2529,21 +2529,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-iot-adapter"
+name = "mgc-iot-adapter"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-exec",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
- "mg-ui",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -2554,22 +2554,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-lib-adapter"
+name = "mgc-lib-adapter"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-exec",
- "mg-lockfile",
- "mg-sbom",
- "mg-types",
- "mg-ui",
- "mg-web-adapter",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-ui",
+ "mgc-web-adapter",
  "pretty_assertions",
  "semver",
  "serde",
@@ -2581,12 +2581,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-lockfile"
+name = "mgc-lockfile"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "mg-crypto",
+ "mgc-crypto",
  "serde",
  "serde_json",
  "tempfile",
@@ -2596,14 +2596,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-oci"
+name = "mgc-oci"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "hex",
- "mg-http",
- "mg-types",
+ "mgc-http",
+ "mgc-types",
  "serde",
  "serde_json",
  "sha2",
@@ -2614,7 +2614,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-pack"
+name = "mgc-pack"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2630,7 +2630,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-platform"
+name = "mgc-platform"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2641,23 +2641,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-plugin"
+name = "mgc-plugin"
 version = "1.0.0"
 dependencies = [
  "async-trait",
- "mg-types",
+ "mgc-types",
  "tokio",
 ]
 
 [[package]]
-name = "mg-publish"
+name = "mgc-publish"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "mg-config",
- "mg-http",
- "mg-pack",
+ "mgc-config",
+ "mgc-http",
+ "mgc-pack",
  "reqwest",
  "serde",
  "serde_json",
@@ -2668,7 +2668,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-registry-server"
+name = "mgc-registry-server"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2679,12 +2679,12 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
- "mg-config",
- "mg-http",
- "mg-lockfile",
- "mg-oci",
- "mg-store",
- "mg-types",
+ "mgc-config",
+ "mgc-http",
+ "mgc-lockfile",
+ "mgc-oci",
+ "mgc-store",
+ "mgc-types",
  "notify",
  "object_store",
  "reqwest",
@@ -2704,7 +2704,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-resolver"
+name = "mgc-resolver"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2713,8 +2713,8 @@ dependencies = [
  "dashmap 6.2.1",
  "futures-util",
  "hex",
- "mg-platform",
- "mg-types",
+ "mgc-platform",
+ "mgc-types",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
@@ -2722,12 +2722,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-sbom"
+name = "mgc-sbom"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "mg-lockfile",
+ "mgc-lockfile",
  "serde",
  "serde_json",
  "tempfile",
@@ -2736,7 +2736,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-search"
+name = "mgc-search"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2744,8 +2744,8 @@ dependencies = [
  "chrono",
  "dirs",
  "futures",
- "mg-platform",
- "mg-types",
+ "mgc-platform",
+ "mgc-types",
  "mockito",
  "reqwest",
  "rusqlite",
@@ -2758,7 +2758,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-store"
+name = "mgc-store"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2773,8 +2773,8 @@ dependencies = [
  "fs2",
  "hex",
  "lru",
- "mg-crypto",
- "mg-types",
+ "mgc-crypto",
+ "mgc-types",
  "parking_lot",
  "pretty_assertions",
  "rmp-serde",
@@ -2791,7 +2791,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-types"
+name = "mgc-types"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2803,7 +2803,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-ui"
+name = "mgc-ui"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2816,7 +2816,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-web-adapter"
+name = "mgc-web-adapter"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2830,21 +2830,21 @@ dependencies = [
  "futures-util",
  "hex",
  "lru",
- "mg-adapter-base",
- "mg-cache",
- "mg-config",
- "mg-crypto",
- "mg-exec",
- "mg-fetcher",
- "mg-http",
- "mg-lockfile",
- "mg-platform",
- "mg-resolver",
- "mg-sbom",
- "mg-search",
- "mg-store",
- "mg-types",
- "mg-ui",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-fetcher",
+ "mgc-http",
+ "mgc-lockfile",
+ "mgc-platform",
+ "mgc-resolver",
+ "mgc-sbom",
+ "mgc-search",
+ "mgc-store",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "rayon",
  "reqwest",
@@ -2862,7 +2862,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-workspace"
+name = "mgc-workspace"
 version = "1.0.0"
 dependencies = [
  "anyhow",

@@ -22,7 +22,7 @@ fn test_help_shows_core_option() {
 
 #[test]
 fn test_create_web_accepts_flags() {
-    let (ok, out) = common::mg(&["create-web", "--help"]);
+    let (ok, out) = common::mgc(&["create-web", "--help"]);
     assert!(ok, "create-web --help failed\n{out}");
     assert!(out.contains("--dir"), "should mention --dir");
     assert!(out.contains("--ts"), "should mention --ts");
@@ -33,7 +33,7 @@ fn test_create_web_accepts_flags() {
 
 #[test]
 fn test_install_accepts_dedupe_and_repair_flags() {
-    let (ok, out) = common::mg(&["install-web", "--help"]);
+    let (ok, out) = common::mgc(&["install-web", "--help"]);
     assert!(ok, "install-web --help failed\n{out}");
     assert!(
         out.contains("--prefer-dedupe"),
@@ -44,7 +44,7 @@ fn test_install_accepts_dedupe_and_repair_flags() {
 
 #[test]
 fn test_store_prune_accepts_flags() {
-    let (ok, out) = common::mg(&["store", "prune", "--help"]);
+    let (ok, out) = common::mgc(&["store", "prune", "--help"]);
     assert!(ok, "store prune --help failed\n{out}");
     assert!(out.contains("--dry-run"), "should mention --dry-run");
     assert!(out.contains("--json"), "should mention --json");
@@ -52,14 +52,14 @@ fn test_store_prune_accepts_flags() {
 
 #[test]
 fn test_install_web_accepts_flags() {
-    let (ok, out) = common::mg(&["install-web", "--help"]);
+    let (ok, out) = common::mgc(&["install-web", "--help"]);
     assert!(ok, "install-web --help failed\n{out}");
     assert!(out.contains("--frozen"), "should mention --frozen");
 }
 
 #[test]
 fn test_add_web_accepts_flags() {
-    let (ok, out) = common::mg(&["add-web", "--help"]);
+    let (ok, out) = common::mgc(&["add-web", "--help"]);
     assert!(ok, "add-web --help failed\n{out}");
     assert!(
         out.contains("Add web dependencies"),
@@ -72,24 +72,24 @@ fn test_add_web_accepts_flags() {
 #[test]
 fn test_bare_add_without_detected_core_fails_closed() {
     let dir = common::work_dir();
-    let (ok, out) = common::mg_in(&dir, &["add", "zod", "--no-install"]);
+    let (ok, out) = common::mgc_in(&dir, &["add", "zod", "--no-install"]);
     assert!(!ok, "bare add should fail without core context\n{out}");
     assert!(
-        out.contains("could not detect a MegaGate core"),
+        out.contains("could not detect a MagiCore core"),
         "bare add should explain missing core context\n{out}"
     );
 }
 
 #[test]
 fn test_bare_add_with_core_flag_keeps_single_core_path() {
-    let (ok, out) = common::mg(&["--core", "web", "add", "--help"]);
-    assert!(ok, "mg --core web add --help failed\n{out}");
+    let (ok, out) = common::mgc(&["--core", "web", "add", "--help"]);
+    assert!(ok, "mgc --core web add --help failed\n{out}");
     assert!(out.contains("--no-install"), "should mention --no-install");
 }
 
 #[test]
 fn test_remove_web_accepts_multiple_packages() {
-    let (ok, out) = common::mg(&["remove-web", "--help"]);
+    let (ok, out) = common::mgc(&["remove-web", "--help"]);
     assert!(ok, "remove-web --help failed\n{out}");
     assert!(
         out.contains("[PACKAGES]...") || out.contains("<PACKAGES>..."),

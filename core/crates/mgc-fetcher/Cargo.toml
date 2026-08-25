@@ -1,0 +1,27 @@
+[package]
+name = "mgc-fetcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Download and extraction helpers for MagiCore"
+
+[dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+tempfile = { workspace = true }
+mgc-store = { workspace = true }
+rayon = { workspace = true }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "cas_claim"
+path = "test/cas_claim.rs"

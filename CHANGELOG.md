@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to MegaGate are documented here.
+All notable changes to MagiCore are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -10,12 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### 🎉 Highlights
 
-**First production-ready release!** MegaGate reaches V1.0.0 with SBOM generation, cryptographically signed lockfiles, and a stable API ready for enterprise deployment.
+**First production-ready release!** MagiCore reaches V1.0.0 with SBOM generation, cryptographically signed lockfiles, and a stable API ready for enterprise deployment.
 
 ### Added
 
 **Week 6: SBOM Generation (Supply Chain Security)**
-- **`mg sbom`** — Generate Software Bill of Materials in CycloneDX JSON/XML and SPDX JSON formats
+- **`mgc sbom`** — Generate Software Bill of Materials in CycloneDX JSON/XML and SPDX JSON formats
   - Full dependency tree analysis with transitive dependencies
   - License detection and compliance checking
   - Vulnerability mapping (CVE references)
@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Ed25519 signature-based lockfile verification (tamper detection)
 - Lockfile schema v2 with simplified Package structure
 - Automatic v1 → v2 migration on first install
-- Signature files (`.mga.lock.sig`) stored alongside lockfiles
+- Signature files (`.mgc.lock.sig`) stored alongside lockfiles
 - Public key distribution via trusted keyring
 
 **CLI Enhancements**
@@ -60,7 +60,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ⚠️ **Temporarily Disabled Features** (stubbed for rapid V1.0.0 release):
 - Workspace lockfile merging (`write_monorepo_root_lockfile`)
 - Pruned install optimization (`load_pruned_locked_graph`)
-- Dependency explanation (`mg why` command)
+- Dependency explanation (`mgc why` command)
 - Lockfile version checks (compatibility validation)
 - ~80% of test suite (requires v2 schema rewrite)
 
@@ -92,25 +92,25 @@ See full security report: `SECURITY_AUDIT_V1.0.0.md`
 **Lockfile v1 → v2 (Automatic)**:
 ```bash
 # Backup existing lockfile (optional)
-cp mga.lock mga.lock.v1.backup
+cp mgc.lock mgc.lock.v1.backup
 
 # Run any install command — auto-migrates to v2
-mg install web
+mgc install web
 
 # Verify signature
-ls -la mga.lock.sig  # signature file created
+ls -la mgc.lock.sig  # signature file created
 ```
 
 **SBOM Generation**:
 ```bash
 # Generate CycloneDX JSON
-mg sbom --format cyclonedx-json --output sbom.json
+mgc sbom --format cyclonedx-json --output sbom.json
 
 # Generate SPDX JSON
-mg sbom --format spdx-json --output sbom.spdx.json
+mgc sbom --format spdx-json --output sbom.spdx.json
 
 # Custom metadata
-mg sbom \
+mgc sbom \
   --format cyclonedx-json \
   --name "MyApp" \
   --version "1.0.0" \
@@ -125,7 +125,7 @@ mg sbom \
 
 ### Contributors
 
-Special thanks to the MegaGate community for testing, bug reports, and feedback throughout the beta phase!
+Special thanks to the MagiCore community for testing, bug reports, and feedback throughout the beta phase!
 
 ---
 
@@ -133,23 +133,23 @@ Special thanks to the MegaGate community for testing, bug reports, and feedback 
 
 ### 🎉 Highlights
 
-First public beta release. MegaGate is a universal, polyglot package manager for the AI-Agent era — written in Rust with native support for 9 ecosystems and first-class AI coding agent integration.
+First public beta release. MagiCore is a universal, polyglot package manager for the AI-Agent era — written in Rust with native support for 9 ecosystems and first-class AI coding agent integration.
 
 ### Added
 
 **AI-Agent Era Features**
-- **`mg mcp`** — Native built-in Model Context Protocol (MCP) server (zero Python dependency). Exposes `mg_install`, `mg_add`, `mg_audit`, `mg_workspace_info` tools to AI IDEs (Cursor, Windsurf, Claude Code, Devin, Antigravity) via JSON-RPC 2.0 stdio.
-- **`mg doctor --fix`** — Smart Semantic Doctor with AI-actionable remediation. Detects missing toolchains, read-only store, low disk space, registry unreachability. Outputs structured `DiagnosticIssue` with `fix_command` for automated repair. Health statuses: `HEALTHY` / `DEGRADED` / `UNHEALTHY`.
+- **`mgc mcp`** — Native built-in Model Context Protocol (MCP) server (zero Python dependency). Exposes `mgc_install`, `mgc_add`, `mgc_audit`, `mgc_workspace_info` tools to AI IDEs (Cursor, Windsurf, Claude Code, Devin, Antigravity) via JSON-RPC 2.0 stdio.
+- **`mgc doctor --fix`** — Smart Semantic Doctor with AI-actionable remediation. Detects missing toolchains, read-only store, low disk space, registry unreachability. Outputs structured `DiagnosticIssue` with `fix_command` for automated repair. Health statuses: `HEALTHY` / `DEGRADED` / `UNHEALTHY`.
 
 **Performance & Correctness (Bun/uv/PNPM parity)**
-- **Zero-Buffer Pipelined Streaming Download** (`mg-fetcher`): Network chunks stream directly into async file writes via `bytes_stream()` — eliminates full-payload RAM spike for large packages (e.g. Electron, Playwright, PyTorch).
-- **OS-Aware Filesystem Concurrency Semaphore** (`mg-platform`): 4 concurrent writes on macOS APFS (eliminates kernel mutex lock contention), 128 on Linux/Windows.
-- **Git Conflict Marker Auto-Resolution** (`mg-lockfile`): Automatically 3-way merges `mg.lock` files when encountering Git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
-- **Monorepo Catalogs Protocol** (`mg-workspace`): Centralized dependency version management with `catalog:`, `catalog:default`, `catalog:<name>` syntax in `megagate.workspace.toml` (PNPM 11 / Bun compatible).
+- **Zero-Buffer Pipelined Streaming Download** (`mgc-fetcher`): Network chunks stream directly into async file writes via `bytes_stream()` — eliminates full-payload RAM spike for large packages (e.g. Electron, Playwright, PyTorch).
+- **OS-Aware Filesystem Concurrency Semaphore** (`mgc-platform`): 4 concurrent writes on macOS APFS (eliminates kernel mutex lock contention), 128 on Linux/Windows.
+- **Git Conflict Marker Auto-Resolution** (`mgc-lockfile`): Automatically 3-way merges `mgc.lock` files when encountering Git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
+- **Monorepo Catalogs Protocol** (`mgc-workspace`): Centralized dependency version management with `catalog:`, `catalog:default`, `catalog:<name>` syntax in `magicore.workspace.toml` (PNPM 11 / Bun compatible).
 
 **Deployment & Infrastructure**
-- Docker Compose multi-service setup (`deploy/docker/`) for `mg-registry-server` with hardened non-root container.
-- Nginx TLS ≥ 1.2 reverse proxy config (`deploy/nginx/megagate.conf`) with ACME passthrough and IP-restricted admin endpoints.
+- Docker Compose multi-service setup (`deploy/docker/`) for `mgc-registry-server` with hardened non-root container.
+- Nginx TLS ≥ 1.2 reverse proxy config (`deploy/nginx/magicore.conf`) with ACME passthrough and IP-restricted admin endpoints.
 - 6-target cross-platform release pipeline via GitHub Actions.
 
 **Documentation**
@@ -164,7 +164,7 @@ First public beta release. MegaGate is a universal, polyglot package manager for
 ### Fixed
 
 - Download implementation no longer buffers entire tarball response in RAM before writing.
-- `mg doctor` now reports structured machine-readable JSON (useful for programmatic agent consumption).
+- `mgc doctor` now reports structured machine-readable JSON (useful for programmatic agent consumption).
 
 ---
 
@@ -173,14 +173,14 @@ First public beta release. MegaGate is a universal, polyglot package manager for
 ### Added
 
 - 9 ecosystem adapters: `web`, `ai`, `cloud`, `cicd`, `game`, `iot`, `app`, `lib`, `hardware`.
-- `mg-registry-server` — embedded and standalone OCI/npm-compatible registry.
-- `mg model` — OCI-based AI model push/pull (`hf://` scheme, `mg model push/pull/list`).
-- `mg sbom` — CycloneDX 1.5 Software Bill of Materials generation.
-- `mg bench` — Install benchmark with wall-time and phase breakdown.
-- `mg trust` — Lifecycle script trust gate (opt-in for pre/post scripts).
-- `mg hooks` — User-defined pre/post event hooks (`mg.hooks.toml`).
-- `mg network` — Full outbound connection transparency listing.
-- `mg telemetry` — Opt-in telemetry reporting (off by default).
+- `mgc-registry-server` — embedded and standalone OCI/npm-compatible registry.
+- `mgc model` — OCI-based AI model push/pull (`hf://` scheme, `mgc model push/pull/list`).
+- `mgc sbom` — CycloneDX 1.5 Software Bill of Materials generation.
+- `mgc bench` — Install benchmark with wall-time and phase breakdown.
+- `mgc trust` — Lifecycle script trust gate (opt-in for pre/post scripts).
+- `mgc hooks` — User-defined pre/post event hooks (`mgc.hooks.toml`).
+- `mgc network` — Full outbound connection transparency listing.
+- `mgc telemetry` — Opt-in telemetry reporting (off by default).
 - Computation caching for monorepo build invalidation.
 - Windows PowerShell installer script.
 
@@ -195,15 +195,15 @@ First public beta release. MegaGate is a universal, polyglot package manager for
 
 ### Added
 
-- Initial MegaGate CLI (`mg`) with multi-core support.
+- Initial MagiCore CLI (`mgc`) with multi-core support.
 - Web core: full Node.js/NPM adapter with lockfile, CAS store, lifecycle scripts.
 - Project scaffolding: React, Vue, Next.js, Express, Fastify, NestJS, FastAPI, Django, Spring Boot, Gin, Axum, Laravel, Symfony, etc.
-- `mg.lock` with SRI integrity verification and BLAKE3 content hashing.
-- Content-addressable store (`~/.megagate/store/v3`) with OS reflinks/hardlinks.
-- Interactive `mg init` project wizard.
+- `mgc.lock` with SRI integrity verification and BLAKE3 content hashing.
+- Content-addressable store (`~/.magicore/store/v3`) with OS reflinks/hardlinks.
+- Interactive `mgc init` project wizard.
 - Global flags: `--core`, `--audit-strict`, `-r/--recursive`.
 - Monorepo workspace support with workspace manifests.
-- `mg config`, `mg cache`, `mg store`, `mg publish`, `mg patch` commands.
+- `mgc config`, `mgc cache`, `mgc store`, `mgc publish`, `mgc patch` commands.
 
 ### Known Limitations
 
@@ -212,6 +212,6 @@ First public beta release. MegaGate is a universal, polyglot package manager for
 
 ---
 
-[0.3.0-beta.1]: https://github.com/mingd-153/MegaGate/compare/v0.2.0...v0.3.0-beta.1
-[0.2.0]: https://github.com/mingd-153/MegaGate/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/mingd-153/MegaGate/releases/tag/v0.1.0
+[0.3.0-beta.1]: https://github.com/mingd-153/MagiCore/compare/v0.2.0...v0.3.0-beta.1
+[0.2.0]: https://github.com/mingd-153/MagiCore/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/mingd-153/MagiCore/releases/tag/v0.1.0

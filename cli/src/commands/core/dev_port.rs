@@ -72,9 +72,9 @@ pub fn is_port_in_use(port: u16) -> bool {
 pub fn resolve_port(core: &str, port_override: Option<u16>) -> Option<u16> {
     let chosen = port_override.or_else(|| default_port(core))?;
     if is_port_in_use(chosen) {
-        mg_ui::warning(&format!(
+        mgc_ui::warning(&format!(
             "port {} is already in use for core `{core}`.\n  \
-             → Use `mg dev {core} --port <PORT>` to pick another port.",
+             → Use `mgc dev {core} --port <PORT>` to pick another port.",
             chosen
         ));
     }

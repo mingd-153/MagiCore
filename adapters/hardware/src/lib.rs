@@ -1,28 +1,28 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! mg-hardware-adapter — hardware ecosystem adapter (MegaGate)
+//! mgc-hardware-adapter — hardware ecosystem adapter (MagiCore)
 //! optimizer/bench packages được materialize từ templates/hardware/ bởi CLI
 //! (không có native package manager — giống godot/unreal scaffold-only).
 //! (ponytail: adapter chỉ detect + manifest; template materialize ở commands/core/hardware.rs)
 
 use async_trait::async_trait;
-use mg_types::adapter::{
+use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
-use mg_types::{Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version};
+use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version};
 
 use std::path::Path;
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 pub struct HardwareAdapter;
 
 fn manifest_is_any_mg(root: &Path) -> bool {
-    // optimizer/bench là add-on cross-core: materialize được trong MỌI project mg
+    // optimizer/bench là add-on cross-core: materialize được trong MỌI project mgc
     // (game/ai/cloud/...), không cần ecosystem = "hardware".
-    root.join("mg.toml").is_file()
+    root.join("mgc.toml").is_file()
 }
 
 fn placeholder_id(name: &PackageName) -> PackageId {
@@ -76,16 +76,16 @@ impl PackageAdapter for HardwareAdapter {
         &self,
         _project_root: &Path,
         _name: &PackageName,
-        _range: Option<&mg_types::VersionRange>,
+        _range: Option<&mgc_types::VersionRange>,
         _opts: AddOptions,
     ) -> MgResult<PackageId> {
-        Err(mg_types::MgError::Other(
-            "hardware packages (optimizer/bench) are materialized by `mg add-hardware <pkg>` — not via the registry".to_string(),
+        Err(mgc_types::MgError::Other(
+            "hardware packages (optimizer/bench) are materialized by `mgc add-hardware <pkg>` — not via the registry".to_string(),
         ))
     }
 
     async fn remove(&self, _project_root: &Path, _name: &PackageName) -> MgResult<()> {
-        Err(mg_types::MgError::Other(
+        Err(mgc_types::MgError::Other(
             "hardware packages do not go through the registry — remove the optimizer/bench folder manually"
                 .to_string(),
         ))
@@ -129,9 +129,8 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -140,19 +139,19 @@ mod tests {
 
     fn tmp_dir(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("mg-hardware-test-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("mgc-hardware-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     #[test]
-    fn detect_in_any_mg_project() {
+    fn detect_in_any_mgc_project() {
         let dir = tmp_dir("detect");
-        std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
         assert!(adapter_for(&dir).is_some());
         let game_dir = tmp_dir("detect-game");
-        std::fs::write(game_dir.join("mg.toml"), "ecosystem = \"game\"\n").unwrap();
+        std::fs::write(game_dir.join("mgc.toml"), "ecosystem = \"game\"\n").unwrap();
         assert!(
             adapter_for(&game_dir).is_some(),
             "cross-core add-ons: optimizer/bench can be added to a game project"
@@ -160,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn reject_non_mg_projects() {
+    fn reject_non_mgc_projects() {
         let dir = tmp_dir("reject");
         assert!(adapter_for(&dir).is_none());
     }
@@ -168,7 +167,7 @@ mod tests {
     #[tokio::test]
     async fn list_reports_optimizer_and_bench_folders() {
         let dir = tmp_dir("list");
-        std::fs::write(dir.join("mg.toml"), "ecosystem = \"hardware\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
         std::fs::create_dir_all(dir.join("optimizer")).unwrap();
         let adapter = HardwareAdapter;
         let pkgs = adapter.list(&dir).await.unwrap();
@@ -177,29 +176,29 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_generate_sbom_hardware() {
-        use mg_lockfile::{LockfileMetadata, Package};
+#[test]
+fn test_generate_sbom_hardware() {
+    use mgc_lockfile::{LockfileMetadata, Package};
 
-        let lockfile = Lockfile {
-            version: "2".to_string(),
-            metadata: LockfileMetadata {
-                generated_at: "2026-08-21T00:00:00Z".to_string(),
-                generator: "mg/0.4.0".to_string(),
-                lockfile_hash: "abc123".to_string(),
-                signer: None,
-            },
-            packages: vec![Package {
-                name: "test-pkg".to_string(),
-                version: "1.0.0".to_string(),
-                resolved: "https://example.com/test.tgz".to_string(),
-                integrity: "blake3:test123".to_string(),
-                dependencies: vec![],
-            }],
-        };
+    let lockfile = Lockfile {
+        version: "2".to_string(),
+        metadata: LockfileMetadata {
+            generated_at: "2026-08-21T00:00:00Z".to_string(),
+            generator: "mgc/0.4.0".to_string(),
+            lockfile_hash: "abc123".to_string(),
+            signer: None,
+        },
+        packages: vec![Package {
+            name: "test-pkg".to_string(),
+            version: "1.0.0".to_string(),
+            resolved: "https://example.com/test.tgz".to_string(),
+            integrity: "blake3:test123".to_string(),
+            dependencies: vec![],
+        }],
+    };
 
-        let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
-        assert!(json.contains("CycloneDX"));
-        assert!(json.contains("test-pkg"));
-        assert!(json.contains("1.0.0"));
-    }
+    let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
+}

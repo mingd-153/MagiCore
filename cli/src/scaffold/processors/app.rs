@@ -23,7 +23,7 @@ impl AppProcessor {
                         .join("main")
                         .join("kotlin")
                         .join("Main.kt"),
-                    "fun main() {\n    println(\"MegaGate Kotlin app scaffold\")\n}\n",
+                    "fun main() {\n    println(\"MagiCore Kotlin app scaffold\")\n}\n",
                 )?;
             }
             "swift" => {
@@ -36,20 +36,20 @@ impl AppProcessor {
                 )?;
                 write_file(
                     &target.join("Sources").join(name).join("main.swift"),
-                    "print(\"MegaGate Swift app scaffold\")\n",
+                    "print(\"MagiCore Swift app scaffold\")\n",
                 )?;
             }
             _ => {
                 write_file(
                     &target.join("pubspec.yaml"),
                     &format!(
-                        "name: {}\ndescription: MegaGate Flutter app\nversion: 0.1.0\n",
+                        "name: {}\ndescription: MagiCore Flutter app\nversion: 0.1.0\n",
                         slugify(name)
                     ),
                 )?;
                 write_file(
                     &target.join("lib").join("main.dart"),
-                    "void main() {\n  print('MegaGate Flutter app scaffold');\n}\n",
+                    "void main() {\n  print('MagiCore Flutter app scaffold');\n}\n",
                 )?;
             }
         }
@@ -80,7 +80,7 @@ impl AppProcessor {
                 .join("kotlin")
                 .join(pkg.as_str())
                 .join("Shared.kt"),
-            "package {pkg}\n\nobject Shared {\n    fun hello(): String = \"hello from MegaGate shared (KMP)\"\n}\n",
+            "package {pkg}\n\nobject Shared {\n    fun hello(): String = \"hello from MagiCore shared (KMP)\"\n}\n",
         )?;
 
         // android/ — kotlin entry dùng shared (gradle include + app module phụ thuộc shared)
@@ -120,7 +120,7 @@ impl AppProcessor {
                 .join("Sources")
                 .join(slug.as_str())
                 .join("main.swift"),
-            "print(\"MegaGate iOS app scaffold (swift)\")\n",
+            "print(\"MagiCore iOS app scaffold (swift)\")\n",
         )?;
         // ObjC bridge nằm ngoài SPM Sources (Xcode native project dùng) — SPM không chấp mixed language.
         write_file(
@@ -129,11 +129,11 @@ impl AppProcessor {
         )?;
         write_file(
             &target.join("ios").join("ObjcBridge").join("ObjcBridge.m"),
-            "#import \"ObjcBridge.h\"\n\n@implementation MGShared\n+ (NSString *)hello {\n    return @\"hello from MegaGate shared (objc)\";\n}\n@end\n",
+            "#import \"ObjcBridge.h\"\n\n@implementation MGShared\n+ (NSString *)hello {\n    return @\"hello from MagiCore shared (objc)\";\n}\n@end\n",
         )?;
 
         // react-native/ — JS entry kept as scaffold data.
-        // Dữ liệu scaffold vẫn có RN, nhưng runner MegaGate không được gọi npm.
+        // Dữ liệu scaffold vẫn có RN, nhưng runner MagiCore không được gọi npm.
         write_file(
             &target.join("react-native").join("package.json"),
             &format!(
@@ -147,20 +147,20 @@ impl AppProcessor {
         )?;
         write_file(
             &target.join("react-native").join("App.js"),
-            "const React = require('react');\nconst { Text } = require('react-native');\n\nmodule.exports = function App() {\n  return React.createElement(Text, null, 'hello from MegaGate (react-native)');\n};\n",
+            "const React = require('react');\nconst { Text } = require('react-native');\n\nmodule.exports = function App() {\n  return React.createElement(Text, null, 'hello from MagiCore (react-native)');\n};\n",
         )?;
 
         // flutter/ — dart entry
         write_file(
             &target.join("flutter").join("pubspec.yaml"),
             &format!(
-                "name: {}\ndescription: MegaGate Flutter platform entry\ndependencies:\n  flutter:\n    sdk: flutter\n",
+                "name: {}\ndescription: MagiCore Flutter platform entry\ndependencies:\n  flutter:\n    sdk: flutter\n",
                 slug
             ),
         )?;
         write_file(
             &target.join("flutter").join("lib").join("main.dart"),
-            "import 'package:flutter/material.dart';\n\nvoid main() => runApp(const App());\n\nclass App extends StatelessWidget {\n  const App({super.key});\n\n  @override\n  Widget build(BuildContext context) {\n    return MaterialApp(home: Scaffold(body: Center(child: Text('hello from MegaGate (flutter)'))));\n  }\n}\n",
+            "import 'package:flutter/material.dart';\n\nvoid main() => runApp(const App());\n\nclass App extends StatelessWidget {\n  const App({super.key});\n\n  @override\n  Widget build(BuildContext context) {\n    return MaterialApp(home: Scaffold(body: Center(child: Text('hello from MagiCore (flutter)'))));\n  }\n}\n",
         )?;
 
         Ok(())

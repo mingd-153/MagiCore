@@ -1,21 +1,21 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! mg-cloud-adapter — cloud ecosystem adapter (MegaGate)
+//! mgc-cloud-adapter — cloud ecosystem adapter (MagiCore)
 //! (cdk/pulumi → delegate WebAdapter npm-format, KHÔNG gọi npm — policy §5.2;
 //!  terraform → exec passthrough terraform init/plan/apply, allowlist §5.1)
 
 use async_trait::async_trait;
-use mg_types::adapter::{
+use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
-use mg_types::{
+use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
 };
 use std::path::{Path, PathBuf};
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudType {
@@ -38,12 +38,12 @@ impl CloudType {
 
 pub struct CloudAdapter {
     cloud_type: CloudType,
-    web: Option<mg_web_adapter::WebAdapter>,
+    web: Option<mgc_web_adapter::WebAdapter>,
 }
 
-/// Detect cloud type — ưu tiên mg.toml `[cloud] type`, fallback manifest probe.
+/// Detect cloud type — ưu tiên mgc.toml `[cloud] type`, fallback manifest probe.
 pub fn detect_type(root: &Path) -> Option<CloudType> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(t) = v
                 .get("cloud")
@@ -94,7 +94,7 @@ fn has_tf_files(root: &Path) -> bool {
 }
 
 fn manifest_is_cloud(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
                 if eco == "cloud" {
@@ -112,7 +112,7 @@ fn manifest_is_cloud(root: &Path) -> bool {
 pub fn adapter_for(root: &Path) -> Option<CloudAdapter> {
     let cloud_type = detect_type(root)?;
     let web = if matches!(cloud_type, CloudType::Cdk | CloudType::Pulumi) {
-        Some(mg_web_adapter::WebAdapter::new())
+        Some(mgc_web_adapter::WebAdapter::new())
     } else {
         None
     };
@@ -120,19 +120,20 @@ pub fn adapter_for(root: &Path) -> Option<CloudAdapter> {
 }
 
 fn exec_tool(root: &Path, cmd: &str, args: &[String]) -> MgResult<()> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run(cmd, args, &opts).map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+    mgc_exec::prelude::run(cmd, args, &opts)
+        .map_err(|e| mgc_types::MgError::Other(e.to_string()))?;
     Ok(())
 }
 
 fn no_package_manager(cloud_type: CloudType) -> MgResult<()> {
-    Err(mg_types::MgError::Other(format!(
-        "{} has no package manager — write resources in HCL directly; use `mg dev` / `mg deploy`",
+    Err(mgc_types::MgError::Other(format!(
+        "{} has no package manager — write resources in HCL directly; use `mgc dev` / `mgc deploy`",
         cloud_type.as_str()
     )))
 }
@@ -284,16 +285,15 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mg-cloud-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mgc-cloud-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -325,9 +325,9 @@ mod tests {
     }
 
     #[test]
-    fn detect_via_mg_toml_type() {
+    fn detect_via_mgc_toml_type() {
         let dir = tmp_dir("cfg");
-        std::fs::write(dir.join("mg.toml"), "[cloud]\ntype = \"pulumi\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "[cloud]\ntype = \"pulumi\"\n").unwrap();
         assert_eq!(detect_type(&dir), Some(CloudType::Pulumi));
     }
 
@@ -351,29 +351,29 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_generate_sbom_cloud() {
-        use mg_lockfile::{LockfileMetadata, Package};
+#[test]
+fn test_generate_sbom_cloud() {
+    use mgc_lockfile::{LockfileMetadata, Package};
 
-        let lockfile = Lockfile {
-            version: "2".to_string(),
-            metadata: LockfileMetadata {
-                generated_at: "2026-08-21T00:00:00Z".to_string(),
-                generator: "mg/0.4.0".to_string(),
-                lockfile_hash: "abc123".to_string(),
-                signer: None,
-            },
-            packages: vec![Package {
-                name: "test-pkg".to_string(),
-                version: "1.0.0".to_string(),
-                resolved: "https://example.com/test.tgz".to_string(),
-                integrity: "blake3:test123".to_string(),
-                dependencies: vec![],
-            }],
-        };
+    let lockfile = Lockfile {
+        version: "2".to_string(),
+        metadata: LockfileMetadata {
+            generated_at: "2026-08-21T00:00:00Z".to_string(),
+            generator: "mgc/0.4.0".to_string(),
+            lockfile_hash: "abc123".to_string(),
+            signer: None,
+        },
+        packages: vec![Package {
+            name: "test-pkg".to_string(),
+            version: "1.0.0".to_string(),
+            resolved: "https://example.com/test.tgz".to_string(),
+            integrity: "blake3:test123".to_string(),
+            dependencies: vec![],
+        }],
+    };
 
-        let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
-        assert!(json.contains("CycloneDX"));
-        assert!(json.contains("test-pkg"));
-        assert!(json.contains("1.0.0"));
-    }
+    let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
+}

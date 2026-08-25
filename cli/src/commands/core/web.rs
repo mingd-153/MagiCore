@@ -5,21 +5,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-// use mg_lockfile::{
+// use mgc_lockfile::{
 //     serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
 // };
-use mg_types::adapter::PackageAdapter;
+use mgc_types::adapter::PackageAdapter;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
 use crate::commands::core::scaffold_flags::ScaffoldFlags;
 use crate::commands::core::shared;
-use mg_types::Ecosystem;
-use mg_ui::info;
+use mgc_types::Ecosystem;
+use mgc_ui::info;
 
 const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
-const SCAFFOLD_VERSION_OVERRIDES_ENV: &str = "MEGAGATE_WEB_SCAFFOLD_VERSION_OVERRIDES";
+const SCAFFOLD_VERSION_OVERRIDES_ENV: &str = "MAGICORE_WEB_SCAFFOLD_VERSION_OVERRIDES";
 /// Version baseline — trước đây ở templates/web/versions/scaffold-baseline.toml;
 /// registry-first (templates/ xóa khỏi repo) → giữ thẳng trong code.
 const SCAFFOLD_BASELINE_VERSIONS_TOML: &str = r#"[versions]
@@ -125,13 +125,13 @@ flyctl = "^0.2.0"
 "#;
 
 fn web_command_profile_enabled() -> bool {
-    std::env::var_os("MEGAGATE_WEB_PROFILE_COMMAND").is_some()
+    std::env::var_os("MAGICORE_WEB_PROFILE_COMMAND").is_some()
 }
 
 fn web_command_profile_mark(label: &str, started_at: std::time::Instant) {
     if web_command_profile_enabled() {
         eprintln!(
-            "[megagate:web:web-command-profile] {}={}ms",
+            "[magicore:web:web-command-profile] {}={}ms",
             label,
             started_at.elapsed().as_millis()
         );
@@ -152,7 +152,7 @@ fn install_hint_command() -> &'static str {
         ))
     ))]
     {
-        return "mg install";
+        return "mgc install";
     }
 
     #[cfg(all(
@@ -168,27 +168,27 @@ fn install_hint_command() -> &'static str {
         )
     ))]
     {
-        return "mg install-web";
+        return "mgc install-web";
     }
 
     #[allow(unreachable_code)]
-    "mg install"
+    "mgc install"
 }
 
 /// Find project root for web commands
 fn project_root() -> Result<std::path::PathBuf> {
     let started_at = std::time::Instant::now();
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root =
-        shared::find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found("web"))?;
+    let root = shared::find_project_root(&cwd)?
+        .ok_or_else(|| crate::error::no_mgc_project_found("web"))?;
     web_command_profile_mark("project_root", started_at);
     Ok(root)
 }
 
 fn web_adapter() -> Arc<dyn PackageAdapter> {
     let started_at = std::time::Instant::now();
-    let registry_url = std::env::var("MEGAGATE_WEB_REGISTRY_URL").ok();
-    let token = std::env::var("MEGAGATE_WEB_REGISTRY_TOKEN").ok();
+    let registry_url = std::env::var("MAGICORE_WEB_REGISTRY_URL").ok();
+    let token = std::env::var("MAGICORE_WEB_REGISTRY_TOKEN").ok();
     let adapter =
         crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())
             .expect("web adapter always available in web core build");
@@ -263,16 +263,16 @@ pub async fn install(
     let adapter: Arc<dyn PackageAdapter> = web_adapter();
     let targets = install_targets(&root)?;
 
-    // Dedupe opt-in (02 §2.1): CLI flag OR mg.toml [dedupe] prefer = true.
+    // Dedupe opt-in (02 §2.1): CLI flag OR mgc.toml [dedupe] prefer = true.
     let mut dedupe_enabled = prefer_dedupe;
     if !dedupe_enabled {
-        if let Ok(Some(cfg)) = mg_config::project::ProjectConfig::load(&root) {
+        if let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&root) {
             dedupe_enabled = cfg.dedupe.prefer;
         }
     }
     if dedupe_enabled {
         adapter.set_dedupe_pref(true);
-        // Shared lock seeding: root mg.lock (workspace aggregate) + mỗi web target lock.
+        // Shared lock seeding: root mgc.lock (workspace aggregate) + mỗi web target lock.
         let mut lock_roots: Vec<&std::path::Path> = vec![root.as_path()];
         lock_roots.extend(
             targets
@@ -281,7 +281,7 @@ pub async fn install(
                 .map(|target| target.as_path()),
         );
         // FIXME(V1.0.1): existing_versions_from disabled - restore after v2 migration
-        // if let Ok(existing) = mg_lockfile::existing_versions_from(&lock_roots) {
+        // if let Ok(existing) = mgc_lockfile::existing_versions_from(&lock_roots) {
         if let Ok(_existing) = Ok::<Vec<String>, ()>(Vec::new()) {
             // Skipping set_existing_versions call until v2 migration complete
             // if !existing.is_empty() {
@@ -291,9 +291,9 @@ pub async fn install(
     }
 
     for pkg in &packages {
-        let spinner = mg_ui::create_spinner(&format!("  Adding {}...", pkg));
-        let name = mg_types::PackageName::new(pkg)?;
-        let opts = mg_types::adapter::AddOptions::default();
+        let spinner = mgc_ui::create_spinner(&format!("  Adding {}...", pkg));
+        let name = mgc_types::PackageName::new(pkg)?;
+        let opts = mgc_types::adapter::AddOptions::default();
         adapter.add(&root, &name, None, opts).await?;
         spinner.finish_and_clear();
     }
@@ -329,7 +329,7 @@ pub async fn install(
 
         for target in &mix_targets {
             let ctx = crate::context::ProjectContext::load_for_dir(target)?;
-            mg_ui::info(&format!("Installing workspace: {}", target.display()));
+            mgc_ui::info(&format!("Installing workspace: {}", target.display()));
             crate::commands::install::install_into_root_ws(
                 ctx.adapter(),
                 target,
@@ -346,9 +346,9 @@ pub async fn install(
                 shared::install_with_adapter(
                     adapter.as_ref(),
                     target,
-                    "mg add",
+                    "mgc add",
                     frozen,
-                    mg_types::adapter::InstallOptions {
+                    mgc_types::adapter::InstallOptions {
                         allow_scripts,
                         prefer_dedupe: dedupe_enabled,
                         repair,
@@ -446,7 +446,7 @@ fn detect_dev_target(project_root: &Path) -> Result<PathBuf> {
     let root_script = read_dev_script(project_root)?;
     if root_script
         .as_deref()
-        .is_some_and(|script| !script.starts_with("mg "))
+        .is_some_and(|script| !script.starts_with("mgc "))
     {
         return Ok(project_root.to_path_buf());
     }
@@ -471,7 +471,7 @@ fn detect_dev_target(project_root: &Path) -> Result<PathBuf> {
 }
 
 fn workspace_frontend_dir(project_root: &Path) -> Result<PathBuf> {
-    let workspace_path = project_root.join("megagate.workspace.toml");
+    let workspace_path = project_root.join("magicore.workspace.toml");
     if workspace_path.exists() {
         let contents = std::fs::read_to_string(&workspace_path)?;
         let config: WorkspaceConfig = toml::from_str(&contents)?;
@@ -488,7 +488,7 @@ fn workspace_frontend_dir(project_root: &Path) -> Result<PathBuf> {
 }
 
 fn workspace_backend_dir(project_root: &Path) -> Result<PathBuf> {
-    let workspace_path = project_root.join("megagate.workspace.toml");
+    let workspace_path = project_root.join("magicore.workspace.toml");
     if workspace_path.exists() {
         let contents = std::fs::read_to_string(&workspace_path)?;
         let config: WorkspaceConfig = toml::from_str(&contents)?;
@@ -505,7 +505,7 @@ fn workspace_backend_dir(project_root: &Path) -> Result<PathBuf> {
 }
 
 fn detect_project_mode(project_root: &Path) -> Result<WebProjectMode> {
-    let workspace_path = project_root.join("megagate.workspace.toml");
+    let workspace_path = project_root.join("magicore.workspace.toml");
     if workspace_path.exists() {
         let contents = std::fs::read_to_string(&workspace_path)?;
         let config: WorkspaceConfig = toml::from_str(&contents)?;
@@ -547,7 +547,7 @@ fn is_workspace_monorepo(config: &WorkspaceConfig) -> bool {
 }
 
 fn discover_monorepo_install_targets(project_root: &Path) -> Result<Vec<PathBuf>> {
-    mg_workspace::discover_workspace_targets(project_root)
+    mgc_workspace::discover_workspace_targets(project_root)
 }
 
 #[derive(Debug, Deserialize)]
@@ -660,9 +660,9 @@ async fn install_monorepo_targets(
     }
 
     if !package_targets.is_empty() {
-        let graph = mg_workspace::build_workspace_graph(&package_targets)?;
+        let graph = mgc_workspace::build_workspace_graph(&package_targets)?;
         let levels =
-            mg_workspace::topo_levels(&graph).map_err(|e| crate::error::topo_order_failed(&e))?;
+            mgc_workspace::topo_levels(&graph).map_err(|e| crate::error::topo_order_failed(&e))?;
 
         let concurrency = monorepo_install_concurrency(&package_targets);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
@@ -678,7 +678,7 @@ async fn install_monorepo_targets(
                         .acquire_owned()
                         .await
                         .map_err(|e| crate::error::install_slot_failed(&e))?;
-                    mg_ui::info(&format!("Installing workspace: {}", node.path.display()));
+                    mgc_ui::info(&format!("Installing workspace: {}", node.path.display()));
                     install_web_target_quiet(
                         adapter.as_ref(),
                         &node.path,
@@ -710,7 +710,7 @@ fn monorepo_install_concurrency(package_targets: &[PathBuf]) -> usize {
         return 1;
     }
 
-    if let Some(override_value) = std::env::var("MEGAGATE_WEB_MONOREPO_INSTALL_CONCURRENCY")
+    if let Some(override_value) = std::env::var("MAGICORE_WEB_MONOREPO_INSTALL_CONCURRENCY")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
@@ -737,8 +737,8 @@ fn looks_like_cold_monorepo_install(package_targets: &[PathBuf]) -> bool {
 
     package_targets.iter().all(|target| {
         !target.join("node_modules").exists()
-            && !target.join("mg.lock").exists()
-            && !target.join(".megagate").join("cache").join("web").exists()
+            && !target.join("mgc.lock").exists()
+            && !target.join(".magicore").join("cache").join("web").exists()
     })
 }
 
@@ -755,7 +755,7 @@ async fn install_web_target_quiet(
     if execution.graph.is_empty() {
         return Ok(());
     }
-    let opts = mg_types::adapter::InstallOptions {
+    let opts = mgc_types::adapter::InstallOptions {
         ignore_scripts,
         allow_scripts,
         prefer_dedupe,
@@ -777,7 +777,7 @@ fn write_monorepo_root_lockfile(_project_root: &Path, _targets: &[PathBuf]) -> R
 
 fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    let tmp_path = dir.join(format!(".mg-tmp-{}", std::process::id()));
+    let tmp_path = dir.join(format!(".mgc-tmp-{}", std::process::id()));
     std::fs::write(&tmp_path, data)
         .with_context(|| format!("failed to write temp file '{}'", tmp_path.display()))?;
     std::fs::rename(&tmp_path, path).with_context(|| {
@@ -1093,7 +1093,7 @@ fn build_dev_launch(
 }
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
-    if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(script) {
+    if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
         return Err(crate::error::web_forbidden_pm(script, manifest_path, pm));
     }
     Ok(())
@@ -1366,15 +1366,15 @@ fn native_install_target(project_root: &Path) -> Result<()> {
 
 fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Result<()> {
     let env = native_install_env(project_root, program)?;
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(project_root.to_path_buf()),
-        log_path: Some(project_root.join(".megagate").join("exec.log")),
+        log_path: Some(project_root.join(".magicore").join("exec.log")),
         clean_env: true,
         env,
         ..Default::default()
     };
     let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
-    mg_exec::prelude::run(program, &args, &opts)
+    mgc_exec::prelude::run(program, &args, &opts)
         .with_context(|| format!("failed to run native install '{}'", program))?;
     Ok(())
 }
@@ -1382,7 +1382,7 @@ fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Resu
 fn native_install_env(project_root: &Path, program: &str) -> Result<Vec<(String, String)>> {
     let mut env = Vec::new();
     if program == "go" {
-        let go_root = project_root.join(".megagate").join("cache").join("go");
+        let go_root = project_root.join(".magicore").join("cache").join("go");
         let mod_cache = go_root.join("pkg").join("mod");
         let build_cache = go_root.join("build");
         std::fs::create_dir_all(&mod_cache)?;
@@ -1522,7 +1522,7 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
         .iter()
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(target.dir.clone()),
         env,
         clean_env: true,
@@ -1531,9 +1531,9 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
     };
 
     if launch.program.components().count() > 1 {
-        mg_exec::prelude::run_project_binary_inherited(&launch.program, &args, &opts)
+        mgc_exec::prelude::run_project_binary_inherited(&launch.program, &args, &opts)
     } else {
-        mg_exec::prelude::run_inherited(&launch.program.to_string_lossy(), &args, &opts)
+        mgc_exec::prelude::run_inherited(&launch.program.to_string_lossy(), &args, &opts)
     }
     .with_context(|| format!("failed to start '{}'", launch.program.to_string_lossy()))?;
     Ok(())
@@ -1684,7 +1684,7 @@ pub async fn run_create_with_options(
     }
     for rel in &rels {
         if !crate::commands::template::ensure_layer(rel).await {
-            mg_ui::warning(&format!(
+            mgc_ui::warning(&format!(
                 "Template layer '{}' not in embedded kernel, cache, or registry; scaffold may fail if no local templates/ dir matches",
                 rel
             ));
@@ -1694,7 +1694,7 @@ pub async fn run_create_with_options(
     let config = build_web_config(&fe_framework, project_name, &flags)?;
     let project_dir = crate::scaffold::Scaffolder::scaffold(&config)?;
 
-    let proj_config = mg_config::project::ProjectConfig::from_scaffold(
+    let proj_config = mgc_config::project::ProjectConfig::from_scaffold(
         crate::scaffold::Scaffolder::display_name(&project_dir),
         "web",
         &config.sub_type,
@@ -3144,7 +3144,7 @@ fn global_cli_http_client() -> &'static reqwest::Client {
             .pool_idle_timeout(std::time::Duration::from_secs(120))
             .tcp_keepalive(std::time::Duration::from_secs(30))
             .timeout(std::time::Duration::from_secs(60))
-            .user_agent(format!("MegaGate/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("MagiCore/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("failed to build HTTP client")
     })

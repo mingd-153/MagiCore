@@ -1,17 +1,17 @@
 use anyhow::{bail, Result};
 use colored::*;
-use mg_types::adapter::AuditReport;
-use mg_ui::{info, success, warning};
+use mgc_types::adapter::AuditReport;
+use mgc_ui::{info, success, warning};
 use std::path::Path;
 
 pub async fn audit(
-    adapter: &dyn mg_types::adapter::PackageAdapter,
+    adapter: &dyn mgc_types::adapter::PackageAdapter,
     project_root: &Path,
     fix: bool,
 ) -> Result<()> {
-    if !mg_ui::is_quiet() {
-        mg_ui::blank_line();
-        println!("🛡️  {}", "MegaGate Security Audit (Web Core)".bold().cyan());
+    if !mgc_ui::is_quiet() {
+        mgc_ui::blank_line();
+        println!("🛡️  {}", "MagiCore Security Audit (Web Core)".bold().cyan());
     }
 
     info("Auditing lockfile through the native web adapter...");
@@ -45,19 +45,19 @@ pub async fn audit(
 }
 
 fn print_report(report: &AuditReport) {
-    mg_ui::blank_line();
+    mgc_ui::blank_line();
     println!("{}", "Audit Report".bold().underline());
     println!("  Packages audited: {}", report.packages_audited);
     println!("  Vulnerabilities: {}", report.vulnerability_count);
 
     for vuln in &report.vulnerabilities {
         let severity = match vuln.severity_level {
-            mg_types::adapter::VulnerabilitySeverity::Critical
-            | mg_types::adapter::VulnerabilitySeverity::High => vuln.severity.red().bold(),
-            mg_types::adapter::VulnerabilitySeverity::Medium => vuln.severity.yellow().bold(),
+            mgc_types::adapter::VulnerabilitySeverity::Critical
+            | mgc_types::adapter::VulnerabilitySeverity::High => vuln.severity.red().bold(),
+            mgc_types::adapter::VulnerabilitySeverity::Medium => vuln.severity.yellow().bold(),
             _ => vuln.severity.normal(),
         };
-        mg_ui::blank_line();
+        mgc_ui::blank_line();
         println!("{} {} in {}", severity, vuln.title.bold(), vuln.package);
         if !vuln.cve.is_empty() {
             println!("  CVE: {}", vuln.cve);

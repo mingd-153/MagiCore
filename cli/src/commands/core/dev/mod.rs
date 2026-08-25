@@ -1,4 +1,4 @@
-//! `mg dev` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
+//! `mgc dev` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
 //! Port cố định per core từ bảng tập trung `dev_port.rs` (RULE §13 — hoán vị 4·3·1·5).
 
 use anyhow::Result;
@@ -17,7 +17,7 @@ pub mod clo;
 pub mod iot;
 pub mod web;
 
-/// Run `mg dev <core>` — lookup port từ bảng, kiểm tra conflict, dispatch đến file con.
+/// Run `mgc dev <core>` — lookup port từ bảng, kiểm tra conflict, dispatch đến file con.
 ///
 /// `port_override`: từ flag `--port` của user.
 /// `dry_run`: hiển thị lệnh sẽ chạy mà không thực thi thật.
@@ -57,14 +57,14 @@ pub async fn run_with_port(core: &str, dry_run: bool, port_override: Option<u16>
         "game" => {
             // game chưa có file riêng — hiển thị thông báo
             if dry_run {
-                mg_ui::info(&format!(
-                    "[dry-run] mg dev game  (port: {})",
+                mgc_ui::info(&format!(
+                    "[dry-run] mgc dev game  (port: {})",
                     port.map(|p| p.to_string()).unwrap_or_else(|| "N/A".into())
                 ));
                 return Ok(());
             }
-            mg_ui::info(&format!(
-                "mg dev game — port {} (cargo run / godot / unity per engine detect)",
+            mgc_ui::info(&format!(
+                "mgc dev game — port {} (cargo run / godot / unity per engine detect)",
                 port.map(|p| p.to_string()).unwrap_or_else(|| "none".into())
             ));
             Ok(())
@@ -72,28 +72,30 @@ pub async fn run_with_port(core: &str, dry_run: bool, port_override: Option<u16>
         #[cfg(feature = "iot")]
         "iot" => {
             if dry_run {
-                mg_ui::info(&format!(
-                    "[dry-run] mg dev iot  (port: {})",
+                mgc_ui::info(&format!(
+                    "[dry-run] mgc dev iot  (port: {})",
                     port.map(|p| p.to_string()).unwrap_or_else(|| "N/A".into())
                 ));
                 return Ok(());
             }
-            mg_ui::info("mg dev iot — run `mg flash` to flash firmware (no local server for IoT)");
+            mgc_ui::info(
+                "mgc dev iot — run `mgc flash` to flash firmware (no local server for IoT)",
+            );
             Ok(())
         }
         #[cfg(not(feature = "iot"))]
         "iot" => Err(crate::error::core_not_in_build("iot")),
         "lib" | "library" => {
             if dry_run {
-                mg_ui::info(&format!(
-                    "[dry-run] mg dev lib  (port: {})",
+                mgc_ui::info(&format!(
+                    "[dry-run] mgc dev lib  (port: {})",
                     port.map(|p| p.to_string()).unwrap_or_else(|| "N/A".into())
                 ));
                 return Ok(());
             }
             // lib: cargo watch hoặc tsc --watch
-            mg_ui::info(&format!(
-                "mg dev lib — build-watch server on port {}",
+            mgc_ui::info(&format!(
+                "mgc dev lib — build-watch server on port {}",
                 port.map(|p| p.to_string()).unwrap_or_else(|| "none".into())
             ));
             Ok(())
@@ -111,7 +113,7 @@ pub async fn run_multi(cores: Vec<(&str, Option<u16>)>, dry_run: bool) -> Result
     let conflicts = dev_port::check_multi_core_conflicts(&cores);
     if !conflicts.is_empty() {
         for (a, b, port) in &conflicts {
-            mg_ui::warning(&format!(
+            mgc_ui::warning(&format!(
                 "port conflict: core `{a}` and `{b}` both want port {port}.\n  \
                  → Use `--port` to assign different ports before running both."
             ));
@@ -130,7 +132,7 @@ pub async fn run_multi(cores: Vec<(&str, Option<u16>)>, dry_run: bool) -> Result
                 .or_else(|| dev_port::default_port(core))
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "N/A".into());
-            mg_ui::info(&format!("[dry-run] mg dev {core}  (port: {port})"));
+            mgc_ui::info(&format!("[dry-run] mgc dev {core}  (port: {port})"));
         } else {
             run_with_port(core, false, *port_override).await?;
         }

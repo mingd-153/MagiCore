@@ -1,30 +1,30 @@
-//! Model command — mg model push/pull (10-task-plan Phase 3)
+//! Model command — mgc model push/pull (10-task-plan Phase 3)
 //! (Lệnh model: push model qua OCI registry, pull về máy)
 //!
-//! AI core (Q11): `mg model pull hf://org/model/file` hoặc `oci://registry/repo:tag`
-//! → CAS store (`~/.megagate/store/v3`, T1) + manifest model; list/rm local.
+//! AI core (Q11): `mgc model pull hf://org/model/file` hoặc `oci://registry/repo:tag`
+//! → CAS store (`~/.magicore/store/v3`, T1) + manifest model; list/rm local.
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
-use mg_oci::client::OciClient;
-use mg_oci::manifest::OciImageConfig;
+use mgc_oci::client::OciClient;
+use mgc_oci::manifest::OciImageConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Default local registry URL (RULE §13: port chứa 4·3·1·5)
 const DEFAULT_REGISTRY: &str = "http://127.0.0.1:4315";
 
-const MODEL_MEDIA_TYPE: &str = "application/vnd.megagate.model.layer.v1+file";
+const MODEL_MEDIA_TYPE: &str = "application/vnd.magicore.model.layer.v1+file";
 
 /* ─── Local model manifest (CAS AI core, Q11) ─────────────────────── */
 
 fn store_root() -> PathBuf {
-    if let Ok(root) = std::env::var("MEGAGATE_STORE_ROOT") {
+    if let Ok(root) = std::env::var("MAGICORE_STORE_ROOT") {
         if !root.is_empty() {
             return PathBuf::from(root);
         }
     }
-    mg_store::default_store_root()
+    mgc_store::default_store_root()
 }
 
 fn model_manifest_dir() -> PathBuf {
@@ -89,7 +89,7 @@ fn now_iso() -> String {
 
 /// CAS pull — tải nguồn ngoài (HF/OCI) vào CAS store + manifest.
 async fn cas_pull(source: &str) -> Result<()> {
-    let store = mg_store::cas::ContentStore::new(store_root())?;
+    let store = mgc_store::cas::ContentStore::new(store_root())?;
     let (name, blobs, total) = if let Some(hf) = source.strip_prefix("hf://") {
         pull_hf(&store, hf).await?
     } else if let Some(oci) = source.strip_prefix("oci://") {
@@ -117,7 +117,7 @@ async fn cas_pull(source: &str) -> Result<()> {
     Ok(())
 }
 
-fn cas_import(store: &mg_store::cas::ContentStore, src: &Path) -> Result<(String, u64)> {
+fn cas_import(store: &mgc_store::cas::ContentStore, src: &Path) -> Result<(String, u64)> {
     let len = std::fs::metadata(src)?.len();
     let hash = store.import_file(src)?;
     Ok((hash.hash, len))
@@ -125,7 +125,7 @@ fn cas_import(store: &mg_store::cas::ContentStore, src: &Path) -> Result<(String
 
 /// hf://org/model/file → https://huggingface.co/{org}/{model}/resolve/main/{file}
 async fn pull_hf(
-    store: &mg_store::cas::ContentStore,
+    store: &mgc_store::cas::ContentStore,
     hf: &str,
 ) -> Result<(String, Vec<String>, u64)> {
     let mut parts = hf.split('/');
@@ -153,7 +153,7 @@ async fn pull_hf(
     }
     let data = resp.bytes().await?;
 
-    let tmp = std::env::temp_dir().join(format!("mg-hf-{}-{}", std::process::id(), now_iso()));
+    let tmp = std::env::temp_dir().join(format!("mgc-hf-{}-{}", std::process::id(), now_iso()));
     std::fs::write(&tmp, &data)?;
     let (hash, len) = cas_import(store, &tmp)?;
     let _ = std::fs::remove_file(&tmp);
@@ -164,7 +164,7 @@ async fn pull_hf(
 
 /// oci://registry/repo:tag → pull manifest + layers → CAS (P1 cơ bản).
 async fn pull_oci(
-    store: &mg_store::cas::ContentStore,
+    store: &mgc_store::cas::ContentStore,
     oci: &str,
 ) -> Result<(String, Vec<String>, u64)> {
     let (registry, rest) = oci
@@ -193,7 +193,8 @@ async fn pull_oci(
             .pull_blob(repo, &layer.digest)
             .await
             .with_context(|| format!("pull blob {}", layer.digest))?;
-        let tmp = std::env::temp_dir().join(format!("mg-oci-{}-{}", std::process::id(), now_iso()));
+        let tmp =
+            std::env::temp_dir().join(format!("mgc-oci-{}-{}", std::process::id(), now_iso()));
         std::fs::write(&tmp, &data)?;
         let (hash, len) = cas_import(store, &tmp)?;
         let _ = std::fs::remove_file(&tmp);
@@ -213,7 +214,7 @@ async fn pull_oci(
 fn list_local() -> Result<()> {
     let manifests = read_manifests_in(model_manifest_dir());
     if manifests.is_empty() {
-        println!("(no local models — pull one: `mg model pull hf://org/model/file`)");
+        println!("(no local models — pull one: `mgc model pull hf://org/model/file`)");
         return Ok(());
     }
     for m in manifests {
@@ -250,12 +251,12 @@ fn remove_local(name: &str) -> Result<()> {
         .flat_map(|m| m.blobs.iter().map(|b| b.as_str()))
         .collect();
 
-    let store = mg_store::cas::ContentStore::new(store_root())?;
+    let store = mgc_store::cas::ContentStore::new(store_root())?;
     for blob in &manifest.blobs {
         if others.contains(&blob.as_str()) {
             continue; // còn model khác dùng — giữ blob (refcount T1)
         }
-        let hash = mg_store::cas::IntegrityHash::from_hash_str(blob, false);
+        let hash = mgc_store::cas::IntegrityHash::from_hash_str(blob, false);
         if let Err(e) = store.remove(&hash) {
             eprintln!("warning: failed to remove blob {blob}: {e}");
         }
@@ -285,7 +286,7 @@ pub enum ModelCmd {
         tag: String,
         #[arg(long, default_value = DEFAULT_REGISTRY)]
         registry: String,
-        #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
+        #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         token: Option<String>,
     },
     /// Pull model: `hf://org/model/file` / `oci://registry/repo:tag` (→ CAS store)
@@ -299,7 +300,7 @@ pub enum ModelCmd {
         registry: String,
         #[arg(long, default_value = ".")]
         output: String,
-        #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
+        #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         token: Option<String>,
     },
     /// List: mặc định registry catalog; `--local` = model trong CAS store
@@ -308,7 +309,7 @@ pub enum ModelCmd {
         local: bool,
         #[arg(long, default_value = DEFAULT_REGISTRY)]
         registry: String,
-        #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
+        #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         token: Option<String>,
     },
     /// Xoá model local khỏi CAS store (manifest + blob không ai trỏ)
@@ -372,7 +373,7 @@ pub async fn run(args: ModelArgs) -> Result<()> {
     }
 }
 
-/// GGUF quantize qua python passthrough (A4, sys-mg/05 §4)
+/// GGUF quantize qua python passthrough (A4, sys-mgc/05 §4)
 fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
     if target != "q4_k_m" && target != "q8_0" {
         return Err(crate::error::unsupported_quantize_target(target));
@@ -402,7 +403,7 @@ fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
         return Err(crate::error::llama_quantize_failed(status.code()));
     }
     println!("quantized: {} ({target})", out);
-    println!("push to registry: mg model push {out} --repo ai/<name> (compressed variant)");
+    println!("push to registry: mgc model push {out} --repo ai/<name> (compressed variant)");
     Ok(())
 }
 
@@ -568,7 +569,7 @@ mod tests {
 
     fn tmp_store(tag: &str) -> (PathBuf, PathBuf) {
         let mut base = std::env::temp_dir();
-        base.push(format!("mg-model-test-{tag}-{}", std::process::id()));
+        base.push(format!("mgc-model-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let store = base.join("store").join("v3");
         (store, base)
@@ -578,13 +579,13 @@ mod tests {
     fn cas_import_roundtrip() {
         let (store_root, base) = tmp_store("roundtrip");
         std::fs::create_dir_all(&store_root).unwrap();
-        let store = mg_store::cas::ContentStore::new(store_root.clone()).unwrap();
+        let store = mgc_store::cas::ContentStore::new(store_root.clone()).unwrap();
 
         let src = base.join("model.bin");
         std::fs::write(&src, b"model-bytes-1234").unwrap();
         let (hash, len) = cas_import(&store, &src).unwrap();
         assert_eq!(len, 16);
-        assert!(store.contains(&mg_store::cas::IntegrityHash::from_hash_str(&hash, false)));
+        assert!(store.contains(&mgc_store::cas::IntegrityHash::from_hash_str(&hash, false)));
     }
 
     #[test]
@@ -614,7 +615,7 @@ mod tests {
     #[test]
     fn remove_local_missing_bails() {
         let (store_root, base) = tmp_store("missing");
-        std::env::set_var("MEGAGATE_STORE_ROOT", &store_root);
+        std::env::set_var("MAGICORE_STORE_ROOT", &store_root);
         std::fs::create_dir_all(&store_root).unwrap();
         let _ = &base;
         assert!(remove_local("not-there").is_err());
@@ -623,7 +624,7 @@ mod tests {
     #[test]
     fn unsupported_source_bails() {
         let (store_root, base) = tmp_store("unsupported");
-        std::env::set_var("MEGAGATE_STORE_ROOT", &store_root);
+        std::env::set_var("MAGICORE_STORE_ROOT", &store_root);
         std::fs::create_dir_all(&store_root).unwrap();
         let _ = &base;
         let rt = tokio::runtime::Runtime::new().unwrap();

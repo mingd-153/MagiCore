@@ -75,7 +75,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   return (
     <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
       <h1>Welcome to {{PROJECT_NAME}}</h1>
-      <p>Powered by MegaGate & React Vite</p>
+      <p>Powered by MagiCore & React Vite</p>
     </div>
   )
 }"#,
@@ -133,7 +133,7 @@ serde_json = "1.0"
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new().route("/", get(|| async { "Hello from MegaGate Axum!" }));
+    let app = Router::new().route("/", get(|| async { "Hello from MagiCore Axum!" }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:4315").await.unwrap();
     println!("Listening on http://127.0.0.1:4315");
     axum::serve(listener, app).await.unwrap();
@@ -150,7 +150,7 @@ app = FastAPI(title="{{PROJECT_NAME}}")
 
 @app.get("/")
 def read_root():
-    return {"message": "Hello from MegaGate FastAPI!", "project": "{{PROJECT_NAME}}"}
+    return {"message": "Hello from MagiCore FastAPI!", "project": "{{PROJECT_NAME}}"}
 "#,
             },
             EmbeddedFile {

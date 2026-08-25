@@ -2,7 +2,7 @@
 # Generate feature-gated templates for all backend frameworks
 set -e
 
-BASE="/Users/doanmihh/Documents/Workspace/MegaGate/templates/web"
+BASE="/Users/doanmihh/Documents/Workspace/MagiCore/templates/web"
 
 generate_backend() {
   local lang=$1

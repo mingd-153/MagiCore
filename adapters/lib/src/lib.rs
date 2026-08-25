@@ -1,22 +1,22 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! mg-lib-adapter — library ecosystem adapter (MegaGate)
+//! mgc-lib-adapter — library ecosystem adapter (MagiCore)
 //! (ts → delegate WebAdapter npm-format; rust → orchestrate cargo Q10; python → pip passthrough)
 //! (ponytail: rust/python version resolution = placeholder 0.1.0 khi dry; add khi save chạy tool native)
 
 use async_trait::async_trait;
-use mg_types::adapter::{
+use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
-use mg_types::{
+use mgc_types::{
     DependencySpec, Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version,
     VersionRange,
 };
 use std::path::{Path, PathBuf};
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LibLanguage {
@@ -29,12 +29,12 @@ type ManifestProbe = fn(&Path) -> Option<String>;
 
 pub struct LibAdapter {
     language: LibLanguage,
-    web: Option<mg_web_adapter::WebAdapter>,
+    web: Option<mgc_web_adapter::WebAdapter>,
 }
 
 fn detect_language(root: &Path) -> Option<LibLanguage> {
-    let mg_toml = root.join("mg.toml");
-    if let Ok(content) = std::fs::read_to_string(&mg_toml) {
+    let mgc_toml = root.join("mgc.toml");
+    if let Ok(content) = std::fs::read_to_string(&mgc_toml) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
                 if eco != "lib" && v.get("lib").is_none() {
@@ -68,7 +68,7 @@ fn detect_language(root: &Path) -> Option<LibLanguage> {
 }
 
 fn manifest_is_lib(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
                 if eco == "lib" {
@@ -100,7 +100,7 @@ fn manifest_is_lib(root: &Path) -> bool {
 fn probe_package_json(path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    v.get("megagate")
+    v.get("magicore")
         .and_then(|m| m.get("core"))
         .and_then(|c| c.as_str())
         .map(str::to_string)
@@ -111,8 +111,8 @@ fn probe_cargo_toml(path: &Path) -> Option<String> {
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("package")
         .and_then(|p| p.get("metadata"))
-        .and_then(|m| m.get("megagate"))
-        .and_then(|mg| mg.get("core"))
+        .and_then(|m| m.get("magicore"))
+        .and_then(|mgc| mgc.get("core"))
         .and_then(|c| c.as_str())
         .map(str::to_string)
 }
@@ -121,28 +121,29 @@ fn probe_pyproject(path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("tool")
-        .and_then(|t| t.get("megagate"))
-        .and_then(|mg| mg.get("core"))
+        .and_then(|t| t.get("magicore"))
+        .and_then(|mgc| mgc.get("core"))
         .and_then(|c| c.as_str())
         .map(str::to_string)
 }
 
 fn exec_tool(root: &Path, cmd: &str, args: &[String]) -> MgResult<()> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run(cmd, args, &opts).map_err(|e| mg_types::MgError::Other(e.to_string()))?;
+    mgc_exec::prelude::run(cmd, args, &opts)
+        .map_err(|e| mgc_types::MgError::Other(e.to_string()))?;
     Ok(())
 }
 
-/// pip package allowlist — đọc `[lib] pip_allowed_packages` từ mg.toml (Q9).
+/// pip package allowlist — đọc `[lib] pip_allowed_packages` từ mgc.toml (Q9).
 /// Rỗng = fail-closed: mọi pip add/remove/update theo tên bị chặn, in cách khai báo.
 fn read_pip_allowlist(root: &Path) -> Vec<String> {
-    let mg_toml = root.join("mg.toml");
-    let Ok(content) = std::fs::read_to_string(&mg_toml) else {
+    let mgc_toml = root.join("mgc.toml");
+    let Ok(content) = std::fs::read_to_string(&mgc_toml) else {
         return Vec::new();
     };
     let Ok(v) = toml::from_str::<toml::Value>(&content) else {
@@ -164,8 +165,8 @@ pub fn check_pip_allowed(root: &Path, name: &str) -> MgResult<()> {
     if allowed.iter().any(|a| a == name) {
         return Ok(());
     }
-    Err(mg_types::MgError::Other(format!(
-        "pip '{}' is not in [lib].pip_allowed_packages (mg.toml). Fail-closed — add the package there to allow pip install/uninstall.",
+    Err(mgc_types::MgError::Other(format!(
+        "pip '{}' is not in [lib].pip_allowed_packages (mgc.toml). Fail-closed — add the package there to allow pip install/uninstall.",
         name
     )))
 }
@@ -188,9 +189,9 @@ impl LibAdapter {
         let web = if language == LibLanguage::Ts {
             Some(match (registry_url, token) {
                 (Some(url), token) => {
-                    mg_web_adapter::WebAdapter::with_registry_chain(url, token, fallbacks.to_vec())
+                    mgc_web_adapter::WebAdapter::with_registry_chain(url, token, fallbacks.to_vec())
                 }
-                (None, _) => mg_web_adapter::WebAdapter::new(),
+                (None, _) => mgc_web_adapter::WebAdapter::new(),
             })
         } else {
             None
@@ -200,18 +201,18 @@ impl LibAdapter {
 }
 
 fn parse_cargo_manifest(root: &Path) -> MgResult<Manifest> {
-    mg_adapter_base::cargo_manifest::parse_manifest(root, Ecosystem::Lib)
+    mgc_adapter_base::cargo_manifest::parse_manifest(root, Ecosystem::Lib)
 }
 
 fn write_cargo_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
-    mg_adapter_base::cargo_manifest::write_manifest(root, manifest)
+    mgc_adapter_base::cargo_manifest::write_manifest(root, manifest)
 }
 
 fn parse_pyproject_manifest(root: &Path) -> MgResult<Manifest> {
     let content = std::fs::read_to_string(root.join("pyproject.toml"))
-        .map_err(|e| mg_types::MgError::Other(format!("read pyproject.toml: {e}")))?;
+        .map_err(|e| mgc_types::MgError::Other(format!("read pyproject.toml: {e}")))?;
     let v: toml::Value = toml::from_str(&content)
-        .map_err(|e| mg_types::MgError::Other(format!("parse pyproject.toml: {e}")))?;
+        .map_err(|e| mgc_types::MgError::Other(format!("parse pyproject.toml: {e}")))?;
     let name = v
         .get("project")
         .and_then(|p| p.get("name"))
@@ -236,14 +237,14 @@ fn parse_pyproject_manifest(root: &Path) -> MgResult<Manifest> {
 fn write_pyproject_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
     let path = root.join("pyproject.toml");
     let content = std::fs::read_to_string(&path)
-        .map_err(|e| mg_types::MgError::Other(format!("read pyproject.toml: {e}")))?;
+        .map_err(|e| mgc_types::MgError::Other(format!("read pyproject.toml: {e}")))?;
     let mut v: toml::Value = toml::from_str(&content)
-        .map_err(|e| mg_types::MgError::Other(format!("parse pyproject.toml: {e}")))?;
+        .map_err(|e| mgc_types::MgError::Other(format!("parse pyproject.toml: {e}")))?;
     let project = v
         .as_table_mut()
         .and_then(|t| t.get_mut("project"))
         .and_then(|p| p.as_table_mut())
-        .ok_or_else(|| mg_types::MgError::Other("pyproject.toml missing [project]".to_string()))?;
+        .ok_or_else(|| mgc_types::MgError::Other("pyproject.toml missing [project]".to_string()))?;
 
     let mut deps: Vec<toml::Value> = Vec::new();
     for dep in manifest.dependencies.iter().filter(|d| !d.range.is_star()) {
@@ -261,9 +262,9 @@ fn write_pyproject_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
 
     std::fs::write(
         &path,
-        toml::to_string_pretty(&v).map_err(|e| mg_types::MgError::Other(e.to_string()))?,
+        toml::to_string_pretty(&v).map_err(|e| mgc_types::MgError::Other(e.to_string()))?,
     )
-    .map_err(|e| mg_types::MgError::Other(format!("write pyproject.toml: {e}")))?;
+    .map_err(|e| mgc_types::MgError::Other(format!("write pyproject.toml: {e}")))?;
     Ok(())
 }
 
@@ -536,7 +537,7 @@ impl PackageAdapter for LibAdapter {
                 if let Some(n) = name {
                     check_pip_allowed(project_root, n.as_str())?;
                 } else {
-                    return Err(mg_types::MgError::Other(
+                    return Err(mgc_types::MgError::Other(
                         "pip update-all is not allowed — name a package (Q9 allowlist)".to_string(),
                     ));
                 }
@@ -644,16 +645,15 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tmp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mg-lib-test-{}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mgc-lib-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -664,7 +664,7 @@ mod tests {
         let dir = tmp_dir("rust");
         std::fs::write(
             dir.join("Cargo.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.magicore]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
         )
         .unwrap();
         let adapter = adapter_for(&dir, None, None).unwrap();
@@ -672,10 +672,10 @@ mod tests {
     }
 
     #[test]
-    fn detect_ts_via_mg_toml() {
+    fn detect_ts_via_mgc_toml() {
         let dir = tmp_dir("ts");
         std::fs::write(
-            dir.join("mg.toml"),
+            dir.join("mgc.toml"),
             "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"ts\"\n",
         )
         .unwrap();
@@ -705,7 +705,7 @@ mod tests {
         let dir = tmp_dir("write");
         std::fs::write(
             dir.join("Cargo.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"lib\"\n\n[dependencies]\n",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.magicore]\ncore = \"lib\"\n\n[dependencies]\n",
         )
         .unwrap();
         let mut manifest = parse_cargo_manifest(&dir).unwrap();
@@ -723,14 +723,14 @@ mod tests {
         assert_eq!(re.dependencies.len(), 1);
         assert_eq!(re.dependencies[0].name.as_str(), "serde");
         let content = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
-        assert!(content.contains("megagate"), "metadata preserved");
+        assert!(content.contains("magicore"), "metadata preserved");
     }
 
     #[test]
     fn pip_allowlist_empty_fail_closed() {
         let dir = tmp_dir("pip-empty");
         std::fs::write(
-            dir.join("mg.toml"),
+            dir.join("mgc.toml"),
             "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\n",
         )
         .unwrap();
@@ -779,7 +779,7 @@ mod tests {
     fn pip_allowlist_allows_listed() {
         let dir = tmp_dir("pip-ok");
         std::fs::write(
-            dir.join("mg.toml"),
+            dir.join("mgc.toml"),
             "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\npip_allowed_packages = [\"requests\", \"numpy\"]\n",
         )
         .unwrap();
@@ -792,7 +792,7 @@ mod tests {
     async fn update_all_python_fail_closed() {
         let dir = tmp_dir("upd-all");
         std::fs::write(
-            dir.join("mg.toml"),
+            dir.join("mgc.toml"),
             "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\npip_allowed_packages = [\"requests\"]\n",
         )
         .unwrap();
@@ -828,29 +828,29 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_generate_sbom_lib() {
-        use mg_lockfile::{LockfileMetadata, Package};
+#[test]
+fn test_generate_sbom_lib() {
+    use mgc_lockfile::{LockfileMetadata, Package};
 
-        let lockfile = Lockfile {
-            version: "2".to_string(),
-            metadata: LockfileMetadata {
-                generated_at: "2026-08-21T00:00:00Z".to_string(),
-                generator: "mg/0.4.0".to_string(),
-                lockfile_hash: "abc123".to_string(),
-                signer: None,
-            },
-            packages: vec![Package {
-                name: "test-pkg".to_string(),
-                version: "1.0.0".to_string(),
-                resolved: "https://example.com/test.tgz".to_string(),
-                integrity: "blake3:test123".to_string(),
-                dependencies: vec![],
-            }],
-        };
+    let lockfile = Lockfile {
+        version: "2".to_string(),
+        metadata: LockfileMetadata {
+            generated_at: "2026-08-21T00:00:00Z".to_string(),
+            generator: "mgc/0.4.0".to_string(),
+            lockfile_hash: "abc123".to_string(),
+            signer: None,
+        },
+        packages: vec![Package {
+            name: "test-pkg".to_string(),
+            version: "1.0.0".to_string(),
+            resolved: "https://example.com/test.tgz".to_string(),
+            integrity: "blake3:test123".to_string(),
+            dependencies: vec![],
+        }],
+    };
 
-        let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
-        assert!(json.contains("CycloneDX"));
-        assert!(json.contains("test-pkg"));
-        assert!(json.contains("1.0.0"));
-    }
+    let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
+}

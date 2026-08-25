@@ -1,23 +1,23 @@
 [package]
-name = "mg-game-adapter"
+name = "mgc-game-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Game ecosystem adapter for MegaGate (bevy/godot/unity/unreal)"
+description = "Game ecosystem adapter for MagiCore (bevy/godot/unity/unreal)"
 
 [dependencies]
 # Core crates (W1-W6 support)
-mg-types = { workspace = true }
-mg-crypto = { workspace = true }
-mg-lockfile = { workspace = true }
-mg-sbom = { workspace = true }
-mg-cache = { workspace = true }
-mg-adapter-base = { workspace = true }
-mg-config = { workspace = true }
-mg-exec = { workspace = true }
-mg-ui = { workspace = true }
+mgc-types = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-config = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-ui = { workspace = true }
 
 # Async
 tokio = { workspace = true }

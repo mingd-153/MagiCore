@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use base64::Engine;
 use futures_util::stream::{self, StreamExt};
-use mg_store::{ContentStore, Layout, PackageCache};
-use mg_types::adapter::ResolvedPackage;
-use mg_types::{MgError, MgResult, PackageId};
+use mgc_store::{ContentStore, Layout, PackageCache};
+use mgc_types::adapter::ResolvedPackage;
+use mgc_types::{MgError, MgResult, PackageId};
 
 use crate::audit::{allow_insecure_loopback_url, is_tarball_url_trusted};
 use crate::cache::{download_concurrency_limit, SharedWebCache};
@@ -18,7 +18,7 @@ use crate::native;
 use crate::profile::{PipelineProfile, TarballFetchResult, TarballPayload};
 
 pub fn pipeline_task_concurrency_limit(extract_concurrency: usize) -> usize {
-    std::env::var("MEGAGATE_WEB_PIPELINE_TASK_CONCURRENCY")
+    std::env::var("MAGICORE_WEB_PIPELINE_TASK_CONCURRENCY")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|limit| *limit > 0)
@@ -280,7 +280,7 @@ pub async fn get_tarball_bytes(
 }
 
 pub async fn prefetch_tarballs(
-    graph: &mg_types::adapter::ResolvedGraph,
+    graph: &mgc_types::adapter::ResolvedGraph,
     skip: &std::collections::HashSet<PackageId>,
     cache: &PackageCache,
     shared_cache: Option<&SharedWebCache>,
@@ -461,7 +461,7 @@ pub async fn prefetch_tarballs(
 }
 
 pub async fn pipeline_download_and_extract(
-    graph: &mg_types::adapter::ResolvedGraph,
+    graph: &mgc_types::adapter::ResolvedGraph,
     skip: &std::collections::HashSet<PackageId>,
     cache: &PackageCache,
     shared_cache: Option<&SharedWebCache>,
@@ -479,7 +479,7 @@ pub async fn pipeline_download_and_extract(
         .map(|shared| shared.package_cache())
         .transpose()
         .map_err(|e| MgError::Store(e.to_string()))?;
-    let extract_concurrency = std::env::var("MEGAGATE_WEB_EXTRACT_CONCURRENCY")
+    let extract_concurrency = std::env::var("MAGICORE_WEB_EXTRACT_CONCURRENCY")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|&n| n > 0)

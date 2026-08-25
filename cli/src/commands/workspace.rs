@@ -1,9 +1,9 @@
-//! mg workspace — workspace graph management (T4).
+//! mgc workspace — workspace graph management (T4).
 //! (In graph workspace: nodes + edges workspace:* deps, filter select subset)
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
-use mg_config::project::ProjectConfig;
+use mgc_config::project::ProjectConfig;
 use std::path::Path;
 
 #[derive(Subcommand, Debug, Clone)]
@@ -19,7 +19,7 @@ pub enum WorkspaceCmd {
     },
 }
 
-/// mg workspace list — in graph tại project root.
+/// mgc workspace list — in graph tại project root.
 pub async fn run(cmd: WorkspaceCmd) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let project_root =
@@ -31,14 +31,14 @@ pub async fn run(cmd: WorkspaceCmd) -> Result<()> {
 }
 
 fn list(project_root: &Path, filter: Option<&str>, json: bool) -> Result<()> {
-    let targets = mg_workspace::discover_workspace_targets(project_root)?;
-    let graph = mg_workspace::build_workspace_graph(&targets)?;
+    let targets = mgc_workspace::discover_workspace_targets(project_root)?;
+    let graph = mgc_workspace::build_workspace_graph(&targets)?;
 
     if graph.is_empty() {
         if json {
             println!("{}", serde_json::json!({ "nodes": [], "edges": [] }));
         } else {
-            mg_ui::info("No workspace packages found (expect apps/ + packages/ with manifests).");
+            mgc_ui::info("No workspace packages found (expect apps/ + packages/ with manifests).");
         }
         return Ok(());
     }
@@ -49,7 +49,7 @@ fn list(project_root: &Path, filter: Option<&str>, json: bool) -> Result<()> {
             .filter(|&i| {
                 let node = &graph.nodes[i];
                 let relative = node.path.strip_prefix(project_root).unwrap_or(&node.path);
-                mg_workspace::filter_matches(pattern, relative, &node.name)
+                mgc_workspace::filter_matches(pattern, relative, &node.name)
             })
             .collect();
         if selected.is_empty() {

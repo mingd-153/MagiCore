@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install mg binary from GitHub release.
-# Usage: curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install-from-gh.sh | bash
-# Or:  ./scripts/install-from-gh.sh [--package megagate|megagate-web] [--version v0.1.0] [--dir /usr/local/bin]
-# Local test: ./scripts/install-from-gh.sh --archive dist/megagate-web-macOS-ARM64.tar.gz --dir /tmp/mg-bin
+# Install mgc binary from GitHub release.
+# Usage: curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash
+# Or:  ./scripts/install-from-gh.sh [--package magicore|magicore-web] [--version v0.1.0] [--dir /usr/local/bin]
+# Local test: ./scripts/install-from-gh.sh --archive dist/magicore-web-macOS-ARM64.tar.gz --dir /tmp/mgc-bin
 set -euo pipefail
 
-REPO="mingd-153/MegaGate"
-PKG="megagate"
+REPO="mingd-153/MagiCore"
+PKG="magicore"
 VERSION="latest"
 INSTALL_DIR="/usr/local/bin"
 ARCHIVE=""
@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
     --version) VERSION="$2"; shift 2 ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --archive) ARCHIVE="$2"; shift 2 ;;
-    *) echo "Usage: $0 [--package megagate-web|megagate] [--version vX.Y.Z] [--dir /usr/local/bin] [--archive <tar.gz>]"; exit 1 ;;
+    *) echo "Usage: $0 [--package magicore-web|magicore] [--version vX.Y.Z] [--dir /usr/local/bin] [--archive <tar.gz>]"; exit 1 ;;
   esac
 done
 
@@ -89,23 +89,23 @@ fi
 verify_checksum "$ARCHIVE_PATH" "$CHECKSUM_PATH"
 tar xzf "$ARCHIVE_PATH" -C "$TMP"
 
-if [ -f "$TMP/mg${EXE_SUFFIX}" ]; then
-  BIN="$TMP/mg${EXE_SUFFIX}"
-elif [ -f "$TMP/${PKG}/mg${EXE_SUFFIX}" ]; then
-  BIN="$TMP/${PKG}/mg${EXE_SUFFIX}"
+if [ -f "$TMP/mgc${EXE_SUFFIX}" ]; then
+  BIN="$TMP/mgc${EXE_SUFFIX}"
+elif [ -f "$TMP/${PKG}/mgc${EXE_SUFFIX}" ]; then
+  BIN="$TMP/${PKG}/mgc${EXE_SUFFIX}"
 else
-  echo "Error: mg binary not found in archive"
+  echo "Error: mgc binary not found in archive"
   find "$TMP" -type f
   exit 1
 fi
 
 mkdir -p "$INSTALL_DIR"
 if command -v install >/dev/null 2>&1; then
-  install "$BIN" "$INSTALL_DIR/mg${EXE_SUFFIX}"
+  install "$BIN" "$INSTALL_DIR/mgc${EXE_SUFFIX}"
 else
-  cp "$BIN" "$INSTALL_DIR/mg${EXE_SUFFIX}"
-  chmod +x "$INSTALL_DIR/mg${EXE_SUFFIX}" 2>/dev/null || true
+  cp "$BIN" "$INSTALL_DIR/mgc${EXE_SUFFIX}"
+  chmod +x "$INSTALL_DIR/mgc${EXE_SUFFIX}" 2>/dev/null || true
 fi
 
-echo "Installed mg -> ${INSTALL_DIR}/mg${EXE_SUFFIX}"
-echo "Run 'mg --help' to verify."
+echo "Installed mgc -> ${INSTALL_DIR}/mgc${EXE_SUFFIX}"
+echo "Run 'mgc --help' to verify."

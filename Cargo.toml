@@ -5,41 +5,41 @@ members = [
     "cli",
     "tools/*",
 ]
-exclude = ["tools/core-web-lab", "tools/mg-mcp"]
+exclude = ["tools/core-web-lab", "tools/mgc-mcp"]
 resolver = "2"
 
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/mingd-153/MegaGate"
-authors = ["MegaGate Contributors"]
+repository = "https://github.com/mingd-153/MagiCore"
+authors = ["MagiCore Contributors"]
 
 [workspace.dependencies]
 # Internal crates
-mg-types = { path = "core/crates/mg-types" }
-mg-config = { path = "core/crates/mg-config" }
-mg-crypto = { path = "core/crates/mg-crypto" }
-mg-cache = { path = "core/crates/mg-cache" }
-mg-http = { path = "core/crates/mg-http" }
-mg-fetcher = { path = "core/crates/mg-fetcher" }
-mg-lockfile = { path = "core/crates/mg-lockfile" }
-mg-sbom = { path = "core/crates/mg-sbom" }
-mg-resolver = { path = "core/crates/mg-resolver" }
-mg-store = { path = "core/crates/mg-store" }
-mg-ui = { path = "core/crates/mg-ui" }
-mg-adapter-base = { path = "core/crates/mg-adapter-base" }
-mg-platform = { path = "core/crates/mg-platform" }
-mg-plugin = { path = "core/crates/mg-plugin" }
-mg-search = { path = "core/crates/mg-search" }
-mg-workspace = { path = "core/crates/mg-workspace" }
-mg-pack = { path = "core/crates/mg-pack" }
-mg-publish = { path = "core/crates/mg-publish" }
-mg-oci = { path = "core/crates/mg-oci" }
-mg-registry-server = { path = "core/crates/mg-registry-server" }
-mg-exec = { path = "core/crates/mg-exec" }
+mgc-types = { path = "core/crates/mgc-types" }
+mgc-config = { path = "core/crates/mgc-config" }
+mgc-crypto = { path = "core/crates/mgc-crypto" }
+mgc-cache = { path = "core/crates/mgc-cache" }
+mgc-http = { path = "core/crates/mgc-http" }
+mgc-fetcher = { path = "core/crates/mgc-fetcher" }
+mgc-lockfile = { path = "core/crates/mgc-lockfile" }
+mgc-sbom = { path = "core/crates/mgc-sbom" }
+mgc-resolver = { path = "core/crates/mgc-resolver" }
+mgc-store = { path = "core/crates/mgc-store" }
+mgc-ui = { path = "core/crates/mgc-ui" }
+mgc-adapter-base = { path = "core/crates/mgc-adapter-base" }
+mgc-platform = { path = "core/crates/mgc-platform" }
+mgc-plugin = { path = "core/crates/mgc-plugin" }
+mgc-search = { path = "core/crates/mgc-search" }
+mgc-workspace = { path = "core/crates/mgc-workspace" }
+mgc-pack = { path = "core/crates/mgc-pack" }
+mgc-publish = { path = "core/crates/mgc-publish" }
+mgc-oci = { path = "core/crates/mgc-oci" }
+mgc-registry-server = { path = "core/crates/mgc-registry-server" }
+mgc-exec = { path = "core/crates/mgc-exec" }
 
-# External deps (for mg-http, mg-oci, etc.)
+# External deps (for mgc-http, mgc-oci, etc.)
 http = { version = "1.2", features = [] }
 bytes = { version = "1" }
 

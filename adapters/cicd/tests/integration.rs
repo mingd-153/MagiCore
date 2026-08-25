@@ -1,14 +1,14 @@
 #![allow(clippy::unwrap_used)]
-//! Integration tests for mg-cicd-adapter — sát với src/lib.rs
+//! Integration tests for mgc-cicd-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_provider (7 providers × 2 paths), adapter_for, PackageAdapter trait.
 
-use mg_cicd_adapter::{adapter_for, detect_provider, CicdAdapter, CicdProvider};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::PackageName;
+use mgc_cicd_adapter::{adapter_for, detect_provider, CicdAdapter, CicdProvider};
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::PackageName;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-cicd-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-cicd-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -69,21 +69,21 @@ fn detect_aws_via_main_tf() {
     assert_eq!(detect_provider(&dir), Some(CicdProvider::Aws));
 }
 
-// ── detect_provider — mg.toml override (priority) ──────────────────────────
+// ── detect_provider — mgc.toml override (priority) ──────────────────────────
 
 #[test]
-fn detect_aws_via_mg_toml_overrides_file_marker() {
-    let dir = tmp("mg-aws");
-    // wrangler.toml → Cloudflare, mg.toml → Aws (mg.toml thắng)
+fn detect_aws_via_mgc_toml_overrides_file_marker() {
+    let dir = tmp("mgc-aws");
+    // wrangler.toml → Cloudflare, mgc.toml → Aws (mgc.toml thắng)
     std::fs::write(dir.join("wrangler.toml"), "name = \"worker\"\n").unwrap();
-    std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"aws\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "[cicd]\nprovider = \"aws\"\n").unwrap();
     assert_eq!(detect_provider(&dir), Some(CicdProvider::Aws));
 }
 
 #[test]
-fn detect_gcp_via_mg_toml() {
-    let dir = tmp("mg-gcp");
-    std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"gcp\"\n").unwrap();
+fn detect_gcp_via_mgc_toml() {
+    let dir = tmp("mgc-gcp");
+    std::fs::write(dir.join("mgc.toml"), "[cicd]\nprovider = \"gcp\"\n").unwrap();
     assert_eq!(detect_provider(&dir), Some(CicdProvider::Gcp));
 }
 
@@ -94,9 +94,9 @@ fn detect_returns_none_for_empty_dir() {
 }
 
 #[test]
-fn detect_returns_none_for_unknown_mg_toml_provider() {
+fn detect_returns_none_for_unknown_mgc_toml_provider() {
     let dir = tmp("unknown");
-    std::fs::write(dir.join("mg.toml"), "[cicd]\nprovider = \"jenkins\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "[cicd]\nprovider = \"jenkins\"\n").unwrap();
     // "jenkins" chưa được hỗ trợ → None
     assert!(detect_provider(&dir).is_none());
 }

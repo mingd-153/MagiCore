@@ -1,6 +1,6 @@
 #[test]
 fn lock_file_detects_uv_sync() {
-    let dir = std::env::temp_dir().join(format!("mg-ai-lock-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-ai-lock-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("uv.lock"), "ok").unwrap();
     let root = dir.clone();

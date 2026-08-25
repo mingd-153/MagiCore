@@ -1,4 +1,4 @@
-//! `mg install` ai — tách từ core/ai.rs (Phase 7 v5). Lock ghép: uv.lock → pip requirements.lock.
+//! `mgc install` ai — tách từ core/ai.rs (Phase 7 v5). Lock ghép: uv.lock → pip requirements.lock.
 
 use anyhow::Result;
 
@@ -7,7 +7,7 @@ use super::super::shared;
 pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     let root = shared::ai_project_root()?;
     if !packages.is_empty() {
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "[ai install] ignoring package args {:?} — install theo lock (05 §5)",
             packages
         ));
@@ -27,7 +27,7 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
         return Err(crate::error::ai_no_lockfile());
     };
     if dry_run {
-        mg_ui::info(&format!("[dry-run] {} {}", tool, args.join(" ")));
+        mgc_ui::info(&format!("[dry-run] {} {}", tool, args.join(" ")));
         return Ok(());
     }
     shared::ai_run_tool(&root, tool, &args)?;

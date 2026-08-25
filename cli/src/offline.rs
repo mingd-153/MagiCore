@@ -47,14 +47,14 @@ mod tests {
     fn test_thread_local_isolation() {
         reset_offline_mode();
         set_offline_mode(true);
-        
+
         std::thread::spawn(|| {
             // Different thread → default false
             assert!(!is_offline_mode());
         })
         .join()
         .unwrap();
-        
+
         // Main thread still true
         assert!(is_offline_mode());
     }

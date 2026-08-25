@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomFormat, SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomFormat, SbomGenerator, SbomOptions};
 
 pub async fn run(
     format: Option<String>,
@@ -23,18 +23,18 @@ pub async fn run(
     };
 
     // Read lockfile
-    let lockfile_path = project_root.join("mg.lock");
+    let lockfile_path = project_root.join("mgc.lock");
     if !lockfile_path.exists() {
         anyhow::bail!(
-            "No lockfile found at {}. Run `mg install` first.",
+            "No lockfile found at {}. Run `mgc install` first.",
             lockfile_path.display()
         );
     }
 
-    let lockfile_content = std::fs::read_to_string(&lockfile_path)
-        .context("Failed to read lockfile")?;
-    let lockfile: Lockfile = serde_json::from_str(&lockfile_content)
-        .context("Failed to parse lockfile")?;
+    let lockfile_content =
+        std::fs::read_to_string(&lockfile_path).context("Failed to read lockfile")?;
+    let lockfile: Lockfile =
+        serde_json::from_str(&lockfile_content).context("Failed to parse lockfile")?;
 
     // Generate SBOM
     let options = SbomOptions {
@@ -53,10 +53,13 @@ pub async fn run(
     });
 
     let _component_version = version.or_else(|| {
-        // Try to read from package.json or mg.toml
+        // Try to read from package.json or mgc.toml
         if let Ok(content) = std::fs::read_to_string(project_root.join("package.json")) {
             if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
-                return pkg.get("version").and_then(|v| v.as_str()).map(String::from);
+                return pkg
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
             }
         }
         None

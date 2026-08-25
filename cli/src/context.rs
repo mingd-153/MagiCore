@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mg_config::project::{ProjectConfig, ProjectExecutionConfig};
-use mg_types::adapter::PackageAdapter;
-use mg_types::Ecosystem;
+use mgc_config::project::{ProjectConfig, ProjectExecutionConfig};
+use mgc_types::adapter::PackageAdapter;
+use mgc_types::Ecosystem;
 
-/// Project context: detects project, loads mg.toml, provides right adapter.
+/// Project context: detects project, loads mgc.toml, provides right adapter.
 pub struct ProjectContext {
     pub root: PathBuf,
     #[allow(dead_code)]
@@ -17,8 +17,8 @@ impl ProjectContext {
     /// Load context, optionally with explicit `--core` override.
     /// Priority (T9a — chữ kí chống nhầm core):
     ///   1. `--core` flag
-    ///   2. `.mg.core` marker (signature file)
-    ///   3. `mg.toml` (saved by `mg init` — marker đồng bộ ecosystem)
+    ///   2. `.mgc.core` marker (signature file)
+    ///   3. `mgc.toml` (saved by `mgc init` — marker đồng bộ ecosystem)
     ///   4. auto_detect signature files (package.json → web, Cargo.toml → lib,
     ///      pyproject.toml → ai) — ambiguous → Err, không đoán (RULE §9.3)
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
@@ -38,9 +38,9 @@ impl ProjectContext {
         let ecosystem = Ecosystem::from_str(&config.ecosystem)
             .ok_or_else(|| crate::error::unknown_ecosystem(&config.ecosystem))?;
 
-        // Registry chain hợp nhất (ITEM 2): env override → mg.toml [[registries]]
+        // Registry chain hợp nhất (ITEM 2): env override → mgc.toml [[registries]]
         // (priority) → .npmrc registry= → npmjs default. entry 0 = primary.
-        let chain = mg_config::chain::registry_chain(Some(&root), Some(&config));
+        let chain = mgc_config::chain::registry_chain(Some(&root), Some(&config));
         let primary = chain
             .first()
             .map(|r| r.url.clone())
@@ -100,7 +100,7 @@ impl ProjectContext {
                 // không còn phụ thuộc thứ tự file (cảnh báo rõ ràng).
                 if marker_core.is_none() && core_override.is_none() {
                     ProjectConfig::write_core_marker_at(root, eco)?;
-                    mg_ui::warning(&format!(
+                    mgc_ui::warning(&format!(
                         "No '{}' found — auto-marking project as core '{}'. Edit the file to change core.",
                         ProjectConfig::CORE_MARKER_FILE,
                         eco,
@@ -122,7 +122,7 @@ impl ProjectContext {
             return Ok((cwd.to_path_buf(), ProjectConfig::new("project", core)));
         }
 
-        Err(crate::error::no_mg_project_root())
+        Err(crate::error::no_mgc_project_root())
     }
 
     fn dir_name(path: &std::path::Path) -> String {

@@ -2,11 +2,11 @@
 //! Helper tìm kiếm đa registry cho lệnh CLI add - DÙNG CHUNG CHO MỌI CORE
 
 use anyhow::Result;
-use mg_search::{
+use mgc_search::{
     prompt_selection, SearchCache, SearchOrchestrator, SearchQuery, SearchResult, ProjectContext,
     NpmSearchClient, CratesSearchClient, GoSearchClient, PyPISearchClient,
 };
-use mg_types::PackageName;
+use mgc_types::PackageName;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ pub async fn try_multi_registry_search(
         return Ok(None);
     }
     
-    mg_ui::info("🔍 Searching across all registries...");
+    mgc_ui::info("🔍 Searching across all registries...");
     
     // Detect project context
     // Phát hiện context dự án
@@ -35,7 +35,7 @@ pub async fn try_multi_registry_search(
     // Kiểm tra cache cho lựa chọn trước của user
     let cache = SearchCache::new()?;
     if let Some(registry) = cache.get_user_choice(package_name)? {
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "Auto-selecting {} from previous choices (used 3+ times)",
             registry
         ));
@@ -47,7 +47,7 @@ pub async fn try_multi_registry_search(
     
     // Create search clients
     // Tạo search clients
-    let clients: Vec<Arc<dyn mg_search::SearchClient>> = vec![
+    let clients: Vec<Arc<dyn mgc_search::SearchClient>> = vec![
         Arc::new(NpmSearchClient::new()),
         Arc::new(CratesSearchClient::new()),
         Arc::new(GoSearchClient::new()),
@@ -66,11 +66,11 @@ pub async fn try_multi_registry_search(
     let results = match orchestrator.search_all(&query).await {
         Ok(r) if !r.is_empty() => r,
         Ok(_) => {
-            mg_ui::warning(&format!("No packages found for '{}'", package_name));
+            mgc_ui::warning(&format!("No packages found for '{}'", package_name));
             return Ok(None);
         }
         Err(e) => {
-            mg_ui::warning(&format!("Search failed: {}", e));
+            mgc_ui::warning(&format!("Search failed: {}", e));
             return Ok(None);
         }
     };
@@ -165,8 +165,8 @@ fn detect_project_context(project_root: &Path) -> Result<ProjectContext> {
 
 /// Format package path based on registry
 /// Format đường dẫn package theo registry
-fn format_package_path(name: &str, registry: mg_search::Registry) -> String {
-    use mg_search::Registry;
+fn format_package_path(name: &str, registry: mgc_search::Registry) -> String {
+    use mgc_search::Registry;
     
     match registry {
         Registry::Npm => name.to_string(),

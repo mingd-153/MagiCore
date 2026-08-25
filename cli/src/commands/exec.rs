@@ -1,11 +1,11 @@
 use anyhow::Result;
-use mg_ui::info;
+use mgc_ui::info;
 use std::path::PathBuf;
 
 use crate::context::ProjectContext;
 
-/// mg exec <cmd> [args...] — runs an allowlisted command inside the project environment.
-/// Prepends core-local bins through mg-exec clean env, without shell/PM wrappers.
+/// mgc exec <cmd> [args...] — runs an allowlisted command inside the project environment.
+/// Prepends core-local bins through mgc-exec clean env, without shell/PM wrappers.
 pub fn run(core: Option<&str>, command: String, args: Vec<String>) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let project_root = ctx.root();
@@ -25,13 +25,13 @@ pub fn run(core: Option<&str>, command: String, args: Vec<String>) -> Result<()>
     let full_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     info(&format!("$ {} {}", command, full_args.join(" ")));
 
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(project_root.to_path_buf()),
-        log_path: Some(project_root.join(".megagate").join("exec.log")),
+        log_path: Some(project_root.join(".magicore").join("exec.log")),
         clean_env: true,
         env: vec![("PATH".to_string(), path_env.to_string_lossy().to_string())],
         ..Default::default()
     };
-    mg_exec::prelude::run_inherited(&command, &args, &opts)?;
+    mgc_exec::prelude::run_inherited(&command, &args, &opts)?;
     Ok(())
 }

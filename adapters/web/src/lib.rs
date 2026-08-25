@@ -1,6 +1,6 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-//! `adapters/web/src/lib.rs` — Web ecosystem adapter for MegaGate.
+//! `adapters/web/src/lib.rs` — Web ecosystem adapter for MagiCore.
 //!
 //! Provides the primary WebAdapter orchestrating resolution, installation,
 //! manifest editing, security audits, and lifecycle hooks for npm/web projects.
@@ -14,10 +14,10 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use async_trait::async_trait;
-use mg_adapter_base::BaseAdapter;
-use mg_resolver::Resolver as CoreResolver;
-use mg_store::{ContentStore, Database, Layout};
-use mg_types::{
+use mgc_adapter_base::BaseAdapter;
+use mgc_resolver::Resolver as CoreResolver;
+use mgc_store::{ContentStore, Database, Layout};
+use mgc_types::{
     adapter::{
         AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
         ResolvedGraph, ResolvedPackage, UpdatedPackage,
@@ -27,8 +27,8 @@ use mg_types::{
 use sha2::{Digest, Sha256};
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 pub mod audit;
 pub mod cache;
@@ -49,9 +49,8 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
-
 
 #[cfg(test)]
 #[path = "test/unit_tests.rs"]
@@ -207,10 +206,10 @@ impl WebAdapter {
             .provider
             .metadata(name)
             .await
-            .map_err(|err| mg_types::MgError::Network(err.to_string()))?;
+            .map_err(|err| mgc_types::MgError::Network(err.to_string()))?;
 
         preferred_registry_version(&metadata).ok_or_else(|| {
-            mg_types::MgError::Other(format!(
+            mgc_types::MgError::Other(format!(
                 "unable to infer latest version for '{}'",
                 name.as_str()
             ))
@@ -237,7 +236,7 @@ impl WebAdapter {
 }
 
 pub fn effective_registry_url(default: &str) -> String {
-    let url = std::env::var("MEGAGATE_WEB_REGISTRY_URL")
+    let url = std::env::var("MAGICORE_WEB_REGISTRY_URL")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -252,7 +251,7 @@ pub fn effective_registry_url(default: &str) -> String {
 }
 
 pub fn validate_registry_allowed(url: &str) {
-    let Some(allowed) = std::env::var("MEGAGATE_WEB_ALLOWED_REGISTRIES").ok() else {
+    let Some(allowed) = std::env::var("MAGICORE_WEB_ALLOWED_REGISTRIES").ok() else {
         return;
     };
     let allowed_list: Vec<&str> = allowed
@@ -271,7 +270,7 @@ pub fn validate_registry_allowed(url: &str) {
         return;
     }
     panic!(
-        "registry '{}' is not in MEGAGATE_WEB_ALLOWED_REGISTRIES ({})",
+        "registry '{}' is not in MAGICORE_WEB_ALLOWED_REGISTRIES ({})",
         url, allowed
     );
 }
@@ -294,7 +293,7 @@ pub fn manifest_resolution_cache_key(manifest: &Manifest, registry_url: &str) ->
     entries.sort_unstable();
 
     let mut hasher = Sha256::new();
-    hasher.update(b"megagate-web-resolution-v1\0");
+    hasher.update(b"magicore-web-resolution-v1\0");
     hasher.update(registry_url.trim_end_matches('/').as_bytes());
     hasher.update(b"\0");
     for entry in entries {
@@ -319,8 +318,8 @@ impl PackageAdapter for WebAdapter {
         "web"
     }
 
-    fn ecosystem(&self) -> mg_types::ecosystem::Ecosystem {
-        mg_types::ecosystem::Ecosystem::Web
+    fn ecosystem(&self) -> mgc_types::ecosystem::Ecosystem {
+        mgc_types::ecosystem::Ecosystem::Web
     }
 
     fn can_handle(&self, project_root: &Path) -> bool {
@@ -331,9 +330,9 @@ impl PackageAdapter for WebAdapter {
         self.dedupe_pref
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
         self.resolver.set_dedupe_pref(if enabled {
-            mg_resolver::solver::DedupePref::PreferExisting
+            mgc_resolver::solver::DedupePref::PreferExisting
         } else {
-            mg_resolver::solver::DedupePref::PreferLatest
+            mgc_resolver::solver::DedupePref::PreferLatest
         });
     }
 
@@ -410,7 +409,7 @@ impl PackageAdapter for WebAdapter {
             .resolver
             .solve(&wanted)
             .await
-            .map_err(|e| mg_types::MgError::DependencyConflict(e.message))?;
+            .map_err(|e| mgc_types::MgError::DependencyConflict(e.message))?;
         profile.mark("solver_solve", solve_started_at);
 
         let metadata_started_at = std::time::Instant::now();
@@ -424,12 +423,12 @@ impl PackageAdapter for WebAdapter {
                     .collect::<Vec<_>>(),
             )
             .await
-            .map_err(|err| mg_types::MgError::Network(err.to_string()))?;
+            .map_err(|err| mgc_types::MgError::Network(err.to_string()))?;
         profile.mark("prefetch_resolution_metadata", metadata_started_at);
         let index_started_at = std::time::Instant::now();
         let resolution_index: std::collections::HashMap<
             String,
-            Vec<&mg_resolver::solver::Resolution>,
+            Vec<&mgc_resolver::solver::Resolution>,
         > = result.resolutions.iter().fold(
             std::collections::HashMap::new(),
             |mut acc, resolution| {
@@ -519,8 +518,8 @@ impl PackageAdapter for WebAdapter {
                 .ok()
                 .and_then(|db| db.release_policy("web").ok().flatten())
         })();
-        let block_new = std::env::var("MEGAGATE_SECURITY_24H_BLOCK")
-            .or_else(|_| std::env::var("MG_AUDIT_STRICT"))
+        let block_new = std::env::var("MAGICORE_SECURITY_24H_BLOCK")
+            .or_else(|_| std::env::var("MGC_AUDIT_STRICT"))
             .ok()
             .map(|v| {
                 matches!(
@@ -531,7 +530,7 @@ impl PackageAdapter for WebAdapter {
             .unwrap_or(false)
             || store_min_age.is_some();
         let min_age_secs = store_min_age.unwrap_or(86400) as i64;
-        let allow_untrusted = std::env::var("MEGAGATE_ALLOW_UNTRUSTED")
+        let allow_untrusted = std::env::var("MAGICORE_ALLOW_UNTRUSTED")
             .ok()
             .map(|v| {
                 matches!(
@@ -545,7 +544,7 @@ impl PackageAdapter for WebAdapter {
             static WARNED: OnceLock<()> = OnceLock::new();
             WARNED.get_or_init(|| {
                 eprintln!(
-                    "⚠️  [megagate] WARNING: MEGAGATE_ALLOW_UNTRUSTED=1 — supply-chain guards\n   \
+                    "⚠️  [magicore] WARNING: MAGICORE_ALLOW_UNTRUSTED=1 — supply-chain guards\n   \
                      (24h quarantine + no-downgrade) are BYPASSED for this process."
                 );
             });
@@ -557,7 +556,7 @@ impl PackageAdapter for WebAdapter {
                     if let Err(msg) =
                         native::npm_registry::check_publish_age(pkg_meta, &ver, min_age_secs)
                     {
-                        return Err(mg_types::MgError::Other(msg));
+                        return Err(mgc_types::MgError::Other(msg));
                     }
                 }
             }
@@ -573,9 +572,9 @@ impl PackageAdapter for WebAdapter {
                         if let Some(old) = old {
                             let new_v = id.version();
                             if *new_v < old {
-                                return Err(mg_types::MgError::Other(format!(
+                                return Err(mgc_types::MgError::Other(format!(
                                     "🚨 SECURITY: Downgrade blocked for '{id}' — installed {old}, requested {new_v}.\n   \
-                                     This can regress packages in the CAS store. Use MEGAGATE_ALLOW_UNTRUSTED=1 to override."
+                                     This can regress packages in the CAS store. Use MAGICORE_ALLOW_UNTRUSTED=1 to override."
                                 )));
                             }
                         }
@@ -620,7 +619,7 @@ impl PackageAdapter for WebAdapter {
                 pkg.id.version()
             );
             let bytes = reg.download_tarball(&url).await.map_err(|e| {
-                mg_types::MgError::Network(format!(
+                mgc_types::MgError::Network(format!(
                     "download failed for '{}': {}",
                     pkg.id.name_str(),
                     e
@@ -629,7 +628,7 @@ impl PackageAdapter for WebAdapter {
             if let Some(ref store) = self.store {
                 store
                     .import_bytes(&bytes)
-                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+                    .map_err(|e| mgc_types::MgError::Store(e.to_string()))?;
             }
         }
         Ok(())
@@ -687,12 +686,12 @@ impl PackageAdapter for WebAdapter {
         name: &PackageName,
         range: Option<&VersionRange>,
         opts: AddOptions,
-    ) -> MgResult<mg_types::adapter::PreparedAdd> {
+    ) -> MgResult<mgc_types::adapter::PreparedAdd> {
         let inferred = self.infer_add_range(name, range, opts.exact).await?;
         let version = inferred
             .satisfying_version()
             .unwrap_or_else(|| Version::new(0, 0, 0));
-        Ok(mg_types::adapter::PreparedAdd {
+        Ok(mgc_types::adapter::PreparedAdd {
             id: PackageId::new(name.clone(), version),
             range: inferred,
         })
@@ -734,7 +733,7 @@ pub fn spawn_tarball_download(
     tokio::spawn(async move {
         let cache = shared_cache
             .package_cache()
-            .map_err(|e| mg_types::MgError::Store(e.to_string()))?;
+            .map_err(|e| mgc_types::MgError::Store(e.to_string()))?;
         let download_sem = Arc::new(tokio::sync::Semaphore::new(download_concurrency_limit()));
         let mut set: tokio::task::JoinSet<MgResult<u64>> = tokio::task::JoinSet::new();
         for pkg in packages {
@@ -747,19 +746,19 @@ pub fn spawn_tarball_download(
                 let _guard = lock.lock().await;
                 if let Some(bytes) = cache
                     .get_tarball(&id)
-                    .map_err(|e| mg_types::MgError::Store(e.to_string()))?
+                    .map_err(|e| mgc_types::MgError::Store(e.to_string()))?
                 {
                     return Ok(bytes.len() as u64);
                 }
                 let _permit = download_sem.acquire_owned().await.map_err(|e| {
-                    mg_types::MgError::Other(format!("download semaphore closed: {e}"))
+                    mgc_types::MgError::Other(format!("download semaphore closed: {e}"))
                 })?;
                 let url = package_tarball_url(reg.registry_url(), &pkg);
                 let bytes =
                     native::npm_registry::batch_download_tarball_with_auth(&url, reg.auth_token())
                         .await
                         .map_err(|e| {
-                            mg_types::MgError::Network(format!("prefetch dl failed: {e}"))
+                            mgc_types::MgError::Network(format!("prefetch dl failed: {e}"))
                         })?;
                 let id = pkg.id.clone();
                 let len = bytes.len() as u64;
@@ -769,16 +768,16 @@ pub fn spawn_tarball_download(
                     if let Err(e) = crate::install::download::prepare_verified_tarball_for_cache(
                         &mut pkg, &bytes,
                     ) {
-                        eprintln!("[megagate] prefetch integrity failed for {id}: {e}");
+                        eprintln!("[magicore] prefetch integrity failed for {id}: {e}");
                     } else if let Err(e) = cache2.cache_tarball(&pkg.id, &bytes) {
-                        eprintln!("[megagate] prefetch cache write failed for {id}: {e}");
+                        eprintln!("[magicore] prefetch cache write failed for {id}: {e}");
                     }
                 })
                 .await
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        eprintln!("[megagate] prefetch spawn_blocking panicked: {e}");
+                        eprintln!("[magicore] prefetch spawn_blocking panicked: {e}");
                     }
                 }
                 Ok(len)
@@ -787,8 +786,8 @@ pub fn spawn_tarball_download(
         let mut total = 0u64;
         while let Some(r) = set.join_next().await {
             total +=
-                r.map_err(|e| mg_types::MgError::Other(format!("prefetch task failed: {e}")))??;
+                r.map_err(|e| mgc_types::MgError::Other(format!("prefetch task failed: {e}")))??;
         }
-        Ok::<_, mg_types::MgError>(total)
+        Ok::<_, mgc_types::MgError>(total)
     })
 }

@@ -133,7 +133,7 @@ fn detect_working_dir(entry: &Path) -> Option<PathBuf> {
     let mut current = entry.parent()?;
     loop {
         if current.join("package.json").exists()
-            || current.join("mg.toml").exists()
+            || current.join("mgc.toml").exists()
             || current.join("Cargo.toml").exists()
         {
             return Some(current.to_path_buf());
@@ -154,7 +154,7 @@ fn prepare_workspace(entry: &Path) -> Result<PreparedWorkspace, anyhow::Error> {
         });
     }
 
-    let needs_materialized_resolver = node_modules.join(".megagate").exists();
+    let needs_materialized_resolver = node_modules.join(".magicore").exists();
     if !needs_materialized_resolver {
         return Ok(PreparedWorkspace {
             entry: entry.to_path_buf(),
@@ -163,7 +163,7 @@ fn prepare_workspace(entry: &Path) -> Result<PreparedWorkspace, anyhow::Error> {
         });
     }
 
-    let temp_root = working_dir.join(".megagate").join(format!(
+    let temp_root = working_dir.join(".magicore").join(format!(
         "tmp-build-workspace-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -252,7 +252,7 @@ fn should_skip_project_path(relative: &Path) -> bool {
     let first = first.as_os_str().to_string_lossy();
     matches!(
         first.as_ref(),
-        "node_modules" | ".megagate" | "dist" | "build" | ".next" | "out"
+        "node_modules" | ".magicore" | "dist" | "build" | ".next" | "out"
     )
 }
 
@@ -309,7 +309,7 @@ fn materialize_index_html(root: &Path, config: &BundlerConfig) -> Result<(), any
     let title = root
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("MegaGate App");
+        .unwrap_or("MagiCore App");
     let html = format!(
         "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>{title}</title>\n  </head>\n  <body>\n    <div id=\"root\"></div>\n    <script type=\"module\" src=\"/{bundle_name}\"></script>\n  </body>\n</html>\n"
     );
@@ -342,8 +342,8 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::create_dir_all(root.join("node_modules")).unwrap();
-        std::fs::create_dir_all(root.join("node_modules/.megagate")).unwrap();
-        std::fs::create_dir_all(root.join(".megagate")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/.magicore")).unwrap();
+        std::fs::create_dir_all(root.join(".magicore")).unwrap();
         std::fs::write(
             root.join("package.json"),
             r#"{"name":"demo","version":"1.0.0"}"#,

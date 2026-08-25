@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used)]
 
 //! E2E: registry server local → publish → install (18 §18 — không mạng thật)
-//! Flow: pack → serve (mg-registry) → publish → install
-//! (spawn binary mg-registry + mg — common::mg pattern)
+//! Flow: pack → serve (mgc-registry) → publish → install
+//! (spawn binary mgc-registry + mgc — common::mgc pattern)
 
 mod common;
 
@@ -29,17 +29,17 @@ fn spawn_server(store_dir: &Path, port: u16) -> Child {
     let debug_bin = workspace_root
         .join("target")
         .join("debug")
-        .join("mg-registry");
+        .join("mgc-registry");
     let release_bin = workspace_root
         .join("target")
         .join("release")
-        .join("mg-registry");
+        .join("mgc-registry");
 
-    let runtime_bin = std::env::var("CARGO_BIN_EXE_mg-registry")
+    let runtime_bin = std::env::var("CARGO_BIN_EXE_mgc-registry")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.exists());
-    let compile_bin = option_env!("CARGO_BIN_EXE_mg-registry")
+    let compile_bin = option_env!("CARGO_BIN_EXE_mgc-registry")
         .map(PathBuf::from)
         .filter(|p| p.exists());
 
@@ -54,9 +54,9 @@ fn spawn_server(store_dir: &Path, port: u16) -> Child {
         fallback
             .arg("run")
             .arg("-p")
-            .arg("mg-registry-server")
+            .arg("mgc-registry-server")
             .arg("--bin")
-            .arg("mg-registry")
+            .arg("mgc-registry")
             .arg("--manifest-path")
             .arg(&workspace_manifest)
             .arg("--");
@@ -70,7 +70,7 @@ fn spawn_server(store_dir: &Path, port: u16) -> Child {
         .arg("--admin-token")
         .arg(TEST_ADMIN_TOKEN)
         .spawn()
-        .expect("spawn mg-registry")
+        .expect("spawn mgc-registry")
 }
 
 const TEST_ADMIN_TOKEN: &str = "e2e-admin-token";
@@ -83,7 +83,7 @@ fn wait_ready(port: u16) {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    panic!("mg-registry did not become ready within 15s");
+    panic!("mgc-registry did not become ready within 15s");
 }
 
 /// Lấy cwd gốc workspace (chạy publish/install từ đây — không dính feature chain)
@@ -101,7 +101,7 @@ fn e2e_publish_then_install() {
     let publisher = base.join("publisher");
     let consumer = base.join("consumer");
 
-    // 1. project publisher (package.json + mg.toml + code file)
+    // 1. project publisher (package.json + mgc.toml + code file)
     fs::create_dir_all(&publisher).unwrap();
     fs::create_dir_all(&consumer).unwrap();
     fs::write(
@@ -111,7 +111,7 @@ fn e2e_publish_then_install() {
     .unwrap();
     fs::write(publisher.join("index.js"), "export const demo = 42;\n").unwrap();
     fs::write(
-        publisher.join("mg.toml"),
+        publisher.join("mgc.toml"),
         format!(
             r#"name = "e2e-demo"
 ecosystem = "web"
@@ -129,7 +129,7 @@ url = "http://127.0.0.1:{port}"
     )
     .unwrap();
     fs::write(
-        consumer.join("mg.toml"),
+        consumer.join("mgc.toml"),
         format!(
             r#"name = "e2e-consumer"
 ecosystem = "web"
@@ -148,8 +148,8 @@ url = "http://127.0.0.1:{port}"
     wait_ready(port);
 
     let root = workspace_root();
-    let debug_mg = root.join("target").join("debug").join("mg");
-    let release_mg = root.join("target").join("release").join("mg");
+    let debug_mg = root.join("target").join("debug").join("mgc");
+    let release_mg = root.join("target").join("release").join("mgc");
     let runtime_mg = std::env::var("CARGO_BIN_EXE_mg")
         .ok()
         .map(PathBuf::from)
@@ -170,7 +170,7 @@ url = "http://127.0.0.1:{port}"
             fallback
                 .arg("run")
                 .arg("-p")
-                .arg("mg")
+                .arg("mgc")
                 .arg("--manifest-path")
                 .arg(root.join("Cargo.toml"))
                 .arg("--");
@@ -178,14 +178,14 @@ url = "http://127.0.0.1:{port}"
         };
         cmd.current_dir(cwd)
             .args(args)
-            .env("MEGAGATE_TEMPLATE_DIR", root.join("templates"));
+            .env("MAGICORE_TEMPLATE_DIR", root.join("templates"));
         for (k, v) in envs {
             cmd.env(k, v);
         }
-        let out = cmd.output().expect("mg run");
+        let out = cmd.output().expect("mgc run");
         assert!(
             out.status.success(),
-            "mg {:?} thất bại:\n{}",
+            "mgc {:?} thất bại:\n{}",
             args,
             String::from_utf8_lossy(&out.stderr)
         );
@@ -219,11 +219,11 @@ url = "http://127.0.0.1:{port}"
         &["add", "@e2e-test/demo@0.1.0"],
         &[
             (
-                "MEGAGATE_WEB_REGISTRY_URL",
+                "MAGICORE_WEB_REGISTRY_URL",
                 &format!("http://127.0.0.1:{port}"),
             ),
-            ("MEGAGATE_WEB_REGISTRY_TOKEN", TEST_ADMIN_TOKEN),
-            ("MEGAGATE_WEB_ALLOW_INSECURE_LOCALHOST", "1"),
+            ("MAGICORE_WEB_REGISTRY_TOKEN", TEST_ADMIN_TOKEN),
+            ("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1"),
         ],
     );
     assert!(

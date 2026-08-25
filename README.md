@@ -1,10 +1,10 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="MegaGate Logo" width="full" />
-  <h1>MegaGate</h1>
-  <p><strong>The Universal Polyglot Package Manager for the AI-Agent Era</strong></p>
+  <img src="assets/logo.svg" alt="MagiCore Logo" width="full" />
+  <h1>MagiCore</h1>
+  <p><strong>Magical Core Management for the AI-Agent Era</strong></p>
   <p>
-    <a href="https://github.com/mingd-153/MegaGate/releases"><img src="https://img.shields.io/github/v/release/mingd-153/MegaGate?label=latest&style=flat-square" alt="Latest Release" /></a>
-    <a href="https://github.com/mingd-153/MegaGate/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mingd-153/MegaGate/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
+    <a href="https://github.com/mingd-153/MagiCore/releases"><img src="https://img.shields.io/github/v/release/mingd-153/MagiCore?label=latest&style=flat-square" alt="Latest Release" /></a>
+    <a href="https://github.com/mingd-153/MagiCore/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mingd-153/MagiCore/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
     <img src="https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square" alt="Rust 1.85+" />
     <img src="https://img.shields.io/badge/MCP-native-blueviolet?style=flat-square" alt="Native MCP Server" />
@@ -14,7 +14,7 @@
 
 ---
 
-**MegaGate** (`mga`) is a single, fast, opinionated package manager written in Rust that handles **Web (Node.js/NPM), AI frameworks, Cloud IaC, CI/CD pipelines, Game engines, IoT toolchains, Mobile (Flutter/Swift/Kotlin), and Polyglot Libraries** — all with one consistent CLI.
+**MagiCore** (`mgc`) is a single, fast, opinionated package manager written in Rust that handles **Web (Node.js/NPM), AI frameworks, Cloud IaC, CI/CD pipelines, Game engines, IoT toolchains, Mobile (Flutter/Swift/Kotlin), and Polyglot Libraries** — all with one consistent CLI.
 
 > **🎉 Production Release:** `v1.0.0` is now production-ready! Includes SBOM generation, cryptographically signed lockfiles, and stable API. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.0.1 roadmap.
 
@@ -31,9 +31,9 @@
 | 🔐 **Signed Lockfiles**      | Ed25519 cryptographic signatures for tamper detection (NEW!)                    |
 | 📦 **CAS Reflink Store**     | Content-addressed store with OS reflinks/hardlinks for zero-copy installs       |
 | 🔀 **Monorepo Catalogs**     | PNPM-compatible `catalog:` protocol for centralized version management          |
-| 🤖 **Native MCP Server**     | `mg mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
-| 🩺 **Smart Doctor**          | `mg doctor --fix` auto-diagnoses and repairs environment issues                 |
-| 🗄️ **Embedded Registry**     | `mg-registry-server` — host your own private package registry                   |
+| 🤖 **Native MCP Server**     | `mgc mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
+| 🩺 **Smart Doctor**          | `mgc doctor --fix` auto-diagnoses and repairs environment issues                 |
+| 🗄️ **Embedded Registry**     | `mgc-registry-server` — host your own private package registry                   |
 | 🌍 **Cross-Platform**        | macOS (Apple Silicon + Intel), Linux x64/ARM64, Windows x64/ARM64               |
 
 ---
@@ -42,40 +42,40 @@
 
 ### macOS (Homebrew)
 ```bash
-brew install mingd-153/tap/megagate
+brew install mingd-153/tap/magicore
 ```
 
 ### Windows (Scoop)
 ```powershell
-scoop bucket add megagate https://github.com/mingd-153/scoop-megagate
-scoop install megagate
+scoop bucket add magicore https://github.com/mingd-153/scoop-magicore
+scoop install magicore
 ```
 
 ### Download Binary (All Platforms)
 
-Download the latest release from [**GitHub Releases →**](https://github.com/mingd-153/MegaGate/releases/latest)
+Download the latest release from [**GitHub Releases →**](https://github.com/mingd-153/MagiCore/releases/latest)
 
 | Platform            | File                          |
 | ------------------- | ----------------------------- |
-| macOS Apple Silicon | `megagate-macOS-ARM64.tar.gz` |
-| macOS Intel         | `megagate-macOS-X64.tar.gz`   |
-| Linux x64           | `megagate-Linux-X64.tar.gz`   |
-| Linux ARM64         | `megagate-Linux-ARM64.tar.gz` |
-| Windows x64         | `megagate-Windows-X64.zip`    |
+| macOS Apple Silicon | `magicore-macOS-ARM64.tar.gz` |
+| macOS Intel         | `magicore-macOS-X64.tar.gz`   |
+| Linux x64           | `magicore-Linux-X64.tar.gz`   |
+| Linux ARM64         | `magicore-Linux-ARM64.tar.gz` |
+| Windows x64         | `magicore-Windows-X64.zip`    |
 
 ```bash
 # macOS/Linux
-tar xzf megagate-*.tar.gz
-sudo mv mga /usr/local/bin/
-mga --version
+tar xzf magicore-*.tar.gz
+sudo mv mgc /usr/local/bin/
+mgc --version
 ```
 
 ### Build from Source
 ```bash
-git clone https://github.com/mingd-153/MegaGate.git
-cd MegaGate
-cargo build --release --bin mga
-# Binary at: target/release/mga
+git clone https://github.com/mingd-153/MagiCore.git
+cd MagiCore
+cargo build --release --bin mgc
+# Binary at: target/release/mgc
 ```
 > **Requires:** Rust 1.85+
 
@@ -85,42 +85,45 @@ cargo build --release --bin mga
 
 ```bash
 # Create a new web project
-mga create-web react@latest my-app --ts
+mgc create-web react@latest my-app --ts
 
 # Install dependencies (auto-detects ecosystem)
-mga install
+mgc install
 
 # Add a package
-mga add zod
-mga add -D vitest
+mgc add zod
+mgc add -D vitest
 
 # Run development server
-mga dev
+mgc dev
 
 # Security audit
-mga audit
+mgc audit
+
+# Generate SBOM (NEW in V1.0.0!)
+mgc sbom --format cyclonedx-json --output sbom.json
 
 # Check environment health
-mga doctor
+mgc doctor
 ```
 
 ### Monorepo / Workspace
 ```bash
 # Install all packages across the entire monorepo
-mga install --recursive
+mgc install --recursive
 
 # Run build in all workspaces
-mga build --recursive
+mgc build --recursive
 
 # Filter specific packages
-mga build --recursive --filter "packages/*"
+mgc build --recursive --filter "packages/*"
 ```
 
 ---
 
 ## 🤖 AI Coding Agent Setup (MCP)
 
-MegaGate ships a **native Model Context Protocol server** — no Python runtime needed.
+MagiCore ships a **native Model Context Protocol server** — no Python runtime needed.
 
 Add to your AI IDE config:
 
@@ -128,8 +131,8 @@ Add to your AI IDE config:
 ```json
 {
   "mcpServers": {
-    "megagate": {
-      "command": "mga",
+    "magicore": {
+      "command": "mgc",
       "args": ["mcp"]
     }
   }
@@ -140,23 +143,23 @@ Add to your AI IDE config:
 ```json
 {
   "mcpServers": {
-    "megagate": {
-      "command": "mga",
+    "magicore": {
+      "command": "mgc",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-MCP tools exposed: `mg_install`, `mg_add`, `mg_audit`, `mg_workspace_info`
+MCP tools exposed: `mgc_install`, `mgc_add`, `mgc_audit`, `mgc_workspace_info`
 
 ---
 
 ## 🗂️ Project Structure
 
 ```
-MegaGate/
-├── cli/                    # mg binary — CLI commands and dispatch engine
+MagiCore/
+├── cli/                    # mgc binary — CLI commands and dispatch engine
 ├── core/crates/            # 18 foundational Rust crates (store, resolver, fetcher…)
 ├── adapters/               # 9 ecosystem adapters (web, ai, cloud, cicd, game, iot, app, lib, hardware)
 ├── deploy/                 # Docker Compose + Nginx TLS reverse proxy configs
@@ -186,7 +189,7 @@ MegaGate/
 ## 📋 Commands Reference
 
 ```
-USAGE: mga [OPTIONS] <COMMAND>
+USAGE: mgc [OPTIONS] <COMMAND>
 
 COMMON COMMANDS:
   install, i      Install dependencies (auto-detect ecosystem)
@@ -209,8 +212,8 @@ WORKSPACE COMMANDS:
   workspace       Manage monorepo workspaces
 
 MORE:
-  mga --help       Full command reference
-  mga <cmd> --help Per-command help
+  mgc --help       Full command reference
+  mgc <cmd> --help Per-command help
 ```
 
 ---
@@ -224,7 +227,7 @@ MORE:
 - ✅ **SRI (Subresource Integrity)** checksums for all packages
 - ✅ **24-hour release quarantine** — newly published packages are flagged
 - ✅ **SBOM generation** — CycloneDX & SPDX for supply chain visibility
-- ✅ `mg audit` scans for known CVEs via the advisory database
+- ✅ `mgc audit` scans for known CVEs via the advisory database
 - ✅ Lifecycle scripts are **opt-in only** (trust gate)
 
 ### Security Advisory (V1.0.0)
@@ -247,7 +250,7 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 **Temporarily Disabled Features** (stubbed for rapid V1.0.0 release):
 - ❌ Workspace lockfile merging (monorepo root lockfiles)
 - ❌ Pruned install optimization (lockfile-based incremental installs)
-- ❌ `mg why` command (dependency explanation)
+- ❌ `mgc why` command (dependency explanation)
 - ❌ Lockfile version compatibility checks
 - ❌ ~80% of test suite (requires v2 schema rewrite)
 
@@ -256,9 +259,9 @@ These features will be **restored in V1.0.1 hotfix (Week 7)** — estimated 1 we
 **Workarounds**:
 - Workspace projects: Each package maintains its own lockfile (no root merge)
 - Install optimization: Full resolution on every install (slower but correct)
-- Dependency explanation: Manual inspection of `mga.lock`
+- Dependency explanation: Manual inspection of `mgc.lock`
 
-See [docs/specs/megaGateChangeLog.md](docs/specs/megaGateChangeLog.md) for migration details.
+See [docs/specs/magiCoreChangeLog.md](docs/specs/magiCoreChangeLog.md) for migration details.
 
 ---
 
@@ -274,4 +277,4 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 ## 📄 License
 
-MIT © MegaGate Contributors — see [LICENSE](LICENSE)
+MIT © MagiCore Contributors — see [LICENSE](LICENSE)

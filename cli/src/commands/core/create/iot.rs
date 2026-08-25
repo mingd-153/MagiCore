@@ -1,4 +1,4 @@
-//! `mg create iot` — wizard + scaffold theo framework (07 §4).
+//! `mgc create iot` — wizard + scaffold theo framework (07 §4).
 
 use anyhow::Result;
 
@@ -13,7 +13,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         crate::commands::template::ensure_layer(&format!("iot/{fw}")).await;
     }
     crate::scaffold::processor::Scaffolder::scaffold(&config)?;
-    mg_ui::success("IoT project created. Run `mg add-iot <pkg>` or `mg install-iot` next.");
+    mgc_ui::success("IoT project created. Run `mgc add-iot <pkg>` or `mgc install-iot` next.");
     Ok(())
 }
 

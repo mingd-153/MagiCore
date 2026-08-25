@@ -1,9 +1,9 @@
-//! mg store — manage the local package store (02 §2.2)
+//! mgc store — manage the local package store (02 §2.2)
 //! (Quản lý store: prune package không còn project nào tham chiếu)
 
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
-use mg_config::project::ProjectConfig;
+use mgc_config::project::ProjectConfig;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,7 +20,7 @@ pub enum StoreCmd {
     Status,
     /// Sao lưu store về một thư mục mục tiêu
     Backup {
-        /// Đường dẫn thư mục đích (mặc định: ~/.megagate/store_backup_<timestamp>)
+        /// Đường dẫn thư mục đích (mặc định: ~/.magicore/store_backup_<timestamp>)
         #[arg(long)]
         path: Option<String>,
     },
@@ -41,12 +41,12 @@ pub struct PruneReport {
 }
 
 fn store_db_for(project_root: &Path) -> Result<PathBuf> {
-    let store_root = project_root.join(".megagate").join("cache").join("web");
+    let store_root = project_root.join(".magicore").join("cache").join("web");
     Ok(store_root.join("store.db"))
 }
 
 fn vstore_root_for(project_root: &Path) -> PathBuf {
-    project_root.join("node_modules").join(".megagate")
+    project_root.join("node_modules").join(".magicore")
 }
 
 fn dir_size(path: &std::path::Path) -> u64 {
@@ -117,13 +117,13 @@ fn timestamp() -> String {
 
 fn default_backup_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let base = Path::new(&home).join(".megagate");
+    let base = Path::new(&home).join(".magicore");
     std::fs::create_dir_all(&base)?;
     Ok(base.join(format!("store_backup_{}", timestamp())))
 }
 
 fn prune_unreferenced(project_root: &Path, dry_run: bool) -> Result<PruneReport> {
-    use mg_store::database::Database;
+    use mgc_store::database::Database;
 
     let db = Database::open(&store_db_for(project_root)?)?;
     let unreferenced = db.list_unreferenced()?;
@@ -155,7 +155,7 @@ fn prune_unreferenced(project_root: &Path, dry_run: bool) -> Result<PruneReport>
     Ok(report)
 }
 
-/// mg store prune — delete unreferenced packages (02 §2.2).
+/// mgc store prune — delete unreferenced packages (02 §2.2).
 pub async fn run(cmd: StoreCmd) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let project_root =
@@ -182,7 +182,7 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             Ok(())
         }
         StoreCmd::Status => {
-            let db = mg_store::database::Database::open(&store_db_for(&project_root)?)?;
+            let db = mgc_store::database::Database::open(&store_db_for(&project_root)?)?;
             let installed = db.list_installed()?;
             println!("Store status: {} installed package(s)", installed.len());
             println!(
@@ -215,7 +215,7 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
             );
             println!("  vstore: {} bytes", dir_size(&vstore_dst));
             println!(
-                "  restore: mg store restore --path {}",
+                "  restore: mgc store restore --path {}",
                 backup_dir.display()
             );
             Ok(())

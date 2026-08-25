@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
-use mg_config::project::ProjectExecutionConfig;
-use mg_ui::info;
+use mgc_config::project::ProjectExecutionConfig;
+use mgc_ui::info;
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -13,9 +13,9 @@ use crate::context::ProjectContext;
 pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
     let root = find_root()?;
 
-    if !mg_ui::is_quiet() {
-        mg_ui::blank_line();
-        println!("📦 {}", "MegaGate Build".bold().cyan());
+    if !mgc_ui::is_quiet() {
+        mgc_ui::blank_line();
+        println!("📦 {}", "MagiCore Build".bold().cyan());
     }
     info(&format!("Project root: {}", root.display()));
 
@@ -53,14 +53,14 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
         "hardware" => Err(crate::error::core_not_in_build("hardware")),
         #[cfg(feature = "ai")]
         "ai" => {
-            mg_ui::warning(
-                "ai core has no build artifact (05 §7 — agents run via `mg run`/`mg dev`); skipped",
+            mgc_ui::warning(
+                "ai core has no build artifact (05 §7 — agents run via `mgc run`/`mgc dev`); skipped",
             );
             Ok(())
         }
         #[cfg(not(feature = "ai"))]
         "ai" => Err(crate::error::core_not_in_build("ai")),
-        other => bail!("'mg build' not implemented for '{}' core yet", other),
+        other => bail!("'mgc build' not implemented for '{}' core yet", other),
     }
 }
 
@@ -68,27 +68,27 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
 /// (godot --export / Unity batchmode) — cảnh báo, không fail.
 #[cfg(feature = "game")]
 async fn build_game(root: &Path) -> Result<()> {
-    let engine = mg_game_adapter::detect_engine(root);
+    let engine = mgc_game_adapter::detect_engine(root);
     match engine {
-        Some(mg_game_adapter::GameEngine::Bevy) => build_rust(root),
-        Some(mg_game_adapter::GameEngine::Godot) => {
-            mg_ui::warning(
+        Some(mgc_game_adapter::GameEngine::Bevy) => build_rust(root),
+        Some(mgc_game_adapter::GameEngine::Godot) => {
+            mgc_ui::warning(
                 "godot export build is P2 (03 §4) — use the editor to export; build skipped",
             );
             Ok(())
         }
-        Some(mg_game_adapter::GameEngine::Unity) => {
-            mg_ui::warning(
+        Some(mgc_game_adapter::GameEngine::Unity) => {
+            mgc_ui::warning(
                 "unity batchmode build is P1, not opened yet — scaffold-only; build skipped",
             );
             Ok(())
         }
-        Some(mg_game_adapter::GameEngine::Unreal) => {
-            mg_ui::warning("unreal build is P2 (03 §4) — scaffold-only; build skipped");
+        Some(mgc_game_adapter::GameEngine::Unreal) => {
+            mgc_ui::warning("unreal build is P2 (03 §4) — scaffold-only; build skipped");
             Ok(())
         }
         None => {
-            mg_ui::warning("could not detect a game engine (project.godot/Cargo.toml/.uproject)");
+            mgc_ui::warning("could not detect a game engine (project.godot/Cargo.toml/.uproject)");
             Ok(())
         }
     }
@@ -100,14 +100,14 @@ async fn build_game(root: &Path) -> Result<()> {
 async fn build_iot(root: &Path) -> Result<()> {
     if root.join("platformio.ini").exists() {
         if tool_unavailable("pio") {
-            mg_ui::warning("pio (platformio) not found — run `pip install platformio` first");
+            mgc_ui::warning("pio (platformio) not found — run `pip install platformio` first");
             return Ok(());
         }
         return run_allowlisted_tool(root, "pio", &["run"]);
     }
     if root.join("west.yml").exists() {
         if tool_unavailable("west") {
-            mg_ui::warning("west not found — install Zephyr SDK + `pip install west` first");
+            mgc_ui::warning("west not found — install Zephyr SDK + `pip install west` first");
             return Ok(());
         }
         return run_allowlisted_tool(root, "west", &["build", "-b", "native_sim"]);
@@ -116,12 +116,12 @@ async fn build_iot(root: &Path) -> Result<()> {
         // esp32-rust: build_rust giữ cargo build; --target esp theo [iot] board là P1.5
         // (04 §5: cần espup toolchain — detect + lỗi rõ)
         if tool_unavailable("cargo") {
-            mg_ui::warning("cargo not found — install Rust toolchain first");
+            mgc_ui::warning("cargo not found — install Rust toolchain first");
             return Ok(());
         }
         return build_rust(root);
     }
-    mg_ui::warning("could not detect an iot framework (platformio.ini/west.yml/Cargo.toml)");
+    mgc_ui::warning("could not detect an iot framework (platformio.ini/west.yml/Cargo.toml)");
     Ok(())
 }
 
@@ -134,7 +134,7 @@ async fn build_lib(root: &Path) -> Result<()> {
     }
     if root.join("pyproject.toml").exists() {
         if tool_unavailable("python") {
-            mg_ui::warning("python not found — install Python toolchain first");
+            mgc_ui::warning("python not found — install Python toolchain first");
             return Ok(());
         }
         info("Building python lib: python -m build");
@@ -153,15 +153,15 @@ async fn build_lib(root: &Path) -> Result<()> {
             prepend_path(&local_bin)?.to_string_lossy().to_string(),
         )];
         info(&format!("tsc: node {}", args.join(" ")));
-        let opts = mg_exec::prelude::ExecOptions {
+        let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(root.to_path_buf()),
             env,
             clean_env: true,
             ..Default::default()
         };
-        return mg_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
+        return mgc_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
     }
-    mg_ui::warning("ts lib requires `mg install` first (node_modules/.bin/tsc missing)");
+    mgc_ui::warning("ts lib requires `mgc install` first (node_modules/.bin/tsc missing)");
     Ok(())
 }
 
@@ -170,12 +170,12 @@ async fn build_lib(root: &Path) -> Result<()> {
 async fn build_hardware(root: &Path) -> Result<()> {
     if root.join("platformio.ini").exists() {
         if tool_unavailable("pio") {
-            mg_ui::warning("pio (platformio) not found — run `pip install platformio` first");
+            mgc_ui::warning("pio (platformio) not found — run `pip install platformio` first");
             return Ok(());
         }
         return run_allowlisted_tool(root, "pio", &["run"]);
     }
-    mg_ui::warning("could not detect a hardware framework (platformio.ini missing)");
+    mgc_ui::warning("could not detect a hardware framework (platformio.ini missing)");
     Ok(())
 }
 
@@ -183,8 +183,8 @@ async fn build_hardware(root: &Path) -> Result<()> {
 /// Fail-closed: platform thiếu toolchain → cảnh báo + skip, không fail cả project.
 #[cfg(feature = "app")]
 async fn build_app(root: &Path) -> Result<()> {
-    let mg_toml = std::fs::read_to_string(root.join("mg.toml")).ok();
-    let v: Option<toml::Value> = mg_toml.as_deref().and_then(|cfg| toml::from_str(cfg).ok());
+    let mgc_toml = std::fs::read_to_string(root.join("mgc.toml")).ok();
+    let v: Option<toml::Value> = mgc_toml.as_deref().and_then(|cfg| toml::from_str(cfg).ok());
     let language = v
         .as_ref()
         .and_then(|v| v.get("app"))
@@ -208,7 +208,7 @@ async fn build_app(root: &Path) -> Result<()> {
         return Err(crate::error::build_toolchain_missing(tool));
     }
     run_allowlisted_tool(root, tool, args)?;
-    mg_ui::success(&format!("App build completed ({language})"));
+    mgc_ui::success(&format!("App build completed ({language})"));
     Ok(())
 }
 
@@ -252,7 +252,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
     for platform in &platforms {
         let dir = root.join(platform);
         if !dir.exists() {
-            mg_ui::warning(&format!(
+            mgc_ui::warning(&format!(
                 "Platform '{platform}' has no directory — skipping"
             ));
             continue;
@@ -260,7 +260,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
         match platform.as_str() {
             "android" => {
                 if tool_unavailable("gradle") {
-                    mg_ui::warning("gradle not found — skipping android build");
+                    mgc_ui::warning("gradle not found — skipping android build");
                     continue;
                 }
                 run_allowlisted_tool(&dir, "gradle", &["build"])?;
@@ -268,30 +268,30 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
             }
             "ios" => {
                 if tool_unavailable("swift") {
-                    mg_ui::warning("swift not found — skipping ios build");
+                    mgc_ui::warning("swift not found — skipping ios build");
                     continue;
                 }
                 run_allowlisted_tool(&dir, "swift", &["build"])?;
                 built += 1;
             }
             "react-native" => {
-                mg_ui::warning(
-                    "react-native build is blocked in beta until the MegaGate-native app runner is available",
+                mgc_ui::warning(
+                    "react-native build is blocked in beta until the MagiCore-native app runner is available",
                 );
             }
             "flutter" => {
                 if tool_unavailable("flutter") {
-                    mg_ui::warning("flutter not found — skipping flutter build");
+                    mgc_ui::warning("flutter not found — skipping flutter build");
                     continue;
                 }
                 run_allowlisted_tool(&dir, "flutter", &["build"])?;
                 built += 1;
             }
-            other => mg_ui::warning(&format!("Unknown platform '{other}' — skipping")),
+            other => mgc_ui::warning(&format!("Unknown platform '{other}' — skipping")),
         }
     }
     if built == 0 {
-        mg_ui::warning("No platform built (toolchains missing or skipped)");
+        mgc_ui::warning("No platform built (toolchains missing or skipped)");
     }
     Ok(())
 }
@@ -310,14 +310,14 @@ fn tool_unavailable(tool: &str) -> bool {
 /// Fail-closed: toolchain thiếu → cảnh báo, không fail project.
 #[cfg(feature = "clo")]
 async fn build_cloud(root: &Path) -> Result<()> {
-    let kind = mg_cloud_adapter::detect_type(root)
+    let kind = mgc_cloud_adapter::detect_type(root)
         .ok_or_else(|| crate::error::no_framework_detected("cloud", root))?;
     match kind {
-        mg_cloud_adapter::CloudType::Cdk => {
+        mgc_cloud_adapter::CloudType::Cdk => {
             let bin = root.join("node_modules").join(".bin").join("cdk");
             if !bin.exists() {
-                mg_ui::warning(
-                    "cdk not installed — run `mg install` first (node_modules/.bin/cdk missing)",
+                mgc_ui::warning(
+                    "cdk not installed — run `mgc install` first (node_modules/.bin/cdk missing)",
                 );
                 return Ok(());
             }
@@ -331,37 +331,37 @@ async fn build_cloud(root: &Path) -> Result<()> {
                 prepend_path(&local_bin)?.to_string_lossy().to_string(),
             )];
             info(&format!("cdk synth: node {}", args.join(" ")));
-            let opts = mg_exec::prelude::ExecOptions {
+            let opts = mgc_exec::prelude::ExecOptions {
                 cwd: Some(root.to_path_buf()),
                 env,
                 clean_env: true,
                 ..Default::default()
             };
-            mg_exec::prelude::run_inherited("node", &args, &opts)?;
+            mgc_exec::prelude::run_inherited("node", &args, &opts)?;
         }
-        mg_cloud_adapter::CloudType::Pulumi => {
+        mgc_cloud_adapter::CloudType::Pulumi => {
             if tool_unavailable("pulumi") {
-                mg_ui::warning("pulumi not found — skipping build (install pulumi CLI first)");
+                mgc_ui::warning("pulumi not found — skipping build (install pulumi CLI first)");
                 return Ok(());
             }
             if let Err(e) = run_allowlisted_tool(root, "pulumi", &["preview"]) {
-                mg_ui::warning(&format!("pulumi preview skipped: {e}"));
+                mgc_ui::warning(&format!("pulumi preview skipped: {e}"));
             }
         }
-        mg_cloud_adapter::CloudType::Terraform => {
+        mgc_cloud_adapter::CloudType::Terraform => {
             if tool_unavailable("terraform") {
-                mg_ui::warning(
+                mgc_ui::warning(
                     "terraform not found — skipping build (install terraform CLI first)",
                 );
                 return Ok(());
             }
             if let Err(e) = run_allowlisted_tool(root, "terraform", &["plan"]) {
-                mg_ui::warning(&format!(
+                mgc_ui::warning(&format!(
                     "terraform plan skipped (uninitialized or error): {e}"
                 ));
             }
         }
-        mg_cloud_adapter::CloudType::Cloudflare => {
+        mgc_cloud_adapter::CloudType::Cloudflare => {
             return Err(crate::error::cloudflare_build_in_cicd_core());
         }
     }
@@ -370,7 +370,7 @@ async fn build_cloud(root: &Path) -> Result<()> {
 
 fn find_root() -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
-    if let Some(root) = mg_config::project::ProjectConfig::find_project_root(&cwd) {
+    if let Some(root) = mgc_config::project::ProjectConfig::find_project_root(&cwd) {
         return Ok(root);
     }
     Err(crate::error::no_project_found_build())
@@ -383,7 +383,7 @@ fn build_rust(root: &Path) -> Result<()> {
     run_allowlisted_tool(root, "cargo", &["build"])?;
 
     let elapsed = start.elapsed();
-    mg_ui::success(&format!("Rust build completed in {:?}", elapsed));
+    mgc_ui::success(&format!("Rust build completed in {:?}", elapsed));
     Ok(())
 }
 
@@ -407,14 +407,14 @@ async fn build_web(
         }
         WebBuildTarget::CompiledExecutable => {
             info("Engine Web: Compiled executable lane selected.");
-            info("MegaGate will build web assets first, then compile the Rust-native engine executable.");
+            info("MagiCore will build web assets first, then compile the Rust-native engine executable.");
         }
     }
 
     if run_framework_build_if_supported(root)? {
         let elapsed = start_time.elapsed();
-        mg_ui::blank_line();
-        mg_ui::success(&format!("Framework build completed in {:?}", elapsed));
+        mgc_ui::blank_line();
+        mgc_ui::success(&format!("Framework build completed in {:?}", elapsed));
 
         if matches!(
             resolved_target,
@@ -425,7 +425,7 @@ async fn build_web(
                     &engine_crate,
                     matches!(resolved_target, WebBuildTarget::CompiledExecutable),
                 )?;
-                mg_ui::success(&format!("Native engine binary ready: {}", binary.display()));
+                mgc_ui::success(&format!("Native engine binary ready: {}", binary.display()));
             } else {
                 info("No native engine crate detected for this project; compatibility artifact is still ready.");
             }
@@ -450,8 +450,8 @@ async fn build_web(
     let result = bundler.bundle().await?;
 
     let elapsed = start_time.elapsed();
-    mg_ui::blank_line();
-    mg_ui::success(&format!(
+    mgc_ui::blank_line();
+    mgc_ui::success(&format!(
         "Bundle created: {:.2} KB in {:?}",
         result.size as f64 / 1024.0,
         elapsed
@@ -469,7 +469,7 @@ async fn build_web(
                 &engine_crate,
                 matches!(resolved_target, WebBuildTarget::CompiledExecutable),
             )?;
-            mg_ui::success(&format!("Native engine binary ready: {}", binary.display()));
+            mgc_ui::success(&format!("Native engine binary ready: {}", binary.display()));
         } else {
             info("No native engine crate detected for this project; compatibility artifact is still ready.");
         }
@@ -563,13 +563,13 @@ fn run_framework_build_if_supported(root: &Path) -> Result<bool> {
         .iter()
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         env,
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
+    mgc_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
         .with_context(|| format!("failed to start build '{}'", program.display()))?;
 
     Ok(true)
@@ -644,9 +644,9 @@ fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<Bui
 }
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
-    if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(script) {
+    if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
         bail!(
-            "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MegaGate or framework-local binaries, not through another package manager.",
+            "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MagiCore or framework-local binaries, not through another package manager.",
             script,
             manifest_path.display(),
             pm
@@ -666,7 +666,7 @@ fn node_bin_args(project_root: &Path, bin_name: &str, args: &[&str]) -> Result<V
         .join(bin_name);
     if !bin.exists() {
         bail!(
-            "Missing local executable '{}'. Run 'mg install-web' in '{}'.",
+            "Missing local executable '{}'. Run 'mgc install-web' in '{}'.",
             bin_name,
             project_root.display()
         );
@@ -780,9 +780,9 @@ fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
     run_allowlisted_tool(crate_dir, "cargo", &args)?;
 
     let binary_name = if cfg!(windows) {
-        "mg-web-engine.exe"
+        "mgc-web-engine.exe"
     } else {
-        "mg-web-engine"
+        "mgc-web-engine"
     };
     let profile_dir = if release { "release" } else { "debug" };
     let binary = crate_dir.join("target").join(profile_dir).join(binary_name);
@@ -801,14 +801,14 @@ fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
 }
 
 fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
     let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
-    mg_exec::prelude::run(program, &args, &opts)?;
+    mgc_exec::prelude::run(program, &args, &opts)?;
     Ok(())
 }
 
@@ -819,7 +819,7 @@ mod tests {
         reject_external_package_manager_script, resolve_web_build_target, tool_unavailable,
         WebBuildTarget,
     };
-    use mg_config::project::ProjectExecutionConfig;
+    use mgc_config::project::ProjectExecutionConfig;
     use std::{fs, path::Path};
 
     fn execution(lane: &str) -> ProjectExecutionConfig {
@@ -867,7 +867,7 @@ mod tests {
         fs::create_dir_all(crate_dir.join("src")).unwrap();
         fs::write(
             crate_dir.join("Cargo.toml"),
-            "[package]\nname=\"mg-web-engine\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+            "[package]\nname=\"mgc-web-engine\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
         )
         .unwrap();
 
@@ -944,18 +944,18 @@ mod tests {
 
     #[test]
     fn tool_unavailable_true_for_nonsense_tool() {
-        assert!(tool_unavailable("definitely-not-a-real-tool-mg"));
+        assert!(tool_unavailable("definitely-not-a-real-tool-mgc"));
     }
 
     #[cfg(feature = "app")]
     #[test]
     fn build_multi_skips_missing_platform_dir() {
-        let tmp = std::env::temp_dir().join(format!("mg-build-multi-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mgc-build-multi-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("mg.toml"), "[app]\nlanguage=\"multi\"\n").unwrap();
+        std::fs::write(tmp.join("mgc.toml"), "[app]\nlanguage=\"multi\"\n").unwrap();
         let v: toml::Value =
-            toml::from_str(&std::fs::read_to_string(tmp.join("mg.toml")).unwrap()).unwrap();
+            toml::from_str(&std::fs::read_to_string(tmp.join("mgc.toml")).unwrap()).unwrap();
         super::build_multi_app(&tmp, &v).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -963,16 +963,16 @@ mod tests {
     #[cfg(feature = "clo")]
     #[test]
     fn build_cloud_warns_skip_when_toolchain_missing() {
-        let tmp = std::env::temp_dir().join(format!("mg-build-cloud-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mgc-build-cloud-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         // terraform: không có CLI trên máy → cảnh báo, không fail
-        std::fs::write(tmp.join("mg.toml"), "[cloud]\ntype = \"terraform\"\n").unwrap();
+        std::fs::write(tmp.join("mgc.toml"), "[cloud]\ntype = \"terraform\"\n").unwrap();
         std::fs::write(tmp.join("main.tf"), "provider \"aws\" {}\n").unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(super::build_cloud(&tmp)).unwrap();
         // cdk: node_modules/.bin/cdk thiếu → cảnh báo, không fail
-        std::fs::write(tmp.join("mg.toml"), "[cloud]\ntype = \"cdk\"\n").unwrap();
+        std::fs::write(tmp.join("mgc.toml"), "[cloud]\ntype = \"cdk\"\n").unwrap();
         std::fs::write(
             tmp.join("package.json"),
             "{\"name\":\"x\",\"dependencies\":{\"aws-cdk-lib\":\"^2.0.0\"}}",
@@ -980,7 +980,7 @@ mod tests {
         .unwrap();
         rt.block_on(super::build_cloud(&tmp)).unwrap();
         // pulumi: CLI thiếu → cảnh báo, không fail
-        std::fs::write(tmp.join("mg.toml"), "[cloud]\ntype = \"pulumi\"\n").unwrap();
+        std::fs::write(tmp.join("mgc.toml"), "[cloud]\ntype = \"pulumi\"\n").unwrap();
         std::fs::write(tmp.join("Pulumi.yaml"), "name: x\nruntime: nodejs\n").unwrap();
         rt.block_on(super::build_cloud(&tmp)).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);
@@ -989,10 +989,10 @@ mod tests {
     #[cfg(feature = "game")]
     #[test]
     fn game_build_warns_skip_when_engine_p2() {
-        let tmp = std::env::temp_dir().join(format!("mg-build-game-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mgc-build-game-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("mg.toml"), "ecosystem = \"game\"\n").unwrap();
+        std::fs::write(tmp.join("mgc.toml"), "ecosystem = \"game\"\n").unwrap();
         std::fs::write(tmp.join("project.godot"), "[application]\n").unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(super::build_game(&tmp)).unwrap();
@@ -1002,10 +1002,10 @@ mod tests {
     #[cfg(feature = "iot")]
     #[test]
     fn iot_build_warns_skip_when_toolchain_missing() {
-        let tmp = std::env::temp_dir().join(format!("mg-build-iot-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mgc-build-iot-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("mg.toml"), "ecosystem = \"iot\"\n").unwrap();
+        std::fs::write(tmp.join("mgc.toml"), "ecosystem = \"iot\"\n").unwrap();
         std::fs::write(
             tmp.join("platformio.ini"),
             "[env:esp32dev]\nplatform = espressif32\n",
@@ -1019,10 +1019,10 @@ mod tests {
     #[cfg(feature = "lib")]
     #[test]
     fn lib_ts_build_warns_when_tsc_missing() {
-        let tmp = std::env::temp_dir().join(format!("mg-build-libts-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mgc-build-libts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("mg.toml"), "ecosystem = \"lib\"\n").unwrap();
+        std::fs::write(tmp.join("mgc.toml"), "ecosystem = \"lib\"\n").unwrap();
         std::fs::write(
             tmp.join("package.json"),
             "{\"name\":\"x\",\"version\":\"0.1.0\"}",

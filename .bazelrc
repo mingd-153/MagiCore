@@ -1,4 +1,4 @@
-# Bazel configuration for MegaGate
+# Bazel configuration for MagiCore
 
 # Build configuration
 build --config=release

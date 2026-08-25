@@ -1,24 +1,24 @@
 [package]
-name = "mg-lib-adapter"
+name = "mgc-lib-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Library ecosystem adapter for MegaGate (ts/rust/python)"
+description = "Library ecosystem adapter for MagiCore (ts/rust/python)"
 
 [dependencies]
 # Core crates (W1-W6 support)
-mg-types = { workspace = true }
-mg-crypto = { workspace = true }
-mg-lockfile = { workspace = true }
-mg-sbom = { workspace = true }
-mg-cache = { workspace = true }
-mg-adapter-base = { workspace = true }
-mg-config = { workspace = true }
-mg-exec = { workspace = true }
-mg-web-adapter = { path = "../web" }
-mg-ui = { workspace = true }
+mgc-types = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-config = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-web-adapter = { path = "../web" }
+mgc-ui = { workspace = true }
 
 # Async
 tokio = { workspace = true }

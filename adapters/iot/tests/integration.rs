@@ -1,14 +1,14 @@
 #![allow(clippy::unwrap_used)]
-//! Integration tests for mg-iot-adapter — sát với src/lib.rs
+//! Integration tests for mgc-iot-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_framework (ESP32-Rust, PlatformIO, Zephyr), board mapping, PackageAdapter trait.
 
-use mg_iot_adapter::{adapter_for, detect_framework, IotFramework};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::PackageName;
+use mgc_iot_adapter::{adapter_for, detect_framework, IotFramework};
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::PackageName;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-iot-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-iot-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -35,10 +35,10 @@ fn detect_zephyr_via_west_yml() {
 }
 
 #[test]
-fn detect_esp32_rust_via_mg_toml() {
+fn detect_esp32_rust_via_mgc_toml() {
     let dir = tmp("esp32-rust");
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "ecosystem = \"iot\"\n\n[iot]\nframework = \"esp32-rust\"\n",
     )
     .unwrap();

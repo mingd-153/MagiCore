@@ -2,7 +2,7 @@
 //! Thực thi policy trust cho CI/CD
 
 use anyhow::Result;
-use mg_lockfile::{verify_lockfile, VerificationStatus};
+use mgc_lockfile::{verify_lockfile, VerificationStatus};
 use std::path::Path;
 
 /// Policy mode — Chế độ policy
@@ -11,11 +11,11 @@ pub enum PolicyMode {
     /// Strict: require signed lockfile (fail on unsigned/tampered)
     /// Nghiêm ngặt: yêu cầu lockfile đã ký (fail nếu chưa ký/tampered)
     Strict,
-    
+
     /// Warn: warn on unsigned, fail on tampered
     /// Cảnh báo: cảnh báo nếu chưa ký, fail nếu tampered
     Warn,
-    
+
     /// Audit: log only, never fail
     /// Audit: chỉ log, không fail
     Audit,
@@ -26,16 +26,16 @@ impl PolicyMode {
     pub fn from_env() -> Self {
         // R5.1 FIX (AUDIT VÒNG 2): Default to strict in CI, warn in dev
         let default_mode = if is_ci_environment() {
-            Self::Strict  // ✅ Stricter default in CI (require signed)
+            Self::Strict // ✅ Stricter default in CI (require signed)
         } else {
-            Self::Warn    // ✅ Relaxed default in dev (allow unsigned)
+            Self::Warn // ✅ Relaxed default in dev (allow unsigned)
         };
-        
-        match std::env::var("MG_TRUST_POLICY").as_deref() {
+
+        match std::env::var("MGC_TRUST_POLICY").as_deref() {
             Ok("strict") => Self::Strict,
             Ok("warn") => Self::Warn,
             Ok("audit") => Self::Audit,
-            _ => default_mode,  // ✅ CI-aware default
+            _ => default_mode, // ✅ CI-aware default
         }
     }
 }
@@ -45,14 +45,14 @@ pub fn enforce_policy(lockfile_path: &Path, mode: PolicyMode) -> Result<()> {
     if !lockfile_path.exists() {
         return Ok(()); // No lockfile = nothing to enforce
     }
-    
+
     let status = verify_lockfile(lockfile_path)?;
-    
+
     match (mode, &status) {
         // Strict mode: fail on unsigned or invalid
         (PolicyMode::Strict, VerificationStatus::Unsigned) => {
             anyhow::bail!(
-                "POLICY VIOLATION (strict): Lockfile not signed. Run 'mg trust sign' or set MG_TRUST_POLICY=warn"
+                "POLICY VIOLATION (strict): Lockfile not signed. Run 'mgc trust sign' or set MGC_TRUST_POLICY=warn"
             );
         }
         (PolicyMode::Strict, VerificationStatus::Tampered(msg)) => {
@@ -64,7 +64,7 @@ pub fn enforce_policy(lockfile_path: &Path, mode: PolicyMode) -> Result<()> {
         (PolicyMode::Strict, VerificationStatus::Valid) => {
             eprintln!("✓ Trust policy: Lockfile signature valid (strict mode)");
         }
-        
+
         // Warn mode: warn on unsigned, fail on tampered
         (PolicyMode::Warn, VerificationStatus::Unsigned) => {
             eprintln!("⚠ Trust policy: Lockfile not signed (warn mode)");
@@ -78,13 +78,13 @@ pub fn enforce_policy(lockfile_path: &Path, mode: PolicyMode) -> Result<()> {
         (PolicyMode::Warn, VerificationStatus::Valid) => {
             eprintln!("✓ Trust policy: Lockfile signature valid (warn mode)");
         }
-        
+
         // Audit mode: log only, never fail
         (PolicyMode::Audit, status) => {
             eprintln!("ℹ Trust policy audit: {:?}", status);
         }
     }
-    
+
     Ok(())
 }
 
@@ -103,7 +103,7 @@ pub fn auto_enforce_in_ci(lockfile_path: &Path) -> Result<()> {
     if !is_ci_environment() {
         return Ok(()); // Skip policy in dev environment
     }
-    
+
     let mode = PolicyMode::from_env();
     eprintln!("🔒 CI detected, enforcing trust policy: {:?}", mode);
     enforce_policy(lockfile_path, mode)

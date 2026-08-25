@@ -1,14 +1,14 @@
 #![allow(clippy::unwrap_used)]
-//! Integration tests for mg-app-adapter — sát với src/lib.rs
+//! Integration tests for mgc-app-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_language (all 6 paths), adapter_for, PackageAdapter trait methods.
 
-use mg_app_adapter::{adapter_for, detect_language, AppAdapter, AppLanguage};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::PackageName;
+use mgc_app_adapter::{adapter_for, detect_language, AppAdapter, AppLanguage};
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::PackageName;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-app-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-app-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -68,19 +68,19 @@ fn detect_objc_via_bridge_header_and_impl_pair() {
 }
 
 #[test]
-fn detect_via_mg_toml_language_overrides_marker() {
-    let dir = tmp("mg-override");
-    // pubspec.yaml → Flutter, mg.toml override → Kotlin
+fn detect_via_mgc_toml_language_overrides_marker() {
+    let dir = tmp("mgc-override");
+    // pubspec.yaml → Flutter, mgc.toml override → Kotlin
     std::fs::write(dir.join("pubspec.yaml"), "name: x\n").unwrap();
-    std::fs::write(dir.join("mg.toml"), "[app]\nlanguage = \"kotlin\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "[app]\nlanguage = \"kotlin\"\n").unwrap();
     assert_eq!(detect_language(&dir), Some(AppLanguage::Kotlin));
 }
 
 #[test]
-fn detect_multi_via_mg_toml() {
+fn detect_multi_via_mgc_toml() {
     let dir = tmp("multi");
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "[app]\nlanguage = \"multi\"\nplatforms = [\"android\",\"ios\"]\n",
     )
     .unwrap();
@@ -94,9 +94,9 @@ fn detect_returns_none_for_empty_dir() {
 }
 
 #[test]
-fn detect_returns_none_for_unknown_mg_toml_language() {
+fn detect_returns_none_for_unknown_mgc_toml_language() {
     let dir = tmp("unknown-lang");
-    std::fs::write(dir.join("mg.toml"), "[app]\nlanguage = \"xamarin\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "[app]\nlanguage = \"xamarin\"\n").unwrap();
     // "xamarin" không được hỗ trợ → None
     assert!(detect_language(&dir).is_none());
 }
@@ -214,9 +214,9 @@ async fn add_fails_closed_directs_to_tooling() {
         .await
         .unwrap_err();
     let msg = err.to_string();
-    // Error message phải hướng dẫn user dùng mg install thay vì add trực tiếp
+    // Error message phải hướng dẫn user dùng mgc install thay vì add trực tiếp
     assert!(
-        msg.contains("flutter") || msg.contains("gradle") || msg.contains("mg install"),
+        msg.contains("flutter") || msg.contains("gradle") || msg.contains("mgc install"),
         "error must mention tooling: {msg}"
     );
 }

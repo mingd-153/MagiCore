@@ -7,13 +7,13 @@ fn not_available(reason: &str) -> anyhow::Error {
 
 pub fn project_root() -> Result<std::path::PathBuf> {
     let cwd = std::env::current_dir()?;
-    mg_app_adapter::adapter_for(&cwd)
+    mgc_app_adapter::adapter_for(&cwd)
         .map(|_| cwd.clone())
         .ok_or_else(crate::error::app_project_not_detected)
 }
 
-pub fn language(root: &Path) -> Result<mg_app_adapter::AppLanguage> {
-    mg_app_adapter::adapter_for(root)
+pub fn language(root: &Path) -> Result<mgc_app_adapter::AppLanguage> {
+    mgc_app_adapter::adapter_for(root)
         .map(|a| a.language)
         .ok_or_else(|| crate::error::no_app_language(root))
 }
@@ -24,29 +24,29 @@ pub struct InstallCommand {
     pub args: Vec<String>,
 }
 
-fn install_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
+fn install_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
     match lang {
-        mg_app_adapter::AppLanguage::Flutter => InstallCommand {
+        mgc_app_adapter::AppLanguage::Flutter => InstallCommand {
             tool: "flutter".to_string(),
             args: vec!["pub".to_string(), "get".to_string()],
         },
-        mg_app_adapter::AppLanguage::Kotlin => InstallCommand {
+        mgc_app_adapter::AppLanguage::Kotlin => InstallCommand {
             tool: "gradle".to_string(),
             args: vec!["dependencies".to_string()],
         },
-        mg_app_adapter::AppLanguage::Swift => InstallCommand {
+        mgc_app_adapter::AppLanguage::Swift => InstallCommand {
             tool: "swift".to_string(),
             args: vec!["package".to_string(), "resolve".to_string()],
         },
-        mg_app_adapter::AppLanguage::ReactNative => InstallCommand {
+        mgc_app_adapter::AppLanguage::ReactNative => InstallCommand {
             tool: String::new(),
             args: vec![],
         },
-        mg_app_adapter::AppLanguage::ObjC => InstallCommand {
+        mgc_app_adapter::AppLanguage::ObjC => InstallCommand {
             tool: String::new(),
             args: vec![],
         },
-        mg_app_adapter::AppLanguage::Multi => InstallCommand {
+        mgc_app_adapter::AppLanguage::Multi => InstallCommand {
             tool: String::new(),
             args: vec![],
         },
@@ -54,52 +54,54 @@ fn install_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
 }
 
 /// Lệnh dev theo language — Q20 (flutter run / gradle run / swift run).
-fn dev_command(lang: mg_app_adapter::AppLanguage) -> InstallCommand {
+fn dev_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
     match lang {
-        mg_app_adapter::AppLanguage::Flutter => InstallCommand {
+        mgc_app_adapter::AppLanguage::Flutter => InstallCommand {
             tool: "flutter".to_string(),
             args: vec!["run".to_string()],
         },
-        mg_app_adapter::AppLanguage::Kotlin => InstallCommand {
+        mgc_app_adapter::AppLanguage::Kotlin => InstallCommand {
             tool: "gradle".to_string(),
             args: vec!["run".to_string()],
         },
-        mg_app_adapter::AppLanguage::Swift => InstallCommand {
+        mgc_app_adapter::AppLanguage::Swift => InstallCommand {
             tool: "swift".to_string(),
             args: vec!["run".to_string()],
         },
-        mg_app_adapter::AppLanguage::ReactNative => InstallCommand {
+        mgc_app_adapter::AppLanguage::ReactNative => InstallCommand {
             tool: String::new(),
             args: vec![],
         },
-        mg_app_adapter::AppLanguage::ObjC | mg_app_adapter::AppLanguage::Multi => InstallCommand {
-            tool: String::new(),
-            args: vec![],
-        },
+        mgc_app_adapter::AppLanguage::ObjC | mgc_app_adapter::AppLanguage::Multi => {
+            InstallCommand {
+                tool: String::new(),
+                args: vec![],
+            }
+        }
     }
 }
 
 pub fn run_tool(root: &Path, cmd: &str, args: &[String]) -> Result<()> {
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run_inherited(cmd, args, &opts)
+    mgc_exec::prelude::run_inherited(cmd, args, &opts)
         .map_err(|e| crate::error::app_tool_failed(cmd, &e))?;
     Ok(())
 }
 
 /// Lệnh theo language cho verb — None = không có CLI passthrough, sửa manifest tay.
-pub fn tool_command(lang: mg_app_adapter::AppLanguage, verb: &str) -> Option<InstallCommand> {
+pub fn tool_command(lang: mgc_app_adapter::AppLanguage, verb: &str) -> Option<InstallCommand> {
     let (tool, base): (&str, &[&str]) = match (lang, verb) {
-        (mg_app_adapter::AppLanguage::Flutter, "add") => ("flutter", &["pub", "add"]),
-        (mg_app_adapter::AppLanguage::Flutter, "remove") => ("flutter", &["pub", "remove"]),
-        (mg_app_adapter::AppLanguage::Flutter, "list") => ("flutter", &["pub", "deps"]),
-        (mg_app_adapter::AppLanguage::Flutter, "update") => ("flutter", &["pub", "upgrade"]),
-        (mg_app_adapter::AppLanguage::Kotlin, "list") => ("gradle", &["dependencies"]),
-        (mg_app_adapter::AppLanguage::Swift, "list") => {
+        (mgc_app_adapter::AppLanguage::Flutter, "add") => ("flutter", &["pub", "add"]),
+        (mgc_app_adapter::AppLanguage::Flutter, "remove") => ("flutter", &["pub", "remove"]),
+        (mgc_app_adapter::AppLanguage::Flutter, "list") => ("flutter", &["pub", "deps"]),
+        (mgc_app_adapter::AppLanguage::Flutter, "update") => ("flutter", &["pub", "upgrade"]),
+        (mgc_app_adapter::AppLanguage::Kotlin, "list") => ("gradle", &["dependencies"]),
+        (mgc_app_adapter::AppLanguage::Swift, "list") => {
             ("swift", &["package", "show-dependencies"])
         }
         _ => return None,
@@ -110,31 +112,33 @@ pub fn tool_command(lang: mg_app_adapter::AppLanguage, verb: &str) -> Option<Ins
     })
 }
 
-pub fn manifest_hint(lang: mg_app_adapter::AppLanguage, verb: &str) -> anyhow::Error {
+pub fn manifest_hint(lang: mgc_app_adapter::AppLanguage, verb: &str) -> anyhow::Error {
     let file = match lang {
-        mg_app_adapter::AppLanguage::Flutter => "pubspec.yaml",
-        mg_app_adapter::AppLanguage::Kotlin => "android/app/build.gradle(.kts)",
-        mg_app_adapter::AppLanguage::Swift => "Package.swift",
-        mg_app_adapter::AppLanguage::ReactNative => "package.json (MegaGate-native runner pending)",
-        mg_app_adapter::AppLanguage::ObjC => "iOS Podfile",
-        mg_app_adapter::AppLanguage::Multi => "platform subproject manifest",
+        mgc_app_adapter::AppLanguage::Flutter => "pubspec.yaml",
+        mgc_app_adapter::AppLanguage::Kotlin => "android/app/build.gradle(.kts)",
+        mgc_app_adapter::AppLanguage::Swift => "Package.swift",
+        mgc_app_adapter::AppLanguage::ReactNative => {
+            "package.json (MagiCore-native runner pending)"
+        }
+        mgc_app_adapter::AppLanguage::ObjC => "iOS Podfile",
+        mgc_app_adapter::AppLanguage::Multi => "platform subproject manifest",
     };
     crate::error::manifest_hint(verb, &format!("{lang:?}"), file)
 }
 
-/// `mg install` — passthrough tool theo language; `--dry-run` in lệnh không chạy.
+/// `mgc install` — passthrough tool theo language; `--dry-run` in lệnh không chạy.
 pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     let root = project_root()?;
     let lang = language(&root)?;
 
     if !packages.is_empty() && dry_run {
-        mg_ui::info("[dry-run] ignoring package args — app deps flow through provider tooling");
+        mgc_ui::info("[dry-run] ignoring package args — app deps flow through provider tooling");
     }
 
-    if lang == mg_app_adapter::AppLanguage::Multi {
+    if lang == mgc_app_adapter::AppLanguage::Multi {
         return install_multi(&root, dry_run).await;
     }
-    if matches!(lang, mg_app_adapter::AppLanguage::ObjC) {
+    if matches!(lang, mgc_app_adapter::AppLanguage::ObjC) {
         return install_objc(&root, dry_run).await;
     }
 
@@ -145,14 +149,14 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
         ));
     }
     if dry_run {
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "[dry-run] would run: {} {} (real install runs when the tool is present — drop `--dry-run`)",
             cmd.tool,
             cmd.args.join(" ")
         ));
         return Ok(());
     }
-    mg_ui::info(&format!("Installing: {} {}", cmd.tool, cmd.args.join(" ")));
+    mgc_ui::info(&format!("Installing: {} {}", cmd.tool, cmd.args.join(" ")));
     run_tool(&root, &cmd.tool, &cmd.args)?;
     Ok(())
 }
@@ -175,28 +179,28 @@ async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
     ));
     for (name, dir, cmd) in platforms {
         if !dir.exists() {
-            mg_ui::info(&format!("Platform '{name}' missing directory — skipping"));
+            mgc_ui::info(&format!("Platform '{name}' missing directory — skipping"));
             continue;
         }
         if cmd.tool.is_empty() {
-            mg_ui::warning(&format!(
-                "{name} install is blocked in beta until a MegaGate-native runner is available"
+            mgc_ui::warning(&format!(
+                "{name} install is blocked in beta until a MagiCore-native runner is available"
             ));
             continue;
         }
         if tool_unavailable(&cmd.tool) {
-            mg_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
+            mgc_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
             continue;
         }
         if dry_run {
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "[dry-run] would run in {name}/: {} {}",
                 cmd.tool,
                 cmd.args.join(" ")
             ));
             continue;
         }
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "Installing {name}: {} {}",
             cmd.tool,
             cmd.args.join(" ")
@@ -251,13 +255,13 @@ async fn install_objc(root: &Path, dry_run: bool) -> Result<()> {
         name.to_string(),
     ];
     if dry_run {
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "[dry-run] would run: xcodebuild {} (real install runs when Xcode is present)",
             args.join(" ")
         ));
         return Ok(());
     }
-    mg_ui::info(&format!("Installing objC: xcodebuild {}", args.join(" ")));
+    mgc_ui::info(&format!("Installing objC: xcodebuild {}", args.join(" ")));
     run_tool(root, "xcodebuild", &args)
 }
 
@@ -276,9 +280,9 @@ pub fn find_xcode_project(root: &Path) -> Option<String> {
     workspace.or(project)
 }
 
-/// [app] dev_scheme trong mg.toml — objC dev chạy xcodebuild build; thiếu → dùng Xcode IDE.
+/// [app] dev_scheme trong mgc.toml — objC dev chạy xcodebuild build; thiếu → dùng Xcode IDE.
 pub fn dev_scheme(root: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(root.join("mg.toml")).ok()?;
+    let content = std::fs::read_to_string(root.join("mgc.toml")).ok()?;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("app")
         .and_then(|a| a.get("dev_scheme"))
@@ -303,13 +307,13 @@ async fn dev_objc(root: &Path, dry_run: bool) -> Result<()> {
         "build".to_string(),
     ];
     if dry_run {
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "[dry-run] would run: xcodebuild {}",
             args.join(" ")
         ));
         return Ok(());
     }
-    mg_ui::info(&format!("App dev (objC): xcodebuild {}", args.join(" ")));
+    mgc_ui::info(&format!("App dev (objC): xcodebuild {}", args.join(" ")));
     run_tool(root, "xcodebuild", &args)
 }
 

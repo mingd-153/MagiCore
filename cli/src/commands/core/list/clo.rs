@@ -1,9 +1,9 @@
-//! `mg list` clo — tách từ core/clo.rs (Phase 7 v5).
+//! `mgc list` clo — tách từ core/clo.rs (Phase 7 v5).
 
 use anyhow::Result;
 
 use super::super::shared;
-use mg_types::Ecosystem;
+use mgc_types::Ecosystem;
 
 pub async fn list() -> Result<()> {
     let root = shared::core_project_root("clo")?;

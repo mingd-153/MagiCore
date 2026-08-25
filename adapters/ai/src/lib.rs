@@ -1,21 +1,21 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! mg-ai-adapter — AI ecosystem adapter (MegaGate)
+//! mgc-ai-adapter — AI ecosystem adapter (MagiCore)
 //! (Q11/Q20: model pull → CAS store; dev chạy main qua python3. Không resolver
-//!  riêng — deps qua pip (allowlist §5.1), mg không quản lý virtualenv)
+//!  riêng — deps qua pip (allowlist §5.1), mgc không quản lý virtualenv)
 
 use async_trait::async_trait;
-use mg_types::adapter::{
+use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
-use mg_types::{
+use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
 };
 use std::path::{Path, PathBuf};
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiFramework {
@@ -31,7 +31,7 @@ impl AiFramework {
         }
     }
 
-    /// Entry script chạy khi `mg dev` — theo scaffold processor.
+    /// Entry script chạy khi `mgc dev` — theo scaffold processor.
     pub fn entry_script(&self) -> &'static str {
         match self {
             AiFramework::PythonAgent => "src/agent.py",
@@ -44,9 +44,9 @@ pub struct AiAdapter {
     pub framework: AiFramework,
 }
 
-/// Detect ai project — mg.toml ecosystem=ai (ưu tiên) hoặc pyproject [tool.megagate].
+/// Detect ai project — mgc.toml ecosystem=ai (ưu tiên) hoặc pyproject [tool.magicore].
 pub fn detect_framework(root: &Path) -> Option<AiFramework> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(p) = v
                 .get("ai")
@@ -63,7 +63,7 @@ pub fn detect_framework(root: &Path) -> Option<AiFramework> {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(p) = v
                 .get("tool")
-                .and_then(|t| t.get("megagate"))
+                .and_then(|t| t.get("magicore"))
                 .and_then(|m| m.get("framework"))
                 .and_then(|p| p.as_str())
             {
@@ -90,8 +90,8 @@ pub fn adapter_for(root: &Path) -> Option<AiAdapter> {
 }
 
 fn no_package_manager() -> MgResult<()> {
-    Err(mg_types::MgError::Other(
-        "ai deps flow through pip (allowlist) — run `pip install -r requirements.txt` manually; mg does not manage virtualenvs".to_string(),
+    Err(mgc_types::MgError::Other(
+        "ai deps flow through pip (allowlist) — run `pip install -r requirements.txt` manually; mgc does not manage virtualenvs".to_string(),
     ))
 }
 
@@ -197,7 +197,7 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
 
 #[cfg(test)]
@@ -205,7 +205,7 @@ mod tests {
     use super::*;
 
     fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mg-ai-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mgc-ai-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmp dir");
         dir
@@ -216,7 +216,7 @@ mod tests {
         let dir = tmp_dir("pa");
         std::fs::write(
             dir.join("pyproject.toml"),
-            "[tool.megagate]\nframework = \"python-agent\"\n",
+            "[tool.magicore]\nframework = \"python-agent\"\n",
         )
         .unwrap();
         assert_eq!(detect_framework(&dir), Some(AiFramework::PythonAgent));
@@ -227,16 +227,16 @@ mod tests {
         let dir = tmp_dir("mcp");
         std::fs::write(
             dir.join("pyproject.toml"),
-            "[tool.megagate]\nframework = \"mcp-server\"\n",
+            "[tool.magicore]\nframework = \"mcp-server\"\n",
         )
         .unwrap();
         assert_eq!(detect_framework(&dir), Some(AiFramework::McpServer));
     }
 
     #[test]
-    fn detect_via_mg_toml_framework() {
+    fn detect_via_mgc_toml_framework() {
         let dir = tmp_dir("cfg");
-        std::fs::write(dir.join("mg.toml"), "[ai]\nframework = \"mcp-server\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"mcp-server\"\n").unwrap();
         assert_eq!(detect_framework(&dir), Some(AiFramework::McpServer));
     }
 
@@ -254,13 +254,13 @@ mod tests {
 
     #[test]
     fn test_generate_sbom_ai() {
-        use mg_lockfile::{LockfileMetadata, Package};
+        use mgc_lockfile::{LockfileMetadata, Package};
 
         let lockfile = Lockfile {
             version: "2".to_string(),
             metadata: LockfileMetadata {
                 generated_at: "2026-08-21T00:00:00Z".to_string(),
-                generator: "mg/0.4.0".to_string(),
+                generator: "mgc/0.4.0".to_string(),
                 lockfile_hash: "abc123".to_string(),
                 signer: None,
             },

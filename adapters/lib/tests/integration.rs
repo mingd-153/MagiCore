@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used)]
-use mg_lib_adapter::{adapter_for, check_pip_allowed};
-use mg_types::adapter::PackageAdapter;
+use mgc_lib_adapter::{adapter_for, check_pip_allowed};
+use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-lib-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-lib-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -13,11 +13,11 @@ fn tmp(tag: &str) -> PathBuf {
 // ── adapter_for — detect languages ─────────────────────────────────────────
 
 #[test]
-fn detect_rust_project_via_cargo_toml_with_megagate_metadata() {
+fn detect_rust_project_via_cargo_toml_with_magicore_metadata() {
     let dir = tmp("rust");
     std::fs::write(
         dir.join("Cargo.toml"),
-        "[package]\nname = \"demo-lib\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
+        "[package]\nname = \"demo-lib\"\nversion = \"0.1.0\"\n\n[package.metadata.magicore]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
     )
     .unwrap();
     let a = adapter_for(&dir, None, None).unwrap();
@@ -25,10 +25,10 @@ fn detect_rust_project_via_cargo_toml_with_megagate_metadata() {
 }
 
 #[test]
-fn detect_ts_project_via_mg_toml() {
+fn detect_ts_project_via_mgc_toml() {
     let dir = tmp("ts");
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"ts\"\n",
     )
     .unwrap();
@@ -37,10 +37,10 @@ fn detect_ts_project_via_mg_toml() {
 }
 
 #[test]
-fn detect_python_project_via_mg_toml() {
+fn detect_python_project_via_mgc_toml() {
     let dir = tmp("py");
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\n",
     )
     .unwrap();
@@ -60,7 +60,7 @@ fn adapter_for_returns_none_for_empty_dir() {
 fn pip_allowlist_rejects_unlisted_package() {
     let dir = tmp("pip-sec");
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"python\"\npip_allowed_packages = [\"requests\", \"numpy\"]\n",
     )
     .unwrap();
@@ -76,7 +76,7 @@ fn pip_allowlist_rejects_unlisted_package() {
 fn adapter_name_and_ecosystem() {
     let dir = tmp("name-eco");
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "ecosystem = \"lib\"\n\n[lib]\nlanguage = \"rust\"\n",
     )
     .unwrap();
@@ -90,7 +90,7 @@ async fn rust_manifest_roundtrip() {
     let dir = tmp("manifest-rt");
     std::fs::write(
         dir.join("Cargo.toml"),
-        "[package]\nname = \"roundtrip\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
+        "[package]\nname = \"roundtrip\"\nversion = \"0.1.0\"\n\n[package.metadata.magicore]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
     )
     .unwrap();
     let a = adapter_for(&dir, None, None).unwrap();
@@ -105,7 +105,7 @@ async fn audit_returns_clean_for_lib_project() {
     let dir = tmp("audit-lib");
     std::fs::write(
         dir.join("Cargo.toml"),
-        "[package]\nname = \"audit-lib\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
+        "[package]\nname = \"audit-lib\"\nversion = \"0.1.0\"\n\n[package.metadata.magicore]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
     )
     .unwrap();
     let a = adapter_for(&dir, None, None).unwrap();

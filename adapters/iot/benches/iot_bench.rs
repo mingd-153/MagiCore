@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use mg_iot_adapter::{detect_framework, IotFramework};
+use mgc_iot_adapter::{detect_framework, IotFramework};
 use std::fs;
 use tempfile::tempdir;
 

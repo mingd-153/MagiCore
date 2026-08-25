@@ -1,21 +1,21 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! mg-app-adapter — mobile app ecosystem adapter (MegaGate)
+//! mgc-app-adapter — mobile app ecosystem adapter (MagiCore)
 //! (Q18: Kotlin/Flutter/Swift exec passthrough. Không resolver riêng —
 //!  install qua tool theo language: flutter pub get / gradle / swift package resolve)
 
 use async_trait::async_trait;
-use mg_types::adapter::{
+use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
-use mg_types::{
+use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
 };
 use std::path::{Path, PathBuf};
 
 // W6: SBOM support
-use mg_lockfile::Lockfile;
-use mg_sbom::{SbomGenerator, SbomOptions};
+use mgc_lockfile::Lockfile;
+use mgc_sbom::{SbomGenerator, SbomOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppLanguage {
@@ -44,9 +44,9 @@ pub struct AppAdapter {
     pub language: AppLanguage,
 }
 
-/// Detect language — ưu tiên mg.toml `[app] language`, fallback marker files.
+/// Detect language — ưu tiên mgc.toml `[app] language`, fallback marker files.
 pub fn detect_language(root: &Path) -> Option<AppLanguage> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(p) = v
                 .get("app")
@@ -86,7 +86,7 @@ pub fn detect_language(root: &Path) -> Option<AppLanguage> {
 }
 
 fn manifest_is_app(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mg.toml")) {
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
         if let Ok(v) = toml::from_str::<toml::Value>(&content) {
             if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
                 if eco == "app" {
@@ -107,8 +107,8 @@ pub fn adapter_for(root: &Path) -> Option<AppAdapter> {
 }
 
 fn no_package_manager() -> MgResult<()> {
-    Err(mg_types::MgError::Other(
-        "app dependencies flow through provider tooling — install with `mg install` (flutter pub get / gradle / swift package resolve)".to_string(),
+    Err(mgc_types::MgError::Other(
+        "app dependencies flow through provider tooling — install with `mgc install` (flutter pub get / gradle / swift package resolve)".to_string(),
     ))
 }
 
@@ -213,7 +213,7 @@ pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<Stri
     let generator = SbomGenerator::new(options);
     generator
         .generate_json(lockfile)
-        .map_err(|e| mg_types::MgError::Other(format!("SBOM generation failed: {e}")))
+        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
 }
 
 #[cfg(test)]
@@ -221,7 +221,7 @@ mod tests {
     use super::*;
 
     fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mg-app-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mgc-app-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmp dir");
         dir
@@ -249,17 +249,17 @@ mod tests {
     }
 
     #[test]
-    fn detect_via_mg_toml_language() {
+    fn detect_via_mgc_toml_language() {
         let dir = tmp_dir("cfg");
-        std::fs::write(dir.join("mg.toml"), "[app]\nlanguage = \"kotlin\"\n").unwrap();
+        std::fs::write(dir.join("mgc.toml"), "[app]\nlanguage = \"kotlin\"\n").unwrap();
         assert_eq!(detect_language(&dir), Some(AppLanguage::Kotlin));
     }
 
     #[test]
-    fn detect_multi_via_mg_toml() {
+    fn detect_multi_via_mgc_toml() {
         let dir = tmp_dir("multi");
         std::fs::write(
-            dir.join("mg.toml"),
+            dir.join("mgc.toml"),
             "[app]\nlanguage = \"multi\"\nplatforms = [\"android\"]\n",
         )
         .unwrap();
@@ -304,29 +304,29 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_generate_sbom_app() {
-        use mg_lockfile::{LockfileMetadata, Package};
+#[test]
+fn test_generate_sbom_app() {
+    use mgc_lockfile::{LockfileMetadata, Package};
 
-        let lockfile = Lockfile {
-            version: "2".to_string(),
-            metadata: LockfileMetadata {
-                generated_at: "2026-08-21T00:00:00Z".to_string(),
-                generator: "mg/0.4.0".to_string(),
-                lockfile_hash: "abc123".to_string(),
-                signer: None,
-            },
-            packages: vec![Package {
-                name: "test-pkg".to_string(),
-                version: "1.0.0".to_string(),
-                resolved: "https://example.com/test.tgz".to_string(),
-                integrity: "blake3:test123".to_string(),
-                dependencies: vec![],
-            }],
-        };
+    let lockfile = Lockfile {
+        version: "2".to_string(),
+        metadata: LockfileMetadata {
+            generated_at: "2026-08-21T00:00:00Z".to_string(),
+            generator: "mgc/0.4.0".to_string(),
+            lockfile_hash: "abc123".to_string(),
+            signer: None,
+        },
+        packages: vec![Package {
+            name: "test-pkg".to_string(),
+            version: "1.0.0".to_string(),
+            resolved: "https://example.com/test.tgz".to_string(),
+            integrity: "blake3:test123".to_string(),
+            dependencies: vec![],
+        }],
+    };
 
-        let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
-        assert!(json.contains("CycloneDX"));
-        assert!(json.contains("test-pkg"));
-        assert!(json.contains("1.0.0"));
-    }
+    let json = generate_sbom(&lockfile, SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
+}

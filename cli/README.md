@@ -1,6 +1,6 @@
-# `cli/` — MegaGate Command-Line Interface
+# `cli/` — MagiCore Command-Line Interface
 
-The `mg` binary. All user-facing commands live here.
+The `mgc` binary. All user-facing commands live here.
 
 ## Structure
 
@@ -9,12 +9,12 @@ cli/src/
 ├── main.rs               # Entry point — parses Clap args, enters dispatch
 ├── commands/             # One module per command
 │   ├── definitions.rs    # Commands enum (Clap derive) — the single source of all subcommands
-│   ├── install.rs        # mg install
-│   ├── audit/            # mg audit (per-core audit modules)
-│   ├── mcp.rs            # mg mcp — native MCP server (JSON-RPC 2.0 stdio)
-│   ├── doctor.rs         # mg doctor [--fix] — AI-guided environment diagnostic
-│   ├── model/            # mg model push/pull/list (OCI AI model registry)
-│   ├── workspace.rs      # mg workspace
+│   ├── install.rs        # mgc install
+│   ├── audit/            # mgc audit (per-core audit modules)
+│   ├── mcp.rs            # mgc mcp — native MCP server (JSON-RPC 2.0 stdio)
+│   ├── doctor.rs         # mgc doctor [--fix] — AI-guided environment diagnostic
+│   ├── model/            # mgc model push/pull/list (OCI AI model registry)
+│   ├── workspace.rs      # mgc workspace
 │   └── ...               # All other commands
 ├── dispatch/
 │   ├── engine.rs         # Top-level dispatch: handles --recursive, --filter, workspace loops
@@ -22,7 +22,7 @@ cli/src/
 │   ├── per_core.rs       # Maps Commands → DispatchCommand (common or core-specific)
 │   ├── bare.rs           # Bare command handling (auto-detect core)
 │   └── types.rs          # CommonCommand and CoreCommand enums
-├── context.rs            # ProjectContext: reads .mg.core, mg.toml, detects ecosystem
+├── context.rs            # ProjectContext: reads .mgc.core, mgc.toml, detects ecosystem
 └── scaffold/             # Template scaffolding engine (embedded kernel, processors)
 ```
 

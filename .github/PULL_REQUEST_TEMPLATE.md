@@ -10,7 +10,7 @@
 - [ ] `cargo fmt --all --check` pass
 - [ ] `cargo clippy --all-targets -- -D warnings` pass
 - [ ] `bash scripts/check-module-hygiene.sh` pass (L1 cấm import chéo)
-- [ ] Entry append vào `docs/specs/megaGateChangeLog.md` (BẮT BUỘC — user 2026-08-15)
+- [ ] Entry append vào `docs/specs/magiCoreChangeLog.md` (BẮT BUỘC — user 2026-08-15)
 - [ ] RULE thay đổi? → cập nhật AGENTS.md/RULE.md + changeLog
 
 ## Nuances

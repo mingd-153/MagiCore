@@ -1,0 +1,77 @@
+[package]
+name = "mgc-crypto"
+version = "1.0.0"
+edition = "2021"
+authors = ["MagiCore Contributors"]
+description = "Cryptographic primitives for MagiCore supply chain security"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+# Test modules tách riêng (RULE §5)
+[[test]]
+name = "blake3_signer"
+path = "test/blake3_signer.rs"
+
+[[test]]
+name = "ed25519_signer"
+path = "test/ed25519_signer.rs"
+
+[[test]]
+name = "keyring"
+path = "test/keyring.rs"
+
+[[test]]
+name = "integrity"
+path = "test/integrity.rs"
+
+[[test]]
+name = "simd"
+path = "test/simd.rs"
+
+[[bench]]
+name = "crypto_perf"
+harness = false
+path = "benches/crypto_perf.rs"
+
+[dependencies]
+# BLAKE3 hasher with SIMD support (AVX2, AVX-512, NEON)
+blake3 = { version = "1.5", features = ["rayon", "mmap"] }
+
+# Memory mapping for fast file hashing
+memmap2 = "0.9"
+
+# Ed25519 signing/verification (ring = fast, well-audited)
+ring = "0.17"
+
+# Base64 encoding for signatures
+base64 = "0.21"
+
+# Serialization for keyring
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Home directory detection
+dirs = "5.0"
+
+# Platform-specific secure memory (mlock)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_System_Memory"] }
+
+[dev-dependencies]
+# Testing framework
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.8"
+
+[features]
+default = []
+# SIMD features (auto-detected by blake3 crate)
+simd = []

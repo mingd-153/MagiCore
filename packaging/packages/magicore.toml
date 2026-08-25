@@ -1,0 +1,8 @@
+name = "magicore"
+binary = "mgc"
+description = "MagiCore full multi-core distribution"
+mode = "multi-core"
+primary_core = "all"
+no_default_features = true
+features = ["all"]
+install_hint = "brew install magicore  |  curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --package magicore"

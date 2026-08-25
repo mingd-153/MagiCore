@@ -53,7 +53,7 @@ pub enum DownloadedTarball {
 }
 
 fn network_profile_enabled() -> bool {
-    std::env::var("MEGAGATE_WEB_PROFILE_NETWORK")
+    std::env::var("MAGICORE_WEB_PROFILE_NETWORK")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
@@ -76,7 +76,7 @@ fn is_auth_error(err: &anyhow::Error) -> bool {
 fn network_profile_log(kind: &str, target: &str, message: &str) {
     if network_profile_enabled() {
         eprintln!(
-            "[megagate:web:network-profile] kind={} target={} {}",
+            "[magicore:web:network-profile] kind={} target={} {}",
             kind, target, message
         );
     }
@@ -94,7 +94,7 @@ fn global_http_client() -> &'static reqwest::Client {
             .tcp_keepalive(Duration::from_secs(30))
             // Metadata responses are small; 30s is plenty.
             .timeout(Duration::from_secs(30))
-            .user_agent(format!("MegaGate/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("MagiCore/{}", env!("CARGO_PKG_VERSION")))
             // H2 stream window: 4 MiB — allows multiple concurrent streams without
             // stalling when one response is slow.
             .http2_initial_stream_window_size(4 * 1024 * 1024)
@@ -115,7 +115,7 @@ pub fn batch_http_client() -> &'static reqwest::Client {
             .tcp_keepalive(Duration::from_secs(60))
             // Long timeout for massive tarballs like @next/swc (>200 MB).
             .timeout(Duration::from_secs(300))
-            .user_agent(format!("MegaGate/{}/batch", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("MagiCore/{}/batch", env!("CARGO_PKG_VERSION")))
             .http2_initial_stream_window_size(16 * 1024 * 1024)
             .http2_initial_connection_window_size(64 * 1024 * 1024)
             .build()
@@ -465,7 +465,7 @@ pub fn check_publish_age(
         let hours = age.num_minutes() as f64 / 60.0;
         Err(format!(
             "🚨 SECURITY: Package '{}@{}' was published only {:.1}h ago (< {}h quarantine).\n   \
-             This may be a supply-chain attack. Set MEGAGATE_ALLOW_UNTRUSTED=1 to override.",
+             This may be a supply-chain attack. Set MAGICORE_ALLOW_UNTRUSTED=1 to override.",
             metadata.name,
             version,
             hours,

@@ -2,13 +2,13 @@
 
 use crate::context::ProjectContext;
 use anyhow::Result;
-use mg_cache::PackageCache;
-use mg_lockfile::Lockfile;
-use mg_types::adapter::{AddOptions, PreparedAdd};
-use mg_types::{
+use mgc_cache::PackageCache;
+use mgc_lockfile::Lockfile;
+use mgc_types::adapter::{AddOptions, PreparedAdd};
+use mgc_types::{
     DependencySpec, Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
 };
-use mg_ui::{
+use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
 };
@@ -16,21 +16,21 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// mg install — install dependencies for the current project
+/// mgc install — install dependencies for the current project
 pub async fn run(
     packages: Vec<String>,
     core: Option<&str>,
     ignore_scripts: bool,
     allow_scripts: bool,
-    offline: bool,  // T4.1: offline mode flag
+    offline: bool, // T4.1: offline mode flag
 ) -> Result<()> {
     // T4.1: Set thread-local offline mode (R6 fix)
     if offline {
         crate::offline::set_offline_mode(true);
         // R4 FIX (AUDIT VÒNG 2): Set env var to enforce offline in adapters
-        std::env::set_var("MG_OFFLINE_MODE", "1");
+        std::env::set_var("MGC_OFFLINE_MODE", "1");
     }
-    
+
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
 
@@ -44,12 +44,12 @@ pub async fn run(
         if offline {
             let mut missing_lockfiles = Vec::new();
             for ws in &workspaces {
-                let lockfile = ws.join("mg.lock");
+                let lockfile = ws.join("mgc.lock");
                 if !lockfile.exists() {
                     missing_lockfiles.push(ws.display().to_string());
                 }
             }
-            
+
             if !missing_lockfiles.is_empty() {
                 anyhow::bail!(
                     "Offline mode requires lockfiles in all {} workspaces.\n  \
@@ -58,8 +58,11 @@ pub async fn run(
                     missing_lockfiles.join("\n  ")
                 );
             }
-            
-            info(&format!("✓ All {} workspaces have lockfiles (offline mode)", workspaces.len()));
+
+            info(&format!(
+                "✓ All {} workspaces have lockfiles (offline mode)",
+                workspaces.len()
+            ));
         }
 
         if !packages.is_empty() {
@@ -77,8 +80,15 @@ pub async fn run(
                     // adapter của root (root có thể không thuộc core nào).
                     let ctx = crate::context::ProjectContext::load_for_dir(&workspace)?;
                     let adapter = ctx.adapter();
-                    install_into_root(adapter, &workspace, packages, ignore_scripts, allow_scripts, offline)
-                        .await
+                    install_into_root(
+                        adapter,
+                        &workspace,
+                        packages,
+                        ignore_scripts,
+                        allow_scripts,
+                        offline,
+                    )
+                    .await
                 }
             })
             .buffered(4)
@@ -89,11 +99,11 @@ pub async fn run(
         for result in results {
             if let Err(e) = result {
                 failed += 1;
-                mg_ui::error(&format!("Workspace install failed: {e:#}"));
+                mgc_ui::error(&format!("Workspace install failed: {e:#}"));
             }
         }
 
-        mg_ui::blank_line();
+        mgc_ui::blank_line();
         if failed > 0 {
             return Err(crate::error::workspace_failed(failed));
         }
@@ -107,74 +117,74 @@ pub async fn run(
         &packages,
         ignore_scripts,
         allow_scripts,
-        offline,  // T4.1
+        offline, // T4.1
     )
     .await
 }
 
 async fn install_into_root(
-    adapter: &dyn mg_types::adapter::PackageAdapter,
+    adapter: &dyn mgc_types::adapter::PackageAdapter,
     project_root: &Path,
     packages: &[String],
     ignore_scripts: bool,
     allow_scripts: bool,
-    offline: bool,  // T4.1: offline mode
+    offline: bool, // T4.1: offline mode
 ) -> Result<()> {
     // T4.1: Offline mode validation
     if offline {
         // R2.1 FIX (AUDIT VÒNG 2): Atomic check-and-load (no TOCTOU)
         info("🔒 Offline mode enabled");
-        
+
         // Try load lockfile immediately (check = use, atomic)
-        let lockfile_path = project_root.join("mg.lock");
+        let lockfile_path = project_root.join("mgc.lock");
         if !lockfile_path.exists() {
             anyhow::bail!(
-                "Offline mode requires mg.lock\n  \
-                 Run 'mg install' online first to create lockfile"
+                "Offline mode requires mgc.lock\n  \
+                 Run 'mgc install' online first to create lockfile"
             );
         }
-        
+
         // T4.5: Verify lockfile integrity BEFORE using cache
-        let status = mg_lockfile::verify_lockfile(&lockfile_path)?;
+        let status = mgc_lockfile::verify_lockfile(&lockfile_path)?;
         match status {
-            mg_lockfile::VerificationStatus::Tampered(msg) => {
+            mgc_lockfile::VerificationStatus::Tampered(msg) => {
                 // T4.5: Invalidate cache on tamper detection
                 info("⚠ Lockfile tampered — invalidating cache");
                 let cache = PackageCache::new()?;
                 // Invalidate all packages in lockfile
-                let lockfile = mg_lockfile::load_lockfile(&lockfile_path)?;
+                let lockfile = mgc_lockfile::load_lockfile(&lockfile_path)?;
                 for pkg in &lockfile.packages {
                     let pkg_id = format!("{}@{}", pkg.name, pkg.version);
                     let _ = cache.invalidate_package(&pkg_id); // Ignore errors (may not exist)
                 }
                 anyhow::bail!(
                     "Lockfile tampered: {}\n  \
-                     Cache invalidated. Run 'mg trust verify' to inspect.",
+                     Cache invalidated. Run 'mgc trust verify' to inspect.",
                     msg
                 );
             }
-            mg_lockfile::VerificationStatus::Unsigned => {
-                info("⚠ Lockfile not signed — run 'mg trust sign' for tamper detection");
+            mgc_lockfile::VerificationStatus::Unsigned => {
+                info("⚠ Lockfile not signed — run 'mgc trust sign' for tamper detection");
             }
-            mg_lockfile::VerificationStatus::Valid => {
+            mgc_lockfile::VerificationStatus::Valid => {
                 info("✓ Lockfile signature valid");
             }
-            mg_lockfile::VerificationStatus::InvalidSignature(msg) => {
+            mgc_lockfile::VerificationStatus::InvalidSignature(msg) => {
                 anyhow::bail!("Invalid lockfile signature: {}", msg);
             }
         }
-        
+
         if !packages.is_empty() {
             anyhow::bail!(
                 "Cannot add packages in offline mode\n  \
-                 Use 'mg install' online to add dependencies"
+                 Use 'mgc install' online to add dependencies"
             );
         }
-        
+
         info("  - Using lockfile for dependencies");
         info("  - Installing from local cache");
     }
-    
+
     const MAX_PACKAGES: usize = 50;
     if packages.len() > MAX_PACKAGES {
         return Err(crate::error::too_many_packages(packages.len(), "install"));
@@ -182,8 +192,8 @@ async fn install_into_root(
 
     let started_at = std::time::Instant::now();
     let add_cmd = match adapter.name() {
-        "web" => "mg add".to_string(),
-        other => format!("mg add-{other}"),
+        "web" => "mgc add".to_string(),
+        other => format!("mgc add-{other}"),
     };
 
     let spinner = create_spinner("  Reading project manifest...");
@@ -229,7 +239,7 @@ async fn install_into_root(
     let (graph, used_lockfile) = if let Some(graph) =
         load_locked_graph(project_root, adapter.name(), &manifest)?
     {
-        info("Using mg.lock for install state.");
+        info("Using mgc.lock for install state.");
         (graph, true)
     } else {
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
@@ -263,7 +273,7 @@ async fn install_into_root(
 
     let spinner = create_spinner("  Linking packages...");
 
-    let opts = mg_types::adapter::InstallOptions {
+    let opts = mgc_types::adapter::InstallOptions {
         ignore_scripts,
         allow_scripts,
         legacy_flat: crate::commands::core::shared::should_use_legacy_flat_layout(adapter.name()),
@@ -281,7 +291,7 @@ async fn install_into_root(
         "0 B",
     );
 
-    mg_ui::blank_line();
+    mgc_ui::blank_line();
     success("All dependencies installed");
 
     Ok(())
@@ -289,12 +299,12 @@ async fn install_into_root(
 
 /// Mix core entry (Q23): install 1 workspace project với adapter đúng core.
 pub(crate) async fn install_into_root_ws(
-    adapter: &dyn mg_types::adapter::PackageAdapter,
+    adapter: &dyn mgc_types::adapter::PackageAdapter,
     project_root: &Path,
     packages: &[String],
     ignore_scripts: bool,
     allow_scripts: bool,
-    offline: bool,  // T4.1
+    offline: bool, // T4.1
 ) -> Result<()> {
     install_into_root(
         adapter,
@@ -302,7 +312,7 @@ pub(crate) async fn install_into_root_ws(
         packages,
         ignore_scripts,
         allow_scripts,
-        offline,  // T4.1
+        offline, // T4.1
     )
     .await
 }
@@ -320,7 +330,7 @@ struct WorkspaceLayout {
 }
 
 pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<Vec<PathBuf>>> {
-    let workspace_path = project_root.join("megagate.workspace.toml");
+    let workspace_path = project_root.join("magicore.workspace.toml");
     if !workspace_path.exists() {
         return Ok(None);
     }
@@ -353,7 +363,7 @@ pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<
 
 /// package.json name (web) — dùng cho --filter match. Non-web fallback: None.
 pub(crate) fn workspace_package_name(project_root: &Path) -> Option<String> {
-    mg_workspace::read_package_manifest(project_root)
+    mgc_workspace::read_package_manifest(project_root)
         .ok()
         .flatten()
         .map(|m| m.name)
@@ -372,8 +382,8 @@ fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result
         }
 
         // Mix core (Q23): nhận mọi manifest — package.json (web), Cargo.toml
-        // (lib), pyproject.toml (ai), pubspec.yaml (app), mg.toml (mọi core).
-        if mg_config::project::ProjectConfig::auto_detect(&path).is_some() {
+        // (lib), pyproject.toml (ai), pubspec.yaml (app), mgc.toml (mọi core).
+        if mgc_config::project::ProjectConfig::auto_detect(&path).is_some() {
             out.push(path);
             continue;
         }
@@ -390,15 +400,15 @@ fn load_locked_graph(
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     let Some(lock) = read_checked_lockfile(project_root)? else {
-        let legacy = mg_lockfile::import::detect_legacy_lockfiles(project_root);
+        let legacy = mgc_lockfile::import::detect_legacy_lockfiles(project_root);
         if !legacy.is_empty() {
             let names = legacy
                 .iter()
                 .map(|lock| lock.file_name)
                 .collect::<Vec<_>>()
                 .join(", ");
-            mg_ui::warning(&format!(
-                "Ignoring legacy lockfile(s): {names}. Run an explicit MegaGate lock migration before install if you want to seed mg.lock from them."
+            mgc_ui::warning(&format!(
+                "Ignoring legacy lockfile(s): {names}. Run an explicit MagiCore lock migration before install if you want to seed mgc.lock from them."
             ));
         }
         return Ok(None);
@@ -426,7 +436,7 @@ fn load_locked_graph(
 }
 
 fn read_checked_lockfile(project_root: &std::path::Path) -> Result<Option<Lockfile>> {
-    mg_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
+    mgc_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 // FIXME(V1.0.1): Disabled — uses pkg.direct field removed in v2
@@ -442,8 +452,8 @@ fn graph_from_lockfile(_lock: &Lockfile) -> Result<ResolvedGraph> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_lockfile::Package;
-    use mg_types::{DependencySpec, Ecosystem, VersionRange};
+    use mgc_lockfile::Package;
+    use mgc_types::{DependencySpec, Ecosystem, VersionRange};
     use tempfile::tempdir;
 
     #[test]
@@ -511,7 +521,7 @@ mod tests {
         );
 
         let mut lock = Lockfile::new();
-        lock.version = "0".into();  // Unsupported version
+        lock.version = "0".into(); // Unsupported version
         lock.packages.push(Package {
             name: "tailwindcss".into(),
             version: "4.3.2".into(),
@@ -520,7 +530,7 @@ mod tests {
             dependencies: vec![],
         });
         std::fs::write(
-            dir.path().join("mg.lock"),
+            dir.path().join("mgc.lock"),
             serde_json::to_string_pretty(&lock).unwrap(),
         )
         .unwrap();
@@ -536,11 +546,11 @@ mod tests {
         let manifest = Manifest::new("demo", Ecosystem::Web);
         let lock = Lockfile::new();
         std::fs::write(
-            dir.path().join("mg.lock"),
+            dir.path().join("mgc.lock"),
             serde_json::to_string_pretty(&lock).unwrap(),
         )
         .unwrap();
-        std::fs::write(dir.path().join("mg.lock.sha256"), "bad").unwrap();
+        std::fs::write(dir.path().join("mgc.lock.sha256"), "bad").unwrap();
 
         let err = load_locked_graph(dir.path(), "web", &manifest).unwrap_err();
 
@@ -573,7 +583,7 @@ mod tests {
     fn test_discover_workspace_projects_for_monorepo_root() {
         let dir = tempdir().unwrap();
         fs::write(
-            dir.path().join("megagate.workspace.toml"),
+            dir.path().join("magicore.workspace.toml"),
             r#"
 version = 1
 mode = "monorepo"
@@ -606,7 +616,7 @@ packages_dir = "packages"
     fn test_discover_workspace_projects_mix_cores() {
         let dir = tempdir().unwrap();
         fs::write(
-            dir.path().join("megagate.workspace.toml"),
+            dir.path().join("magicore.workspace.toml"),
             r#"
 mode = "monorepo"
 [layout]
@@ -646,7 +656,7 @@ packages_dir = "packages"
     fn test_discover_workspace_projects_ignores_non_monorepo_file() {
         let dir = tempdir().unwrap();
         fs::write(
-            dir.path().join("megagate.workspace.toml"),
+            dir.path().join("magicore.workspace.toml"),
             r#"
 version = 1
 mode = "single"
@@ -661,7 +671,7 @@ mode = "single"
 /// T3.5: Verify lockfile signature before install (soft fail on unsigned)
 /// T3.5: Verify chữ ký lockfile trước install (soft fail nếu chưa ký)
 fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
-    let lockfile_path = project_root.join("mg.lock");
+    let lockfile_path = project_root.join("mgc.lock");
     if !lockfile_path.exists() {
         return Ok(());
     }
@@ -669,22 +679,22 @@ fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
     // T3.6: Enforce policy in CI environment
     crate::commands::trust::policy::auto_enforce_in_ci(&lockfile_path)?;
 
-    let status = mg_lockfile::verify_lockfile(&lockfile_path)?;
-    
+    let status = mgc_lockfile::verify_lockfile(&lockfile_path)?;
+
     match status {
-        mg_lockfile::VerificationStatus::Valid => {
-            mg_ui::success("✓ Lockfile signature valid");
+        mgc_lockfile::VerificationStatus::Valid => {
+            mgc_ui::success("✓ Lockfile signature valid");
         }
-        mg_lockfile::VerificationStatus::Unsigned => {
-            mg_ui::warning("⚠ Lockfile not signed — run 'mg trust sign' to sign it");
+        mgc_lockfile::VerificationStatus::Unsigned => {
+            mgc_ui::warning("⚠ Lockfile not signed — run 'mgc trust sign' to sign it");
         }
-        mg_lockfile::VerificationStatus::Tampered(msg) => {
+        mgc_lockfile::VerificationStatus::Tampered(msg) => {
             return Err(anyhow::anyhow!("Lockfile tampered: {}", msg));
         }
-        mg_lockfile::VerificationStatus::InvalidSignature(msg) => {
+        mgc_lockfile::VerificationStatus::InvalidSignature(msg) => {
             return Err(anyhow::anyhow!("Invalid signature: {}", msg));
         }
     }
-    
+
     Ok(())
 }

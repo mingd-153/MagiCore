@@ -1,0 +1,61 @@
+[package]
+name = "mgc-search"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+authors = ["MagiCore Contributors"]
+description = "Multi-registry search engine for MagiCore - search packages across npm, crates.io, pkg.go.dev, PyPI"
+rust-version = "1.75"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Cache storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Utilities
+chrono = "0.4"
+dirs = "5"
+urlencoding = "2.1"
+
+# MagiCore crates
+mgc-types = { path = "../mgc-types" }
+mgc-platform = { path = "../mgc-platform" }
+
+[dev-dependencies]
+mockito = "1"
+tempfile = "3"
+
+[[test]]
+name = "types"
+path = "test/types.rs"
+
+[[test]]
+name = "client"
+path = "test/client.rs"
+
+[[test]]
+name = "orchestrator"
+path = "test/orchestrator.rs"
+
+[[test]]
+name = "ranking"
+path = "test/ranking.rs"
+
+[[test]]
+name = "cache"
+path = "test/cache.rs"

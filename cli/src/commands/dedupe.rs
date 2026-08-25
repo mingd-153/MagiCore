@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
-use mg_config::project::ProjectConfig;
+use mgc_config::project::ProjectConfig;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -37,7 +37,7 @@ pub struct DedupeEntry {
 }
 
 /// Merge duplicate lockfile entries into a merged Lockfile (no-op if none).
-fn merged_lockfile(lock: &mg_lockfile::Lockfile) -> (mg_lockfile::Lockfile, usize) {
+fn merged_lockfile(lock: &mgc_lockfile::Lockfile) -> (mgc_lockfile::Lockfile, usize) {
     let mut seen: HashMap<(String, String), bool> = HashMap::new();
     let mut merged = 0usize;
     let mut new_packages = Vec::new();
@@ -67,11 +67,11 @@ async fn verify_with_build(_project_root: &Path, dry_run: bool) -> Result<()> {
 }
 
 fn vstore_root(project_root: &Path) -> std::path::PathBuf {
-    project_root.join("node_modules").join(".megagate")
+    project_root.join("node_modules").join(".magicore")
 }
 
 /// Delete virtual-store package dirs no longer referenced by the lockfile.
-fn cleanup_unreferenced_vstore(project_root: &Path, lock: &mg_lockfile::Lockfile) -> u64 {
+fn cleanup_unreferenced_vstore(project_root: &Path, lock: &mgc_lockfile::Lockfile) -> u64 {
     let vstore = vstore_root(project_root);
     if !vstore.exists() {
         return 0;
@@ -125,13 +125,13 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     let project_root =
         ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
 
-    let mg_lock = project_root.join("mg.lock");
-    if !mg_lock.exists() {
-        bail!("mg.lock not found — run mg install first");
+    let mgc_lock = project_root.join("mgc.lock");
+    if !mgc_lock.exists() {
+        bail!("mgc.lock not found — run mgc install first");
     }
 
-    let lock_content = fs::read_to_string(&mg_lock)?;
-    let lock: mg_lockfile::Lockfile = mg_lockfile::serialization::from_toml(&lock_content)?;
+    let lock_content = fs::read_to_string(&mgc_lock)?;
+    let lock: mgc_lockfile::Lockfile = mgc_lockfile::serialization::from_toml(&lock_content)?;
     let before = lock.packages.len();
 
     let (new_lock, merged) = merged_lockfile(&lock);
@@ -154,10 +154,10 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     if merged > 0 && !args.dry_run {
         // Verify runtime build before committing the merge (02 §5.2).
         let backup = lock_content.clone();
-        let lock_path = project_root.join("mga.lock");
-        mg_lockfile::write_lockfile(&new_lock, &lock_path)?;
+        let lock_path = project_root.join("mgc.lock");
+        mgc_lockfile::write_lockfile(&new_lock, &lock_path)?;
         if let Err(err) = verify_with_build(&project_root, false).await {
-            fs::write(&mg_lock, backup)?;
+            fs::write(&mgc_lock, backup)?;
             bail!("merge rolled back — build verification failed: {err}");
         }
     }

@@ -2,7 +2,7 @@
 """Generate monorepo backend + fullstack templates."""
 import os
 
-BASE = "/Users/doanmihh/Documents/Workspace/MegaGate/templates/web"
+BASE = "/Users/doanmihh/Documents/Workspace/MagiCore/templates/web"
 
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)

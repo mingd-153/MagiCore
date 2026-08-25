@@ -1,21 +1,21 @@
 [package]
-name = "mg-ai-adapter"
+name = "mgc-ai-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "AI ecosystem adapter for MegaGate"
+description = "AI ecosystem adapter for MagiCore"
 
 [dependencies]
 # Core crates (W1-W6 support)
-mg-types = { path = "../../core/crates/mg-types" }
-mg-crypto = { workspace = true }
-mg-lockfile = { workspace = true }
-mg-sbom = { workspace = true }
-mg-cache = { workspace = true }
-mg-config = { workspace = true }
-mg-adapter-base = { workspace = true }
+mgc-types = { path = "../../core/crates/mgc-types" }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-config = { workspace = true }
+mgc-adapter-base = { workspace = true }
 
 # Async
 async-trait.workspace = true

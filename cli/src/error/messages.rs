@@ -3,25 +3,25 @@
 
 use anyhow::{anyhow, Error};
 
-/// `mg remove-ai <pkg> [pkg...]` — name packages to remove
+/// `mgc remove-ai <pkg> [pkg...]` — name packages to remove
 pub fn remove_ai_usage() -> Error {
-    anyhow!("mg remove-ai <pkg> [pkg...] — name the packages to remove")
+    anyhow!("mgc remove-ai <pkg> [pkg...] — name the packages to remove")
 }
 
-/// `mg remove-app <pkg> [pkg...]` — name packages to remove
+/// `mgc remove-app <pkg> [pkg...]` — name packages to remove
 pub fn remove_app_usage() -> Error {
-    anyhow!("mg remove-app <pkg> [pkg...] — name the packages to remove")
+    anyhow!("mgc remove-app <pkg> [pkg...] — name the packages to remove")
 }
 
-/// `mg add-app <pkg> [pkg...]` — name packages to add
+/// `mgc add-app <pkg> [pkg...]` — name packages to add
 pub fn add_app_usage() -> Error {
-    anyhow!("mg add-app <pkg> [pkg...] — name the packages to add")
+    anyhow!("mgc add-app <pkg> [pkg...] — name the packages to add")
 }
 
 /// verb not applicable to cicd core (07 §4)
 pub fn cicd_verb_not_applicable(verb: &str) -> Error {
     anyhow!(
-        "'{verb}' does not apply to the cicd core (07 §4) — use `mg ci generate`, `mg verify`, or `mg deploy`."
+        "'{verb}' does not apply to the cicd core (07 §4) — use `mgc ci generate`, `mgc verify`, or `mgc deploy`."
     )
 }
 
@@ -41,7 +41,7 @@ pub fn no_web_layer_found(dir: &std::path::Path) -> Error {
 /// template publish required before fetch
 pub fn template_not_published(url: &str, http: u16) -> Error {
     anyhow!(
-        "Template '{}' not found at {} (HTTP {}) — run `mg template publish` first",
+        "Template '{}' not found at {} (HTTP {}) — run `mgc template publish` first",
         url,
         url,
         http
@@ -55,7 +55,7 @@ pub fn hf_request_failed() -> Error {
 
 /// pull manifest failed — registry running?
 pub fn pull_manifest_failed() -> Error {
-    anyhow!("pull manifest failed (is the registry running? `mg registry serve`)")
+    anyhow!("pull manifest failed (is the registry running? `mgc registry serve`)")
 }
 
 /// parse manifest failed
@@ -80,7 +80,7 @@ pub fn dir_has_no_files(p: &std::path::Path) -> Error {
 
 /// push model failed — server running?
 pub fn push_model_failed() -> Error {
-    anyhow!("push model failed — is the server running? (`mg registry serve`)")
+    anyhow!("push model failed — is the server running? (`mgc registry serve`)")
 }
 
 /// catalog listing failed
@@ -120,7 +120,7 @@ pub fn deploy_target_unknown(other: &str) -> Error {
 
 /// no deploy targets configured
 pub fn no_deploy_targets() -> Error {
-    anyhow!("no deploy target — add [deploy] targets to mg.toml")
+    anyhow!("no deploy target — add [deploy] targets to mgc.toml")
 }
 
 /// python -m build failed
@@ -131,7 +131,7 @@ pub fn python_build_failed(e: &dyn std::fmt::Display) -> Error {
 /// flash only supports esp32-rust currently
 pub fn flash_framework_unsupported(framework: &str) -> Error {
     anyhow!(
-        "'mg flash' currently supports only the esp32-rust framework (you are using {framework}) — platformio/zephyr flash is P2"
+        "'mgc flash' currently supports only the esp32-rust framework (you are using {framework}) — platformio/zephyr flash is P2"
     )
 }
 
@@ -155,20 +155,20 @@ pub fn cwd_deleted(e: &std::io::Error) -> Error {
 }
 
 /// không detect được project theo core kind
-pub fn no_mg_project_found(kind: &str) -> Error {
+pub fn no_mgc_project_found(kind: &str) -> Error {
     let msg = match kind {
-        "game" => "No MegaGate game project found (missing mg.toml with ecosystem = \"game\" \
+        "game" => "No MagiCore game project found (missing mgc.toml with ecosystem = \"game\" \
                    or project.godot/Packages/manifest.json/.uproject/Cargo.toml in the current project)",
-        "iot" => "No MegaGate IoT project found (missing mg.toml with ecosystem = \"iot\" \
+        "iot" => "No MagiCore IoT project found (missing mgc.toml with ecosystem = \"iot\" \
                   or platformio.ini/west.yml/Cargo.toml in the current project)",
-        "lib" | "library" => "No MegaGate library project found (missing mg.toml with \
+        "lib" | "library" => "No MagiCore library project found (missing mgc.toml with \
                   ecosystem = \"lib\" or Cargo.toml/package.json/pyproject.toml in the current project)",
-        "clo" | "cloud" => "No MegaGate cloud project found (missing mg.toml with ecosystem = \"cloud\" \
+        "clo" | "cloud" => "No MagiCore cloud project found (missing mgc.toml with ecosystem = \"cloud\" \
                   or Pulumi.yaml/*.tf/cdk package.json in the current project)",
-        "app" => "No MegaGate app project found (missing mg.toml with ecosystem = \"app\" \
+        "app" => "No MagiCore app project found (missing mgc.toml with ecosystem = \"app\" \
                   or pubspec.yaml/build.gradle/.kts/Package.swift in the current project)",
-        "web" => "No MegaGate project found (missing .megagate/project.toml or package.json in the current project)",
-        _ => "No MegaGate project found (missing mg.toml or known project manifest in the current directory tree)",
+        "web" => "No MagiCore project found (missing .magicore/project.toml or package.json in the current project)",
+        _ => "No MagiCore project found (missing mgc.toml or known project manifest in the current directory tree)",
     };
     anyhow!(msg)
 }
@@ -181,18 +181,18 @@ pub fn unknown_core(core: &str) -> Error {
 /// bare package command needs an explicit or detected core
 pub fn bare_core_not_detected(verb: &str) -> Error {
     anyhow!(
-        "`mg {verb}` could not detect a MegaGate core in this project. Use `mg --core <core> {verb}` or the explicit command such as `mg {verb}-web`."
+        "`mgc {verb}` could not detect a MagiCore core in this project. Use `mgc --core <core> {verb}` or the explicit command such as `mgc {verb}-web`."
     )
 }
 
-/// chưa chạy mg init
+/// chưa chạy mgc init
 pub fn project_root_missing() -> Error {
-    anyhow!("Project root not found — run mg init")
+    anyhow!("Project root not found — run mgc init")
 }
 
-/// thiếu mg.toml
-pub fn mg_toml_missing() -> Error {
-    anyhow!("mg.toml not found — run mg init")
+/// thiếu mgc.toml
+pub fn mgc_toml_missing() -> Error {
+    anyhow!("mgc.toml not found — run mgc init")
 }
 
 /// không detect framework theo loại
@@ -210,11 +210,11 @@ pub fn too_many_packages(count: usize, verb: &str) -> Error {
     anyhow!("Too many packages ({count}). Maximum per {verb} command is 50.")
 }
 
-/// lockfile mới hơn mg hỗ trợ
+/// lockfile mới hơn mgc hỗ trợ
 pub fn lockfile_newer(version: u32, supported: u32) -> Error {
     anyhow!(
-        "mg.lock version {version} is newer than this version of mg (supports up to {supported}). \
-         Upgrade mg to read this lockfile."
+        "mgc.lock version {version} is newer than this version of mgc (supports up to {supported}). \
+         Upgrade mgc to read this lockfile."
     )
 }
 
@@ -226,8 +226,8 @@ pub fn invalid_dep_id(dep: &str, name: &str, version: &str, e: &dyn std::fmt::Di
 /// package không thấy local/global
 pub fn pkg_not_found_local(package: &str) -> Error {
     anyhow!(
-        "package '{package}' not found in local node_modules or MegaGate global package roots.\n\
-         Use 'mg install' to install it first, provide a local path, or configure MEGAGATE_GLOBAL_PACKAGE_ROOT."
+        "package '{package}' not found in local node_modules or MagiCore global package roots.\n\
+         Use 'mgc install' to install it first, provide a local path, or configure MAGICORE_GLOBAL_PACKAGE_ROOT."
     )
 }
 
@@ -239,7 +239,7 @@ pub fn app_not_available(reason: &str) -> Error {
 
 pub fn app_project_not_detected() -> Error {
     anyhow!(
-        "Cannot detect an app project here (missing mg.toml [app] language / pubspec.yaml / build.gradle/.kts / Package.swift)."
+        "Cannot detect an app project here (missing mgc.toml [app] language / pubspec.yaml / build.gradle/.kts / Package.swift)."
     )
 }
 
@@ -253,7 +253,7 @@ pub fn app_tool_failed(cmd: &str, e: &dyn std::fmt::Display) -> Error {
 
 /// verb không có CLI passthrough cho language
 pub fn manifest_hint(verb: &str, lang: &str, file: &str) -> Error {
-    anyhow!("'{verb}' for {lang:?} has no CLI passthrough — edit {file} then run `mg install`.")
+    anyhow!("'{verb}' for {lang:?} has no CLI passthrough — edit {file} then run `mgc install`.")
 }
 
 pub fn xcode_project_missing(root: &std::path::Path) -> Error {
@@ -269,7 +269,7 @@ pub fn xcode_project_missing_short() -> Error {
 
 pub fn objc_dev_needs_xcode(proj: &str) -> Error {
     anyhow!(
-        "objC dev runs in Xcode — open {proj}, or set [app] dev_scheme = \"<scheme>\" in mg.toml so `mg dev` runs xcodebuild build on the simulator"
+        "objC dev runs in Xcode — open {proj}, or set [app] dev_scheme = \"<scheme>\" in mgc.toml so `mgc dev` runs xcodebuild build on the simulator"
     )
 }
 
@@ -277,7 +277,7 @@ pub fn objc_dev_needs_xcode(proj: &str) -> Error {
 
 pub fn ai_no_lockfile() -> Error {
     anyhow!(
-        "no lock file (uv.lock or requirements.lock) — run `mg add <pkg>` to create a lock first"
+        "no lock file (uv.lock or requirements.lock) — run `mgc add <pkg>` to create a lock first"
     )
 }
 
@@ -285,7 +285,7 @@ pub fn ai_no_lockfile() -> Error {
 
 pub fn frozen_lock_missing(cmd: &str) -> Error {
     anyhow!(
-        "--frozen: mg.lock is missing or does not match package.json.\n\
+        "--frozen: mgc.lock is missing or does not match package.json.\n\
          Run '{cmd}' to generate an up-to-date lockfile."
     )
 }
@@ -325,7 +325,7 @@ pub fn link_web_only() -> Error {
 }
 
 pub fn link_usage() -> Error {
-    anyhow!("Usage: mg link <package>")
+    anyhow!("Usage: mgc link <package>")
 }
 
 pub fn link_exists(name: &str) -> Error {
@@ -337,7 +337,7 @@ pub fn unlink_web_only() -> Error {
 }
 
 pub fn unlink_usage() -> Error {
-    anyhow!("Usage: mg unlink <package>")
+    anyhow!("Usage: mgc unlink <package>")
 }
 
 pub fn unlink_not_linked(name: &str) -> Error {
@@ -349,7 +349,7 @@ pub fn why_web_only() -> Error {
 }
 
 pub fn lock_missing_install() -> Error {
-    anyhow!("mg.lock not found — run 'mg install' first")
+    anyhow!("mgc.lock not found — run 'mgc install' first")
 }
 
 pub fn local_path_not_found(path: &std::path::Path) -> Error {
@@ -362,7 +362,7 @@ pub fn cargo_toml_no_deps() -> Error {
 
 pub fn ai_project_not_detected() -> Error {
     anyhow!(
-        "Cannot detect an ai project here (missing mg.toml [ai] framework / pyproject [tool.megagate] framework)."
+        "Cannot detect an ai project here (missing mgc.toml [ai] framework / pyproject [tool.magicore] framework)."
     )
 }
 
@@ -382,12 +382,12 @@ pub fn path_not_utf8() -> Error {
 
 pub fn unreal_editor_dev(uproject: &str) -> Error {
     anyhow!(
-        "unreal dev runs in Unreal Editor (engine binary is named by version, no standard PATH) — open {uproject} in the editor, or install UnrealBuildTool and run the build directly. Run `mg build` + the editor to run."
+        "unreal dev runs in Unreal Editor (engine binary is named by version, no standard PATH) — open {uproject} in the editor, or install UnrealBuildTool and run the build directly. Run `mgc build` + the editor to run."
     )
 }
 
 pub fn dev_no_command_for_engine(engine: &str) -> Error {
-    anyhow!("'mg dev' has no command for engine '{engine}' — use the engine editor to run it")
+    anyhow!("'mgc dev' has no command for engine '{engine}' — use the engine editor to run it")
 }
 
 pub fn godot_failed(e: &dyn std::fmt::Display) -> Error {
@@ -410,31 +410,31 @@ pub fn cicd_reason(reason: &str) -> Error {
 
 pub fn ci_template_unknown(provider: &str) -> Error {
     anyhow!(
-        "'mg ci generate' has no template for provider '{provider}' — supported: github-actions | gitlab | circleci"
+        "'mgc ci generate' has no template for provider '{provider}' — supported: github-actions | gitlab | circleci"
     )
 }
 
 pub fn cicd_project_not_detected() -> Error {
     anyhow!(
-        "Cannot detect a cicd project here (missing mg.toml [cicd] provider / wrangler.toml / argocd / .github/workflows)."
+        "Cannot detect a cicd project here (missing mgc.toml [cicd] provider / wrangler.toml / argocd / .github/workflows)."
     )
 }
 
 // ===== dev/clo.rs =====
 
 pub fn deploy_not_implemented(cloud: &str) -> Error {
-    anyhow!("'mg deploy' for '{cloud}' cloud type is not implemented yet")
+    anyhow!("'mgc deploy' for '{cloud}' cloud type is not implemented yet")
 }
 
 pub fn tool_not_installed_project(tool: &str) -> Error {
     anyhow!(
-        "{tool} is not installed in the project — run `mg install` first (tools resolve from node_modules/.bin/{tool})"
+        "{tool} is not installed in the project — run `mgc install` first (tools resolve from node_modules/.bin/{tool})"
     )
 }
 
 pub fn project_tool_failed(tool: &str, e: &dyn std::fmt::Display) -> Error {
     anyhow!(
-        "{tool} failed: {e} — run `mg install` in this project first (tools install via node_modules/.bin)"
+        "{tool} failed: {e} — run `mgc install` in this project first (tools install via node_modules/.bin)"
     )
 }
 
@@ -442,7 +442,7 @@ pub fn project_tool_failed(tool: &str, e: &dyn std::fmt::Display) -> Error {
 
 pub fn no_board_specified(boards: &str) -> Error {
     anyhow!(
-        "No board specified — add `[iot] board = \"<id>\"` to mg.toml (known boards: {boards}) or pass `mg flash --board <id>`"
+        "No board specified — add `[iot] board = \"<id>\"` to mgc.toml (known boards: {boards}) or pass `mgc flash --board <id>`"
     )
 }
 
@@ -457,7 +457,7 @@ pub fn fw_path_not_utf8(elf: &std::path::Path) -> Error {
 // ===== dev/app.rs =====
 
 pub fn multi_dev_flutter_only() -> Error {
-    anyhow!("multi dev P1 targets flutter/ entry — run `mg build` for other platforms")
+    anyhow!("multi dev P1 targets flutter/ entry — run `mgc build` for other platforms")
 }
 
 // ===== create/hardware.rs =====
@@ -475,7 +475,7 @@ pub fn no_hardware_framework() -> Error {
 // ===== build.rs =====
 
 pub fn no_project_found_build() -> Error {
-    anyhow!("No project found (no mg.toml, package.json, or Cargo.toml)")
+    anyhow!("No project found (no mgc.toml, package.json, or Cargo.toml)")
 }
 
 pub fn join_paths(err: &std::env::JoinPathsError) -> Error {
@@ -520,7 +520,7 @@ pub fn web_audit_needs_context() -> Error {
 
 pub fn script_not_found(script: &str) -> Error {
     anyhow!(
-        "Script '{script}' not found. Define it in 'mg.toml' under [scripts] or in 'package.json'."
+        "Script '{script}' not found. Define it in 'mgc.toml' under [scripts] or in 'package.json'."
     )
 }
 
@@ -612,7 +612,7 @@ pub fn no_framework_specified() -> Error {
 
 pub fn pm_not_supported(pm: &str) -> Error {
     anyhow!(
-        "--pm {pm} is not supported by core-web. MegaGate web uses the native mg installer, not npm/pnpm/yarn/bun."
+        "--pm {pm} is not supported by core-web. MagiCore web uses the native mgc installer, not npm/pnpm/yarn/bun."
     )
 }
 
@@ -656,18 +656,18 @@ pub fn package_json_root_object() -> Error {
 
 /// dev chưa implement cho core này
 pub fn dev_core_not_implemented(core: &str) -> Error {
-    anyhow!("'mg dev' Engine is not implemented for the '{core}' core yet")
+    anyhow!("'mgc dev' Engine is not implemented for the '{core}' core yet")
 }
 
 /// dev chưa implement cho iot framework này
 pub fn dev_iot_framework_not_implemented(fw: &str) -> Error {
-    anyhow!("'mg dev' for '{fw}' iot framework is not implemented yet")
+    anyhow!("'mgc dev' for '{fw}' iot framework is not implemented yet")
 }
 
 /// dev chưa implement cho cloud type này
 pub fn dev_cloud_not_implemented(cloud: &str) -> Error {
     anyhow!(
-        "'mg dev' for '{cloud}' cloud type is not implemented yet — supported: terraform (plan) | cdk (synth) | pulumi (preview)"
+        "'mgc dev' for '{cloud}' cloud type is not implemented yet — supported: terraform (plan) | cdk (synth) | pulumi (preview)"
     )
 }
 
@@ -709,7 +709,7 @@ pub fn web_unsupported_dev_script(script: &str, root: &std::path::Path) -> Error
 
 pub fn web_forbidden_pm(script: &str, manifest: &std::path::Path, pm: &str) -> Error {
     anyhow!(
-        "Unsupported script '{script}' in '{}': it delegates to '{pm}'. Core-web must execute natively through MegaGate or framework-local binaries, not through another package manager.",
+        "Unsupported script '{script}' in '{}': it delegates to '{pm}'. Core-web must execute natively through MagiCore or framework-local binaries, not through another package manager.",
         manifest.display()
     )
 }
@@ -739,7 +739,7 @@ pub fn web_missing_executable(bin: &str, hint: &str, root: &std::path::Path) -> 
 
 pub fn build_toolchain_missing(tool: &str) -> Error {
     anyhow!(
-        "'{tool}' not found in PATH — install it first (mg doctor check lists required toolchains)"
+        "'{tool}' not found in PATH — install it first (mgc doctor check lists required toolchains)"
     )
 }
 
@@ -759,14 +759,14 @@ pub fn no_registry_configured() -> Error {
 
 pub fn cannot_detect_project_type(root: &std::path::Path) -> Error {
     anyhow!(
-        "Cannot detect project type in '{}'. Run `mg init --template <type>`, \
-         `mg init --signature <core>`, or specify `--core <type>`",
+        "Cannot detect project type in '{}'. Run `mgc init --template <type>`, \
+         `mgc init --signature <core>`, or specify `--core <type>`",
         root.display()
     )
 }
 
-pub fn no_mg_project_root() -> Error {
-    anyhow!("No MegaGate project found. Run `mg init` to create one, or specify `--core <type>`.")
+pub fn no_mgc_project_root() -> Error {
+    anyhow!("No MagiCore project found. Run `mgc init` to create one, or specify `--core <type>`.")
 }
 
 // ===== factory.rs =====
@@ -777,14 +777,14 @@ pub fn core_not_in_build(core: &str) -> Error {
 
 pub fn detect_core_failed(kind: &str) -> Error {
     let msg = match kind {
-        "game" => "Cannot detect a game project here (missing mg.toml/project.godot/manifest.json/.uproject).",
-        "ai" => "Cannot detect an ai project here (missing mg.toml [ai] framework / pyproject [tool.megagate] framework).",
-        "clo" | "cloud" => "Cannot detect a cloud project here (missing mg.toml/Pulumi.yaml/*.tf/cdk package.json).",
-        "cicd" => "Cannot detect a cicd project here (missing mg.toml/wrangler.toml/argocd/.github/workflows).",
-        "iot" => "Cannot detect an iot project here (missing mg.toml/platformio.ini/west.yml).",
-        "app" => "Cannot detect an app project here (missing mg.toml/pubspec.yaml/build.gradle/Package.swift).",
-        "hardware" => "Cannot detect a hardware project here (missing mg.toml with ecosystem = \"hardware\").",
-        "lib" => "Cannot detect a lib project here (missing mg.toml/lib marker).",
+        "game" => "Cannot detect a game project here (missing mgc.toml/project.godot/manifest.json/.uproject).",
+        "ai" => "Cannot detect an ai project here (missing mgc.toml [ai] framework / pyproject [tool.magicore] framework).",
+        "clo" | "cloud" => "Cannot detect a cloud project here (missing mgc.toml/Pulumi.yaml/*.tf/cdk package.json).",
+        "cicd" => "Cannot detect a cicd project here (missing mgc.toml/wrangler.toml/argocd/.github/workflows).",
+        "iot" => "Cannot detect an iot project here (missing mgc.toml/platformio.ini/west.yml).",
+        "app" => "Cannot detect an app project here (missing mgc.toml/pubspec.yaml/build.gradle/Package.swift).",
+        "hardware" => "Cannot detect a hardware project here (missing mgc.toml with ecosystem = \"hardware\").",
+        "lib" => "Cannot detect a lib project here (missing mgc.toml/lib marker).",
         _ => "Cannot detect a project here.",
     };
     anyhow!(msg)

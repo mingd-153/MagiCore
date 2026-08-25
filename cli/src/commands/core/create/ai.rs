@@ -1,4 +1,4 @@
-//! `mg create-<ai>` — tách từ core/ai.rs (Phase 7 v5).
+//! `mgc create-<ai>` — tách từ core/ai.rs (Phase 7 v5).
 
 use anyhow::Result;
 
@@ -13,8 +13,8 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         crate::commands::template::ensure_layer(&format!("ai/{fw}")).await;
     }
     crate::scaffold::processor::Scaffolder::scaffold(&config)?;
-    mg_ui::success(
-        "AI project created. Pull a model with `mg model pull hf://...` or run `mg dev`.",
+    mgc_ui::success(
+        "AI project created. Pull a model with `mgc model pull hf://...` or run `mgc dev`.",
     );
     Ok(())
 }
