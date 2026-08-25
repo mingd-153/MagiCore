@@ -2,7 +2,7 @@
 //! Integration tests for mgc-app-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_language (all 6 paths), adapter_for, PackageAdapter trait methods.
 
-use mgc_app_adapter::{adapter_for, detect_language, AppAdapter, AppLanguage};
+use mgc_app_adapter::{adapter_for, detect_language, generate_sbom, AppAdapter, AppLanguage};
 use mgc_types::adapter::{AddOptions, PackageAdapter};
 use mgc_types::PackageName;
 use std::path::PathBuf;
@@ -255,4 +255,19 @@ async fn list_returns_empty_for_no_deps() {
     let a = adapter_for(&dir).unwrap();
     let pkgs = a.list(&dir).await.unwrap();
     assert!(pkgs.is_empty());
+}
+
+#[test]
+fn generate_sbom_uses_lockfile_v2_fixture() {
+    let mut lockfile = mgc_lockfile::Lockfile::new();
+    lockfile.add_package(mgc_lockfile::Package::new(
+        "test-pkg".to_string(),
+        "1.0.0".to_string(),
+        "https://example.com/test.tgz".to_string(),
+        "blake3:test123".to_string(),
+    ));
+    let json = generate_sbom(&lockfile, mgc_sbom::SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
 }

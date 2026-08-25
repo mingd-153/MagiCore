@@ -2,7 +2,7 @@
 //! Integration tests for mgc-ai-adapter — sát với src/lib.rs
 //! Kiểm thử: detect framework, adapter_for, PackageAdapter trait methods.
 
-use mgc_ai_adapter::{adapter_for, detect_framework, AiAdapter, AiFramework};
+use mgc_ai_adapter::{adapter_for, detect_framework, generate_sbom, AiAdapter, AiFramework};
 use mgc_types::adapter::{AddOptions, PackageAdapter};
 use mgc_types::PackageName;
 use std::path::PathBuf;
@@ -206,4 +206,19 @@ async fn list_returns_empty_for_project_with_no_deps() {
     let adapter = adapter_for(&dir).unwrap();
     let pkgs = adapter.list(&dir).await.unwrap();
     assert!(pkgs.is_empty());
+}
+
+#[test]
+fn generate_sbom_uses_lockfile_v2_fixture() {
+    let mut lockfile = mgc_lockfile::Lockfile::new();
+    lockfile.add_package(mgc_lockfile::Package::new(
+        "transformers".to_string(),
+        "4.35.0".to_string(),
+        "https://pypi.org/transformers-4.35.0.tgz".to_string(),
+        "blake3:ai123".to_string(),
+    ));
+    let json = generate_sbom(&lockfile, mgc_sbom::SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("transformers"));
+    assert!(json.contains("4.35.0"));
 }
