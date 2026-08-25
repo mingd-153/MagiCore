@@ -5,6 +5,7 @@ pub mod download;
 pub mod extract;
 pub mod link_tree;
 pub mod materialize;
+pub mod script_policy;
 
 use mgc_store::{ContentStore, Database, Layout, PackageCache};
 use mgc_types::adapter::{InstallOptions, InstallSummary, ResolvedGraph, ResolvedPackage};
@@ -20,44 +21,15 @@ use crate::install::materialize::{
     materialize_strict_layout, prune_root_install_dirs, repair_dangling_symlinks,
     reset_nested_node_modules, select_root_packages, strict_vstore_package_dir,
 };
+pub use crate::install::script_policy::{
+    lifecycle_scripts_allowed, load_trust_policies, should_run_lifecycle_scripts,
+    trust_allows_script,
+};
 use crate::lifecycle::LifecycleRunner;
 use crate::lockfile::installed_package_matches;
 use crate::lockfile::{project_cache_dir, write_web_lockfile_with_state};
 use crate::native;
 use crate::profile::InstallProfile;
-
-pub fn lifecycle_scripts_allowed() -> bool {
-    std::env::var("MAGICORE_WEB_ALLOW_SCRIPTS")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-}
-
-pub fn should_run_lifecycle_scripts(ignore_scripts: bool, allow_scripts: bool) -> bool {
-    if ignore_scripts {
-        return false;
-    }
-    allow_scripts || lifecycle_scripts_allowed()
-}
-
-pub fn load_trust_policies(layout: &Layout) -> std::collections::HashMap<String, String> {
-    Database::open(&layout.db_path())
-        .and_then(|db| db.list_trust_policies())
-        .map(|rows| {
-            rows.into_iter()
-                .map(|(id, policy, _)| (id, policy))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub fn trust_allows_script(policy: Option<&str>, blanket_scripts: bool) -> bool {
-    match policy {
-        Some("approved") => true,
-        Some("denied") => false,
-        _ => blanket_scripts,
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_install(
