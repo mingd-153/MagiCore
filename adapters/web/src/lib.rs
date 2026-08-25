@@ -24,11 +24,6 @@ use mgc_types::{
     },
     DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
 };
-use sha2::{Digest, Sha256};
-
-// W6: SBOM support
-use mgc_lockfile::Lockfile;
-use mgc_sbom::{SbomGenerator, SbomOptions};
 
 pub mod audit;
 pub mod cache;
@@ -42,15 +37,10 @@ pub mod manifest;
 pub mod native;
 pub mod profile;
 pub mod provider;
+pub mod registry_config;
+pub mod resolution_cache;
+pub mod sbom;
 pub mod update;
-
-/// W6: Generate SBOM from lockfile (web adapter)
-pub fn generate_sbom(lockfile: &Lockfile, options: SbomOptions) -> MgResult<String> {
-    let generator = SbomGenerator::new(options);
-    generator
-        .generate_json(lockfile)
-        .map_err(|e| mgc_types::MgError::Other(format!("SBOM generation failed: {e}")))
-}
 
 #[cfg(test)]
 #[path = "test/unit_tests.rs"]
@@ -58,8 +48,13 @@ mod tests;
 
 pub use lockfile::{read_web_lockfile, read_web_lockfile_checked};
 pub use manifest::PackageJson;
+pub use registry_config::{
+    effective_registry_url, validate_registry_allowed, DEFAULT_NPM_REGISTRY,
+};
+pub use resolution_cache::manifest_resolution_cache_key;
+pub use sbom::generate_sbom;
 
-use crate::audit::{allow_insecure_loopback_url, run_audit, run_audit_fix};
+use crate::audit::{run_audit, run_audit_fix};
 use crate::cache::{download_concurrency_limit, resolve_prefetch_enabled, SharedWebCache};
 use crate::install::download::package_tarball_url;
 use crate::install::extract::tarball_prefetch_lock;
@@ -69,8 +64,6 @@ use crate::manifest::{parse_manifest, write_manifest};
 use crate::profile::ResolveProfile;
 use crate::provider::NpmDependencyProvider;
 use crate::update::preferred_registry_version;
-
-const DEFAULT_NPM_REGISTRY: &str = "https://registry.npmjs.org";
 
 pub struct WebAdapter {
     pub registry_url: String,
@@ -233,74 +226,6 @@ impl WebAdapter {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-}
-
-pub fn effective_registry_url(default: &str) -> String {
-    let url = std::env::var("MAGICORE_WEB_REGISTRY_URL")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| default.to_string());
-    if !url.starts_with("https://") && !allow_insecure_loopback_url(&url) {
-        panic!(
-            "registry URL must use HTTPS: '{url}' (loopback http://127.0.0.1/localhost được phép)"
-        );
-    }
-    validate_registry_allowed(&url);
-    url
-}
-
-pub fn validate_registry_allowed(url: &str) {
-    let Some(allowed) = std::env::var("MAGICORE_WEB_ALLOWED_REGISTRIES").ok() else {
-        return;
-    };
-    let allowed_list: Vec<&str> = allowed
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if allowed_list.is_empty() {
-        return;
-    }
-    let normalized = url.trim_end_matches('/');
-    let matched = allowed_list
-        .iter()
-        .any(|a| normalized == a.trim_end_matches('/'));
-    if matched {
-        return;
-    }
-    panic!(
-        "registry '{}' is not in MAGICORE_WEB_ALLOWED_REGISTRIES ({})",
-        url, allowed
-    );
-}
-
-pub fn manifest_resolution_cache_key(manifest: &Manifest, registry_url: &str) -> String {
-    let mut entries = Vec::new();
-    for (group, deps) in manifest.dep_groups() {
-        for dep in deps {
-            entries.push(format!(
-                "{}\0{}\0{}\0{}\0{}\0{}",
-                group,
-                dep.name.as_str(),
-                dep.range.as_str(),
-                dep.dev,
-                dep.optional,
-                dep.peer
-            ));
-        }
-    }
-    entries.sort_unstable();
-
-    let mut hasher = Sha256::new();
-    hasher.update(b"magicore-web-resolution-v1\0");
-    hasher.update(registry_url.trim_end_matches('/').as_bytes());
-    hasher.update(b"\0");
-    for entry in entries {
-        hasher.update(entry.as_bytes());
-        hasher.update(b"\0");
-    }
-    format!("{:x}", hasher.finalize())
 }
 
 impl Default for WebAdapter {
