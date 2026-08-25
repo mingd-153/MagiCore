@@ -103,6 +103,7 @@ sys-mg/
 
 # Internal specs, guides and notes
 docs/specs/
+docs/internal-reports/  # Week reports, audit reports (nội bộ)
 docs/guides/
 scripts/notes/
 
