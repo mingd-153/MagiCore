@@ -65,6 +65,11 @@ struct WebProjectPruneStats {
     resolution_files: usize,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct GenericPruneStats {
+    files: usize,
+}
+
 pub async fn run(
     action: String,
     target: String,
@@ -291,9 +296,18 @@ fn prune(entries: &[CacheEntry], yes: bool, dry_run: bool, core: Option<&str>) -
                 stats.resolution_files,
                 entry.path.display()
             );
+        } else if core.is_some() {
+            let stats = prune_generic_cache(&entry.path, dry_run)?;
+            println!(
+                "{}\t{}\t{} files\t{}",
+                if dry_run { "would prune" } else { "pruned" },
+                entry.label,
+                stats.files,
+                entry.path.display()
+            );
         } else {
             println!(
-                "skip\t{}\tprune is only implemented for --core web cache",
+                "skip\t{}\tprune needs --core for non-web caches",
                 entry.label
             );
         }
@@ -329,6 +343,12 @@ fn prune_web_project_cache(root: &Path, dry_run: bool) -> Result<WebProjectPrune
         cas_files: prune_cas_blobs_under(&root.join("cas"), root, dry_run)?,
         tarball_files: prune_files_under(&root.join("cache"), dry_run)?,
         resolution_files: prune_files_under(&root.join("resolutions"), dry_run)?,
+    })
+}
+
+fn prune_generic_cache(root: &Path, dry_run: bool) -> Result<GenericPruneStats> {
+    Ok(GenericPruneStats {
+        files: prune_unlinked_files_under(root, dry_run)?,
     })
 }
 
@@ -847,5 +867,41 @@ mod tests {
         assert_eq!(pruned.cas_files, 0);
         assert!(blob.exists());
         assert!(live_link.exists());
+    }
+
+    #[test]
+    fn generic_core_prune_removes_unlinked_files() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join(".magicore").join("cache").join("ai");
+        let stale = cache.join("models").join("stale.bin");
+        std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        std::fs::write(&stale, b"stale").unwrap();
+
+        let dry_run = prune_generic_cache(&cache, true).unwrap();
+
+        assert_eq!(dry_run.files, 1);
+        assert!(stale.exists());
+
+        let pruned = prune_generic_cache(&cache, false).unwrap();
+
+        assert_eq!(pruned, dry_run);
+        assert!(!stale.exists());
+    }
+
+    #[test]
+    fn generic_core_prune_keeps_externally_hardlinked_files() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join(".magicore").join("cache").join("lib");
+        let live = cache.join("cas").join("live.bin");
+        let link = root.path().join("project-live.bin");
+        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+        std::fs::write(&live, b"live").unwrap();
+        std::fs::hard_link(&live, &link).unwrap();
+
+        let pruned = prune_generic_cache(&cache, false).unwrap();
+
+        assert_eq!(pruned.files, 0);
+        assert!(live.exists());
+        assert!(link.exists());
     }
 }

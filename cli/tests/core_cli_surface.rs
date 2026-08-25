@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 // CLI surface tests: public commands must expose the four primary cores.
-// Product rule: web/ai/app/lib stay visible together instead of web-only drift.
+// Product rule: web/ai/app/lib stay visible together instead of single-core drift.
 
 mod common;
 

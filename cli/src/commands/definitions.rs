@@ -989,6 +989,39 @@ mod tests {
     }
 
     #[test]
+    fn test_create_core_commands_follow_create_core_name_shape() {
+        let ai = Cli::try_parse_from(["mgc", "create-ai", "python-agent", "demo-ai"]).unwrap();
+        match ai.command.unwrap() {
+            Commands::CreateAi {
+                framework,
+                project_name,
+            } => {
+                assert_eq!(framework, "python-agent");
+                assert_eq!(project_name, "demo-ai");
+            }
+            _ => panic!("expected create-ai command"),
+        }
+
+        let app = Cli::try_parse_from(["mgc", "create-app", "flutter", "demo-app"]).unwrap();
+        match app.command.unwrap() {
+            Commands::CreateApp {
+                framework,
+                project_name,
+            } => {
+                assert_eq!(framework, "flutter");
+                assert_eq!(project_name, "demo-app");
+            }
+            _ => panic!("expected create-app command"),
+        }
+
+        let lib = Cli::try_parse_from(["mgc", "create-lib", "demo-lib"]).unwrap();
+        match lib.command.unwrap() {
+            Commands::CreateLib { project_name } => assert_eq!(project_name, "demo-lib"),
+            _ => panic!("expected create-lib command"),
+        }
+    }
+
+    #[test]
     fn test_add_web_accepts_multiple_packages() {
         let cli =
             Cli::try_parse_from(["mgc", "add-web", "zod", "lodash", "@types/node", "-D"]).unwrap();
