@@ -743,6 +743,16 @@ pub fn build_toolchain_missing(tool: &str) -> Error {
     )
 }
 
+/// Build has no supported artifact for the selected core — core này chưa có artifact build được hỗ trợ.
+pub fn build_not_supported(core: &str, guidance: &str) -> Error {
+    anyhow!("`mgc build` is not supported for core '{core}': {guidance}")
+}
+
+/// Build completed without producing any artifact — build không tạo được artifact nào.
+pub fn build_no_artifact() -> Error {
+    anyhow!("build produced no artifact; fix the project configuration or install the required toolchain")
+}
+
 pub fn workspace_failed(count: usize) -> Error {
     anyhow!("{count} workspace(s) failed to install")
 }

@@ -439,14 +439,35 @@ fn read_checked_lockfile(project_root: &std::path::Path) -> Result<Option<Lockfi
     mgc_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
-// FIXME(V1.0.1): Disabled — uses pkg.direct field removed in v2
-fn lock_matches_manifest(_lock: &Lockfile, _manifest: &Manifest) -> bool {
-    unimplemented!("lock_matches_manifest requires lockfile v2 migration")
+fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
+    manifest.all_dependencies().all(|dependency| {
+        lock.get_package(dependency.name.as_str())
+            .and_then(|package| Version::parse(&package.version).ok())
+            .is_some_and(|version| dependency.range.matches(&version))
+    })
 }
 
-// FIXME(V1.0.1): Disabled — uses pkg.direct, pkg.dev fields removed in v2
-fn graph_from_lockfile(_lock: &Lockfile) -> Result<ResolvedGraph> {
-    unimplemented!("graph_from_lockfile requires lockfile v2 migration")
+fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
+    let packages = lock
+        .packages
+        .iter()
+        .map(|package| {
+            Ok(ResolvedPackage {
+                id: PackageId::parse(&format!("{}@{}", package.name, package.version))?,
+                integrity: package.integrity.clone(),
+                tarball_url: package.resolved.clone(),
+                deps: package
+                    .dependencies
+                    .iter()
+                    .map(|dependency| PackageId::parse(dependency))
+                    .collect::<std::result::Result<Vec<_>, _>>()?,
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ResolvedGraph { packages })
 }
 
 #[cfg(test)]
@@ -531,33 +552,29 @@ mod tests {
         });
         std::fs::write(
             dir.path().join("mgc.lock"),
-            serde_json::to_string_pretty(&lock).unwrap(),
+            mgc_lockfile::serialization::to_toml(&lock).unwrap(),
         )
         .unwrap();
 
-        assert!(load_locked_graph(dir.path(), "web", &manifest)
-            .unwrap()
-            .is_none());
+        let err = load_locked_graph(dir.path(), "web", &manifest).unwrap_err();
+        assert!(err.to_string().contains("unsupported lockfile version"));
     }
 
     #[test]
-    fn test_load_locked_graph_errors_on_checksum_mismatch() {
+    fn test_load_locked_graph_ignores_legacy_checksum_sidecar() {
         let dir = tempdir().unwrap();
         let manifest = Manifest::new("demo", Ecosystem::Web);
         let lock = Lockfile::new();
         std::fs::write(
             dir.path().join("mgc.lock"),
-            serde_json::to_string_pretty(&lock).unwrap(),
+            mgc_lockfile::serialization::to_toml(&lock).unwrap(),
         )
         .unwrap();
         std::fs::write(dir.path().join("mgc.lock.sha256"), "bad").unwrap();
 
-        let err = load_locked_graph(dir.path(), "web", &manifest).unwrap_err();
-
-        assert!(
-            err.to_string().contains("lockfile checksum mismatch"),
-            "unexpected error: {err}"
-        );
+        assert!(load_locked_graph(dir.path(), "web", &manifest)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -574,7 +591,7 @@ mod tests {
         let err = graph_from_lockfile(&lock).unwrap_err();
 
         assert!(
-            err.to_string().contains("invalid dependency id"),
+            err.to_string().contains("invalid package spec"),
             "unexpected error: {err}"
         );
     }

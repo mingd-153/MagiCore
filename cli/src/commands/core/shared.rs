@@ -3,8 +3,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use colored::Colorize;
-// FIXME(V1.0.1): Lockfile v2 migration — LockPackage removed
-// use mgc_lockfile::{LockPackage, Lockfile};
 use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
 use mgc_types::{
@@ -775,17 +773,13 @@ fn read_checked_lockfile(project_root: &Path) -> Result<Option<Lockfile>> {
     mgc_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
-// FIXME(V1.0.1): Disabled — uses pkg.direct field removed in v2
 #[allow(dead_code)]
-fn lock_matches_manifest(_lock: &Lockfile, _manifest: &Manifest) -> bool {
-    // direct_manifest.iter().all(|dep| {
-    //     direct_locked
-    //         .iter()
-    //         .find(|pkg| pkg.name == dep.name.as_str())
-    //         .and_then(|pkg| Version::parse(&pkg.version).ok())
-    //         .is_some_and(|version| dep.range.matches(&version))
-    // })
-    unimplemented!("lock_matches_manifest requires lockfile v2 migration")
+fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
+    manifest.all_dependencies().all(|dependency| {
+        lock.get_package(dependency.name.as_str())
+            .and_then(|package| Version::parse(&package.version).ok())
+            .is_some_and(|version| dependency.range.matches(&version))
+    })
 }
 
 // FIXME(V1.0.1): Disabled due to lockfile v2 migration
@@ -798,10 +792,30 @@ fn lock_matches_manifest(_lock: &Lockfile, _manifest: &Manifest) -> bool {
 //     unimplemented!("load_pruned_locked_graph disabled pending lockfile v2 migration")
 // }
 
-// FIXME(V1.0.1): Disabled due to lockfile v2 migration (pkg.direct, pkg.dev removed)
 #[allow(dead_code)]
-fn graph_from_lockfile(_lock: &Lockfile) -> Result<ResolvedGraph> {
-    unimplemented!("graph_from_lockfile requires lockfile v2 migration")
+fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
+    let packages = lock
+        .packages
+        .iter()
+        .map(|package| {
+            let id = PackageId::parse(&format!("{}@{}", package.name, package.version))?;
+            let deps = package
+                .dependencies
+                .iter()
+                .map(|dependency| PackageId::parse(dependency))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(ResolvedPackage {
+                id,
+                integrity: package.integrity.clone(),
+                tarball_url: package.resolved.clone(),
+                deps,
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            })
+        })
+        .collect::<Result<Vec<_>, mgc_types::MgError>>()?;
+    Ok(ResolvedGraph { packages })
 }
 
 fn link_name(package: &str) -> &str {

@@ -52,45 +52,35 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
         #[cfg(not(feature = "hardware"))]
         "hardware" => Err(crate::error::core_not_in_build("hardware")),
         #[cfg(feature = "ai")]
-        "ai" => {
-            mgc_ui::warning(
-                "ai core has no build artifact (05 §7 — agents run via `mgc run`/`mgc dev`); skipped",
-            );
-            Ok(())
-        }
+        "ai" => Err(crate::error::build_not_supported(
+            "ai",
+            "AI projects run with `mgc run` or `mgc dev` (05 §7)",
+        )),
         #[cfg(not(feature = "ai"))]
         "ai" => Err(crate::error::core_not_in_build("ai")),
         other => bail!("'mgc build' not implemented for '{}' core yet", other),
     }
 }
 
-/// Game build (03 §4): bevy → cargo build (build_rust); godot/unity → P2
-/// (godot --export / Unity batchmode) — cảnh báo, không fail.
+/// Game build routes only implemented engines — chỉ chạy engine đã có build contract.
 #[cfg(feature = "game")]
 async fn build_game(root: &Path) -> Result<()> {
     let engine = mgc_game_adapter::detect_engine(root);
     match engine {
         Some(mgc_game_adapter::GameEngine::Bevy) => build_rust(root),
-        Some(mgc_game_adapter::GameEngine::Godot) => {
-            mgc_ui::warning(
-                "godot export build is P2 (03 §4) — use the editor to export; build skipped",
-            );
-            Ok(())
-        }
-        Some(mgc_game_adapter::GameEngine::Unity) => {
-            mgc_ui::warning(
-                "unity batchmode build is P1, not opened yet — scaffold-only; build skipped",
-            );
-            Ok(())
-        }
-        Some(mgc_game_adapter::GameEngine::Unreal) => {
-            mgc_ui::warning("unreal build is P2 (03 §4) — scaffold-only; build skipped");
-            Ok(())
-        }
-        None => {
-            mgc_ui::warning("could not detect a game engine (project.godot/Cargo.toml/.uproject)");
-            Ok(())
-        }
+        Some(mgc_game_adapter::GameEngine::Godot) => Err(crate::error::build_not_supported(
+            "game/godot",
+            "configure an export preset and run Godot export (03 §4 P2)",
+        )),
+        Some(mgc_game_adapter::GameEngine::Unity) => Err(crate::error::build_not_supported(
+            "game/unity",
+            "Unity batchmode export is not implemented yet (03 §4)",
+        )),
+        Some(mgc_game_adapter::GameEngine::Unreal) => Err(crate::error::build_not_supported(
+            "game/unreal",
+            "Unreal build is not implemented yet (03 §4 P2)",
+        )),
+        None => Err(crate::error::no_framework_detected("game engine", root)),
     }
 }
 
@@ -100,15 +90,13 @@ async fn build_game(root: &Path) -> Result<()> {
 async fn build_iot(root: &Path) -> Result<()> {
     if root.join("platformio.ini").exists() {
         if tool_unavailable("pio") {
-            mgc_ui::warning("pio (platformio) not found — run `pip install platformio` first");
-            return Ok(());
+            return Err(crate::error::build_toolchain_missing("pio"));
         }
         return run_allowlisted_tool(root, "pio", &["run"]);
     }
     if root.join("west.yml").exists() {
         if tool_unavailable("west") {
-            mgc_ui::warning("west not found — install Zephyr SDK + `pip install west` first");
-            return Ok(());
+            return Err(crate::error::build_toolchain_missing("west"));
         }
         return run_allowlisted_tool(root, "west", &["build", "-b", "native_sim"]);
     }
@@ -116,13 +104,11 @@ async fn build_iot(root: &Path) -> Result<()> {
         // esp32-rust: build_rust giữ cargo build; --target esp theo [iot] board là P1.5
         // (04 §5: cần espup toolchain — detect + lỗi rõ)
         if tool_unavailable("cargo") {
-            mgc_ui::warning("cargo not found — install Rust toolchain first");
-            return Ok(());
+            return Err(crate::error::build_toolchain_missing("cargo"));
         }
         return build_rust(root);
     }
-    mgc_ui::warning("could not detect an iot framework (platformio.ini/west.yml/Cargo.toml)");
-    Ok(())
+    Err(crate::error::no_framework_detected("iot", root))
 }
 
 /// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
@@ -134,8 +120,7 @@ async fn build_lib(root: &Path) -> Result<()> {
     }
     if root.join("pyproject.toml").exists() {
         if tool_unavailable("python") {
-            mgc_ui::warning("python not found — install Python toolchain first");
-            return Ok(());
+            return Err(crate::error::build_toolchain_missing("python"));
         }
         info("Building python lib: python -m build");
         return run_allowlisted_tool(root, "python", &["-m", "build"])
@@ -161,8 +146,11 @@ async fn build_lib(root: &Path) -> Result<()> {
         };
         return mgc_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
     }
-    mgc_ui::warning("ts lib requires `mgc install` first (node_modules/.bin/tsc missing)");
-    Ok(())
+    Err(crate::error::web_missing_executable(
+        "tsc",
+        "mgc install",
+        root,
+    ))
 }
 
 /// Hardware build: platformio (pio run) — chung cơ chế với iot.
@@ -170,13 +158,11 @@ async fn build_lib(root: &Path) -> Result<()> {
 async fn build_hardware(root: &Path) -> Result<()> {
     if root.join("platformio.ini").exists() {
         if tool_unavailable("pio") {
-            mgc_ui::warning("pio (platformio) not found — run `pip install platformio` first");
-            return Ok(());
+            return Err(crate::error::build_toolchain_missing("pio"));
         }
         return run_allowlisted_tool(root, "pio", &["run"]);
     }
-    mgc_ui::warning("could not detect a hardware framework (platformio.ini missing)");
-    Ok(())
+    Err(crate::error::no_framework_detected("hardware", root))
 }
 
 /// C9 — build app: single framework passthrough hoặc multi-platform (shared + platforms).
@@ -291,7 +277,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
         }
     }
     if built == 0 {
-        mgc_ui::warning("No platform built (toolchains missing or skipped)");
+        return Err(crate::error::build_no_artifact());
     }
     Ok(())
 }
@@ -316,10 +302,11 @@ async fn build_cloud(root: &Path) -> Result<()> {
         mgc_cloud_adapter::CloudType::Cdk => {
             let bin = root.join("node_modules").join(".bin").join("cdk");
             if !bin.exists() {
-                mgc_ui::warning(
-                    "cdk not installed — run `mgc install` first (node_modules/.bin/cdk missing)",
-                );
-                return Ok(());
+                return Err(crate::error::web_missing_executable(
+                    "cdk",
+                    "mgc install",
+                    root,
+                ));
             }
             let args = node_bin_args(root, "cdk", &["synth"])?
                 .into_iter()
@@ -341,25 +328,15 @@ async fn build_cloud(root: &Path) -> Result<()> {
         }
         mgc_cloud_adapter::CloudType::Pulumi => {
             if tool_unavailable("pulumi") {
-                mgc_ui::warning("pulumi not found — skipping build (install pulumi CLI first)");
-                return Ok(());
+                return Err(crate::error::build_toolchain_missing("pulumi"));
             }
-            if let Err(e) = run_allowlisted_tool(root, "pulumi", &["preview"]) {
-                mgc_ui::warning(&format!("pulumi preview skipped: {e}"));
-            }
+            run_allowlisted_tool(root, "pulumi", &["preview"])?;
         }
         mgc_cloud_adapter::CloudType::Terraform => {
             if tool_unavailable("terraform") {
-                mgc_ui::warning(
-                    "terraform not found — skipping build (install terraform CLI first)",
-                );
-                return Ok(());
+                return Err(crate::error::build_toolchain_missing("terraform"));
             }
-            if let Err(e) = run_allowlisted_tool(root, "terraform", &["plan"]) {
-                mgc_ui::warning(&format!(
-                    "terraform plan skipped (uninitialized or error): {e}"
-                ));
-            }
+            run_allowlisted_tool(root, "terraform", &["plan"])?;
         }
         mgc_cloud_adapter::CloudType::Cloudflare => {
             return Err(crate::error::cloudflare_build_in_cicd_core());
@@ -949,20 +926,20 @@ mod tests {
 
     #[cfg(feature = "app")]
     #[test]
-    fn build_multi_skips_missing_platform_dir() {
+    fn build_multi_fails_when_no_platform_artifact_is_created() {
         let tmp = std::env::temp_dir().join(format!("mgc-build-multi-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("mgc.toml"), "[app]\nlanguage=\"multi\"\n").unwrap();
         let v: toml::Value =
             toml::from_str(&std::fs::read_to_string(tmp.join("mgc.toml")).unwrap()).unwrap();
-        super::build_multi_app(&tmp, &v).unwrap();
+        assert!(super::build_multi_app(&tmp, &v).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[cfg(feature = "clo")]
     #[test]
-    fn build_cloud_warns_skip_when_toolchain_missing() {
+    fn build_cloud_fails_when_toolchain_missing() {
         let tmp = std::env::temp_dir().join(format!("mgc-build-cloud-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -970,38 +947,26 @@ mod tests {
         std::fs::write(tmp.join("mgc.toml"), "[cloud]\ntype = \"terraform\"\n").unwrap();
         std::fs::write(tmp.join("main.tf"), "provider \"aws\" {}\n").unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(super::build_cloud(&tmp)).unwrap();
-        // cdk: node_modules/.bin/cdk thiếu → cảnh báo, không fail
-        std::fs::write(tmp.join("mgc.toml"), "[cloud]\ntype = \"cdk\"\n").unwrap();
-        std::fs::write(
-            tmp.join("package.json"),
-            "{\"name\":\"x\",\"dependencies\":{\"aws-cdk-lib\":\"^2.0.0\"}}",
-        )
-        .unwrap();
-        rt.block_on(super::build_cloud(&tmp)).unwrap();
-        // pulumi: CLI thiếu → cảnh báo, không fail
-        std::fs::write(tmp.join("mgc.toml"), "[cloud]\ntype = \"pulumi\"\n").unwrap();
-        std::fs::write(tmp.join("Pulumi.yaml"), "name: x\nruntime: nodejs\n").unwrap();
-        rt.block_on(super::build_cloud(&tmp)).unwrap();
+        assert!(rt.block_on(super::build_cloud(&tmp)).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[cfg(feature = "game")]
     #[test]
-    fn game_build_warns_skip_when_engine_p2() {
+    fn game_build_fails_when_engine_is_not_implemented() {
         let tmp = std::env::temp_dir().join(format!("mgc-build-game-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("mgc.toml"), "ecosystem = \"game\"\n").unwrap();
         std::fs::write(tmp.join("project.godot"), "[application]\n").unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(super::build_game(&tmp)).unwrap();
+        assert!(rt.block_on(super::build_game(&tmp)).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[cfg(feature = "iot")]
     #[test]
-    fn iot_build_warns_skip_when_toolchain_missing() {
+    fn iot_build_fails_when_toolchain_missing() {
         let tmp = std::env::temp_dir().join(format!("mgc-build-iot-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -1012,13 +977,13 @@ mod tests {
         )
         .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(super::build_iot(&tmp)).unwrap();
+        assert!(rt.block_on(super::build_iot(&tmp)).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[cfg(feature = "lib")]
     #[test]
-    fn lib_ts_build_warns_when_tsc_missing() {
+    fn lib_ts_build_fails_when_tsc_missing() {
         let tmp = std::env::temp_dir().join(format!("mgc-build-libts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -1029,7 +994,7 @@ mod tests {
         )
         .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(super::build_lib(&tmp)).unwrap();
+        assert!(rt.block_on(super::build_lib(&tmp)).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
