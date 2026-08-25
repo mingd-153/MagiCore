@@ -28,6 +28,8 @@ use mgc_types::{
 pub mod audit;
 pub mod cache;
 pub mod cache_daemon;
+pub mod cache_metadata;
+pub mod cache_prune;
 pub mod install;
 pub mod layout;
 pub mod lifecycle;
