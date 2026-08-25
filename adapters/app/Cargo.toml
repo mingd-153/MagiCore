@@ -8,9 +8,19 @@ authors.workspace = true
 description = "Mobile app ecosystem adapter for MegaGate"
 
 [dependencies]
+# Core crates (W1-W5 support)
 mg-types = { path = "../../core/crates/mg-types" }
+mg-crypto = { workspace = true }
+mg-lockfile = { workspace = true }
+mg-cache = { workspace = true }
+mg-config = { workspace = true }
+mg-adapter-base = { workspace = true }
+
+# Async
 async-trait.workspace = true
 tokio.workspace = true
+
+# Serialization
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 

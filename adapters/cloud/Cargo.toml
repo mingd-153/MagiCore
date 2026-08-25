@@ -8,8 +8,13 @@ authors.workspace = true
 description = "Cloud ecosystem adapter for MegaGate (cdk/pulumi/terraform)"
 
 [dependencies]
-# Core crates
+# Core crates (W1-W5 support)
 mg-types = { workspace = true }
+mg-crypto = { workspace = true }
+mg-lockfile = { workspace = true }
+mg-cache = { workspace = true }
+mg-config = { workspace = true }
+mg-adapter-base = { workspace = true }
 mg-exec = { workspace = true }
 
 # Web delegate (cdk/pulumi npm-format)

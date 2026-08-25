@@ -8,8 +8,11 @@ authors.workspace = true
 description = "IoT ecosystem adapter for MegaGate (esp32-rust/platformio/zephyr)"
 
 [dependencies]
-# Core crates
+# Core crates (W1-W5 support)
 mg-types = { workspace = true }
+mg-crypto = { workspace = true }
+mg-lockfile = { workspace = true }
+mg-cache = { workspace = true }
 mg-adapter-base = { workspace = true }
 mg-config = { workspace = true }
 mg-exec = { workspace = true }
