@@ -23,6 +23,13 @@ pub async fn run(
     allow_scripts: bool,
     offline: bool,  // T4.1: offline mode flag
 ) -> Result<()> {
+    // T4.1: Set thread-local offline mode (R6 fix)
+    if offline {
+        crate::offline::set_offline_mode(true);
+        // R4 FIX (AUDIT VÒNG 2): Set env var to enforce offline in adapters
+        std::env::set_var("MG_OFFLINE_MODE", "1");
+    }
+    
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
 
@@ -30,6 +37,28 @@ pub async fn run(
         if workspaces.is_empty() {
             info("No installable workspaces found in this monorepo.");
             return Ok(());
+        }
+
+        // R3 FIX (AUDIT VÒNG 2): Pre-validate ALL workspaces in offline mode
+        if offline {
+            let mut missing_lockfiles = Vec::new();
+            for ws in &workspaces {
+                let lockfile = ws.join("mg.lock");
+                if !lockfile.exists() {
+                    missing_lockfiles.push(ws.display().to_string());
+                }
+            }
+            
+            if !missing_lockfiles.is_empty() {
+                anyhow::bail!(
+                    "Offline mode requires lockfiles in all {} workspaces.\n  \
+                     Missing lockfiles:\n  {}",
+                    workspaces.len(),
+                    missing_lockfiles.join("\n  ")
+                );
+            }
+            
+            info(&format!("✓ All {} workspaces have lockfiles (offline mode)", workspaces.len()));
         }
 
         if !packages.is_empty() {

@@ -1,0 +1,29 @@
+// TODO (Week 4 Phase 3): Implement R1 & R4 fixes
+//
+// R1: Pass offline flag to adapter
+// --------------------------------
+// Current:
+//   let graph = adapter.resolve(&manifest).await?;
+//
+// Needed:
+//   let options = ResolveOptions { offline, lockfile };
+//   let graph = adapter.resolve(&manifest, options).await?;
+//
+// Requires:
+//   - mg-types/src/adapter.rs trait update
+//   - All 9 adapter implementations updated
+//
+// R4: Enforce no network in offline mode
+// ---------------------------------------
+// Option 1: Environment variable
+//   std::env::set_var("MG_OFFLINE_MODE", "1");
+//   // Adapters check before network calls
+//
+// Option 2: Network interceptor (mg-http)
+//   pub fn record_network_call() {
+//       if is_offline_mode() {
+//           panic!("Network call in offline mode");
+//       }
+//   }
+//
+// Recommendation: Option 1 (simpler, no mg-http changes needed)

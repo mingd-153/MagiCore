@@ -14,6 +14,7 @@ mod context;
 mod dispatch;
 pub mod error;
 mod factory;
+mod offline;  // T4.1: Offline mode state
 mod scaffold;
 mod wizard;
 
