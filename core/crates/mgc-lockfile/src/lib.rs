@@ -3,15 +3,18 @@
 //!
 //! Provides lockfile schema v2 with Ed25519 signatures for tamper detection.
 
+pub mod import;
 pub mod migrate;
 pub mod parser;
 pub mod schema;
 pub mod serialization;
 pub mod verifier;
 pub mod writer;
-// FIXME: merge and import modules use v1 schema - need v2 rewrite
-// pub mod merge;
-pub mod import;
+
+pub use import::{
+    check_trust_downgrade_risk, detect_legacy_lockfiles, import_file, import_into_lockfile,
+    LegacyLockfile,
+};
 
 pub use migrate::{auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2};
 pub use parser::{load_and_verify_lockfile, load_lockfile, parse_lockfile};

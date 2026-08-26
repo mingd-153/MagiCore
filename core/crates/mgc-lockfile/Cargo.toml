@@ -22,6 +22,10 @@ path = "test/tamper.rs"
 name = "migrate"
 path = "test/migrate.rs"
 
+[[test]]
+name = "import"
+path = "test/import.rs"
+
 [dependencies]
 # Crypto primitives (local crate)
 mgc-crypto = { path = "../mgc-crypto", version = "1.0.0" }
@@ -33,6 +37,7 @@ toml_edit = { version = "0.22", features = ["serde"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml.workspace = true
 
 # Error handling
 anyhow = "1.0"
