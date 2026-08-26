@@ -470,6 +470,23 @@ pub async fn run_install(
             "materialize_strict_layout_step",
             strict_materialize_step_started_at,
         );
+
+        // Tarball nén đã extract xong → dọn khỏi active cache (tránh giữ 2× nội dung:
+        // nén trong cache + giải nén trong node_modules). Offline reinstall cần lại thì
+        // đặt MAGICORE_KEEP_TARBALLS=1.
+        // (Purge compressed tarballs post-extract — halves project footprint;
+        // opt out with MAGICORE_KEEP_TARBALLS=1.)
+        if std::env::var("MAGICORE_KEEP_TARBALLS").as_deref() != Ok("1") {
+            let mut purged = 0usize;
+            for pkg in &graph.packages {
+                if std::fs::remove_file(active_package_cache.tarball_path(&pkg.id)).is_ok() {
+                    purged += 1;
+                }
+            }
+            if purged > 0 {
+                eprintln!("[magicore] purged {} cached tarball(s) after successful extract", purged);
+            }
+        }
         let persist_step_started_at = std::time::Instant::now();
         for handle in persist_handles {
             handle
