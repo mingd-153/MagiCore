@@ -114,6 +114,10 @@ tool_env() {
   case "$tool" in
     mgc)
       printf 'HOME=%s' "$home"
+      # MULTI_PROJECTS>0 → dùng global shared cache để đo dedup
+      if [[ "${MULTI:-0}" -gt 0 ]]; then
+        printf ' MAGICORE_SHARED_CACHE_DIR=%s/shared-mgc-cache' "$WORK"
+      fi
       if [[ -n "$REG_URL" ]]; then
         printf ' MAGICORE_WEB_REGISTRY_URL=%s MAGICORE_WEB_REGISTRY_TOKEN=e2e-admin-token MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST=1' "$REG_URL"
       fi
