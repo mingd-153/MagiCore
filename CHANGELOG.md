@@ -228,3 +228,6 @@ First public beta release. MagiCore is a universal, polyglot package manager for
 [0.3.0-beta.1]: https://github.com/mingd-153/MagiCore/compare/v0.2.0...v0.3.0-beta.1
 [0.2.0]: https://github.com/mingd-153/MagiCore/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mingd-153/MagiCore/releases/tag/v0.1.0
+
+### Unreleased (bench)
+- **Install benchmark harness**: `scripts/benchmark-install.sh` — hyperfine cold/warm vs npm & pnpm, fully isolated caches (`HOME`/`npm_config_cache`/XDG), pinned-dep fixture, disk usage report. First public baseline at `benchmarks/install/results-*`.
