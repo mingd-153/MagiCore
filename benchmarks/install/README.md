@@ -20,9 +20,9 @@ scripts/benchmark-install.sh            # (runs_cold=2, runs_warm=3 mặc địn
 - **`du` KHÔNG dùng được** làm metric: nó mù với APFS clonefile (reflink của mgc)
   và đếm trùng hardlink (pnpm) khi cộng nhiều thư mục. Metric chuẩn = **df-delta**
   trên filesystem chứa toàn bộ footprint của tool (script đã làm sẵn).
-- Multi-project ×N: ⚠️ EXPERIMENTAL — npm qua registry local bị treo/không ổn định
-  (ECONNREFUSED/treo 120s), cần điều tra riêng trước khi công bố số scenario này.
-  Chạy không cần: bỏ MULTI_PROJECTS (mặc định 0).
+- Multi-project ×N: ⚠️ EXPERIMENTAL — npm trong layout multi trả exit-0 mà không cài
+  gì (S1 cùng cấu hình chạy bình thường); nghi vấn .npmrc/npm-upstate quirk, cần
+  phiên debug riêng. mgc & pnpm chạy tốt. Bỏ flag bằng cách không đặt MULTI_PROJECTS.
 
 
 ## Phương pháp
