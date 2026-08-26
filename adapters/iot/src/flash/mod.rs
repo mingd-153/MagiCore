@@ -114,13 +114,28 @@ pub fn detect_serial_ports_in(base: &Path) -> Vec<String> {
 }
 
 /// Dò cổng serial USB khả dụng trên máy hiện tại.
-/// Windows cần enumerate COM qua SetupAPI (crate `serialport`, P2) — tạm trả rỗng.
+/// Unix: scan /dev for ttyUSB*/ttyACM*/tty.usb*/cu.usb*
+/// Windows: use serialport crate SetupAPI when windows-serial feature enabled
 // (Detect available USB serial ports. Windows needs SetupAPI enumeration via the
-// `serialport` crate (P2) — returns empty there for now.)
+// `serialport` crate (feature windows-serial) — returns empty when disabled.)
 pub fn detect_serial_ports() -> Vec<String> {
-    if cfg!(target_os = "windows") {
-        Vec::new()
-    } else {
+    #[cfg(target_os = "windows")]
+    {
+        #[cfg(feature = "windows-serial")]
+        {
+            match serialport::available_ports() {
+                Ok(ports) => ports.into_iter().map(|p| p.port_name).collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+        #[cfg(not(feature = "windows-serial"))]
+        {
+            Vec::new()
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
         detect_serial_ports_in(Path::new("/dev"))
     }
 }

@@ -32,6 +32,14 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
+# Serial port detection (optional - Windows only needs it)
+serialport = { version = "4.3", optional = true }
+
+[features]
+default = []
+# Windows serial detection via SetupAPI
+windows-serial = ["serialport"]
+
 [lints]
 workspace = true
 
