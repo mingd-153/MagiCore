@@ -119,7 +119,7 @@ tool_env() {
       fi
       ;;
     npm|pnpm)
-      printf 'npm_config_cache=%s/cache XDG_CACHE_HOME=%s/xdg-cache XDG_DATA_HOME=%s/xdg-data' "$home" "$home" "$home"
+      printf 'npm_config_cache=%s/cache npm_config_userconfig=%s/user-npmrc XDG_CACHE_HOME=%s/xdg-cache XDG_DATA_HOME=%s/xdg-data' "$home" "$home" "$home" "$home"
       if [[ -n "$REG_URL" ]]; then
         printf ' npm_config_registry=%s' "$REG_URL"
       fi
@@ -202,12 +202,16 @@ disk_node_modules() { [[ -d "$1/node_modules" ]] && du -sk "$1/node_modules" | c
 
 # ---------------------------------------------------------------- S1: timing single project
 echo "[bench] mode=$REGISTRY_MODE · cold×$RUNS_COLD warm×$RUNS_WARM"
-for t in mgc npm pnpm; do
-  echo "[bench]   → $t cold"; run_tool "$t" cold "$RUNS_COLD" "$FIXTURE"
-done
-for t in mgc npm pnpm; do
-  echo "[bench]   → $t warm"; run_tool "$t" warm "$RUNS_WARM" "$FIXTURE"
-done
+if [[ "${SKIP_TIMING:-0}" != "1" ]]; then
+  for t in mgc npm pnpm; do
+    echo "[bench]   → $t cold"; run_tool "$t" cold "$RUNS_COLD" "$FIXTURE"
+  done
+  for t in mgc npm pnpm; do
+    echo "[bench]   → $t warm"; run_tool "$t" warm "$RUNS_WARM" "$FIXTURE"
+  done
+else
+  echo "[bench] SKIP_TIMING=1 — bỏ qua phase timing"
+fi
 
 # ---------------------------------------------------------------- S2: multi-project CAS
 declare_disk() { :; }  # placeholder giữ bash3.2 vui lòng — dùng biến thường
@@ -220,10 +224,15 @@ if [[ "$MULTI" -gt 0 ]]; then
       tproj="$WORK/proj-$t/p$i"
       mkdir -p "$local_home" "$tproj"
       cp "$FIXTURE/package.json" "$tproj/package.json"
+      cp "$FIXTURE/.npmrc" "$tproj/.npmrc"
       ensure_registry
       env_str="$(tool_env "$t" "$local_home")"
       start=$(python3 -c 'import time; print(time.time())')
-      env $env_str bash -c "cd '$tproj' && $(install_cmd "$t")" >/dev/null 2>&1 || true
+      if ! env $env_str bash -c "cd '$tproj' && $(install_cmd "$t")" >"$WORK/multi-$t-$i.log" 2>&1; then
+        echo "[bench] !! multi $t #$i FAILED:"
+        tail -3 "$WORK/multi-$t-$i.log"
+      fi
+      [[ -d "$tproj/node_modules" ]] || echo "[bench] ?? multi $t #$i: exit 0 nhưng KHÔNG có node_modules (log: $WORK/multi-$t-$i.log)"
       end=$(python3 -c 'import time; print(time.time())')
       echo "$t $i $(python3 -c "print(f'{$end-$start:.2f}')")" >> "$WORK/multi-times.txt"
     done
@@ -258,6 +267,7 @@ for t in mgc npm pnpm; do
     tproj="$WORK/proj-$t/p$i"
     mkdir -p "$tproj"
     cp "$FIXTURE/package.json" "$tproj/package.json"
+    cp "$FIXTURE/.npmrc" "$tproj/.npmrc"
     env_str="$(tool_env "$t" "$local_home")"
     local_home="$WORK/$t-multi-home"
     env $env_str bash -c "cd '$tproj' && $(install_cmd "$t")" >/dev/null 2>&1 || true
