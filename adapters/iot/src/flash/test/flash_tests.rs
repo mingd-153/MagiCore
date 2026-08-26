@@ -16,8 +16,8 @@ async fn test_flash_esp32_fails_closed_not_fake_success() {
         .await
         .unwrap_err();
     assert!(
-        err.to_string().contains("not implemented"),
-        "phải báo chưa implement, không được success ảo: {err}"
+        err.to_string().contains("espflash"),
+        "lỗi phải chỉ rõ tool passthrough: {err}"
     );
 }
 

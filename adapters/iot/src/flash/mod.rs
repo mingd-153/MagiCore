@@ -4,6 +4,7 @@
 // report a clear error instead of faking success.)
 
 use crate::framework::IotFramework;
+use mgc_exec::run::{run as mgc_run, ExecOptions};
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
@@ -15,9 +16,9 @@ pub async fn flash_firmware(
     _port: Option<&str>,
 ) -> MgResult<FlashResult> {
     match framework {
-        IotFramework::Esp32Rust => flash_esp32().await,
-        IotFramework::Platformio => flash_platformio().await,
-        IotFramework::Zephyr => flash_zephyr().await,
+        IotFramework::Esp32Rust => flash_esp32(_project_root, _port).await,
+        IotFramework::Platformio => flash_platformio(_project_root, _port).await,
+        IotFramework::Zephyr => flash_zephyr(_project_root, _port).await,
     }
 }
 
@@ -28,25 +29,65 @@ pub struct FlashResult {
     pub duration_ms: u64,
 }
 
-async fn flash_esp32() -> MgResult<FlashResult> {
-    // Fail-closed (RULE §11): chạy espflash thật qua mgc-exec ở P2 — giờ không được trả success ảo
-    // (Fail-closed: real espflash runs via mgc-exec in P2 — never return a fake success today)
-    Err(MgError::Other(
-        "esp32-rust flash not implemented yet (P2): run `espflash flash <elf>` manually meanwhile"
-            .into(),
-    ))
+/// Chạy tool passthrough qua mgc-exec (allowlist + audit log) — REAL exec.
+fn exec_tool(tool: &str, args: &[&str], root: &Path) -> MgResult<()> {
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let opts = ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        ..Default::default()
+    };
+    let report = mgc_run(tool, &args, &opts).map_err(|e| MgError::Other(format!("{tool}: {e}")))?;
+    if report.exit_code == 0 {
+        Ok(())
+    } else {
+        Err(MgError::Other(format!(
+            "{tool} exited with {}: {}",
+            report.exit_code,
+            report.stderr_tail.trim()
+        )))
+    }
 }
 
-async fn flash_platformio() -> MgResult<FlashResult> {
-    Err(MgError::Other(
-        "platformio upload not implemented yet (P2): run `pio run --target upload` manually meanwhile".into(),
-    ))
+async fn flash_esp32(root: &Path, port: Option<&str>) -> MgResult<FlashResult> {
+    let started = std::time::Instant::now();
+    let mut args: Vec<String> = vec!["flash".into()];
+    if let Some(p) = port {
+        args.push("--port".into());
+        args.push(p.into());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    exec_tool("espflash", &refs, root)?;
+    Ok(FlashResult {
+        port: port.unwrap_or("auto").into(),
+        success: true,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
 }
 
-async fn flash_zephyr() -> MgResult<FlashResult> {
-    Err(MgError::Other(
-        "zephyr flash not implemented yet (P2): run `west flash` manually meanwhile".into(),
-    ))
+async fn flash_platformio(root: &Path, port: Option<&str>) -> MgResult<FlashResult> {
+    let started = std::time::Instant::now();
+    let mut args: Vec<String> = vec!["run".into(), "--target".into(), "upload".into()];
+    if let Some(p) = port {
+        args.push("--upload-port".into());
+        args.push(p.into());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    exec_tool("pio", &refs, root)?;
+    Ok(FlashResult {
+        port: port.unwrap_or("auto").into(),
+        success: true,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+async fn flash_zephyr(root: &Path, _port: Option<&str>) -> MgResult<FlashResult> {
+    let started = std::time::Instant::now();
+    exec_tool("west", &["flash"], root)?;
+    Ok(FlashResult {
+        port: "west-managed".into(),
+        success: true,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
 }
 
 /// Quét cổng serial trong 1 thư mục (hàm thuần — test được với TempDir).
