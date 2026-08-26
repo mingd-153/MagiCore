@@ -12,11 +12,14 @@ pub enum DeployTarget {
 }
 
 pub async fn deploy(target: DeployTarget, dry_run: bool) -> MgResult<String> {
-    // (tool, args) theo allowlist mgc-exec — dry_run chỉ in lệnh, không chạy
+    // Real CLI commands per service (placeholder args - production needs specifics)
     let (tool, args): (&str, Vec<&str>) = match target {
-        DeployTarget::Aws => ("aws", vec!["deploy"]),
-        DeployTarget::Cloudflare => ("wrangler", vec!["publish"]),
-        DeployTarget::Gcp => ("gcloud", vec!["deploy"]),
+        // AWS CLI: placeholder "cloudformation deploy" (actual needs --stack-name, --template-file, etc.)
+        DeployTarget::Aws => ("aws", vec!["cloudformation", "deploy"]),
+        // Wrangler: "wrangler deploy" (formerly "wrangler publish" in v2, v3 uses "deploy")
+        DeployTarget::Cloudflare => ("wrangler", vec!["deploy"]),
+        // Gcloud: placeholder "app deploy" (actual needs --project, app.yaml, etc.)
+        DeployTarget::Gcp => ("gcloud", vec!["app", "deploy"]),
     };
     let summary = format!("{} {}", tool, args.join(" "));
 
