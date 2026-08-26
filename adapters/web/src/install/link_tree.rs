@@ -186,6 +186,30 @@ pub fn backing_link_file(
     profile: Option<&MaterializationProfile>,
     reflink_enabled: bool,
 ) -> MgResult<()> {
+    // Parent dir tạo trước — cả hardlink lẫn reflink đều cần
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            MgError::Other(format!(
+                "failed to create parent '{}' for '{}': {}",
+                parent.display(),
+                target.display(),
+                err
+            ))
+        })?;
+    }
+
+    // HARDLINK-FIRST (same volume): 0 byte vật lý mới, không COW overhead như reflink.
+    // Giả định an toàn: nội dung package BẤT BIẾN sau install (patch/lifecycle edit
+    // phải qua cơ chế copy riêng). pnpm dùng đúng mô hình này.
+    // (HARDLINK-FIRST: zero new bytes, no COW overhead; assumes installed package
+    // contents stay immutable — same model pnpm uses.)
+    if std::fs::hard_link(source, target).is_ok() {
+        if let Some(profile) = profile {
+            profile.record_hardlink();
+        }
+        return Ok(());
+    }
+
     if reflink_enabled {
         match reflink_clone(source, target) {
             Ok(()) => {
