@@ -3,7 +3,7 @@
 use mgc_types::MgResult;
 
 use mgc_exec::run::{run as mgc_run, ExecOptions};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum DeployTarget {
@@ -26,7 +26,7 @@ pub async fn deploy(target: DeployTarget, dry_run: bool) -> MgResult<String> {
     }
 
     let opts = ExecOptions {
-        cwd: std::env::current_dir().ok().map(PathBuf::from),
+        cwd: std::env::current_dir().ok(),
         ..Default::default()
     };
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
