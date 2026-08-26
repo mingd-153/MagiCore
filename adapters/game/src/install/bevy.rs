@@ -1,5 +1,6 @@
 //! Bevy dependency installation via cargo orchestrate.
 
+use mgc_exec::run::{run as mgc_run, ExecOptions};
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
@@ -12,28 +13,59 @@ pub async fn install_dependencies(project_root: &Path) -> MgResult<(Vec<String>,
         return Err(MgError::Other("Cargo.toml not found".into()));
     }
 
-    // Stub: actual implementation needs mgc-exec with cargo allowlist
-    // Command: cargo fetch --manifest-path <path>
-    // Result: parse Cargo.lock for installed packages
+    // Orchestrate thật qua mgc-exec (allowlist cargo, audit log, cwd = project)
+    let opts = ExecOptions {
+        cwd: Some(project_root.to_path_buf()),
+        ..Default::default()
+    };
+    let report = mgc_run("cargo", &["fetch".to_string()], &opts)?;
+    if report.exit_code != 0 {
+        return Err(MgError::Other(format!(
+            "cargo fetch exited with {}: {}",
+            report.exit_code,
+            report.stderr_tail.trim()
+        )));
+    }
 
-    let packages = vec!["bevy@0.14.0".to_string()]; // Stub
-    let bytes = 0; // Stub - would parse cargo output
-    let verified = true; // Cargo.lock ensures integrity
+    // Đếm packages từ Cargo.lock (nếu có) — fail-open về 0
+    let lock = std::fs::read_to_string(project_root.join("Cargo.lock")).unwrap_or_default();
+    let packages: Vec<String> = lock
+        .lines()
+        .filter_map(|l| l.strip_prefix("name = "))
+        .map(|n| n.trim_matches('"').to_string())
+        .collect();
 
-    Ok((packages, bytes, verified))
+    let verified = project_root.join("Cargo.lock").exists();
+    Ok((packages, report.duration_ms as u64, verified))
 }
 
 /// Add Bevy dependency via `cargo add`
 pub async fn add_dependency(
-    _project_root: &Path,
-    _name: &str,
-    _version: Option<&str>,
-    _dev: bool,
+    project_root: &Path,
+    name: &str,
+    version: Option<&str>,
+    dev: bool,
 ) -> MgResult<()> {
-    // Stub: mgc-exec cargo add
-    // cargo add <name>[@version] [--dev]
-    // Then: cargo fetch
-
+    let spec = match version {
+        Some(v) => format!("{name}@{v}"),
+        None => name.to_string(),
+    };
+    let mut args: Vec<String> = vec!["add".into(), spec];
+    if dev {
+        args.push("--dev".into());
+    }
+    let opts = ExecOptions {
+        cwd: Some(project_root.to_path_buf()),
+        ..Default::default()
+    };
+    let report = mgc_run("cargo", &args, &opts)?;
+    if report.exit_code != 0 {
+        return Err(MgError::Other(format!(
+            "cargo add exited with {}: {}",
+            report.exit_code,
+            report.stderr_tail.trim()
+        )));
+    }
     Ok(())
 }
 
@@ -49,6 +81,8 @@ mod tests {
     #[tokio::test]
     async fn test_install_bevy() {
         let tmp = tmp();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
         std::fs::write(
             tmp.path().join("Cargo.toml"),
             "[package]\nname=\"game\"\nversion=\"0.1.0\"\n",
