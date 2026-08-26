@@ -381,20 +381,114 @@ impl RegistryStore {
             pkg.versions = versions;
             Ok(Some(pkg))
         } else if let Some(upstream) = &self.upstream {
-            // ITEM 4: miss → fetch upstream → cache local (private store giữ public mirror)
+            // ITEM 4: miss → fetch upstream → cache local (private store giữ public mirror).
+            // Packument thật của npmjs có version entry dị dạng (author/repository dạng
+            // string, field thiếu...) — parse PER-VERSION, skip bản lỗi + log, không bỏ
+            // cả package như trước (nguyên nhân 404 "có sẵn" trên upstream mirror).
+            // (Per-version tolerant parse: skip unparsable entries with a warning
+            // instead of silently dropping the whole packument.)
             match upstream.fetch_json(name).await {
-                Ok(Some(json)) => match serde_json::from_value::<crate::model::Package>(json) {
+                Ok(Some(json)) => match Self::package_from_upstream_json(&json) {
                     Ok(pkg) => {
                         let _ = self.put_package(&pkg).await;
                         Ok(Some(pkg))
                     }
-                    Err(_) => Ok(None),
+                    Err(e) => {
+                        eprintln!("[registry] upstream packument unusable for {name}: {e}");
+                        Ok(None)
+                    }
                 },
-                _ => Ok(None),
+                other => {
+                    if let Err(e) = &other {
+                        eprintln!("[registry] upstream fetch failed for {name}: {e}");
+                    }
+                    Ok(None)
+                }
             }
         } else {
             Ok(None)
         }
+    }
+
+    /// Chuyển packument JSON (shape npmjs) → Package: parse từng version, skip lỗi.
+    /// (Convert an npmjs-shaped packument into a Package, skipping bad version entries.)
+    fn package_from_upstream_json(
+        json: &serde_json::Value,
+    ) -> std::result::Result<crate::model::Package, String> {
+        use crate::model::PackageVersion;
+
+        let name = json
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'name'".to_string())?
+            .to_string();
+
+        // Các field mà model đòi string — npmjs thả được bool/map/object.
+        // Không phải string/null → ép Null trước khi parse (fail-open từng field).
+        const STRING_FIELDS: &[&str] = &[
+            "description", "readme", "license", "main", "module", "types",
+            "_id", "_rev", "homepage",
+        ];
+
+        let mut versions = std::collections::HashMap::new();
+        if let Some(map) = json.get("versions").and_then(|v| v.as_object()) {
+            for (ver, entry) in map {
+                let mut entry = entry.clone();
+                if let Some(obj) = entry.as_object_mut() {
+                    for key in STRING_FIELDS {
+                        if let Some(v) = obj.get(*key) {
+                            if !v.is_string() && !v.is_null() {
+                                obj.insert(key.to_string(), serde_json::Value::Null);
+                            }
+                        }
+                    }
+                    // keywords phải là array
+                    if let Some(v) = obj.get("keywords") {
+                        if !v.is_array() && !v.is_null() {
+                            obj.insert("keywords".to_string(), serde_json::Value::Null);
+                        }
+                    }
+                }
+                match serde_json::from_value::<PackageVersion>(entry) {
+                    Ok(pv) => {
+                        versions.insert(ver.clone(), pv);
+                    }
+                    Err(e) => {
+                        eprintln!("[registry] skip unparsable version {name}@{ver}: {e}");
+                    }
+                }
+            }
+        }
+        if versions.is_empty() {
+            return Err("no parsable versions".to_string());
+        }
+
+        let dist_tags = json
+            .get("dist-tags")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let time = json
+            .get("time")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let maintainers = json
+            .get("maintainers")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let description = json
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        Ok(crate::model::Package {
+            name,
+            description,
+            versions,
+            dist_tags,
+            maintainers,
+            time,
+            private: false,
+        })
     }
 
     pub async fn get_package_versions(

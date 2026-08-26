@@ -9,25 +9,71 @@ fn de_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Erro
 where
     D: serde::Deserializer<'de>,
 {
-    struct OptStr;
-    impl<'de> serde::Deserialize<'de> for OptStr {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            #[derive(serde::Deserialize)]
-            #[serde(untagged)]
-            #[allow(dead_code)]
-            enum V {
-                S(String),
-                B(bool),
-            }
-            match V::deserialize(deserializer)? {
-                V::S(_) | V::B(_) => Ok(OptStr),
-            }
-        }
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    #[allow(dead_code)] // B chỉ dùng để phân biệt untagged — payload không đọc
+    enum V {
+        S(String),
+        B(bool),
     }
-    Ok(Option::<OptStr>::deserialize(deserializer)?.map(|_| String::new()))
+    // String → giữ nguyên; bool (vd `"main": false`) → None
+    let v = Option::<V>::deserialize(deserializer)?;
+    Ok(match v {
+        Some(V::S(s)) => Some(s),
+        Some(V::B(_)) | None => None,
+    })
+}
+
+/// npmjs thả author/repository/bugs dạng string HOẶC object — chấp nhận cả hai,
+/// sai kiểu thì bỏ qua field (fail-open có kiểm soát, không giết cả packument).
+// (npmjs emits these as string OR object; accept both, drop on mismatch.)
+fn de_author<'de, D>(deserializer: D) -> Result<Option<Author>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(v.and_then(|v| match v {
+        serde_json::Value::String(s) => {
+            // Chuẩn npm: "Name <email> (url)" — tách từng phần, thiếu thì bỏ qua
+            let name = s.split('<').next().unwrap_or(&s).trim().to_string();
+            let email = s
+                .split('<')
+                .nth(1)
+                .and_then(|rest| rest.split('>').next())
+                .map(str::to_string);
+            let url = s
+                .split('(')
+                .nth(1)
+                .and_then(|rest| rest.split(')').next())
+                .map(str::to_string);
+            Some(Author { name, email, url })
+        }
+        other => serde_json::from_value(other).ok(),
+    }))
+}
+
+fn de_repository<'de, D>(deserializer: D) -> Result<Option<Repository>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(v.and_then(|v| match v {
+        serde_json::Value::String(s) => {
+            Some(Repository { r#type: "git".into(), url: s, directory: None })
+        }
+        other => serde_json::from_value(other).ok(),
+    }))
+}
+
+fn de_bugs<'de, D>(deserializer: D) -> Result<Option<Bugs>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(v.and_then(|v| match v {
+        serde_json::Value::String(s) => Some(Bugs { url: s, email: None }),
+        other => serde_json::from_value(other).ok(),
+    }))
 }
 
 /// Package metadata in registry
@@ -60,8 +106,11 @@ pub struct PackageVersion {
     pub optional_dependencies: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scripts: Option<HashMap<String, String>>,
+    #[serde(default, deserialize_with = "de_optional_string")]
     pub main: Option<String>,
+    #[serde(default, deserialize_with = "de_optional_string")]
     pub module: Option<String>,
+    #[serde(default, deserialize_with = "de_optional_string")]
     pub types: Option<String>,
     pub exports: Option<serde_json::Value>,
     pub publish_config: Option<PublishConfig>,
@@ -69,8 +118,11 @@ pub struct PackageVersion {
     pub deprecated: Option<String>,
     pub license: Option<String>,
     pub keywords: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "de_author")]
     pub author: Option<Author>,
+    #[serde(default, deserialize_with = "de_repository")]
     pub repository: Option<Repository>,
+    #[serde(default, deserialize_with = "de_bugs")]
     pub bugs: Option<Bugs>,
     pub homepage: Option<String>,
     pub readme: Option<String>,

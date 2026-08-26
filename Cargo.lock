@@ -2752,6 +2752,7 @@ dependencies = [
  "mgc-oci",
  "mgc-store",
  "mgc-types",
+ "mockito",
  "notify",
  "object_store",
  "reqwest",

@@ -32,6 +32,7 @@
 | 📦 **CAS Reflink Store**     | Content-addressed store with OS reflinks/hardlinks for zero-copy installs       |
 | 🔀 **Monorepo Catalogs**     | PNPM-compatible `catalog:` protocol for centralized version management          |
 | 🔁 **Cross-PM Migration**    | Import npm/pnpm/yarn/bun lockfiles into signed `mgc.lock` — `mgc import`        |
+| ⚡ **Fast cold install**      | 0.94s vs npm 3.10s / pnpm 3.95s (local-registry bench, M2) — see `benchmarks/install` |
 | 🤖 **Native MCP Server**     | `mgc mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
 | 🩺 **Smart Doctor**          | `mgc doctor --fix` auto-diagnoses and repairs environment issues                 |
 | 🗄️ **Embedded Registry**     | `mgc-registry-server` — host your own private package registry                   |
