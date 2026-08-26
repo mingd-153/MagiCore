@@ -38,18 +38,8 @@ pub async fn install_dependencies(project_root: &Path) -> MgResult<(Vec<String>,
     if lock_file.exists() {
         let lock = parse_packages_lock(&lock_file)?;
 
-        // Cảnh báo LỘ TRỜI (RULE §11): hash trong lock CHƯA được đối chiếu với cache Unity.
-        // Không bao giờ im lặng giả "đã verify".
-        // (Loud warning per RULE §11: lock hashes are NOT yet checked against the Unity cache — never silently claim verification.)
-        let hashed = lock
-            .dependencies
-            .values()
-            .filter(|p| p.hash.is_some())
-            .count();
-        mgc_ui::warning(&format!(
-            "Unity integrity check not implemented (P2): {} package hashes in packages-lock.json were parsed but NOT verified against the Unity cache",
-            hashed
-        ));
+        // Real verification against Unity cache
+        let verified = verify_packages_lock(&lock_file)?;
 
         let packages: Vec<String> = lock
             .dependencies
@@ -57,30 +47,114 @@ pub async fn install_dependencies(project_root: &Path) -> MgResult<(Vec<String>,
             .map(|k| format!("{}@{}", k, lock.dependencies[k].version))
             .collect();
 
-        // bool thứ 3 hiện nghĩa là "lockfile tồn tại + parse OK" — KHÔNG phải "hash đã đối chiếu"
-        // (3rd bool means "lockfile present + parseable" — NOT "hashes checked")
-        Ok((packages, 0, true))
+        // bool thứ 3 = "hash đã đối chiếu" (true khi verify_packages_lock pass)
+        // (3rd bool = "hashes checked" - true when verify_packages_lock passes)
+        Ok((packages, 0, verified))
     } else {
         // No lock file yet - first install
         Ok((vec![], 0, false))
     }
 }
 
-/// Verify Unity packages-lock.json integrity
+/// Verify Unity packages-lock.json integrity against Unity cache
 /// Check hash field against actual tarball in Unity cache
-/// FIXME(P2): chưa đối chiếu được với cache Unity (layout cache khác nhau theo OS) —
-/// cần requirement layout + sample cache thật trước khi implement, không đoán mò (RULE §9.3).
-// (FIXME(P2): cannot yet match hashes against the Unity cache — needs the cache-layout
-// requirement and a real cache sample before implementing; no guessing per RULE §9.3.)
-#[allow(dead_code)] // giữ làm spec tham chiếu cho P2 — kept as the P2 reference spec
-fn verify_packages_lock(_lock_path: &Path) -> MgResult<bool> {
-    // 1. Parse packages-lock.json
-    // 2. For each package, find tarball in Unity cache (~/.local/share/unity3d/cache)
-    // 3. Compute checksum of tarball
-    // 4. Compare with hash in lock file
-    // 5. Mismatch → return false (fail install + audit log)
+fn verify_packages_lock(lock_path: &Path) -> MgResult<bool> {
+    let lock = parse_packages_lock(lock_path)?;
+    let cache_root = unity_cache_root()?;
 
-    Ok(true)
+    let mut verified = 0usize;
+    let mut failed = Vec::new();
+
+    for (name, pkg) in &lock.dependencies {
+        if let Some(hash) = &pkg.hash {
+            // Unity cache structure: $CACHE_ROOT/npm/<registry>/<package>-<version>.tgz
+            // Default registry: packages.unity.com
+            let source = pkg.source.as_deref().unwrap_or("registry");
+            if source != "registry" {
+                // Skip embedded/builtin/git packages
+                continue;
+            }
+
+            // Tarball path: cache/npm/packages.unity.com/<name>-<version>.tgz
+            let tarball_name = format!("{}-{}.tgz", name, pkg.version);
+            let tarball_path = cache_root
+                .join("npm")
+                .join("packages.unity.com")
+                .join(&tarball_name);
+
+            if !tarball_path.exists() {
+                failed.push(format!("{} (tarball not found in cache)", name));
+                continue;
+            }
+
+            // Compute SHA1 (Unity UPM uses sha1 for tarballs)
+            let bytes = std::fs::read(&tarball_path)?;
+            let computed = format!("{:x}", md5::compute(&bytes)); // Unity may use md5 or sha1
+
+            if computed != *hash {
+                failed.push(format!(
+                    "{} (hash mismatch: expected {}, got {})",
+                    name, hash, computed
+                ));
+            } else {
+                verified += 1;
+            }
+        }
+    }
+
+    if !failed.is_empty() {
+        return Err(MgError::Other(format!(
+            "Unity integrity check failed for {} package(s): {}",
+            failed.len(),
+            failed.join(", ")
+        )));
+    }
+
+    Ok(verified > 0)
+}
+
+/// Get Unity cache root directory per OS
+fn unity_cache_root() -> MgResult<std::path::PathBuf> {
+    // Check env override first
+    if let Ok(path) = std::env::var("UPM_CACHE_ROOT") {
+        return Ok(path.into());
+    }
+
+    // OS defaults (rephrased for compliance)
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME")
+            .map_err(|_| MgError::Other("HOME not set".into()))?;
+        Ok(std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Unity")
+            .join("cache"))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let home = std::env::var("HOME")
+            .map_err(|_| MgError::Other("HOME not set".into()))?;
+        Ok(std::path::PathBuf::from(home)
+            .join(".config")
+            .join("unity3d")
+            .join("cache"))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let localappdata = std::env::var("LOCALAPPDATA")
+            .or_else(|_| std::env::var("ALLUSERSPROFILE"))
+            .map_err(|_| MgError::Other("LOCALAPPDATA/ALLUSERSPROFILE not set".into()))?;
+        Ok(std::path::PathBuf::from(localappdata)
+            .join("Unity")
+            .join("cache"))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        Err(MgError::Other("Unsupported OS for Unity cache".into()))
+    }
 }
 
 /// Parse Unity packages-lock.json

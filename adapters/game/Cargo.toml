@@ -31,6 +31,9 @@ toml = { workspace = true }
 # Utils
 dirs.workspace = true
 
+# Crypto (Unity checksum)
+md5 = "0.7"
+
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
