@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Trust command integration tests
 //! Test tích hợp lệnh trust
 

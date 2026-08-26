@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="MagiCore Logo" width="full" />
+  <img src="assets/logo-full.svg" alt="MagiCore Logo" width="full" />
   <h1>MagiCore</h1>
   <p><strong>Magical Core Management for the AI-Agent Era</strong></p>
   <p>

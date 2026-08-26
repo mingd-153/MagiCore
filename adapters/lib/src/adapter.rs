@@ -114,23 +114,17 @@ impl PackageAdapter for LibAdapter {
         project_root: &Path,
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        if let Some(web) = &self.web {
-            return web.install(graph, project_root, opts).await;
-        }
-        match self.language {
-            LibLanguage::Rust => {
-                exec_tool(project_root, "cargo", &["fetch".to_string()])?;
-            }
-            LibLanguage::Python => {
-                exec_tool(
-                    project_root,
-                    "pip",
-                    &["install".to_string(), "-e".to_string(), ".".to_string()],
-                )?;
-            }
-            LibLanguage::Ts => unreachable!("ts handled by web delegate"),
-        }
-        Ok(InstallSummary::default())
+        // Use new install pipeline (install/mod.rs)
+        // Dùng install pipeline mới (install/mod.rs)
+        crate::install::run_install(
+            self.language,
+            self.web.as_ref(),
+            graph,
+            project_root,
+            opts,
+            None, // TODO: pass ContentStore when available
+        )
+        .await
     }
 
     async fn add(

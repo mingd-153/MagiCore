@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Shared trust test fixtures.
 //! Fixture chung cho test trust.
 

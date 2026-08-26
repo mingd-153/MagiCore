@@ -468,6 +468,37 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
     Ok(ResolvedGraph { packages })
 }
 
+/// T3.5: Verify lockfile signature before install (soft fail on unsigned)
+/// T3.5: Verify chữ ký lockfile trước install (soft fail nếu chưa ký)
+fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
+    let lockfile_path = project_root.join("mgc.lock");
+    if !lockfile_path.exists() {
+        return Ok(());
+    }
+
+    // T3.6: Enforce policy in CI environment
+    crate::commands::trust::policy::auto_enforce_in_ci(&lockfile_path)?;
+
+    let status = mgc_lockfile::verify_lockfile(&lockfile_path)?;
+
+    match status {
+        mgc_lockfile::VerificationStatus::Valid => {
+            mgc_ui::success("✓ Lockfile signature valid");
+        }
+        mgc_lockfile::VerificationStatus::Unsigned => {
+            mgc_ui::warning("⚠ Lockfile not signed — run 'mgc trust sign' to sign it");
+        }
+        mgc_lockfile::VerificationStatus::Tampered(msg) => {
+            return Err(anyhow::anyhow!("Lockfile tampered: {}", msg));
+        }
+        mgc_lockfile::VerificationStatus::InvalidSignature(msg) => {
+            return Err(anyhow::anyhow!("Invalid signature: {}", msg));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -681,35 +712,4 @@ mode = "single"
 
         assert!(discover_workspace_projects(dir.path()).unwrap().is_none());
     }
-}
-
-/// T3.5: Verify lockfile signature before install (soft fail on unsigned)
-/// T3.5: Verify chữ ký lockfile trước install (soft fail nếu chưa ký)
-fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
-    let lockfile_path = project_root.join("mgc.lock");
-    if !lockfile_path.exists() {
-        return Ok(());
-    }
-
-    // T3.6: Enforce policy in CI environment
-    crate::commands::trust::policy::auto_enforce_in_ci(&lockfile_path)?;
-
-    let status = mgc_lockfile::verify_lockfile(&lockfile_path)?;
-
-    match status {
-        mgc_lockfile::VerificationStatus::Valid => {
-            mgc_ui::success("✓ Lockfile signature valid");
-        }
-        mgc_lockfile::VerificationStatus::Unsigned => {
-            mgc_ui::warning("⚠ Lockfile not signed — run 'mgc trust sign' to sign it");
-        }
-        mgc_lockfile::VerificationStatus::Tampered(msg) => {
-            return Err(anyhow::anyhow!("Lockfile tampered: {}", msg));
-        }
-        mgc_lockfile::VerificationStatus::InvalidSignature(msg) => {
-            return Err(anyhow::anyhow!("Invalid signature: {}", msg));
-        }
-    }
-
-    Ok(())
 }

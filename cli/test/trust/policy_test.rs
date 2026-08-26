@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Trust policy enforcement tests
 //! Test thực thi policy trust
 

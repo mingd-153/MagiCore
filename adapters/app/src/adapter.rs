@@ -42,15 +42,11 @@ impl PackageAdapter for AppAdapter {
     }
 
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
-        let name = project_root
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "app".to_string());
-        Ok(Manifest::new(&name, Ecosystem::App))
+        crate::manifest::parse_manifest(self.language, project_root)
     }
 
-    async fn write_manifest(&self, _project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-        Ok(())
+    async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
+        crate::manifest::write_manifest(self.language, project_root, manifest)
     }
 
     async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
@@ -63,11 +59,12 @@ impl PackageAdapter for AppAdapter {
 
     async fn install(
         &self,
-        _graph: &ResolvedGraph,
-        _project_root: &Path,
-        _opts: InstallOptions,
+        graph: &ResolvedGraph,
+        project_root: &Path,
+        opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        Ok(InstallSummary::default())
+        // Use new install pipeline
+        crate::install::run_install(self.language, graph, project_root, opts, None).await
     }
 
     async fn add(

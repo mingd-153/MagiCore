@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! mgc-lib-adapter — library ecosystem adapter for MagiCore.
 //! Lib core hỗ trợ TypeScript/Rust/Python qua module rõ trách nhiệm.
 
@@ -6,6 +7,11 @@ mod language;
 mod manifest;
 mod sbom;
 mod tooling;
+
+pub mod audit;
+pub mod cache;
+pub mod install;
+pub mod native;
 
 pub use adapter::{adapter_for, adapter_for_with_chain, LibAdapter};
 pub use sbom::generate_sbom;

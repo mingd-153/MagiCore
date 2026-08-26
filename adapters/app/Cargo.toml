@@ -16,6 +16,8 @@ mgc-sbom = { workspace = true }
 mgc-cache = { workspace = true }
 mgc-config = { workspace = true }
 mgc-adapter-base = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-store = { workspace = true }
 
 # Async
 async-trait.workspace = true
@@ -24,11 +26,25 @@ tokio.workspace = true
 # Serialization
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Crypto
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# Utilities
+dirs = { workspace = true }
+which = "6.0"
+reqwest = { version = "0.12", features = ["json"] }
+mgc-lib-adapter = { path = "../lib" }
 
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [[bench]]
 name = "perf_bench"
