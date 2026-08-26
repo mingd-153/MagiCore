@@ -31,6 +31,7 @@
 | 🔐 **Signed Lockfiles**      | Ed25519 cryptographic signatures for tamper detection (NEW!)                    |
 | 📦 **CAS Reflink Store**     | Content-addressed store with OS reflinks/hardlinks for zero-copy installs       |
 | 🔀 **Monorepo Catalogs**     | PNPM-compatible `catalog:` protocol for centralized version management          |
+| 🔁 **Cross-PM Migration**    | Import npm/pnpm/yarn/bun lockfiles into signed `mgc.lock` — `mgc import`        |
 | 🤖 **Native MCP Server**     | `mgc mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
 | 🩺 **Smart Doctor**          | `mgc doctor --fix` auto-diagnoses and repairs environment issues                 |
 | 🗄️ **Embedded Registry**     | `mgc-registry-server` — host your own private package registry                   |
@@ -160,7 +161,7 @@ MCP tools exposed: `mgc_install`, `mgc_add`, `mgc_audit`, `mgc_workspace_info`
 ```
 MagiCore/
 ├── cli/                    # mgc binary — CLI commands and dispatch engine
-├── core/crates/            # 18 foundational Rust crates (store, resolver, fetcher…)
+├── core/crates/            # 21 foundational Rust crates (store, resolver, fetcher…)
 ├── adapters/               # 9 ecosystem adapters (web, ai, cloud, cicd, game, iot, app, lib, hardware)
 ├── deploy/                 # Docker Compose + Nginx TLS reverse proxy configs
 ├── packaging/              # Homebrew formula + Scoop manifest
@@ -252,7 +253,6 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 - ❌ Pruned install optimization (lockfile-based incremental installs)
 - ❌ `mgc why` command (dependency explanation)
 - ❌ Lockfile version compatibility checks
-- ❌ ~80% of test suite (requires v2 schema rewrite)
 
 These features will be **restored in V1.0.1 hotfix (Week 7)** — estimated 1 week from V1.0.0 release.
 
@@ -260,6 +260,9 @@ These features will be **restored in V1.0.1 hotfix (Week 7)** — estimated 1 we
 - Workspace projects: Each package maintains its own lockfile (no root merge)
 - Install optimization: Full resolution on every install (slower but correct)
 - Dependency explanation: Manual inspection of `mgc.lock`
+
+> ✅ **Restored since:** cross-PM lockfile import (`mgc import`), lockfile 3-way merge,
+> unified TOML v2 lockfile writer, and a full black-box E2E suite (`tests/e2e`).
 
 See [docs/specs/magiCoreChangeLog.md](docs/specs/magiCoreChangeLog.md) for migration details.
 

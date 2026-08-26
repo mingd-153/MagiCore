@@ -41,47 +41,9 @@ async fn audit_python_without_pip_audit_returns_empty_report() {
     assert_eq!(report.vulnerability_count, 0);
 }
 
-// Note: The following tests require cargo-audit/pip-audit to be installed
-// They are commented out by default
-
-/*
-#[tokio::test]
-#[ignore]
-async fn audit_rust_clean_project() {
-    let dir = tmp("rust-clean");
-    std::fs::write(
-        dir.join("Cargo.toml"),
-        "[package]\nname = \"clean\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n",
-    )
-    .unwrap();
-
-    // Generate Cargo.lock
-    std::process::Command::new("cargo")
-        .args(&["generate-lockfile"])
-        .current_dir(&dir)
-        .output()
-        .unwrap();
-
-    let report = audit_rust(&dir).await.unwrap();
-    // serde should be clean
-    assert_eq!(report.vulnerability_count, 0);
-}
-
-#[tokio::test]
-#[ignore]
-async fn audit_python_clean_project() {
-    let dir = tmp("py-clean");
-    std::fs::write(
-        dir.join("pyproject.toml"),
-        "[project]\nname = \"clean\"\nversion = \"0.1.0\"\ndependencies = [\"certifi>=2024.0.0\"]\n",
-    )
-    .unwrap();
-
-    let report = audit_python(&dir).await.unwrap();
-    // Recent certifi should be clean
-    assert_eq!(report.vulnerability_count, 0);
-}
-*/
+// NOTE: audit với cargo-audit/pip-audit cài thật là manual QA (cần tool hệ thống,
+// kết quả phụ thuộc advisory DB) — không đưa vào suite hermetic.
+// (Real-tool audits are manual QA: they need system tools + live advisory DBs.)
 
 #[test]
 fn audit_rust_with_invalid_project_dir() {

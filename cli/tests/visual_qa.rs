@@ -162,13 +162,13 @@ fn run_framework_test(framework: &str, port: u16) {
 }
 
 #[test]
-#[ignore]
+#[ignore = "manual visual QA: needs node+npm install, dev server and Playwright"]
 fn visual_qa_react_vite() {
     run_framework_test("react-vite", 4315);
 }
 
 #[test]
-#[ignore]
+#[ignore = "manual visual QA: needs node+npm install, dev server and Playwright"]
 fn visual_qa_vue_vite() {
     run_framework_test("vue-vite", 4316);
 }

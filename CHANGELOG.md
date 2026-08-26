@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Cross-PM lockfile import** (`mgc import`): migrate `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock` → signed `mgc.lock` v2. Shape-first version policy — new PM format bumps import without an mgc release (advisory warning only). Install auto-seeds from legacy lockfiles when the manifest matches.
+- **Lockfile 3-way merge** (`merge3`) restored on schema v2, including automatic git conflict-marker resolution (add/add same-version keeps, divergent versions fail closed).
+- **Canonical TOML lockfile writer** — all writers now emit one format; readers accept both new TOML and legacy JSON-flavoured files.
+- **Black-box E2E crate** `tests/e2e`: real-binary pipelines pack→publish→install and import→install against a local registry (fully hermetic).
+- **Hermetic native-client tests**: cargo sparse-index + PyPI JSON API covered via mockito (no network).
+
+### Planned (carried over)
+- Offline mode R1: pass `ResolveOptions { offline }` through `PackageAdapter::resolve`; R4: enforce no-network in offline mode (moved from `cli/src/commands/install.rs.TODO`).
+---
+
 ## [1.0.0] — 2026-08-21 🎉 PRODUCTION RELEASE
 
 ### 🎉 Highlights

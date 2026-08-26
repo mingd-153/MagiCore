@@ -4,6 +4,7 @@ members = [
     "adapters/*",
     "cli",
     "tools/*",
+    "tests/e2e",
 ]
 exclude = ["tools/core-web-lab", "tools/mgc-mcp"]
 resolver = "2"
@@ -103,6 +104,7 @@ parking_lot = "0.12"
 pretty_assertions = "1.4"
 tempfile = "3.12"
 criterion = { version = "0.5", features = ["async_tokio"] }
+mockito = "1"
 
 # Storage / files
 rusqlite = { version = "0.32", features = ["bundled"] }

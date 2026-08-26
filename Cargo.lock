@@ -2473,6 +2473,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mgc-e2e"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "mgc-exec"
 version = "1.0.0"
 dependencies = [
@@ -2622,6 +2631,7 @@ dependencies = [
  "mgc-types",
  "mgc-ui",
  "mgc-web-adapter",
+ "mockito",
  "pretty_assertions",
  "reqwest",
  "semver",

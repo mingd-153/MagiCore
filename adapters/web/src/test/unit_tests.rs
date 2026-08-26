@@ -121,7 +121,7 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
         .exists());
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
-    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
     assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages.len(), 1);
     assert_eq!(parsed.packages[0].name, "tailwindcss");
@@ -196,7 +196,7 @@ async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
     assert_eq!(dep.range.as_str(), "*");
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
-    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
     assert!(parsed
         .packages
         .iter()
@@ -1395,7 +1395,7 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
         .exists());
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
-    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
     assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages.len(), 2);
 
@@ -1708,7 +1708,7 @@ async fn test_install_failure_does_not_materialize_partial_node_modules() {
     assert!(!dir.path().join("node_modules/react").exists());
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
-    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
     assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages.len(), 2);
 }
@@ -1773,7 +1773,7 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
     );
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
-    let parsed: Lockfile = serde_json::from_str(&lock).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
     assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages[0].version, "4.4.3");
 }

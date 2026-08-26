@@ -61,8 +61,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --workspace --locked --exclude mgc -- --test-threads=4
-      - name: Seed registry + cargo test (mgc, skip benchmarks)
+        run: cargo test --workspace --locked --exclude mgc --exclude mgc-e2e -- --test-threads=4
+      - name: Seed registry + cargo test (mgc + mgc-e2e, skip benchmarks)
         run: |
           ./target/debug/mgc-registry --host 127.0.0.1 --port 4315 --store-dir /tmp/mgc-reg-store >/tmp/mgc-reg.log 2>&1 &
           SRV=$!
@@ -97,7 +97,7 @@ jobs:
           printf 'APP_ENV=dev\nAPP_DEBUG=1\nAPP_SECRET=changeme\nAPP_NAME={{project_name}}\n' > /tmp/mgc-tpl/templates/web/backend/php/symfony/sources/.env
           MAGICORE_TEMPLATE_DIR=/tmp/mgc-tpl/templates MGC_NPM_REGISTRY=http://127.0.0.1:4315 cargo run -p mgc -- template publish-all
           mkdir -p /tmp/mgc-empty-cache
-          MGC_NPM_REGISTRY=http://127.0.0.1:4315 MGC_TEMPLATES_DIR=/tmp/mgc-empty-cache cargo test -p mgc --locked -- --test-threads=4 --skip bench_
+          MGC_NPM_REGISTRY=http://127.0.0.1:4315 MGC_TEMPLATES_DIR=/tmp/mgc-empty-cache cargo test -p mgc -p mgc-e2e --locked -- --test-threads=4 --skip bench_
 
   build:
     name: Build Release

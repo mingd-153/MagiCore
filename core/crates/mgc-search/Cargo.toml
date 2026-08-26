@@ -37,7 +37,7 @@ mgc-types = { path = "../mgc-types" }
 mgc-platform = { path = "../mgc-platform" }
 
 [dev-dependencies]
-mockito = "1"
+mockito.workspace = true
 tempfile = "3"
 
 [[test]]

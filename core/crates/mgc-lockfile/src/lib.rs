@@ -4,6 +4,7 @@
 //! Provides lockfile schema v2 with Ed25519 signatures for tamper detection.
 
 pub mod import;
+pub mod merge;
 pub mod migrate;
 pub mod parser;
 pub mod schema;
@@ -15,6 +16,7 @@ pub use import::{
     check_trust_downgrade_risk, detect_legacy_lockfiles, import_file, import_into_lockfile,
     LegacyLockfile,
 };
+pub use merge::{merge3, resolve_git_conflict_markers, MergeConflict};
 
 pub use migrate::{auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2};
 pub use parser::{load_and_verify_lockfile, load_lockfile, parse_lockfile};

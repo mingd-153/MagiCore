@@ -83,8 +83,14 @@ pub fn read_web_lockfile_checked(project_root: &Path) -> MgResult<Option<Lockfil
     let content = std::fs::read_to_string(&lock_path)
         .map_err(|e| MgError::Other(format!("Failed to read lockfile: {}", e)))?;
 
-    let lockfile: Lockfile = serde_json::from_str(&content)
-        .map_err(|e| MgError::Other(format!("Failed to parse lockfile: {}", e)))?;
+    // Dual-format reader: TOML chuẩn v2 (import/migrate ghi) trước, JSON-flavoured
+    // (add/install path cũ) fallback — cùng 1 kiểu Lockfile nên chuyển giá vô hình.
+    // (Dual-format: canonical v2 TOML first, legacy JSON-flavoured fallback.)
+    let lockfile: Lockfile = match mgc_lockfile::parse_lockfile(&content) {
+        Ok(lockfile) => lockfile,
+        Err(_) => serde_json::from_str(&content)
+            .map_err(|e| MgError::Other(format!("Failed to parse lockfile: {}", e)))?,
+    };
 
     maybe_warn_missing_lockfile_checksum(project_root, &lockfile);
     Ok(Some(lockfile))
@@ -125,7 +131,7 @@ pub fn write_web_lockfile_with_state(
         version: "2".to_string(),
         metadata: LockfileMetadata {
             generated_at: chrono::Utc::now().to_rfc3339(),
-            generator: "mgc/0.4.0".to_string(),
+            generator: format!("mgc/{}", env!("CARGO_PKG_VERSION")),
             lockfile_hash: String::new(),
             signer: None,
         },
@@ -143,7 +149,7 @@ pub fn write_web_lockfile_with_state(
 
     // Update metadata
     lockfile.metadata.generated_at = chrono::Utc::now().to_rfc3339();
-    lockfile.metadata.generator = "mgc/0.4.0".to_string();
+    lockfile.metadata.generator = format!("mgc/{}", env!("CARGO_PKG_VERSION"));
 
     // Update packages
     lockfile.packages = graph
@@ -174,11 +180,13 @@ pub fn write_web_lockfile_with_state(
         })
         .collect();
 
-    // Write lockfile
-    let json = serde_json::to_string_pretty(&lockfile)
-        .map_err(|e| MgError::Other(format!("JSON serialization failed: {}", e)))?;
+    // Write lockfile — CANONICAL TOML v2 (một format duy nhất cho mọi đường ghi;
+    // reader vẫn đọc được JSON-flavoured cũ từ các bản trước)
+    // (Write CANONICAL TOML v2 — single format across all writers)
+    let toml_content = mgc_lockfile::writer::serialize_lockfile(&lockfile)
+        .map_err(|e| MgError::Other(format!("TOML serialization failed: {}", e)))?;
 
-    std::fs::write(&lock_path, json.as_bytes())
+    std::fs::write(&lock_path, toml_content.as_bytes())
         .map_err(|e| MgError::Other(format!("Failed to write lockfile: {}", e)))?;
 
     Ok(())
