@@ -8,6 +8,7 @@ authors.workspace = true
 description = "CI/CD ecosystem adapter for MagiCore"
 
 [dependencies]
+mgc-exec = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { path = "../../core/crates/mgc-types" }
 mgc-crypto = { workspace = true }

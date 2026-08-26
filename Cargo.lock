@@ -2397,6 +2397,7 @@ dependencies = [
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
+ "mgc-exec",
  "mgc-lockfile",
  "mgc-sbom",
  "mgc-types",
