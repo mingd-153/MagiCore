@@ -3,7 +3,6 @@
 use mgc_types::MgResult;
 
 use mgc_exec::run::{run as mgc_run, ExecOptions};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum DeployTarget {
