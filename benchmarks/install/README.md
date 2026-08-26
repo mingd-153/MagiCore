@@ -16,11 +16,14 @@ scripts/benchmark-install.sh            # (runs_cold=2, runs_warm=3 mặc địn
 | `REGISTRY_MODE=local` ✅ chuẩn public | mọi tool trỏ vào `mgc-registry --upstream` local | So **tốc độ tool thuần** — không nhiễu mạng |
 | `REGISTRY_MODE=real` | bắn thẳng registry.npmjs.org | Thực tế người dùng cuối, nhưng stddev cao |
 
-## TODO (chưa public)
-- Multi-project shared-store scenario: phát hiện mgc đang COPY thay vì hardlink từ CAS
-  trên macOS (`node_modules` ×5 ≈ 5×dung lượng) → cần điều tra/fix link-mode trước khi đo,
-  nếu không số sẽ tự vạ miệng.
-- Cột bun.
+## Lưu ý đo đạc
+- **`du` KHÔNG dùng được** làm metric: nó mù với APFS clonefile (reflink của mgc)
+  và đếm trùng hardlink (pnpm) khi cộng nhiều thư mục. Metric chuẩn = **df-delta**
+  trên filesystem chứa toàn bộ footprint của tool (script đã làm sẵn).
+- Multi-project ×N: ⚠️ EXPERIMENTAL — npm qua registry local bị treo/không ổn định
+  (ECONNREFUSED/treo 120s), cần điều tra riêng trước khi công bố số scenario này.
+  Chạy không cần: bỏ MULTI_PROJECTS (mặc định 0).
+
 
 ## Phương pháp
 

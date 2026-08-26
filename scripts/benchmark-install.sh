@@ -246,50 +246,29 @@ total_disk_kb() {
   [[ -d "$WORK/$tool-multi-home" ]] && total=$((total + $(du -sk "$WORK/$tool-multi-home" | cut -f1)))
   echo "$total"
 }
+# Disk VẬT LÝ thật = df-delta quanh phase multi của từng tool
+# (du mù với APFS clone/hardlink — đếm sai cả mgc reflink lẫn pnpm hardlink)
+avail_kb() { df -k "$WORK" | awk 'NR==2{print $4}'; }
 DISK_MGC=0; DISK_NPM=0; DISK_PNPM=0
 for t in mgc npm pnpm; do
   ensure_registry
-  rm -rf "$FIXTURE/node_modules"
-  denv="$(tool_env "$t" "$WORK/$t-warm-home")"
-  if ! env $denv bash -c "cd '$FIXTURE' && $(install_cmd "$t")" >"$WORK/disk-$t.log" 2>&1; then
-    echo "[bench] !! disk-phase $t install failed:"
-    tail -3 "$WORK/disk-$t.log"
-  fi
-done
-# disk multi-project: cài lại p1..pN với home dùng chung rồi tính tổng
-if [[ "$MULTI" -gt 0 ]]; then
-  for t in mgc npm pnpm; do
+  rm -rf "$WORK/proj-$t" "$WORK/$t-multi-home"
+  local_before=$(avail_kb)
+  for i in $(seq 1 "$MULTI"); do
+    tproj="$WORK/proj-$t/p$i"
+    mkdir -p "$tproj"
+    cp "$FIXTURE/package.json" "$tproj/package.json"
+    env_str="$(tool_env "$t" "$local_home")"
     local_home="$WORK/$t-multi-home"
-    rm -rf "$WORK/proj-$t"
-    for i in $(seq 1 "$MULTI"); do
-      ensure_registry
-      tproj="$WORK/proj-$t/p$i"
-      mkdir -p "$tproj"
-      cp "$FIXTURE/package.json" "$tproj/package.json"
-      env_str="$(tool_env "$t" "$local_home")"
-      env $env_str bash -c "cd '$tproj' && $(install_cmd "$t")" >/dev/null 2>&1 || true
-    done
-    case "$t" in
-      mgc)  DISK_MGC="$(total_disk_kb "$t")";;
-      npm)  DISK_NPM="$(total_disk_kb "$t")";;
-      pnpm) DISK_PNPM="$(total_disk_kb "$t")";;
-    esac
+    env $env_str bash -c "cd '$tproj' && $(install_cmd "$t")" >/dev/null 2>&1 || true
   done
-else
-  for t in mgc npm pnpm; do
-    rm -rf "$FIXTURE/node_modules"
-    case "$t" in
-      mgc)  env HOME="$WORK/$t-warm-home" bash -c "cd '$FIXTURE' && $(install_cmd mgc)" >/dev/null 2>&1;;
-      npm)  env npm_config_cache="$WORK/npm-warm-home/cache" bash -c "cd '$FIXTURE' && $(install_cmd npm)" >/dev/null 2>&1;;
-      pnpm) env npm_config_cache="$WORK/pnpm-warm-home/cache" npm_config_store_dir="$WORK/pnpm-warm-home/store" bash -c "cd '$FIXTURE' && $(install_cmd pnpm)" >/dev/null 2>&1;;
-    esac
-    case "$t" in
-      mgc)  DISK_MGC="$(disk_node_modules "$FIXTURE")";;
-      npm)  DISK_NPM="$(disk_node_modules "$FIXTURE")";;
-      pnpm) DISK_PNPM="$(disk_node_modules "$FIXTURE")";;
-    esac
-  done
-fi
+  d=$(($(avail_kb) - local_before))
+  case "$t" in
+    mgc)  DISK_MGC=$((d < 0 ? -d : d));;
+    npm)  DISK_NPM=$((d < 0 ? -d : d));;
+    pnpm) DISK_PNPM=$((d < 0 ? -d : d));;
+  esac
+done
 
 # ---------------------------------------------------------------- report
 machine_line="$(sw_vers -productVersion 2>/dev/null) · $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m) · $(sysctl -n hw.ncpu) cores"
@@ -302,7 +281,7 @@ machine_line="$(sw_vers -productVersion 2>/dev/null) · $(sysctl -n machdep.cpu.
   [[ "$MULTI" -gt 0 ]] && echo "- Multi-project: ×$MULTI shared cache/store"
   echo "- mgc @ $(git -C "$ROOT" rev-parse --short HEAD) (release build)"
   echo
-  echo "| Tool | Cold mean (s) | ± | Warm mean (s) | ± | Total disk (KB) |"
+  echo "| Tool | Cold mean (s) | ± | Warm mean (s) | ± | Physical disk ×5 projects (KB) |"
   echo "|------|---------------|---|---------------|---|-----------------|"
   for t in mgc npm pnpm; do
     d="$(disk_val "$t")"
