@@ -24,9 +24,13 @@ pub async fn start_dev_server(engine: GameEngine, project_root: &Path) -> MgResu
 }
 
 /// Start Bevy dev server (cargo run)
+/// P1: Standard cargo run (full rebuild on change)
+/// P2 (A13 - deferred): Dynamic linking hot reload
+/// Requires: (1) Bevy dynamic_linking feature, (2) game compiled as dylib,
+///           (3) file watcher, (4) dylib reload API, (5) state preservation
+/// Rationale: cargo run sufficient for P1; hot reload is nice-to-have optimization,
+///            not security/correctness critical. Adds ~400-500 lines + platform complexity.
 async fn start_bevy_dev(project_root: &Path) -> MgResult<DevCommand> {
-    // Bevy: cargo run
-    // A13: future - dynamic linking (.dylib/.dll reload, keep runtime state)
 
     Ok(DevCommand {
         command: "cargo".to_string(),

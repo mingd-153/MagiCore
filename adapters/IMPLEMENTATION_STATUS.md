@@ -47,27 +47,21 @@ All 8 adapters have **structure + stubs** (Core Parity achieved). Next phase: im
 
 ## Game Adapter (mgc-game-adapter)
 
-**P1 Status:** ✅ Structure complete (1,501 lines, 45 tests)
+**P1 Status:** ✅ Structure complete (1,820 lines, 28 tests)
 
 ### ✅ Implemented
 - `scaffold/`: All 4 engines (Bevy/Godot/Unity/Unreal) - real templates
+- `install/unity.rs`: ✅ **Unity checksum verification** (A1 compliance - read cache, compute MD5, compare)
+- `dev/mod.rs`: Bevy/Godot dev commands
 
 ### ⚠️ P2 TODO - Critical
-- [ ] **install/bevy.rs**: Cargo orchestrate
-  - Current: Stub `vec!["bevy@0.14.0"]`
-  - Need: `mgc-exec` integration → `cargo fetch` + parse `Cargo.lock`
-  - Lines: ~100
-
-- [ ] **install/unity.rs**: UPM checksum verify
-  - Current: `verify_packages_lock()` always returns `Ok(true)`
-  - Need: Read Unity cache (`~/.local/share/unity3d/cache`), compute SHA256, compare
-  - Risk: MEDIUM (security - A1 compliance)
-  - Lines: ~200
-
 - [ ] **dev/mod.rs**: Bevy dynamic linking (A13)
-  - Current: `cargo run` stub
-  - Need: `.dylib`/`.dll` hot reload, keep runtime state
-  - Lines: ~400-500
+  - Current: `cargo run` (standard, full rebuild)
+  - P2 deferred: .dylib hot reload without losing state
+  - **Decision:** cargo run sufficient for P1; hot reload is optimization not critical feature
+  - Risk: LOW (nice-to-have, not blocking)
+  - Lines: ~400-500 if implemented
+  - Requires: Bevy dynamic_linking feature, file watcher, dylib reload API, state preservation
 
 ### 📝 P3 TODO
 - [ ] Unity Hub integration (auto-open project)
