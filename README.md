@@ -96,7 +96,7 @@ mgc install
 
 # Add a package
 mgc add zod
-mgc add -D vitest
+mgc add -D jest @types/jest  # Testing with Jest
 
 # Run development server
 mgc dev
