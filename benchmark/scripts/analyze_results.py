@@ -42,8 +42,9 @@ def calculate_stats(values: list) -> dict:
 
 def analyze_pm(runs: list) -> dict:
     """Analyze all runs for a single PM"""
-    cold_durations = [r["cold_install"]["duration_seconds"] for r in runs]
-    warm_durations = [r["warm_install"]["duration_seconds"] for r in runs]
+    # Convert string durations to float (bash script outputs strings)
+    cold_durations = [float(r["cold_install"]["duration_seconds"]) for r in runs]
+    warm_durations = [float(r["warm_install"]["duration_seconds"]) for r in runs]
     disk_usage = [r["cold_install"]["disk_mb"] for r in runs]
     
     return {

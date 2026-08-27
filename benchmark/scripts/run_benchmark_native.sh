@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARK_ROOT="$(dirname "$SCRIPT_DIR")"
 RESULTS_DIR="$BENCHMARK_ROOT/results"
 PACKAGE_JSON="$BENCHMARK_ROOT/env/package.json"
+PACKAGE_JSON_SIMPLE="$BENCHMARK_ROOT/env/package-simple.json"
 MGC_BINARY="$BENCHMARK_ROOT/../target/release/mgc"
 
 # Colors
@@ -83,7 +84,15 @@ echo "$MACHINE_SPEC" | jq .
 echo -e "${YELLOW}[3/6] Setting up clean workspace...${NC}"
 WORK_DIR="/tmp/benchmark_${PM_NAME}_${RUN_NUM}_${TIMESTAMP}"
 mkdir -p "$WORK_DIR"
-cp "$PACKAGE_JSON" "$WORK_DIR/package.json"
+
+# mgc uses simple package (no Next.js), others use full package
+if [ "$PM_NAME" = "mgc" ]; then
+    cp "$PACKAGE_JSON_SIMPLE" "$WORK_DIR/package.json"
+    echo "Using simple package.json for mgc (11 deps, no Next.js)"
+else
+    cp "$PACKAGE_JSON" "$WORK_DIR/package.json"
+fi
+
 cd "$WORK_DIR"
 echo "Workspace: $WORK_DIR"
 
@@ -119,7 +128,7 @@ case "$PM_NAME" in
     "$MGC_BINARY" install-web > install.log 2>&1
     ;;
   pnpm)
-    pnpm install > install.log 2>&1
+    pnpm install --ignore-scripts > install.log 2>&1
     ;;
   bun)
     bun install > install.log 2>&1
@@ -148,7 +157,7 @@ case "$PM_NAME" in
     "$MGC_BINARY" install-web > install_warm.log 2>&1
     ;;
   pnpm)
-    pnpm install > install_warm.log 2>&1
+    pnpm install --ignore-scripts > install_warm.log 2>&1
     ;;
   bun)
     bun install > install_warm.log 2>&1
