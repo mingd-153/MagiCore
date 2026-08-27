@@ -11,7 +11,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARK_ROOT="$(dirname "$SCRIPT_DIR")"
 RESULTS_DIR="$BENCHMARK_ROOT/results"
-PACKAGE_JSON="$BENCHMARK_ROOT/env/package.json"
+PACKAGE_JSON="$BENCHMARK_ROOT/env/package-no-vitest.json"  # WORKAROUND: vitest causes crash
 PACKAGE_JSON_SIMPLE="$BENCHMARK_ROOT/env/package-simple.json"
 MGC_BINARY="$BENCHMARK_ROOT/../target/release/mgc"
 
@@ -85,13 +85,10 @@ echo -e "${YELLOW}[3/6] Setting up clean workspace...${NC}"
 WORK_DIR="/tmp/benchmark_${PM_NAME}_${RUN_NUM}_${TIMESTAMP}"
 mkdir -p "$WORK_DIR"
 
-# mgc uses simple package (no Next.js), others use full package
-if [ "$PM_NAME" = "mgc" ]; then
-    cp "$PACKAGE_JSON_SIMPLE" "$WORK_DIR/package.json"
-    echo "Using simple package.json for mgc (11 deps, no Next.js)"
-else
-    cp "$PACKAGE_JSON" "$WORK_DIR/package.json"
-fi
+# G1 FIX APPLIED: mgc now handles Next.js deps (>=X.x <=Y.x wildcard ranges)
+# Using FULL 20-package set for apples-to-apples comparison
+cp "$PACKAGE_JSON" "$WORK_DIR/package.json"
+echo "Using full package.json (20 deps, includes Next.js)"
 
 cd "$WORK_DIR"
 echo "Workspace: $WORK_DIR"
