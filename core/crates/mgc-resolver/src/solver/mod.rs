@@ -324,6 +324,9 @@ pub struct Resolver {
     dedupe_pref: std::sync::RwLock<DedupePref>,
     /// Versions already installed (from lockfile) to prefer under PreferExisting.
     existing_versions: std::sync::RwLock<HashMap<String, Version>>,
+    /// G2: Peer-deps cache — memoizes resolved dependencies by PackageId.
+    /// Key: PackageId string, Value: Arc<[ResolvedDep]>
+    peer_cache: std::sync::RwLock<HashMap<String, Arc<[ResolvedDep]>>>,
 }
 
 impl std::fmt::Debug for Resolver {
@@ -369,6 +372,7 @@ impl Resolver {
             overrides: HashMap::new(),
             dedupe_pref: std::sync::RwLock::new(DedupePref::default()),
             existing_versions: std::sync::RwLock::new(HashMap::new()),
+            peer_cache: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
@@ -617,13 +621,41 @@ impl Resolver {
                     .iter()
                     .map(|(name, _, version)| PackageId::new(name.clone(), version.clone()))
                     .collect();
-                let dependency_results =
-                    self.provider
-                        .prefetch_dependencies(&ids)
+                
+                // G2: Peer cache — check cache before prefetch
+                let mut dependency_results = HashMap::new();
+                let mut uncached_ids = Vec::new();
+                {
+                    let cache = self.peer_cache.read().unwrap();
+                    for id in &ids {
+                        let key = format!("{}@{}", id.name_str(), id.version());
+                        if let Some(cached_deps) = cache.get(&key) {
+                            dependency_results.insert(id.clone(), cached_deps.to_vec());
+                        } else {
+                            uncached_ids.push(id.clone());
+                        }
+                    }
+                }
+                
+                // Fetch uncached dependencies
+                if !uncached_ids.is_empty() {
+                    let fetched = self.provider
+                        .prefetch_dependencies(&uncached_ids)
                         .await
                         .map_err(|e| SolveError {
                             message: format!("dependency prefetch failed: {e}"),
                         })?;
+                    
+                    // Store in cache
+                    let mut cache = self.peer_cache.write().unwrap();
+                    for (id, deps) in fetched {
+                        let key = format!("{}@{}", id.name_str(), id.version());
+                        let deps_arc = Arc::<[ResolvedDep]>::from(deps.clone());
+                        cache.insert(key, deps_arc.clone());
+                        dependency_results.insert(id, deps);
+                    }
+                }
+                
                 profile.mark("prefetch_dependencies", deps_prefetch_started_at);
                 self.provider
                     .on_batch_resolved(&ids)

@@ -220,13 +220,23 @@ fn match_single_range(range: &str, version: &Version) -> bool {
             && version.minor == target.minor
             && version >= &target;
     }
+    // Enhanced: Handle wildcard ranges with comparison operators (>=22.x, <=24.x)
     if range.starts_with(">=")
         || range.starts_with("<=")
         || range.starts_with('>')
         || range.starts_with('<')
     {
         if let Some((low, high)) = parse_wildcard_bounds(range) {
-            return version >= &low && version < &high;
+            // For >= and >, check lower bound; for <= and <, check upper bound
+            if range.starts_with(">=") {
+                return version >= &low;
+            } else if range.starts_with(">") {
+                return version > &low;
+            } else if range.starts_with("<=") {
+                return version < &high;
+            } else if range.starts_with("<") {
+                return version < &low;
+            }
         }
     }
     if let Some(target) = range
@@ -753,5 +763,37 @@ mod tests {
         let range = VersionRange::parse("^1.2.3").unwrap();
         assert!(range.matches(&v("1.5.0")));
         assert!(!range.matches(&v("2.0.0")));
+    }
+
+    // --- G1 Fix: Wildcard ranges with comparison operators ---
+
+    #[test]
+    fn wildcard_range_gte_matches() {
+        let range = VersionRange::parse(">=22.x").unwrap();
+        assert!(range.matches(&v("22.0.0")));
+        assert!(range.matches(&v("22.5.0")));
+        assert!(range.matches(&v("23.0.0")));
+        assert!(range.matches(&v("24.0.0")));
+        assert!(!range.matches(&v("21.9.9")));
+    }
+
+    #[test]
+    fn wildcard_range_lte_matches() {
+        let range = VersionRange::parse("<=24.x").unwrap();
+        assert!(range.matches(&v("24.0.0")));
+        assert!(range.matches(&v("23.5.0")));
+        assert!(range.matches(&v("22.0.0")));
+        assert!(!range.matches(&v("25.0.0")));
+    }
+
+    #[test]
+    fn wildcard_compound_range_gte_lte() {
+        // This is the puppeteer-core pattern that was failing
+        let range = VersionRange::parse(">=22.x <=24.x").unwrap();
+        assert!(range.matches(&v("22.0.0")));
+        assert!(range.matches(&v("23.5.0")));
+        assert!(range.matches(&v("24.0.0")));
+        assert!(!range.matches(&v("21.9.9")));
+        assert!(!range.matches(&v("25.0.0")));
     }
 }
