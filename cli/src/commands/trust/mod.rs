@@ -1,9 +1,12 @@
 //! Trust commands for lockfile signing and verification
 //! Lệnh trust cho ký và xác minh lockfile
 
+pub mod approve;
+pub mod deny;
 pub mod init;
 pub mod list;
 pub mod policy;
+pub mod prune;
 pub mod sign;
 pub mod verify;
 
@@ -39,6 +42,21 @@ pub enum TrustCmd {
 
     /// List keys — Liệt kê keys
     List,
+
+    /// Approve package lifecycle scripts — Cho phép lifecycle scripts của package
+    Approve {
+        /// Package name — Tên package
+        package: String,
+    },
+
+    /// Deny package lifecycle scripts — Từ chối lifecycle scripts của package
+    Deny {
+        /// Package name — Tên package
+        package: String,
+    },
+
+    /// Prune stale trust policies — Dọn policy cũ (package đã gỡ)
+    Prune,
 }
 
 /// Execute trust command — Thực thi lệnh trust
@@ -48,6 +66,9 @@ pub fn execute(cmd: TrustCmd) -> anyhow::Result<()> {
         TrustCmd::Sign { lockfile, key_id } => sign::execute(&lockfile, key_id.as_deref()),
         TrustCmd::Verify { lockfile } => verify::execute(&lockfile),
         TrustCmd::List => list::execute(),
+        TrustCmd::Approve { package } => approve::execute(&package),
+        TrustCmd::Deny { package } => deny::execute(&package),
+        TrustCmd::Prune => prune::execute(),
     }
 }
 
