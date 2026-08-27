@@ -127,6 +127,9 @@ pub struct ProjectConfig {
     /// AI core config (mgc.toml [ai]) — framework (Q11)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai: Option<AiConfig>,
+    /// Security config (mgc.toml [security]) — min_release_age per ecosystem
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security: Option<SecurityConfig>,
 }
 
 /// AI core config — `[ai] framework` (python-agent/mcp-server).
@@ -225,6 +228,7 @@ impl ProjectConfig {
             cicd: None,
             app: None,
             ai: None,
+            security: None,
         }
     }
 
@@ -354,6 +358,7 @@ impl ProjectConfig {
             cicd,
             app,
             ai,
+            security: None,
         }
     }
 
@@ -539,5 +544,57 @@ impl ProjectConfig {
         }
 
         None
+    }
+}
+
+
+/// Security config — `[security] min_release_age` per ecosystem (quarantine guard).
+/// Bảo mật — `[security] min_release_age` theo ecosystem (guard cách ly).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecurityConfig {
+    /// Minimum release age in seconds (global default) — Tuổi tối thiểu gói phát hành (mặc định toàn cục)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_release_age: Option<u64>,
+    
+    /// Per-ecosystem min_release_age overrides — Ghi đè min_release_age theo ecosystem
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<u64>,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai: Option<u64>,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<u64>,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lib: Option<u64>,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<u64>,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iot: Option<u64>,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<u64>,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cicd: Option<u64>,
+}
+
+impl SecurityConfig {
+    /// Get min_release_age for specific ecosystem (fallback to global) — Lấy min_release_age cho ecosystem cụ thể
+    pub fn min_age_for_ecosystem(&self, ecosystem: &str) -> Option<u64> {
+        match ecosystem {
+            "web" => self.web.or(self.min_release_age),
+            "ai" => self.ai.or(self.min_release_age),
+            "app" => self.app.or(self.min_release_age),
+            "lib" => self.lib.or(self.min_release_age),
+            "game" => self.game.or(self.min_release_age),
+            "iot" => self.iot.or(self.min_release_age),
+            "cloud" => self.cloud.or(self.min_release_age),
+            "cicd" => self.cicd.or(self.min_release_age),
+            _ => self.min_release_age,
+        }
     }
 }
