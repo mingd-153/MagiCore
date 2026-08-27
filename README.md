@@ -14,9 +14,11 @@
 
 ---
 
-**MagiCore** (`mgc`) is a single, fast, opinionated package manager written in Rust that handles **Web (Node.js/NPM), AI frameworks, Cloud IaC, CI/CD pipelines, Game engines, IoT toolchains, Mobile (Flutter/Swift/Kotlin), and Polyglot Libraries** — all with one consistent CLI.
+**MagiCore** (`mgc`) is a **fast JavaScript package manager** with **multi-language orchestration** — written in Rust for speed and security.
 
-> **🎉 Production Release:** `v1.0.0` is now production-ready! Includes SBOM generation, cryptographically signed lockfiles, and stable API. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.0.1 roadmap.
+**Core strength:** Native npm replacement for web projects (faster install, supply-chain security, signed lockfiles). **Multi-language:** Orchestrates dev workflows for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile.
+
+> **🎉 Production Release:** `v1.0.0` is now production-ready! Includes SBOM generation, cryptographically signed lockfiles, trust policy management, and 24-hour quarantine for new releases. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.0.1 roadmap.
 
 ---
 
@@ -27,6 +29,7 @@
 | 🌐 **9 Ecosystems**          | Web, AI, Cloud, CI/CD, Game, IoT, App, Lib, Hardware — one CLI                  |
 | ⚡ **Zero-Buffer Streaming** | Chunks stream directly from network → disk, no full-payload RAM spike           |
 | 🔒 **Supply-Chain Security** | 24-hour new-release quarantine + SRI integrity + SBOM generation                |
+| 🛡️ **Trust Policy Gate**     | Lifecycle script approval system (`mgc trust approve/deny/prune`) — NEW!       |
 | 📋 **SBOM Generation**       | CycloneDX & SPDX formats for compliance and vulnerability tracking (NEW!)       |
 | 🔐 **Signed Lockfiles**      | Ed25519 cryptographic signatures for tamper detection (NEW!)                    |
 | 📦 **CAS Reflink Store**     | Content-addressed store with OS reflinks/hardlinks for zero-copy installs       |
@@ -101,11 +104,33 @@ mgc dev
 # Security audit
 mgc audit
 
+# Trust policy management (NEW in V1.0.0!)
+mgc trust approve lodash  # Allow lifecycle scripts
+mgc trust deny cowsay     # Block lifecycle scripts
+mgc trust list            # Show all policies
+
 # Generate SBOM (NEW in V1.0.0!)
 mgc sbom --format cyclonedx-json --output sbom.json
 
 # Check environment health
 mgc doctor
+```
+
+### Security & Trust (NEW!)
+```bash
+# Configure quarantine (24h default)
+echo '[security]
+min_release_age = 86400  # 24 hours
+web = 172800             # 48 hours for web packages' > mg.toml
+
+# Initialize keyring for signed lockfiles
+mgc trust init
+
+# Sign lockfile
+mgc trust sign mgc.lock
+
+# Verify lockfile (automatic on install)
+mgc trust verify mgc.lock
 ```
 
 ### Monorepo / Workspace
