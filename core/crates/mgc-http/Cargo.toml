@@ -42,5 +42,9 @@ path = "test/skeleton.rs"
 name = "test_security"
 path = "test/security.rs"
 
+[[test]]
+name = "test_offline"
+path = "test/offline_test.rs"
+
 [lints]
 workspace = true
