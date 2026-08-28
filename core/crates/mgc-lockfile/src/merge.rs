@@ -160,7 +160,3 @@ pub fn merge3(
 
     Ok(out)
 }
-
-#[cfg(test)]
-#[path = "../test/merge.rs"]
-mod tests;

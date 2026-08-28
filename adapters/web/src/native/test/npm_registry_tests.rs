@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 // NPM registry tests for core-web — kept beside the native module test tree.
 // Test registry NPM của core-web — tách khỏi thân file production để dễ mở rộng.
 use super::*;

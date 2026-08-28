@@ -110,14 +110,3 @@ impl SearchClient for PyPISearchClient {
         self.try_variants(query).await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pypi_client_creation() {
-        let client = PyPISearchClient::new();
-        assert_eq!(client.registry(), Registry::PyPI);
-    }
-}

@@ -22,7 +22,9 @@ pub use migrate::{auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_
 pub use parser::{load_and_verify_lockfile, load_lockfile, parse_lockfile};
 pub use schema::{Lockfile, LockfileMetadata, Package, SignatureFile, SignerInfo};
 pub use verifier::{verification_status_message, verify_lockfile, VerificationStatus};
-pub use writer::{sign_and_write_lockfile, sign_lockfile_with_default_key, write_lockfile};
+pub use writer::{
+    serialize_lockfile, sign_and_write_lockfile, sign_lockfile_with_default_key, write_lockfile,
+};
 
 // FIXME(V1.0.1): Temporary stub — replace with proper v2 implementation
 pub fn read_lockfile_checked(project_root: &std::path::Path) -> LockfileResult<Option<Lockfile>> {

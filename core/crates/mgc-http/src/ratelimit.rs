@@ -69,13 +69,5 @@ impl RateLimiter {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ratelimit_default_values() {
-        let config = RateLimitConfig::default();
-        assert_eq!(config.max_requests, 100);
-        assert_eq!(config.period, Duration::from_secs(60));
-    }
-}
+#[path = "test/ratelimit_test.rs"]
+mod tests;

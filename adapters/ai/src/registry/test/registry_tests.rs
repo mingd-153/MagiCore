@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Tests cho ai/registry — tách khỏi src theo RULE §5. Offline trừ test live có ignore.
 // (Tests for ai/registry — split per RULE §5. Offline except the ignored live test.)
 

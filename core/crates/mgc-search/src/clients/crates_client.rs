@@ -96,14 +96,3 @@ impl SearchClient for CratesSearchClient {
             .collect())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_crates_client_creation() {
-        let client = CratesSearchClient::new();
-        assert_eq!(client.registry(), Registry::Crates);
-    }
-}

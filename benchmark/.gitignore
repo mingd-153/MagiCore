@@ -1,0 +1,11 @@
+# Benchmark results (local only — too large, machine-specific)
+results/*.json
+results/*.log
+
+# Docker build cache
+.dockerignore
+
+# Temporary files
+*.tmp
+*.swp
+.DS_Store

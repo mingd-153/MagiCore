@@ -219,14 +219,3 @@ pub fn print_install_summary(added: usize, cached: usize, duration_ms: u64, disk
         style("└──────────────────────────────────────────────┘").cyan()
     );
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_progress_bar_creation() {
-        let pb = create_progress_bar(100, "test");
-        assert_eq!(pb.length().unwrap(), 100);
-    }
-}

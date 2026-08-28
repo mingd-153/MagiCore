@@ -301,7 +301,8 @@ fn ask_web_features(config: &ScaffoldConfig) -> (Vec<Answer>, bool) {
             Answer::new("TypeScript", "typescript"),
             Answer::new("Tailwind CSS", "tailwindcss"),
             Answer::new("ESLint", "eslint"),
-            Answer::new("Vitest", "vitest"),
+            // Answer::new("Vitest", "vitest"),  // DISABLED: vitest crashes (known issue V1.0)
+            Answer::new("Jest", "jest"),
             Answer::new("Playwright", "playwright"),
         ],
         "backend" => vec![

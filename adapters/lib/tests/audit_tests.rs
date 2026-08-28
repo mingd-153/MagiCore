@@ -1,6 +1,8 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Audit module integration tests.
 
-#![allow(clippy::unwrap_used)]
 use mgc_lib_adapter::audit::scanner::{audit_python, audit_rust};
 use std::path::PathBuf;
 

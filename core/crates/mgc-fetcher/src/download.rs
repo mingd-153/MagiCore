@@ -47,24 +47,3 @@ pub async fn download_with_progress(
     file.flush().await?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_progress_callback_type() {
-        fn assert_send<T: Send>() {}
-        fn assert_sync<T: Sync>() {}
-
-        assert_send::<ProgressCallback>();
-        assert_sync::<ProgressCallback>();
-
-        let cb: ProgressCallback = Box::new(|downloaded, total| {
-            assert!(downloaded <= total);
-        });
-        cb(0, 100);
-        cb(50, 100);
-        cb(100, 100);
-    }
-}

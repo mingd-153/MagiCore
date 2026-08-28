@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Tests cho game/install/unity — tách khỏi src theo RULE §5.
 // (Tests for game/install/unity — split per RULE §5.)
 
@@ -48,12 +51,14 @@ async fn test_install_unity_with_lock_lists_packages() {
     // Expected: Error báo "tarball not found in cache" — đúng fail-closed
     // (Real verification will fail if Unity cache doesn't exist — correct fail-closed behavior)
     let result = install_dependencies(tmp.path()).await;
-    
+
     match result {
         Err(e) if e.to_string().contains("tarball not found") => {
             // Expected in test env without Unity cache — correct fail-closed
         }
-        Err(e) if e.to_string().contains("HOME not set") || e.to_string().contains("LOCALAPPDATA") => {
+        Err(e)
+            if e.to_string().contains("HOME not set") || e.to_string().contains("LOCALAPPDATA") =>
+        {
             // Also acceptable - env var missing in test
         }
         Ok(_) => {

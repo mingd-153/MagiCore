@@ -79,19 +79,3 @@ fn set_permissions(path: &Path, executable: bool) -> Result<(), StoreError> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_write_all_verify() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test.bin");
-        let writer = fs::File::create(&path).unwrap();
-        let result = write_all_verify_and_set_perms(writer, &path, b"hello world", false);
-        assert!(result.is_ok());
-        assert!(path.exists());
-    }
-}

@@ -14,9 +14,11 @@
 
 ---
 
-**MagiCore** (`mgc`) is a single, fast, opinionated package manager written in Rust that handles **Web (Node.js/NPM), AI frameworks, Cloud IaC, CI/CD pipelines, Game engines, IoT toolchains, Mobile (Flutter/Swift/Kotlin), and Polyglot Libraries** — all with one consistent CLI.
+**MagiCore** (`mgc`) is a **multi-language package orchestrator** with **web (npm/yarn) beta testing ready** — written in Rust for speed and security.
 
-> **🎉 Production Release:** `v1.0.0` is now production-ready! Includes SBOM generation, cryptographically signed lockfiles, and stable API. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.0.1 roadmap.
+**Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
+
+> **🚧 Beta Release:** `v1.0.0` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) remain experimental. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.1 roadmap toward full core parity.
 
 ---
 
@@ -27,6 +29,7 @@
 | 🌐 **9 Ecosystems**          | Web, AI, Cloud, CI/CD, Game, IoT, App, Lib, Hardware — one CLI                  |
 | ⚡ **Zero-Buffer Streaming** | Chunks stream directly from network → disk, no full-payload RAM spike           |
 | 🔒 **Supply-Chain Security** | 24-hour new-release quarantine + SRI integrity + SBOM generation                |
+| 🛡️ **Trust Policy Gate**     | Lifecycle script approval system (`mgc trust approve/deny/prune`) — NEW!       |
 | 📋 **SBOM Generation**       | CycloneDX & SPDX formats for compliance and vulnerability tracking (NEW!)       |
 | 🔐 **Signed Lockfiles**      | Ed25519 cryptographic signatures for tamper detection (NEW!)                    |
 | 📦 **CAS Reflink Store**     | Content-addressed store with OS reflinks/hardlinks for zero-copy installs       |
@@ -93,7 +96,7 @@ mgc install
 
 # Add a package
 mgc add zod
-mgc add -D vitest
+mgc add -D jest @types/jest  # Testing with Jest
 
 # Run development server
 mgc dev
@@ -101,11 +104,63 @@ mgc dev
 # Security audit
 mgc audit
 
+# Trust policy management (NEW in V1.0.0!)
+mgc trust approve lodash  # Allow lifecycle scripts
+mgc trust deny cowsay     # Block lifecycle scripts
+mgc trust list            # Show all policies
+
 # Generate SBOM (NEW in V1.0.0!)
 mgc sbom --format cyclonedx-json --output sbom.json
 
 # Check environment health
+```
+
+---
+
+## ⚡ Performance
+
+**Preliminary benchmarks** (macOS M2, 20-package Next.js + React + TypeScript project):
+
+| Metric | mgc | pnpm | Notes |
+|--------|-----|------|-------|
+| **Cold Install** | 2.6s | 120s | Single dev workload, 5 runs |
+| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster (hardlink) |
+| **Disk Usage** | 462MB | 360MB | +28% CAS overhead |
+
+**Key Findings:**
+- ✅ **Cold install competitive** on test workload (2.6s vs 120s pnpm)
+- ✅ **Sub-3-second installs**: Consistent on tested manifest
+- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
+- ✅ **Consistency**: Lower variance in this dataset (25% CV vs pnpm 60%)
+
+**Beta Caveats:**
+- ⚠️ macOS-only data (Linux/Windows validation pending)
+- ⚠️ Single 20-package manifest (enterprise scale TBD)
+- ⚠️ vitest excluded (P0 crash), replaced with jest
+- Full methodology: [`benchmark/BENCHMARK_METHODOLOGY.md`](benchmark/BENCHMARK_METHODOLOGY.md)
+- Raw data: [`benchmark/results/`](benchmark/results/)
+
+> **Beta disclaimer**: Performance validated on dev workload only. Cross-platform and large-scale benchmarks deferred to V1.1 with CI automation. Current claims limited to tested configuration.
+
+---
 mgc doctor
+```
+
+### Security & Trust (NEW!)
+```bash
+# Configure quarantine (24h default)
+echo '[security]
+min_release_age = 86400  # 24 hours
+web = 172800             # 48 hours for web packages' > mg.toml
+
+# Initialize keyring for signed lockfiles
+mgc trust init
+
+# Sign lockfile
+mgc trust sign mgc.lock
+
+# Verify lockfile (automatic on install)
+mgc trust verify mgc.lock
 ```
 
 ### Monorepo / Workspace

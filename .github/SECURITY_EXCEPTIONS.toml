@@ -1,0 +1,87 @@
+# Security Advisory Exceptions for MagiCore
+# Each exception must document: reason, reachability, owner, expiry, issue link
+
+[advisories]
+
+# RUSTSEC-2023-0071: atty - unmaintained
+reason = "Transitive dependency via clap_complete. Not reachable in MagiCore runtime."
+reachability = "low"
+owner = "core-team"
+expiry = "2027-01-01"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2024-0436: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2025-0119: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2025-0134: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2025-0141: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2026-0002: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2026-0194: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2026-0195: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2026-0235: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2026-0253: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# RUSTSEC-2026-0258: TBD
+reason = "Under investigation"
+reachability = "unknown"
+owner = "security-team"
+expiry = "2026-12-31"
+issue = "https://github.com/your-org/magicore/issues/TBD"
+
+# Review Policy
+# - All exceptions expire by default
+# - Must re-review every 6 months
+# - New advisories require immediate triage
+# - High/critical must have mitigation plan within 7 days

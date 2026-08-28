@@ -42,20 +42,20 @@ tempfile = "3"
 
 [[test]]
 name = "types"
-path = "test/types.rs"
+path = "tests/types.rs"
 
 [[test]]
 name = "client"
-path = "test/client.rs"
+path = "tests/client.rs"
 
 [[test]]
 name = "orchestrator"
-path = "test/orchestrator.rs"
+path = "tests/orchestrator.rs"
 
 [[test]]
 name = "ranking"
-path = "test/ranking.rs"
+path = "tests/ranking.rs"
 
 [[test]]
 name = "cache"
-path = "test/cache.rs"
+path = "tests/cache.rs"

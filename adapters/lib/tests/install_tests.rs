@@ -1,6 +1,8 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Install module integration tests.
 
-#![allow(clippy::unwrap_used)]
 use mgc_lib_adapter::install::fetch::{crate_tarball_url, pypi_package_index_url};
 use mgc_lib_adapter::install::verify::{verify_cargo_lock, verify_python_package};
 use mgc_types::{PackageId, PackageName, Version};

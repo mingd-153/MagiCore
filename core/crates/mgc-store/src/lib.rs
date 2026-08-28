@@ -29,15 +29,3 @@ pub fn default_store_root() -> std::path::PathBuf {
         .join("store")
         .join("v3")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_store_creation() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = ContentStore::new(temp.path().to_path_buf()).unwrap();
-        assert!(store.root().exists());
-    }
-}

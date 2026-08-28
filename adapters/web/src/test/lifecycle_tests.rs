@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 // Lifecycle tests for core-web — kept outside production source bodies.
 // Test lifecycle của core-web — tách khỏi thân file production để dễ maintain.
 use super::*;

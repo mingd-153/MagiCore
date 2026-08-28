@@ -12,23 +12,23 @@ path = "src/lib.rs"
 # Test modules tách riêng (RULE §5)
 [[test]]
 name = "blake3_signer"
-path = "test/blake3_signer.rs"
+path = "tests/blake3_signer.rs"
 
 [[test]]
 name = "ed25519_signer"
-path = "test/ed25519_signer.rs"
+path = "tests/ed25519_signer.rs"
 
 [[test]]
 name = "keyring"
-path = "test/keyring.rs"
+path = "tests/keyring.rs"
 
 [[test]]
 name = "integrity"
-path = "test/integrity.rs"
+path = "tests/integrity.rs"
 
 [[test]]
 name = "simd"
-path = "test/simd.rs"
+path = "tests/simd.rs"
 
 [[bench]]
 name = "crypto_perf"

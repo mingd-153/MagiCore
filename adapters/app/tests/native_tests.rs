@@ -1,4 +1,6 @@
-#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Native client tests for app adapter.
 
 use mgc_app_adapter::native::cocoapods_client::CocoaPodsClient;

@@ -40,20 +40,3 @@ pub fn check_path_traversal(path: &Path) -> Result<(), StoreError> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_check_path_traversal_rejects_parent() {
-        let result = check_path_traversal(Path::new("/tmp/../../../etc/passwd"));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_check_path_traversal_accepts_normal() {
-        let result = check_path_traversal(Path::new("/tmp/safe/path"));
-        assert!(result.is_ok());
-    }
-}

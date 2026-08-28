@@ -1,4 +1,6 @@
-#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Install module tests for app adapter.
 
 use mgc_app_adapter::install::fetch::*;

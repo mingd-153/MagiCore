@@ -245,23 +245,3 @@ impl OciClient {
         Ok(tag)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn manifest_creation() {
-        let config = crate::manifest::OciDescriptor::new(
-            "application/vnd.oci.image.config.v1+json".to_string(),
-            100,
-            "sha256:config123".to_string(),
-        );
-        let layer = crate::manifest::OciDescriptor::new(
-            "application/vnd.oci.image.layer.v1.tar+gzip".to_string(),
-            1000,
-            "sha256:layer456".to_string(),
-        );
-        let manifest = crate::manifest::OciManifest::new(config, vec![layer]);
-        assert_eq!(manifest.config.digest, "sha256:config123");
-        assert_eq!(manifest.layers.len(), 1);
-    }
-}

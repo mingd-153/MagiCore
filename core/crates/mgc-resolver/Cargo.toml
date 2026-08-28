@@ -26,8 +26,8 @@ tempfile = { workspace = true }
 # Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
 [[test]]
 name = "test_patches"
-path = "test/patches.rs"
+path = "tests/patches.rs"
 
 [[test]]
 name = "test_dedupe"
-path = "test/dedupe.rs"
+path = "tests/dedupe.rs"

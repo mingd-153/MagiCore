@@ -12,19 +12,19 @@ path = "src/lib.rs"
 # Test modules tách riêng (RULE §5)
 [[test]]
 name = "schema"
-path = "test/schema.rs"
+path = "tests/schema.rs"
 
 [[test]]
 name = "tamper"
-path = "test/tamper.rs"
+path = "tests/tamper.rs"
 
 [[test]]
 name = "migrate"
-path = "test/migrate.rs"
+path = "tests/migrate.rs"
 
 [[test]]
 name = "import"
-path = "test/import.rs"
+path = "tests/import.rs"
 
 [dependencies]
 # Crypto primitives (local crate)

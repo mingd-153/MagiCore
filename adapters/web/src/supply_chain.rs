@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use mgc_config::ProjectConfig;
 use mgc_resolver::solver::Resolution;
 use mgc_store::{Database, Layout};
 use mgc_types::MgResult;
@@ -37,7 +38,19 @@ pub fn enforce_resolution_supply_chain_guards(
 }
 
 fn configured_store_min_age() -> Option<u64> {
+    // Try reading from mg.toml [security] first — Đọc từ mg.toml [security] trước
     let cwd = std::env::current_dir().ok()?;
+
+    // Read mg.toml config — Đọc config mg.toml
+    if let Ok(Some(project)) = ProjectConfig::load(&cwd) {
+        if let Some(security) = &project.security {
+            if let Some(min_age) = security.min_age_for_ecosystem("web") {
+                return Some(min_age);
+            }
+        }
+    }
+
+    // Fallback to database release_policy — Dự phòng đọc từ database
     let layout = Layout::new(project_cache_dir(&cwd));
     Database::open(&layout.db_path())
         .ok()

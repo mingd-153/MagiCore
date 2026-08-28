@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Tests cho install/download — tách khỏi src theo RULE §5.
 // (Tests for install/download — split out of src per RULE §5.)
 

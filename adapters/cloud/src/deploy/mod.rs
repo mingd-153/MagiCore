@@ -14,7 +14,7 @@ pub struct DeployResult {
 
 pub async fn deploy(framework: CloudType, root: &Path, dry_run: bool) -> MgResult<DeployResult> {
     let started = std::time::Instant::now();
-    
+
     // Real commands per framework (placeholder args - production needs specifics)
     let (tool, args): (&str, Vec<&str>) = match framework {
         // AWS CDK: "cdk deploy" (actual needs --app, --stack-name, etc.)
@@ -28,7 +28,7 @@ pub async fn deploy(framework: CloudType, root: &Path, dry_run: bool) -> MgResul
     };
 
     let summary = format!("{} {}", tool, args.join(" "));
-    
+
     if dry_run {
         return Ok(DeployResult {
             dry_run: true,
@@ -42,9 +42,9 @@ pub async fn deploy(framework: CloudType, root: &Path, dry_run: bool) -> MgResul
         ..Default::default()
     };
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let report = mgc_run(tool, &owned, &opts)
-        .map_err(|e| MgError::Other(format!("{summary}: {e}")))?;
-    
+    let report =
+        mgc_run(tool, &owned, &opts).map_err(|e| MgError::Other(format!("{summary}: {e}")))?;
+
     if report.exit_code != 0 {
         return Err(MgError::Other(format!(
             "{} exited with {}: {}",
@@ -62,17 +62,5 @@ pub async fn deploy(framework: CloudType, root: &Path, dry_run: bool) -> MgResul
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_deploy_dry_run() {
-        let tmp = TempDir::new().unwrap();
-        let result = deploy(CloudType::Terraform, tmp.path(), true)
-            .await
-            .unwrap();
-        assert!(result.dry_run);
-        assert_eq!(result.duration_ms, 0);
-    }
-}
+#[path = "test/mod_test.rs"]
+mod tests;

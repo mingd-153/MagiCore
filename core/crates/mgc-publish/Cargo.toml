@@ -26,7 +26,7 @@ mgc-pack = { workspace = true }
 # Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
 [[test]]
 name = "test_auth"
-path = "test/auth.rs"
+path = "tests/auth.rs"
 
 [lints]
 workspace = true

@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Tests cho native/hf_client — tách khỏi src theo RULE §5. Parser test offline thuần.
 // (Tests for native/hf_client — split per RULE §5; parser tests are fully offline.)
 

@@ -8,6 +8,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+---
+
+## [1.0.0] - 2026-08-27
+
+### 🚧 Beta Launch - V1.0.0 (Web)
+
+**Status**: Beta-ready for web projects (npm/pnpm replacement). Multi-language cores experimental.
+
+### Added
+- ✅ **SBOM Generation**: `mgc sbom` with CycloneDX/SPDX formats
+- ✅ **Signed Lockfiles**: Ed25519 cryptographic signatures (tamper detection)
+- ✅ **Trust Policy System**: `mgc trust approve/deny/prune` for lifecycle script control
+- ✅ **24-hour Quarantine**: New release safety gate (configurable)
+- ✅ **Next.js/React/TypeScript support**: Tested with 20-package dev manifests
+- ✅ **Cross-PM Migration**: Import npm/pnpm/yarn/bun lockfiles
+
+### Performance (Beta — Limited Scope)
+- **Cold install**: 2.63s average on test workload (macOS M2, 20 packages)
+- **Warm install**: 2.01s (pnpm 1.2x faster due to hardlinks)
+- **Disk usage**: 462MB (CAS deduplication)
+- **Caveat**: Single platform, dev workload only. Cross-platform validation deferred to V1.1
+
+### Known Issues
+- ⚠️ **vitest crash**: Projects with `vitest@^1.0.0` encounter "illegal hardware instruction" (workaround: use jest, fix in V1.1)
+- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
+- ⚠️ **Multi-language cores**: ai/app/lib remain experimental, reaching parity in V1.1
+
+### Documentation
+- Added beta caveats to README and benchmark docs
+- Downgraded absolute performance claims to scoped measurements
+- RULE §7 compliance: bilingual comments in test code
+- Added `V1.0_CRITICAL_BUG_FOUND.md` (vitest crash root cause analysis)
+
+---
+
+## [Unreleased]
+
 ### Added
 - **Cross-PM lockfile import** (`mgc import`): migrate `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock` → signed `mgc.lock` v2. Shape-first version policy — new PM format bumps import without an mgc release (advisory warning only). Install auto-seeds from legacy lockfiles when the manifest matches.
 - **Lockfile 3-way merge** (`merge3`) restored on schema v2, including automatic git conflict-marker resolution (add/add same-version keeps, divergent versions fail closed).
@@ -19,11 +56,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Offline mode R1: pass `ResolveOptions { offline }` through `PackageAdapter::resolve`; R4: enforce no-network in offline mode (moved from `cli/src/commands/install.rs.TODO`).
 ---
 
-## [1.0.0] — 2026-08-21 🎉 PRODUCTION RELEASE
+## [1.0.0] — 2026-08-21 🚧 BETA RELEASE (WEB)
 
-### 🎉 Highlights
+### 🚧 Status
 
-**First production-ready release!** MagiCore reaches V1.0.0 with SBOM generation, cryptographically signed lockfiles, and a stable API ready for enterprise deployment.
+**Beta-ready for web projects.** MagiCore V1.0.0 includes SBOM generation, cryptographically signed lockfiles, and trust policies. Web (npm/pnpm replacement) is beta-ready; multi-language cores (ai/app/lib) remain experimental. Full core parity targeted for V1.1.
 
 ### Added
 

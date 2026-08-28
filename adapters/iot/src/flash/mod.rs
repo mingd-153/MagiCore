@@ -133,7 +133,7 @@ pub fn detect_serial_ports() -> Vec<String> {
             Vec::new()
         }
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         detect_serial_ports_in(Path::new("/dev"))

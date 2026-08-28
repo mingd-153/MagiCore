@@ -1,0 +1,20 @@
+MagiCore Benchmark Suite Summary
+Date: Thu Aug 27 14:50:05 +07 2026
+Duration: 0h 40m 23s
+Total Runs: 20
+Completed: 10
+Failed: 10
+Success Rate: 50%
+
+PMs Tested: npm pnpm bun mgc
+Runs Per PM: 5
+
+Machine Spec:
+  CPU: Apple M2
+  Cores: 8
+  Memory: 16GB
+  OS: Darwin 25.5.0
+  Node: v25.9.0
+
+Results: /Users/doanmihh/Documents/Workspace/MagiCore/benchmark/results
+Log: /Users/doanmihh/Documents/Workspace/MagiCore/benchmark/results/suite_20260827_140942.log

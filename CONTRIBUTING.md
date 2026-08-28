@@ -158,8 +158,94 @@ cargo test -p mgc -- --nocapture
 **Standards:**
 - Every new command must have a CLI surface test in `cli/tests/`.
 - Every new core crate function must have unit tests.
+- **Tests must be in `test/` directory, NOT inline** (see [RULE.md §9](#coding-standards-rulemd)).
 - Security-critical code (crypto, tarball extraction, store) requires both unit + integration tests.
 - All tests must pass before a PR can be merged (`cargo test --workspace` exits 0).
+
+---
+
+## Coding Standards (RULE.md)
+
+MagiCore follows **strict coding standards** defined in [`RULE.md`](RULE.md). All contributors must comply.
+
+### 1. **Mandatory 5-Step Workflow** (RULE §3)
+
+Every task (feature/fix/refactor) must go through **5 steps in order**, running **2 loops**:
+
+1. **DEFINE** — Write spec/design (what, why, scope)
+2. **PLAN** — Break into atomic tasks with acceptance criteria
+3. **BUILD** — Implement (loop 1: first pass, loop 2: incorporate review findings)
+4. **VERIFY** — Run tests (loop 1: unit tests, loop 2: integration + workspace tests)
+5. **REVIEW** — Self-audit (loop 1: find bugs/gaps, loop 2: confirm clean)
+
+**After loop 2:** Update changelog + docs, then submit PR.
+
+**Workflow visualization:**
+```
+DEFINE → PLAN → BUILD¹ → VERIFY¹ → REVIEW¹ (findings)
+                   ↓
+               BUILD² → VERIFY² → REVIEW² (clean) → SHIP
+```
+
+### 2. **Test Organization** (RULE §9)
+
+**❌ Bad (inline tests):**
+```rust
+// src/install.rs
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_install() { ... }
+}
+```
+
+**✅ Good (external test file):**
+```rust
+// src/install.rs
+#[cfg(test)]
+#[path = "test/install_tests.rs"]
+mod tests;
+
+// src/test/install_tests.rs
+use super::*;
+#[test]
+fn test_install() { ... }
+```
+
+**Why:** Keeps production code clean, follows Cargo best practices.
+
+### 3. **Bilingual Comments** (RULE §7)
+
+For user-facing code (CLI commands, config), write bilingual comments (English + Vietnamese):
+
+```rust
+/// Initialize keyring — Khởi tạo keyring
+pub fn init_keyring() -> Result<()> { ... }
+```
+
+**Console output:** English only (international audience).
+
+### 4. **Security Review** (RULE §11)
+
+For security-critical code, answer **2 反biện questions** (self-critique):
+
+1. **"Còn cửa bypass nào?"** (Any bypass paths left?)
+2. **"Chặn cứng có phá luồng dùng thật?"** (Does fail-closed break legitimate use?)
+
+Add answers in PR description or code comments.
+
+### 5. **Folder Structure** (RULE §2)
+
+Every module must follow:
+```
+module-name/
+├── src/        # Source code
+├── test/       # Tests (NOT inline in src/)
+├── docs/       # Progress reports + checklists
+└── README.md   # Module overview
+```
+
+**Enforcement:** CI checks for inline `#[cfg(test)] mod tests` in `src/` (fails build).
 
 ---
 

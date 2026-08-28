@@ -100,14 +100,3 @@ impl SearchClient for GoSearchClient {
             .collect())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_go_client_creation() {
-        let client = GoSearchClient::new();
-        assert_eq!(client.registry(), Registry::Go);
-    }
-}

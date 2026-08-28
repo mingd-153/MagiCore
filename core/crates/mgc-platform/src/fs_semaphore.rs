@@ -34,17 +34,3 @@ pub fn global_fs_write_semaphore() -> Arc<Semaphore> {
         })
         .clone()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_fs_write_semaphore_limit() {
-        let sem = global_fs_write_semaphore();
-        #[cfg(target_os = "macos")]
-        assert_eq!(sem.available_permits(), 4);
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(sem.available_permits(), 128);
-    }
-}
