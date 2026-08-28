@@ -1,0 +1,18 @@
+{
+  "pm": "mgc",
+  "run": 2,
+  "timestamp": "20260828_110117",
+  "machine": {
+    "cpu": "Apple M2",
+    "cores": 8,
+    "os": "macOS 26.5"
+  },
+  "cold": {
+    "seconds": 3.602215000,
+    "disk_mb": 462
+  },
+  "warm": {
+    "seconds": 2.011297000,
+    "speedup_pct": 40.0
+  }
+}

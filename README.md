@@ -113,6 +113,35 @@ mgc trust list            # Show all policies
 mgc sbom --format cyclonedx-json --output sbom.json
 
 # Check environment health
+```
+
+---
+
+## ⚡ Performance
+
+**Validated benchmarks** (macOS M2, 20-package Next.js + React + TypeScript project):
+
+| Metric | mgc | pnpm | Speedup |
+|--------|-----|------|---------|
+| **Cold Install** | 2.6s | 120s | **45x faster** |
+| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster |
+| **Disk Usage** | 462MB | 380MB | +22% overhead |
+
+**Key Findings:**
+- ✅ **First-time installs**: mgc is **45x faster** than pnpm (validated, 5 runs)
+- ✅ **Sub-3-second installs**: Consistent performance (2.6s average)
+- ⚠️ **Warm cache**: pnpm has slight edge (1.2x) due to hardlink efficiency
+- ✅ **Consistency**: Low variance (25% CV vs pnpm 60%)
+
+**Caveats:**
+- macOS-only data (Linux/Windows TBD)
+- vitest excluded (P0 crash), replaced with jest
+- Full methodology: [`benchmark/BENCHMARK_METHODOLOGY.md`](benchmark/BENCHMARK_METHODOLOGY.md)
+- Raw data: [`benchmark/results/`](benchmark/results/)
+
+> **Honest claims**: Previous "39x" was invalidated (different package counts). New "45x" is validated with same 20-package manifest for all PMs.
+
+---
 mgc doctor
 ```
 
