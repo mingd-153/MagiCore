@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 use mgc_types::package::VersionRange;
 use mgc_types::patch::{LockPatch, PatchKind, PatchSpec};
 

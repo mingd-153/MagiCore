@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 use mgc_config::chain::*;
 use mgc_config::registry::Registry;
 use std::sync::{Mutex, OnceLock};

@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Cache module integration tests.
 
 #![allow(clippy::unwrap_used)]

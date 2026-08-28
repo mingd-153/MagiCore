@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 // Auto-migrated from core/crates/mgc-platform/src/fs_semaphore.rs
 use mgc_platform::*;
 

@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 use mgc_types::ecosystem::Ecosystem;
 
 #[test]

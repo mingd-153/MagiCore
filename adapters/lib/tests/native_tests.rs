@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Native registry client tests — HERMETIC qua mockito (không mạng thật).
 //! Các dead-test trong block comment cũ đã được hồi sinh thành test offline thật.
 

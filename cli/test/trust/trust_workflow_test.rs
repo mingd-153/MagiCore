@@ -1,4 +1,6 @@
-#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Integration tests for `mgc trust` workflow
 //! Test tích hợp cho workflow `mgc trust`
 

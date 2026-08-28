@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Tests cho game/install/unity — tách khỏi src theo RULE §5.
 // (Tests for game/install/unity — split per RULE §5.)
 

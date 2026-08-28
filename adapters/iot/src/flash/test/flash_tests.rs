@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 //! Tests cho iot/flash — tách khỏi src theo RULE §5. Toàn bộ hermetic, không đụng phần cứng.
 // (Tests for iot/flash — split per RULE §5. Fully hermetic, no hardware touched.)
 

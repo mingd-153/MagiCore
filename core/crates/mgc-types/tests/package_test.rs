@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 use mgc_types::error::MgError;
 use mgc_types::package::*;
 use mgc_types::version::Version;

@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 // Auto-migrated from core/crates/mgc-crypto/src/checksum.rs
 use mgc_crypto::checksum::*;
 

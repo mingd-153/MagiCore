@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![allow(clippy::unwrap_used)]
+
 use mgc_types::ecosystem::Ecosystem;
 use mgc_types::manifest::Manifest;
 use mgc_types::package::{DependencySpec, PackageName, VersionRange};
