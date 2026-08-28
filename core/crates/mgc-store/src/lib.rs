@@ -29,4 +29,3 @@ pub fn default_store_root() -> std::path::PathBuf {
         .join("store")
         .join("v3")
 }
-

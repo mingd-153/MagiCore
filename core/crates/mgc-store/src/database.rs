@@ -423,4 +423,3 @@ impl Database {
         Ok(best)
     }
 }
-

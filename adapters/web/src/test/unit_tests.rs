@@ -1,7 +1,5 @@
 #![cfg(test)]
-#![allow(clippy::unwrap_used)]
-
-#![allow(clippy::await_holding_lock, clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::await_holding_lock)]
 use super::*;
 use base64::Engine;
 use flate2::write::GzEncoder;

@@ -50,4 +50,3 @@ pub struct TarballEntry {
     pub data: Vec<u8>,
     pub executable: bool,
 }
-

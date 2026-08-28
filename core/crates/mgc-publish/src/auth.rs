@@ -147,4 +147,3 @@ pub fn resolve_auth(
         registry_url
     ))
 }
-

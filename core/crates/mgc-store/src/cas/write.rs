@@ -79,4 +79,3 @@ fn set_permissions(path: &Path, executable: bool) -> Result<(), StoreError> {
     }
     Ok(())
 }
-

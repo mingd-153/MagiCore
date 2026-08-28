@@ -55,4 +55,3 @@ pub fn resolve_catalog_specifier(
             .cloned()
     }
 }
-

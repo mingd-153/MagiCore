@@ -28,7 +28,6 @@ pub async fn download_unreal_binary(
     Ok(stub_path)
 }
 
-
 #[cfg(test)]
 #[path = "test/unreal_test.rs"]
 mod tests;

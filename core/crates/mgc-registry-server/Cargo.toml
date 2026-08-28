@@ -48,11 +48,11 @@ tower = "0.5"
 
 [[test]]
 name = "registry"
-path = "test/registry.rs"
+path = "tests/registry.rs"
 
 [[test]]
 name = "proxy_parse"
-path = "test/proxy_parse.rs"
+path = "tests/proxy_parse.rs"
 
 [lints]
 workspace = true

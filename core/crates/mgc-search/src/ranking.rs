@@ -130,4 +130,3 @@ fn parse_updated_score(updated_str: &str) -> f64 {
         0.0 // Years ago or unknown
     }
 }
-

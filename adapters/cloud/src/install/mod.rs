@@ -20,7 +20,6 @@ pub async fn install_dependencies(
     }
 }
 
-
 #[cfg(test)]
 #[path = "test/mod_test.rs"]
 mod tests;

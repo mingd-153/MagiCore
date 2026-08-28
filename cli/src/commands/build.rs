@@ -789,7 +789,6 @@ fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()>
     Ok(())
 }
 
-
 #[cfg(test)]
 #[path = "../test/build_test.rs"]
 mod tests;

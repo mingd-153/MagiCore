@@ -160,7 +160,6 @@ fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String
 }
 
 #[cfg(all(test, feature = "game", feature = "iot"))]
-
 #[cfg(test)]
 #[path = "../test/dev_test.rs"]
 mod tests;

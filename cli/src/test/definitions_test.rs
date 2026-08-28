@@ -8,7 +8,7 @@ use clap::{CommandFactory, Parser};
 
 #[test]
 fn test_config_parses_get_set_delete_local() {
-let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
+    let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
     match get.command.unwrap() {
         Commands::Config { cmd, local } => match cmd {
             crate::commands::config::ConfigCmd::Get { key } => {
@@ -75,7 +75,7 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
 }
 
 #[test]
-    fn test_stage_parses_dir_flag() {
+fn test_stage_parses_dir_flag() {
     let cli = Cli::try_parse_from(["mgc", "stage", "--dir", "/tmp/demo"]).unwrap();
     match cli.command.unwrap() {
         Commands::Stage { dir } => {
@@ -83,10 +83,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected stage command"),
     }
-    }
+}
 
-    #[test]
-    fn test_per_core_aliases_resolve() {
+#[test]
+fn test_per_core_aliases_resolve() {
     let cmd = Cli::command();
     for (alias, expected) in [
         ("i-web", "install-web"),
@@ -105,10 +105,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
             "alias {alias} should map to {expected}"
         );
     }
-    }
+}
 
-    #[test]
-    fn test_create_web_accepts_flags() {
+#[test]
+fn test_create_web_accepts_flags() {
     let cli = Cli::try_parse_from([
         "mgc",
         "create-web",
@@ -132,10 +132,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected create-web command"),
     }
-    }
+}
 
-    #[test]
-    fn test_create_core_commands_follow_create_core_name_shape() {
+#[test]
+fn test_create_core_commands_follow_create_core_name_shape() {
     let ai = Cli::try_parse_from(["mgc", "create-ai", "python-agent", "demo-ai"]).unwrap();
     match ai.command.unwrap() {
         Commands::CreateAi {
@@ -165,10 +165,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         Commands::CreateLib { project_name } => assert_eq!(project_name, "demo-lib"),
         _ => panic!("expected create-lib command"),
     }
-    }
+}
 
-    #[test]
-    fn test_add_web_accepts_multiple_packages() {
+#[test]
+fn test_add_web_accepts_multiple_packages() {
     let cli =
         Cli::try_parse_from(["mgc", "add-web", "zod", "lodash", "@types/node", "-D"]).unwrap();
 
@@ -179,20 +179,20 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected add-web command"),
     }
-    }
+}
 
-    #[test]
-    fn test_global_quiet_flag_parses() {
+#[test]
+fn test_global_quiet_flag_parses() {
     let cli = Cli::try_parse_from(["mgc", "--quiet", "add-web", "zod"]).unwrap();
     assert!(cli.quiet);
     match cli.command.unwrap() {
         Commands::AddWeb { packages, .. } => assert_eq!(packages, vec!["zod"]),
         _ => panic!("expected add-web command"),
     }
-    }
+}
 
-    #[test]
-    fn test_add_and_remove_accept_no_install() {
+#[test]
+fn test_add_and_remove_accept_no_install() {
     let add = Cli::try_parse_from(["mgc", "add-web", "dayjs", "--no-install"]).unwrap();
     match add.command.unwrap() {
         Commands::AddWeb { no_install, .. } => assert!(no_install),
@@ -211,10 +211,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected remove-web command"),
     }
-    }
+}
 
-    #[test]
-    fn test_install_accepts_script_policy_flags() {
+#[test]
+fn test_install_accepts_script_policy_flags() {
     let install = Cli::try_parse_from(["mgc", "install", "--allow-scripts"]).unwrap();
     match install.command.unwrap() {
         Commands::Install {
@@ -229,8 +229,7 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
     }
 
     let install_web =
-        Cli::try_parse_from(["mgc", "install-web", "--ignore-scripts", "--allow-scripts"])
-            .unwrap();
+        Cli::try_parse_from(["mgc", "install-web", "--ignore-scripts", "--allow-scripts"]).unwrap();
     match install_web.command.unwrap() {
         Commands::InstallWeb {
             ignore_scripts,
@@ -242,10 +241,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected install-web command"),
     }
-    }
+}
 
-    #[test]
-    fn test_install_accepts_package_specs() {
+#[test]
+fn test_install_accepts_package_specs() {
     let install = Cli::try_parse_from([
         "mgc",
         "install",
@@ -266,10 +265,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected install command"),
     }
-    }
+}
 
-    #[test]
-    fn test_cache_command_accepts_status_and_clean_targets() {
+#[test]
+fn test_cache_command_accepts_status_and_clean_targets() {
     let status = Cli::try_parse_from(["mgc", "cache", "status", "--target", "shared"]).unwrap();
     match status.command.unwrap() {
         Commands::Cache {
@@ -320,8 +319,7 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
     }
 
     let dry_run =
-        Cli::try_parse_from(["mgc", "cache", "prune", "--target", "shared", "--dry-run"])
-            .unwrap();
+        Cli::try_parse_from(["mgc", "cache", "prune", "--target", "shared", "--dry-run"]).unwrap();
     match dry_run.command.unwrap() {
         Commands::Cache {
             action,
@@ -336,10 +334,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected cache command"),
     }
-    }
+}
 
-    #[test]
-    fn test_available_cores_matches_build_shape() {
+#[test]
+fn test_available_cores_matches_build_shape() {
     let available = crate::factory::available_cores();
 
     #[cfg(feature = "web")]
@@ -360,10 +358,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
     assert!(available.iter().any(|(core, _)| *core == "cicd"));
     #[cfg(feature = "hardware")]
     assert!(available.iter().any(|(core, _)| *core == "hardware"));
-    }
+}
 
-    #[test]
-    fn test_help_surface_matches_build_shape() {
+#[test]
+fn test_help_surface_matches_build_shape() {
     let help = Cli::command().render_long_help().to_string();
 
     assert!(help.contains("dev"));
@@ -396,10 +394,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
 
     #[cfg(any(not(feature = "web"), feature = "all"))]
     assert!(!help.contains("create   "));
-    }
+}
 
-    #[test]
-    #[cfg(all(
+#[test]
+#[cfg(all(
     feature = "web",
     not(any(
         feature = "game",
@@ -410,10 +408,9 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         feature = "app",
         feature = "lib"
     ))
-    ))]
-    fn test_single_core_create_alias_parses() {
-    let cli =
-        Cli::try_parse_from(["mgc", "create", "react@latest", "demo-app", "--ts"]).unwrap();
+))]
+fn test_single_core_create_alias_parses() {
+    let cli = Cli::try_parse_from(["mgc", "create", "react@latest", "demo-app", "--ts"]).unwrap();
 
     match cli.command.unwrap() {
         Commands::CreateWeb {
@@ -427,12 +424,11 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected create-web command through single-core alias"),
     }
-    }
+}
 
-    #[test]
-    fn test_dev_command_accepts_host_and_port() {
-    let cli =
-        Cli::try_parse_from(["mgc", "dev", "--host", "127.0.0.1", "--port", "4315"]).unwrap();
+#[test]
+fn test_dev_command_accepts_host_and_port() {
+    let cli = Cli::try_parse_from(["mgc", "dev", "--host", "127.0.0.1", "--port", "4315"]).unwrap();
 
     match cli.command.unwrap() {
         Commands::Dev {
@@ -445,10 +441,10 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         }
         _ => panic!("expected dev command"),
     }
-    }
+}
 
-    #[test]
-    fn test_deploy_defaults_to_dry_run() {
+#[test]
+fn test_deploy_defaults_to_dry_run() {
     let cli = Cli::try_parse_from(["mgc", "deploy"]).unwrap();
     match cli.command.unwrap() {
         Commands::Deploy { run } => assert!(!run),
@@ -459,22 +455,21 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         Commands::Deploy { run } => assert!(run),
         _ => panic!("expected deploy command"),
     }
-    }
+}
 
-    #[test]
-    fn test_install_parses_dry_run_flag() {
+#[test]
+fn test_install_parses_dry_run_flag() {
     let cli = Cli::try_parse_from(["mgc", "install", "--dry-run"]).unwrap();
     match cli.command.unwrap() {
         Commands::Install { dry_run, .. } => assert!(dry_run),
         _ => panic!("expected install command"),
     }
-    }
+}
 
-    #[test]
-    fn test_workspace_list_parses_filter_and_json() {
-    let cli =
-        Cli::try_parse_from(["mgc", "workspace", "list", "--filter", "./apps/*", "--json"])
-            .unwrap();
+#[test]
+fn test_workspace_list_parses_filter_and_json() {
+    let cli = Cli::try_parse_from(["mgc", "workspace", "list", "--filter", "./apps/*", "--json"])
+        .unwrap();
 
     match cli.command.unwrap() {
         Commands::Workspace { cmd } => match cmd {
@@ -485,5 +480,4 @@ let get = Cli::try_parse_from(["mgc", "config", "get", "registry"]).unwrap();
         },
         _ => panic!("expected workspace command"),
     }
-
 }

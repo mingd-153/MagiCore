@@ -55,4 +55,3 @@ impl Layout {
         self.root.join("index.msgpack")
     }
 }
-

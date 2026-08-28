@@ -854,7 +854,6 @@ pub(crate) enum Commands {
     },
 }
 
-
 #[cfg(test)]
 #[path = "../test/definitions_test.rs"]
 mod tests;

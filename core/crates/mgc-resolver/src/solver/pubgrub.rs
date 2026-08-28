@@ -294,4 +294,3 @@ impl From<Incompatibility> for SolveError {
         SolveError::Unsatisfiable(inc)
     }
 }
-

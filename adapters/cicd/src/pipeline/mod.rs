@@ -23,7 +23,6 @@ jobs:
     Ok(())
 }
 
-
 #[cfg(test)]
 #[path = "test/mod_test.rs"]
 mod tests;

@@ -83,4 +83,3 @@ fn iot_dev_platformio_uses_pio() {
 fn iot_dev_unknown_framework_bails() {
     assert!(iot_dev_command(std::path::Path::new("/nonexistent")).is_err());
 }
-

@@ -14,4 +14,4 @@ tokio = { workspace = true }
 
 [[test]]
 name = "registry"
-path = "test/registry.rs"
+path = "tests/registry.rs"

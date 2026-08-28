@@ -92,4 +92,3 @@ impl SearchOrchestrator {
         Ok(all_results)
     }
 }
-

@@ -72,7 +72,6 @@ architecture = "rust-first"
 lane = "native-ready"
 "#;
 
-
 #[cfg(test)]
 #[path = "test/bevy_test.rs"]
 mod tests;

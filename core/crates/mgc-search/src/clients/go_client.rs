@@ -100,4 +100,3 @@ impl SearchClient for GoSearchClient {
             .collect())
     }
 }
-

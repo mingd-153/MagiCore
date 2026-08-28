@@ -4,7 +4,6 @@
 // Auto-migrated from core/crates/mgc-crypto/src/checksum.rs
 use mgc_crypto::checksum::*;
 
-
 #[test]
 fn test_checksum_adler32_basic() {
     // Known adler32: b"hello" → 0x062c0215

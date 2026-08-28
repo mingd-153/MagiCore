@@ -60,11 +60,11 @@ pretty_assertions = { workspace = true }
 
 [[test]]
 name = "test_refcount"
-path = "test/refcount.rs"
+path = "tests/refcount.rs"
 
 [[test]]
 name = "test_index"
-path = "test/index.rs"
+path = "tests/index.rs"
 
 [lints]
 workspace = true

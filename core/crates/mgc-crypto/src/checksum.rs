@@ -19,4 +19,3 @@ pub fn checksum_adler32(data: &[u8]) -> u32 {
 pub fn verify_adler32(data: &[u8], expected: u32) -> Result<bool> {
     Ok(checksum_adler32(data) == expected)
 }
-

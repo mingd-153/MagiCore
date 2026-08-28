@@ -160,4 +160,3 @@ pub fn merge3(
 
     Ok(out)
 }
-

@@ -211,4 +211,3 @@ fn sanitize_archive_path(path: &Path) -> Result<PathBuf> {
 
     Ok(clean)
 }
-

@@ -105,7 +105,6 @@ pub fn check_multi_core_conflicts(cores: &[(&str, Option<u16>)]) -> Vec<(String,
 // Tests
 // ────────────────────────────────────────────────────────────────
 
-
 #[cfg(test)]
 #[path = "../../test/dev_port_test.rs"]
 mod tests;

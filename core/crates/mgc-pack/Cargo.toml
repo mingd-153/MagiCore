@@ -24,15 +24,15 @@ tempfile = { workspace = true }
 # Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
 [[test]]
 name = "test_ignore"
-path = "test/ignore.rs"
+path = "tests/ignore.rs"
 
 [[test]]
 name = "test_manifest"
-path = "test/manifest.rs"
+path = "tests/manifest.rs"
 
 [[test]]
 name = "test_tarball"
-path = "test/tarball.rs"
+path = "tests/tarball.rs"
 
 [lints]
 workspace = true

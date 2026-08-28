@@ -499,7 +499,6 @@ fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 #[path = "../test/install_test.rs"]
 mod tests;

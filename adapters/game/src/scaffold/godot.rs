@@ -57,7 +57,6 @@ engine = "godot"
 architecture = "native-first"
 "#;
 
-
 #[cfg(test)]
 #[path = "test/godot_test.rs"]
 mod tests;

@@ -13,7 +13,6 @@ fn pn(input: &str) -> PackageName {
     PackageName::new(input).unwrap()
 }
 
-
 // --- PackageName::new() ---
 
 #[test]

@@ -97,4 +97,3 @@ impl Default for SbomGenerator {
         Self::new(SbomOptions::default())
     }
 }
-

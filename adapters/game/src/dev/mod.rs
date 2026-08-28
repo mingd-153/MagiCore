@@ -31,7 +31,6 @@ pub async fn start_dev_server(engine: GameEngine, project_root: &Path) -> MgResu
 /// Rationale: cargo run sufficient for P1; hot reload is nice-to-have optimization,
 ///            not security/correctness critical. Adds ~400-500 lines + platform complexity.
 async fn start_bevy_dev(project_root: &Path) -> MgResult<DevCommand> {
-
     Ok(DevCommand {
         command: "cargo".to_string(),
         args: vec!["run".to_string()],
@@ -68,7 +67,6 @@ async fn start_unreal_dev(_project_root: &Path) -> MgResult<DevCommand> {
         "Unreal dev server P2 - use Unreal Editor manually".into(),
     ))
 }
-
 
 #[cfg(test)]
 #[path = "test/mod_test.rs"]

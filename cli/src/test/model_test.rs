@@ -13,7 +13,6 @@ fn tmp_store(tag: &str) -> (PathBuf, PathBuf) {
     (store, base)
 }
 
-
 #[test]
 fn cas_import_roundtrip() {
     let (store_root, base) = tmp_store("roundtrip");

@@ -13,16 +13,14 @@ pub fn execute(package: &str) -> Result<()> {
     }
 
     // Get project root (current directory) — Lấy project root (thư mục hiện tại)
-    let project_root = env::current_dir()
-        .context("failed to get current directory")?;
+    let project_root = env::current_dir().context("failed to get current directory")?;
 
     // Layout for web cache — Layout cho cache web
     let cache_root = project_root.join(".magicore").join("cache").join("web");
     let layout = Layout::new(cache_root);
 
     // Open database — Mở database
-    let db = Database::open(&layout.db_path())
-        .context("failed to open trust policy database")?;
+    let db = Database::open(&layout.db_path()).context("failed to open trust policy database")?;
 
     // Upsert policy to 'denied' — Thêm/cập nhật policy thành 'denied'
     db.upsert_trust_policy(package, "denied")

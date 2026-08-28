@@ -245,4 +245,3 @@ impl OciClient {
         Ok(tag)
     }
 }
-

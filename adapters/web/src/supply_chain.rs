@@ -40,7 +40,7 @@ pub fn enforce_resolution_supply_chain_guards(
 fn configured_store_min_age() -> Option<u64> {
     // Try reading from mg.toml [security] first — Đọc từ mg.toml [security] trước
     let cwd = std::env::current_dir().ok()?;
-    
+
     // Read mg.toml config — Đọc config mg.toml
     if let Ok(Some(project)) = ProjectConfig::load(&cwd) {
         if let Some(security) = &project.security {
@@ -49,7 +49,7 @@ fn configured_store_min_age() -> Option<u64> {
             }
         }
     }
-    
+
     // Fallback to database release_policy — Dự phòng đọc từ database
     let layout = Layout::new(project_cache_dir(&cwd));
     Database::open(&layout.db_path())

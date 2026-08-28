@@ -135,4 +135,3 @@ pub mod media_types {
     pub const OCI_LAYER_ZSTD: &str = "application/vnd.oci.image.layer.v1.tar+zstd";
     pub const OCI_EMPTY_JSON: &str = "application/vnd.oci.empty.v1+json";
 }
-

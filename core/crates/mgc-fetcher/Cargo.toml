@@ -24,4 +24,4 @@ workspace = true
 
 [[test]]
 name = "cas_claim"
-path = "test/cas_claim.rs"
+path = "tests/cas_claim.rs"

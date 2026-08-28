@@ -20,7 +20,7 @@ fn test_component_can_be_created() {
         licenses: None,
         hashes: None,
     };
-    
+
     assert_eq!(component.name, "test-package");
     assert_eq!(component.version, "1.0.0");
 }
@@ -39,8 +39,6 @@ fn test_sbom_generator_can_be_created() {
         include_hashes: true,
         format: SbomFormat::CycloneDx,
     };
-    let generator = SbomGenerator::new(options);
+    let _generator = SbomGenerator::new(options);
     // Generator created successfully
-    drop(generator);
 }
-

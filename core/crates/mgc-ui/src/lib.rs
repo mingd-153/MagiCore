@@ -219,4 +219,3 @@ pub fn print_install_summary(added: usize, cached: usize, duration_ms: u64, disk
         style("└──────────────────────────────────────────────┘").cyan()
     );
 }
-

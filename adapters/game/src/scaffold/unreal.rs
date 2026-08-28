@@ -68,7 +68,6 @@ unreal_version = "{{unreal_version}}"
 architecture = "native-first"
 "#;
 
-
 #[cfg(test)]
 #[path = "test/unreal_test.rs"]
 mod tests;

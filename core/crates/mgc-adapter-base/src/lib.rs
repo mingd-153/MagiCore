@@ -119,4 +119,3 @@ pub trait BaseAdapter: PackageAdapter + Send + Sync {
         Ok(Vec::new())
     }
 }
-

@@ -49,7 +49,6 @@ async fn install_zephyr(project_root: &Path) -> MgResult<Vec<String>> {
     Ok(vec![])
 }
 
-
 #[cfg(test)]
 #[path = "test/mod_test.rs"]
 mod tests;

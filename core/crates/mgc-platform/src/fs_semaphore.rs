@@ -34,4 +34,3 @@ pub fn global_fs_write_semaphore() -> Arc<Semaphore> {
         })
         .clone()
 }
-

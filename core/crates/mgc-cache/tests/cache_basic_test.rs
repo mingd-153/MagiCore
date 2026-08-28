@@ -21,8 +21,7 @@ fn test_package_cache_creates_default_directory() {
 fn test_package_cache_can_be_created_multiple_times() {
     let cache1 = PackageCache::new();
     let cache2 = PackageCache::new();
-    
+
     assert!(cache1.is_ok());
     assert!(cache2.is_ok());
 }
-

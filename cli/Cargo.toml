@@ -118,9 +118,5 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 reqwest = { workspace = true }
 
-[[test]]
-name = "trust_integration"
-path = "test/trust/mod.rs"
-
 [lints]
 workspace = true

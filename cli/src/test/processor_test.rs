@@ -164,9 +164,7 @@ fn test_game_templates_materialize_all_engines() {
 #[test]
 fn test_iot_templates_materialize_all_frameworks() {
     if !template_layer_ready("iot/esp32-rust") {
-        eprintln!(
-            "skipped: iot/esp32-rust template layer not available offline (registry-first)"
-        );
+        eprintln!("skipped: iot/esp32-rust template layer not available offline (registry-first)");
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -426,8 +424,7 @@ fn test_fullstack_gin_falls_back_to_monorepo_composite() {
     let out = Scaffolder::scaffold(&config).unwrap();
     assert!(out.join("magicore.workspace.toml").exists());
     assert!(out.join("apps").join("backend").join("go.mod").exists());
-    let go_mod =
-        std::fs::read_to_string(out.join("apps").join("backend").join("go.mod")).unwrap();
+    let go_mod = std::fs::read_to_string(out.join("apps").join("backend").join("go.mod")).unwrap();
     assert!(
         go_mod.contains("gin"),
         "backend go.mod should pin gin, got: {go_mod}"
@@ -718,7 +715,9 @@ fn test_unknown_frameworks_fail_fast() {
 #[test]
 fn test_web_feature_gated_templates_materialize_only_when_active() {
     if !template_layer_ready("web/frontend/nextjs") {
-        eprintln!("skipped: web/frontend/nextjs template layer not available offline (registry-first)");
+        eprintln!(
+            "skipped: web/frontend/nextjs template layer not available offline (registry-first)"
+        );
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -770,7 +769,9 @@ fn test_web_feature_gated_templates_materialize_only_when_active() {
 #[test]
 fn test_web_docker_templates_materialize_in_base_layer() {
     if !template_layer_ready("web/frontend/nextjs") {
-        eprintln!("skipped: web/frontend/nextjs template layer not available offline (registry-first)");
+        eprintln!(
+            "skipped: web/frontend/nextjs template layer not available offline (registry-first)"
+        );
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -808,7 +809,9 @@ fn test_web_docker_templates_materialize_in_base_layer() {
 #[test]
 fn test_web_postgres_env_template_materializes_with_feature() {
     if !template_layer_ready("web/frontend/nextjs") {
-        eprintln!("skipped: web/frontend/nextjs template layer not available offline (registry-first)");
+        eprintln!(
+            "skipped: web/frontend/nextjs template layer not available offline (registry-first)"
+        );
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -885,8 +888,7 @@ fn test_multi_app_scaffold_writes_shared_and_all_platforms() {
         shared_build.contains("baseName = \"demo-multi\""),
         "shared framework baseName"
     );
-    let android_build =
-        std::fs::read_to_string(out.join("android/app/build.gradle.kts")).unwrap();
+    let android_build = std::fs::read_to_string(out.join("android/app/build.gradle.kts")).unwrap();
     assert!(
         android_build.contains("implementation(project(\":shared\"))"),
         "android depends on shared"
@@ -907,4 +909,3 @@ fn test_multi_app_scaffold_writes_shared_and_all_platforms() {
         );
     }
 }
-

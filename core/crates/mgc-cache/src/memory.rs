@@ -47,4 +47,3 @@ impl Default for StringPool {
         Self::new()
     }
 }
-

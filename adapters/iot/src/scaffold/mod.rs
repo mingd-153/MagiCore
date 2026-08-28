@@ -63,7 +63,6 @@ async fn scaffold_zephyr(name: &str, board: &str, dir: &Path) -> MgResult<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 #[path = "test/mod_test.rs"]
 mod tests;

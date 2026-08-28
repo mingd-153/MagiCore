@@ -123,8 +123,7 @@ fn unity_cache_root() -> MgResult<std::path::PathBuf> {
     // OS defaults (rephrased for compliance)
     #[cfg(target_os = "macos")]
     {
-        let home = std::env::var("HOME")
-            .map_err(|_| MgError::Other("HOME not set".into()))?;
+        let home = std::env::var("HOME").map_err(|_| MgError::Other("HOME not set".into()))?;
         Ok(std::path::PathBuf::from(home)
             .join("Library")
             .join("Unity")
@@ -133,8 +132,7 @@ fn unity_cache_root() -> MgResult<std::path::PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        let home = std::env::var("HOME")
-            .map_err(|_| MgError::Other("HOME not set".into()))?;
+        let home = std::env::var("HOME").map_err(|_| MgError::Other("HOME not set".into()))?;
         Ok(std::path::PathBuf::from(home)
             .join(".config")
             .join("unity3d")

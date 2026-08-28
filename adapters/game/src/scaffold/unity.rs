@@ -65,7 +65,6 @@ unity_version = "{{unity_version}}"
 architecture = "native-first"
 "#;
 
-
 #[cfg(test)]
 #[path = "test/unity_test.rs"]
 mod tests;

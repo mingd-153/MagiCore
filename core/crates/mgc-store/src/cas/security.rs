@@ -40,4 +40,3 @@ pub fn check_path_traversal(path: &Path) -> Result<(), StoreError> {
     }
     Ok(())
 }
-

@@ -45,7 +45,6 @@ pub async fn deploy(target: DeployTarget, dry_run: bool) -> MgResult<String> {
     Ok(format!("{} (deployed)", summary))
 }
 
-
 #[cfg(test)]
 #[path = "test/mod_test.rs"]
 mod tests;

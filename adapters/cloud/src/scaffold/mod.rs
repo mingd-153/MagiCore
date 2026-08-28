@@ -54,7 +54,6 @@ async fn scaffold_terraform(name: &str, dir: &Path) -> MgResult<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 #[path = "test/mod_test.rs"]
 mod tests;

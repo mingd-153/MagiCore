@@ -47,4 +47,3 @@ pub async fn download_with_progress(
     file.flush().await?;
     Ok(())
 }
-

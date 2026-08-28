@@ -562,7 +562,6 @@ async fn list(registry: &str, token: Option<String>) -> Result<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 #[path = "../../test/model_test.rs"]
 mod tests;

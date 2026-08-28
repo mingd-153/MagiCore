@@ -3,7 +3,6 @@
 
 //! Cache module integration tests.
 
-#![allow(clippy::unwrap_used)]
 use mgc_lib_adapter::cache::metadata::{metadata_path, CacheEntry, CacheMetadata};
 use mgc_lib_adapter::cache::prune::{prune_cache, PruneStrategy};
 use mgc_lib_adapter::cache::{cache_dir, cache_size, clear_cache};

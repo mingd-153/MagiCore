@@ -331,7 +331,6 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-
 #[cfg(test)]
 #[path = "../test/bundler_test.rs"]
 mod tests;

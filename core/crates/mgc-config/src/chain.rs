@@ -69,4 +69,3 @@ fn host_of(url: &str) -> String {
         .map(|u| u.host_str().unwrap_or("").to_string())
         .unwrap_or_default()
 }
-

@@ -1583,7 +1583,6 @@ pub fn infer_backend_language(framework: &str) -> Option<&'static str> {
         .and_then(|f| f.base)
 }
 
-
 #[cfg(test)]
 #[path = "../test/processor_test.rs"]
 mod tests;

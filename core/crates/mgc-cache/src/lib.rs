@@ -238,4 +238,3 @@ impl Default for PackageCache {
         Self::new().expect("Failed to create default cache")
     }
 }
-

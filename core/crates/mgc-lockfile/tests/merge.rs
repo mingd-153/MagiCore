@@ -1,7 +1,6 @@
 //! Tests cho 3-way merge (v2 schema) — tách khỏi src theo RULE §5.
 
-use super::*;
-use crate::Package;
+use mgc_lockfile::{merge3, resolve_git_conflict_markers, serialize_lockfile, Lockfile, Package};
 
 fn pkg(name: &str, version: &str) -> Package {
     Package {
@@ -127,6 +126,6 @@ fn conflict_markers_resolve_to_union_when_sides_parse() {
 #[test]
 fn plain_lockfile_has_no_markers_returns_none() {
     let plain = lock(&[pkg("a", "1.0.0")]);
-    let text = crate::writer::serialize_lockfile(&plain).unwrap();
+    let text = serialize_lockfile(&plain).unwrap();
     assert!(resolve_git_conflict_markers(&text).is_none());
 }

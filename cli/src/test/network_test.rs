@@ -34,4 +34,3 @@ fn url_host_parses_registry_urls() {
     );
     assert!(url_host("not a url").is_none());
 }
-

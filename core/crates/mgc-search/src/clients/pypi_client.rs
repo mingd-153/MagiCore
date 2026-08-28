@@ -110,4 +110,3 @@ impl SearchClient for PyPISearchClient {
         self.try_variants(query).await
     }
 }
-

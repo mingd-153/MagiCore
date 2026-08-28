@@ -17,4 +17,4 @@ tempfile = { workspace = true }
 
 [[test]]
 name = "workspace"
-path = "test/workspace.rs"
+path = "tests/workspace.rs"

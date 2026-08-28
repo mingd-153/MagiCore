@@ -96,4 +96,3 @@ impl SearchClient for CratesSearchClient {
             .collect())
     }
 }
-

@@ -390,4 +390,3 @@ fn match_compound_range(range: &str, version: &Version) -> bool {
         .iter()
         .all(|part| match_single_range(part.as_str(), version))
 }
-

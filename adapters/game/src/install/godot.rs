@@ -39,7 +39,6 @@ pub async fn download_godot_binary(
     Ok(binary_path)
 }
 
-
 #[cfg(test)]
 #[path = "test/godot_test.rs"]
 mod tests;

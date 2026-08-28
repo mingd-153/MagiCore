@@ -641,7 +641,7 @@ impl Resolver {
                     .iter()
                     .map(|(name, _, version)| PackageId::new(name.clone(), version.clone()))
                     .collect();
-                
+
                 // G2: Dependency memoization — check cache before prefetch
                 let mut dependency_results = HashMap::new();
                 let mut uncached_ids = Vec::new();
@@ -650,24 +650,27 @@ impl Resolver {
                     for id in &ids {
                         let key = format!("{}@{}", id.name_str(), id.version());
                         if let Some(cached_deps) = cache.get(&key) {
-                            self.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            self.cache_hits
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             dependency_results.insert(id.clone(), cached_deps.to_vec());
                         } else {
-                            self.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            self.cache_misses
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             uncached_ids.push(id.clone());
                         }
                     }
                 }
-                
+
                 // Fetch uncached dependencies
                 if !uncached_ids.is_empty() {
-                    let fetched = self.provider
+                    let fetched = self
+                        .provider
                         .prefetch_dependencies(&uncached_ids)
                         .await
                         .map_err(|e| SolveError {
                             message: format!("dependency prefetch failed: {e}"),
                         })?;
-                    
+
                     // Store in cache
                     let mut cache = self.dep_memo_cache.write().unwrap();
                     for (id, deps) in fetched {
@@ -677,7 +680,7 @@ impl Resolver {
                         dependency_results.insert(id, deps);
                     }
                 }
-                
+
                 profile.mark("prefetch_dependencies", deps_prefetch_started_at);
                 self.provider
                     .on_batch_resolved(&ids)
@@ -843,4 +846,3 @@ impl Resolver {
         merged.into_values().collect()
     }
 }
-

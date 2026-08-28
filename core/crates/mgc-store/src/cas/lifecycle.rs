@@ -56,4 +56,3 @@ pub fn set_cas_root_permissions(root: &Path) -> Result<(), StoreError> {
 
     Ok(())
 }
-

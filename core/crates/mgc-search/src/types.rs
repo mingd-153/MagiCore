@@ -144,4 +144,3 @@ pub struct ResultMetadata {
     /// Điểm chất lượng (0.0-1.0, chỉ npm)
     pub quality: Option<f32>,
 }
-
