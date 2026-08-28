@@ -1,13 +1,13 @@
 use anyhow::Result;
 #[cfg(feature = "web")]
-use mg_ui::info;
+use mgc_ui::info;
 #[cfg(feature = "web")]
 use serde::Serialize;
 
 #[cfg(feature = "web")]
 use crate::commands::web_registry_config::web_registry_url;
 
-/// mg info <pkg> — show package information.
+/// mgc info <pkg> — show package information.
 /// Queries multiple registries, auto-labels Core/Language based on package metadata.
 pub async fn run(package: String, json: bool) -> Result<()> {
     #[cfg(not(feature = "web"))]
@@ -19,7 +19,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
     #[cfg(feature = "web")]
     {
         // Query npm-compatible registry — đọc registry web qua config/env tập trung.
-        let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
+        let registry = mgc_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
 
         let meta = match registry.fetch_metadata(&package).await {
             Ok(m) => m,
@@ -48,7 +48,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
             return Ok(());
         }
 
-        mg_ui::blank_line();
+        mgc_ui::blank_line();
         info(&format!("Package:      {}", meta.name));
         info(&format!("Core Support: {}", core_label));
         if let Some(desc) = &meta.description {
@@ -60,7 +60,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
         info(&format!("Versions:     {}", meta.versions.len()));
 
         if !meta.dist_tags.is_empty() {
-            mg_ui::blank_line();
+            mgc_ui::blank_line();
             for (tag, ver) in &meta.dist_tags {
                 info(&format!("  {}: {}", tag, ver));
             }
@@ -70,7 +70,7 @@ pub async fn run(package: String, json: bool) -> Result<()> {
         sorted.sort();
         let recent: Vec<_> = sorted.iter().rev().take(5).collect();
         if !recent.is_empty() {
-            mg_ui::blank_line();
+            mgc_ui::blank_line();
             info("Recent versions:");
             for v in recent {
                 info(&format!("  {}", v));

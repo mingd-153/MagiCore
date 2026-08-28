@@ -1,9 +1,9 @@
-//! `mg install` game — tách từ core/game.rs (Phase 7 v5).
+//! `mgc install` game — tách từ core/game.rs (Phase 7 v5).
 
 use anyhow::Result;
 
 use super::super::shared;
-use mg_types::Ecosystem;
+use mgc_types::Ecosystem;
 
 const OPTIMIZER_PKG: &str = "optimizer";
 
@@ -22,18 +22,18 @@ pub async fn install(packages: Vec<String>) -> Result<()> {
     }
 
     for pkg in &adapter_pkgs {
-        let spinner = mg_ui::create_spinner(&format!("  Adding {}...", pkg));
-        let name = mg_types::PackageName::new(pkg)?;
-        let opts = mg_types::adapter::AddOptions::default();
+        let spinner = mgc_ui::create_spinner(&format!("  Adding {}...", pkg));
+        let name = mgc_types::PackageName::new(pkg)?;
+        let opts = mgc_types::adapter::AddOptions::default();
         adapter.add(&root, &name, None, opts).await?;
         spinner.finish_and_clear();
     }
     shared::install_with_adapter(
         &*adapter,
         &root,
-        "mg add",
+        "mgc add",
         false,
-        mg_types::adapter::InstallOptions {
+        mgc_types::adapter::InstallOptions {
             legacy_flat: false,
             ..Default::default()
         },

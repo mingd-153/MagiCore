@@ -1,4 +1,4 @@
-//! Registry command — mg registry serve / user add / user rm (10-task-plan Phase 3)
+//! Registry command — mgc registry serve / user add / user rm (10-task-plan Phase 3)
 //! (Lệnh registry: serve server, quản lý user — add/rm)
 
 use anyhow::{bail, Result};
@@ -24,7 +24,7 @@ pub enum RegistryCmd {
         port: u16,
         #[arg(long, default_value = "./data/registry")]
         store_dir: String,
-        #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
+        #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         admin_token: Option<String>,
         #[arg(long, default_value = "104857600")]
         max_body_size: usize,
@@ -52,7 +52,7 @@ pub enum UserCmd {
         name: String,
         #[arg(long, help = "password (prompt if omitted)")]
         password: Option<String>,
-        #[arg(long = "scope", help = "package scope patterns, vd: @megagate/*")]
+        #[arg(long = "scope", help = "package scope patterns, vd: @magicore/*")]
         scopes: Vec<String>,
         #[arg(
             long,
@@ -68,7 +68,7 @@ pub enum UserCmd {
         name: String,
         #[arg(long, default_value = DEFAULT_REGISTRY)]
         registry: String,
-        #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
+        #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         admin_token: Option<String>,
     },
     /// Revoke an access token (requires admin token)
@@ -76,7 +76,7 @@ pub enum UserCmd {
         token: String,
         #[arg(long, default_value = DEFAULT_REGISTRY)]
         registry: String,
-        #[arg(long, env = "MEGAGATE_REGISTRY_ADMIN_TOKEN")]
+        #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         admin_token: Option<String>,
     },
 }
@@ -98,7 +98,7 @@ pub async fn run(args: RegistryArgs) -> Result<()> {
                     EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
                 )
                 .try_init(); // main.rs đã init global — không panic nếu set rồi
-            mg_registry_server::serve(mg_registry_server::RegistryServerConfig {
+            mgc_registry_server::serve(mgc_registry_server::RegistryServerConfig {
                 host,
                 port,
                 store_dir,
@@ -175,7 +175,7 @@ async fn user_add(
         .ok_or_else(|| crate::error::no_token_in_response(&text))?;
     println!("User {} created. Token: {}", name, token);
     println!(
-        "Set it in .npmrc via: mg login --username {} --password <pw>",
+        "Set it in .npmrc via: mgc login --username {} --password <pw>",
         name
     );
     Ok(())
@@ -183,7 +183,7 @@ async fn user_add(
 
 async fn user_rm(name: &str, registry: &str, admin_token: Option<String>) -> Result<()> {
     let Some(token) = admin_token else {
-        bail!("Admin token required (--admin-token or MEGAGATE_REGISTRY_ADMIN_TOKEN)");
+        bail!("Admin token required (--admin-token or MAGICORE_REGISTRY_ADMIN_TOKEN)");
     };
     let url = format!(
         "{}/-/user/org.couchdb.user:{}",
@@ -209,7 +209,7 @@ async fn user_rm(name: &str, registry: &str, admin_token: Option<String>) -> Res
 
 async fn revoke_token(token: &str, registry: &str, admin_token: Option<String>) -> Result<()> {
     let Some(admin) = admin_token else {
-        bail!("Admin token required (--admin-token or MEGAGATE_REGISTRY_ADMIN_TOKEN)");
+        bail!("Admin token required (--admin-token or MAGICORE_REGISTRY_ADMIN_TOKEN)");
     };
     let url = format!("{}/-/user/token/{}", registry.trim_end_matches('/'), token);
     let client = reqwest::Client::new();

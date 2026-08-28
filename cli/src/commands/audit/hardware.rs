@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mg_types::Ecosystem;
+use mgc_types::Ecosystem;
 
 pub async fn audit() -> Result<()> {
     let ctx = crate::context::ProjectContext::load_with_core(Some("hardware"))?;

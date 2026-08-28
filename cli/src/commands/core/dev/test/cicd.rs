@@ -2,14 +2,14 @@ use super::*;
 
 #[test]
 fn cloudflare_deploy_command() {
-    let cmd = deploy_command(mg_cicd_adapter::CicdProvider::Cloudflare).expect("cloudflare ok");
+    let cmd = deploy_command(mgc_cicd_adapter::CicdProvider::Cloudflare).expect("cloudflare ok");
     assert_eq!(cmd.tool, "wrangler");
     assert_eq!(cmd.args, vec!["deploy", "--dry-run"]);
 }
 
 #[test]
 fn gcp_deploy_command() {
-    let cmd = deploy_command(mg_cicd_adapter::CicdProvider::Gcp).expect("gcp ok");
+    let cmd = deploy_command(mgc_cicd_adapter::CicdProvider::Gcp).expect("gcp ok");
     assert_eq!(cmd.tool, "gcloud");
     assert_eq!(cmd.args, vec!["app", "deploy", "--no-promote"]);
 }
@@ -44,17 +44,17 @@ fn target_deploy_commands() {
 
 #[test]
 fn ci_only_providers_bail() {
-    assert!(deploy_command(mg_cicd_adapter::CicdProvider::GithubActions).is_err());
-    assert!(deploy_command(mg_cicd_adapter::CicdProvider::Gitlab).is_err());
-    assert!(deploy_command(mg_cicd_adapter::CicdProvider::CircleCi).is_err());
-    assert!(deploy_command(mg_cicd_adapter::CicdProvider::Aws).is_err());
-    assert!(deploy_command(mg_cicd_adapter::CicdProvider::Argocd).is_err());
+    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::GithubActions).is_err());
+    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::Gitlab).is_err());
+    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::CircleCi).is_err());
+    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::Aws).is_err());
+    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::Argocd).is_err());
 }
 
 #[test]
 fn ci_templates_cover_all_providers() {
     assert!(WORKFLOW_TEMPLATE.contains("actions/checkout@v4"));
-    assert!(GITLAB_TEMPLATE.contains("mg verify"));
+    assert!(GITLAB_TEMPLATE.contains("mgc verify"));
     assert!(GITLAB_TEMPLATE.contains("stages:"));
     assert!(CIRCLE_TEMPLATE.contains("version: 2.1"));
     assert!(CIRCLE_TEMPLATE.contains("cimg/rust"));
@@ -62,17 +62,17 @@ fn ci_templates_cover_all_providers() {
 
 #[test]
 fn verify_chain_parses_custom_or_default() {
-    let tmp = std::env::temp_dir().join(format!("mg-cicd-chain-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("mgc-cicd-chain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     std::fs::write(
-        tmp.join("mg.toml"),
+        tmp.join("mgc.toml"),
         "[cicd]\nprovider = \"github-actions\"\nverify = [\"audit\", \"build\"]\n",
     )
     .unwrap();
     assert_eq!(verify_chain(&tmp).unwrap(), vec!["audit", "build"]);
     std::fs::write(
-        tmp.join("mg.toml"),
+        tmp.join("mgc.toml"),
         "[cicd]\nprovider = \"github-actions\"\n",
     )
     .unwrap();

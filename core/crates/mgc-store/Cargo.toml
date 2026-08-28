@@ -1,0 +1,70 @@
+[package]
+name = "mgc-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Package store and cache management for MagiCore"
+
+[dependencies]
+mgc-types = { workspace = true }
+mgc-crypto = { workspace = true }
+
+# Database
+rusqlite = { workspace = true }
+
+# File system
+walkdir = { workspace = true }
+tempfile = { workspace = true }
+dirs = { workspace = true }
+fs2 = { workspace = true }
+
+# Compression
+tar = { workspace = true }
+flate2 = { workspace = true }
+async-compression = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Concurrency
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+rmp-serde = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Hashing
+hex = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+blake3 = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+
+# Utilities
+lru = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+
+[[test]]
+name = "test_refcount"
+path = "tests/refcount.rs"
+
+[[test]]
+name = "test_index"
+path = "tests/index.rs"
+
+[lints]
+workspace = true

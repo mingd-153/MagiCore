@@ -1,8 +1,8 @@
 use crate::context::ProjectContext;
 use anyhow::Result;
-use mg_ui::info;
+use mgc_ui::info;
 
-/// mg list — show installed packages
+/// mgc list — show installed packages
 pub async fn run(core: Option<&str>) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();

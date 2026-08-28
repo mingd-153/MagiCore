@@ -2,7 +2,7 @@
 """Generate feature-gated backend templates for all frameworks."""
 import os
 
-BASE = "/Users/doanmihh/Documents/Workspace/MegaGate/templates/web"
+BASE = "/Users/doanmihh/Documents/Workspace/MagiCore/templates/web"
 
 # === Source templates ===
 
@@ -189,7 +189,7 @@ import { router, publicProcedure } from "./trpc.js";
 export const appRouter = router({
   greeting: publicProcedure
     .input(z.object({ name: z.string().optional() }).optional())
-    .query(({ input }) => `hello ${input?.name ?? "megagate"}`),
+    .query(({ input }) => `hello ${input?.name ?? "magicore"}`),
 });
 
 export type AppRouter = typeof appRouter;
@@ -201,7 +201,7 @@ import { router, publicProcedure } from "./trpc.js";
 export const appRouter = router({
   greeting: publicProcedure
     .input(z.object({ name: z.string().optional() }).optional())
-    .query(({ input }) => `hello ${input?.name ?? "megagate"}`),
+    .query(({ input }) => `hello ${input?.name ?? "magicore"}`),
 });
 """
 

@@ -60,14 +60,14 @@ impl WizardEngine {
         match &question.kind {
             QuestionKind::Select { options } => {
                 let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
-                let idx = mg_ui::prompt::select(&question.prompt, &labels).unwrap_or(0);
+                let idx = mgc_ui::prompt::select(&question.prompt, &labels).unwrap_or(0);
                 let chosen = &options[idx];
                 Self::run_next(chosen)
             }
             QuestionKind::MultiSelect { options } => {
                 let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
                 let indices =
-                    mg_ui::prompt::multi_select(&question.prompt, &labels).unwrap_or(vec![]);
+                    mgc_ui::prompt::multi_select(&question.prompt, &labels).unwrap_or(vec![]);
                 let mut results = vec![];
                 for &i in &indices {
                     let chosen = &options[i];
@@ -77,7 +77,7 @@ impl WizardEngine {
                 results
             }
             QuestionKind::Input { default } => {
-                let answer = mg_ui::prompt::input(&question.prompt)
+                let answer = mgc_ui::prompt::input(&question.prompt)
                     .unwrap_or(default.clone().unwrap_or_default());
                 vec![answer]
             }

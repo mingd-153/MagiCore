@@ -1,0 +1,21 @@
+{
+    "name": "magicore-benchmark-simple",
+    "version": "1.0.0",
+    "description": "Simplified benchmark (no Next.js transitive deps)",
+    "private": true,
+    "dependencies": {
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "axios": "^1.6.0",
+        "zod": "^3.22.0",
+        "date-fns": "^2.30.0",
+        "lodash": "^4.17.21",
+        "clsx": "^2.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.9.0",
+        "@types/react": "^18.2.0",
+        "@types/lodash": "^4.14.0",
+        "typescript": "^5.2.0"
+    }
+}

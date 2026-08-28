@@ -1,4 +1,4 @@
-//! `mg add app` — passthrough tool theo language (Q18 allowlist §5.1). Phase 7 v5.
+//! `mgc add app` — passthrough tool theo language (Q18 allowlist §5.1). Phase 7 v5.
 
 use anyhow::Result;
 

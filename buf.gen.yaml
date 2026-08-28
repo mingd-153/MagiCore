@@ -2,7 +2,7 @@ version: v1
 managed:
   enabled: true
   go_package_prefix:
-    default: github.com/megagate/megagate/gen/go
+    default: github.com/magicore/magicore/gen/go
 plugins:
   - plugin: buf.build/protocolbuffers/go
     out: gen/go

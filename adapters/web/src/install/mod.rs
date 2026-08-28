@@ -3,11 +3,16 @@
 pub mod bin;
 pub mod download;
 pub mod extract;
+pub mod fetch;
+pub mod integrity;
+pub mod link_tree;
 pub mod materialize;
+pub mod package_marker;
+pub mod script_policy;
 
-use mg_store::{ContentStore, Database, Layout, PackageCache};
-use mg_types::adapter::{InstallOptions, InstallSummary, ResolvedGraph, ResolvedPackage};
-use mg_types::{MgError, MgResult, PackageId};
+use mgc_store::{ContentStore, Database, Layout, PackageCache};
+use mgc_types::adapter::{InstallOptions, InstallSummary, ResolvedGraph, ResolvedPackage};
+use mgc_types::{MgError, MgResult, PackageId};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -19,44 +24,15 @@ use crate::install::materialize::{
     materialize_strict_layout, prune_root_install_dirs, repair_dangling_symlinks,
     reset_nested_node_modules, select_root_packages, strict_vstore_package_dir,
 };
+pub use crate::install::script_policy::{
+    lifecycle_scripts_allowed, load_trust_policies, should_run_lifecycle_scripts,
+    trust_allows_script,
+};
 use crate::lifecycle::LifecycleRunner;
 use crate::lockfile::installed_package_matches;
 use crate::lockfile::{project_cache_dir, write_web_lockfile_with_state};
 use crate::native;
 use crate::profile::InstallProfile;
-
-pub fn lifecycle_scripts_allowed() -> bool {
-    std::env::var("MEGAGATE_WEB_ALLOW_SCRIPTS")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-}
-
-pub fn should_run_lifecycle_scripts(ignore_scripts: bool, allow_scripts: bool) -> bool {
-    if ignore_scripts {
-        return false;
-    }
-    allow_scripts || lifecycle_scripts_allowed()
-}
-
-pub fn load_trust_policies(layout: &Layout) -> std::collections::HashMap<String, String> {
-    Database::open(&layout.db_path())
-        .and_then(|db| db.list_trust_policies())
-        .map(|rows| {
-            rows.into_iter()
-                .map(|(id, policy, _)| (id, policy))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub fn trust_allows_script(policy: Option<&str>, blanket_scripts: bool) -> bool {
-    match policy {
-        Some("approved") => true,
-        Some("denied") => false,
-        _ => blanket_scripts,
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_install(
@@ -205,9 +181,9 @@ pub async fn run_install(
     };
 
     let fetch_graph = if opts.incremental && !already_in_virtual_store.is_empty() {
-        if std::env::var("MEGAGATE_WEB_PROFILE_INSTALL").is_ok() {
+        if std::env::var("MAGICORE_WEB_PROFILE_INSTALL").is_ok() {
             eprintln!(
-                "[megagate:web:materialize-profile] fetch_graph={} already_in_vstore={} graph_total={}",
+                "[magicore:web:materialize-profile] fetch_graph={} already_in_vstore={} graph_total={}",
                 graph_without_packages(graph, &already_in_virtual_store)
                     .packages
                     .len(),
@@ -581,11 +557,11 @@ pub async fn run_install(
                             if !trust_allows_script(policy, blanket_scripts) {
                                 if policy == Some("denied") {
                                     eprintln!(
-                                        "[megagate] DENIED lifecycle scripts for {name}@{version} (mg trust deny)"
+                                        "[magicore] DENIED lifecycle scripts for {name}@{version} (mgc trust deny)"
                                     );
                                 } else {
                                     eprintln!(
-                                        "[megagate] skipped lifecycle scripts for {name}@{version} — not approved. Approve with: mg trust approve {name}"
+                                        "[magicore] skipped lifecycle scripts for {name}@{version} — not approved. Approve with: mgc trust approve {name}"
                                     );
                                 }
                                 continue;
@@ -603,7 +579,7 @@ pub async fn run_install(
         for pkg_dir in scripted_packages {
             let project_root = project_root.to_path_buf();
             let Ok(permit) = semaphore.clone().acquire_owned().await else {
-                eprintln!("[megagate] warning: lifecycle semaphore closed");
+                eprintln!("[magicore] warning: lifecycle semaphore closed");
                 continue;
             };
             join_set.spawn(async move {
@@ -615,8 +591,8 @@ pub async fn run_install(
         while let Some(result) = join_set.join_next().await {
             match result {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => eprintln!("[megagate] warning: lifecycle script error: {}", e),
-                Err(e) => eprintln!("[megagate] warning: lifecycle script task panicked: {}", e),
+                Ok(Err(e)) => eprintln!("[magicore] warning: lifecycle script error: {}", e),
+                Err(e) => eprintln!("[magicore] warning: lifecycle script task panicked: {}", e),
             }
         }
     }

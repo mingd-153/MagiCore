@@ -1,0 +1,8 @@
+name = "magicore-lib"
+binary = "mgc"
+description = "MagiCore single-core library distribution"
+mode = "single-core"
+primary_core = "lib"
+no_default_features = true
+features = ["lib"]
+install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --package magicore-lib"

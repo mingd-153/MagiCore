@@ -1,4 +1,4 @@
-//! cicd tooling lệnh: `mg ci generate`, `mg verify`, `mg deploy`, `mg dev` (07 §4).
+//! cicd tooling lệnh: `mgc ci generate`, `mgc verify`, `mgc deploy`, `mgc dev` (07 §4).
 
 use anyhow::Result;
 
@@ -6,31 +6,31 @@ fn not_available(reason: &str) -> anyhow::Error {
     crate::error::cicd_reason(reason)
 }
 
-/// `mg ci generate` — sinh file CI theo provider (07 §4).
-/// Workflow: checkout → setup-megagate → mg install → mg verify.
+/// `mgc ci generate` — sinh file CI theo provider (07 §4).
+/// Workflow: checkout → setup-magicore → mgc install → mgc verify.
 pub fn ci_generate() -> Result<()> {
     let root = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let provider = provider_config()?;
     match provider {
-        mg_cicd_adapter::CicdProvider::GithubActions => {
+        mgc_cicd_adapter::CicdProvider::GithubActions => {
             let dir = root.join(".github").join("workflows");
             std::fs::create_dir_all(&dir)?;
             let path = dir.join("ci.yml");
             let workflow = WORKFLOW_TEMPLATE.replace("{name}", "CI");
             std::fs::write(&path, workflow)?;
-            mg_ui::success(&format!("CI workflow generated: {}", path.display()));
+            mgc_ui::success(&format!("CI workflow generated: {}", path.display()));
         }
-        mg_cicd_adapter::CicdProvider::Gitlab => {
+        mgc_cicd_adapter::CicdProvider::Gitlab => {
             let path = root.join(".gitlab-ci.yml");
             std::fs::write(&path, GITLAB_TEMPLATE)?;
-            mg_ui::success(&format!("GitLab CI generated: {}", path.display()));
+            mgc_ui::success(&format!("GitLab CI generated: {}", path.display()));
         }
-        mg_cicd_adapter::CicdProvider::CircleCi => {
+        mgc_cicd_adapter::CicdProvider::CircleCi => {
             let dir = root.join(".circleci");
             std::fs::create_dir_all(&dir)?;
             let path = dir.join("config.yml");
             std::fs::write(&path, CIRCLE_TEMPLATE)?;
-            mg_ui::success(&format!("CircleCI config generated: {}", path.display()));
+            mgc_ui::success(&format!("CircleCI config generated: {}", path.display()));
         }
         other => {
             return Err(crate::error::ci_template_unknown(other.as_str()));
@@ -50,14 +50,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install MegaGate
+      - name: Install MagiCore
         run: |
           rustup toolchain install stable --profile minimal
-          cargo install --git https://github.com/mingd-153/MegaGate --branch phase-4 mg --locked
+          cargo install --git https://github.com/mingd-153/MagiCore --branch phase-4 mgc --locked
       - name: Install dependencies
-        run: mg install
+        run: mgc install
       - name: Verify
-        run: mg verify
+        run: mgc verify
 "#;
 
 const GITLAB_TEMPLATE: &str = r#"stages:
@@ -68,10 +68,10 @@ ci:
   image: rust:1.86
   before_script:
     - rustup toolchain install stable --profile minimal
-    - cargo install --git https://github.com/mingd-153/MegaGate --branch phase-4 mg --locked
+    - cargo install --git https://github.com/mingd-153/MagiCore --branch phase-4 mgc --locked
   script:
-    - mg install
-    - mg verify
+    - mgc install
+    - mgc verify
 "#;
 
 const CIRCLE_TEMPLATE: &str = r#"version: 2.1
@@ -82,9 +82,9 @@ jobs:
     steps:
       - checkout
       - run: rustup toolchain install stable --profile minimal
-      - run: cargo install --git https://github.com/mingd-153/MegaGate --branch phase-4 mg --locked
-      - run: mg install
-      - run: mg verify
+      - run: cargo install --git https://github.com/mingd-153/MagiCore --branch phase-4 mgc --locked
+      - run: mgc install
+      - run: mgc verify
 workflows:
   version: 2
   ci:
@@ -92,16 +92,16 @@ workflows:
       - ci
 "#;
 
-/// `mg verify` — chạy chain theo adapter: audit (web P1) → test → build (07 §4).
+/// `mgc verify` — chạy chain theo adapter: audit (web P1) → test → build (07 §4).
 /// 1 bước fail → dừng, báo rõ project (workspace recursive P2 — chỉ cwd P1).
 pub async fn verify() -> Result<()> {
     let root = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    mg_ui::info(&format!("[verify] project: {}", root.display()));
+    mgc_ui::info(&format!("[verify] project: {}", root.display()));
 
     let chain = verify_chain(&root)?;
-    mg_ui::info(&format!("[verify] chain: {}", chain.join(" → ")));
+    mgc_ui::info(&format!("[verify] chain: {}", chain.join(" → ")));
 
-    let core = mg_config::project::ProjectConfig::load(&root)
+    let core = mgc_config::project::ProjectConfig::load(&root)
         .ok()
         .flatten()
         .map(|cfg| cfg.ecosystem)
@@ -113,29 +113,31 @@ pub async fn verify() -> Result<()> {
                 if core == "web" {
                     crate::commands::audit::run(None, false).await?;
                 } else {
-                    mg_ui::warning("audit for non-web cores is P2 (Q22) — skipping the audit step");
+                    mgc_ui::warning(
+                        "audit for non-web cores is P2 (Q22) — skipping the audit step",
+                    );
                 }
             }
             "test" => run_test_step(&root, &core).await?,
             "build" => {
                 if core == "cicd" {
-                    mg_ui::warning(
-                        "cicd core has no build (07 §4) — pipelines run via `mg ci generate`",
+                    mgc_ui::warning(
+                        "cicd core has no build (07 §4) — pipelines run via `mgc ci generate`",
                     );
                 } else {
                     crate::commands::build::run(None, None).await?;
                 }
             }
-            other => mg_ui::warning(&format!("unknown verify step: '{other}' — skipping")),
+            other => mgc_ui::warning(&format!("unknown verify step: '{other}' — skipping")),
         }
     }
-    mg_ui::success("Verify chain OK");
+    mgc_ui::success("Verify chain OK");
     Ok(())
 }
 
-/// Chain từ mg.toml `[cicd] verify` — default ["audit", "test", "build"].
+/// Chain từ mgc.toml `[cicd] verify` — default ["audit", "test", "build"].
 fn verify_chain(root: &std::path::Path) -> Result<Vec<String>> {
-    let content = std::fs::read_to_string(root.join("mg.toml"))?;
+    let content = std::fs::read_to_string(root.join("mgc.toml"))?;
     let v: toml::Value = toml::from_str(&content)?;
     let chain = v
         .get("cicd")
@@ -167,27 +169,27 @@ async fn run_test_step(root: &std::path::Path, core: &str) -> Result<()> {
         crate::commands::run::run("test".to_string(), vec![], Some("web")).await?;
     } else if core == "lib" {
         if root.join("Cargo.toml").exists() {
-            let opts = mg_exec::prelude::ExecOptions {
+            let opts = mgc_exec::prelude::ExecOptions {
                 cwd: Some(root.to_path_buf()),
-                log_path: Some(root.join(".megagate").join("exec.log")),
+                log_path: Some(root.join(".magicore").join("exec.log")),
                 clean_env: true,
                 ..Default::default()
             };
-            mg_exec::prelude::run_inherited("cargo", &["test".into()], &opts)?;
+            mgc_exec::prelude::run_inherited("cargo", &["test".into()], &opts)?;
             return Ok(());
         }
         return Err(crate::error::lib_no_test_runner());
     } else {
-        mg_ui::warning(&format!(
+        mgc_ui::warning(&format!(
             "test step for core '{core}' is not P1 yet — skipping (cargo test for rust, scripts.test for web)"
         ));
     }
     Ok(())
 }
 
-fn provider_config() -> Result<mg_cicd_adapter::CicdProvider> {
+fn provider_config() -> Result<mgc_cicd_adapter::CicdProvider> {
     let cwd = std::env::current_dir()?;
-    mg_cicd_adapter::adapter_for(&cwd)
+    mgc_cicd_adapter::adapter_for(&cwd)
         .map(|a| a.provider)
         .ok_or_else(crate::error::cicd_project_not_detected)
 }
@@ -208,9 +210,9 @@ struct DeployTarget {
     region: String,
 }
 
-/// Đọc `[deploy] targets` từ mg.toml — None = không có target, dùng provider detect.
+/// Đọc `[deploy] targets` từ mgc.toml — None = không có target, dùng provider detect.
 fn deploy_targets(root: &std::path::Path) -> Result<Option<Vec<DeployTarget>>> {
-    let content = match std::fs::read_to_string(root.join("mg.toml")) {
+    let content = match std::fs::read_to_string(root.join("mgc.toml")) {
         Ok(c) => c,
         Err(_) => return Ok(None),
     };
@@ -286,25 +288,25 @@ fn target_deploy_command(target: &DeployTarget, dry_run: bool) -> Result<DeployC
     }
 }
 
-fn deploy_command(provider: mg_cicd_adapter::CicdProvider) -> Result<DeployCommand> {
+fn deploy_command(provider: mgc_cicd_adapter::CicdProvider) -> Result<DeployCommand> {
     match provider {
-        mg_cicd_adapter::CicdProvider::Cloudflare => Ok(DeployCommand {
+        mgc_cicd_adapter::CicdProvider::Cloudflare => Ok(DeployCommand {
             tool: "wrangler",
             args: vec!["deploy".to_string(), "--dry-run".to_string()],
         }),
-        mg_cicd_adapter::CicdProvider::Gcp => Ok(DeployCommand {
+        mgc_cicd_adapter::CicdProvider::Gcp => Ok(DeployCommand {
             tool: "gcloud",
             args: vec!["app".to_string(), "deploy".to_string(), "--no-promote".to_string()],
         }),
-        mg_cicd_adapter::CicdProvider::GithubActions
-        | mg_cicd_adapter::CicdProvider::Gitlab
-        | mg_cicd_adapter::CicdProvider::CircleCi => Err(not_available(
+        mgc_cicd_adapter::CicdProvider::GithubActions
+        | mgc_cicd_adapter::CicdProvider::Gitlab
+        | mgc_cicd_adapter::CicdProvider::CircleCi => Err(not_available(
             "is CI-only — push to trigger; no local deploy command.",
         )),
-        mg_cicd_adapter::CicdProvider::Aws => Err(not_available(
-            "aws deploy needs a target (s3 bucket/pipeline) — configure [deploy] targets then run `mg deploy`.",
+        mgc_cicd_adapter::CicdProvider::Aws => Err(not_available(
+            "aws deploy needs a target (s3 bucket/pipeline) — configure [deploy] targets then run `mgc deploy`.",
         )),
-        mg_cicd_adapter::CicdProvider::Argocd => Err(not_available(
+        mgc_cicd_adapter::CicdProvider::Argocd => Err(not_available(
             "argocd runs server-side (GitOps) — commit + push to trigger sync; no local deploy command.",
         )),
     }
@@ -327,34 +329,34 @@ pub async fn deploy(run: bool) -> Result<()> {
         return Err(crate::error::no_deploy_targets());
     }
 
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.clone()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
     for cmd in &commands {
         if !run {
-            mg_ui::info(&format!(
-                "[dry-run] would run: {} {} (real deploy requires `mg deploy --run`)",
+            mgc_ui::info(&format!(
+                "[dry-run] would run: {} {} (real deploy requires `mgc deploy --run`)",
                 cmd.tool,
                 cmd.args.join(" ")
             ));
             continue;
         }
-        mg_ui::info(&format!("Deploying: {} {}", cmd.tool, cmd.args.join(" ")));
-        mg_exec::prelude::run_inherited(cmd.tool, &cmd.args, &opts)?;
+        mgc_ui::info(&format!("Deploying: {} {}", cmd.tool, cmd.args.join(" ")));
+        mgc_exec::prelude::run_inherited(cmd.tool, &cmd.args, &opts)?;
     }
     Ok(())
 }
 
-/// `mg dev` cho cicd — in lệnh deploy (dry-run), không chạy thật (§5.4/S2).
+/// `mgc dev` cho cicd — in lệnh deploy (dry-run), không chạy thật (§5.4/S2).
 pub async fn dev(dry_run: bool) -> Result<()> {
     let root = std::env::current_dir()?;
     let provider = provider_config()?;
     let cmd = deploy_command(provider)?;
-    mg_ui::info(&format!(
-        "[dry-run] preview: {} {} (run with `mg deploy --run`)",
+    mgc_ui::info(&format!(
+        "[dry-run] preview: {} {} (run with `mgc deploy --run`)",
         cmd.tool,
         cmd.args.join(" ")
     ));

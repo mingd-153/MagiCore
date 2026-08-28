@@ -1,8 +1,0 @@
-name = "megagate-game"
-binary = "mg"
-description = "MegaGate single-core game distribution"
-mode = "single-core"
-primary_core = "game"
-no_default_features = true
-features = ["game"]
-install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install-from-gh.sh | bash -s -- --package megagate-game"

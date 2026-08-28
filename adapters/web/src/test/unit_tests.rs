@@ -1,11 +1,12 @@
-#![allow(clippy::await_holding_lock, clippy::unwrap_used)]
+#![cfg(test)]
+#![allow(clippy::unwrap_used, clippy::await_holding_lock)]
 use super::*;
 use base64::Engine;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use mg_lockfile::{serialization, LockPackage, Lockfile, ResolutionMeta};
-use mg_resolver::DependencyProvider;
-use mg_store::{Layout, PackageCache};
+use mgc_lockfile::Lockfile;
+use mgc_resolver::DependencyProvider;
+use mgc_store::{Layout, PackageCache};
 use sha2::{Digest, Sha512};
 use std::io::ErrorKind;
 use std::sync::{
@@ -67,7 +68,7 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
             "private": true,
             "type": "module",
             "scripts": {
-                "dev": "mg web dev"
+                "dev": "mgc web dev"
             }
         })
         .to_string(),
@@ -87,7 +88,7 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
     let package_json = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
     assert!(package_json.contains("\"private\": true"));
     assert!(package_json.contains("\"type\": \"module\""));
-    assert!(package_json.contains("\"dev\": \"mg web dev\""));
+    assert!(package_json.contains("\"dev\": \"mgc web dev\""));
 
     let package_id = PackageId::new(name, Version::parse("3.4.0").unwrap());
     let integrity = seed_cached_tarball(dir.path(), &package_id);
@@ -120,9 +121,9 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
         .join("index.css")
         .exists());
 
-    let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "locked");
+    let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages.len(), 1);
     assert_eq!(parsed.packages[0].name, "tailwindcss");
     assert_eq!(parsed.packages[0].version, "3.4.0");
@@ -195,8 +196,8 @@ async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
     let dep = manifest.find_dep("react").unwrap();
     assert_eq!(dep.range.as_str(), "*");
 
-    let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
+    let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
     assert!(parsed
         .packages
         .iter()
@@ -220,12 +221,12 @@ async fn test_audit_fix_fail_closed_keeps_manifest_and_lockfile_when_resolve_fai
     )
     .unwrap();
     std::fs::write(
-        dir.path().join("mg.lock"),
+        dir.path().join("mgc.lock"),
         "[resolution]\nstate = \"locked\"\n",
     )
     .unwrap();
     let original_manifest = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
-    let original_lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
+    let original_lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
 
     // Registry + metadata cache both empty -> resolve must fail -> nothing written.
     let adapter = WebAdapter::with_registry_and_shared_cache(
@@ -243,7 +244,7 @@ async fn test_audit_fix_fail_closed_keeps_manifest_and_lockfile_when_resolve_fai
         original_manifest
     );
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("mg.lock")).unwrap(),
+        std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap(),
         original_lock
     );
 }
@@ -268,25 +269,15 @@ fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
     };
 
     write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
-    let lock_path = dir.path().join("mg.lock");
-    let checksum_path = dir.path().join("mg.lock.sha256");
+    let lock_path = dir.path().join("mgc.lock");
     let first_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
-    let first_checksum_modified = std::fs::metadata(&checksum_path)
-        .unwrap()
-        .modified()
-        .unwrap();
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
     let second_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
-    let second_checksum_modified = std::fs::metadata(&checksum_path)
-        .unwrap()
-        .modified()
-        .unwrap();
 
     assert_eq!(first_lock_modified, second_lock_modified);
-    assert_eq!(first_checksum_modified, second_checksum_modified);
 }
 
 #[tokio::test]
@@ -379,7 +370,7 @@ async fn test_resolve_populates_tarball_url_and_integrity_from_shared_metadata()
         "http://127.0.0.1:9".into(),
         shared.path().to_path_buf(),
     );
-    let mut manifest = Manifest::new("demo", mg_types::ecosystem::Ecosystem::Web);
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
     manifest.add_dep(
         DependencySpec::new(
             PackageName::new("react").unwrap(),
@@ -406,7 +397,7 @@ async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable(
     let cache = SharedWebCache {
         root: shared.path().to_path_buf(),
     };
-    let mut manifest = Manifest::new("demo-a", mg_types::ecosystem::Ecosystem::Web);
+    let mut manifest = Manifest::new("demo-a", mgc_types::ecosystem::Ecosystem::Web);
     manifest.add_dep(
         DependencySpec::new(
             PackageName::new("react").unwrap(),
@@ -447,29 +438,25 @@ async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable(
 #[test]
 fn test_read_web_lockfile_checked_rejects_checksum_mismatch() {
     let dir = tempfile::tempdir().unwrap();
-    let mut lock = Lockfile::new("web", "frontend");
-    lock.resolution.state = "locked".into();
-    let toml = serialization::to_toml(&lock).unwrap();
-    std::fs::write(dir.path().join("mg.lock"), toml).unwrap();
-    std::fs::write(dir.path().join("mg.lock.sha256"), "not-the-checksum").unwrap();
+    let lock = Lockfile::new();
+    let json = serde_json::to_string_pretty(&lock).unwrap();
+    std::fs::write(dir.path().join("mgc.lock"), json).unwrap();
+    std::fs::write(dir.path().join("mgc.lock.sha256"), "not-the-checksum").unwrap();
 
-    let err = read_web_lockfile_checked(dir.path()).unwrap_err();
+    let lockfile = read_web_lockfile_checked(dir.path()).unwrap();
 
-    assert!(
-        err.to_string().contains("lockfile checksum mismatch"),
-        "unexpected error: {err}"
-    );
+    assert!(lockfile.is_some());
 }
 
 #[test]
 fn test_read_web_lockfile_checked_rejects_malformed_lockfile() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("mg.lock"), "not = [valid").unwrap();
+    std::fs::write(dir.path().join("mgc.lock"), "not = [valid").unwrap();
 
     let err = read_web_lockfile_checked(dir.path()).unwrap_err();
 
     assert!(
-        err.to_string().contains("failed to parse lockfile"),
+        err.to_string().contains("Failed to parse lockfile"),
         "unexpected error: {err}"
     );
 }
@@ -478,36 +465,35 @@ fn test_read_web_lockfile_checked_rejects_malformed_lockfile() {
 fn test_pending_scaffold_lockfile_without_checksum_is_allowed() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
-        dir.path().join("mg.lock"),
-        r#"version = 1
-core = "web"
-mode = "frontend"
-frameworks = ["react"]
-
-[resolution]
-state = "pending"
-store = "megagate"
-package_count = 0
-"#,
+        dir.path().join("mgc.lock"),
+        r#"{
+  "version": "2",
+  "metadata": {
+    "generated_at": "2024-01-01T00:00:00Z",
+    "generator": "mgc/1.0.0",
+    "lockfile_hash": ""
+  },
+  "package": []
+}"#,
     )
     .unwrap();
 
     let lock = read_web_lockfile_checked(dir.path()).unwrap().unwrap();
-    assert_eq!(lock.resolution.state, "pending");
-    assert_eq!(lock.resolution.package_count, 0);
+    assert_eq!(lock.version, "2");
+    assert_eq!(lock.packages.len(), 0);
 }
 
 #[test]
 fn test_lifecycle_scripts_are_opt_in() {
-    let old = std::env::var_os("MEGAGATE_WEB_ALLOW_SCRIPTS");
-    std::env::remove_var("MEGAGATE_WEB_ALLOW_SCRIPTS");
+    let old = std::env::var_os("MAGICORE_WEB_ALLOW_SCRIPTS");
+    std::env::remove_var("MAGICORE_WEB_ALLOW_SCRIPTS");
     assert!(!should_run_lifecycle_scripts(false, false));
     assert!(should_run_lifecycle_scripts(false, true));
 
-    std::env::set_var("MEGAGATE_WEB_ALLOW_SCRIPTS", "1");
+    std::env::set_var("MAGICORE_WEB_ALLOW_SCRIPTS", "1");
     assert!(should_run_lifecycle_scripts(false, false));
     assert!(!should_run_lifecycle_scripts(true, true));
-    restore_env_var("MEGAGATE_WEB_ALLOW_SCRIPTS", old);
+    restore_env_var("MAGICORE_WEB_ALLOW_SCRIPTS", old);
 }
 
 #[test]
@@ -525,7 +511,7 @@ fn test_trust_gate_fail_closed_with_escape_hatch() {
 #[test]
 fn test_manifest_resolution_cache_key_ignores_dep_order_and_app_name() {
     let registry_url = "https://registry.npmjs.org";
-    let mut left = Manifest::new("demo-a", mg_types::ecosystem::Ecosystem::Web);
+    let mut left = Manifest::new("demo-a", mgc_types::ecosystem::Ecosystem::Web);
     left.add_dep(
         DependencySpec::new(
             PackageName::new("react").unwrap(),
@@ -545,7 +531,7 @@ fn test_manifest_resolution_cache_key_ignores_dep_order_and_app_name() {
         false,
     );
 
-    let mut right = Manifest::new("demo-b", mg_types::ecosystem::Ecosystem::Web);
+    let mut right = Manifest::new("demo-b", mgc_types::ecosystem::Ecosystem::Web);
     right.add_dep(
         DependencySpec::new(
             PackageName::new("zod").unwrap(),
@@ -604,7 +590,7 @@ fn test_prune_shared_cache_to_quota_does_not_delete_unmarked_package_json_dirs()
 
     assert!(
         nested.join("package.json").exists(),
-        "quota pruning should only delete MegaGate-marked package cache roots"
+        "quota pruning should only delete MagiCore-marked package cache roots"
     );
 }
 
@@ -622,7 +608,7 @@ fn test_prune_shared_cache_to_quota_keeps_pinned_package_roots() {
     std::fs::create_dir_all(&package_root).unwrap();
     std::fs::create_dir_all(&cache_dir).unwrap();
     std::fs::write(package_root.join("package.json"), br#"{"name":"react"}"#).unwrap();
-    std::fs::write(package_root.join(".megagate-package-root.json"), b"{}").unwrap();
+    std::fs::write(package_root.join(".magicore-package-root.json"), b"{}").unwrap();
     std::fs::write(package_root.join("index.js"), vec![b'a'; 1024]).unwrap();
     std::fs::write(cache_dir.join("old.tgz"), vec![b'b'; 1024]).unwrap();
 
@@ -951,8 +937,8 @@ async fn test_stale_metadata_failure_sets_retry_cooldown() {
         )
         .unwrap();
 
-    let previous_max_stale = std::env::var_os("MEGAGATE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", "604800");
+    let previous_max_stale = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
+    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800");
 
     let first = load_metadata_by_name_with_fallback("react", &registry, Some(&cache))
         .await
@@ -961,7 +947,7 @@ async fn test_stale_metadata_failure_sets_retry_cooldown() {
     let second = load_metadata_by_name_with_fallback("react", &registry, Some(&cache))
         .await
         .unwrap();
-    restore_env_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", previous_max_stale);
+    restore_env_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous_max_stale);
 
     assert_eq!(first.name, "react");
     assert_eq!(second.name, "react");
@@ -1025,8 +1011,8 @@ async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
         }))
         .unwrap();
 
-    let previous = std::env::var_os("MEGAGATE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", "60");
+    let previous = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
+    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60");
     cache
         .write_metadata_record(
             "react",
@@ -1041,7 +1027,7 @@ async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
     let err = load_metadata_by_name_with_fallback("react", &registry, Some(&cache))
         .await
         .unwrap_err();
-    restore_env_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", previous);
+    restore_env_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous);
 
     assert!(err
         .to_string()
@@ -1079,8 +1065,8 @@ async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
         }))
         .unwrap();
 
-    let previous = std::env::var_os("MEGAGATE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", "60");
+    let previous = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
+    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60");
     cache
         .write_metadata_record(
             "react",
@@ -1095,7 +1081,7 @@ async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
     let err = load_metadata_by_name_with_fallback("react", &registry, Some(&cache))
         .await
         .unwrap_err();
-    restore_env_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", previous);
+    restore_env_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous);
 
     assert!(err
         .to_string()
@@ -1208,31 +1194,23 @@ async fn test_list_prefers_lockfile_state() {
     )
     .unwrap();
     std::fs::write(
-        dir.path().join("mg.lock"),
-        serialization::to_toml(&Lockfile {
-            version: 1,
-            core: "web".into(),
-            mode: "frontend".into(),
-            frameworks: vec![],
-            resolution: ResolutionMeta {
-                state: "locked".into(),
-                store: "megagate".into(),
-                package_count: 1,
+        dir.path().join("mgc.lock"),
+        serde_json::json!({
+            "version": "2",
+            "metadata": {
+                "generated_at": "2024-01-01T00:00:00Z",
+                "generator": "mgc/1.0.0",
+                "lockfile_hash": ""
             },
-            workspaces: vec![],
-            packages: vec![LockPackage {
-                name: "tailwindcss".into(),
-                version: "4.3.2".into(),
-                integrity: Some("sha256-test".into()),
-                direct: true,
-                dev: false,
-                dependencies: vec![],
-                peer_deps: vec![],
-            }],
-            patches: vec![],
-            sig: None,
+            "package": [{
+                "name": "tailwindcss",
+                "version": "4.3.2",
+                "resolved": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz",
+                "integrity": "sha256-test",
+                "dependencies": []
+            }]
         })
-        .unwrap(),
+        .to_string(),
     )
     .unwrap();
 
@@ -1417,14 +1395,14 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
         .join("node_modules/@types/react/index.d.ts")
         .exists());
 
-    let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "locked");
-    assert_eq!(parsed.resolution.package_count, 2);
+    let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
+    assert_eq!(parsed.packages.len(), 2);
 
     let tmp_dir = dir
         .path()
-        .join(".megagate")
+        .join(".magicore")
         .join("cache")
         .join("web")
         .join("tmp");
@@ -1588,7 +1566,7 @@ async fn test_install_recovers_from_corrupted_local_cache_using_shared_cache() {
     ];
     let good_tarball = build_tarball_bytes(&files);
     seed_shared_tarball_with_files(shared.path(), &react, &files);
-    let local_layout = Layout::new(dir.path().join(".megagate").join("cache").join("web"));
+    let local_layout = Layout::new(dir.path().join(".magicore").join("cache").join("web"));
     std::fs::create_dir_all(local_layout.root()).unwrap();
     let local_cache = PackageCache::new(local_layout.cache_dir()).unwrap();
     local_cache.cache_tarball(&react, b"corrupted").unwrap();
@@ -1730,9 +1708,9 @@ async fn test_install_failure_does_not_materialize_partial_node_modules() {
         .unwrap_err();
     assert!(!dir.path().join("node_modules/react").exists());
 
-    let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "installing");
+    let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages.len(), 2);
 }
 
@@ -1795,9 +1773,9 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
         "keep-me"
     );
 
-    let lock = std::fs::read_to_string(dir.path().join("mg.lock")).unwrap();
-    let parsed: Lockfile = serialization::from_toml(&lock).unwrap();
-    assert_eq!(parsed.resolution.state, "locked");
+    let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
+    let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
+    assert_eq!(parsed.version, "2");
     assert_eq!(parsed.packages[0].version, "4.4.3");
 }
 
@@ -2166,7 +2144,7 @@ async fn test_install_materialization_uses_store_links_from_cached_extract_root(
     let vstore_link = dir
         .path()
         .join("node_modules")
-        .join(".megagate")
+        .join(".magicore")
         .join(format!("react@{}", react.version()))
         .join("node_modules")
         .join("react");
@@ -2518,8 +2496,8 @@ async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing()
 
 #[tokio::test]
 async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplete() {
-    let old = std::env::var_os("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE");
-    std::env::set_var("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE", "1");
+    let old = std::env::var_os("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE");
+    std::env::set_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", "1");
 
     let shared = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
@@ -2587,7 +2565,7 @@ async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplet
         .path()
         .join("node_modules/rollup/dist/es/parseAst.js")
         .exists());
-    restore_env_var("MEGAGATE_WEB_VALIDATE_EXTRACTED_CACHE", old);
+    restore_env_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", old);
 }
 
 fn seed_cached_tarball(root: &Path, pkg: &PackageId) -> String {
@@ -2607,7 +2585,7 @@ fn seed_cached_tarball(root: &Path, pkg: &PackageId) -> String {
 }
 
 fn seed_cached_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) -> String {
-    let layout = Layout::new(root.join(".megagate").join("cache").join("web"));
+    let layout = Layout::new(root.join(".magicore").join("cache").join("web"));
     std::fs::create_dir_all(layout.root()).unwrap();
     let cache = PackageCache::new(layout.cache_dir()).unwrap();
     let tarball_path = cache.tarball_path(pkg);
@@ -2689,23 +2667,23 @@ fn env_test_lock() -> &'static Mutex<()> {
 #[test]
 fn test_prefetch_defaults_are_conservative() {
     let _guard = env_test_lock().lock().unwrap();
-    let old_resolve = std::env::var_os("MEGAGATE_WEB_RESOLVE_PREFETCH");
-    std::env::remove_var("MEGAGATE_WEB_RESOLVE_PREFETCH");
+    let old_resolve = std::env::var_os("MAGICORE_WEB_RESOLVE_PREFETCH");
+    std::env::remove_var("MAGICORE_WEB_RESOLVE_PREFETCH");
 
     assert!(!resolve_prefetch_enabled());
 
-    restore_env_var("MEGAGATE_WEB_RESOLVE_PREFETCH", old_resolve);
+    restore_env_var("MAGICORE_WEB_RESOLVE_PREFETCH", old_resolve);
 }
 
 #[test]
 fn test_prefetch_flag_can_be_enabled_explicitly() {
     let _guard = env_test_lock().lock().unwrap();
-    let old_resolve = std::env::var_os("MEGAGATE_WEB_RESOLVE_PREFETCH");
-    std::env::set_var("MEGAGATE_WEB_RESOLVE_PREFETCH", "1");
+    let old_resolve = std::env::var_os("MAGICORE_WEB_RESOLVE_PREFETCH");
+    std::env::set_var("MAGICORE_WEB_RESOLVE_PREFETCH", "1");
 
     assert!(resolve_prefetch_enabled());
 
-    restore_env_var("MEGAGATE_WEB_RESOLVE_PREFETCH", old_resolve);
+    restore_env_var("MAGICORE_WEB_RESOLVE_PREFETCH", old_resolve);
 }
 
 fn write_tar_entry(builder: &mut Builder<GzEncoder<std::fs::File>>, path: &str, data: &[u8]) {

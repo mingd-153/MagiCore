@@ -1,22 +1,39 @@
 [package]
-name = "mg-cicd-adapter"
+name = "mgc-cicd-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "CI/CD ecosystem adapter for MegaGate"
+description = "CI/CD ecosystem adapter for MagiCore"
 
 [dependencies]
-mg-types = { path = "../../core/crates/mg-types" }
+mgc-exec = { workspace = true }
+# Core crates (W1-W6 support)
+mgc-types = { path = "../../core/crates/mgc-types" }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-config = { workspace = true }
+mgc-adapter-base = { workspace = true }
+
+# Async
 async-trait.workspace = true
 tokio.workspace = true
+
+# Serialization
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "perf_bench"
+harness = false
 
 [lints]
 workspace = true

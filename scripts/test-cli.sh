@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# MegaGate CLI integration tests
+# MagiCore CLI integration tests
 set -e
 
 MGROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MG="$MGROOT/target/debug/mg"
+MGC="$MGROOT/target/debug/mgc"
 PASS=0
 FAIL=0
-TMPDIR="/tmp/mg-test-$$"
+TMPDIR="/tmp/mgc-test-$$"
 
 cleanup() { rm -rf "$TMPDIR"; }
 trap cleanup EXIT
@@ -52,36 +52,36 @@ run_contains() {
 
 bold ""
 bold "=== 1. Build ==="
-cargo build -p mg 2>/dev/null
-echo "  mg binary ready"
+cargo build -p mgc 2>/dev/null
+echo "  mgc binary ready"
 
 # ─── 2. Help ───────────────────────────────────────────────────────
 
 bold ""
 bold "=== 2. Help ==="
-run_contains "shows mg command"       "MegaGate" "$MG" --help
-run_contains "shows --core flag"      "--core"   "$MG" --help
-run_contains "shows init"             "init"     "$MG" --help
-run_contains "shows install"          "install"  "$MG" --help
-run_contains "shows add"              "add"      "$MG" --help
-run_contains "shows remove"           "remove"   "$MG" --help
-run_contains "shows list"             "list"     "$MG" --help
-run_contains "shows info"             "info"     "$MG" --help
-run_contains "shows search"           "search"   "$MG" --help
+run_contains "shows mgc command"       "MagiCore" "$MGC" --help
+run_contains "shows --core flag"      "--core"   "$MGC" --help
+run_contains "shows init"             "init"     "$MGC" --help
+run_contains "shows install"          "install"  "$MGC" --help
+run_contains "shows add"              "add"      "$MGC" --help
+run_contains "shows remove"           "remove"   "$MGC" --help
+run_contains "shows list"             "list"     "$MGC" --help
+run_contains "shows info"             "info"     "$MGC" --help
+run_contains "shows search"           "search"   "$MGC" --help
 
 # ─── 3. Registry ───────────────────────────────────────────────────
 
 bold ""
 bold "=== 3. Registry (live) ==="
-run_contains "info lodash"    "Package: lodash" "$MG" info lodash
-run_contains "search react"  "react@"          "$MG" search react
+run_contains "info lodash"    "Package: lodash" "$MGC" info lodash
+run_contains "search react"  "react@"          "$MGC" search react
 
 # ─── 4. Init ───────────────────────────────────────────────────────
 
 bold ""
 bold "=== 4. Init ==="
 rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
-run_ok "init --template web" "$MG" init --template web
+run_ok "init --template web" "$MGC" init --template web
 
 # ─── 5. List + Add + Remove ────────────────────────────────────────
 
@@ -93,10 +93,10 @@ cat > "$TMPDIR/my-app/package.json" << 'ENDJSON'
 ENDJSON
 
 cd "$TMPDIR/my-app"
-run_contains "list (empty)"    "No packages" "$MG" list
-run_contains "add is-odd"      "Added"       "$MG" add is-odd
-run_contains "list (after)"    "is-odd"      "$MG" list
-run_contains "remove is-odd"   "Removed"     "$MG" remove is-odd
+run_contains "list (empty)"    "No packages" "$MGC" list
+run_contains "add is-odd"      "Added"       "$MGC" add is-odd
+run_contains "list (after)"    "is-odd"      "$MGC" list
+run_contains "remove is-odd"   "Removed"     "$MGC" remove is-odd
 
 # ─── 6. Error cases ────────────────────────────────────────────────
 
@@ -104,10 +104,10 @@ bold ""
 bold "=== 6. Errors ==="
 cd "$TMPDIR"
 mkdir -p empty-dir && cd empty-dir
-run_contains "no project error" "No MegaGate" "$MG" list
+run_contains "no project error" "No MagiCore" "$MGC" list
 
 cd "$TMPDIR/my-app"
-run_contains "bad core error"   "not yet implemented" "$MG" --core game list
+run_contains "bad core error"   "not yet implemented" "$MGC" --core game list
 
 # ─── 8. Single-core build ─────────────────────────────────────────
 
@@ -118,10 +118,10 @@ mkdir -p solo && cd solo
 cat > package.json << 'ENDJSON'
 {"name":"solo","version":"1.0.0","dependencies":{}}
 ENDJSON
-MGSOLO="$MGROOT/target/debug/mg-solo"
+MGSOLO="$MGROOT/target/debug/mgc-solo"
 test -f "$MGSOLO" || (
-    cargo build -p mg --no-default-features --features web 2>/dev/null
-    cp "$MGROOT/target/debug/mg" "$MGSOLO"
+    cargo build -p mgc --no-default-features --features web 2>/dev/null
+    cp "$MGROOT/target/debug/mgc" "$MGSOLO"
 )
 run_contains "solo: no --core needed" "No packages" "$MGSOLO" list
 

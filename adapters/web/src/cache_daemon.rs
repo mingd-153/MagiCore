@@ -1,5 +1,5 @@
 //! In-Memory Caching Daemon for sub-millisecond warm installs
-use mg_types::PackageId;
+use mgc_types::PackageId;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 

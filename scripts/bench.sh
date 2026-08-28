@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 BENCH_DIR="adapters/web"
 
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║     MegaGate Benchmark Runner                               ║"
+echo "║     MagiCore Benchmark Runner                               ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo
 

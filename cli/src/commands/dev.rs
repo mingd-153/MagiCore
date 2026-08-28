@@ -1,11 +1,11 @@
-use mg_ui::info;
+use mgc_ui::info;
 
 use crate::context::ProjectContext;
 
 /// Lệnh dev cho từng engine game (Q15/Q20): bevy → cargo run; godot → mở editor.
 #[cfg(feature = "game")]
 fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
-    let adapter = mg_game_adapter::adapter_for(root)
+    let adapter = mgc_game_adapter::adapter_for(root)
         .ok_or_else(|| crate::error::no_framework_detected("game engine", root))?;
     match adapter.engine() {
         "bevy" => Ok(("cargo".to_string(), vec!["run".to_string()])),
@@ -56,7 +56,7 @@ pub async fn run(
     let host = host.unwrap_or_else(|| "localhost".to_string());
     let root = ctx.root().to_path_buf();
 
-    info("Starting MegaGate Native Dev Server...");
+    info("Starting MagiCore Native Dev Server...");
     info(&format!("Project root: {}", root.display()));
     info(&format!("Execution profile: {}", ctx.execution_summary()));
 
@@ -70,9 +70,9 @@ pub async fn run(
         #[cfg(feature = "game")]
         "game" => {
             let (cmd, args) = game_dev_command(&root)?;
-            let opts = mg_exec::prelude::ExecOptions {
+            let opts = mgc_exec::prelude::ExecOptions {
                 cwd: Some(root.clone()),
-                log_path: Some(root.join(".megagate").join("exec.log")),
+                log_path: Some(root.join(".magicore").join("exec.log")),
                 clean_env: true,
                 ..Default::default()
             };
@@ -81,7 +81,7 @@ pub async fn run(
                 cmd,
                 args.join(" ")
             ));
-            mg_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
+            mgc_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
                 if cmd == "godot" {
                     crate::error::godot_failed(&e)
                 } else {
@@ -95,14 +95,14 @@ pub async fn run(
         #[cfg(feature = "iot")]
         "iot" => {
             let (cmd, args) = iot_dev_command(&root)?;
-            let opts = mg_exec::prelude::ExecOptions {
+            let opts = mgc_exec::prelude::ExecOptions {
                 cwd: Some(root.clone()),
-                log_path: Some(root.join(".megagate").join("exec.log")),
+                log_path: Some(root.join(".magicore").join("exec.log")),
                 clean_env: true,
                 ..Default::default()
             };
             info(&format!("IoT dev: running `{} {}`...", cmd, args.join(" ")));
-            mg_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
+            mgc_exec::prelude::run_inherited(&cmd, &args, &opts).map_err(|e| {
                 if cmd == "espflash" {
                     crate::error::espflash_failed(&e)
                 } else {
@@ -149,7 +149,7 @@ pub async fn run(
 /// platformio/zephyr → passthrough tới tool của framework (P1).
 #[cfg(feature = "iot")]
 fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String>)> {
-    let adapter = mg_iot_adapter::adapter_for(root)
+    let adapter = mgc_iot_adapter::adapter_for(root)
         .ok_or_else(|| crate::error::no_framework_detected("IoT", root))?;
     match adapter.framework() {
         "esp32-rust" => Ok(("espflash".to_string(), vec!["monitor".to_string()])),
@@ -160,86 +160,6 @@ fn iot_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<String
 }
 
 #[cfg(all(test, feature = "game", feature = "iot"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn game_dev_bevy_runs_cargo() {
-        let dir = std::env::temp_dir().join(format!("mg-dev-bevy-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[package.metadata.megagate]\ncore = \"game\"\n\n[dependencies]\n",
-        )
-        .unwrap();
-        let (cmd, args) = game_dev_command(&dir).unwrap();
-        assert_eq!(cmd, "cargo");
-        assert_eq!(args, vec!["run"]);
-    }
-
-    #[test]
-    fn game_dev_godot_opens_editor() {
-        let dir = std::env::temp_dir().join(format!("mg-dev-godot-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("project.godot"), "[application]\nname=\"demo\"\n").unwrap();
-        let (cmd, args) = game_dev_command(&dir).unwrap();
-        assert_eq!(cmd, "godot");
-        assert!(args.iter().any(|a| a == "--editor"));
-        assert!(args.iter().any(|a| a == "--path"));
-    }
-
-    #[test]
-    fn game_dev_unity_opens_editor_cli() {
-        let dir = std::env::temp_dir().join(format!("mg-dev-unity-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("Packages")).unwrap();
-        std::fs::write(dir.join("Packages").join("manifest.json"), "{}").unwrap();
-        let (cmd, args) = game_dev_command(&dir).unwrap();
-        assert_eq!(cmd, "unity");
-        assert!(args.iter().any(|a| a == "-projectPath"));
-    }
-
-    #[test]
-    fn game_dev_unreal_hints_editor() {
-        let dir = std::env::temp_dir().join(format!("mg-dev-unreal-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Game.uproject"), "{}").unwrap();
-        let err = game_dev_command(&dir).unwrap_err();
-        assert!(err.to_string().contains("Game.uproject"));
-    }
-
-    #[test]
-    fn game_dev_unknown_engine_bails() {
-        assert!(game_dev_command(std::path::Path::new("/nonexistent")).is_err());
-    }
-
-    #[test]
-    fn iot_dev_esp32_uses_espflash_monitor() {
-        let dir = std::env::temp_dir().join(format!("mg-dev-iot-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
-        let (cmd, args) = iot_dev_command(&dir).unwrap();
-        assert_eq!(cmd, "espflash");
-        assert_eq!(args, vec!["monitor"]);
-    }
-
-    #[test]
-    fn iot_dev_platformio_uses_pio() {
-        let dir = std::env::temp_dir().join(format!("mg-dev-pio-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("platformio.ini"), "[env:esp32dev]\n").unwrap();
-        let (cmd, args) = iot_dev_command(&dir).unwrap();
-        assert_eq!(cmd, "pio");
-        assert_eq!(args, vec!["run"]);
-    }
-
-    #[test]
-    fn iot_dev_unknown_framework_bails() {
-        assert!(iot_dev_command(std::path::Path::new("/nonexistent")).is_err());
-    }
-}
+#[cfg(test)]
+#[path = "../test/dev_test.rs"]
+mod tests;

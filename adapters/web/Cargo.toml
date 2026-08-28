@@ -1,26 +1,29 @@
 [package]
-name = "mg-web-adapter"
+name = "mgc-web-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Web ecosystem adapter for MegaGate"
+description = "Web ecosystem adapter for MagiCore"
 
 [dependencies]
 # Core crates
-mg-types = { workspace = true }
-mg-adapter-base = { workspace = true }
-mg-config = { workspace = true }
-mg-resolver = { workspace = true }
-mg-store = { workspace = true }
-mg-lockfile = { workspace = true }
-mg-fetcher = { workspace = true }
-mg-http = { workspace = true }
-mg-ui = { workspace = true }
-mg-exec = { workspace = true }
-mg-platform = { workspace = true }
-mg-search = { workspace = true }
+mgc-types = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-config = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-resolver = { workspace = true }
+mgc-store = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-fetcher = { workspace = true }
+mgc-http = { workspace = true }
+mgc-ui = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-platform = { workspace = true }
+mgc-search = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -57,10 +60,14 @@ rayon = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-criterion = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "large_install"
+harness = false
 
 [[bench]]
 name = "install_bench"

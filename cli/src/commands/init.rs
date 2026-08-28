@@ -5,13 +5,13 @@ use crate::scaffold::Scaffolder;
 use crate::wizard::engine::{Answer, Question, QuestionKind, ScaffoldConfig, WizardEngine};
 use crate::wizard::web::WebWizard;
 use anyhow::Result;
-use mg_config::project::ProjectConfig;
-use mg_ui::{print_banner, print_next_steps, section};
+use mgc_config::project::ProjectConfig;
+use mgc_ui::{print_banner, print_next_steps, section};
 use std::path::{Path, PathBuf};
 
-/// mg init — create a new project with mg.toml
+/// mgc init — create a new project with mgc.toml
 ///
-/// `--signature <core>`: chỉ ghi marker `.mg.core` cho project HIỆN TẠI
+/// `--signature <core>`: chỉ ghi marker `.mgc.core` cho project HIỆN TẠI
 /// (không wizard, không scaffold) — dùng khi auto-detect ambiguous hoặc
 /// muốn đổi core project cũ (T9a).
 pub async fn run(template: Option<String>, signature: Option<String>) -> Result<()> {
@@ -19,7 +19,7 @@ pub async fn run(template: Option<String>, signature: Option<String>) -> Result<
         let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
         let root = ProjectConfig::find_project_root(&cwd).unwrap_or(cwd);
         ProjectConfig::write_core_marker_at(&root, &core)?;
-        mg_ui::success(&format!(
+        mgc_ui::success(&format!(
             "Core signature '{}' written to {}/{}",
             core,
             root.display(),
@@ -75,11 +75,11 @@ pub async fn run(template: Option<String>, signature: Option<String>) -> Result<
         }
         if t == "hardware" {
             let project_dir = init_hardware(&config).await?;
-            write_mg_toml(&project_dir, &config)?;
+            write_mgc_toml(&project_dir, &config)?;
             return Ok(());
         }
         let project_dir = Scaffolder::scaffold(&config)?;
-        write_mg_toml(&project_dir, &config)?;
+        write_mgc_toml(&project_dir, &config)?;
         if t == "web" && !config.frameworks.is_empty() {
             seed_web_deps(&project_dir, &config).await?;
         }
@@ -113,7 +113,7 @@ pub async fn run(template: Option<String>, signature: Option<String>) -> Result<
         Scaffolder::scaffold(&config)?
     };
 
-    write_mg_toml(&project_dir, &config)?;
+    write_mgc_toml(&project_dir, &config)?;
 
     if config.core == "web" && !config.frameworks.is_empty() {
         seed_web_deps(&project_dir, &config).await?;
@@ -124,7 +124,7 @@ pub async fn run(template: Option<String>, signature: Option<String>) -> Result<
 }
 
 /// hardware core: tạo root project + materialize package vào subfolder (giống add-hardware),
-/// để mg.toml nằm ở root và list-hardware detect được package.
+/// để mgc.toml nằm ở root và list-hardware detect được package.
 async fn init_hardware(config: &ScaffoldConfig) -> Result<PathBuf> {
     let root = std::env::current_dir()
         .map_err(|e| crate::error::cwd_deleted(&e))?
@@ -139,7 +139,7 @@ async fn init_hardware(config: &ScaffoldConfig) -> Result<PathBuf> {
     Ok(root)
 }
 
-fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
+fn write_mgc_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
     let name = Scaffolder::display_name(project_dir);
     let template = config.template_dir.to_str().unwrap_or("").to_string();
     let proj_config = ProjectConfig::from_scaffold(
@@ -151,18 +151,18 @@ fn write_mg_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
         config.features.clone(),
     );
     proj_config.save(project_dir)?;
-    // T9a: Tự động ghi .mg.core marker cùng lúc với mg.toml.
+    // T9a: Tự động ghi .mgc.core marker cùng lúc với mgc.toml.
     // Đảm bảo auto_detect ưu tiên marker → đúng core cho mọi lệnh core-aware.
     if let Err(e) = ProjectConfig::write_core_marker_at(project_dir, &config.core) {
-        mg_ui::warning(&format!(
+        mgc_ui::warning(&format!(
             "Could not write {} marker: {e}",
             ProjectConfig::CORE_MARKER_FILE
         ));
     }
     if config.core == "game" {
-        // `mg run` = script runner — game scaffold bổ sung bản ship chuẩn (mg build → cargo run)
+        // `mgc run` = script runner — game scaffold bổ sung bản ship chuẩn (mgc build → cargo run)
         let scripts = "\n[scripts]\nrun = \"cargo run\"\nbuild = \"cargo build\"\n".to_string();
-        let path = project_dir.join("mg.toml");
+        let path = project_dir.join("mgc.toml");
         let mut content = std::fs::read_to_string(&path)?;
         content.push_str(&scripts);
         std::fs::write(path, content)?;
@@ -255,7 +255,7 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
 }
 
 fn ask_project_name() -> String {
-    mg_ui::prompt::input("Project name:").unwrap_or_else(|_| "my-project".to_string())
+    mgc_ui::prompt::input("Project name:").unwrap_or_else(|_| "my-project".to_string())
 }
 
 async fn seed_web_deps(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
@@ -294,14 +294,15 @@ async fn seed_web_deps(project_dir: &Path, config: &ScaffoldConfig) -> Result<()
 
 fn ask_web_features(config: &ScaffoldConfig) -> (Vec<Answer>, bool) {
     let use_defaults =
-        mg_ui::prompt::confirm("Use default settings for this framework?").unwrap_or(true);
+        mgc_ui::prompt::confirm("Use default settings for this framework?").unwrap_or(true);
 
     let options = match config.sub_type.as_str() {
         "frontend" => vec![
             Answer::new("TypeScript", "typescript"),
             Answer::new("Tailwind CSS", "tailwindcss"),
             Answer::new("ESLint", "eslint"),
-            Answer::new("Vitest", "vitest"),
+            // Answer::new("Vitest", "vitest"),  // DISABLED: vitest crashes (known issue V1.0)
+            Answer::new("Jest", "jest"),
             Answer::new("Playwright", "playwright"),
         ],
         "backend" => vec![

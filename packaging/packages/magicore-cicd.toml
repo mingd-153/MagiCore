@@ -1,0 +1,8 @@
+name = "magicore-cicd"
+binary = "mgc"
+description = "MagiCore single-core CI/CD distribution"
+mode = "single-core"
+primary_core = "cicd"
+no_default_features = true
+features = ["cicd"]
+install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --package magicore-cicd"

@@ -36,6 +36,19 @@ pub fn command_to_dispatch(
         Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
         Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
         Commands::Import { dir } => Some(CommonCommand::Import { dir }),
+        Commands::Sbom {
+            format,
+            output,
+            name,
+            version,
+            dir,
+        } => Some(CommonCommand::Sbom {
+            format,
+            output,
+            name,
+            version,
+            dir,
+        }),
         Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
         Commands::Build { target } => Some(CommonCommand::Build { target }),
         Commands::Flash { board, skip_build } => Some(CommonCommand::Flash { board, skip_build }),
@@ -126,7 +139,6 @@ pub fn command_to_dispatch(
         Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
         Commands::Docs { output } => Some(CommonCommand::Docs { output }),
         Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
-        Commands::Sbom { output } => Some(CommonCommand::Sbom { output }),
         Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
         Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
         _ => None,
@@ -203,6 +215,7 @@ pub fn command_to_dispatch(
             allow_scripts,
             prefer_dedupe,
             repair,
+            offline,
         } => Some(CoreCommand::InstallWeb {
             packages,
             frozen,
@@ -210,6 +223,7 @@ pub fn command_to_dispatch(
             allow_scripts,
             prefer_dedupe,
             repair,
+            offline,
         }),
         Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
         Commands::InstallAi { packages, dry_run } => {

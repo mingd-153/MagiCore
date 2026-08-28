@@ -1,19 +1,23 @@
 [package]
-name = "mg-game-adapter"
+name = "mgc-game-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Game ecosystem adapter for MegaGate (bevy/godot/unity/unreal)"
+description = "Game ecosystem adapter for MagiCore (bevy/godot/unity/unreal)"
 
 [dependencies]
-# Core crates
-mg-types = { workspace = true }
-mg-adapter-base = { workspace = true }
-mg-config = { workspace = true }
-mg-exec = { workspace = true }
-mg-ui = { workspace = true }
+# Core crates (W1-W6 support)
+mgc-types = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-config = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-ui = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -24,6 +28,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 
+# Utils
+dirs.workspace = true
+
+# Crypto (Unity checksum)
+md5 = "0.7"
+
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -32,6 +42,11 @@ anyhow = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "perf_bench"
+harness = false

@@ -8,19 +8,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use mg_config::npmrc::NpmRc;
-use mg_config::project::ProjectConfig;
-use mg_pack::ignore::select_files;
-use mg_pack::manifest::{dep_fields, sanitize};
-use mg_pack::tarball::pack;
-use mg_publish::auth::resolve_auth;
-use mg_types::PublishSummary;
-use mg_ui::info;
+use mgc_config::npmrc::NpmRc;
+use mgc_config::project::ProjectConfig;
+use mgc_pack::ignore::select_files;
+use mgc_pack::manifest::{dep_fields, sanitize};
+use mgc_pack::tarball::pack;
+use mgc_publish::auth::resolve_auth;
+use mgc_types::PublishSummary;
+use mgc_ui::info;
 
 /// Default registry (hardcode warning — OK: default const, overrideable via config/env)
 const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org/";
 const DEFAULT_PUBLISH_LIFECYCLE_TIMEOUT_SECS: u64 = 300;
-const PUBLISH_LIFECYCLE_TIMEOUT_ENV: &str = "MG_PUBLISH_LIFECYCLE_TIMEOUT_SECS";
+const PUBLISH_LIFECYCLE_TIMEOUT_ENV: &str = "MGC_PUBLISH_LIFECYCLE_TIMEOUT_SECS";
 
 #[derive(Args, Debug, Clone)]
 pub struct PublishArgs {
@@ -57,7 +57,7 @@ pub struct PublishArgs {
     pub major: bool,
     #[arg(long, help = "override registry URL")]
     pub registry: Option<String>,
-    #[arg(long, help = "override token (env MG_NPM_TOKEN recommended)")]
+    #[arg(long, help = "override token (env MGC_NPM_TOKEN recommended)")]
     pub token: Option<String>,
 }
 pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
@@ -65,10 +65,10 @@ pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
 
     if recursive {
         let project_root = ProjectConfig::find_project_root(&cwd)
-            .ok_or_else(|| anyhow!("Could not find project root — run mg init"))?;
+            .ok_or_else(|| anyhow!("Could not find project root — run mgc init"))?;
         let mut workspaces = super::install::discover_workspace_projects(&project_root)?
             .ok_or_else(|| {
-                anyhow!("--recursive requires megagate.workspace.toml (mode = \"monorepo\")")
+                anyhow!("--recursive requires magicore.workspace.toml (mode = \"monorepo\")")
             })?;
         workspaces = topo_sort_workspaces(workspaces)?;
         for ws in &workspaces {
@@ -80,13 +80,13 @@ pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
     publish_project(&args, &cwd).await
 }
 
-/// `mg stage` — pack project vào .mg-stage/ (không đăng registry).
+/// `mgc stage` — pack project vào .mgc-stage/ (không đăng registry).
 /// Kiểm tra nhanh trước khi publish: tarball hợp lệ, files selection đúng.
 pub async fn stage(dir: Option<String>) -> Result<()> {
     let cwd = dir.map(PathBuf::from).unwrap_or(std::env::current_dir()?);
     let project_root =
         ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
-    let project = ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mg_toml_missing)?;
+    let project = ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mgc_toml_missing)?;
 
     let entry_prefix = format!("{}-{}", project.name, project.version);
     let filename = format!(
@@ -94,19 +94,19 @@ pub async fn stage(dir: Option<String>) -> Result<()> {
         project.name.replace(['/', '@'], "-"),
         project.version
     );
-    let stage_dir = project_root.join(".mg-stage");
+    let stage_dir = project_root.join(".mgc-stage");
     fs::create_dir_all(&stage_dir)?;
     let tarball_path = stage_dir.join(&filename);
     pack(&project_root, &tarball_path, &entry_prefix)?;
 
     let size = fs::metadata(&tarball_path).map(|m| m.len()).unwrap_or(0);
-    mg_ui::success(&format!(
+    mgc_ui::success(&format!(
         "staged {} ({:.1} KiB) → {}",
         filename,
         size as f64 / 1024.0,
         tarball_path.display()
     ));
-    mg_ui::info("next: `mg publish` to upload, or `mg publish --dry-run` to verify first");
+    mgc_ui::info("next: `mgc publish` to upload, or `mgc publish --dry-run` to verify first");
     Ok(())
 }
 
@@ -168,7 +168,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
 
     // 2. Load project config
     let mut project = ProjectConfig::load(project_root)?
-        .ok_or_else(|| anyhow!("mg.toml does not exist — run mg init"))?;
+        .ok_or_else(|| anyhow!("mgc.toml does not exist — run mgc init"))?;
 
     // 3. Version bump (Q4)
     let bump = match (args.patch, args.minor, args.major) {
@@ -223,7 +223,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     // 6. Manifest sanitize (exportable)
     let sanitized = sanitize(pkg_json.clone(), &project.name, &new_version)?;
     let dep_fields_map = dep_fields(&sanitized.manifest);
-    // Tên publish = package.json name (scoped) — mg.toml name có thể thiếu scope
+    // Tên publish = package.json name (scoped) — mgc.toml name có thể thiếu scope
     let publish_name = pkg_json
         .get("name")
         .and_then(serde_json::Value::as_str)
@@ -234,7 +234,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     // 7. Files selection
     let files = select_files(project_root)?;
 
-    // 8. mg-pack: build tarball (filename dùng unscoped — scoped name chứa '/' làm tempdir join fail)
+    // 8. mgc-pack: build tarball (filename dùng unscoped — scoped name chứa '/' làm tempdir join fail)
     let entry_prefix = format!("{}-{}", project.name, new_version);
     let filename = format!(
         "{}-{}.tgz",
@@ -323,7 +323,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
         );
     }
 
-    // Save updated version to mg.toml + package.json
+    // Save updated version to mgc.toml + package.json
     project.save(project_root)?;
     if pkg_json_path.exists() {
         fs::write(&pkg_json_path, serde_json::to_string_pretty(&pkg_json)?)?;
@@ -373,11 +373,11 @@ fn run_git_capture(args: &[&str]) -> Result<String> {
         .iter()
         .map(|arg| (*arg).to_string())
         .collect::<Vec<_>>();
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         clean_env: true,
         ..Default::default()
     };
-    let report = mg_exec::prelude::run("git", &args, &opts)?;
+    let report = mgc_exec::prelude::run("git", &args, &opts)?;
     Ok(report.stdout_tail)
 }
 
@@ -412,7 +412,7 @@ fn select_registry(
         return Ok(url);
     }
 
-    // 4. mg.toml [registry]
+    // 4. mgc.toml [registry]
     if let Some(reg) = project.registries.first() {
         return Ok(reg.url.clone());
     }
@@ -429,19 +429,19 @@ fn run_lifecycle(pkg_json: &serde_json::Value, script: &str) -> Result<()> {
         .and_then(|v| v.as_str())
     {
         println!("> {}: {}", script, cmd);
-        mg_exec::allowlist::reject_forbidden_pm_script(cmd)?;
-        let invocation = mg_exec::allowlist::parse_script_invocation(cmd)?;
+        mgc_exec::allowlist::reject_forbidden_pm_script(cmd)?;
+        let invocation = mgc_exec::allowlist::parse_script_invocation(cmd)?;
         let mut env = invocation.env;
         if let Some(path) = std::env::var_os("PATH") {
             env.push(("PATH".to_string(), path.to_string_lossy().to_string()));
         }
-        let opts = mg_exec::prelude::ExecOptions {
+        let opts = mgc_exec::prelude::ExecOptions {
             timeout: Some(publish_lifecycle_timeout()),
             env,
             clean_env: true,
             ..Default::default()
         };
-        mg_exec::prelude::run_inherited(&invocation.program, &invocation.args, &opts)?;
+        mgc_exec::prelude::run_inherited(&invocation.program, &invocation.args, &opts)?;
     }
     Ok(())
 }
@@ -456,7 +456,7 @@ fn publish_lifecycle_timeout() -> Duration {
 }
 
 /// Verify token with whoami endpoint (npmjs)
-async fn verify_token(registry_url: &str, auth: &mg_publish::auth::Auth) -> Result<()> {
+async fn verify_token(registry_url: &str, auth: &mgc_publish::auth::Auth) -> Result<()> {
     let client = reqwest::Client::new();
     let whoami_url = format!("{}/-/whoami", registry_url.trim_end_matches('/'));
     let req = client.get(&whoami_url);
@@ -476,12 +476,12 @@ async fn verify_token(registry_url: &str, auth: &mg_publish::auth::Auth) -> Resu
 /// Publish PUT to registry
 async fn publish_put(
     registry_url: &str,
-    auth: &mg_publish::auth::Auth,
+    auth: &mgc_publish::auth::Auth,
     name: &str,
     version: &str,
     manifest: &serde_json::Value,
     deps: &serde_json::Map<String, serde_json::Value>,
-    pack_result: &mg_pack::tarball::PackResult,
+    pack_result: &mgc_pack::tarball::PackResult,
     args: &PublishArgs,
 ) -> Result<()> {
     let client = reqwest::Client::new();
@@ -582,7 +582,7 @@ async fn publish_put(
 
 async fn upload_tarball_client(
     registry_url: &str,
-    auth: &mg_publish::auth::Auth,
+    auth: &mgc_publish::auth::Auth,
     name: &str,
     version: &str,
     tarball_path: &std::path::Path,
@@ -615,7 +615,7 @@ async fn upload_tarball_client(
 /// Set dist-tag
 async fn set_dist_tag(
     registry_url: &str,
-    auth: &mg_publish::auth::Auth,
+    auth: &mgc_publish::auth::Auth,
     name: &str,
     version: &str,
     tag: &str,

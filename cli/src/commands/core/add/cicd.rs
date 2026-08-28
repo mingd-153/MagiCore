@@ -1,4 +1,4 @@
-//! `mg add cicd` — bail rõ ràng (cicd không có add — dùng `mg ci generate`).
+//! `mgc add cicd` — bail rõ ràng (cicd không có add — dùng `mgc ci generate`).
 
 use anyhow::Result;
 

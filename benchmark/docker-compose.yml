@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  benchmark:
+    build:
+      context: ./env
+      dockerfile: Dockerfile
+    container_name: magicore-benchmark
+    volumes:
+      # Mount MagiCore binary
+      - ../target/release/mgc:/benchmark/mgc:ro
+      # Mount benchmark scripts
+      - ./scripts:/benchmark/scripts:ro
+      # Mount package.json
+      - ./env/package.json:/benchmark/env/package.json:ro
+      # Mount results directory (persistent)
+      - ./results:/benchmark/results:rw
+    working_dir: /benchmark
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    environment:
+      - NODE_ENV=production
+      - CI=true
+    # Resource limits for fair comparison
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G

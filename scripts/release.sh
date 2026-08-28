@@ -22,4 +22,4 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "==> building all packaged distributions"
-cargo run -p mg-dist -- build-all --profile "$profile" "${target_args[@]}"
+cargo run -p mgc-dist -- build-all --profile "$profile" "${target_args[@]}"

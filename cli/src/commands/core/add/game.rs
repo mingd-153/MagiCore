@@ -1,10 +1,10 @@
-//! `mg add` game — tách từ core/game.rs (Phase 7 v5). Optimizer là local template,
+//! `mgc add` game — tách từ core/game.rs (Phase 7 v5). Optimizer là local template,
 //! không gửi qua adapter (bevy `cargo add optimizer` fail vì crate không tồn tại).
 
 use anyhow::Result;
 
 use super::super::shared;
-use mg_types::Ecosystem;
+use mgc_types::Ecosystem;
 
 const OPTIMIZER_PKG: &str = "optimizer";
 

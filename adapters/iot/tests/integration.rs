@@ -1,14 +1,14 @@
 #![allow(clippy::unwrap_used)]
-//! Integration tests for mg-iot-adapter — sát với src/lib.rs
+//! Integration tests for mgc-iot-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_framework (ESP32-Rust, PlatformIO, Zephyr), board mapping, PackageAdapter trait.
 
-use mg_iot_adapter::{adapter_for, detect_framework, IotFramework};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::PackageName;
+use mgc_iot_adapter::{adapter_for, detect_framework, generate_sbom, IotFramework};
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::PackageName;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-iot-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-iot-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -35,10 +35,10 @@ fn detect_zephyr_via_west_yml() {
 }
 
 #[test]
-fn detect_esp32_rust_via_mg_toml() {
+fn detect_esp32_rust_via_mgc_toml() {
     let dir = tmp("esp32-rust");
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "ecosystem = \"iot\"\n\n[iot]\nframework = \"esp32-rust\"\n",
     )
     .unwrap();
@@ -133,4 +133,19 @@ async fn audit_returns_clean_for_iot_project() {
     let a = adapter_for(&dir).unwrap();
     let report = a.audit(&dir).await.unwrap();
     assert_eq!(report.vulnerabilities.len(), 0);
+}
+
+#[test]
+fn generate_sbom_uses_lockfile_v2_fixture() {
+    let mut lockfile = mgc_lockfile::Lockfile::new();
+    lockfile.add_package(mgc_lockfile::Package::new(
+        "test-pkg".to_string(),
+        "1.0.0".to_string(),
+        "https://example.com/test.tgz".to_string(),
+        "blake3:test123".to_string(),
+    ));
+    let json = generate_sbom(&lockfile, mgc_sbom::SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
 }

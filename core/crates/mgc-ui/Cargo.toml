@@ -1,0 +1,27 @@
+[package]
+name = "mgc-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Terminal UI components for MagiCore"
+
+[dependencies]
+# CLI
+indicatif = { workspace = true }
+console = { workspace = true }
+colored = { workspace = true }
+
+# TUI
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+# Interactive prompts
+dialoguer = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+[lints]
+workspace = true

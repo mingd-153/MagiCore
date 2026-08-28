@@ -1,8 +1,8 @@
 use crate::context::ProjectContext;
 use anyhow::Result;
-use mg_types::adapter::AddOptions;
+use mgc_types::adapter::AddOptions;
 
-/// mg add — add a dependency to the project
+/// mgc add — add a dependency to the project
 #[allow(dead_code)]
 pub async fn run(
     package: String,
@@ -53,23 +53,23 @@ pub async fn run_many(
     } else {
         "dependencies"
     };
-    mg_ui::info(&format!(
+    mgc_ui::info(&format!(
         "Adding {} package(s) to {} ({})...",
         total, ctx.config.name, group
     ));
 
     for package in packages {
-        let spec = mg_types::DependencySpec::parse(&package)?;
+        let spec = mgc_types::DependencySpec::parse(&package)?;
         let name = spec.name;
         let range = if let Some(v) = version.as_ref() {
-            Some(mg_types::VersionRange::parse(v)?)
+            Some(mgc_types::VersionRange::parse(v)?)
         } else if spec.range.is_star() {
             None
         } else {
             Some(spec.range)
         };
 
-        let spinner = mg_ui::create_spinner(&format!("  Resolving {}...", package));
+        let spinner = mgc_ui::create_spinner(&format!("  Resolving {}...", package));
         let opts = AddOptions {
             dev,
             optional,
@@ -88,23 +88,23 @@ pub async fn run_many(
 
         if !no_save {
             if resolved_version == "0.0.0" {
-                mg_ui::info(&format!(
+                mgc_ui::info(&format!(
                     "  {}@{} saved to {}",
                     pkg_id.name_str(),
                     requested_range,
                     group
                 ));
             } else {
-                mg_ui::info(&format!(
+                mgc_ui::info(&format!(
                     "  {}@{} added to {}",
                     pkg_id.name_str(),
                     resolved_version,
                     group
                 ));
             }
-            mg_ui::success(&format!("Added {}", package));
+            mgc_ui::success(&format!("Added {}", package));
         } else {
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "  {}@{} checked (--no-save, manifest unchanged)",
                 pkg_id.name_str(),
                 requested_range
@@ -113,9 +113,9 @@ pub async fn run_many(
     }
 
     if !no_save {
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "Run '{}' to install",
-            mg_ui::style_cmd("mg install")
+            mgc_ui::style_cmd("mgc install")
         ));
     }
 

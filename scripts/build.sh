@@ -11,13 +11,13 @@ shift
 
 case "$package" in
   bootstrap)
-    cargo run -p mg-dist -- build-bootstrap "$@"
+    cargo run -p mgc-dist -- build-bootstrap "$@"
     ;;
   all)
-    cargo run -p mg-dist -- build-all "$@"
+    cargo run -p mgc-dist -- build-all "$@"
     ;;
-  megagate|megagate-web|megagate-ai|megagate-game|megagate-clo|megagate-cicd|megagate-iot|megagate-app|megagate-lib)
-    cargo run -p mg-dist -- build "$package" "$@"
+  magicore|magicore-web|magicore-ai|magicore-game|magicore-clo|magicore-cicd|magicore-iot|magicore-app|magicore-lib)
+    cargo run -p mgc-dist -- build "$package" "$@"
     ;;
   *)
     echo "unsupported package: $package"

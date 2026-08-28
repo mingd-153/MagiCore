@@ -1,11 +1,13 @@
-use mg_types::error::{MgError, MgResult};
+// Web lifecycle execution guard — validates and runs package lifecycle scripts.
+// Bộ chạy lifecycle cho core-web — giữ script package trong allowlist an toàn.
+use mgc_types::error::{MgError, MgResult};
 use serde::Deserialize;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DEFAULT_LIFECYCLE_TIMEOUT_SECS: u64 = 300;
-const LIFECYCLE_TIMEOUT_ENV: &str = "MG_LIFECYCLE_TIMEOUT_SECS";
+const LIFECYCLE_TIMEOUT_ENV: &str = "MGC_LIFECYCLE_TIMEOUT_SECS";
 
 #[derive(Debug, Deserialize, Default)]
 struct PackageScripts {
@@ -55,7 +57,7 @@ impl LifecycleRunner {
 
     fn run_script(pkg_dir: &Path, project_root: &Path, name: &str, script: &str) -> MgResult<()> {
         reject_external_package_manager_script(script, &pkg_dir.join("package.json"))?;
-        let invocation = mg_exec::allowlist::parse_script_invocation(script)
+        let invocation = mgc_exec::allowlist::parse_script_invocation(script)
             .map_err(|e| MgError::Other(format!("unsupported lifecycle script '{name}': {e}")))?;
         let path_env = lifecycle_path_env(project_root)?;
         let mut env = vec![
@@ -64,7 +66,7 @@ impl LifecycleRunner {
             ("npm_config_node_gyp".to_string(), "node-gyp".to_string()),
         ];
         env.extend(invocation.env);
-        let opts = mg_exec::prelude::ExecOptions {
+        let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(pkg_dir.to_path_buf()),
             timeout: Some(lifecycle_timeout()),
             env,
@@ -72,7 +74,7 @@ impl LifecycleRunner {
             ..Default::default()
         };
 
-        mg_exec::prelude::run(&invocation.program, &invocation.args, &opts)
+        mgc_exec::prelude::run(&invocation.program, &invocation.args, &opts)
             .map_err(|e| MgError::Other(format!("lifecycle script '{name}' failed: {e}")))?;
 
         Ok(())
@@ -89,7 +91,7 @@ fn lifecycle_timeout() -> Duration {
 }
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> MgResult<()> {
-    if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(script) {
+    if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
         return Err(MgError::Other(format!(
             "lifecycle script in '{}' delegates to '{}'; core-web refuses package-manager wrappers inside lifecycle execution",
             manifest_path.display(),
@@ -119,125 +121,5 @@ fn lifecycle_path_env(project_root: &Path) -> MgResult<OsString> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn write_package_script(package: &Path, script: &str) {
-        let manifest = serde_json::json!({
-            "scripts": {
-                "postinstall": script,
-            }
-        });
-        std::fs::write(package.join("package.json"), manifest.to_string()).unwrap();
-    }
-
-    #[test]
-    fn lifecycle_path_env_prepends_node_modules_bin_when_present() {
-        let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("node_modules").join(".bin");
-        std::fs::create_dir_all(&bin).unwrap();
-
-        let path_env = lifecycle_path_env(dir.path()).unwrap();
-        let paths: Vec<_> = std::env::split_paths(&path_env).collect();
-
-        assert_eq!(paths.first(), Some(&bin));
-    }
-
-    #[test]
-    fn lifecycle_errors_on_invalid_package_json() {
-        let project = tempfile::tempdir().unwrap();
-        let package = tempfile::tempdir().unwrap();
-        std::fs::write(package.path().join("package.json"), "{not-json").unwrap();
-
-        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("failed to parse package.json for lifecycle"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn lifecycle_rejects_external_package_manager_wrappers() {
-        let project = tempfile::tempdir().unwrap();
-        let package = tempfile::tempdir().unwrap();
-        std::fs::write(
-            package.path().join("package.json"),
-            r#"{"scripts":{"postinstall":"npm run postinstall:inner"}}"#,
-        )
-        .unwrap();
-
-        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
-        assert!(err.to_string().contains("delegates to 'npm'"));
-    }
-
-    #[test]
-    fn lifecycle_rejects_pm_wrappers_after_shell_separators() {
-        let project = tempfile::tempdir().unwrap();
-        let package = tempfile::tempdir().unwrap();
-        std::fs::write(
-            package.path().join("package.json"),
-            r#"{"scripts":{"postinstall":"node build.js && /usr/bin/pnpm install"}}"#,
-        )
-        .unwrap();
-
-        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
-        assert!(err.to_string().contains("delegates to 'pnpm'"));
-    }
-
-    #[test]
-    fn lifecycle_rejects_shell_control_tokens() {
-        let project = tempfile::tempdir().unwrap();
-        let package = tempfile::tempdir().unwrap();
-        std::fs::write(
-            package.path().join("package.json"),
-            r#"{"scripts":{"postinstall":"node build.js; node post.js"}}"#,
-        )
-        .unwrap();
-
-        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
-        assert!(err.to_string().contains("unsupported lifecycle script"));
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn lifecycle_runs_simple_script_without_shell() {
-        let project = tempfile::tempdir().unwrap();
-        let package = tempfile::tempdir().unwrap();
-        let marker = package.path().join("marker.txt");
-        write_package_script(
-            package.path(),
-            "python3 -c \"from pathlib import Path; Path('marker.txt').write_text('ok')\"",
-        );
-
-        LifecycleRunner::run_scripts(package.path(), project.path()).unwrap();
-        assert!(marker.exists());
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn lifecycle_accepts_leading_env_assignment() {
-        let project = tempfile::tempdir().unwrap();
-        let package = tempfile::tempdir().unwrap();
-        write_package_script(
-            package.path(),
-            "MG_LIFECYCLE_TEST=ok python3 -c \"import os; assert os.environ.get('MG_LIFECYCLE_TEST') == 'ok'\"",
-        );
-
-        LifecycleRunner::run_scripts(package.path(), project.path()).unwrap();
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn lifecycle_timeout_kills_hung_process() {
-        let project = tempfile::tempdir().unwrap();
-        let package = tempfile::tempdir().unwrap();
-        write_package_script(package.path(), "python3 -c \"import time; time.sleep(2)\"");
-
-        std::env::set_var("MG_LIFECYCLE_TIMEOUT_SECS", "1");
-        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
-        std::env::remove_var("MG_LIFECYCLE_TIMEOUT_SECS");
-        assert!(err.to_string().contains("timed out"));
-    }
-}
+#[path = "test/lifecycle_tests.rs"]
+mod tests;

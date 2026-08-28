@@ -14,9 +14,9 @@ impl TemplateRoot {
     }
 
     /// Resolve a template rel (relative to templates/) against the source
-    /// priority: MEGAGATE_TEMPLATE_DIR env → workspace disk → registry cache.
+    /// priority: MAGICORE_TEMPLATE_DIR env → workspace disk → registry cache.
     pub fn resolve(rel: &str) -> TemplateRoot {
-        if let Ok(dir) = env::var("MEGAGATE_TEMPLATE_DIR") {
+        if let Ok(dir) = env::var("MAGICORE_TEMPLATE_DIR") {
             let candidate = PathBuf::from(dir).join(rel);
             if candidate.is_dir() {
                 return TemplateRoot::disk(candidate);
@@ -28,7 +28,7 @@ impl TemplateRoot {
             return TemplateRoot::disk(disk);
         }
 
-        // Registry cache fallback: ~/.mg/templates/{rel} (mg template fetch).
+        // Registry cache fallback: ~/.mgc/templates/{rel} (mgc template fetch).
         let cached = crate::commands::template::templates_cache_dir().join(rel);
         if cached.is_dir() {
             return TemplateRoot::disk(cached);

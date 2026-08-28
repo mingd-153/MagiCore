@@ -11,7 +11,7 @@ fn scaffold_materializes_framework_structure() {
     }
     for fw in ["bevy", "godot", "unity", "unreal"] {
         let dir = std::env::temp_dir().join(format!(
-            "mg-game-scaffold-{fw}-{}-{}",
+            "mgc-game-scaffold-{fw}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -33,7 +33,7 @@ fn scaffold_materializes_framework_structure() {
         std::env::set_current_dir(&prev).unwrap();
         res.expect("scaffold game");
         let base = dir.join("game-demo");
-        assert!(base.join("mg.toml").exists(), "{fw}: mg.toml missing");
+        assert!(base.join("mgc.toml").exists(), "{fw}: mgc.toml missing");
 
         let expected: &[&str] = match fw {
             "bevy" => &[

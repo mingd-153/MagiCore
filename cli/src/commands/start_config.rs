@@ -1,11 +1,11 @@
 // Start bind configuration — validates local production server binding.
-// Cấu hình bind cho `mg start` — giữ mặc định local-first và port đúng RULE.
+// Cấu hình bind cho `mgc start` — giữ mặc định local-first và port đúng RULE.
 use anyhow::{bail, Context, Result};
 
 pub const DEFAULT_WEB_START_HOST: &str = "localhost";
 pub const DEFAULT_WEB_START_PORT: u16 = 4315;
-pub const WEB_START_HOST_ENV: &str = "MEGAGATE_WEB_START_HOST";
-pub const WEB_START_PORT_ENV: &str = "MEGAGATE_WEB_START_PORT";
+pub const WEB_START_HOST_ENV: &str = "MAGICORE_WEB_START_HOST";
+pub const WEB_START_PORT_ENV: &str = "MAGICORE_WEB_START_PORT";
 pub const VALID_RULE_PORTS: [u16; 24] = [
     4315, 4351, 4135, 4153, 4513, 4531, 3415, 3451, 3145, 3154, 3541, 3514, 1345, 1354, 1435, 1453,
     1534, 1543, 5134, 5143, 5314, 5341, 5413, 5431,
@@ -40,7 +40,7 @@ pub fn resolve_web_start_bind_from_env(
         None => DEFAULT_WEB_START_PORT,
     };
     if !VALID_RULE_PORTS.contains(&port) {
-        bail!("{WEB_START_PORT_ENV} must be one of the approved MegaGate ports");
+        bail!("{WEB_START_PORT_ENV} must be one of the approved MagiCore ports");
     }
 
     Ok((host, port))

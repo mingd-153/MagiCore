@@ -6,8 +6,8 @@ mod common;
 #[test]
 fn test_deploy_without_cicd_project_fails() {
     let dir = common::work_dir();
-    // Không có mg.toml → deploy rơi về cloud core (lỗi khác) → cần project cicd rõ ràng.
-    let (ok, out) = common::mg_in(&dir, &["deploy"]);
+    // Không có mgc.toml → deploy rơi về cloud core (lỗi khác) → cần project cicd rõ ràng.
+    let (ok, out) = common::mgc_in(&dir, &["deploy"]);
     assert!(!ok, "deploy outside any project must fail");
     assert!(
         out.contains("cloud"),
@@ -16,11 +16,11 @@ fn test_deploy_without_cicd_project_fails() {
 
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        dir.join("mg.toml"),
+        dir.join("mgc.toml"),
         "name = \"ci-test\"\nversion = \"0.1.0\"\necosystem = \"cicd\"\n\n[cicd]\nprovider = \"github-actions\"\n",
     )
     .unwrap();
-    let (ok, out) = common::mg_in(&dir, &["deploy"]);
+    let (ok, out) = common::mgc_in(&dir, &["deploy"]);
     assert!(!ok, "deploy with cicd project but no target must fail");
     assert!(
         out.contains("CI-only"),
@@ -31,10 +31,10 @@ fn test_deploy_without_cicd_project_fails() {
 #[test]
 fn test_cicd_verbs_hint_direction() {
     let dir = common::work_dir();
-    let (ok, out) = common::mg_in(&dir, &["add-cicd", "somepkg"]);
+    let (ok, out) = common::mgc_in(&dir, &["add-cicd", "somepkg"]);
     assert!(!ok, "add-cicd must fail");
     assert!(
-        out.contains("mg deploy"),
+        out.contains("mgc deploy"),
         "expected deploy direction hint, got: {out}"
     );
 }

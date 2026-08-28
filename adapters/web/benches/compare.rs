@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
-use mg_types::{adapter::InstallOptions, PackageAdapter};
-/// Compare MegaGate vs npm / pnpm / bun on the same packages.
-/// Usage: cargo bench -p mg-web-adapter --bench compare
+use mgc_types::{adapter::InstallOptions, PackageAdapter};
+/// Compare MagiCore vs npm / pnpm / bun on the same packages.
+/// Usage: cargo bench -p mgc-web-adapter --bench compare
 use std::time::{Duration, Instant};
 
 const PACKAGES: &[&str] = &["lodash", "uuid", "dayjs", "axios", "tslib"];
@@ -9,7 +9,7 @@ const PKG_JSON: &str = r#"{"name":"cmp","version":"0.1.0","dependencies":{"lodas
 
 fn run_mg(_label: &str, dir: &std::path::Path) -> (Duration, Duration, Duration) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let adapter = mg_web_adapter::WebAdapter::new();
+    let adapter = mgc_web_adapter::WebAdapter::new();
 
     let t0 = Instant::now();
     let manifest = rt.block_on(adapter.parse_manifest(dir)).unwrap();
@@ -167,14 +167,14 @@ fn main() {
 
     let mut results: Vec<(&str, String, String, String, usize, String)> = Vec::new();
 
-    // ── MegaGate ──
+    // ── MagiCore ──
     {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("package.json"), PKG_JSON).unwrap();
-        let (resolve, cold, warm) = run_mg("mg", dir.path());
+        let (resolve, cold, warm) = run_mg("mgc", dir.path());
         let count = count_node_modules(dir.path());
         let disk = measure_disk(dir.path());
-        println!("┌─ MegaGate");
+        println!("┌─ MagiCore");
         println!("│   resolve │ {:.3}s", resolve.as_secs_f64());
         println!(
             "│   install │ cold {:.3}s  warm {:.3}s",
@@ -183,7 +183,7 @@ fn main() {
         );
         println!("│   packages│ {} │ disk {}", count, disk);
         results.push((
-            "MegaGate",
+            "MagiCore",
             format!("{:.3}s", cold.as_secs_f64()),
             format!("{:.3}s", warm.as_secs_f64()),
             format!("{}", count),

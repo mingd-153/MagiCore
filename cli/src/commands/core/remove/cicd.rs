@@ -1,4 +1,4 @@
-//! `mg remove cicd` — bail rõ ràng (cicd không có remove).
+//! `mgc remove cicd` — bail rõ ràng (cicd không có remove).
 
 use anyhow::Result;
 

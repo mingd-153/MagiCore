@@ -1,4 +1,4 @@
-//! Tests cho `mg config` — get/set/delete/unset/list (npmrc + mg.toml layers)
+//! Tests cho `mgc config` — get/set/delete/unset/list (npmrc + mgc.toml layers)
 
 use super::*;
 use std::fs;
@@ -10,10 +10,10 @@ fn temp_dir_with_npmrc(content: &str) -> tempfile::TempDir {
     dir
 }
 
-/// Helper: tạo temp dir có mg.toml
-fn temp_dir_with_mg_toml(content: &str) -> tempfile::TempDir {
+/// Helper: tạo temp dir có mgc.toml
+fn temp_dir_with_mgc_toml(content: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("mg.toml"), content).unwrap();
+    fs::write(dir.path().join("mgc.toml"), content).unwrap();
     dir
 }
 
@@ -63,20 +63,21 @@ fn delete_npmrc_removes_key() {
 
 #[test]
 fn toml_value_reads_top_level_key() {
-    let dir = temp_dir_with_mg_toml("name = \"myapp\"\necosystem = \"web\"\nversion = \"0.1.0\"\n");
-    let val = toml_value(&dir.path().join("mg.toml"), "ecosystem");
+    let dir =
+        temp_dir_with_mgc_toml("name = \"myapp\"\necosystem = \"web\"\nversion = \"0.1.0\"\n");
+    let val = toml_value(&dir.path().join("mgc.toml"), "ecosystem");
     assert_eq!(val.as_deref(), Some("web"));
-    let ver = toml_value(&dir.path().join("mg.toml"), "version");
+    let ver = toml_value(&dir.path().join("mgc.toml"), "version");
     assert_eq!(ver.as_deref(), Some("0.1.0"));
 }
 
 #[test]
 fn toml_value_reads_dot_notation() {
     let dir =
-        temp_dir_with_mg_toml("[game]\nengine = \"bevy\"\n\n[iot]\nframework = \"esp-idf\"\n");
-    let val = toml_value(&dir.path().join("mg.toml"), "game.engine");
+        temp_dir_with_mgc_toml("[game]\nengine = \"bevy\"\n\n[iot]\nframework = \"esp-idf\"\n");
+    let val = toml_value(&dir.path().join("mgc.toml"), "game.engine");
     assert_eq!(val.as_deref(), Some("bevy"));
-    let iot_val = toml_value(&dir.path().join("mg.toml"), "iot.framework");
+    let iot_val = toml_value(&dir.path().join("mgc.toml"), "iot.framework");
     assert_eq!(iot_val.as_deref(), Some("esp-idf"));
 }
 

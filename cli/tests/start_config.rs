@@ -24,7 +24,7 @@ fn rejects_bind_all_hosts() {
 fn rejects_ports_outside_rule_set() {
     let err =
         start_config::resolve_web_start_bind_from_env(Some("localhost"), Some("3000")).unwrap_err();
-    assert!(err.to_string().contains("approved MegaGate ports"));
+    assert!(err.to_string().contains("approved MagiCore ports"));
 }
 
 #[test]

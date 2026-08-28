@@ -104,7 +104,7 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<HmrManager>) {
 pub const HMR_CLIENT_SCRIPT: &str = r#"
 (function() {
     console.log('[MgDevServer] Connecting to HMR WebSocket...');
-    const ws = new WebSocket(`ws://${window.location.host}/@megagate/hmr`);
+    const ws = new WebSocket(`ws://${window.location.host}/@magicore/hmr`);
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === 'reload') {

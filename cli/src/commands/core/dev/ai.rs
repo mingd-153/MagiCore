@@ -1,4 +1,4 @@
-//! `mg dev` ai — chạy entry script qua python3 (Q20, allowlist §5.1) — tách từ core/ai.rs.
+//! `mgc dev` ai — chạy entry script qua python3 (Q20, allowlist §5.1) — tách từ core/ai.rs.
 
 use anyhow::Result;
 

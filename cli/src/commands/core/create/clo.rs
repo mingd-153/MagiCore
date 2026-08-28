@@ -1,4 +1,4 @@
-//! `mg create-<clo>` — tách từ core/clo.rs (Phase 7 v5).
+//! `mgc create-<clo>` — tách từ core/clo.rs (Phase 7 v5).
 
 use anyhow::Result;
 
@@ -12,8 +12,8 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         // Registry-first: fetch layer clo/<fw> nếu chưa có; fetch fail → fallback procedural.
         crate::commands::template::ensure_layer(&format!("clo/{fw}")).await;
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
-    mg_ui::success("Cloud project created. Run `mg add-clo <pkg>` or `mg install-clo` next.");
+    super::scaffold_and_save_metadata(&config)?;
+    mgc_ui::success("Cloud project created. Run `mgc add-clo <pkg>` or `mgc install-clo` next.");
     Ok(())
 }
 

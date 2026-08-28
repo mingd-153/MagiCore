@@ -1,5 +1,5 @@
-# MegaGate — Docker Compose
-# Runs mg-registry-server + optional mg CLI sidecar.
+# MagiCore — Docker Compose
+# Runs mgc-registry-server + optional mgc CLI sidecar.
 #
 # Quick start:
 #   cp registry.env.example registry.env          # fill in secrets
@@ -9,7 +9,7 @@
 # Production (with Nginx TLS):
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
-name: megagate
+name: magicore
 
 services:
   # ── Registry server ────────────────────────────────────────────────────────
@@ -17,20 +17,20 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.registry
-    image: megagate/registry-server:latest
-    container_name: mg-registry
+    image: magicore/registry-server:latest
+    container_name: mgc-registry
     restart: unless-stopped
     ports:
-      - "${MEGAGATE_REGISTRY_PORT:-8080}:8080"
+      - "${MAGICORE_REGISTRY_PORT:-8080}:8080"
     volumes:
       - registry-data:/data
     env_file:
       - registry.env
     environment:
-      MEGAGATE_REGISTRY_HOST: "0.0.0.0"
-      MEGAGATE_REGISTRY_PORT: "8080"
-      MEGAGATE_REGISTRY_STORE_DIR: "/data"
-      MEGAGATE_LOG_LEVEL: "${MEGAGATE_LOG_LEVEL:-info}"
+      MAGICORE_REGISTRY_HOST: "0.0.0.0"
+      MAGICORE_REGISTRY_PORT: "8080"
+      MAGICORE_REGISTRY_STORE_DIR: "/data"
+      MAGICORE_LOG_LEVEL: "${MAGICORE_LOG_LEVEL:-info}"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v2/"]
       interval: 30s
@@ -43,30 +43,30 @@ services:
     tmpfs:
       - /tmp
     networks:
-      - mg-internal
+      - mgc-internal
 
-  # ── mg CLI sidecar (one-shot) ──────────────────────────────────────────────
-  # Usage:  docker compose run --rm mg-cli mg publish ./my-pkg
-  mg-cli:
-    image: megagate/cli:latest
+  # ── mgc CLI sidecar (one-shot) ──────────────────────────────────────────────
+  # Usage:  docker compose run --rm mgc-cli mgc publish ./my-pkg
+  mgc-cli:
+    image: magicore/cli:latest
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: mg-cli
+    container_name: mgc-cli
     profiles:
       - cli
     depends_on:
       registry:
         condition: service_healthy
     environment:
-      MG_REGISTRY: "http://registry:8080"
-      MG_AUTH_TOKEN: "${MG_AUTH_TOKEN:-}"
+      MGC_REGISTRY: "http://registry:8080"
+      MGC_AUTH_TOKEN: "${MGC_AUTH_TOKEN:-}"
     volumes:
       - "${HOST_WORKSPACE:-./workspace}:/workspace:rw"
     working_dir: /workspace
-    entrypoint: ["/usr/local/bin/mg"]
+    entrypoint: ["/usr/local/bin/mgc"]
     networks:
-      - mg-internal
+      - mgc-internal
 
 # ── Volumes ───────────────────────────────────────────────────────────────────
 volumes:
@@ -79,5 +79,5 @@ volumes:
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 networks:
-  mg-internal:
+  mgc-internal:
     driver: bridge

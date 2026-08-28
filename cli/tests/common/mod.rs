@@ -6,13 +6,13 @@ use std::time::Instant;
 
 const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
 
-/// Run mg command from workspace root.
-pub fn mg(args: &[&str]) -> (bool, String) {
+/// Run mgc command from workspace root.
+pub fn mgc(args: &[&str]) -> (bool, String) {
     run_mg(args, Path::new(MANIFEST))
 }
 
-/// Run mg command in a specific target directory.
-pub fn mg_in(dir: &Path, args: &[&str]) -> (bool, String) {
+/// Run mgc command in a specific target directory.
+pub fn mgc_in(dir: &Path, args: &[&str]) -> (bool, String) {
     run_mg(args, dir)
 }
 
@@ -21,13 +21,13 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
     let workspace_root = workspace_manifest
         .parent()
         .expect("workspace manifest should have a parent");
-    let debug_bin = workspace_root.join("target").join("debug").join("mg");
+    let debug_bin = workspace_root.join("target").join("debug").join("mgc");
 
-    let runtime_bin = std::env::var("CARGO_BIN_EXE_mg")
+    let runtime_bin = std::env::var("CARGO_BIN_EXE_mgc")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.exists());
-    let compile_bin = option_env!("CARGO_BIN_EXE_mg")
+    let compile_bin = option_env!("CARGO_BIN_EXE_mgc")
         .map(PathBuf::from)
         .filter(|path| path.exists());
 
@@ -40,7 +40,7 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         fallback
             .arg("run")
             .arg("--bin")
-            .arg("mg")
+            .arg("mgc")
             .arg("--manifest-path")
             .arg(&workspace_manifest)
             .arg("--");
@@ -49,7 +49,7 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
 
     // Only pin workspace templates when the tree actually holds template
     // content — the repo may keep just placeholder READMEs and rely on the
-    // registry cache (~/.mg/templates).
+    // registry cache (~/.mgc/templates).
     let template_disk = workspace_root.join("templates");
     let template_contract = template_disk
         .join("web")
@@ -59,14 +59,14 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         .is_file();
 
     if template_contract {
-        command.env("MEGAGATE_TEMPLATE_DIR", template_disk);
+        command.env("MAGICORE_TEMPLATE_DIR", template_disk);
     }
 
     let output = command
         .args(args)
         .current_dir(cwd)
         .output()
-        .expect("failed to run mg");
+        .expect("failed to run mgc");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let combined = if stderr.is_empty() {
@@ -80,7 +80,7 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
 /// Create a temp directory for scaffold testing.
 pub fn work_dir() -> PathBuf {
     let unique = format!(
-        "mg-test-{}-{:?}-{}",
+        "mgc-test-{}-{:?}-{}",
         std::process::id(),
         std::thread::current().id(),
         std::time::SystemTime::now()
@@ -98,7 +98,7 @@ pub fn work_dir() -> PathBuf {
 /// Note: --dir flag is not supported; project is always created in CWD.
 pub fn scaffold(framework: &str, project: &str) -> PathBuf {
     let base = work_dir();
-    let result = mg_in(&base, &["create-web", framework, project, "--ts"]);
+    let result = mgc_in(&base, &["create-web", framework, project, "--ts"]);
     assert!(result.0, "scaffold {framework} failed:\n{}", result.1);
     base.join(project)
 }
@@ -129,27 +129,27 @@ pub fn assert_file_contains(project: &Path, rel_path: &str, expected: &str) {
 pub fn bench_scaffold(framework: &str, project: &str) -> u128 {
     let base = work_dir();
     let start = Instant::now();
-    let result = mg_in(&base, &["create-web", framework, project, "--ts"]);
+    let result = mgc_in(&base, &["create-web", framework, project, "--ts"]);
     let elapsed = start.elapsed().as_millis();
     assert!(result.0, "bench scaffold {framework} failed: {}", result.1);
     elapsed
 }
 
 pub fn assert_help_contains(expected: &str) {
-    let (ok, out) = mg(&["--help"]);
-    assert!(ok, "mg --help failed");
+    let (ok, out) = mgc(&["--help"]);
+    assert!(ok, "mgc --help failed");
     assert!(
         out.contains(expected),
-        "mg --help should contain '{expected}'\n---\n{out}"
+        "mgc --help should contain '{expected}'\n---\n{out}"
     );
 }
 
 pub fn assert_help_excludes(unexpected: &str) {
-    let (ok, out) = mg(&["--help"]);
-    assert!(ok, "mg --help failed");
+    let (ok, out) = mgc(&["--help"]);
+    assert!(ok, "mgc --help failed");
     assert!(
         !out.contains(unexpected),
-        "mg --help should NOT contain '{unexpected}'\n---\n{out}"
+        "mgc --help should NOT contain '{unexpected}'\n---\n{out}"
     );
 }
 

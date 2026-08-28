@@ -1,4 +1,4 @@
-use mg_types::MgResult;
+use mgc_types::MgResult;
 use std::path::Path;
 
 #[cfg(unix)]
@@ -38,7 +38,7 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
         #[cfg(not(unix))]
         {
             if let Err(e2) = crate::hardlink_tree(target, link) {
-                return Err(mg_types::MgError::Other(format!(
+                return Err(mgc_types::MgError::Other(format!(
                     "failed to create symlink (or fallback hardlink tree) from {} to {}: {} (fallback error: {})",
                     target.display(), link.display(), e, e2
                 )));
@@ -46,7 +46,7 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
         }
         #[cfg(unix)]
         {
-            return Err(mg_types::MgError::Other(format!(
+            return Err(mgc_types::MgError::Other(format!(
                 "failed to create symlink from {} to {}: {}",
                 target.display(),
                 link.display(),

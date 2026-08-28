@@ -2,7 +2,7 @@
 """Fill missing source files for react-* and vue-* split fullstack templates."""
 import os
 
-BASE = "/Users/doanmihh/Documents/Workspace/MegaGate/templates/web/fullstack/split"
+BASE = "/Users/doanmihh/Documents/Workspace/MagiCore/templates/web/fullstack/split"
 
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)

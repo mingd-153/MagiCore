@@ -25,11 +25,11 @@ jobs:
         run: cargo fmt --all --check
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: mg-exec allowlist tests
-        run: cargo test -p mg-exec --test test_run 2>&1
+      - name: mgc-exec allowlist tests
+        run: cargo test -p mgc-exec --test test_run 2>&1
         timeout-minutes: 2
       - name: single-core web CLI surface
-        run: cargo test -p mg --no-default-features --features web test_single_core_create_alias_parses --quiet
+        run: cargo test -p mgc --no-default-features --features web test_single_core_create_alias_parses --quiet
       - name: cargo check
         run: cargo check --workspace --all-targets --locked
       - name: module hygiene
@@ -40,13 +40,15 @@ jobs:
         run: bash -n scripts/update-release-hashes.sh
       - name: package manifests syntax
         run: |
-          ruby -c packaging/homebrew/megagate.rb
-          ruby -c packaging/homebrew/megagate-web.rb
-          python3 -m json.tool packaging/scoop/megagate.json >/dev/null
-          python3 -m json.tool packaging/scoop/megagate-web.json >/dev/null
+          ruby -c packaging/homebrew/magicore.rb
+          ruby -c packaging/homebrew/magicore-web.rb
+          python3 -m json.tool packaging/scoop/magicore.json >/dev/null
+          python3 -m json.tool packaging/scoop/magicore-web.json >/dev/null
+      - name: benchmark provenance
+        run: python3 benchmark/scripts/verify_benchmark_provenance.py
       - name: internal specs stay ignored
         run: |
-          git check-ignore -q docs/specs/megaGateChangeLog.md
+          git check-ignore -q docs/specs/magiCoreChangeLog.md
           git check-ignore -q docs/specs/preGitCICDHardening20260820.md
 
   test:
@@ -61,17 +63,17 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --workspace --locked --exclude mg -- --test-threads=4
-      - name: Seed registry + cargo test (mg, skip benchmarks)
+        run: cargo test --workspace --locked --exclude mgc --exclude mgc-e2e -- --test-threads=4
+      - name: Seed registry + cargo test (mgc + mgc-e2e, skip benchmarks)
         run: |
-          ./target/debug/mg-registry --host 127.0.0.1 --port 4315 --store-dir /tmp/mg-reg-store >/tmp/mg-reg.log 2>&1 &
+          ./target/debug/mgc-registry --host 127.0.0.1 --port 4315 --store-dir /tmp/mgc-reg-store >/tmp/mgc-reg.log 2>&1 &
           SRV=$!
           trap 'kill $SRV' EXIT
           for i in $(seq 1 15); do curl -sf -o /dev/null http://127.0.0.1:4315/ && break || sleep 1; done
-          mkdir -p /tmp/mg-tpl && git archive 1b69dd0^ templates | tar -x -C /tmp/mg-tpl
+          mkdir -p /tmp/mgc-tpl && git archive 1b69dd0^ templates | tar -x -C /tmp/mgc-tpl
           node -e '
             const fs = require("fs"), path = require("path");
-            const root = "/tmp/mg-tpl/templates";
+            const root = "/tmp/mgc-tpl/templates";
             let ok = 0, fail = 0;
             function walk(d) {
               for (const f of fs.readdirSync(d, { withFileTypes: true })) {
@@ -92,12 +94,12 @@ jobs:
             walk(root);
             console.log(`resolved symlinks: ${ok} ok, ${fail} skipped`);
           '
-          mkdir -p /tmp/mg-tpl/templates/web/backend/php/laravel/sources/storage/logs
-          touch /tmp/mg-tpl/templates/web/backend/php/laravel/sources/storage/logs/.gitkeep
-          printf 'APP_ENV=dev\nAPP_DEBUG=1\nAPP_SECRET=changeme\nAPP_NAME={{project_name}}\n' > /tmp/mg-tpl/templates/web/backend/php/symfony/sources/.env
-          MEGAGATE_TEMPLATE_DIR=/tmp/mg-tpl/templates MG_NPM_REGISTRY=http://127.0.0.1:4315 cargo run -p mg -- template publish-all
-          mkdir -p /tmp/mg-empty-cache
-          MG_NPM_REGISTRY=http://127.0.0.1:4315 MG_TEMPLATES_DIR=/tmp/mg-empty-cache cargo test -p mg --locked -- --test-threads=4 --skip bench_
+          mkdir -p /tmp/mgc-tpl/templates/web/backend/php/laravel/sources/storage/logs
+          touch /tmp/mgc-tpl/templates/web/backend/php/laravel/sources/storage/logs/.gitkeep
+          printf 'APP_ENV=dev\nAPP_DEBUG=1\nAPP_SECRET=changeme\nAPP_NAME={{project_name}}\n' > /tmp/mgc-tpl/templates/web/backend/php/symfony/sources/.env
+          MAGICORE_TEMPLATE_DIR=/tmp/mgc-tpl/templates MGC_NPM_REGISTRY=http://127.0.0.1:4315 cargo run -p mgc -- template publish-all
+          mkdir -p /tmp/mgc-empty-cache
+          MGC_NPM_REGISTRY=http://127.0.0.1:4315 MGC_TEMPLATES_DIR=/tmp/mgc-empty-cache cargo test -p mgc -p mgc-e2e --locked -- --test-threads=4 --skip bench_
 
   build:
     name: Build Release
