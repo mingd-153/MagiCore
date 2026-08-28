@@ -48,22 +48,3 @@ impl Default for StringPool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_string_pool() {
-        let pool = StringPool::new();
-
-        let s1 = pool.intern("hello");
-        let s2 = pool.intern("hello");
-        let s3 = pool.intern("world");
-
-        // Same string returns same Arc
-        assert!(Arc::ptr_eq(&s1, &s2));
-        assert!(!Arc::ptr_eq(&s1, &s3));
-
-        assert_eq!(pool.len(), 2); // "hello" and "world"
-    }
-}

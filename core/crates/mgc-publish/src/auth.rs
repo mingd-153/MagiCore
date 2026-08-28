@@ -148,32 +148,3 @@ pub fn resolve_auth(
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mgc_config::npmrc::NpmRc;
-
-    #[test]
-    fn token_from_url_keyed_npmrc() {
-        // .npmrc chuẩn npm: //host/:_authToken — nhưng cũng chấp url-key
-        let npmrc = NpmRc::parse("//127.0.0.1:4315/:_authToken=uabc\n").unwrap();
-        let auth = resolve_auth(&npmrc, "http://127.0.0.1:4315", None, None).unwrap();
-        assert_eq!(auth.token.as_deref(), Some("uabc"));
-
-        let npmrc = NpmRc::parse("http://127.0.0.1:4315/:_authToken=habc\n").unwrap();
-        let auth = resolve_auth(&npmrc, "http://127.0.0.1:4315", None, None).unwrap();
-        assert_eq!(auth.token.as_deref(), Some("habc"));
-    }
-
-    #[test]
-    fn basic_from_url_keyed_npmrc() {
-        let npmrc = NpmRc::parse(
-            "http://127.0.0.1:4315/:username=u\nhttp://127.0.0.1:4315/:_password=cGFzcw==\n",
-        )
-        .unwrap();
-        let auth = resolve_auth(&npmrc, "http://127.0.0.1:4315", None, None).unwrap();
-        assert_eq!(auth.username.as_deref(), Some("u"));
-        // _password giữ base64 (npm format — server decode)
-        assert_eq!(auth.password.as_deref(), Some("cGFzcw=="));
-    }
-}

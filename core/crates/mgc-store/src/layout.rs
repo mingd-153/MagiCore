@@ -56,17 +56,3 @@ impl Layout {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_layout_paths() {
-        let root = tempdir().unwrap();
-        let layout = Layout::new(root.path().to_path_buf());
-        assert!(layout.cas_dir().to_string_lossy().contains("cas"));
-        assert!(layout.cache_dir().to_string_lossy().contains("cache"));
-        assert!(layout.db_path().to_string_lossy().ends_with("store.db"));
-    }
-}

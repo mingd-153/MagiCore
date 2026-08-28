@@ -5,6 +5,7 @@
 //! and SIMD-accelerated operations.
 
 pub mod blake3_signer;
+pub mod checksum;
 pub mod ed25519_signer;
 pub mod integrity;
 pub mod keyring;

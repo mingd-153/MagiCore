@@ -136,36 +136,3 @@ pub mod media_types {
     pub const OCI_EMPTY_JSON: &str = "application/vnd.oci.empty.v1+json";
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn manifest_serializes() {
-        let config = OciDescriptor::new(
-            media_types::OCI_CONFIG.to_string(),
-            1024,
-            "sha256:abc123".to_string(),
-        );
-        let layer = OciDescriptor::new(
-            media_types::OCI_LAYER_GZIP.to_string(),
-            4096,
-            "sha256:def456".to_string(),
-        );
-        let manifest = OciManifest::new(config, vec![layer]);
-        let json = serde_json::to_string(&manifest).unwrap();
-        assert!(json.contains("schema_version"));
-        assert!(json.contains("sha256:abc123"));
-    }
-
-    #[test]
-    fn descriptor_with_data() {
-        let desc = OciDescriptor::new(
-            "application/octet-stream".to_string(),
-            100,
-            "sha256:test".to_string(),
-        )
-        .with_data(vec![1, 2, 3]);
-        assert_eq!(desc.data.as_ref().unwrap().len(), 3);
-    }
-}

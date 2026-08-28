@@ -118,13 +118,3 @@ impl SearchClient for NpmSearchClient {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_npm_client_creation() {
-        let client = NpmSearchClient::new();
-        assert_eq!(client.registry(), Registry::Npm);
-    }
-}

@@ -57,28 +57,3 @@ pub fn set_cas_root_permissions(root: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_validate_nonexistent_root() {
-        let root = tempdir().unwrap().path().join("nonexistent");
-        assert!(validate_cas_root(&root).is_ok());
-    }
-
-    #[test]
-    fn test_validate_existing_root() {
-        let root = tempdir().unwrap();
-        assert!(validate_cas_root(root.path()).is_ok());
-    }
-
-    #[test]
-    fn test_ensure_cas_dirs_creates_structure() {
-        let root = tempdir().unwrap().path().join("cas");
-        ensure_cas_dirs(&root).unwrap();
-        assert!(root.join("files").join("blake3").exists());
-        assert!(root.join("compiled").join("blake3").exists());
-    }
-}

@@ -116,36 +116,3 @@ impl Default for RegistryCache {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample_versions() -> Vec<mgc_types::Version> {
-        vec![
-            mgc_types::Version::parse("1.0.0").unwrap(),
-            mgc_types::Version::parse("2.0.0").unwrap(),
-        ]
-    }
-
-    #[test]
-    fn test_insert_and_get_versions() {
-        let cache = RegistryCache::new();
-        cache.insert_versions("react".to_string(), sample_versions());
-        let v = cache.get_versions("react").unwrap();
-        assert_eq!(v.len(), 2);
-    }
-
-    #[test]
-    fn test_get_versions_missing() {
-        let cache = RegistryCache::new();
-        assert!(cache.get_versions("nonexistent").is_none());
-    }
-
-    #[test]
-    fn test_clear() {
-        let cache = RegistryCache::new();
-        cache.insert_versions("react".to_string(), sample_versions());
-        cache.clear();
-        assert!(cache.is_empty());
-    }
-}

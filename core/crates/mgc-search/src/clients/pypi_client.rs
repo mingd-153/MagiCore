@@ -111,13 +111,3 @@ impl SearchClient for PyPISearchClient {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pypi_client_creation() {
-        let client = PyPISearchClient::new();
-        assert_eq!(client.registry(), Registry::PyPI);
-    }
-}

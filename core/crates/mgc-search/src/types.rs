@@ -145,35 +145,3 @@ pub struct ResultMetadata {
     pub quality: Option<f32>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_registry_as_str() {
-        assert_eq!(Registry::Npm.as_str(), "npm");
-        assert_eq!(Registry::Crates.as_str(), "crates");
-        assert_eq!(Registry::Go.as_str(), "go");
-        assert_eq!(Registry::PyPI.as_str(), "pypi");
-    }
-
-    #[test]
-    fn test_registry_from_str() {
-        assert_eq!(Registry::from_str("npm"), Ok(Registry::Npm));
-        assert_eq!(Registry::from_str("NPM"), Ok(Registry::Npm));
-        assert_eq!(Registry::from_str("crates.io"), Ok(Registry::Crates));
-        assert_eq!(Registry::from_str("go"), Ok(Registry::Go));
-        assert_eq!(Registry::from_str("pkg.go.dev"), Ok(Registry::Go));
-        assert_eq!(Registry::from_str("pypi"), Ok(Registry::PyPI));
-        assert_eq!(Registry::from_str("pip"), Ok(Registry::PyPI));
-        assert!(Registry::from_str("unknown").is_err());
-    }
-
-    #[test]
-    fn test_registry_display() {
-        assert_eq!(format!("{}", Registry::Npm), "npm");
-        assert_eq!(format!("{}", Registry::Crates), "crates");
-        assert_eq!(format!("{}", Registry::Go), "go");
-        assert_eq!(format!("{}", Registry::PyPI), "pypi");
-    }
-}

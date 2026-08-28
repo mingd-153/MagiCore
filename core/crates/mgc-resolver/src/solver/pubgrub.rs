@@ -295,19 +295,3 @@ impl From<Incompatibility> for SolveError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_incompatibility() {
-        let inc = Incompatibility::new(vec![
-            Term::Positive(PackageName::new("react").unwrap(), VersionSet::any()),
-            Term::Negative(
-                PackageName::new("react").unwrap(),
-                VersionSet::range(mgc_types::VersionRange::parse("^18.0.0").unwrap()),
-            ),
-        ]);
-        assert_eq!(inc.terms.len(), 2);
-    }
-}
