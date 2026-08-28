@@ -1,4 +1,4 @@
-//! `mg install cicd` — bail rõ ràng (cicd không có install — dùng `mg ci generate`/`verify`/`deploy`).
+//! `mgc install cicd` — bail rõ ràng (cicd không có install — dùng `mgc ci generate`/`verify`/`deploy`).
 
 use anyhow::Result;
 

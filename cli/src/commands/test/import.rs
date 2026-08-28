@@ -34,18 +34,18 @@ async fn test_import_detects_and_converts_package_lock() {
     let res = run(Some(root.to_path_buf())).await;
     assert!(res.is_ok(), "import should succeed: {:?}", res.err());
 
-    // Verify mg.lock generated
-    let mg_lock = root.join("mg.lock");
-    assert!(mg_lock.exists(), "mg.lock must be created");
+    // Verify mgc.lock generated
+    let mgc_lock = root.join("mgc.lock");
+    assert!(mgc_lock.exists(), "mgc.lock must be created");
 
-    let checksum = root.join("mg.lock.sha256");
-    assert!(checksum.exists(), "mg.lock.sha256 must be created");
+    let checksum = root.join("mgc.lock.sha256");
+    assert!(checksum.exists(), "mgc.lock.sha256 must be created");
 
-    let marker = root.join(mg_config::project::ProjectConfig::CORE_MARKER_FILE);
-    assert!(marker.exists(), ".mg.core signature marker must be created");
+    let marker = root.join(mgc_config::project::ProjectConfig::CORE_MARKER_FILE);
+    assert!(marker.exists(), ".mgc.core signature marker must be created");
 
     // Read back lockfile
-    let lockfile = mg_lockfile::read_lockfile_checked(root).unwrap().unwrap();
+    let lockfile = mgc_lockfile::read_lockfile_checked(root).unwrap().unwrap();
     assert_eq!(lockfile.core, "web");
     assert_eq!(lockfile.packages.len(), 1);
     assert_eq!(lockfile.packages[0].name, "left-pad");

@@ -25,7 +25,7 @@ impl CloProcessor {
                 )?;
                 write_file(
                     &target.join("bin").join("app.ts"),
-                    "console.log('MegaGate CDK app scaffold');\n",
+                    "console.log('MagiCore CDK app scaffold');\n",
                 )?;
             }
             "cloudflare" => write_file(
@@ -40,7 +40,7 @@ impl CloProcessor {
                 write_file(
                     &target.join("Pulumi.yaml"),
                     &format!(
-                        "name: {}\nruntime: nodejs\ndescription: MegaGate cloud project\n",
+                        "name: {}\nruntime: nodejs\ndescription: MagiCore cloud project\n",
                         slugify(name)
                     ),
                 )?;
@@ -53,7 +53,7 @@ impl CloProcessor {
                 )?;
                 write_file(
                     &target.join("index.ts"),
-                    "console.log('MegaGate Pulumi scaffold');\n",
+                    "console.log('MagiCore Pulumi scaffold');\n",
                 )?;
             }
         }

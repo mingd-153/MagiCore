@@ -25,7 +25,7 @@ impl LibProcessor {
                 )?;
                 write_file(
                     &target.join("src").join("index.ts"),
-                    "export function hello(): string {\n    return 'hello from MegaGate';\n}\n",
+                    "export function hello(): string {\n    return 'hello from MagiCore';\n}\n",
                 )?;
             }
             "python" => {
@@ -52,7 +52,7 @@ impl LibProcessor {
                 )?;
                 write_file(
                     &target.join("src").join("lib.rs"),
-                    "pub fn hello() -> &'static str {\n    \"hello from MegaGate\"\n}\n",
+                    "pub fn hello() -> &'static str {\n    \"hello from MagiCore\"\n}\n",
                 )?;
             }
         }

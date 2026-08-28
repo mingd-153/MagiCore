@@ -1,4 +1,4 @@
-//! `mg dev app` — T9: OS-aware simulator selector.
+//! `mgc dev app` — T9: OS-aware simulator selector.
 //!
 //! ## Quy tắc chọn nền tảng (T9 spec — 2026-08-19)
 //!
@@ -21,7 +21,7 @@ use crate::commands::core::install::app::{
 
 // ─── OS detection ────────────────────────────────────────────────────────────
 
-/// Nền tảng đích khi chạy `mg dev app`.
+/// Nền tảng đích khi chạy `mgc dev app`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetPlatform {
     /// iOS Simulator (chỉ macOS + Xcode)
@@ -136,12 +136,12 @@ fn flutter_dev_command(platform: &TargetPlatform, dry_run: bool) -> InstallComma
             // Tìm simulator có sẵn
             let device_arg = find_ios_simulator().unwrap_or_else(|| {
                 if !dry_run {
-                    mg_ui::warning("No iOS simulator found — falling back to auto-detect device");
+                    mgc_ui::warning("No iOS simulator found — falling back to auto-detect device");
                 }
                 "auto".to_string()
             });
             if !dry_run {
-                mg_ui::info(&format!("Target: iOS Simulator ({})", device_arg));
+                mgc_ui::info(&format!("Target: iOS Simulator ({})", device_arg));
             }
             InstallCommand {
                 tool: "flutter".to_string(),
@@ -154,7 +154,7 @@ fn flutter_dev_command(platform: &TargetPlatform, dry_run: bool) -> InstallComma
         }
         TargetPlatform::Android => {
             if !dry_run {
-                mg_ui::info("Target: Android (emulator / attached device)");
+                mgc_ui::info("Target: Android (emulator / attached device)");
             }
             InstallCommand {
                 tool: "flutter".to_string(),
@@ -180,9 +180,9 @@ fn kotlin_dev_command(root: &Path) -> InstallCommand {
 
 // ─── ObjC / Xcodebuild ────────────────────────────────────────────────────────
 
-/// Lấy scheme từ mg.toml [app] dev_scheme.
+/// Lấy scheme từ mgc.toml [app] dev_scheme.
 fn dev_scheme(root: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(root.join("mg.toml")).ok()?;
+    let content = std::fs::read_to_string(root.join("mgc.toml")).ok()?;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("app")
         .and_then(|a| a.get("dev_scheme"))
@@ -198,18 +198,18 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
     if !cfg!(target_os = "macos") {
         bail!(
             "iOS Simulator only runs on macOS (host: {}). \
-             Use `mg dev app` on macOS or switch to Android target.",
+             Use `mgc dev app` on macOS or switch to Android target.",
             std::env::consts::OS
         );
     }
     if !xcode_available() {
         bail!(
             "Xcode command-line tools not found. Install with: xcode-select --install\n\
-             Or set [app] dev_scheme in mg.toml to use xcodebuild."
+             Or set [app] dev_scheme in mgc.toml to use xcodebuild."
         );
     }
 
-    // ObjC: dùng scheme từ mg.toml
+    // ObjC: dùng scheme từ mgc.toml
     if !lang_is_swift {
         let Some(scheme) = dev_scheme(root) else {
             let Some(proj) = find_xcode_project(root) else {
@@ -229,13 +229,13 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
             "build".to_string(),
         ];
         if dry_run {
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "[dry-run] would run: xcodebuild {}",
                 args.join(" ")
             ));
             return Ok(());
         }
-        mg_ui::info(&format!("App dev (ObjC): xcodebuild {}", args.join(" ")));
+        mgc_ui::info(&format!("App dev (ObjC): xcodebuild {}", args.join(" ")));
         return run_tool(root, "xcodebuild", &args);
     }
 
@@ -259,13 +259,13 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
             "run".to_string(),
         ];
         if dry_run {
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "[dry-run] would run: xcodebuild {}",
                 args.join(" ")
             ));
             return Ok(());
         }
-        mg_ui::info(&format!(
+        mgc_ui::info(&format!(
             "App dev (Swift/Xcode): xcodebuild {}",
             args.join(" ")
         ));
@@ -274,16 +274,16 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
 
     // Fallback: swift run (Package.swift)
     if dry_run {
-        mg_ui::info("[dry-run] would run: swift run");
+        mgc_ui::info("[dry-run] would run: swift run");
         return Ok(());
     }
-    mg_ui::info("App dev (Swift): swift run");
+    mgc_ui::info("App dev (Swift): swift run");
     run_tool(root, "swift", &["run".to_string()])
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-/// `mg dev app` — T9: chọn platform dựa theo OS host.
+/// `mgc dev app` — T9: chọn platform dựa theo OS host.
 ///
 /// macOS + Xcode → iOS Simulator (tự tìm UDID booted/available)
 /// Linux / Windows → Android Emulator (flutter -d android / gradlew installDebug)
@@ -294,15 +294,15 @@ pub async fn dev(dry_run: bool) -> Result<()> {
     let platform = detect_target_platform();
 
     if dry_run {
-        mg_ui::info(&format!(
-            "[dry-run] mg dev app — OS: {}, platform: {:?}, lang: {:?}",
+        mgc_ui::info(&format!(
+            "[dry-run] mgc dev app — OS: {}, platform: {:?}, lang: {:?}",
             std::env::consts::OS,
             platform,
             lang
         ));
     } else {
-        mg_ui::info(&format!(
-            "mg dev app — OS: {}, target: {}",
+        mgc_ui::info(&format!(
+            "mgc dev app — OS: {}, target: {}",
             std::env::consts::OS,
             match &platform {
                 TargetPlatform::IosSimulator => "iOS Simulator",
@@ -312,33 +312,33 @@ pub async fn dev(dry_run: bool) -> Result<()> {
     }
 
     match lang {
-        mg_app_adapter::AppLanguage::Flutter => {
+        mgc_app_adapter::AppLanguage::Flutter => {
             let cmd = flutter_dev_command(&platform, dry_run);
             if dry_run {
-                mg_ui::info(&format!(
+                mgc_ui::info(&format!(
                     "[dry-run] would run: {} {}",
                     cmd.tool,
                     cmd.args.join(" ")
                 ));
                 return Ok(());
             }
-            mg_ui::info(&format!("Running: {} {}", cmd.tool, cmd.args.join(" ")));
+            mgc_ui::info(&format!("Running: {} {}", cmd.tool, cmd.args.join(" ")));
             run_tool(&root, &cmd.tool, cmd.args.as_slice())?;
             Ok(())
         }
 
-        mg_app_adapter::AppLanguage::Swift => dev_ios(&root, true, dry_run).await,
+        mgc_app_adapter::AppLanguage::Swift => dev_ios(&root, true, dry_run).await,
 
-        mg_app_adapter::AppLanguage::ObjC => dev_ios(&root, false, dry_run).await,
+        mgc_app_adapter::AppLanguage::ObjC => dev_ios(&root, false, dry_run).await,
 
-        mg_app_adapter::AppLanguage::Kotlin => {
+        mgc_app_adapter::AppLanguage::Kotlin => {
             // Kotlin = Android-only (không phân biệt OS host)
             if dry_run {
-                mg_ui::info("[dry-run] would run: ./gradlew installDebug");
+                mgc_ui::info("[dry-run] would run: ./gradlew installDebug");
                 return Ok(());
             }
             let cmd = kotlin_dev_command(&root);
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "App dev (Kotlin/Android): {} {}",
                 cmd.tool,
                 cmd.args.join(" ")
@@ -346,9 +346,9 @@ pub async fn dev(dry_run: bool) -> Result<()> {
             run_tool(&root, &cmd.tool, cmd.args.as_slice())?;
             // Sau installDebug: launch app qua adb nếu có emulator
             if android_emulator_running() {
-                // Đọc applicationId từ mg.toml nếu có
+                // Đọc applicationId từ mgc.toml nếu có
                 let app_id = read_app_id(&root).unwrap_or_else(|| "com.example.app".to_string());
-                mg_ui::info(&format!(
+                mgc_ui::info(&format!(
                     "Launching app: adb shell am start -n {app_id}/.MainActivity"
                 ));
                 let _ = std::process::Command::new("adb")
@@ -364,15 +364,15 @@ pub async fn dev(dry_run: bool) -> Result<()> {
             Ok(())
         }
 
-        mg_app_adapter::AppLanguage::ReactNative => {
+        mgc_app_adapter::AppLanguage::ReactNative => {
             let _ = platform;
             let _ = dry_run;
             Err(crate::error::app_not_available(
-                "react-native dev is blocked in beta until the MegaGate-native app runner is available",
+                "react-native dev is blocked in beta until the MagiCore-native app runner is available",
             ))
         }
 
-        mg_app_adapter::AppLanguage::Multi => {
+        mgc_app_adapter::AppLanguage::Multi => {
             // Multi: ưu tiên Flutter entry
             let flutter_dir = root.join("flutter");
             if !flutter_dir.exists() {
@@ -380,14 +380,14 @@ pub async fn dev(dry_run: bool) -> Result<()> {
             }
             let cmd = flutter_dev_command(&platform, dry_run);
             if dry_run {
-                mg_ui::info(&format!(
+                mgc_ui::info(&format!(
                     "[dry-run] would run: {} {} (in flutter/)",
                     cmd.tool,
                     cmd.args.join(" ")
                 ));
                 return Ok(());
             }
-            mg_ui::info(&format!(
+            mgc_ui::info(&format!(
                 "App dev (Multi → flutter/): {} {}",
                 cmd.tool,
                 cmd.args.join(" ")
@@ -400,9 +400,9 @@ pub async fn dev(dry_run: bool) -> Result<()> {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Đọc applicationId từ mg.toml [app] application_id.
+/// Đọc applicationId từ mgc.toml [app] application_id.
 fn read_app_id(root: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(root.join("mg.toml")).ok()?;
+    let content = std::fs::read_to_string(root.join("mgc.toml")).ok()?;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("app")
         .and_then(|a| a.get("application_id"))

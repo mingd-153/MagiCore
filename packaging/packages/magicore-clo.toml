@@ -1,0 +1,8 @@
+name = "magicore-clo"
+binary = "mgc"
+description = "MagiCore single-core cloud distribution"
+mode = "single-core"
+primary_core = "clo"
+no_default_features = true
+features = ["clo"]
+install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --package magicore-clo"

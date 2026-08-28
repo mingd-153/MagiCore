@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used)]
 use criterion::{criterion_group, criterion_main, Criterion};
-use mg_types::{
+use mgc_types::{
     adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
     ResolvedPackage, Version,
 };
-use mg_web_adapter::WebAdapter;
+use mgc_web_adapter::WebAdapter;
 use std::path::Path;
 
 fn pkg_id(name: &str, version: &str) -> PackageId {
@@ -15,9 +15,9 @@ fn pkg_id(name: &str, version: &str) -> PackageId {
 }
 
 fn seed_cached_tarball(root: &Path, pkg: &PackageId) {
-    let store_root = root.join(".megagate").join("cache").join("web");
+    let store_root = root.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
-    let cache = mg_store::PackageCache::new(store_root.join("cache")).unwrap();
+    let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
     let tarball_path = cache.tarball_path(pkg);
     if let Some(parent) = tarball_path.parent() {
         std::fs::create_dir_all(parent).unwrap();

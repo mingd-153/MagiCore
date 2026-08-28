@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-/// MegaGate CLI - Universal Package Manager
+/// MagiCore CLI - Universal Package Manager
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -14,12 +14,13 @@ mod context;
 mod dispatch;
 pub mod error;
 mod factory;
+mod offline; // T4.1: Offline mode state
 mod scaffold;
 mod wizard;
 
 #[derive(Parser)]
-#[command(name = "mg")]
-#[command(about = "MegaGate - Universal Package Manager", long_about = None)]
+#[command(name = "mgc")]
+#[command(about = "MagiCore - Universal Package Manager", long_about = None)]
 #[command(version)]
 pub(crate) struct Cli {
     /// Target core (web, game, ai, clo, cicd, iot, app, lib)

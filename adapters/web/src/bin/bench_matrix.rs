@@ -1,9 +1,9 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use mg_store::{Layout, PackageCache};
-use mg_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
-use mg_web_adapter::WebAdapter;
+use mgc_store::{Layout, PackageCache};
+use mgc_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+use mgc_web_adapter::WebAdapter;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use std::path::{Path, PathBuf};
@@ -80,7 +80,7 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
-    std::env::set_var("MEGAGATE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
+    std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut runs = 7usize;
@@ -201,7 +201,7 @@ fn run_fixture_matrix(
             let summary = rt.block_on(adapter.install(
                 &fixture.graph,
                 dir.path(),
-                mg_types::adapter::InstallOptions::default(),
+                mgc_types::adapter::InstallOptions::default(),
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
@@ -227,13 +227,13 @@ fn run_fixture_matrix(
             rt.block_on(adapter.install(
                 &fixture.graph,
                 dir.path(),
-                mg_types::adapter::InstallOptions::default(),
+                mgc_types::adapter::InstallOptions::default(),
             ))?;
             let started = Instant::now();
             let summary = rt.block_on(adapter.install(
                 &fixture.graph,
                 dir.path(),
-                mg_types::adapter::InstallOptions::default(),
+                mgc_types::adapter::InstallOptions::default(),
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
@@ -261,7 +261,7 @@ fn run_fixture_matrix(
             let summary = rt.block_on(adapter.install(
                 &graph,
                 dir.path(),
-                mg_types::adapter::InstallOptions::default(),
+                mgc_types::adapter::InstallOptions::default(),
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
@@ -290,7 +290,7 @@ fn run_fixture_matrix(
                 let summary = rt.block_on(adapter.install(
                     &fixture.graph,
                     dir.path(),
-                    mg_types::adapter::InstallOptions::default(),
+                    mgc_types::adapter::InstallOptions::default(),
                 ))?;
                 let elapsed = started.elapsed().as_secs_f64() * 1000.0;
                 let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
@@ -316,14 +316,14 @@ fn run_fixture_matrix(
             rt.block_on(adapter.install(
                 &fixture.graph,
                 dir.path(),
-                mg_types::adapter::InstallOptions::default(),
+                mgc_types::adapter::InstallOptions::default(),
             ))?;
             std::fs::remove_dir_all(dir.path().join("node_modules"))?;
             let started = Instant::now();
             let summary = rt.block_on(adapter.install(
                 &fixture.graph,
                 dir.path(),
-                mg_types::adapter::InstallOptions::default(),
+                mgc_types::adapter::InstallOptions::default(),
             ))?;
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             let stats = inspect_node_modules(&dir.path().join("node_modules"))?;
@@ -352,7 +352,7 @@ fn run_fixture_matrix(
                     rt.block_on(adapter.install(
                         &fixture.graph,
                         dir.path(),
-                        mg_types::adapter::InstallOptions::default(),
+                        mgc_types::adapter::InstallOptions::default(),
                     ))?;
                     let node_modules = dir.path().join("node_modules");
                     if node_modules.exists() {
@@ -366,7 +366,7 @@ fn run_fixture_matrix(
                     let summary = rt.block_on(adapter.install(
                         &fixture.graph,
                         dir.path(),
-                        mg_types::adapter::InstallOptions::default(),
+                        mgc_types::adapter::InstallOptions::default(),
                     ))?;
                     last_summary = Some(summary);
                     let node_modules = dir.path().join("node_modules");
@@ -812,7 +812,7 @@ fn write_package_json(root: &Path, packages: &[PackageId]) -> anyhow::Result<()>
     std::fs::write(
         root.join("package.json"),
         serde_json::json!({
-            "name": "mg-bench",
+            "name": "mgc-bench",
             "version": "0.1.0",
             "private": true,
             "dependencies": dependencies
@@ -831,7 +831,7 @@ fn seed_local_tarballs(
     packages: &[ResolvedPackage],
     files_per_package: usize,
 ) -> anyhow::Result<()> {
-    let layout = Layout::new(project_root.join(".megagate").join("cache").join("web"));
+    let layout = Layout::new(project_root.join(".magicore").join("cache").join("web"));
     seed_tarballs_into_layout(&layout, packages, files_per_package)
 }
 
@@ -1146,25 +1146,25 @@ where
     F: FnOnce() -> anyhow::Result<T>,
 {
     let isolated = tempfile::tempdir()?;
-    let previous_shared = std::env::var_os("MEGAGATE_SHARED_CACHE_DIR");
-    let previous_ttl = std::env::var_os("MEGAGATE_WEB_METADATA_TTL_SECS");
-    let previous_retry = std::env::var_os("MEGAGATE_WEB_METADATA_STALE_RETRY_TTL_SECS");
-    let previous_max_stale = std::env::var_os("MEGAGATE_WEB_METADATA_MAX_STALE_SECS");
+    let previous_shared = std::env::var_os("MAGICORE_SHARED_CACHE_DIR");
+    let previous_ttl = std::env::var_os("MAGICORE_WEB_METADATA_TTL_SECS");
+    let previous_retry = std::env::var_os("MAGICORE_WEB_METADATA_STALE_RETRY_TTL_SECS");
+    let previous_max_stale = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
 
     std::env::set_var(
-        "MEGAGATE_SHARED_CACHE_DIR",
+        "MAGICORE_SHARED_CACHE_DIR",
         shared_root.unwrap_or(isolated.path()),
     );
-    std::env::set_var("MEGAGATE_WEB_METADATA_TTL_SECS", "300");
-    std::env::set_var("MEGAGATE_WEB_METADATA_STALE_RETRY_TTL_SECS", "30");
-    std::env::set_var("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", "604800");
+    std::env::set_var("MAGICORE_WEB_METADATA_TTL_SECS", "300");
+    std::env::set_var("MAGICORE_WEB_METADATA_STALE_RETRY_TTL_SECS", "30");
+    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800");
 
     let result = f();
 
-    restore_env("MEGAGATE_SHARED_CACHE_DIR", previous_shared);
-    restore_env("MEGAGATE_WEB_METADATA_TTL_SECS", previous_ttl);
-    restore_env("MEGAGATE_WEB_METADATA_STALE_RETRY_TTL_SECS", previous_retry);
-    restore_env("MEGAGATE_WEB_METADATA_MAX_STALE_SECS", previous_max_stale);
+    restore_env("MAGICORE_SHARED_CACHE_DIR", previous_shared);
+    restore_env("MAGICORE_WEB_METADATA_TTL_SECS", previous_ttl);
+    restore_env("MAGICORE_WEB_METADATA_STALE_RETRY_TTL_SECS", previous_retry);
+    restore_env("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous_max_stale);
 
     result
 }

@@ -1,20 +1,25 @@
 [package]
-name = "mg-lib-adapter"
+name = "mgc-lib-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Library ecosystem adapter for MegaGate (ts/rust/python)"
+description = "Library ecosystem adapter for MagiCore (ts/rust/python)"
 
 [dependencies]
-# Core crates
-mg-types = { workspace = true }
-mg-adapter-base = { workspace = true }
-mg-config = { workspace = true }
-mg-exec = { workspace = true }
-mg-web-adapter = { path = "../web" }
-mg-ui = { workspace = true }
+# Core crates (W1-W6 support)
+mgc-types = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-config = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-store = { workspace = true }
+mgc-web-adapter = { path = "../web" }
+mgc-ui = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -29,13 +34,29 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
+# Crypto
+sha2 = { workspace = true }
+hex = { workspace = true }
+
 # Utilities
 semver = { workspace = true }
+dirs = { workspace = true }
+which = "6.0"
+reqwest = { version = "0.12", features = ["json"] }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
+mockito.workspace = true
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }
+tokio-test = "0.4"
+hex = { workspace = true }
+sha2 = { workspace = true }
+
+[[bench]]
+name = "perf_bench"
+harness = false

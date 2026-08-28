@@ -1,4 +1,4 @@
-//! `mg add <core>` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
+//! `mgc add <core>` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
 
 #[cfg(feature = "ai")]
 pub mod ai;

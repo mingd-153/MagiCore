@@ -1,4 +1,4 @@
-//! `mg create cicd` — wizard + scaffold theo framework (07 §4).
+//! `mgc create cicd` — wizard + scaffold theo framework (07 §4).
 
 use anyhow::Result;
 
@@ -12,7 +12,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         // Registry-first: fetch layer cicd/<fw> nếu chưa có; fetch fail → fallback procedural.
         crate::commands::template::ensure_layer(&format!("cicd/{fw}")).await;
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
-    mg_ui::success("CICD project created. Run `mg deploy` (dry-run) to preview deployment.");
+    super::scaffold_and_save_metadata(&config)?;
+    mgc_ui::success("CICD project created. Run `mgc deploy` (dry-run) to preview deployment.");
     Ok(())
 }

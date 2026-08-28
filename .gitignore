@@ -76,10 +76,10 @@ temp/
 benchmark_brutal_results_*.md
 benchmark_brutal_results_*.json
 benchmark_brutal_results_*.status.tsv
-megagate-bench-*
-mg-brutal-*
-mg-test-*
-mg-bench-*
+magicore-bench-*
+mgc-brutal-*
+mgc-test-*
+mgc-bench-*
 
 # ── Internal documentation (local-only, NOT for git) ─────────────────────────
 
@@ -93,16 +93,17 @@ mg-bench-*
 report-v2-changes.md
 ARCHITECTURE_AUDIT.md
 SECURITY_AUDIT.md
-MEGAGATE_P2_REPORT.md
+MAGICORE_P2_REPORT.md
 OPTIMIZATION_SUMMARY.md
 CODEBASE_REVIEW.md
 REPORT.md
 
 # System design docs (working drafts — read internally, never push)
-sys-mg/
+sys-mgc/
 
 # Internal specs, guides and notes
-docs/specs/
+docs/*
+docs/internal-reports/  # Week reports, audit reports (nội bộ)
 docs/guides/
 scripts/notes/
 

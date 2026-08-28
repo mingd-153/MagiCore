@@ -1,4 +1,4 @@
-//! `mg dev`/`mg deploy` clo — cloud tooling (terraform/cdk/pulumi) — tách từ core/clo.rs (v5).
+//! `mgc dev`/`mgc deploy` clo — cloud tooling (terraform/cdk/pulumi) — tách từ core/clo.rs (v5).
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -7,9 +7,9 @@ fn project_root() -> Result<PathBuf> {
     super::super::shared::core_project_root("clo")
 }
 
-/// Cloud type từ mg.toml `[cloud] type` hoặc manifest probe — dùng cho dev/deploy.
+/// Cloud type từ mgc.toml `[cloud] type` hoặc manifest probe — dùng cho dev/deploy.
 pub fn cloud_type(root: &Path) -> anyhow::Result<String> {
-    let adapter = mg_cloud_adapter::adapter_for(root)
+    let adapter = mgc_cloud_adapter::adapter_for(root)
         .ok_or_else(|| crate::error::no_framework_detected("cloud", root))?;
     Ok(adapter.cloud_type().to_string())
 }
@@ -19,28 +19,28 @@ pub async fn dev(dry_run: bool) -> Result<()> {
     let kind = cloud_type(&root)?;
     let (cmd, args) = dev_command(&kind)?;
     if dry_run {
-        mg_ui::info(&format!("[dry-run] would run: {} {}", cmd, args.join(" ")));
+        mgc_ui::info(&format!("[dry-run] would run: {} {}", cmd, args.join(" ")));
         return Ok(());
     }
     run_tool(&root, &cmd, &args)?;
     Ok(())
 }
 
-/// `mg deploy` — mặc định dry-run (in lệnh deploy theo type, KHÔNG chạy);
+/// `mgc deploy` — mặc định dry-run (in lệnh deploy theo type, KHÔNG chạy);
 /// chạy thật chỉ với `--run` (spec §4: deploy = hành động ghi cloud).
 pub async fn deploy(run: bool) -> Result<()> {
     let root = project_root()?;
     let kind = cloud_type(&root)?;
     let (cmd, args) = deploy_command(&kind)?;
     if !run {
-        mg_ui::info(&format!(
-            "[dry-run] would run: {} {} (real deploy requires `mg deploy --run`)",
+        mgc_ui::info(&format!(
+            "[dry-run] would run: {} {} (real deploy requires `mgc deploy --run`)",
             cmd,
             args.join(" ")
         ));
         return Ok(());
     }
-    mg_ui::info(&format!("Deploying: {} {}", cmd, args.join(" ")));
+    mgc_ui::info(&format!("Deploying: {} {}", cmd, args.join(" ")));
     run_tool(&root, &cmd, &args)?;
     Ok(())
 }
@@ -57,7 +57,7 @@ fn dev_command(kind: &str) -> Result<(String, Vec<String>)> {
 }
 
 /// cdk/pulumi chạy từ node_modules/.bin (npm-installed, allowlist §3);
-/// thiếu → lỗi rõ hướng `mg install` trước.
+/// thiếu → lỗi rõ hướng `mgc install` trước.
 fn bin_resolved_path(root: &std::path::Path, cmd: &str) -> Option<std::path::PathBuf> {
     match cmd {
         "cdk" | "pulumi" => {
@@ -84,17 +84,17 @@ fn run_tool(root: &Path, cmd: &str, args: &[String]) -> Result<()> {
         } else {
             (None, cmd.to_string())
         };
-    // cdk/pulumi là npm-installed tools — chưa cài → lỗi rõ hướng `mg install`.
+    // cdk/pulumi là npm-installed tools — chưa cài → lỗi rõ hướng `mgc install`.
     if resolved.is_none() && matches!(cmd, "cdk" | "pulumi") {
         return Err(crate::error::tool_not_installed_project(cmd));
     }
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".megagate").join("exec.log")),
+        log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
         ..Default::default()
     };
-    let res = mg_exec::prelude::run_inherited(&run_cmd, args, &opts);
+    let res = mgc_exec::prelude::run_inherited(&run_cmd, args, &opts);
     if resolved.is_some() {
         return match res {
             Ok(_) => Ok(()),

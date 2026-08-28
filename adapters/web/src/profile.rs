@@ -8,7 +8,7 @@ use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use mg_types::PackageId;
+use mgc_types::PackageId;
 
 #[derive(Default)]
 pub struct InstallProfile {
@@ -18,7 +18,7 @@ pub struct InstallProfile {
 
 impl InstallProfile {
     pub fn from_env() -> Self {
-        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+        let enabled = std::env::var("MAGICORE_WEB_PROFILE_INSTALL")
             .ok()
             .map(|value| value.trim().to_ascii_lowercase())
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
@@ -47,9 +47,9 @@ impl InstallProfile {
             return;
         }
 
-        eprintln!("[megagate:web:install-profile] total={}ms", total_ms);
+        eprintln!("[magicore:web:install-profile] total={}ms", total_ms);
         for (label, millis) in &self.marks {
-            eprintln!("[megagate:web:install-profile] {}={}ms", label, millis);
+            eprintln!("[magicore:web:install-profile] {}={}ms", label, millis);
         }
     }
 }
@@ -62,7 +62,7 @@ pub struct ResolveProfile {
 
 impl ResolveProfile {
     pub fn from_env() -> Self {
-        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+        let enabled = std::env::var("MAGICORE_WEB_PROFILE_INSTALL")
             .ok()
             .map(|value| value.trim().to_ascii_lowercase())
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
@@ -84,9 +84,9 @@ impl ResolveProfile {
             return;
         }
 
-        eprintln!("[megagate:web:resolve-profile] total={}ms", total_ms);
+        eprintln!("[magicore:web:resolve-profile] total={}ms", total_ms);
         for (label, millis) in &self.marks {
-            eprintln!("[megagate:web:resolve-profile] {}={}ms", label, millis);
+            eprintln!("[magicore:web:resolve-profile] {}={}ms", label, millis);
         }
     }
 }
@@ -131,7 +131,7 @@ pub struct TarballFetchResult {
 
 impl PipelineProfile {
     pub fn from_env() -> Self {
-        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+        let enabled = std::env::var("MAGICORE_WEB_PROFILE_INSTALL")
             .ok()
             .map(|value| value.trim().to_ascii_lowercase())
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
@@ -214,7 +214,7 @@ impl PipelineProfile {
             return;
         }
         eprintln!(
-            "[megagate:web:pipeline-profile] packages={} bytes={} download_ms_total={} download_ms_max={} extract_ms_total={} extract_ms_max={}",
+            "[magicore:web:pipeline-profile] packages={} bytes={} download_ms_total={} download_ms_max={} extract_ms_total={} extract_ms_max={}",
             self.package_count.load(Ordering::Relaxed),
             self.tarball_bytes.load(Ordering::Relaxed),
             self.download_ms_total.load(Ordering::Relaxed),
@@ -224,13 +224,13 @@ impl PipelineProfile {
         );
         for (elapsed_ms, package, bytes) in self.downloads_guard().iter() {
             eprintln!(
-                "[megagate:web:pipeline-profile] slow_download package={} elapsed={}ms bytes={}",
+                "[magicore:web:pipeline-profile] slow_download package={} elapsed={}ms bytes={}",
                 package, elapsed_ms, bytes
             );
         }
         for (elapsed_ms, package) in self.extracts_guard().iter() {
             eprintln!(
-                "[megagate:web:pipeline-profile] slow_extract package={} elapsed={}ms",
+                "[magicore:web:pipeline-profile] slow_extract package={} elapsed={}ms",
                 package, elapsed_ms
             );
         }
@@ -251,7 +251,7 @@ pub struct MaterializationProfile {
 
 impl MaterializationProfile {
     pub fn from_env() -> Self {
-        let enabled = std::env::var("MEGAGATE_WEB_PROFILE_INSTALL")
+        let enabled = std::env::var("MAGICORE_WEB_PROFILE_INSTALL")
             .ok()
             .map(|value| value.trim().to_ascii_lowercase())
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
@@ -309,7 +309,7 @@ impl MaterializationProfile {
             return;
         }
         eprintln!(
-            "[megagate:web:materialize-profile] packages_linked={} dirs={} files={} hardlinks={} copies={} reflinks={} symlinks={}",
+            "[magicore:web:materialize-profile] packages_linked={} dirs={} files={} hardlinks={} copies={} reflinks={} symlinks={}",
             self.packages_linked.load(Ordering::Relaxed),
             self.directories_seen.load(Ordering::Relaxed),
             self.files_seen.load(Ordering::Relaxed),

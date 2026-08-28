@@ -1,0 +1,48 @@
+[package]
+name = "mgc-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Config parsing and project metadata for MagiCore"
+
+[dependencies]
+anyhow = { workspace = true }
+dirs = { workspace = true }
+mgc-types = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+
+# Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
+[[test]]
+name = "test_npmrc"
+path = "tests/npmrc.rs"
+
+[[test]]
+name = "test_registry"
+path = "tests/registry.rs"
+
+[[test]]
+name = "test_user"
+path = "tests/user.rs"
+
+[[test]]
+name = "test_project"
+path = "tests/project.rs"
+
+[[test]]
+name = "test_hooks"
+path = "tests/hooks.rs"
+
+[[test]]
+name = "test_core_marker"
+path = "tests/core_marker.rs"
+
+[lints]
+workspace = true

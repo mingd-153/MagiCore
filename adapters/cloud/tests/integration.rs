@@ -1,15 +1,15 @@
 #![allow(clippy::unwrap_used)]
-//! Integration tests for mg-cloud-adapter — sát với src/lib.rs
+//! Integration tests for mgc-cloud-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_type (4 types × 2 paths), adapter_for, cloud_type helper,
 //! CDK/Pulumi sử dụng WebAdapter delegate, Terraform fail-closed add/remove.
 
-use mg_cloud_adapter::{adapter_for, detect_type, CloudType};
-use mg_types::adapter::{AddOptions, PackageAdapter};
-use mg_types::PackageName;
+use mgc_cloud_adapter::{adapter_for, detect_type, generate_sbom, CloudType};
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::PackageName;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mg-cloud-itg-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-cloud-itg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("tmp dir");
     dir
@@ -71,21 +71,21 @@ fn detect_cdk_via_package_json_cdk_key() {
     assert_eq!(detect_type(&dir), Some(CloudType::Cdk));
 }
 
-// ── detect_type — mg.toml override (priority) ──────────────────────────────
+// ── detect_type — mgc.toml override (priority) ──────────────────────────────
 
 #[test]
-fn mg_toml_overrides_file_marker_for_cloud_type() {
+fn mgc_toml_overrides_file_marker_for_cloud_type() {
     let dir = tmp("override");
-    // Pulumi.yaml → Pulumi, mg.toml → Terraform (mg.toml wins)
+    // Pulumi.yaml → Pulumi, mgc.toml → Terraform (mgc.toml wins)
     std::fs::write(dir.join("Pulumi.yaml"), "name: x\nruntime: nodejs\n").unwrap();
-    std::fs::write(dir.join("mg.toml"), "[cloud]\ntype = \"terraform\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "[cloud]\ntype = \"terraform\"\n").unwrap();
     assert_eq!(detect_type(&dir), Some(CloudType::Terraform));
 }
 
 #[test]
-fn detect_cloudflare_via_mg_toml() {
-    let dir = tmp("mg-cf");
-    std::fs::write(dir.join("mg.toml"), "[cloud]\ntype = \"cloudflare\"\n").unwrap();
+fn detect_cloudflare_via_mgc_toml() {
+    let dir = tmp("mgc-cf");
+    std::fs::write(dir.join("mgc.toml"), "[cloud]\ntype = \"cloudflare\"\n").unwrap();
     assert_eq!(detect_type(&dir), Some(CloudType::Cloudflare));
 }
 
@@ -96,9 +96,9 @@ fn detect_returns_none_for_empty_dir() {
 }
 
 #[test]
-fn detect_returns_none_for_unknown_type_in_mg_toml() {
+fn detect_returns_none_for_unknown_type_in_mgc_toml() {
     let dir = tmp("unknown");
-    std::fs::write(dir.join("mg.toml"), "[cloud]\ntype = \"ansible\"\n").unwrap();
+    std::fs::write(dir.join("mgc.toml"), "[cloud]\ntype = \"ansible\"\n").unwrap();
     assert!(detect_type(&dir).is_none());
 }
 
@@ -246,4 +246,19 @@ async fn audit_returns_clean_for_terraform_project() {
     let a = adapter_for(&dir).unwrap();
     let report = a.audit(&dir).await.unwrap();
     assert_eq!(report.vulnerabilities.len(), 0);
+}
+
+#[test]
+fn generate_sbom_uses_lockfile_v2_fixture() {
+    let mut lockfile = mgc_lockfile::Lockfile::new();
+    lockfile.add_package(mgc_lockfile::Package::new(
+        "test-pkg".to_string(),
+        "1.0.0".to_string(),
+        "https://example.com/test.tgz".to_string(),
+        "blake3:test123".to_string(),
+    ));
+    let json = generate_sbom(&lockfile, mgc_sbom::SbomOptions::default()).unwrap();
+    assert!(json.contains("CycloneDX"));
+    assert!(json.contains("test-pkg"));
+    assert!(json.contains("1.0.0"));
 }

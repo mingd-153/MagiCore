@@ -1,9 +1,9 @@
-//! `mg add` clo — tách từ core/clo.rs (Phase 7 v5).
+//! `mgc add` clo — tách từ core/clo.rs (Phase 7 v5).
 
 use anyhow::Result;
 
 use super::super::shared;
-use mg_types::Ecosystem;
+use mgc_types::Ecosystem;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn add(

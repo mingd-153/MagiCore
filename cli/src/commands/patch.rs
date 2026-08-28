@@ -3,9 +3,9 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
-use mg_config::project::ProjectConfig;
-use mg_resolver::patches::{get_patches_dir, verify_patch_integrity};
-use mg_types::PatchSpec;
+use mgc_config::project::ProjectConfig;
+use mgc_resolver::patches::{get_patches_dir, verify_patch_integrity};
+use mgc_types::PatchSpec;
 use std::fs;
 use std::path::Path;
 
@@ -42,7 +42,7 @@ pub async fn run(args: PatchArgs) -> Result<()> {
     let project_root =
         ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
     let mut project =
-        ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mg_toml_missing)?;
+        ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mgc_toml_missing)?;
 
     match args.cmd {
         PatchCmd::Add {
@@ -86,13 +86,13 @@ async fn add_patch(
 
     // Add to project patches
     let version_range = range
-        .map(|r| mg_types::VersionRange::parse(&r))
+        .map(|r| mgc_types::VersionRange::parse(&r))
         .transpose()?
-        .unwrap_or_else(mg_types::VersionRange::star);
+        .unwrap_or_else(mgc_types::VersionRange::star);
 
     let spec = PatchSpec::new(package.to_string(), version_range, dest_name, integrity);
 
-    // Store in mg.toml [patches]
+    // Store in mgc.toml [patches]
     project.patches.push(spec);
     project.save(project_root)?;
 

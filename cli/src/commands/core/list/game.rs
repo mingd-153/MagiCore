@@ -1,9 +1,9 @@
-//! `mg list` game — tách từ core/game.rs (Phase 7 v5).
+//! `mgc list` game — tách từ core/game.rs (Phase 7 v5).
 
 use anyhow::Result;
 
 use super::super::shared;
-use mg_types::Ecosystem;
+use mgc_types::Ecosystem;
 
 pub async fn list() -> Result<()> {
     let root = super::super::shared::core_project_root("game")?;

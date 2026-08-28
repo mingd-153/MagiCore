@@ -1,0 +1,8 @@
+name = "magicore-ai"
+binary = "mgc"
+description = "MagiCore single-core AI distribution"
+mode = "single-core"
+primary_core = "ai"
+no_default_features = true
+features = ["ai"]
+install_hint = "curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --package magicore-ai"

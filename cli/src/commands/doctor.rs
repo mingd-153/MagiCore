@@ -1,4 +1,4 @@
-//! mg doctor — intelligent diagnostic and AI-guided automatic error recovery.
+//! mgc doctor — intelligent diagnostic and AI-guided automatic error recovery.
 //!
 //! Provides both human-readable tables and machine-readable JSON reports with
 //! actionable remediation steps (`suggested_actions`) for AI Coding Assistants.
@@ -116,7 +116,7 @@ pub fn report() -> Result<DoctorReport> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".into());
-    let store_dir = Path::new(&home).join(".megagate");
+    let store_dir = Path::new(&home).join(".magicore");
     let store_writable = std::fs::create_dir_all(&store_dir).is_ok();
     let disk_free_bytes = fs_avail(&store_dir);
 
@@ -153,7 +153,7 @@ pub fn report() -> Result<DoctorReport> {
             code: "ERR_STORE_READONLY",
             severity: "CRITICAL",
             message: format!(
-                "MegaGate global store '{}' is not writable.",
+                "MagiCore global store '{}' is not writable.",
                 store_dir.display()
             ),
             fix_command: Some(format!("chmod -R 755 {}", store_dir.display())),
@@ -170,9 +170,9 @@ pub fn report() -> Result<DoctorReport> {
                 "Low disk space: only {} MB free.",
                 disk_free_bytes / (1024 * 1024)
             ),
-            fix_command: Some("mg store prune --all".to_string()),
+            fix_command: Some("mgc store prune --all".to_string()),
         });
-        suggested_actions.push("Run `mg store prune --all` to reclaim disk space".to_string());
+        suggested_actions.push("Run `mgc store prune --all` to reclaim disk space".to_string());
     }
 
     let health_status = if detected_issues.iter().any(|i| i.severity == "CRITICAL") {
@@ -227,7 +227,7 @@ pub fn handle(cmd: DoctorCmd) -> Result<()> {
         }
         DoctorCmd::Check { json: false, fix } => {
             println!(
-                "MegaGate Doctor (v0.3.0) — Environment Health: {}",
+                "MagiCore Doctor (v0.3.0) — Environment Health: {}",
                 rep.health_status
             );
             println!("─────────────────────────────────────────────────────────────");
@@ -272,7 +272,7 @@ pub fn handle(cmd: DoctorCmd) -> Result<()> {
             if fix {
                 println!("\nAttempting automatic remediation...");
                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                let store_dir = Path::new(&home).join(".megagate");
+                let store_dir = Path::new(&home).join(".magicore");
                 let _ = std::fs::create_dir_all(&store_dir);
                 println!("✓ Environment maintenance pass completed.");
             }

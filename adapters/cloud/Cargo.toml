@@ -1,19 +1,25 @@
 [package]
-name = "mg-cloud-adapter"
+name = "mgc-cloud-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Cloud ecosystem adapter for MegaGate (cdk/pulumi/terraform)"
+description = "Cloud ecosystem adapter for MagiCore (cdk/pulumi/terraform)"
 
 [dependencies]
-# Core crates
-mg-types = { workspace = true }
-mg-exec = { workspace = true }
+# Core crates (W1-W6 support)
+mgc-types = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-config = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-exec = { workspace = true }
 
 # Web delegate (cdk/pulumi npm-format)
-mg-web-adapter = { path = "../web" }
+mgc-web-adapter = { path = "../web" }
 
 # Async
 tokio = { workspace = true }

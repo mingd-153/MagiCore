@@ -1,17 +1,17 @@
 # `packaging/` — Distribution Packaging
 
-Pre-built package manager manifests so users can install `mg` with a single command.
+Pre-built package manager manifests so users can install `mgc` with a single command.
 
 ## Structure
 
 ```
 packaging/
 ├── homebrew/
-│   ├── megagate.rb          # Homebrew formula for macOS/Linux
-│   └── megagate-web.rb      # Homebrew formula for single-core web
+│   ├── magicore.rb          # Homebrew formula for macOS/Linux
+│   └── magicore-web.rb      # Homebrew formula for single-core web
 └── scoop/
-    ├── megagate.json        # Scoop manifest for Windows
-    └── megagate-web.json    # Scoop manifest for single-core web
+    ├── magicore.json        # Scoop manifest for Windows
+    └── magicore-web.json    # Scoop manifest for single-core web
 ```
 
 ## Homebrew (`homebrew/`)
@@ -19,14 +19,14 @@ packaging/
 For macOS and Linux users via [Homebrew](https://brew.sh/).
 
 ```bash
-brew install mingd-153/tap/megagate
+brew install mingd-153/tap/magicore
 # or from tap:
-brew tap mingd-153/megagate
-brew install megagate
-brew install megagate-web
+brew tap mingd-153/magicore
+brew install magicore
+brew install magicore-web
 ```
 
-When releasing a new version, update `megagate.rb` and `megagate-web.rb`:
+When releasing a new version, update `magicore.rb` and `magicore-web.rb`:
 1. Update the `url` to point to the new release archive.
 2. Download the release artifacts locally.
 3. Run `./scripts/update-release-hashes.sh --artifacts <release-assets-dir>`.
@@ -38,12 +38,12 @@ When releasing a new version, update `megagate.rb` and `megagate-web.rb`:
 For Windows users via [Scoop](https://scoop.sh/).
 
 ```powershell
-scoop bucket add megagate https://github.com/mingd-153/scoop-megagate
-scoop install megagate
-scoop install megagate-web
+scoop bucket add magicore https://github.com/mingd-153/scoop-magicore
+scoop install magicore
+scoop install magicore-web
 ```
 
-When releasing a new version, update `megagate.json` and `megagate-web.json`:
+When releasing a new version, update `magicore.json` and `magicore-web.json`:
 1. Update `version`.
 2. Update `url` for both x64 and ARM64.
 3. Download the release artifacts locally.

@@ -1,19 +1,23 @@
 [package]
-name = "mg-iot-adapter"
+name = "mgc-iot-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "IoT ecosystem adapter for MegaGate (esp32-rust/platformio/zephyr)"
+description = "IoT ecosystem adapter for MagiCore (esp32-rust/platformio/zephyr)"
 
 [dependencies]
-# Core crates
-mg-types = { workspace = true }
-mg-adapter-base = { workspace = true }
-mg-config = { workspace = true }
-mg-exec = { workspace = true }
-mg-ui = { workspace = true }
+# Core crates (W1-W6 support)
+mgc-types = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-config = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-ui = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -28,6 +32,14 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
+# Serial port detection (optional - Windows only needs it)
+serialport = { version = "4.3", optional = true }
+
+[features]
+default = []
+# Windows serial detection via SetupAPI
+windows-serial = ["serialport"]
+
 [lints]
 workspace = true
 
@@ -36,6 +48,10 @@ pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 criterion = { workspace = true }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "perf_bench"
+harness = false
 
 [[bench]]
 name = "iot_bench"

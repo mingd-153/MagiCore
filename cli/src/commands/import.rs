@@ -1,107 +1,58 @@
-//! `mg import` — Import and migrate legacy package-manager lockfiles to mg.lock.
-//!
-//! Supported lockfiles:
-//! - `package-lock.json` (npm v2, v3)
-//! - `pnpm-lock.yaml` (pnpm v6, v9)
-//! - `yarn.lock` (yarn v1)
-//! - `bun.lock` (bun v1)
+//! Import legacy lockfiles to mgc.lock format
+//! Chuyển đổi lockfile legacy (package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock)
+//! sang mgc.lock schema v2 — parser dữ liệu thuần, không gọi/wrap PM nào.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+use std::path::PathBuf;
 
-/// Run `mg import` in project directory.
-/// Chuyển đổi lockfile cũ thành mg.lock chuẩn xác và an toàn.
-pub async fn run(project_dir: Option<std::path::PathBuf>) -> Result<()> {
-    let cwd = project_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let detected = mg_lockfile::import::detect_legacy_lockfiles(&cwd);
+/// Run `mgc import` in project directory.
+/// Chuyển đổi lockfile cũ thành mgc.lock v2; có key mặc định trong keyring thì ký,
+/// chưa có → ghi unsigned kèm cảnh báo rõ (RULE §11: escape hatch phải lên tiếng).
+pub async fn run(project_dir: Option<PathBuf>) -> Result<()> {
+    let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
+    let root = project_dir.map_or(cwd, |dir| {
+        mgc_config::project::ProjectConfig::find_project_root(&dir).unwrap_or(dir)
+    });
+    let root = mgc_config::project::ProjectConfig::find_project_root(&root).unwrap_or(root);
 
-    if detected.is_empty() {
-        mg_ui::warning(
-            "No legacy lockfiles found (package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock).",
-        );
-        return Ok(());
+    let (mut lockfile, report) = mgc_lockfile::import_into_lockfile(&root)?;
+    for warning in &report.warnings {
+        mgc_ui::warning(warning);
     }
+    let lock_path = root.join("mgc.lock");
 
-    let manifest_path = cwd.join("package.json");
-    if !manifest_path.exists() {
-        anyhow::bail!("manifest package.json not found in {}", cwd.display());
-    }
-
-    let content = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-    let pkg_json: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| "failed to parse package.json")?;
-
-    let name = pkg_json
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unnamed");
-    let mut manifest = mg_types::Manifest::new(name, mg_types::Ecosystem::Web);
-
-    // Extract production dependencies from package.json
-    if let Some(deps) = pkg_json.get("dependencies").and_then(|v| v.as_object()) {
-        for (pkg_name, range) in deps {
-            if let Some(r_str) = range.as_str() {
-                if let (Ok(p_name), Ok(v_range)) = (
-                    mg_types::PackageName::new(pkg_name),
-                    mg_types::VersionRange::parse(r_str),
-                ) {
-                    manifest.add_dep(
-                        mg_types::DependencySpec::new(p_name, v_range),
-                        false,
-                        false,
-                        false,
-                    );
-                }
-            }
+    let signed = match mgc_lockfile::sign_lockfile_with_default_key(&mut lockfile, &lock_path) {
+        Ok(()) => true,
+        Err(e) => {
+            // Không có key → ghi unsigned + cảnh báo (không im lặng)
+            mgc_ui::warning(&format!(
+                "writing UNSIGNED mgc.lock (no default signing key: {e}) — run `mgc trust sign` after generating a key"
+            ));
+            mgc_lockfile::write_lockfile(&lockfile, &lock_path)?;
+            false
         }
+    };
+
+    // Self-check roundtrip: chữ ký ghi ra phải đọc-lại-verify được ngay
+    if signed {
+        mgc_lockfile::load_and_verify_lockfile(&lock_path, &lock_path.with_extension("lock.sig"))
+            .map_err(|e| anyhow::anyhow!("post-write verification failed: {e}"))?;
     }
 
-    // Extract dev dependencies from package.json
-    if let Some(dev_deps) = pkg_json.get("devDependencies").and_then(|v| v.as_object()) {
-        for (pkg_name, range) in dev_deps {
-            if let Some(r_str) = range.as_str() {
-                if let (Ok(p_name), Ok(v_range)) = (
-                    mg_types::PackageName::new(pkg_name),
-                    mg_types::VersionRange::parse(r_str),
-                ) {
-                    manifest.add_dep(
-                        mg_types::DependencySpec::new(p_name, v_range),
-                        true,
-                        false,
-                        false,
-                    );
-                }
-            }
-        }
-    }
-
-    let mode = "frontend";
-    let core = "web";
-
-    let imported =
-        mg_lockfile::import::import_legacy_lockfile_explicit(&cwd, core, mode, &manifest)?
-            .ok_or_else(|| anyhow::anyhow!("failed to import legacy lockfile"))?;
-
-    let package_count = imported.packages.len();
-    mg_lockfile::write_lockfile(&cwd, &imported)
-        .with_context(|| "failed to write imported mg.lock")?;
-
-    // Auto-create .mg.core signature marker if missing
-    let marker_path = cwd.join(mg_config::project::ProjectConfig::CORE_MARKER_FILE);
-    if !marker_path.exists() {
-        let _ = std::fs::write(&marker_path, format!("{core}\n"));
-    }
-
-    let sources: Vec<&str> = detected.iter().map(|d| d.file_name).collect();
-    mg_ui::success(&format!(
-        "Imported {} packages from {} into mg.lock (and generated checksum).",
-        package_count,
-        sources.join(", ")
+    mgc_ui::success(&format!(
+        "Imported {} packages from {} into mgc.lock{}",
+        report.packages,
+        report.source_file,
+        if signed { " (signed)" } else { " (unsigned)" }
     ));
+
+    // Cảnh báo trust-downgrade: legacy file vẫn còn nằm cạnh mgc.lock mới
+    if let Some(remaining) = mgc_lockfile::check_trust_downgrade_risk(&root) {
+        mgc_ui::warning(&format!(
+            "legacy lockfile(s) still present alongside the new mgc.lock: {} — consider removing them to avoid confusion",
+            remaining.join(", ")
+        ));
+    }
 
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "test/import.rs"]
-mod tests;

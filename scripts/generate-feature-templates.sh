@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/Users/doanmihh/Documents/Workspace/MegaGate"
+ROOT="/Users/doanmihh/Documents/Workspace/MagiCore"
 RVS="$ROOT/templates/web/frontend/react-vite/sources"
 
 SHARED_FILES=(
@@ -83,7 +83,7 @@ write_template_toml() {
 
   # -- emit --
   {
-    echo "# MegaGate template for $FW"
+    echo "# MagiCore template for $FW"
     echo "# Auto-generated — do not edit manually"
     echo ""
 
@@ -388,14 +388,14 @@ export type FrameworkConfig = {
 export const frameworkConfig: FrameworkConfig = {
   shortName: "Solid",
   docs: { label: "Explore Solid", href: "https://solidjs.com" },
-  signal: ["Solid-first", "Fine-grained", "Powered by mg"],
+  signal: ["Solid-first", "Fine-grained", "Powered by mgc"],
 };
 ENDCONF
       cat > "$FW_SRC/config/framework.js" << 'ENDCONF'
 export const frameworkConfig = {
   shortName: "Solid",
   docs: { label: "Explore Solid", href: "https://solidjs.com" },
-  signal: ["Solid-first", "Fine-grained", "Powered by mg"],
+  signal: ["Solid-first", "Fine-grained", "Powered by mgc"],
 };
 ENDCONF
       ;;
@@ -409,14 +409,14 @@ export type FrameworkConfig = {
 export const frameworkConfig: FrameworkConfig = {
   shortName: "Qwik",
   docs: { label: "Explore Qwik", href: "https://qwik.dev" },
-  signal: ["Resumable", "Instant", "Powered by mg"],
+  signal: ["Resumable", "Instant", "Powered by mgc"],
 };
 ENDCONF
       cat > "$FW_SRC/config/framework.js" << 'ENDCONF'
 export const frameworkConfig = {
   shortName: "Qwik",
   docs: { label: "Explore Qwik", href: "https://qwik.dev" },
-  signal: ["Resumable", "Instant", "Powered by mg"],
+  signal: ["Resumable", "Instant", "Powered by mgc"],
 };
 ENDCONF
       ;;
@@ -430,7 +430,7 @@ export type FrameworkConfig = {
 export const frameworkConfig: FrameworkConfig = {
   shortName: "Angular",
   docs: { label: "Explore Angular", href: "https://angular.dev" },
-  signal: ["Enterprise-grade", "Modular", "Powered by mg"],
+  signal: ["Enterprise-grade", "Modular", "Powered by mgc"],
 };
 ENDCONF
       ;;
@@ -444,14 +444,14 @@ export type FrameworkConfig = {
 export const frameworkConfig: FrameworkConfig = {
   shortName: "Vanilla",
   docs: { label: "Explore Web APIs", href: "https://developer.mozilla.org" },
-  signal: ["Lightweight", "Zero-deps", "Powered by mg"],
+  signal: ["Lightweight", "Zero-deps", "Powered by mgc"],
 };
 ENDCONF
       cat > "$FW_SRC/config/framework.js" << 'ENDCONF'
 export const frameworkConfig = {
   shortName: "Vanilla",
   docs: { label: "Explore Web APIs", href: "https://developer.mozilla.org" },
-  signal: ["Lightweight", "Zero-deps", "Powered by mg"],
+  signal: ["Lightweight", "Zero-deps", "Powered by mgc"],
 };
 ENDCONF
       ;;
@@ -465,14 +465,14 @@ export type FrameworkConfig = {
 export const frameworkConfig: FrameworkConfig = {
   shortName: "Astro",
   docs: { label: "Explore Astro", href: "https://astro.build" },
-  signal: ["Content-first", "Islands", "Powered by mg"],
+  signal: ["Content-first", "Islands", "Powered by mgc"],
 };
 ENDCONF
       cat > "$FW_SRC/config/framework.js" << 'ENDCONF'
 export const frameworkConfig = {
   shortName: "Astro",
   docs: { label: "Explore Astro", href: "https://astro.build" },
-  signal: ["Content-first", "Islands", "Powered by mg"],
+  signal: ["Content-first", "Islands", "Powered by mgc"],
 };
 ENDCONF
       ;;
@@ -486,14 +486,14 @@ export type FrameworkConfig = {
 export const frameworkConfig: FrameworkConfig = {
   shortName: "Nuxt",
   docs: { label: "Explore Nuxt", href: "https://nuxt.com" },
-  signal: ["Vue-first", "SSR-ready", "Powered by mg"],
+  signal: ["Vue-first", "SSR-ready", "Powered by mgc"],
 };
 ENDCONF
       cat > "$FW_SRC/config/framework.js" << 'ENDCONF'
 export const frameworkConfig = {
   shortName: "Nuxt",
   docs: { label: "Explore Nuxt", href: "https://nuxt.com" },
-  signal: ["Vue-first", "SSR-ready", "Powered by mg"],
+  signal: ["Vue-first", "SSR-ready", "Powered by mgc"],
 };
 ENDCONF
       ;;
@@ -502,13 +502,13 @@ ENDCONF
 interface ProjectLink { label: string; url: string; }
 export const projectLinks: ProjectLink[] = [
   { label: "SvelteKit docs", url: "https://svelte.dev/docs/kit" },
-  { label: "MegaGate docs", url: "https://megagate.dev/docs" },
+  { label: "MagiCore docs", url: "https://magicore.dev/docs" },
 ];
 ENDCONF
       cat > "$FW_SRC/config/framework.js" << 'ENDCONF'
 export const projectLinks = [
   { label: "SvelteKit docs", url: "https://svelte.dev/docs/kit" },
-  { label: "MegaGate docs", url: "https://megagate.dev/docs" },
+  { label: "MagiCore docs", url: "https://magicore.dev/docs" },
 ];
 ENDCONF
       ;;
@@ -661,11 +661,11 @@ export default function (opts: RenderOptions) { return renderDev(<Root />, opts)
 ENDQ
     cat > "$FW_SRC/src/routes/index.tsx" << 'ENDQ'
 import { component$ } from '@builder.io/qwik';
-export default component$(() => (<div><h1>{{project_name}}</h1><p>Scaffolded with MegaGate · Qwik</p></div>));
+export default component$(() => (<div><h1>{{project_name}}</h1><p>Scaffolded with MagiCore · Qwik</p></div>));
 ENDQ
     cat > "$FW_SRC/src/routes/index.jsx" << 'ENDQ'
 import { component$ } from '@builder.io/qwik';
-export default component$(() => (<div><h1>{{project_name}}</h1><p>Scaffolded with MegaGate · Qwik</p></div>));
+export default component$(() => (<div><h1>{{project_name}}</h1><p>Scaffolded with MagiCore · Qwik</p></div>));
 ENDQ
   fi
 
@@ -686,7 +686,7 @@ import Layout from '../layouts/Layout.astro';
 const projectName = '{{project_name}}';
 ---
 <Layout title={projectName}>
-  <main><h1>{projectName}</h1><p>Scaffolded with MegaGate · Astro</p></main>
+  <main><h1>{projectName}</h1><p>Scaffolded with MagiCore · Astro</p></main>
 </Layout>
 ENDA
     cat > "$FW_SRC/src/layouts/Layout.astro" << 'ENDA'

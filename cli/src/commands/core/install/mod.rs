@@ -1,4 +1,4 @@
-//! `mg install` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
+//! `mgc install` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
 
 use anyhow::Result;
 
@@ -21,7 +21,7 @@ pub mod library;
 pub mod web;
 
 pub async fn run(core: &str, packages: Vec<String>) -> Result<()> {
-    // Tự động tối ưu hóa phần cứng và quản lý profile trong .mg-optimizer/ khi user install core
+    // Tự động tối ưu hóa phần cứng và quản lý profile trong .mgc-optimizer/ khi user install core
     if let Ok(cwd) = std::env::current_dir() {
         if let Ok(Some(root)) = crate::commands::core::shared::find_project_root(&cwd) {
             let _ = crate::commands::optimizer::optimize_project(&root, core, false);
@@ -37,7 +37,7 @@ pub async fn run(core: &str, packages: Vec<String>) -> Result<()> {
         "ai" => ai::install(packages, false).await,
         #[cfg(not(feature = "ai"))]
         "ai" => Err(crate::error::core_not_in_build("ai")),
-        "web" => web::install(packages, false, false, false, false, false).await,
+        "web" => web::install(packages, false, false, false, false, false, false).await,
         #[cfg(feature = "clo")]
         "clo" | "cloud" => clo::install(packages, false).await,
         #[cfg(not(feature = "clo"))]

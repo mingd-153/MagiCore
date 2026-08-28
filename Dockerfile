@@ -1,6 +1,6 @@
-# MegaGate CLI — multi-stage Docker build
-# Usage: docker build -t megagate . --build-arg PACKAGE=megagate
-#        docker run megagate mg --help
+# MagiCore CLI — multi-stage Docker build
+# Usage: docker build -t magicore . --build-arg PACKAGE=magicore
+#        docker run magicore mgc --help
 
 ARG RUST_IMAGE=docker.io/library/rust:1.85-slim-bookworm
 ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian12
@@ -19,12 +19,12 @@ COPY adapters/ adapters/
 COPY cli/ cli/
 COPY tools/ tools/
 
-ARG PACKAGE=megagate
+ARG PACKAGE=magicore
 RUN cargo build --release --package "${PACKAGE}" && \
-    cp target/release/mg /mg
+    cp target/release/mgc /mgc
 
 # ---- Runtime stage ----
 FROM ${RUNTIME_IMAGE}
-COPY --from=build /mg /usr/local/bin/mg
-ENTRYPOINT ["/usr/local/bin/mg"]
+COPY --from=build /mgc /usr/local/bin/mgc
+ENTRYPOINT ["/usr/local/bin/mgc"]
 CMD ["--help"]

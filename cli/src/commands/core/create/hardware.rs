@@ -1,4 +1,4 @@
-//! `mg create-hardware <optimizer|bench>` — scaffold thẳng vào project. Phase 7 v5.
+//! `mgc create-hardware <optimizer|bench>` — scaffold thẳng vào project. Phase 7 v5.
 
 use anyhow::Result;
 
@@ -13,9 +13,9 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         Some(other) => return Err(crate::error::unknown_hardware_framework(other)),
         None => return Err(crate::error::no_hardware_framework()),
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
-    mg_ui::success(&format!(
-        "Hardware '{}' scaffolded at '{project_name}'. Run `mg add-hardware bench` or `mg bench` to run benchmarks.",
+    super::scaffold_and_save_metadata(&config)?;
+    mgc_ui::success(&format!(
+        "Hardware '{}' scaffolded at '{project_name}'. Run `mgc add-hardware bench` or `mgc bench` to run benchmarks.",
         config.frameworks.first().map(|s| s.as_str()).unwrap_or("")
     ));
     Ok(())

@@ -1,4 +1,4 @@
-//! mg network verify — list all outbound connections + reachability (18 §4)
+//! mgc network verify — list all outbound connections + reachability (18 §4)
 //! (Minh bạch mã nguồn mở: user tự kiểm tra MỌI kết nối đi ra.
 //!  Chỉ TCP connect tới host — KHÔNG request thật, không gửi dữ liệu.)
 
@@ -34,7 +34,7 @@ pub fn outbound_connections() -> Vec<Connection> {
         Connection {
             host: "huggingface.co".into(),
             port: 443,
-            purpose: "AI model hub (mg model pull hf://)",
+            purpose: "AI model hub (mgc model pull hf://)",
         },
         Connection {
             host: "github.com".into(),
@@ -46,7 +46,7 @@ pub fn outbound_connections() -> Vec<Connection> {
             port: 443,
             purpose: "PyPI (python packages proxy)",
         },
-        // Registries user-config trong mg.toml / ~/.config/megagate
+        // Registries user-config trong mgc.toml / ~/.config/magicore
     ]
 }
 
@@ -65,17 +65,17 @@ fn reachable(host: &str, port: u16) -> bool {
     }
 }
 
-/// Pub cho mg doctor dùng (T7b) — passthrough tới `reachable`
+/// Pub cho mgc doctor dùng (T7b) — passthrough tới `reachable`
 pub fn reachable_public(host: &str, port: u16) -> bool {
     reachable(host, port)
 }
 
-/// Gộp host registry user-configured (mg.toml [registry]) — đọc an toàn, thiếu file → bỏ qua.
+/// Gộp host registry user-configured (mgc.toml [registry]) — đọc an toàn, thiếu file → bỏ qua.
 fn user_registries() -> Vec<Connection> {
     let mut out = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
-        let mg_toml = cwd.join("mg.toml");
-        if let Ok(raw) = std::fs::read_to_string(&mg_toml) {
+        let mgc_toml = cwd.join("mgc.toml");
+        if let Ok(raw) = std::fs::read_to_string(&mgc_toml) {
             let cfg: Option<toml::Value> = toml::from_str(&raw).ok();
             if let Some(cfg) = cfg {
                 if let Some(regs) = cfg.get("registry") {
@@ -94,7 +94,7 @@ fn user_registries() -> Vec<Connection> {
                             out.push(Connection {
                                 host: host.0,
                                 port: host.1,
-                                purpose: "user-configured registry (mg.toml)",
+                                purpose: "user-configured registry (mgc.toml)",
                             });
                         }
                     }
@@ -151,38 +151,7 @@ pub fn handle(cmd: NetworkCmd) -> Result<()> {
     }
     Ok(())
 }
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outbound_connections_stable_and_unique() {
-        let all = outbound_connections();
-        assert!(all.len() >= 4, "must have at least 4 default hosts");
-        let mut hosts: Vec<&str> = all.iter().map(|c| c.host.as_str()).collect();
-        hosts.sort();
-        hosts.dedup();
-        assert_eq!(hosts.len(), all.len(), "hosts must be unique");
-        for c in &all {
-            assert!(c.port == 443 || c.port == 80, "port must be 443/80");
-            assert!(!c.purpose.is_empty(), "must have a purpose");
-        }
-    }
-
-    #[test]
-    fn url_host_parses_registry_urls() {
-        assert_eq!(
-            url_host("https://registry.npmjs.org").unwrap(),
-            ("registry.npmjs.org".into(), 443)
-        );
-        assert_eq!(
-            url_host("https://npm.local:8443/").unwrap(),
-            ("npm.local".into(), 8443)
-        );
-        assert_eq!(
-            url_host("http://mirror:8080/x").unwrap(),
-            ("mirror".into(), 8080)
-        );
-        assert!(url_host("not a url").is_none());
-    }
-}
+#[path = "../test/network_test.rs"]
+mod tests;

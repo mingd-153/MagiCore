@@ -1,0 +1,33 @@
+{
+    "name": "magicore-benchmark-project",
+    "version": "1.0.0",
+    "description": "Benchmark package without vitest (19 deps)",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build"
+    },
+    "dependencies": {
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "next": "^14.0.0",
+        "axios": "^1.6.0",
+        "zod": "^3.22.0",
+        "date-fns": "^2.30.0",
+        "lodash": "^4.17.21",
+        "clsx": "^2.0.0",
+        "framer-motion": "^10.16.0",
+        "react-hook-form": "^7.48.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.9.0",
+        "@types/react": "^18.2.0",
+        "@types/lodash": "^4.14.0",
+        "typescript": "^5.2.0",
+        "eslint": "^8.53.0",
+        "tailwindcss": "^3.3.0",
+        "postcss": "^8.4.0",
+        "autoprefixer": "^10.4.0",
+        "prettier": "^3.1.0"
+    }
+}

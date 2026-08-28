@@ -1,23 +1,49 @@
 [package]
-name = "mg-ai-adapter"
+name = "mgc-ai-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "AI ecosystem adapter for MegaGate"
+description = "AI ecosystem adapter for MagiCore"
 
 [dependencies]
-mg-types = { path = "../../core/crates/mg-types" }
+# Core crates (W1-W6 support)
+mgc-types = { path = "../../core/crates/mgc-types" }
+mgc-crypto = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-config = { workspace = true }
+mgc-adapter-base = { workspace = true }
+
+# Async
 async-trait.workspace = true
 tokio.workspace = true
+
+# Serialization
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 toml.workspace = true
+
+# Crypto
+hex.workspace = true
+sha2.workspace = true
+
+# Utils
+dirs.workspace = true
+
+# HTTP
+reqwest = { workspace = true, features = ["stream"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[bench]]
+name = "perf_bench"
+harness = false
 
 [[bench]]
 name = "ai_bench"

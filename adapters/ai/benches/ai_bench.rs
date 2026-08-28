@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use mg_ai_adapter::{detect_framework, AiFramework};
+use mgc_ai_adapter::{detect_framework, AiFramework};
 use std::fs;
 use tempfile::tempdir;
 
@@ -10,7 +10,7 @@ fn bench_ai_framework_detection(c: &mut Criterion) {
 
     fs::write(
         root.join("pyproject.toml"),
-        r#"[tool.megagate]
+        r#"[tool.magicore]
 framework = "python-agent"
 core = "ai"
 "#,

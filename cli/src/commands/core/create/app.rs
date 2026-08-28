@@ -1,4 +1,4 @@
-//! `mg create app` — wizard + scaffold theo framework (07 §4).
+//! `mgc create app` — wizard + scaffold theo framework (07 §4).
 
 use anyhow::Result;
 
@@ -12,8 +12,8 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         // Registry-first: fetch layer app/<fw> nếu chưa có; fetch fail → fallback procedural.
         crate::commands::template::ensure_layer(&format!("app/{fw}")).await;
     }
-    crate::scaffold::processor::Scaffolder::scaffold(&config)?;
-    mg_ui::success("App project created. Run `mg install` or `mg dev` next.");
+    super::scaffold_and_save_metadata(&config)?;
+    mgc_ui::success("App project created. Run `mgc install` or `mgc dev` next.");
     Ok(())
 }
 

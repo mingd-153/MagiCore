@@ -9,7 +9,7 @@
 
 ## 1. FOLDER-STRUCTURE — BẮT BUỘC TUÂN THEO (Mandatory Structure)
 
-Agent **bắt buộc** tuân theo cây folder tại: `sys-mg/11-folder-structure.md` (source of truth — nguồn chân lý duy nhất).
+Agent **bắt buộc** tuân theo cây folder tại: `sys-mgc/11-folder-structure.md` (source of truth — nguồn chân lý duy nhất).
 
 - Không tạo file/folder ngoài cây được phép. No files/folders outside the allowed tree.
 - Cây có thể thay đổi **chỉ khi** user duyệt bản cập nhật 11-folder-structure.md trước. Tree changes only after user approves.
@@ -35,7 +35,7 @@ tên-folder/
 - `docs/` là nơi duy nhất ghi báo cáo tiến độ + checklist của folder đó.
 - docs/ is the single place for progress reports + checklists.
 - `test/` là nơi duy nhất đặt test của folder — **CẤM `#[cfg(test)] mod tests` inline trong file `src/*.rs`** (xem §5).
-- Ví dụ: `core/crates/mg-exec/docs/Checklist.md`, `adapters/game/test/`, `cli/docs/ProgressReport.md`.
+- Ví dụ: `core/crates/mgc-exec/docs/Checklist.md`, `adapters/game/test/`, `cli/docs/ProgressReport.md`.
 - Tên folder phải là **lowercase** (`docs/` không phải `DOCS/`).
 
 ---
@@ -75,12 +75,12 @@ Mọi việc làm đều thuộc 1 trong 3 loại — ghi rõ ở đầu Progres
 
 | Loại | Định nghĩa | Ví dụ |
 |---|---|---|
-| **TASK** | Việc được giao (từ user / plan) | "Implement mg-exec allowlist" |
-| **REQUIREMENT** | Yêu cầu ràng buộc phải thỏa (từ design MD trong sys-mg/) | "Allowlist bất biến 25 tool, cấm npm" |
-| **DESIGN** | Thiết kế quyết định trước khi viết (trong sys-mg/ hoặc docs/ của folder) | "mg-exec module map, audit sanitizer" |
+| **TASK** | Việc được giao (từ user / plan) | "Implement mgc-exec allowlist" |
+| **REQUIREMENT** | Yêu cầu ràng buộc phải thỏa (từ design MD trong sys-mgc/) | "Allowlist bất biến 25 tool, cấm npm" |
+| **DESIGN** | Thiết kế quyết định trước khi viết (trong sys-mgc/ hoặc docs/ của folder) | "mgc-exec module map, audit sanitizer" |
 
 - **Requirement/Design thiếu → KHÔNG được viết code** — hỏi user trước. No requirement/design = no code.
-- Mọi thay đổi code phải trỏ tới requirement trong sys-mg/ (ghi số file + section). Every code change must reference its requirement.
+- Mọi thay đổi code phải trỏ tới requirement trong sys-mgc/ (ghi số file + section). Every code change must reference its requirement.
 
 ---
 
@@ -143,13 +143,13 @@ Quy tắc:
 
 | Loại | Quy tắc | Ví dụ |
 |---|---|---|
-| Folder | lowercase, rõ nghĩa | `core/crates/mg-exec`, `adapters/game` |
-| Rust module file | **snake_case** (chuẩn Rust bắt buộc) | `mg_exec/allowlist.rs` |
+| Folder | lowercase, rõ nghĩa | `core/crates/mgc-exec`, `adapters/game` |
+| Rust module file | **snake_case** (chuẩn Rust bắt buộc) | `mgc_exec/allowlist.rs` |
 | Rust type (struct/trait) | **PascalCase** | `ExecReport`, `PackageAdapter` |
 | Rust const/static | **UPPER_SNAKE_CASE** | `FORBIDDEN_TOOLS` |
-| CLI command | verb-object, lowercase, không gạch | `mg publish`, `mg store gc` |
+| CLI command | verb-object, lowercase, không gạch | `mgc publish`, `mgc store gc` |
 | CLI flag | kebab-case | `--dry-run`, `--no-git-checks` |
-| Config key (mg.toml) | snake_case | `store.max_gb`, `scripts.mode` |
+| Config key (mgc.toml) | snake_case | `store.max_gb`, `scripts.mode` |
 | File báo cáo/checklist/docs | **camelCase** | `ProgressReport.md`, `Checklist.md`, `networkVerify.md` |
 | File phải viết hoa | ĐÚNG như tên bắt buộc | `LICENSE`, `README.md`, `RULE.md`, `CHANGELOG.md`, `Cargo.toml` |
 | Folder docs/tests | **lowercase** (viết thường) | `docs/`, `test/`, `tests/` — KHÔNG `DOCS/` |
@@ -162,14 +162,15 @@ Quy tắc:
 ## 9. ĐIỀU CẤM TUYỆT ĐỐI (Absolute Forbidden)
 
 1. Tự ý tạo folder/file ngoài cây đã duyệt. Creating files outside the approved tree.
-2. Tự ý sửa design MD trong sys-mg/ khi chưa được duyệt. Editing design MDs without approval.
+2. Tự ý sửa design MD trong sys-mgc/ khi chưa được duyệt. Editing design MDs without approval.
 3. Đoán mò khi không chắc — phải dừng hỏi user. Guessing when unsure — ask.
 4. Commit/push khi chưa được yêu cầu. Committing without being asked.
 5. Viết code khi thiếu REQUIREMENT/DESIGN. Writing code without requirements.
 6. Báo cáo "xong" khi test chưa pass hoặc checklist chưa tick. Reporting done without green tests.
 7. Log/in in secret (token/password/OTP) dưới mọi hình thức. Logging secrets in any form.
-8. **Hardcode giá trị có thể config** (đường dẫn, URL, kích thước giới hạn, timeout, registry, cổng...) — mọi giá trị đổi được theo môi trường phải qua config (mg.toml / env / const tập trung). Hardcoding configurable values is forbidden.
+8. **Hardcode giá trị có thể config** (đường dẫn, URL, kích thước giới hạn, timeout, registry, cổng...) — mọi giá trị đổi được theo môi trường phải qua config (mgc.toml / env / const tập trung). Hardcoding configurable values is forbidden.
 9. **Test trong `src/`** (không dùng `#[cfg(test)]` inline) — test phải ở `test/` (hoặc `tests/` chuẩn Cargo). Tests in src/ are forbidden.
+10. **Commit tài liệu nội bộ khi chưa được user cho phép rõ từng file.** Internal docs/changelogs/spec notes under `docs/` are private by default: append/update locally when RULE requires evidence, but do not `git add`, `git add -f`, commit, or push any `.md` under `docs/` unless the user explicitly approves that exact file for git.
 
 ---
 
@@ -177,10 +178,10 @@ Quy tắc:
 
 | File | Vai trò |
 |---|---|
-| `sys-mg/11-folder-structure.md` | Cây folder tổng thể — nguồn chân lý |
-| `sys-mg/00-index.md` | 24 quyết định Q1–Q24 + exec policy + phase |
-| `sys-mg/14-module-map.md` | Module map từng crate |
-| `sys-mg/21-repo-ops.md` | Quality gates, CI, PR convention |
+| `sys-mgc/11-folder-structure.md` | Cây folder tổng thể — nguồn chân lý |
+| `sys-mgc/00-index.md` | 24 quyết định Q1–Q24 + exec policy + phase |
+| `sys-mgc/14-module-map.md` | Module map từng crate |
+| `sys-mgc/21-repo-ops.md` | Quality gates, CI, PR convention |
 | `CONTRIBUTING.md` | Hướng dẫn contribute (đã có) |
 | `LICENSE` | MIT (đã có) |
 
@@ -202,10 +203,10 @@ Mọi giá trị có thể thay đổi theo môi trường/config **bắt buộc
 
 | Giá trị | Nơi đặt |
 |---|---|
-| Đường dẫn (store, cache, log, lock...) | config (mg.toml / env) — `mg-config/paths.rs`, `mg-platform/paths.rs` |
-| URL registry / API endpoint | config (mg.toml `[registry]`, .npmrc) — KHÔNG nhúng `https://registry.npmjs.org` trong code logic |
+| Đường dẫn (store, cache, log, lock...) | config (mgc.toml / env) — `mgc-config/paths.rs`, `mgc-platform/paths.rs` |
+| URL registry / API endpoint | config (mgc.toml `[registry]`, .npmrc) — KHÔNG nhúng `https://registry.npmjs.org` trong code logic |
 | Giới hạn kích thước / timeout / retry | config hoặc const tập trung đầu file có tên mô tả (`MAX_*`, `DEFAULT_*`) |
-| Cổng mạng, host | config / env (`MG_*_PORT`) |
+| Cổng mạng, host | config / env (`MGC_*_PORT`) |
 | Danh sách (allowlist, forbidden) | config hoặc const tập trung — không rải rác trong logic |
 
 Quy tắc:
@@ -219,10 +220,21 @@ Quy tắc:
 
 Mọi cổng mạng dùng trong dự án **bắt buộc chứa đủ 4 chữ số: 4, 3, 1, 5** (thứ tự bất kỳ, mỗi số đúng 1 lần — port phải là hoán vị của 4 chữ số này). Every port must contain all of digits 4, 3, 1, 5.
 
-- Áp dụng cho: port mặc định trong code (`DEFAULT_*_PORT`), config mẫu (mg.toml, .env.example), docker-compose, docs, script test, CLI flag.
+- Áp dụng cho: port mặc định trong code (`DEFAULT_*_PORT`), config mẫu (mgc.toml, .env.example), docker-compose, docs, script test, CLI flag.
 - Chỉ còn **24 số hợp lệ** (hoán vị của 4315): `4315 4351 4135 4153 4513 4531 3415 3451 3145 3154 3541 3514 1345 1354 1435 1453 1534 1543 5134 5143 5314 5341 5413 5431`.
-- Port mặc định chính thức của registry: **4315** (mg-registry). Các service khác chọn hoán vị khác nhau trong 24 số trên — không trùng lặp.
+- Port mặc định chính thức của registry: **4315** (mgc-registry). Các service khác chọn hoán vị khác nhau trong 24 số trên — không trùng lặp.
 - CẤM port không đủ 4 chữ số đó (vd: `8080`, `3000`, `18091`, `5432`). Forbidden: any port without all four digits.
 - Violation = redo (§1).
+
+---
+
+## 14. CORE PARITY — CHIA ĐỀU NĂNG LỰC GIỮA CÁC CORE CHÍNH
+
+MagiCore không được phát triển lệch về một core duy nhất. Khi thêm CLI, scaffold, test, docs, hoặc quality gate cho một core chính, agent phải rà tác động parity cho tối thiểu 4 core chính đang cạnh tranh trực tiếp: `web`, `ai`, `app`, `lib` (và mở rộng `game/cloud/iot/cicd/hardware` khi task chạm tới).
+
+- Không ship feature nổi bật chỉ cho `web` nếu cùng pattern có thể áp dụng hợp lý cho `ai`, `app`, `lib`.
+- Nếu buộc phải làm một core trước vì test đang fail hoặc user chỉ định scope, phải ghi rõ đó là fix cục bộ, không coi là định hướng sản phẩm.
+- CLI surface phải ưu tiên mô hình core-neutral: lệnh chung (`mgc init`, `mgc install`, `mgc dev`, `mgc build`) tự nhận core trước; lệnh per-core chỉ là alias/shortcut khi cần.
+- Roadmap và test mới phải cân bằng capability matrix thay vì dồn toàn bộ benchmark/scaffold vào `web`.
 
 ---

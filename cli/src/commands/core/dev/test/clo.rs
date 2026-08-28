@@ -16,7 +16,7 @@ fn dev_command_maps_types() {
 
 #[test]
 fn bin_resolution_for_npm_tools() {
-    let dir = std::env::temp_dir().join(format!("mg-clo-bin-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mgc-clo-bin-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("node_modules").join(".bin")).unwrap();
     std::fs::write(

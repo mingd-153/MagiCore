@@ -1,0 +1,58 @@
+[package]
+name = "mgc-registry-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Private registry server (MagiCore) — binary: mgc-registry"
+
+[[bin]]
+name = "mgc-registry"
+path = "src/main.rs"
+
+[dependencies]
+mgc-http = { workspace = true }
+mgc-types = { workspace = true }
+mgc-oci = { workspace = true }
+mgc-config = { workspace = true }
+mgc-store = { workspace = true }
+mgc-lockfile = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
+notify = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2"] }
+object_store = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tempfile = { workspace = true }
+clap = { workspace = true }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "json", "migrate"] }
+chrono = { workspace = true }
+
+[dev-dependencies]
+http = "1"
+tempfile = { workspace = true }
+tokio-test = "0.4"
+tower = "0.5"
+
+[[test]]
+name = "registry"
+path = "tests/registry.rs"
+
+[[test]]
+name = "proxy_parse"
+path = "tests/proxy_parse.rs"
+
+[lints]
+workspace = true

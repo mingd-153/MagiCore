@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Module hygiene check (sys-mg/21-repo-ops §1, 99-report 7.1)
-# L0 (mg-platform) + L1 (core/crates) cấm import L2/L3 (adapters/, cli/)
+# Module hygiene check (sys-mgc/21-repo-ops §1, 99-report 7.1)
+# L0 (mgc-platform) + L1 (core/crates) cấm import L2/L3 (adapters/, cli/)
 # Chạy: bash scripts/check-module-hygiene.sh
 set -u
 
@@ -37,10 +37,10 @@ check_hard() {
     done | grep -vE "$skip")
 }
 
-# L0: mg-platform cũng là core/crates — import chéo cấm (14 §1)
+# L0: mgc-platform cũng là core/crates — import chéo cấm (14 §1)
 check "core/crates" "L1-import" 'use (adapters|cli)::' '^$'
-# reqwest nơi chuẩn: mg-http + mg-fetcher + mg-registry-server (upstream proxy); hardcode path cấm (14 §8)
-check_hard "core/crates" "L1-hardcode" 'reqwest::|\$HOME|/Users/|/tmp/' 'crates/(mg-http|mg-fetcher|mg-registry-server)/'
+# reqwest nơi chuẩn: mgc-http + mgc-fetcher + mgc-registry-server (upstream proxy); hardcode path cấm (14 §8)
+check_hard "core/crates" "L1-hardcode" 'reqwest::|\$HOME|/Users/|/tmp/' 'crates/(mgc-http|mgc-fetcher|mgc-registry-server)/'
 
 if [ "$fail" = "0" ]; then
     echo "OK: module hygiene pass"

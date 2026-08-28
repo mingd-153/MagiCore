@@ -1,10 +1,10 @@
-//! mg hooks — user-defined pre/post scripts (P2, 21 §9)
+//! mgc hooks — user-defined pre/post scripts (P2, 21 §9)
 //! (Chạy script trước/sau command: pre-install, post-publish...
 //!  hook fail → command fail; hook ghi audit.)
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
-use mg_config::hooks;
+use mgc_config::hooks;
 use std::path::Path;
 
 #[derive(Subcommand, Debug, Clone)]

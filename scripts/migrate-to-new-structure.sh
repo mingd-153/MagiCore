@@ -1,16 +1,16 @@
 #!/bin/bash
-# MegaGate Migration Script
+# MagiCore Migration Script
 # Purpose: Migrate from old structure to new architecture
 # Date: 2026-07-07
 # DO NOT RUN without user confirmation!
 
 set -e  # Exit on error
 
-echo "🚀 MegaGate Structure Migration"
+echo "🚀 MagiCore Structure Migration"
 echo "================================"
 echo ""
 echo "⚠️  WARNING: This script will:"
-echo "   1. Move /web/mg/ → _archive/web-pm-v1/"
+echo "   1. Move /web/mgc/ → _archive/web-pm-v1/"
 echo "   2. Delete empty folders (sdk/, apps/, packages/, etc.)"
 echo "   3. Create new folder structure"
 echo ""
@@ -22,14 +22,14 @@ if [ "$confirm" != "yes" ]; then
 fi
 
 echo ""
-echo "📦 Step 1: Archive /web/mg/"
+echo "📦 Step 1: Archive /web/mgc/"
 echo "----------------------------"
 mkdir -p _archive
-mv web/mg _archive/web-pm-v1
+mv web/mgc _archive/web-pm-v1
 cat > _archive/web-pm-v1/NOTE.md << 'EOF'
 # Archived Web PM v1
 
-This is the original MegaGate web package manager implementation (40k+ lines Rust).
+This is the original MagiCore web package manager implementation (40k+ lines Rust).
 
 **Status**: Archived for reference and code extraction.  
 **Tests**: 811/811 passing  
@@ -47,12 +47,12 @@ Keep this code for:
 - Use in production (use new structure instead)
 
 ## Code Extraction Map
-- `crates/mg-store/` → `core/crates/mg-store/`
-- `crates/mg-resolver/` → `core/crates/mg-resolver/`
-- `crates/mg-lockfile/` → `core/crates/mg-lockfile/`
-- `crates/mg-registry/` → `adapters/web/src/npm_registry.rs`
-- `crates/mg-fetcher/` → `core/crates/mg-fetcher/`
-- `crates/mg-core/src/cffi/sha256.rs` → `core/crates/mg-crypto/`
+- `crates/mgc-store/` → `core/crates/mgc-store/`
+- `crates/mgc-resolver/` → `core/crates/mgc-resolver/`
+- `crates/mgc-lockfile/` → `core/crates/mgc-lockfile/`
+- `crates/mgc-registry/` → `adapters/web/src/npm_registry.rs`
+- `crates/mgc-fetcher/` → `core/crates/mgc-fetcher/`
+- `crates/mgc-core/src/cffi/sha256.rs` → `core/crates/mgc-crypto/`
 EOF
 
 echo "✅ Archived to _archive/web-pm-v1/"
@@ -67,7 +67,7 @@ rm -rf bindings/
 rm -rf memanto/
 rm -rf proto/
 rm -rf examples/
-rm -rf web/  # Now empty after moving mg/
+rm -rf web/  # Now empty after moving mgc/
 echo "✅ Removed empty folders"
 echo ""
 
@@ -75,7 +75,7 @@ echo "📦 Step 3: Create new folder structure"
 echo "---------------------------------------"
 
 # Core
-mkdir -p core/crates/{mg-http,mg-store,mg-crypto,mg-lockfile,mg-resolver,mg-fetcher,mg-ui,mg-config,mg-types}
+mkdir -p core/crates/{mgc-http,mgc-store,mgc-crypto,mgc-lockfile,mgc-resolver,mgc-fetcher,mgc-ui,mgc-config,mgc-types}
 
 # Adapters
 mkdir -p adapters/{web,game,ai,cloud,iot}/{src,tests}
@@ -115,8 +115,8 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/mingd-153/MegaGate"
-authors = ["MegaGate Contributors"]
+repository = "https://github.com/mingd-153/MagiCore"
+authors = ["MagiCore Contributors"]
 
 [workspace.dependencies]
 # Async runtime
@@ -171,21 +171,21 @@ echo "📦 Step 5: Create README files"
 echo "-------------------------------"
 
 cat > core/README.md << 'EOF'
-# MegaGate Core
+# MagiCore Core
 
 Shared Rust components used across all adapters.
 
 ## Crates
 
-- `mg-http`: HTTP client wrapper
-- `mg-store`: Content-addressable store (CAS)
-- `mg-crypto`: Integrity verification (SHA-256)
-- `mg-lockfile`: Unified lockfile format
-- `mg-resolver`: Dependency resolver (PubGrub)
-- `mg-fetcher`: Parallel download manager
-- `mg-ui`: TUI components (ratatui)
-- `mg-config`: Configuration management
-- `mg-types`: Shared types, traits, errors
+- `mgc-http`: HTTP client wrapper
+- `mgc-store`: Content-addressable store (CAS)
+- `mgc-crypto`: Integrity verification (SHA-256)
+- `mgc-lockfile`: Unified lockfile format
+- `mgc-resolver`: Dependency resolver (PubGrub)
+- `mgc-fetcher`: Parallel download manager
+- `mgc-ui`: TUI components (ratatui)
+- `mgc-config`: Configuration management
+- `mgc-types`: Shared types, traits, errors
 
 ## Development
 
@@ -196,7 +196,7 @@ cargo test --all
 EOF
 
 cat > adapters/README.md << 'EOF'
-# MegaGate Adapters
+# MagiCore Adapters
 
 Ecosystem-specific package managers.
 
@@ -214,9 +214,9 @@ See `docs/adapters/creating-adapter.md`
 EOF
 
 cat > templates/README.md << 'EOF'
-# MegaGate Templates
+# MagiCore Templates
 
-Project scaffolding templates for `mg create-*` commands.
+Project scaffolding templates for `mgc create-*` commands.
 
 ## Template Variables
 

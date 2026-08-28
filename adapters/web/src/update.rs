@@ -1,7 +1,7 @@
 //! `update.rs` — Update dependencies to latest matching or newer versions for WebAdapter.
 
-use mg_types::adapter::UpdatedPackage;
-use mg_types::{MgError, MgResult, PackageName, Version, VersionRange};
+use mgc_types::adapter::UpdatedPackage;
+use mgc_types::{MgError, MgResult, PackageName, Version, VersionRange};
 use std::path::Path;
 
 use crate::lockfile::read_web_lockfile_checked;
@@ -105,7 +105,7 @@ pub async fn run_update(
                 .and_then(|lock| {
                     lock.packages
                         .iter()
-                        .find(|pkg| pkg.direct && pkg.name == dep.name.as_str())
+                        .find(|pkg| pkg.name == dep.name.as_str())
                         .map(|pkg| pkg.version.clone())
                 })
                 .unwrap_or_else(|| dep.range.to_string());

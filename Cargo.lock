@@ -146,6 +146,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "assert-json-diff"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "async-compression"
 version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -346,6 +356,8 @@ dependencies = [
  "cfg-if",
  "constant_time_eq",
  "cpufeatures 0.3.0",
+ "memmap2",
+ "rayon-core",
 ]
 
 [[package]]
@@ -1234,6 +1246,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foreign-types"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"
+dependencies = [
+ "foreign-types-shared",
+]
+
+[[package]]
+name = "foreign-types-shared"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1442,9 +1469,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.15"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
+checksum = "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1665,6 +1692,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-tls"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
+ "tower-service",
+]
+
+[[package]]
 name = "hyper-util"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1682,9 +1725,11 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2",
+ "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
+ "windows-registry",
 ]
 
 [[package]]
@@ -1904,6 +1949,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-kit-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617ee6cf8e3f66f3b4ea67a4058564628cde41901316e19f559e14c7c72c5e7b"
+dependencies = [
+ "core-foundation-sys",
+ "mach2",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2036,6 +2091,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "libudev"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78b324152da65df7bb95acfcaab55e3097ceaab02fb19b228a9eb74d55f135e0"
+dependencies = [
+ "libc",
+ "libudev-sys",
+]
+
+[[package]]
+name = "libudev-sys"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
+dependencies = [
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "libz-sys"
 version = "1.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2136,6 +2211,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
+name = "mach2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2167,10 +2251,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "memorymodule-rs"
@@ -2183,13 +2282,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg"
-version = "0.3.0"
+name = "mgc"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
  "blake3",
+ "chrono",
  "clap",
  "clap_complete",
  "colored",
@@ -2201,31 +2301,34 @@ dependencies = [
  "glob",
  "hex",
  "lightningcss",
- "mg-adapter-base",
- "mg-ai-adapter",
- "mg-app-adapter",
- "mg-cicd-adapter",
- "mg-cloud-adapter",
- "mg-config",
- "mg-exec",
- "mg-fetcher",
- "mg-game-adapter",
- "mg-hardware-adapter",
- "mg-http",
- "mg-iot-adapter",
- "mg-lib-adapter",
- "mg-lockfile",
- "mg-oci",
- "mg-pack",
- "mg-plugin",
- "mg-publish",
- "mg-registry-server",
- "mg-resolver",
- "mg-store",
- "mg-types",
- "mg-ui",
- "mg-web-adapter",
- "mg-workspace",
+ "mgc-adapter-base",
+ "mgc-ai-adapter",
+ "mgc-app-adapter",
+ "mgc-cache",
+ "mgc-cicd-adapter",
+ "mgc-cloud-adapter",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-fetcher",
+ "mgc-game-adapter",
+ "mgc-hardware-adapter",
+ "mgc-http",
+ "mgc-iot-adapter",
+ "mgc-lib-adapter",
+ "mgc-lockfile",
+ "mgc-oci",
+ "mgc-pack",
+ "mgc-plugin",
+ "mgc-publish",
+ "mgc-registry-server",
+ "mgc-resolver",
+ "mgc-sbom",
+ "mgc-store",
+ "mgc-types",
+ "mgc-ui",
+ "mgc-web-adapter",
+ "mgc-workspace",
  "mime_guess",
  "notify",
  "regex",
@@ -2248,13 +2351,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-adapter-base"
-version = "0.3.0"
+name = "mgc-adapter-base"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "mg-types",
- "mg-ui",
+ "mgc-types",
+ "mgc-ui",
  "serde",
  "serde_json",
  "tempfile",
@@ -2263,37 +2366,86 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-ai-adapter"
-version = "0.3.0"
+name = "mgc-ai-adapter"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
- "mg-types",
+ "dirs",
+ "hex",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "reqwest",
  "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "toml",
 ]
 
 [[package]]
-name = "mg-app-adapter"
-version = "0.3.0"
+name = "mgc-app-adapter"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "criterion",
- "mg-types",
+ "dirs",
+ "hex",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lib-adapter",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-store",
+ "mgc-types",
+ "reqwest",
  "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
  "tempfile",
  "tokio",
  "toml",
+ "which",
 ]
 
 [[package]]
-name = "mg-cicd-adapter"
-version = "0.3.0"
+name = "mgc-cache"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "dashmap 6.2.1",
+ "dirs",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "mgc-cicd-adapter"
+version = "1.0.0"
 dependencies = [
  "async-trait",
- "mg-types",
+ "criterion",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
  "serde",
  "tempfile",
  "tokio",
@@ -2301,14 +2453,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-cloud-adapter"
-version = "0.3.0"
+name = "mgc-cloud-adapter"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "mg-exec",
- "mg-types",
- "mg-web-adapter",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-web-adapter",
  "serde",
  "serde_json",
  "tempfile",
@@ -2317,12 +2475,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-config"
-version = "0.3.0"
+name = "mgc-config"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dirs",
- "mg-types",
+ "mgc-types",
  "serde",
  "serde_json",
  "tempfile",
@@ -2331,19 +2489,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-crypto"
-version = "0.3.0"
+name = "mgc-crypto"
+version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
  "blake3",
- "hex",
+ "criterion",
+ "dirs",
+ "libc",
+ "memmap2",
+ "ring",
  "serde",
- "sha2",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
-name = "mg-dist"
-version = "0.3.0"
+name = "mgc-dist"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2353,8 +2519,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-exec"
-version = "0.3.0"
+name = "mgc-e2e"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "mgc-exec"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2362,13 +2537,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-fetcher"
-version = "0.3.0"
+name = "mgc-fetcher"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "flate2",
  "futures-util",
- "mg-store",
+ "mgc-store",
  "rayon",
  "reqwest",
  "tar",
@@ -2378,16 +2553,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-game-adapter"
-version = "0.3.0"
+name = "mgc-game-adapter"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "mg-adapter-base",
- "mg-config",
- "mg-exec",
- "mg-types",
- "mg-ui",
+ "criterion",
+ "dirs",
+ "md5",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -2398,27 +2580,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-hardware-adapter"
-version = "0.3.0"
+name = "mgc-hardware-adapter"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "mg-adapter-base",
- "mg-config",
- "mg-exec",
- "mg-types",
- "mg-ui",
+ "criterion",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml",
 ]
 
 [[package]]
-name = "mg-http"
-version = "0.3.0"
+name = "mgc-http"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2446,20 +2634,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-iot-adapter"
-version = "0.3.0"
+name = "mgc-iot-adapter"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
- "mg-adapter-base",
- "mg-config",
- "mg-exec",
- "mg-types",
- "mg-ui",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "serialport",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2467,52 +2660,65 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-lib-adapter"
-version = "0.3.0"
+name = "mgc-lib-adapter"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "mg-adapter-base",
- "mg-config",
- "mg-exec",
- "mg-types",
- "mg-ui",
- "mg-web-adapter",
+ "criterion",
+ "dirs",
+ "hex",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-lockfile",
+ "mgc-sbom",
+ "mgc-store",
+ "mgc-types",
+ "mgc-ui",
+ "mgc-web-adapter",
+ "mockito",
  "pretty_assertions",
+ "reqwest",
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-test",
  "toml",
+ "which",
 ]
 
 [[package]]
-name = "mg-lockfile"
-version = "0.3.0"
+name = "mgc-lockfile"
+version = "1.0.0"
 dependencies = [
  "anyhow",
- "blake3",
- "hex",
- "mg-types",
+ "chrono",
+ "mgc-crypto",
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
  "tempfile",
+ "thiserror 1.0.69",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]
-name = "mg-oci"
-version = "0.3.0"
+name = "mgc-oci"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "hex",
- "mg-http",
- "mg-types",
+ "mgc-http",
+ "mgc-types",
  "serde",
  "serde_json",
  "sha2",
@@ -2523,8 +2729,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-pack"
-version = "0.3.0"
+name = "mgc-pack"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2539,8 +2745,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-platform"
-version = "0.3.0"
+name = "mgc-platform"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2550,23 +2756,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-plugin"
-version = "0.3.0"
+name = "mgc-plugin"
+version = "1.0.0"
 dependencies = [
  "async-trait",
- "mg-types",
+ "mgc-types",
  "tokio",
 ]
 
 [[package]]
-name = "mg-publish"
-version = "0.3.0"
+name = "mgc-publish"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "mg-config",
- "mg-http",
- "mg-pack",
+ "mgc-config",
+ "mgc-http",
+ "mgc-pack",
  "reqwest",
  "serde",
  "serde_json",
@@ -2577,8 +2783,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-registry-server"
-version = "0.3.0"
+name = "mgc-registry-server"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2588,12 +2794,12 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
- "mg-config",
- "mg-http",
- "mg-lockfile",
- "mg-oci",
- "mg-store",
- "mg-types",
+ "mgc-config",
+ "mgc-http",
+ "mgc-lockfile",
+ "mgc-oci",
+ "mgc-store",
+ "mgc-types",
  "notify",
  "object_store",
  "reqwest",
@@ -2613,8 +2819,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-resolver"
-version = "0.3.0"
+name = "mgc-resolver"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2622,8 +2828,8 @@ dependencies = [
  "dashmap 6.2.1",
  "futures-util",
  "hex",
- "mg-platform",
- "mg-types",
+ "mgc-platform",
+ "mgc-types",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
@@ -2631,8 +2837,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-store"
-version = "0.3.0"
+name = "mgc-sbom"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mgc-lockfile",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "mgc-search"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "futures",
+ "mgc-platform",
+ "mgc-types",
+ "mockito",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "urlencoding",
+]
+
+[[package]]
+name = "mgc-store"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -2646,8 +2888,8 @@ dependencies = [
  "fs2",
  "hex",
  "lru",
- "mg-crypto",
- "mg-types",
+ "mgc-crypto",
+ "mgc-types",
  "parking_lot",
  "pretty_assertions",
  "rmp-serde",
@@ -2664,8 +2906,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-types"
-version = "0.3.0"
+name = "mgc-types"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2676,8 +2918,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-ui"
-version = "0.3.0"
+name = "mgc-ui"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "colored",
@@ -2689,8 +2931,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mg-web-adapter"
-version = "0.3.0"
+name = "mgc-web-adapter"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2703,17 +2945,21 @@ dependencies = [
  "futures-util",
  "hex",
  "lru",
- "mg-adapter-base",
- "mg-config",
- "mg-exec",
- "mg-fetcher",
- "mg-http",
- "mg-lockfile",
- "mg-platform",
- "mg-resolver",
- "mg-store",
- "mg-types",
- "mg-ui",
+ "mgc-adapter-base",
+ "mgc-cache",
+ "mgc-config",
+ "mgc-crypto",
+ "mgc-exec",
+ "mgc-fetcher",
+ "mgc-http",
+ "mgc-lockfile",
+ "mgc-platform",
+ "mgc-resolver",
+ "mgc-sbom",
+ "mgc-search",
+ "mgc-store",
+ "mgc-types",
+ "mgc-ui",
  "pretty_assertions",
  "rayon",
  "reqwest",
@@ -2726,12 +2972,13 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "url",
+ "urlencoding",
  "walkdir",
 ]
 
 [[package]]
-name = "mg-workspace"
-version = "0.3.0"
+name = "mgc-workspace"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2792,6 +3039,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "mockito"
+version = "1.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90820618712cab19cfc46b274c6c22546a82affcb3c3bdf0f29e3db8e1bb92c0"
+dependencies = [
+ "assert-json-diff",
+ "bytes",
+ "colored",
+ "futures-core",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "pin-project-lite",
+ "rand 0.9.5",
+ "regex",
+ "serde_json",
+ "serde_urlencoded",
+ "similar",
+ "tokio",
+]
+
+[[package]]
 name = "multer"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2806,6 +3078,34 @@ dependencies = [
  "mime",
  "spin",
  "version_check",
+]
+
+[[package]]
+name = "native-tls"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "465500e14ea162429d264d44189adc38b199b62b1c21eea9f69e4b73cb03bbf2"
+dependencies = [
+ "libc",
+ "log",
+ "openssl",
+ "openssl-probe 0.2.1",
+ "openssl-sys",
+ "schannel",
+ "security-framework 3.7.0",
+ "security-framework-sys",
+ "tempfile",
+]
+
+[[package]]
+name = "nix"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
+dependencies = [
+ "bitflags 1.3.2",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -2942,6 +3242,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
+name = "openssl"
+version = "0.10.81"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77823a27f0babb03091cb9ed9ef80af3b39dbc82f97e8fa530374b7dafd87a45"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if",
+ "foreign-types",
+ "libc",
+ "openssl-macros",
+ "openssl-sys",
+]
+
+[[package]]
+name = "openssl-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "openssl-probe"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2952,6 +3277,18 @@ name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+
+[[package]]
+name = "openssl-sys"
+version = "0.9.117"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
+]
 
 [[package]]
 name = "option-ext"
@@ -3353,8 +3690,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
  "libc",
- "rand_chacha",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
+dependencies = [
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -3379,12 +3726,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_chacha"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.9.5",
+]
+
+[[package]]
 name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
+dependencies = [
+ "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -3518,6 +3884,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "encoding_rs",
  "futures-core",
  "futures-util",
  "h2",
@@ -3526,9 +3893,12 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-rustls",
+ "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",
+ "mime",
+ "native-tls",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -3540,6 +3910,7 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls",
  "tokio-util",
  "tower",
@@ -3944,6 +4315,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "serialport"
+version = "4.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a2f4ac56b5d3af3c40fbbee17be96d532cba02fa5853926aacdb77d926272ab"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "io-kit-sys",
+ "libudev",
+ "mach2",
+ "nix",
+ "scopeguard",
+ "unescaper",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4047,6 +4437,12 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "siphasher"
@@ -4439,6 +4835,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-configuration"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a13f3d0daba03132c0aa9767f98351b3488edc2c100cda2d2ec2b04f3d8d3c8b"
+dependencies = [
+ "bitflags 2.13.0",
+ "core-foundation 0.9.4",
+ "system-configuration-sys",
+]
+
+[[package]]
+name = "system-configuration-sys"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4462,7 +4879,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -4608,6 +5025,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "tokio-native-tls"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
+dependencies = [
+ "native-tls",
+ "tokio",
 ]
 
 [[package]]
@@ -4879,6 +5306,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
+name = "unescaper"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7285e83a80ce76f5e7bce79fa41f68d78ba62d1003cf27bf748ab24413808cf4"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "unicase"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4963,6 +5399,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "utf-8"
@@ -5171,6 +5613,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "which"
+version = "6.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ee928febd44d98f2f459a4a79bd4d928591333a494a10a868418ac1b39cf1f"
+dependencies = [
+ "either",
+ "home",
+ "rustix 0.38.44",
+ "winsafe",
+]
+
+[[package]]
 name = "whoami"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5251,6 +5705,17 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link",
+ "windows-result",
+ "windows-strings",
+]
 
 [[package]]
 name = "windows-result"
@@ -5435,6 +5900,12 @@ checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen"

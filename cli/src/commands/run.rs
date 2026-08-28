@@ -1,23 +1,23 @@
 use anyhow::Result;
-use mg_ui::info;
+use mgc_ui::info;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DEFAULT_RUN_SCRIPT_TIMEOUT_SECS: u64 = 300;
-const RUN_SCRIPT_TIMEOUT_ENV: &str = "MG_RUN_SCRIPT_TIMEOUT_SECS";
+const RUN_SCRIPT_TIMEOUT_ENV: &str = "MGC_RUN_SCRIPT_TIMEOUT_SECS";
 
-/// mg run <script> [args...] — MegaGate Native Task Runner.
+/// mgc run <script> [args...] — MagiCore Native Task Runner.
 /// Priority:
-///   1. mg.toml [scripts] section
+///   1. mgc.toml [scripts] section
 ///   2. package.json scripts (Web core only)
 pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Result<()> {
     let ctx = crate::context::ProjectContext::load_with_core(core)?;
     let project_root = ctx.root();
 
-    // 1. Try mg.toml first (native MegaGate task definition)
-    let mg_toml_path = project_root.join("mg.toml");
-    if mg_toml_path.exists() {
-        if let Some(cmd) = resolve_mg_toml_script(&mg_toml_path, &script)? {
+    // 1. Try mgc.toml first (native MagiCore task definition)
+    let mgc_toml_path = project_root.join("mgc.toml");
+    if mgc_toml_path.exists() {
+        if let Some(cmd) = resolve_mgc_toml_script(&mgc_toml_path, &script)? {
             return execute_task_with_bin(&cmd, &args, project_root, &script, None);
         }
     }
@@ -36,14 +36,14 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
 }
 
 fn reject_external_package_manager_script(cmd: &str, manifest_path: &Path) -> Result<()> {
-    if let Some(pm) = mg_exec::allowlist::find_forbidden_tool_in_script(cmd) {
+    if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(cmd) {
         return Err(crate::error::forbidden_pm_script(cmd, manifest_path, pm));
     }
 
     Ok(())
 }
 
-fn resolve_mg_toml_script(path: &Path, script: &str) -> Result<Option<String>> {
+fn resolve_mgc_toml_script(path: &Path, script: &str) -> Result<Option<String>> {
     let content = std::fs::read_to_string(path)?;
     let toml: toml::Value = toml::from_str(&content)?;
     Ok(toml
@@ -70,7 +70,7 @@ fn execute_task_with_bin(
     script_name: &str,
     bin_path: Option<PathBuf>,
 ) -> Result<()> {
-    let invocation = mg_exec::allowlist::parse_script_invocation(cmd)
+    let invocation = mgc_exec::allowlist::parse_script_invocation(cmd)
         .map_err(|e| crate::error::unsupported_script(script_name, &e))?;
     let program = invocation.program;
     let mut script_args = invocation.args;
@@ -94,18 +94,18 @@ fn execute_task_with_bin(
 
     let mut env = vec![
         ("PATH".to_string(), path_env.to_string_lossy().to_string()),
-        ("MG_LIFECYCLE_EVENT".to_string(), script_name.to_string()),
+        ("MGC_LIFECYCLE_EVENT".to_string(), script_name.to_string()),
     ];
     env.extend(invocation.env);
 
-    let opts = mg_exec::prelude::ExecOptions {
+    let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(cwd.to_path_buf()),
         timeout: Some(run_script_timeout()),
         env,
         clean_env: true,
         ..Default::default()
     };
-    mg_exec::prelude::run_inherited(&program, &script_args, &opts)?;
+    mgc_exec::prelude::run_inherited(&program, &script_args, &opts)?;
     Ok(())
 }
 

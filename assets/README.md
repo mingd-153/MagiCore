@@ -4,7 +4,7 @@
 
 | File | Usage |
 |---|---|
-| `logo.svg` | Full MegaGate logo (use in README, website, social) |
+| `logo.svg` | Full MagiCore logo (use in README, website, social) |
 | `logo-in.svg` | Inline / compact variant (use in badges, IDE extensions) |
 | `favicon.ico` | Browser favicon for the registry web UI |
 
@@ -19,4 +19,4 @@ Contains JSON/TOML board definitions for:
 - Arduino-compatible boards
 - Nordic nRF52840
 
-These are used by `mg create-iot --board <name>` to generate correct project scaffolding and toolchain configuration.
+These are used by `mgc create-iot --board <name>` to generate correct project scaffolding and toolchain configuration.

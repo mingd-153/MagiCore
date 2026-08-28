@@ -1,7 +1,7 @@
 //! `install/bin.rs` — Node modules .bin link creation and executable handling.
 
-use mg_types::adapter::ResolvedPackage;
-use mg_types::{MgError, MgResult};
+use mgc_types::adapter::ResolvedPackage;
+use mgc_types::{MgError, MgResult};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -90,12 +90,12 @@ pub fn rebuild_bin_links(
                 continue;
             };
             let resolved_str = resolved.to_string_lossy();
-            if !resolved_str.contains(".megagate/") {
+            if !resolved_str.contains(".magicore/") {
                 continue;
             }
             let still_expected = vstore_keys
                 .iter()
-                .any(|key| resolved_str.contains(&format!(".megagate/{key}/node_modules/")));
+                .any(|key| resolved_str.contains(&format!(".magicore/{key}/node_modules/")));
             if !still_expected {
                 std::fs::remove_file(&link).map_err(|err| {
                     MgError::Other(format!(

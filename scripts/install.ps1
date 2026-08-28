@@ -1,23 +1,23 @@
-# Install mg binary from GitHub release on Windows PowerShell
-# Usage: irm https://raw.githubusercontent.com/mingd-153/MegaGate/main/scripts/install.ps1 | iex
+# Install mgc binary from GitHub release on Windows PowerShell
+# Usage: irm https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install.ps1 | iex
 
 [CmdletBinding()]
 param (
-    [string]$Package = "megagate",
+    [string]$Package = "magicore",
     [string]$Version = "latest",
-    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\MegaGate"
+    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\MagiCore"
 )
 
 $ErrorActionPreference = "Stop"
-$Repo = "mingd-153/MegaGate"
+$Repo = "mingd-153/MagiCore"
 
 Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║     MegaGate Installer for Windows                          ║" -ForegroundColor Cyan
+Write-Host "║     MagiCore Installer for Windows                          ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
-if ($Package -ne "megagate" -and $Package -ne "megagate-web") {
-    Write-Error "Unsupported package: $Package. Expected 'megagate' or 'megagate-web'."
+if ($Package -ne "magicore" -and $Package -ne "magicore-web") {
+    Write-Error "Unsupported package: $Package. Expected 'magicore' or 'magicore-web'."
     exit 1
 }
 
@@ -55,7 +55,7 @@ $TempDir = [System.IO.Path]::GetTempPath()
 $ZipPath = Join-Path $TempDir $ArchiveName
 $ChecksumPath = Join-Path $TempDir "$ArchiveName.sha256"
 
-Write-Host "Downloading MegaGate ($Tag)..." -ForegroundColor Yellow
+Write-Host "Downloading MagiCore ($Tag)..." -ForegroundColor Yellow
 try {
     Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath -UseBasicParsing
     Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
@@ -82,7 +82,7 @@ if (!(Test-Path $InstallDir)) {
 }
 
 Expand-Archive -Path $ZipPath -DestinationPath $InstallDir -Force
-$ExePath = Join-Path $InstallDir "mg.exe"
+$ExePath = Join-Path $InstallDir "mgc.exe"
 
 # Add to User PATH if not present
 $UserPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
@@ -93,5 +93,5 @@ if ($UserPath -notlike "*$InstallDir*") {
 }
 
 Write-Host ""
-Write-Host "✅ MegaGate installed successfully to: $ExePath" -ForegroundColor Green
-Write-Host "Run 'mg --help' to get started." -ForegroundColor Cyan
+Write-Host "✅ MagiCore installed successfully to: $ExePath" -ForegroundColor Green
+Write-Host "Run 'mgc --help' to get started." -ForegroundColor Cyan

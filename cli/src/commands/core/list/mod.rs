@@ -1,4 +1,4 @@
-//! `mg list` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
+//! `mgc list` — router: core detect → file con (v5: LỆNH = folder, CORE = file).
 
 use anyhow::Result;
 

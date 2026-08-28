@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mg_types::Ecosystem;
+use mgc_types::Ecosystem;
 
 use crate::context::ProjectContext;
 

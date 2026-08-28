@@ -1,0 +1,29 @@
+{
+  "version": "0.3.0",
+  "description": "Universal package manager with multi-core runtime",
+  "homepage": "https://github.com/mingd-153/MagiCore",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/mingd-153/MagiCore/releases/download/v0.3.0/magicore-Windows-X64.zip",
+      "hash": "UPDATE_ME",
+      "bin": "mgc.exe"
+    },
+    "arm64": {
+      "url": "https://github.com/mingd-153/MagiCore/releases/download/v0.3.0/magicore-Windows-ARM64.zip",
+      "hash": "UPDATE_ME",
+      "bin": "mgc.exe"
+    }
+  },
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-Windows-X64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-Windows-ARM64.zip"
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 //! `audit.rs` — Security audits, supply-chain checks, and advisory query execution for WebAdapter.
 
-use mg_types::adapter::{AuditReport, Vulnerability, VulnerabilitySeverity};
-use mg_types::{DependencySpec, MgError, MgResult, PackageId, PackageName, Version, VersionRange};
+use mgc_types::adapter::{AuditReport, Vulnerability, VulnerabilitySeverity};
+use mgc_types::{DependencySpec, MgError, MgResult, PackageId, PackageName, Version, VersionRange};
 use std::path::Path;
 
 use crate::lockfile::{read_web_lockfile_checked, write_web_lockfile_with_state};
@@ -49,7 +49,7 @@ pub fn is_tarball_url_trusted(tarball_url: &str, registry_url: &str) -> bool {
             || tarball_host == "registry.yarnpkg.com";
     }
 
-    if let Ok(allowed) = std::env::var("MEGAGATE_WEB_ALLOWED_TARBALL_HOSTS") {
+    if let Ok(allowed) = std::env::var("MAGICORE_WEB_ALLOWED_TARBALL_HOSTS") {
         let allowed_hosts: Vec<&str> = allowed
             .split(',')
             .map(|s| s.trim())
@@ -100,7 +100,7 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent(format!("megagate/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("magicore/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| MgError::Network(format!("audit client error: {e}")))?;
 
@@ -186,8 +186,8 @@ pub async fn run_audit_fix<F, Fut>(
     resolve_fn: F,
 ) -> MgResult<usize>
 where
-    F: FnOnce(mg_types::Manifest) -> Fut,
-    Fut: std::future::Future<Output = MgResult<mg_types::adapter::ResolvedGraph>>,
+    F: FnOnce(mgc_types::Manifest) -> Fut,
+    Fut: std::future::Future<Output = MgResult<mgc_types::adapter::ResolvedGraph>>,
 {
     if vulnerable.is_empty() {
         return Ok(0);

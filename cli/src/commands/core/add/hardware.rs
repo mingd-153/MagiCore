@@ -1,4 +1,4 @@
-//! `mg add-hardware <pkg>` — materialize optimizer/bench vào project. Phase 7 v5.
+//! `mgc add-hardware <pkg>` — materialize optimizer/bench vào project. Phase 7 v5.
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use crate::commands::core::shared::{self, BENCH_PKG, OPTIMIZER_PKG};
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let root =
-        shared::find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mg_project_found(""))?;
+        shared::find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mgc_project_found(""))?;
     Ok(root)
 }
 
@@ -25,27 +25,27 @@ pub async fn add(packages: Vec<String>) -> Result<()> {
         hardware_kind(pkg)?;
         if pkg == OPTIMIZER_PKG {
             // Xác định core hiện tại của project để optimize đúng profile
-            let core = mg_config::project::ProjectConfig::read_core_marker(&root)?
+            let core = mgc_config::project::ProjectConfig::read_core_marker(&root)?
                 .unwrap_or_else(|| "web".to_string());
             crate::commands::optimizer::optimize_project(&root, &core, false)?;
         } else {
-            let spinner = mg_ui::create_spinner(&format!("  Materializing {pkg}..."));
+            let spinner = mgc_ui::create_spinner(&format!("  Materializing {pkg}..."));
             shared::materialize_template(&root, pkg).await?;
             spinner.finish_and_clear();
-            mg_ui::success(&format!("{pkg} scaffolded at ./{pkg}"));
+            mgc_ui::success(&format!("{pkg} scaffolded at ./{pkg}"));
         }
     }
     let has_materialized_pkg = packages.iter().any(|pkg| pkg != OPTIMIZER_PKG);
     if has_materialized_pkg {
         if let Ok(adapter) =
-            crate::factory::create_adapter(&mg_types::Ecosystem::Hardware, None, None)
+            crate::factory::create_adapter(&mgc_types::Ecosystem::Hardware, None, None)
         {
             shared::install_with_adapter(
                 &*adapter,
                 &root,
-                "mg add-hardware",
+                "mgc add-hardware",
                 false,
-                mg_types::adapter::InstallOptions::default(),
+                mgc_types::adapter::InstallOptions::default(),
             )
             .await?;
         }

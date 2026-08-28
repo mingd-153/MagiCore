@@ -1,4 +1,4 @@
-//! Tests for T9 — OS-aware simulator selector (`mg dev app`).
+//! Tests for T9 — OS-aware simulator selector (`mgc dev app`).
 
 #[cfg(target_os = "macos")]
 use super::find_ios_simulator;

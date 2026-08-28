@@ -1,16 +1,16 @@
 use anyhow::Result;
-use mg_ui::info;
+use mgc_ui::info;
 use serde::Serialize;
 
 use crate::commands::web_registry_config::{search_endpoint, web_registry_url};
 
-/// mg search <query> [--core <core>] — search packages across all 8 MegaGate cores.
+/// mgc search <query> [--core <core>] — search packages across all 8 MagiCore cores.
 /// Groups results by Core & Language when no --core flag is provided.
 /// Accepts an optional `core_filter` to narrow results to a specific ecosystem.
 pub async fn run(query: String, json: bool, exact: bool, page: Option<u32>) -> Result<()> {
     // NOTE: `core_filter` is read from CLI global flag `--core` and passed here via context.
     // For now we read it from the environment to keep the signature backward-compatible.
-    let core_filter = std::env::var("MG_CORE_FILTER").ok();
+    let core_filter = std::env::var("MGC_CORE_FILTER").ok();
     run_with_core(query, json, exact, page, core_filter.as_deref()).await
 }
 
@@ -88,7 +88,7 @@ pub async fn run_with_core(
             .map(|f| format!(" [filter: --core {}]", f))
             .unwrap_or_default()
     ));
-    mg_ui::blank_line();
+    mgc_ui::blank_line();
 
     for r in &results {
         info(&format!("  {} {}@{}", r.core_label, r.name, r.version));
@@ -109,7 +109,7 @@ pub async fn run_with_core(
     Ok(())
 }
 
-/// Detect which MegaGate Core a package belongs to based on name/description heuristics.
+/// Detect which MagiCore Core a package belongs to based on name/description heuristics.
 fn detect_core_label(name: &str, desc: &str) -> String {
     let combined = format!("{} {}", name, desc).to_lowercase();
 

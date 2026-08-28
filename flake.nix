@@ -1,6 +1,6 @@
 # Nix flake for hermetic development environment
 {
-  description = "MegaGate development environment";
+  description = "MagiCore development environment";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -24,7 +24,7 @@
         };
       in {
         devShells.default = pkgs.mkShell {
-          name = "megagate-dev";
+          name = "magicore-dev";
           buildInputs = with pkgs; [
             rust-toolchain
             cargo
@@ -38,7 +38,7 @@
           SHELL_HOOK = ''
             export RUSTUP_TOOLCHAIN=stable
             export BAZEL_VERSION=7.4.0
-            echo "MegaGate development environment ready!"
+            echo "MagiCore development environment ready!"
             echo "Available commands:"
             echo "  cargo check --workspace"
             echo "  cargo test --workspace"
@@ -48,7 +48,7 @@
         };
 
         packages.default = pkgs.stdenv.mkDerivation {
-          name = "megagate";
+          name = "magicore";
           src = self;
           nativeBuildInputs = with pkgs; [
             cargo
@@ -56,11 +56,11 @@
             rust-toolchain
           ];
           buildPhase = ''
-            bazel build //crates/megagate-cli:megagate
+            bazel build //crates/magicore-cli:magicore
           '';
           installPhase = ''
             mkdir -p $out/bin
-            cp bazel-bin/crates/megagate-cli/megagate $out/bin/
+            cp bazel-bin/crates/magicore-cli/magicore $out/bin/
           '';
         };
       });

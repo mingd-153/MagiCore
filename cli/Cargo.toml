@@ -1,45 +1,48 @@
 [package]
-name = "mg"
+name = "mgc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "MegaGate - Universal Package Manager CLI"
+description = "MagiCore - Universal Package Manager CLI"
 
 [[bin]]
-name = "mg"
+name = "mgc"
 path = "src/main.rs"
 
 [dependencies]
 # Core crates
-mg-types = { workspace = true }
-mg-adapter-base = { workspace = true }
-mg-config = { workspace = true }
-mg-resolver = { workspace = true }
-mg-store = { workspace = true }
-mg-lockfile = { workspace = true }
-mg-fetcher = { workspace = true }
-mg-http = { workspace = true }
-mg-ui = { workspace = true }
-mg-pack = { workspace = true }
-mg-publish = { workspace = true }
-mg-registry-server = { workspace = true }
-mg-oci = { workspace = true }
-mg-exec = { workspace = true }
-mg-plugin = { workspace = true }
-mg-workspace = { workspace = true }
+mgc-types = { workspace = true }
+mgc-adapter-base = { workspace = true }
+mgc-config = { workspace = true }
+mgc-resolver = { workspace = true }
+mgc-store = { workspace = true }
+mgc-lockfile = { workspace = true }
+mgc-sbom = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-cache = { workspace = true }
+mgc-fetcher = { workspace = true }
+mgc-http = { workspace = true }
+mgc-ui = { workspace = true }
+mgc-pack = { workspace = true }
+mgc-publish = { workspace = true }
+mgc-registry-server = { workspace = true }
+mgc-oci = { workspace = true }
+mgc-exec = { workspace = true }
+mgc-plugin = { workspace = true }
+mgc-workspace = { workspace = true }
 
 # Adapters (optional — per-core feature flags)
-mg-web-adapter = { path = "../adapters/web", optional = true }
-mg-lib-adapter = { path = "../adapters/lib", optional = true }
-mg-game-adapter = { path = "../adapters/game", optional = true }
-mg-iot-adapter = { path = "../adapters/iot", optional = true }
-mg-cloud-adapter = { path = "../adapters/cloud", optional = true }
-mg-app-adapter = { path = "../adapters/app", optional = true }
-mg-cicd-adapter = { path = "../adapters/cicd", optional = true }
-mg-ai-adapter = { path = "../adapters/ai", optional = true }
-mg-hardware-adapter = { path = "../adapters/hardware", optional = true }
+mgc-web-adapter = { path = "../adapters/web", optional = true }
+mgc-lib-adapter = { path = "../adapters/lib", optional = true }
+mgc-game-adapter = { path = "../adapters/game", optional = true }
+mgc-iot-adapter = { path = "../adapters/iot", optional = true }
+mgc-cloud-adapter = { path = "../adapters/cloud", optional = true }
+mgc-app-adapter = { path = "../adapters/app", optional = true }
+mgc-cicd-adapter = { path = "../adapters/cicd", optional = true }
+mgc-ai-adapter = { path = "../adapters/ai", optional = true }
+mgc-hardware-adapter = { path = "../adapters/hardware", optional = true }
 
 # CLI
 clap = { workspace = true }
@@ -78,6 +81,7 @@ lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
 futures-util = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }
+chrono = { workspace = true }
 
 # Import rewriting + hashing
 regex = { workspace = true }
@@ -99,15 +103,15 @@ tracing-subscriber = { workspace = true }
 [features]
 default = ["all"]
 all      = ["web", "game", "ai", "clo", "cicd", "iot", "app", "lib", "hardware"]
-web      = ["mg-web-adapter"]
-game     = ["mg-game-adapter"]
-ai       = ["mg-ai-adapter"]
-clo      = ["mg-cloud-adapter"]
-cicd     = ["mg-cicd-adapter"]
-iot      = ["mg-iot-adapter"]
-app      = ["mg-app-adapter"]
-lib      = ["mg-lib-adapter"]
-hardware = ["mg-hardware-adapter"]
+web      = ["mgc-web-adapter"]
+game     = ["mgc-game-adapter"]
+ai       = ["mgc-ai-adapter"]
+clo      = ["mgc-cloud-adapter"]
+cicd     = ["mgc-cicd-adapter"]
+iot      = ["mgc-iot-adapter"]
+app      = ["mgc-app-adapter"]
+lib      = ["mgc-lib-adapter"]
+hardware = ["mgc-hardware-adapter"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

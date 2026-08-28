@@ -1,0 +1,22 @@
+[package]
+name = "mgc-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Black-box end-to-end tests driving real mgc/mgc-registry binaries"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tempfile.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

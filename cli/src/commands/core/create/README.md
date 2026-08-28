@@ -1,6 +1,6 @@
 # `cli/src/commands/core/create` — Scaffolding Delegation Engine
 
-Module điều phối lệnh khởi tạo dự án (`mg create` và `mg create-<core>`) cho toàn bộ 9 hệ sinh thái của MegaGate.
+Module điều phối lệnh khởi tạo dự án (`mgc create` và `mgc create-<core>`) cho toàn bộ 9 hệ sinh thái của MagiCore.
 
 ---
 
@@ -31,91 +31,91 @@ create/
 ### 1. 🌐 Web Core (FE, BE Đa Ngôn Ngữ & Fullstack)
 ```bash
 # Frontend (React, Vue, Svelte, Astro qua Vite/Astro)
-mg create-web vite my-react-app -- --template react-ts
-mg create-web astro my-astro-blog
+mgc create-web vite my-react-app -- --template react-ts
+mgc create-web astro my-astro-blog
 
 # Backend Đa Ngôn Ngữ:
-mg create-web spring-boot my-java-api      # Java (Spring Boot)
-mg create-web django my-django-api         # Python (Django)
-mg create-web fastapi my-fastapi-api       # Python (FastAPI)
-mg create-web dotnet my-dotnet-api         # C# (.NET WebAPI)
-mg create-web gin my-go-api                # Go (Gin)
-mg create-web actix my-rust-api            # Rust (Actix-web)
-mg create-web nestjs my-nest-api           # Node/TS (NestJS)
+mgc create-web spring-boot my-java-api      # Java (Spring Boot)
+mgc create-web django my-django-api         # Python (Django)
+mgc create-web fastapi my-fastapi-api       # Python (FastAPI)
+mgc create-web dotnet my-dotnet-api         # C# (.NET WebAPI)
+mgc create-web gin my-go-api                # Go (Gin)
+mgc create-web actix my-rust-api            # Rust (Actix-web)
+mgc create-web nestjs my-nest-api           # Node/TS (NestJS)
 
 # Fullstack:
-mg create-web nextjs@latest my-next-app --ts --tailwind
-mg create-web nuxt my-nuxt-app
+mgc create-web nextjs@latest my-next-app --ts --tailwind
+mgc create-web nuxt my-nuxt-app
 ```
 
 ### 2. 📱 App Core (Mobile, Desktop, Backend)
 ```bash
 # Mobile Client (Flutter, React Native, Native Kotlin/Swift)
-mg create-app flutter my_flutter_app --org com.megagate
-mg create-app react-native my_rn_app
-mg create-app kotlin my_android_app
-mg create-app swift my_ios_app
+mgc create-app flutter my_flutter_app --org com.magicore
+mgc create-app react-native my_rn_app
+mgc create-app kotlin my_android_app
+mgc create-app swift my_ios_app
 
 # Desktop / Cross-Platform GUI
-mg create-app tauri my_tauri_desktop
-mg create-app maui my_dotnet_maui_app
+mgc create-app tauri my_tauri_desktop
+mgc create-app maui my_dotnet_maui_app
 
 # App Backend Services
-mg create-app spring-boot my_app_backend
-mg create-app ktor my_ktor_backend
-mg create-app go-grpc my_grpc_backend
+mgc create-app spring-boot my_app_backend
+mgc create-app ktor my_ktor_backend
+mgc create-app go-grpc my_grpc_backend
 ```
 
 ### 3. 🤖 AI Core (Agent & Model Context Protocol)
 ```bash
-mg create-ai mcp-server my-mcp-server
-mg create-ai python-agent my-agent
-mg create-ai langchain-app my-ai-app
+mgc create-ai mcp-server my-mcp-server
+mgc create-ai python-agent my-agent
+mgc create-ai langchain-app my-ai-app
 ```
 
 ### 4. 🎮 Game Core (Bevy, Godot, Unity, Unreal)
 ```bash
-mg create-game bevy my-bevy-game --2d       # Rust (Bevy)
-mg create-game godot my-godot-game          # Godot Engine
-mg create-game unity my-unity-game          # Unity (C#)
-mg create-game unreal my-unreal-game        # Unreal (C++)
+mgc create-game bevy my-bevy-game --2d       # Rust (Bevy)
+mgc create-game godot my-godot-game          # Godot Engine
+mgc create-game unity my-unity-game          # Unity (C#)
+mgc create-game unreal my-unreal-game        # Unreal (C++)
 ```
 
 ### 5. ☁️ Cloud Core (IaC & Cloud Backends)
 ```bash
-mg create-clo cdk my-cdk-infra --language typescript
-mg create-clo pulumi my-pulumi-infra --template aws-typescript
-mg create-clo terraform my-tf-infra
-mg create-clo gin-go my-cloud-microservice
-mg create-clo cloudflare my-worker
+mgc create-clo cdk my-cdk-infra --language typescript
+mgc create-clo pulumi my-pulumi-infra --template aws-typescript
+mgc create-clo terraform my-tf-infra
+mgc create-clo gin-go my-cloud-microservice
+mgc create-clo cloudflare my-worker
 ```
 
 ### 6. 🔌 IoT / Embedded Core (Rust, PlatformIO, Zephyr)
 ```bash
-mg create-iot esp32 my-esp-device --board esp32c3
-mg create-iot platformio my-arduino-node --board uno
-mg create-iot zephyr my-arm-firmware
+mgc create-iot esp32 my-esp-device --board esp32c3
+mgc create-iot platformio my-arduino-node --board uno
+mgc create-iot zephyr my-arm-firmware
 ```
 
 ### 7. 🔄 CI/CD Core
 ```bash
-mg create-cicd github-actions
-mg create-cicd argocd
+mgc create-cicd github-actions
+mgc create-cicd argocd
 ```
 
 ### 8. 📚 Lib Core (Thư Viện Đa Ngôn Ngữ)
 ```bash
-mg create-lib ts my-typescript-lib
-mg create-lib rust my-rust-crate
-mg create-lib python my-python-package
-mg create-lib go my-go-module
-mg create-lib java my-java-library
-mg create-lib dotnet my-dotnet-classlib
+mgc create-lib ts my-typescript-lib
+mgc create-lib rust my-rust-crate
+mgc create-lib python my-python-package
+mgc create-lib go my-go-module
+mgc create-lib java my-java-library
+mgc create-lib dotnet my-dotnet-classlib
 ```
 
 ### 9. ⚙️ Hardware Core
 ```bash
-mg create-hardware bench-profile my-hw-profile
+mgc create-hardware bench-profile my-hw-profile
 ```
 
 ---
@@ -124,9 +124,9 @@ mg create-hardware bench-profile my-hw-profile
 
 Chạy test riêng cho module create:
 ```bash
-cargo test -p mg --bin mg commands::core::create
+cargo test -p mgc --bin mgc commands::core::create
 ```
 Chạy toàn bộ test CLI:
 ```bash
-cargo test -p mg
+cargo test -p mgc
 ```

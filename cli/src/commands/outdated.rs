@@ -7,9 +7,9 @@ use crate::commands::web_registry_config::web_registry_url;
 #[cfg(feature = "web")]
 use crate::context::ProjectContext;
 #[cfg(feature = "web")]
-use mg_ui::{info, success};
+use mgc_ui::{info, success};
 
-/// mg outdated — check for outdated packages
+/// mgc outdated — check for outdated packages
 pub async fn run(core: Option<&str>, json: bool) -> Result<()> {
     outdated_web(core, json).await
 }
@@ -45,7 +45,7 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
             ));
         }
 
-        let registry = mg_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
+        let registry = mgc_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
 
         let mut outdated_pkgs: Vec<OutdatedPkg> = Vec::new();
 
@@ -53,7 +53,7 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
             if let Ok(meta) = registry.fetch_metadata(dep.name.as_str()).await {
                 let latest = meta.dist_tags.get("latest");
                 if let Some(latest_ver) = latest {
-                    if let Ok(lv) = mg_types::Version::parse(latest_ver) {
+                    if let Ok(lv) = mgc_types::Version::parse(latest_ver) {
                         if !dep.range.matches(&lv) {
                             outdated_pkgs.push(OutdatedPkg {
                                 name: dep.name.to_string(),
@@ -85,7 +85,7 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
                 ));
             }
             info(&format!(
-                "{} package(s) outdated. Run 'mg update' to update.",
+                "{} package(s) outdated. Run 'mgc update' to update.",
                 outdated_pkgs.len(),
             ));
         }
