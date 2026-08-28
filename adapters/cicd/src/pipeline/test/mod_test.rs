@@ -4,13 +4,11 @@
 
 use super::*;
 
-    use super::*;
-    use tempfile::TempDir;
+use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_generate_pipeline() {
-        let tmp = TempDir::new().unwrap();
-        generate_pipeline("test", tmp.path()).await.unwrap();
-        assert!(tmp.path().join(".github/workflows/ci.yml").exists());
-    }
+#[tokio::test]
+async fn test_generate_pipeline() {
+    let tmp = TempDir::new().unwrap();
+    generate_pipeline("test", tmp.path()).await.unwrap();
+    assert!(tmp.path().join(".github/workflows/ci.yml").exists());
 }

@@ -71,5 +71,5 @@ pub async fn add_dependency(
 
 
 #[cfg(test)]
-#[path = "../test/bevy_test.rs"]
+#[path = "test/bevy_test.rs"]
 mod tests;

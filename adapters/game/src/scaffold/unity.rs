@@ -67,5 +67,5 @@ architecture = "native-first"
 
 
 #[cfg(test)]
-#[path = "../test/unity_test.rs"]
+#[path = "test/unity_test.rs"]
 mod tests;

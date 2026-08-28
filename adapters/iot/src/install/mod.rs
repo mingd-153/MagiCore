@@ -51,5 +51,5 @@ async fn install_zephyr(project_root: &Path) -> MgResult<Vec<String>> {
 
 
 #[cfg(test)]
-#[path = "../test/mod_test.rs"]
+#[path = "test/mod_test.rs"]
 mod tests;

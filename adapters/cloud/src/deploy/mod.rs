@@ -63,5 +63,5 @@ pub async fn deploy(framework: CloudType, root: &Path, dry_run: bool) -> MgResul
 
 
 #[cfg(test)]
-#[path = "../test/mod_test.rs"]
+#[path = "test/mod_test.rs"]
 mod tests;

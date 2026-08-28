@@ -4,15 +4,13 @@
 
 use super::*;
 
-    use super::*;
-    use tempfile::TempDir;
+use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_scaffold_cdk() {
-        let tmp = TempDir::new().unwrap();
-        scaffold_project(CloudType::Cdk, "test", tmp.path())
-            .await
-            .unwrap();
-        assert!(tmp.path().join("package.json").exists());
-    }
+#[tokio::test]
+async fn test_scaffold_cdk() {
+    let tmp = TempDir::new().unwrap();
+    scaffold_project(CloudType::Cdk, "test", tmp.path())
+        .await
+        .unwrap();
+    assert!(tmp.path().join("package.json").exists());
 }

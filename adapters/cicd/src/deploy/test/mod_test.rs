@@ -4,11 +4,8 @@
 
 use super::*;
 
-    use super::*;
-
-    #[tokio::test]
-    async fn test_deploy_dry_run() {
-        let result = deploy(DeployTarget::Aws, true).await.unwrap();
-        assert!(result.contains("dry_run: true"));
-    }
+#[tokio::test]
+async fn test_deploy_dry_run() {
+    let result = deploy(DeployTarget::Aws, true).await.unwrap();
+    assert!(result.contains("dry_run: true"));
 }

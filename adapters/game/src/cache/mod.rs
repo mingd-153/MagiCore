@@ -81,5 +81,5 @@ pub fn remove_cached_binary(engine: GameEngine, version: &str) -> MgResult<()> {
 
 
 #[cfg(test)]
-#[path = "../test/mod_test.rs"]
+#[path = "test/mod_test.rs"]
 mod tests;

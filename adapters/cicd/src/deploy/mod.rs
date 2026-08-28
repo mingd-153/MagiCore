@@ -47,5 +47,5 @@ pub async fn deploy(target: DeployTarget, dry_run: bool) -> MgResult<String> {
 
 
 #[cfg(test)]
-#[path = "../test/mod_test.rs"]
+#[path = "test/mod_test.rs"]
 mod tests;

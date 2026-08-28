@@ -65,5 +65,5 @@ async fn scaffold_zephyr(name: &str, board: &str, dir: &Path) -> MgResult<()> {
 
 
 #[cfg(test)]
-#[path = "../test/mod_test.rs"]
+#[path = "test/mod_test.rs"]
 mod tests;

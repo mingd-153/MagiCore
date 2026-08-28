@@ -71,5 +71,5 @@ async fn start_unreal_dev(_project_root: &Path) -> MgResult<DevCommand> {
 
 
 #[cfg(test)]
-#[path = "../test/mod_test.rs"]
+#[path = "test/mod_test.rs"]
 mod tests;
