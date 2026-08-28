@@ -107,7 +107,7 @@ bun:      Latest stable (system installed)
 ### Rationale
 
 **Why 20 packages?**
-- Industry standard benchmark size
+- Fixed beta workload selected for repeatability
 - Represents typical React/Next.js project
 - Complex enough to show performance differences
 - Not so large that runs take hours
@@ -293,7 +293,7 @@ print(f"CV: {(stdev(cold_times)/mean(cold_times))*100:.1f}%")
 **Speedup factor**:
 ```
 speedup = pnpm_cold_mean / mgc_cold_mean
-# Example: 120.04s / 2.63s = 45.7x
+# Beta dataset inputs: 120.04s / 2.63s; do not publish an absolute multiplier
 ```
 
 **Percentage faster**:
@@ -320,7 +320,7 @@ pct_faster = ((pnpm_time - mgc_time) / pnpm_time) × 100
 > "mgc cold install competitive on test workload (2.6s vs 120s pnpm, 5 runs, macOS M2, 20-package Next.js manifest, beta data)"
 
 **Bad claim**:
-> "mgc is 1000x faster than npm!" (no data, cherry-picked scenario, misleading)
+> "mgc is dramatically faster than npm!" (no data, cherry-picked scenario, misleading)
 
 ### Disclosure Requirements
 
@@ -352,7 +352,7 @@ Every performance claim must include:
 
 ### Known Issues
 1. **vitest crash**: P0 issue, workaround with jest
-2. **pnpm variance**: High CV (60%) - registry/network flakiness?
+2. **pnpm variance**: High CV (60%) in this dataset; cause not established
 3. **mgc warm cache**: Only 23% speedup (expected 30-50%)
 
 ---
@@ -401,4 +401,3 @@ To reproduce these benchmarks:
 Questions about methodology? Issues reproducing?
 - Open issue: https://github.com/your-org/magicore/issues
 - Tag: `benchmark` + `methodology`
-

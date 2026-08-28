@@ -44,6 +44,8 @@ jobs:
           ruby -c packaging/homebrew/magicore-web.rb
           python3 -m json.tool packaging/scoop/magicore.json >/dev/null
           python3 -m json.tool packaging/scoop/magicore-web.json >/dev/null
+      - name: benchmark provenance
+        run: python3 benchmark/scripts/verify_benchmark_provenance.py
       - name: internal specs stay ignored
         run: |
           git check-ignore -q docs/specs/magiCoreChangeLog.md

@@ -123,15 +123,15 @@ mgc sbom --format cyclonedx-json --output sbom.json
 
 | Metric | mgc | pnpm | Notes |
 |--------|-----|------|-------|
-| **Cold Install** | 2.6s | 104s | Single dev workload, 5 runs |
-| **Warm Install** | 2.0s | 1.8s | pnpm 1.1x faster (hardlink) |
-| **Disk Usage** | 462MB | 380MB | +22% CAS overhead |
+| **Cold Install** | 2.6s | 120s | Single dev workload, 5 runs |
+| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster (hardlink) |
+| **Disk Usage** | 462MB | 360MB | +28% CAS overhead |
 
 **Key Findings:**
-- ✅ **Cold install competitive** on test workload (2.6s vs 104s pnpm)
+- ✅ **Cold install competitive** on test workload (2.6s vs 120s pnpm)
 - ✅ **Sub-3-second installs**: Consistent on tested manifest
-- ⚠️ **Warm cache**: pnpm slight edge (1.1x) due to hardlink efficiency
-- ✅ **Consistency**: Low variance (25% CV vs pnpm 68%)
+- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
+- ✅ **Consistency**: Lower variance in this dataset (25% CV vs pnpm 60%)
 
 **Beta Caveats:**
 - ⚠️ macOS-only data (Linux/Windows validation pending)

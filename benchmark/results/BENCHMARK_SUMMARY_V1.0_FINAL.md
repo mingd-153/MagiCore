@@ -11,17 +11,17 @@
 
 **Cold Install (Clean Cache)**:
 - **mgc**: 2.63s ± 0.67s
-- **pnpm**: 103.73s ± 70.66s
-- **Result**: mgc competitive on test workload (2.63s vs 104s)
+- **pnpm**: 120.04s ± 72.04s
+- **Result**: mgc competitive on test workload (2.63s vs 120s)
 
 **Warm Install (Cache Hit)**:
 - **mgc**: 2.01s ± 0.04s
-- **pnpm**: 1.82s ± 0.32s
-- **Result**: pnpm slightly faster (1.1x advantage)
+- **pnpm**: 1.69s ± 0.11s
+- **Result**: pnpm slightly faster (1.2x advantage)
 
 **Disk Usage**:
 - **mgc**: 462MB (CAS deduplication working)
-- **pnpm**: ~380MB (hardlink store)
+- **pnpm**: 360MB (hardlink store)
 
 **Caveat**: Single dev workload, macOS only, 20 packages. Cross-platform validation pending.
 
@@ -50,10 +50,10 @@
 | 2   | 69.68    | 1.57     |
 | 3   | 89.17    | 1.64     |
 | 4   | 231.89   | 1.71     |
-| 5   | 69.51    | 2.35     |
-| **Mean** | **103.73** | **1.82** |
-| **Std Dev** | **70.66** | **0.32** |
-| **CV** | **68%** | **18%** |
+| 5   | 151.05    | 1.66     |
+| **Mean** | **120.04** | **1.69** |
+| **Std Dev** | **72.04** | **0.11** |
+| **CV** | **60%** | **6%** |
 
 ---
 
@@ -62,7 +62,7 @@
 ### ✅ CAN CLAIM (with caveats)
 
 1. **"mgc cold install competitive on test workload"**
-   - Measured: 2.63s vs 120s pnpm average (5 runs each)
+   - Measured: 2.63s vs 120.04s pnpm average (5 runs each)
    - Caveat: Single dev workload, macOS only, 20 packages
 
 2. **"Sub-3-second installs with mgc"**
@@ -73,14 +73,14 @@
    - Measured: Full dependency tree resolved (~235 packages total)
    - Caveat: No crashes on tested config
 
-4. **"Competitive disk usage"**
-   - Measured: 462MB vs pnpm 380MB (+22% overhead)
+4. **"Measured disk usage on the test workload"**
+   - Measured: 462MB vs pnpm 360MB (+28% overhead)
    - CAS deduplication working as designed
 
 ### ⚠️ MUST CAVEAT
 
 1. **"pnpm faster on warm installs"**
-   - pnpm: 1.82s vs mgc: 2.01s (1.1x advantage)
+   - pnpm: 1.69s vs mgc: 2.01s (1.2x advantage)
    - Reason: pnpm hardlink store more efficient than mgc's CAS fetch
 
 2. **"High variance in pnpm cold installs"**
@@ -96,7 +96,7 @@
 ## Comparison with Previous Claims
 
 ### OLD (V1.0-alpha, invalidated)
-- ❌ "39x faster" - Used 19 vs 20 packages (apples-to-oranges)
+- ❌ Previous absolute multiplier claim - Used 19 vs 20 packages (apples-to-oranges)
 - ❌ "30% cache speedup" - Actually 2-10% (resolver bottleneck)
 
 ### NEW (V1.0-beta, preliminary)
@@ -113,8 +113,8 @@
 3. **Works with complex manifests**: Next.js wildcard ranges (>=22.x <=24.x)
 
 ### Where mgc Needs Work
-1. **Warm install**: pnpm 1.1x faster (hardlinks vs CAS fetch)
-2. **Disk overhead**: +22% vs pnpm (CAS metadata)
+1. **Warm install**: pnpm 1.2x faster (hardlinks vs CAS fetch)
+2. **Disk overhead**: +28% vs pnpm in this dataset (CAS metadata)
 3. **Cache speedup**: 23% vs expected 30-50%
 
 ### Known Issues
@@ -127,9 +127,9 @@
 ## Methodology Notes
 
 ### Why 20 Packages?
-- Industry standard benchmark size
-- Represents typical React/Next.js starter
-- Complex enough to show PM performance differences
+- Fixed development workload selected for repeatability
+- Represents the tested React/Next.js starter scenario
+- Complex enough to exercise dependency resolution in this beta dataset
 
 ### Why Jest Instead of vitest?
 - vitest causes P0 crash in mgc v1.0
@@ -137,7 +137,7 @@
 - All PMs support jest without issues
 
 ### Statistical Rigor
-- 5 runs per PM (industry standard)
+- 5 runs per PM in this preliminary dataset
 - Fresh cache clean between cold runs
 - Sleep 1-2s between phases (disk settle)
 - Mean + StdDev + CV reported
@@ -162,7 +162,7 @@ benchmark/results/phased/pnpm_run*.json
 ## Conclusions (Beta Scope)
 
 1. **Cold Install**: mgc competitive on test workload (2.6s vs 120s pnpm)
-2. **Warm Install**: pnpm has slight edge (1.1x), acceptable tradeoff
+2. **Warm Install**: pnpm has slight edge (1.2x), acceptable tradeoff
 3. **Beta Ready**: YES for web testing (no vitest, single platform validated)
 4. **Honest Claims**: Limited to tested configuration, cross-platform TBD
 

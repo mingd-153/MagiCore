@@ -33,7 +33,7 @@
         "jest": "^29.7.0"
     },
     "_notes": {
-        "why_20_packages": "Industry standard benchmark size - enough complexity to show PM performance differences without being unwieldy",
+        "why_20_packages": "Fixed beta workload selected for repeatability and dependency-resolution coverage",
         "why_not_vitest": "mgc v1.0 has known P0 issue with vitest causing illegal hardware instruction crash. Replaced with Jest (similar functionality, stable).",
         "why_jest": "Jest is most popular JS test framework (40M+ weekly downloads), widely supported by all package managers, no known compatibility issues.",
         "package_count": "10 dependencies + 10 devDependencies = 20 direct packages (plus ~200-250 transitive dependencies)",
