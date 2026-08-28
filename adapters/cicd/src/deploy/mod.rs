@@ -45,13 +45,7 @@ pub async fn deploy(target: DeployTarget, dry_run: bool) -> MgResult<String> {
     Ok(format!("{} (deployed)", summary))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[tokio::test]
-    async fn test_deploy_dry_run() {
-        let result = deploy(DeployTarget::Aws, true).await.unwrap();
-        assert!(result.contains("dry_run: true"));
-    }
-}
+#[cfg(test)]
+#[path = "../test/mod_test.rs"]
+mod tests;

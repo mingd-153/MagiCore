@@ -61,18 +61,7 @@ pub async fn deploy(framework: CloudType, root: &Path, dry_run: bool) -> MgResul
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_deploy_dry_run() {
-        let tmp = TempDir::new().unwrap();
-        let result = deploy(CloudType::Terraform, tmp.path(), true)
-            .await
-            .unwrap();
-        assert!(result.dry_run);
-        assert_eq!(result.duration_ms, 0);
-    }
-}
+#[cfg(test)]
+#[path = "../test/mod_test.rs"]
+mod tests;
