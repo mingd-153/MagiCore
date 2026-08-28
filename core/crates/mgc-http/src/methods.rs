@@ -156,13 +156,5 @@ impl Default for HttpClient {
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used)]
-    use super::*;
-
-    #[test]
-    fn http_client_default_works() {
-        let client = HttpClient::new().unwrap();
-        assert!(client.retry.delay(0).as_secs() >= 1);
-    }
-}
+#[path = "test/methods_test.rs"]
+mod tests;
