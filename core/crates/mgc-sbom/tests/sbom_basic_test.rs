@@ -42,3 +42,86 @@ fn test_sbom_generator_can_be_created() {
     let _generator = SbomGenerator::new(options);
     // Generator created successfully
 }
+
+#[test]
+fn test_sbom_generate_from_lockfile() {
+    use mgc_lockfile::{Lockfile, Package};
+
+    let mut lockfile = Lockfile::new();
+    lockfile.packages = vec![
+        Package {
+            name: "lodash".to_string(),
+            version: "4.17.21".to_string(),
+            resolved: "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz".to_string(),
+            integrity: "blake3:abc123".to_string(),
+            dependencies: vec![],
+        },
+        Package {
+            name: "axios".to_string(),
+            version: "1.0.0".to_string(),
+            resolved: "https://registry.npmjs.org/axios/-/axios-1.0.0.tgz".to_string(),
+            integrity: "blake3:def456".to_string(),
+            dependencies: vec!["lodash@4.17.21".to_string()],
+        },
+    ];
+
+    let generator = SbomGenerator::new(SbomOptions {
+        include_dev: false,
+        include_licenses: false,
+        include_hashes: true,
+        format: SbomFormat::CycloneDx,
+    });
+
+    let bom = generator.generate(&lockfile).unwrap();
+
+    // Verify components
+    assert_eq!(bom.components.len(), 2);
+    assert_eq!(bom.components[0].name, "lodash");
+    assert_eq!(bom.components[1].name, "axios");
+
+    // Verify hashes included
+    assert!(bom.components[0].hashes.is_some());
+    let hash = &bom.components[0].hashes.as_ref().unwrap()[0];
+    assert_eq!(hash.alg, "BLAKE3");
+    assert_eq!(hash.content, "abc123");
+
+    // Verify dependencies graph
+    assert!(bom.dependencies.is_some());
+    let deps = bom.dependencies.as_ref().unwrap();
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].dependency_ref, "pkg:axios@1.0.0");
+}
+
+#[test]
+fn test_sbom_generate_json() {
+    use mgc_lockfile::{Lockfile, Package};
+
+    let mut lockfile = Lockfile::new();
+    lockfile.packages = vec![Package {
+        name: "react".to_string(),
+        version: "18.0.0".to_string(),
+        resolved: "https://registry.npmjs.org/react/-/react-18.0.0.tgz".to_string(),
+        integrity: "blake3:xyz789".to_string(),
+        dependencies: vec![],
+    }];
+
+    let generator = SbomGenerator::default();
+    let json = generator.generate_json(&lockfile).unwrap();
+
+    // Verify JSON structure
+    assert!(json.contains("\"bomFormat\": \"CycloneDX\""));
+    assert!(json.contains("\"name\": \"react\""));
+    assert!(json.contains("\"version\": \"18.0.0\""));
+}
+
+#[test]
+fn test_sbom_empty_lockfile() {
+    use mgc_lockfile::Lockfile;
+
+    let lockfile = Lockfile::new();
+    let generator = SbomGenerator::default();
+    let bom = generator.generate(&lockfile).unwrap();
+
+    assert_eq!(bom.components.len(), 0);
+    assert!(bom.dependencies.is_none() || bom.dependencies.as_ref().unwrap().is_empty());
+}
