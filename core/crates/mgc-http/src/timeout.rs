@@ -68,14 +68,5 @@ pub fn apply_timeouts(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn timeout_config_defaults() {
-        let cfg = TimeoutConfig::default();
-        assert_eq!(cfg.connect.as_secs(), 10);
-        assert_eq!(cfg.request.as_secs(), 30);
-        assert_eq!(cfg.upload_chunk.as_secs(), 60);
-    }
-}
+#[path = "test/timeout_test.rs"]
+mod tests;

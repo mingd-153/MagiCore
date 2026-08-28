@@ -185,14 +185,5 @@ impl ChunkedUploader {
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used)]
-    use super::*;
-
-    #[test]
-    fn uploader_creation() {
-        let client = HttpClient::new().unwrap();
-        let uploader = ChunkedUploader::new(client, "http://localhost:4315");
-        assert_eq!(uploader.chunk_size, 10 * 1024 * 1024);
-    }
-}
+#[path = "test/upload_test.rs"]
+mod tests;
