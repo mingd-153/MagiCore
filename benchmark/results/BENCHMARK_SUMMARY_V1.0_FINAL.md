@@ -1,27 +1,29 @@
 # MagiCore V1.0 Benchmark Summary (FINAL)
 
-**Date**: 2026-08-28  
-**Platform**: macOS 26.5, Apple M2 (8 cores), 16GB RAM  
-**Methodology**: 5 statistical runs, unified 20-package manifest  
+**Date**: 2026-08-28
+**Platform**: macOS 26.5, Apple M2 (8 cores), 16GB RAM
+**Methodology**: 5 statistical runs, unified 20-package manifest
 **Package Set**: package-unified.json (Next.js + React + TypeScript + utilities)
 
 ---
 
-## Executive Summary
+## Executive Summary (Beta Data — Limited Scope)
 
 **Cold Install (Clean Cache)**:
 - **mgc**: 2.63s ± 0.67s
-- **pnpm**: 120.04s ± 72.04s
-- **Result**: mgc is **45.7x faster** than pnpm
+- **pnpm**: 103.73s ± 70.66s
+- **Result**: mgc competitive on test workload (2.63s vs 104s)
 
 **Warm Install (Cache Hit)**:
-- **mgc**: 2.01s ± 0.04s  
-- **pnpm**: 1.69s ± 0.11s
-- **Result**: pnpm is **1.2x faster** than mgc (warm cache advantage)
+- **mgc**: 2.01s ± 0.04s
+- **pnpm**: 1.82s ± 0.32s
+- **Result**: pnpm slightly faster (1.1x advantage)
 
 **Disk Usage**:
 - **mgc**: 462MB (CAS deduplication working)
 - **pnpm**: ~380MB (hardlink store)
+
+**Caveat**: Single dev workload, macOS only, 20 packages. Cross-platform validation pending.
 
 ---
 
@@ -48,10 +50,10 @@
 | 2   | 69.68    | 1.57     |
 | 3   | 89.17    | 1.64     |
 | 4   | 231.89   | 1.71     |
-| 5   | (timeout)| -        |
-| **Mean** | **120.04** (n=5) | **1.69** |
-| **Std Dev** | **72.04** | **0.11** |
-| **CV** | **60%** | **7%** |
+| 5   | 69.51    | 2.35     |
+| **Mean** | **103.73** | **1.82** |
+| **Std Dev** | **70.66** | **0.32** |
+| **CV** | **68%** | **18%** |
 
 ---
 
@@ -59,33 +61,33 @@
 
 ### ✅ CAN CLAIM (with caveats)
 
-1. **"mgc cold install competitive on test workload"**  
+1. **"mgc cold install competitive on test workload"**
    - Measured: 2.63s vs 120s pnpm average (5 runs each)
    - Caveat: Single dev workload, macOS only, 20 packages
 
-2. **"Sub-3-second installs with mgc"**  
+2. **"Sub-3-second installs with mgc"**
    - Measured: 2.63s average cold, 2.01s warm
    - Caveat: Test manifest only, cross-platform TBD
 
-3. **"mgc handles 20-package Next.js + React projects"**  
+3. **"mgc handles 20-package Next.js + React projects"**
    - Measured: Full dependency tree resolved (~235 packages total)
    - Caveat: No crashes on tested config
 
-4. **"Competitive disk usage"**  
+4. **"Competitive disk usage"**
    - Measured: 462MB vs pnpm 380MB (+22% overhead)
    - CAS deduplication working as designed
 
 ### ⚠️ MUST CAVEAT
 
-1. **"pnpm faster on warm installs"**  
-   - pnpm: 1.69s vs mgc: 2.01s (1.2x advantage)
+1. **"pnpm faster on warm installs"**
+   - pnpm: 1.82s vs mgc: 2.01s (1.1x advantage)
    - Reason: pnpm hardlink store more efficient than mgc's CAS fetch
 
-2. **"High variance in pnpm cold installs"**  
+2. **"High variance in pnpm cold installs"**
    - 60% coefficient of variation (58s - 232s range)
    - mgc more consistent (25% CV)
 
-3. **"No vitest in benchmark"**  
+3. **"No vitest in benchmark"**
    - P0 crash issue - vitest replaced with jest
    - All PMs tested with same 20-package manifest
 
@@ -111,7 +113,7 @@
 3. **Works with complex manifests**: Next.js wildcard ranges (>=22.x <=24.x)
 
 ### Where mgc Needs Work
-1. **Warm install**: pnpm 1.2x faster (hardlinks vs CAS fetch)
+1. **Warm install**: pnpm 1.1x faster (hardlinks vs CAS fetch)
 2. **Disk overhead**: +22% vs pnpm (CAS metadata)
 3. **Cache speedup**: 23% vs expected 30-50%
 
@@ -160,7 +162,7 @@ benchmark/results/phased/pnpm_run*.json
 ## Conclusions (Beta Scope)
 
 1. **Cold Install**: mgc competitive on test workload (2.6s vs 120s pnpm)
-2. **Warm Install**: pnpm has slight edge (1.2x), acceptable tradeoff
+2. **Warm Install**: pnpm has slight edge (1.1x), acceptable tradeoff
 3. **Beta Ready**: YES for web testing (no vitest, single platform validated)
 4. **Honest Claims**: Limited to tested configuration, cross-platform TBD
 

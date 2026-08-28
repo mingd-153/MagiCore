@@ -12,42 +12,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [1.0.0] - 2026-08-27
 
-### 🎉 Beta Launch - V1.0.0
+### 🚧 Beta Launch - V1.0.0 (Web)
 
-**Performance**: 39x faster than pnpm, sub-2-second installs for React/Next.js projects
+**Status**: Beta-ready for web projects (npm/pnpm replacement). Multi-language cores experimental.
 
 ### Added
-- ✅ **G1 Fix**: Wildcard version range support (`>=X.x <=Y.x` patterns) in `mgc-types/src/package.rs`
-- ✅ **G2 Fix**: Peer dependency caching (30% faster warm installs) in `mgc-resolver/src/solver/mod.rs`
-- ✅ **G3**: Trust system commands fully verified (`mgc trust approve/deny/prune`)
-- ✅ **Statistical benchmarks**: 5-run validation vs pnpm/bun/npm
-- ✅ **Next.js 14.x support**: Handles 235+ package dependency trees
-- ✅ **React 18.x, TypeScript 5.x, Tailwind 3.x**: Full ecosystem support
+- ✅ **SBOM Generation**: `mgc sbom` with CycloneDX/SPDX formats
+- ✅ **Signed Lockfiles**: Ed25519 cryptographic signatures (tamper detection)
+- ✅ **Trust Policy System**: `mgc trust approve/deny/prune` for lifecycle script control
+- ✅ **24-hour Quarantine**: New release safety gate (configurable)
+- ✅ **Next.js/React/TypeScript support**: Tested with 20-package dev manifests
+- ✅ **Cross-PM Migration**: Import npm/pnpm/yarn/bun lockfiles
 
-### Fixed
-- 🔧 Complex version range resolution (wildcard operators now work correctly)
-- 🔧 Peer dependency prefetch optimization (HashMap cache added)
-- 🔧 Build passing: 1m 24s, 159 tests green
+### Performance (Beta — Limited Scope)
+- **Cold install**: 2.63s average on test workload (macOS M2, 20 packages)
+- **Warm install**: 2.01s (pnpm 1.2x faster due to hardlinks)
+- **Disk usage**: 462MB (CAS deduplication)
+- **Caveat**: Single platform, dev workload only. Cross-platform validation deferred to V1.1
 
 ### Known Issues
-- ⚠️ **vitest crash**: Projects with `vitest@^1.0.0` encounter "illegal hardware instruction" (workaround: exclude vitest, fix in V1.1)
-- ⚠️ **Warm install speedup**: Only 2% faster than cold (resolver optimization needed for V1.1)
-- ⚠️ **G5 RULE compliance**: 123 files with inline tests (migration script ready, cleanup deferred to V1.1)
-
-### Performance (Validated)
-- **Cold install**: 1.62s average (median 1.63s, std dev 4.3%)
-- **Warm install**: 1.59s average (2% speedup)
-- **Disk usage**: 380 MB (19-package benchmark → 235 total resolved)
-- **Benchmark vs competitors** (cold install, 19-20 package sets):
-  - mgc: 1.62s
-  - pnpm: 63.6s (39x slower)
-  - bun: 47.4s (29x slower)
-  - npm: 212s (130x slower)
+- ⚠️ **vitest crash**: Projects with `vitest@^1.0.0` encounter "illegal hardware instruction" (workaround: use jest, fix in V1.1)
+- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
+- ⚠️ **Multi-language cores**: ai/app/lib remain experimental, reaching parity in V1.1
 
 ### Documentation
-- Added `MGC_BENCHMARK_FINAL_V1.0.md` (detailed benchmark analysis)
-- Added `RELEASE_NOTES_V1.0.md` (user-facing release notes)
-- Added `V1.0_LAUNCH_POSITIONING.md` (conservative claims documentation)
+- Added beta caveats to README and benchmark docs
+- Downgraded absolute performance claims to scoped measurements
+- RULE §7 compliance: bilingual comments in test code
 - Added `V1.0_CRITICAL_BUG_FOUND.md` (vitest crash root cause analysis)
 
 ---
