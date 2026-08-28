@@ -1,5 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+//! Cache behavior tests — Test hành vi cache
+//! Hermetic tests using tempdir, no real cache access
 
 use mgc_cache::PackageCache;
 use std::fs;
@@ -7,12 +9,14 @@ use std::io::Write;
 use tempfile::TempDir;
 
 fn setup_test_cache() -> (TempDir, PackageCache) {
+    // Create temp cache — Tạo cache tạm thời
     let tmp = tempfile::tempdir().unwrap();
     let cache = PackageCache::with_root(tmp.path().to_path_buf());
     (tmp, cache)
 }
 
 fn create_test_package(dir: &std::path::Path, content: &[u8]) -> std::path::PathBuf {
+    // Create test package file — Tạo file package test
     let pkg_path = dir.join("test.tgz");
     let mut file = fs::File::create(&pkg_path).unwrap();
     file.write_all(content).unwrap();
@@ -23,19 +27,19 @@ fn create_test_package(dir: &std::path::Path, content: &[u8]) -> std::path::Path
 fn test_cache_store_and_retrieve() {
     let (_tmp, cache) = setup_test_cache();
 
-    // Create test package
+    // Create test package — Tạo test package
     let test_dir = tempfile::tempdir().unwrap();
     let content = b"test package content";
     let pkg_file = create_test_package(test_dir.path(), content);
 
-    // Compute integrity
+    // Compute integrity — Tính integrity
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
 
-    // Store package
+    // Store package — Lưu package
     let stored = cache.store_package("lodash@4.17.21", &pkg_file, &integrity);
     assert!(stored.is_ok(), "Failed to store package: {:?}", stored);
 
-    // Retrieve package
+    // Retrieve package — Lấy package
     let retrieved = cache.get_package("lodash@4.17.21", &integrity);
     assert!(
         retrieved.is_ok(),
@@ -43,7 +47,7 @@ fn test_cache_store_and_retrieve() {
         retrieved
     );
 
-    // Verify content
+    // Verify content — Kiểm tra nội dung
     let retrieved_path = retrieved.unwrap();
     let retrieved_content = fs::read(&retrieved_path).unwrap();
     assert_eq!(retrieved_content, content);
@@ -57,12 +61,12 @@ fn test_cache_integrity_mismatch_fails() {
     let pkg_file = create_test_package(test_dir.path(), b"original content");
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
 
-    // Store package
+    // Store package — Lưu package
     cache
         .store_package("axios@1.0.0", &pkg_file, &integrity)
         .unwrap();
 
-    // Try retrieve with wrong integrity
+    // Try retrieve with wrong integrity — Thử lấy với integrity sai
     let wrong_integrity = "blake3:0000000000000000";
     let result = cache.get_package("axios@1.0.0", wrong_integrity);
 
@@ -80,7 +84,7 @@ fn test_cache_store_with_wrong_integrity_fails() {
     let test_dir = tempfile::tempdir().unwrap();
     let pkg_file = create_test_package(test_dir.path(), b"test content");
 
-    // Try store with wrong integrity
+    // Try store with wrong integrity — Thử lưu với integrity sai
     let wrong_integrity = "blake3:wronghash";
     let result = cache.store_package("express@4.0.0", &pkg_file, wrong_integrity);
 
@@ -97,7 +101,7 @@ fn test_cache_has_package() {
 
     assert!(!cache.has_package("nonexistent@1.0.0"));
 
-    // Store package
+    // Store package — Lưu package
     let test_dir = tempfile::tempdir().unwrap();
     let pkg_file = create_test_package(test_dir.path(), b"content");
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
@@ -112,7 +116,7 @@ fn test_cache_has_package() {
 fn test_cache_invalidate_package() {
     let (_tmp, cache) = setup_test_cache();
 
-    // Store package
+    // Store package — Lưu package
     let test_dir = tempfile::tempdir().unwrap();
     let pkg_file = create_test_package(test_dir.path(), b"content");
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
@@ -122,7 +126,7 @@ fn test_cache_invalidate_package() {
 
     assert!(cache.has_package("vue@3.0.0"));
 
-    // Invalidate
+    // Invalidate — Vô hiệu hoá
     cache.invalidate_package("vue@3.0.0").unwrap();
 
     assert!(!cache.has_package("vue@3.0.0"));
@@ -132,7 +136,7 @@ fn test_cache_invalidate_package() {
 fn test_cache_prune() {
     let (_tmp, cache) = setup_test_cache();
 
-    // Store multiple packages
+    // Store multiple packages — Lưu nhiều packages
     let test_dir = tempfile::tempdir().unwrap();
     let pkg_file = create_test_package(test_dir.path(), b"content");
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
@@ -148,10 +152,11 @@ fn test_cache_prune() {
         .unwrap();
 
     // Prune (current impl removes all packages in npm directory)
+    // Dọn dẹp (impl hiện xoá tất cả packages trong npm directory)
     let pruned = cache.prune().unwrap();
     assert!(pruned > 0, "Should prune at least some packages");
 
-    // Verify packages gone
+    // Verify packages gone — Kiểm tra packages đã xoá
     assert!(!cache.has_package("pkg1@1.0.0"));
     assert!(!cache.has_package("pkg2@1.0.0"));
     assert!(!cache.has_package("pkg3@1.0.0"));

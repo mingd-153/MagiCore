@@ -65,11 +65,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Offline mode R1: pass `ResolveOptions { offline }` through `PackageAdapter::resolve`; R4: enforce no-network in offline mode (moved from `cli/src/commands/install.rs.TODO`).
 ---
 
-## [1.0.0] — 2026-08-21 🎉 PRODUCTION RELEASE
+## [1.0.0] — 2026-08-21 🚧 BETA RELEASE (WEB)
 
-### 🎉 Highlights
+### 🚧 Status
 
-**First production-ready release!** MagiCore reaches V1.0.0 with SBOM generation, cryptographically signed lockfiles, and a stable API ready for enterprise deployment.
+**Beta-ready for web projects.** MagiCore V1.0.0 includes SBOM generation, cryptographically signed lockfiles, and trust policies. Web (npm/pnpm replacement) is production-grade; multi-language cores (ai/app/lib) remain experimental. Full core parity targeted for V1.1.
 
 ### Added
 

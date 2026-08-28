@@ -14,11 +14,11 @@
 
 ---
 
-**MagiCore** (`mgc`) is a **fast JavaScript package manager** with **multi-language orchestration** — written in Rust for speed and security.
+**MagiCore** (`mgc`) is a **multi-language package orchestrator** with **web (npm/yarn) as the production-ready core** — written in Rust for speed and security.
 
-**Core strength:** Native npm replacement for web projects (faster install, supply-chain security, signed lockfiles). **Multi-language:** Orchestrates dev workflows for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile.
+**Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 
-> **🎉 Production Release:** `v1.0.0` is now production-ready! Includes SBOM generation, cryptographically signed lockfiles, trust policy management, and 24-hour quarantine for new releases. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.0.1 roadmap.
+> **🚧 Beta Release:** `v1.0.0` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) remain experimental. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.1 roadmap toward full core parity.
 
 ---
 
@@ -119,27 +119,28 @@ mgc sbom --format cyclonedx-json --output sbom.json
 
 ## ⚡ Performance
 
-**Validated benchmarks** (macOS M2, 20-package Next.js + React + TypeScript project):
+**Preliminary benchmarks** (macOS M2, 20-package Next.js + React + TypeScript project):
 
-| Metric | mgc | pnpm | Speedup |
-|--------|-----|------|---------|
-| **Cold Install** | 2.6s | 120s | **45x faster** |
-| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster |
-| **Disk Usage** | 462MB | 380MB | +22% overhead |
+| Metric | mgc | pnpm | Notes |
+|--------|-----|------|-------|
+| **Cold Install** | 2.6s | 120s | Single dev workload, 5 runs |
+| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster (hardlink) |
+| **Disk Usage** | 462MB | 380MB | +22% CAS overhead |
 
 **Key Findings:**
-- ✅ **First-time installs**: mgc is **45x faster** than pnpm (validated, 5 runs)
-- ✅ **Sub-3-second installs**: Consistent performance (2.6s average)
-- ⚠️ **Warm cache**: pnpm has slight edge (1.2x) due to hardlink efficiency
+- ✅ **Cold install competitive** on test workload (2.6s vs 120s pnpm)
+- ✅ **Sub-3-second installs**: Consistent on tested manifest
+- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
 - ✅ **Consistency**: Low variance (25% CV vs pnpm 60%)
 
-**Caveats:**
-- macOS-only data (Linux/Windows TBD)
-- vitest excluded (P0 crash), replaced with jest
+**Beta Caveats:**
+- ⚠️ macOS-only data (Linux/Windows validation pending)
+- ⚠️ Single 20-package manifest (enterprise scale TBD)
+- ⚠️ vitest excluded (P0 crash), replaced with jest
 - Full methodology: [`benchmark/BENCHMARK_METHODOLOGY.md`](benchmark/BENCHMARK_METHODOLOGY.md)
 - Raw data: [`benchmark/results/`](benchmark/results/)
 
-> **Honest claims**: Previous "39x" was invalidated (different package counts). New "45x" is validated with same 20-package manifest for all PMs.
+> **Beta disclaimer**: Performance validated on dev workload only. Cross-platform and large-scale benchmarks deferred to V1.1 with CI automation. Current claims limited to tested configuration.
 
 ---
 mgc doctor

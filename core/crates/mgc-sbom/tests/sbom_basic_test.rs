@@ -1,5 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+//! SBOM generation tests — Test tạo SBOM
+//! Tests SBOM generation from lockfile with behavior validation
 
 use mgc_sbom::{Bom, Component, ComponentType, SbomFormat, SbomGenerator, SbomOptions};
 
@@ -11,6 +13,7 @@ fn test_sbom_format_cyclonedx() {
 
 #[test]
 fn test_component_can_be_created() {
+    // Create component — Tạo component
     let component = Component {
         component_type: ComponentType::Library,
         bom_ref: "pkg:npm/test@1.0.0".to_string(),
@@ -33,6 +36,7 @@ fn test_bom_can_be_created() {
 
 #[test]
 fn test_sbom_generator_can_be_created() {
+    // Create generator with options — Tạo generator với options
     let options = SbomOptions {
         include_dev: false,
         include_licenses: true,
@@ -40,13 +44,14 @@ fn test_sbom_generator_can_be_created() {
         format: SbomFormat::CycloneDx,
     };
     let _generator = SbomGenerator::new(options);
-    // Generator created successfully
+    // Generator created successfully — Generator tạo thành công
 }
 
 #[test]
 fn test_sbom_generate_from_lockfile() {
     use mgc_lockfile::{Lockfile, Package};
 
+    // Create test lockfile — Tạo lockfile test
     let mut lockfile = Lockfile::new();
     lockfile.packages = vec![
         Package {
@@ -72,20 +77,21 @@ fn test_sbom_generate_from_lockfile() {
         format: SbomFormat::CycloneDx,
     });
 
+    // Generate SBOM — Tạo SBOM
     let bom = generator.generate(&lockfile).unwrap();
 
-    // Verify components
+    // Verify components — Kiểm tra components
     assert_eq!(bom.components.len(), 2);
     assert_eq!(bom.components[0].name, "lodash");
     assert_eq!(bom.components[1].name, "axios");
 
-    // Verify hashes included
+    // Verify hashes included — Kiểm tra hashes có được thêm
     assert!(bom.components[0].hashes.is_some());
     let hash = &bom.components[0].hashes.as_ref().unwrap()[0];
     assert_eq!(hash.alg, "BLAKE3");
     assert_eq!(hash.content, "abc123");
 
-    // Verify dependencies graph
+    // Verify dependencies graph — Kiểm tra dependency graph
     assert!(bom.dependencies.is_some());
     let deps = bom.dependencies.as_ref().unwrap();
     assert_eq!(deps.len(), 1);
@@ -96,6 +102,7 @@ fn test_sbom_generate_from_lockfile() {
 fn test_sbom_generate_json() {
     use mgc_lockfile::{Lockfile, Package};
 
+    // Create test lockfile — Tạo lockfile test
     let mut lockfile = Lockfile::new();
     lockfile.packages = vec![Package {
         name: "react".to_string(),
@@ -106,9 +113,10 @@ fn test_sbom_generate_json() {
     }];
 
     let generator = SbomGenerator::default();
+    // Generate JSON — Tạo JSON
     let json = generator.generate_json(&lockfile).unwrap();
 
-    // Verify JSON structure
+    // Verify JSON structure — Kiểm tra cấu trúc JSON
     assert!(json.contains("\"bomFormat\": \"CycloneDX\""));
     assert!(json.contains("\"name\": \"react\""));
     assert!(json.contains("\"version\": \"18.0.0\""));
@@ -118,6 +126,7 @@ fn test_sbom_generate_json() {
 fn test_sbom_empty_lockfile() {
     use mgc_lockfile::Lockfile;
 
+    // Empty lockfile test — Test lockfile rỗng
     let lockfile = Lockfile::new();
     let generator = SbomGenerator::default();
     let bom = generator.generate(&lockfile).unwrap();
