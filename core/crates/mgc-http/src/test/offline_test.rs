@@ -1,7 +1,8 @@
+#![cfg(test)]
 #![allow(clippy::unwrap_used)]
 //! Tests for offline HTTP client functionality
 
-use mgc_http::offline::OfflineClient;
+use super::*;
 use std::time::{Duration, SystemTime};
 
 #[test]

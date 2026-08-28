@@ -121,5 +121,5 @@ impl HybridClient {
 }
 
 #[cfg(test)]
-#[path = "../test/offline_test.rs"]
+#[path = "test/offline_test.rs"]
 mod tests;

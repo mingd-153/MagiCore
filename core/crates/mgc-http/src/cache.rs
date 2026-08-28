@@ -64,29 +64,5 @@ impl Default for HttpCache {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cache_entry_fresh_is_valid() {
-        let entry = CacheEntry {
-            data: vec![1, 2, 3],
-            timestamp: SystemTime::now(),
-            ttl: Duration::from_secs(60),
-        };
-        assert!(entry.is_valid());
-    }
-
-    #[test]
-    fn cache_entry_expired_is_invalid() {
-        let past = SystemTime::now()
-            .checked_sub(Duration::from_secs(120))
-            .expect("system time anomaly");
-        let entry = CacheEntry {
-            data: Vec::new(),
-            timestamp: past,
-            ttl: Duration::from_secs(60),
-        };
-        assert!(!entry.is_valid());
-    }
-}
+#[path = "test/cache_test.rs"]
+mod tests;
