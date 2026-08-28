@@ -316,8 +316,8 @@ pct_faster = ((pnpm_time - mgc_time) / pnpm_time) × 100
 
 ### Claim Template
 
-**Good claim**:
-> "mgc is 45x faster than pnpm for cold installs (2.6s vs 120s average, 5 runs, macOS M2, 20-package Next.js manifest)"
+**Good claim (beta scope)**:
+> "mgc cold install competitive on test workload (2.6s vs 120s pnpm, 5 runs, macOS M2, 20-package Next.js manifest, beta data)"
 
 **Bad claim**:
 > "mgc is 1000x faster than npm!" (no data, cherry-picked scenario, misleading)

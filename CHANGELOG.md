@@ -69,7 +69,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### 🚧 Status
 
-**Beta-ready for web projects.** MagiCore V1.0.0 includes SBOM generation, cryptographically signed lockfiles, and trust policies. Web (npm/pnpm replacement) is production-grade; multi-language cores (ai/app/lib) remain experimental. Full core parity targeted for V1.1.
+**Beta-ready for web projects.** MagiCore V1.0.0 includes SBOM generation, cryptographically signed lockfiles, and trust policies. Web (npm/pnpm replacement) is beta-ready; multi-language cores (ai/app/lib) remain experimental. Full core parity targeted for V1.1.
 
 ### Added
 

@@ -1,7 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
 //! SBOM generation tests — Test tạo SBOM
-//! Tests SBOM generation from lockfile with behavior validation
+//! Tests SBOM generation from lockfile with behavior validation — Test tạo SBOM từ lockfile với kiểm tra hành vi
 
 use mgc_sbom::{Bom, Component, ComponentType, SbomFormat, SbomGenerator, SbomOptions};
 

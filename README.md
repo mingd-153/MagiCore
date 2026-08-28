@@ -14,7 +14,7 @@
 
 ---
 
-**MagiCore** (`mgc`) is a **multi-language package orchestrator** with **web (npm/yarn) as the production-ready core** — written in Rust for speed and security.
+**MagiCore** (`mgc`) is a **multi-language package orchestrator** with **web (npm/yarn) beta testing ready** — written in Rust for speed and security.
 
 **Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 

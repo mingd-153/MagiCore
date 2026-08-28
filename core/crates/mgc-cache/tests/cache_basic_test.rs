@@ -1,7 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
 //! Cache behavior tests — Test hành vi cache
-//! Hermetic tests using tempdir, no real cache access
+//! Hermetic tests using tempdir, no real cache access — Test hermetic với tempdir, không chạm cache thật
 
 use mgc_cache::PackageCache;
 use std::fs;
