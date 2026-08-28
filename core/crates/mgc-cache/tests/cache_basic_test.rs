@@ -37,7 +37,11 @@ fn test_cache_store_and_retrieve() {
 
     // Retrieve package
     let retrieved = cache.get_package("lodash@4.17.21", &integrity);
-    assert!(retrieved.is_ok(), "Failed to retrieve package: {:?}", retrieved);
+    assert!(
+        retrieved.is_ok(),
+        "Failed to retrieve package: {:?}",
+        retrieved
+    );
 
     // Verify content
     let retrieved_path = retrieved.unwrap();
@@ -54,14 +58,19 @@ fn test_cache_integrity_mismatch_fails() {
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
 
     // Store package
-    cache.store_package("axios@1.0.0", &pkg_file, &integrity).unwrap();
+    cache
+        .store_package("axios@1.0.0", &pkg_file, &integrity)
+        .unwrap();
 
     // Try retrieve with wrong integrity
     let wrong_integrity = "blake3:0000000000000000";
     let result = cache.get_package("axios@1.0.0", wrong_integrity);
 
     assert!(result.is_err(), "Should fail with wrong integrity");
-    assert!(result.unwrap_err().to_string().contains("Integrity mismatch"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Integrity mismatch"));
 }
 
 #[test]
@@ -76,7 +85,10 @@ fn test_cache_store_with_wrong_integrity_fails() {
     let result = cache.store_package("express@4.0.0", &pkg_file, wrong_integrity);
 
     assert!(result.is_err(), "Should fail storing with wrong integrity");
-    assert!(result.unwrap_err().to_string().contains("Integrity mismatch"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Integrity mismatch"));
 }
 
 #[test]
@@ -89,7 +101,9 @@ fn test_cache_has_package() {
     let test_dir = tempfile::tempdir().unwrap();
     let pkg_file = create_test_package(test_dir.path(), b"content");
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
-    cache.store_package("react@18.0.0", &pkg_file, &integrity).unwrap();
+    cache
+        .store_package("react@18.0.0", &pkg_file, &integrity)
+        .unwrap();
 
     assert!(cache.has_package("react@18.0.0"));
 }
@@ -102,7 +116,9 @@ fn test_cache_invalidate_package() {
     let test_dir = tempfile::tempdir().unwrap();
     let pkg_file = create_test_package(test_dir.path(), b"content");
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
-    cache.store_package("vue@3.0.0", &pkg_file, &integrity).unwrap();
+    cache
+        .store_package("vue@3.0.0", &pkg_file, &integrity)
+        .unwrap();
 
     assert!(cache.has_package("vue@3.0.0"));
 
@@ -121,9 +137,15 @@ fn test_cache_prune() {
     let pkg_file = create_test_package(test_dir.path(), b"content");
     let integrity = cache.compute_integrity(&pkg_file).unwrap();
 
-    cache.store_package("pkg1@1.0.0", &pkg_file, &integrity).unwrap();
-    cache.store_package("pkg2@1.0.0", &pkg_file, &integrity).unwrap();
-    cache.store_package("pkg3@1.0.0", &pkg_file, &integrity).unwrap();
+    cache
+        .store_package("pkg1@1.0.0", &pkg_file, &integrity)
+        .unwrap();
+    cache
+        .store_package("pkg2@1.0.0", &pkg_file, &integrity)
+        .unwrap();
+    cache
+        .store_package("pkg3@1.0.0", &pkg_file, &integrity)
+        .unwrap();
 
     // Prune (current impl removes all packages in npm directory)
     let pruned = cache.prune().unwrap();
