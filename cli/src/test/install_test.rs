@@ -92,6 +92,9 @@ fn test_load_locked_graph_rejects_unsupported_lock_version() {
 
 #[test]
 fn test_load_locked_graph_ignores_legacy_checksum_sidecar() {
+    // Set trust policy to warn for test (no signature required)
+    std::env::set_var("MGC_TRUST_POLICY", "warn");
+    
     let dir = tempdir().unwrap();
     let manifest = Manifest::new("demo", Ecosystem::Web);
     let lock = Lockfile::new();
