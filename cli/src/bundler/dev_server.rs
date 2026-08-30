@@ -395,81 +395,82 @@ async fn serve_transpiled(file_path: &std::path::Path, _state: &ServerState) -> 
     warn!("transpiler disabled: esbuild-rs requires Go");
     return (
         StatusCode::NOT_IMPLEMENTED,
-        "Transpiler temporarily disabled: esbuild-rs requires Go compiler"
-    ).into_response();
+        "Transpiler temporarily disabled: esbuild-rs requires Go compiler",
+    )
+        .into_response();
 
     /* COMMENTED UNTIL GO COMPILER AVAILABLE
-    let working_dir = state.config.root.to_string_lossy().to_string();
-    let mut builder = esbuild_rs::BuildOptionsBuilder::new();
-    builder.entry_points = vec![file_path.to_string_lossy().to_string()];
-    builder.bundle = false; // ← QUAN TRỌNG: chỉ transpile, không bundle
-    builder.abs_working_dir = working_dir;
-    builder.platform = esbuild_rs::Platform::Browser;
-    builder.format = esbuild_rs::Format::ESModule;
-    builder.source_map = esbuild_rs::SourceMap::Inline;
-    builder.write = false;
-    builder.resolve_extensions = vec![
-        ".tsx".to_string(),
-        ".ts".to_string(),
-        ".jsx".to_string(),
-        ".js".to_string(),
-    ];
+        let working_dir = state.config.root.to_string_lossy().to_string();
+        let mut builder = esbuild_rs::BuildOptionsBuilder::new();
+        builder.entry_points = vec![file_path.to_string_lossy().to_string()];
+        builder.bundle = false; // ← QUAN TRỌNG: chỉ transpile, không bundle
+        builder.abs_working_dir = working_dir;
+        builder.platform = esbuild_rs::Platform::Browser;
+        builder.format = esbuild_rs::Format::ESModule;
+        builder.source_map = esbuild_rs::SourceMap::Inline;
+        builder.write = false;
+        builder.resolve_extensions = vec![
+            ".tsx".to_string(),
+            ".ts".to_string(),
+            ".jsx".to_string(),
+            ".js".to_string(),
+        ];
 
-    let options = builder.build();
-    let result = esbuild_rs::build(options).await;
+        let options = builder.build();
+        let result = esbuild_rs::build(options).await;
 
-    if !result.errors.as_slice().is_empty() {
-        let msgs: Vec<String> = result
-            .errors
+        if !result.errors.as_slice().is_empty() {
+            let msgs: Vec<String> = result
+                .errors
+                .as_slice()
+                .iter()
+                .map(|e| e.to_string())
+                .collect();
+            let err_str = msgs.join("\n");
+            error!("esbuild error for {}: {}", file_path.display(), err_str);
+
+            // Trả về lỗi dưới dạng JS để browser có thể hiển thị (không crash silent)
+            let err_js = format!(
+                r#"
+    const __err = `{err_esc}`;
+    console.error('[MgDevServer] Build Error:', __err);
+    const el = document.getElementById('__mgc-error') || document.createElement('div');
+    el.id = '__mgc-error';
+    el.style = 'position:fixed;top:0;left:0;right:0;background:#1a0000;color:#ff6b6b;padding:20px;font-family:monospace;white-space:pre;z-index:99999;border-bottom:2px solid #f00';
+    el.textContent = '[MgDevServer Build Error]\n' + __err;
+    document.body?.prepend(el);
+    "#,
+                err_esc = err_str.replace('`', "\\`")
+            );
+            return js_response(err_js);
+        }
+
+        let raw_js = result
+            .output_files
             .as_slice()
             .iter()
-            .map(|e| e.to_string())
-            .collect();
-        let err_str = msgs.join("\n");
-        error!("esbuild error for {}: {}", file_path.display(), err_str);
+            .find(|f| f.path.as_str().ends_with(".js"))
+            .map(|f| f.data.as_str().to_string())
+            .unwrap_or_default();
 
-        // Trả về lỗi dưới dạng JS để browser có thể hiển thị (không crash silent)
-        let err_js = format!(
-            r#"
-const __err = `{err_esc}`;
-console.error('[MgDevServer] Build Error:', __err);
-const el = document.getElementById('__mgc-error') || document.createElement('div');
-el.id = '__mgc-error';
-el.style = 'position:fixed;top:0;left:0;right:0;background:#1a0000;color:#ff6b6b;padding:20px;font-family:monospace;white-space:pre;z-index:99999;border-bottom:2px solid #f00';
-el.textContent = '[MgDevServer Build Error]\n' + __err;
-document.body?.prepend(el);
-"#,
-            err_esc = err_str.replace('`', "\\`")
-        );
-        return js_response(err_js);
-    }
+        // 5. Rewrite bare imports → /@magicore/deps/ paths
+        let js_with_rewrites = rewrite_imports(&raw_js);
 
-    let raw_js = result
-        .output_files
-        .as_slice()
-        .iter()
-        .find(|f| f.path.as_str().ends_with(".js"))
-        .map(|f| f.data.as_str().to_string())
-        .unwrap_or_default();
-
-    // 5. Rewrite bare imports → /@magicore/deps/ paths
-    let js_with_rewrites = rewrite_imports(&raw_js);
-
-    // 6. Lưu vào CompiledCache (global) để projects khác dùng chung
-    if let Ok(store) = mgc_store::cas::ContentStore::new(store_root) {
-        let compiled_cache = store.compiled_cache();
-        let hash_key = mgc_store::cas::IntegrityHash::from_hash_str(&source_hash, false);
-        let module = mgc_store::cas::CompiledModule {
-            js: raw_js, // Lưu raw (trước khi rewrite) vì path có thể thay đổi giữa projects
-            source_map: None,
-        };
-        if let Err(e) = compiled_cache.put(&hash_key, &module) {
-            debug!("failed to save to compiled cache: {}", e);
+        // 6. Lưu vào CompiledCache (global) để projects khác dùng chung
+        if let Ok(store) = mgc_store::cas::ContentStore::new(store_root) {
+            let compiled_cache = store.compiled_cache();
+            let hash_key = mgc_store::cas::IntegrityHash::from_hash_str(&source_hash, false);
+            let module = mgc_store::cas::CompiledModule {
+                js: raw_js, // Lưu raw (trước khi rewrite) vì path có thể thay đổi giữa projects
+                source_map: None,
+            };
+            if let Err(e) = compiled_cache.put(&hash_key, &module) {
+                debug!("failed to save to compiled cache: {}", e);
+            }
         }
-    }
 
-    js_response(js_with_rewrites)
-    */
+        js_response(js_with_rewrites)
+        */
 }
 
 fn js_response(js: String) -> Response {

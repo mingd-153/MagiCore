@@ -69,7 +69,10 @@ impl DepsCache {
     /// Lấy cached dep hoặc bundle nó lần đầu.
     pub async fn get_or_bundle(&self, pkg_name: &str) -> Option<CachedDep> {
         // TEMPORARY: esbuild-rs requires Go compiler not available in CI
-        warn!("deps bundler disabled: {} - esbuild-rs requires Go", pkg_name);
+        warn!(
+            "deps bundler disabled: {} - esbuild-rs requires Go",
+            pkg_name
+        );
         None
 
         /* COMMENTED UNTIL GO COMPILER AVAILABLE
