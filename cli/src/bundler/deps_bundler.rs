@@ -12,7 +12,7 @@
 ///   - CSS được xử lý riêng (trả về empty nếu dependency không có CSS).
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::warn;
 
 #[derive(Clone, Default)]
 pub struct DepsCache {
@@ -68,6 +68,11 @@ impl DepsCache {
 
     /// Lấy cached dep hoặc bundle nó lần đầu.
     pub async fn get_or_bundle(&self, pkg_name: &str) -> Option<CachedDep> {
+        // TEMPORARY: esbuild-rs requires Go compiler not available in CI
+        warn!("deps bundler disabled: {} - esbuild-rs requires Go", pkg_name);
+        None
+
+        /* COMMENTED UNTIL GO COMPILER AVAILABLE
         // 1. Fast path: đọc từ in-memory cache (không lock write)
         {
             let cache = self.inner.read().await;
@@ -156,5 +161,6 @@ impl DepsCache {
         }
 
         Some(dep)
+        */
     }
 }

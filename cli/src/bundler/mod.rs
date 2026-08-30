@@ -37,6 +37,11 @@ impl Bundler {
     }
 
     pub async fn bundle(&self) -> Result<BundleResult, anyhow::Error> {
+        // TEMPORARY: esbuild-rs requires Go compiler not available in CI
+        // See: https://github.com/mingd-153/MagiCore/issues/XXX
+        anyhow::bail!("bundler temporarily disabled: esbuild-rs requires Go compiler");
+
+        /* COMMENTED UNTIL GO COMPILER AVAILABLE
         std::fs::create_dir_all(&self.config.output_dir)?;
         let prepared = prepare_workspace(&self.config.entry)?;
 
@@ -126,6 +131,7 @@ impl Bundler {
             .sum();
 
         Ok(BundleResult { size: total_size })
+        */
     }
 }
 

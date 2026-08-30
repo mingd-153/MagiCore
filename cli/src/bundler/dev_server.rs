@@ -48,7 +48,7 @@ use axum::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // Regex-based import rewriter — khớp cả ESM static và dynamic imports
 // Ví dụ: import x from 'react' → import x from '/@magicore/deps/react'
@@ -355,7 +355,7 @@ async fn serve_source_or_static(
 ///   2. Hash source bằng Blake3 → tìm trong CompiledCache
 ///   3. Nếu cache hit: rewrite imports → serve (0ms)
 ///   4. Nếu miss: esbuild transpile (bundle=false) → rewrite imports → lưu cache → serve
-async fn serve_transpiled(file_path: &std::path::Path, state: &ServerState) -> Response {
+async fn serve_transpiled(file_path: &std::path::Path, _state: &ServerState) -> Response {
     // 1. Đọc source
     let source = match tokio::fs::read(file_path).await {
         Ok(b) => b,
@@ -391,6 +391,14 @@ async fn serve_transpiled(file_path: &std::path::Path, state: &ServerState) -> R
     // 4. Cache miss → transpile bằng esbuild (bundle=false, chỉ transpile TS→JS)
     debug!("transpiling: {}", file_path.display());
 
+    // TEMPORARY: esbuild-rs requires Go compiler not available in CI
+    warn!("transpiler disabled: esbuild-rs requires Go");
+    return (
+        StatusCode::NOT_IMPLEMENTED,
+        "Transpiler temporarily disabled: esbuild-rs requires Go compiler"
+    ).into_response();
+
+    /* COMMENTED UNTIL GO COMPILER AVAILABLE
     let working_dir = state.config.root.to_string_lossy().to_string();
     let mut builder = esbuild_rs::BuildOptionsBuilder::new();
     builder.entry_points = vec![file_path.to_string_lossy().to_string()];
@@ -461,6 +469,7 @@ document.body?.prepend(el);
     }
 
     js_response(js_with_rewrites)
+    */
 }
 
 fn js_response(js: String) -> Response {

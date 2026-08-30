@@ -74,7 +74,7 @@ tower-http = { workspace = true }
 notify = { workspace = true }
 
 # Bundler
-esbuild-rs = { workspace = true }
+# esbuild-rs = { workspace = true }  # REMOVED: requires Go compiler
 glob = { workspace = true }
 mime_guess = { workspace = true }
 lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
