@@ -393,11 +393,11 @@ async fn serve_transpiled(file_path: &std::path::Path, _state: &ServerState) -> 
 
     // TEMPORARY: esbuild-rs requires Go compiler not available in CI
     warn!("transpiler disabled: esbuild-rs requires Go");
-    return (
+    (
         StatusCode::NOT_IMPLEMENTED,
         "Transpiler temporarily disabled: esbuild-rs requires Go compiler",
     )
-        .into_response();
+        .into_response()
 
     /* COMMENTED UNTIL GO COMPILER AVAILABLE
         let working_dir = state.config.root.to_string_lossy().to_string();
