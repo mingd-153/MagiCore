@@ -1568,7 +1568,6 @@ fn local_bin_candidates(bin_dir: &Path, bin_name: &str) -> Vec<PathBuf> {
         let mut candidates = candidates;
         candidates.push(bin_dir.join(format!("{bin_name}.cmd")));
         candidates.push(bin_dir.join(format!("{bin_name}.exe")));
-        return candidates;
     }
     candidates
 }

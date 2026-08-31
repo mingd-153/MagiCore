@@ -894,7 +894,18 @@ pub async fn link(adapter: &dyn PackageAdapter, root: &Path, package: Option<&st
 
     std::fs::create_dir_all(&node_modules)?;
     let source = find_package_source(root, pkg)?;
+
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&source, &link_path)?;
+
+    #[cfg(windows)]
+    {
+        if source.is_dir() {
+            std::os::windows::fs::symlink_dir(&source, &link_path)?;
+        } else {
+            std::os::windows::fs::symlink_file(&source, &link_path)?;
+        }
+    }
 
     success(&format!("Linked {} -> {}", name, source.display()));
     Ok(())

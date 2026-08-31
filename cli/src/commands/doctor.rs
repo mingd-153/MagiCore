@@ -215,6 +215,7 @@ fn fs_avail(path: &Path) -> u64 {
     }
     #[cfg(not(unix))]
     {
+        let _ = path; // Suppress unused warning on Windows
         0
     }
 }
