@@ -52,7 +52,7 @@ When releasing a new version, update `magicore.json` and `magicore-web.json`:
 
 ## Release Checklist
 
-- [ ] Tag pushed: `git tag v0.3.0-beta.1 && git push origin v0.3.0-beta.1`
+- [ ] Tag pushed: `git tag v1.0.0-rc.2 && git push origin v1.0.0-rc.2`
 - [ ] GitHub Actions `release.yml` builds and attaches all all-core and web-core binary artifacts
 - [ ] Homebrew formula updated with `./scripts/update-release-hashes.sh`
 - [ ] Scoop manifest updated with `./scripts/update-release-hashes.sh`

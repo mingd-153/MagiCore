@@ -206,32 +206,24 @@ all_core_scoop="$scoop_dir/magicore.json"
 web_core_scoop="$scoop_dir/magicore-web.json"
 
 magicore_linux_x64_hash="$(artifact_hash "magicore-Linux-X64.tar.gz")"
-magicore_linux_arm64_hash="$(artifact_hash "magicore-Linux-ARM64.tar.gz")"
 magicore_macos_x64_hash="$(artifact_hash "magicore-macOS-X64.tar.gz")"
 magicore_macos_arm64_hash="$(artifact_hash "magicore-macOS-ARM64.tar.gz")"
 magicore_windows_x64_hash="$(artifact_hash "magicore-Windows-X64.zip")"
-magicore_windows_arm64_hash="$(artifact_hash "magicore-Windows-ARM64.zip")"
 magicore_web_linux_x64_hash="$(artifact_hash "magicore-web-Linux-X64.tar.gz")"
-magicore_web_linux_arm64_hash="$(artifact_hash "magicore-web-Linux-ARM64.tar.gz")"
 magicore_web_macos_x64_hash="$(artifact_hash "magicore-web-macOS-X64.tar.gz")"
 magicore_web_macos_arm64_hash="$(artifact_hash "magicore-web-macOS-ARM64.tar.gz")"
 magicore_web_windows_x64_hash="$(artifact_hash "magicore-web-Windows-X64.zip")"
-magicore_web_windows_arm64_hash="$(artifact_hash "magicore-web-Windows-ARM64.zip")"
 
 if [[ "$verify_only" -eq 1 ]]; then
   verify_homebrew_hash "$all_core_homebrew" "magicore-macOS-ARM64.tar.gz" "$magicore_macos_arm64_hash"
   verify_homebrew_hash "$all_core_homebrew" "magicore-macOS-X64.tar.gz" "$magicore_macos_x64_hash"
-  verify_homebrew_hash "$all_core_homebrew" "magicore-Linux-ARM64.tar.gz" "$magicore_linux_arm64_hash"
   verify_homebrew_hash "$all_core_homebrew" "magicore-Linux-X64.tar.gz" "$magicore_linux_x64_hash"
   verify_scoop_hash "$all_core_scoop" "magicore-Windows-X64.zip" "$magicore_windows_x64_hash"
-  verify_scoop_hash "$all_core_scoop" "magicore-Windows-ARM64.zip" "$magicore_windows_arm64_hash"
 
   verify_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-ARM64.tar.gz" "$magicore_web_macos_arm64_hash"
   verify_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-X64.tar.gz" "$magicore_web_macos_x64_hash"
-  verify_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-ARM64.tar.gz" "$magicore_web_linux_arm64_hash"
   verify_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-X64.tar.gz" "$magicore_web_linux_x64_hash"
   verify_scoop_hash "$web_core_scoop" "magicore-web-Windows-X64.zip" "$magicore_web_windows_x64_hash"
-  verify_scoop_hash "$web_core_scoop" "magicore-web-Windows-ARM64.zip" "$magicore_web_windows_arm64_hash"
 
   if grep -R "UPDATE_ME" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
     echo "error: packaging still contains UPDATE_ME placeholders" >&2
@@ -244,16 +236,12 @@ fi
 
 replace_homebrew_hash "$all_core_homebrew" "magicore-macOS-ARM64.tar.gz" "$magicore_macos_arm64_hash"
 replace_homebrew_hash "$all_core_homebrew" "magicore-macOS-X64.tar.gz" "$magicore_macos_x64_hash"
-replace_homebrew_hash "$all_core_homebrew" "magicore-Linux-ARM64.tar.gz" "$magicore_linux_arm64_hash"
 replace_homebrew_hash "$all_core_homebrew" "magicore-Linux-X64.tar.gz" "$magicore_linux_x64_hash"
 replace_scoop_hash "$all_core_scoop" "magicore-Windows-X64.zip" "$magicore_windows_x64_hash"
-replace_scoop_hash "$all_core_scoop" "magicore-Windows-ARM64.zip" "$magicore_windows_arm64_hash"
 
 replace_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-ARM64.tar.gz" "$magicore_web_macos_arm64_hash"
 replace_homebrew_hash "$web_core_homebrew" "magicore-web-macOS-X64.tar.gz" "$magicore_web_macos_x64_hash"
-replace_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-ARM64.tar.gz" "$magicore_web_linux_arm64_hash"
 replace_homebrew_hash "$web_core_homebrew" "magicore-web-Linux-X64.tar.gz" "$magicore_web_linux_x64_hash"
 replace_scoop_hash "$web_core_scoop" "magicore-web-Windows-X64.zip" "$magicore_web_windows_x64_hash"
-replace_scoop_hash "$web_core_scoop" "magicore-web-Windows-ARM64.zip" "$magicore_web_windows_arm64_hash"
 
 echo "Release hashes updated from $artifacts_dir."

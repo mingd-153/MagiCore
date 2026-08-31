@@ -1,6 +1,9 @@
 use mgc_types::MgResult;
 use std::path::Path;
 
+#[cfg(not(unix))]
+use crate::install::materialize::hardlink_tree;
+
 #[cfg(unix)]
 fn symlink_dir(original: &Path, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(original, link)
@@ -33,11 +36,12 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Attempt symlink, fallback to copy if failed (Windows fallback)
+    // Attempt symlink, fallback to hardlink tree on Windows.
+    // Thử symlink trước, Windows rớt quyền thì fallback sang cây hardlink.
     if let Err(e) = symlink_dir(target, link) {
         #[cfg(not(unix))]
         {
-            if let Err(e2) = crate::hardlink_tree(target, link) {
+            if let Err(e2) = hardlink_tree(target, link) {
                 return Err(mgc_types::MgError::Other(format!(
                     "failed to create symlink (or fallback hardlink tree) from {} to {}: {} (fallback error: {})",
                     target.display(), link.display(), e, e2
