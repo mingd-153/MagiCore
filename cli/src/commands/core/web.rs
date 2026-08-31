@@ -1562,10 +1562,9 @@ fn resolve_local_bin(project_root: &Path, bin_name: &str) -> Result<PathBuf> {
 }
 
 fn local_bin_candidates(bin_dir: &Path, bin_name: &str) -> Vec<PathBuf> {
-    let candidates = vec![bin_dir.join(bin_name)];
+    let mut candidates = vec![bin_dir.join(bin_name)];
     #[cfg(windows)]
     {
-        let mut candidates = candidates;
         candidates.push(bin_dir.join(format!("{bin_name}.cmd")));
         candidates.push(bin_dir.join(format!("{bin_name}.exe")));
     }
