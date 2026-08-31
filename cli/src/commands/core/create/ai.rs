@@ -13,6 +13,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         crate::commands::template::ensure_layer(&format!("ai/{fw}")).await;
     }
     super::scaffold_and_save_metadata(&config)?;
+
     mgc_ui::success(
         "AI project created. Pull a model with `mgc model pull hf://...` or run `mgc dev`.",
     );

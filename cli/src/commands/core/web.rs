@@ -36,6 +36,7 @@ typescript = "^5.9.2"
 "@types/react-dom" = "^19.2.3"
 "@types/node" = "^26.1.1"
 tailwindcss = "^4.3.2"
+"@tailwindcss/vite" = "^4.3.2"
 "@sveltejs/kit" = "^2.69.2"
 "@sveltejs/vite-plugin-svelte" = "^7.2.0"
 "@sveltejs/adapter-auto" = "^7.0.1"
@@ -1609,9 +1610,8 @@ pub async fn run_create_with_options(
         project_name, fe_framework
     ));
 
-    // Registry-first preflight: ensure mọi layer scaffold sẽ dùng (frontend leaf,
-    // backend leaf theo lang/fw, monorepo base/partials) — pnpm-style delegate.
-    // Embedded kernel + cache + disk được kiểm trước; thiếu thì fetch registry.
+    // Registry-first preflight — đảm bảo các template layer cần dùng đã sẵn sàng.
+    // Embedded/cache/registry fallback — scaffold vẫn do MagiCore native xử lý.
     let frontend = parse_framework_request(&fe_framework);
     let be_from_flags = detect_backend_framework(&flags);
     let be_name = be_from_flags
@@ -1623,19 +1623,15 @@ pub async fn run_create_with_options(
     match be_ref {
         Some(be) => {
             if let Some(lang) = crate::scaffold::processor::infer_backend_language(be) {
-                // Backend-only mode dùng web/backend/{lang}/{be}; monorepo dùng
-                // web/monorepo/backend/{lang}/{be} — fetch cả 2 (registry-first).
+                // Backend layers — chuẩn bị cả standalone và monorepo backend.
+                // Shared fetch keeps create deterministic — fetch chung giúp scaffold ổn định.
                 rels.push(format!("web/backend/{lang}/{be}"));
                 rels.push(format!("web/monorepo/backend/{lang}/{be}"));
             }
-            // Fullstack combo Node (react-express, vue-laravel...) — be đến từ
-            // framework name, không phải flag → cần split leaf riêng theo combo.
             if be_from_flags.is_none() {
                 rels.push(format!("web/fullstack/split/{}", frontend.raw));
             }
         }
-        // Backend-only mode khi framework name là backend thuần (express, fastapi...):
-        // scaffold dùng web/backend/{lang}/{fe}, không có frontend leaf.
         None => {
             if let Some(lang) =
                 crate::scaffold::processor::infer_backend_language(&frontend.normalized)
@@ -1646,9 +1642,6 @@ pub async fn run_create_with_options(
                     frontend.normalized
                 ));
             } else {
-                // Không có backend riêng → fullstack split combo Node
-                // (react-express...) hoặc all-in-one (nextjs/remix/...) —
-                // ensure đúng bucket theo framework.
                 let bucket =
                     if crate::scaffold::processor::is_all_in_one_fullstack(&frontend.normalized) {
                         "all-in-one"
@@ -1663,7 +1656,6 @@ pub async fn run_create_with_options(
         rels.push("web/monorepo/base".to_string());
         rels.push(format!("web/monorepo/frontend/{}", frontend.normalized));
     }
-    // Shared partials (processor dùng mọi mode): fetch hết — layer nhỏ, an toàn.
     for partial in [
         "base",
         "backend",
@@ -1683,12 +1675,7 @@ pub async fn run_create_with_options(
         rels.push(format!("web/shared/partials/{partial}"));
     }
     for rel in &rels {
-        if !crate::commands::template::ensure_layer(rel).await {
-            mgc_ui::warning(&format!(
-                "Template layer '{}' not in embedded kernel, cache, or registry; scaffold may fail if no local templates/ dir matches",
-                rel
-            ));
-        }
+        let _ = crate::commands::template::ensure_layer(rel).await;
     }
 
     let config = build_web_config(&fe_framework, project_name, &flags)?;

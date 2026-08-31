@@ -21,8 +21,12 @@ mod wizard;
 #[derive(Parser)]
 #[command(name = "mgc")]
 #[command(about = "MagiCore - Universal Package Manager", long_about = None)]
-#[command(version)]
+#[command(version, disable_version_flag = true)]
 pub(crate) struct Cli {
+    /// Print version — in phiên bản CLI.
+    #[arg(short = 'V', short_alias = 'v', long = "version", action = clap::ArgAction::Version)]
+    _version: Option<bool>,
+
     /// Target core (web, game, ai, clo, cicd, iot, app, lib)
     #[arg(global = true, long)]
     core: Option<String>,

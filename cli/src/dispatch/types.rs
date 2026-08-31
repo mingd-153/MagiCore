@@ -1066,27 +1066,27 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
         }
     }
 
-    // 4. Interactive prompt for missing ecosystem
-    if package_json_path.exists() || cargo_toml_path.exists() || pyproject_toml_path.exists() {
-        let items = crate::factory::available_cores();
-        let display_items: Vec<&str> = items.iter().map(|(_, label)| *label).collect();
+    // Auto-detect from file presence — tự nhận core cho project đơn manifest.
+    // Priority is intentionally conservative — ưu tiên manifest phổ biến nhất.
+    let auto_detected = if package_json_path.exists() {
+        Some("web")
+    } else if cargo_toml_path.exists() {
+        Some("lib")
+    } else if pyproject_toml_path.exists() {
+        Some("ai")
+    } else {
+        None
+    };
 
-        mgc_ui::blank_line();
-        mgc_ui::info("MagiCore detected a project without a bound core.");
-        let selected_idx = mgc_ui::prompt::select(
-            "Which ecosystem does this project belong to?",
-            &display_items,
-        )?;
-        let selected_core = items[selected_idx].0;
-
+    if let Some(core) = auto_detected {
+        // Auto-save to mgc.toml for future runs — lưu binding nếu thư mục ghi được.
         let cfg = mgc_config::project::ProjectConfig::new(
             cwd.file_name().unwrap_or_default().to_string_lossy(),
-            selected_core,
+            core,
         );
-        cfg.save(&cwd)?;
-        mgc_ui::info("Saved core binding to mgc.toml");
+        let _ = cfg.save(&cwd);
 
-        return Ok(Some(selected_core.to_string()));
+        return Ok(Some(core.to_string()));
     }
 
     Ok(None)
