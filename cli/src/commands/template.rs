@@ -263,68 +263,106 @@ pub async fn ensure_layer(
     crate::scaffold::resolver::ScaffoldResolveStatus,
     crate::scaffold::resolver::ScaffoldResolveError,
 > {
+    use crate::scaffold::embedded::EmbeddedKernel;
     use crate::scaffold::resolver::{ScaffoldResolveError, ScaffoldResolveStatus};
+    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
 
-    // Check disk / cache trước (TemplateRoot::resolve đã theo đúng priority
-    // env → workspace disk → cache).
+    // Parse layer path để lấy core/name (web/frontend/nextjs → core=web, name=nextjs)
+    let segments: Vec<&str> = rel.split('/').collect();
+    let core_str = segments.first().unwrap_or(&"web");
+    let core = CoreKind::from_str_core(core_str).ok_or_else(|| {
+        ScaffoldResolveError::Other(format!("Unknown core: {}", core_str))
+    })?;
+
+    let name = segments.last().unwrap_or(&"unknown");
+
+    // 1. Check embedded kernel first
+    if EmbeddedKernel::has_layer(core_str, name) {
+        return Ok(ScaffoldResolveStatus::Embedded {
+            layer: rel.to_string(),
+        });
+    }
+
+    // 2. Parse spec for registry lookup (use name@latest as default)
+    let spec = parse_scaffold_spec(core, &format!("{}@latest", name)).map_err(|e| {
+        ScaffoldResolveError::Other(format!("Failed to parse scaffold spec: {}", e))
+    })?;
+
+    // 3. Check versioned cache (Phase 2 - NEW)
+    use crate::scaffold::cache::ScaffoldCache;
+    let cached_versions = ScaffoldCache::list_versions(&spec);
+    if let Some(version) = cached_versions.first() {
+        let path = ScaffoldCache::path(&spec, version);
+        return Ok(ScaffoldResolveStatus::CacheHit {
+            layer: rel.to_string(),
+            version: Some(version.clone()),
+            path,
+        });
+    }
+
+    // 4. Legacy cache fallback (old ~/.mgc/templates/{rel})
     let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
     if root.exists("") && root.exists("template.toml") && root.exists("sources") {
-        // Phân biệt embedded vs cache - check nếu trong embedded kernel
-        let path_str = root.path().display().to_string();
-        let is_embedded = path_str.contains("embedded");
-        if is_embedded {
-            return Ok(ScaffoldResolveStatus::Embedded {
-                layer: rel.to_string(),
-            });
-        } else {
-            // Extract version từ cache metadata nếu có
-            let version = extract_cached_version(&root);
-            return Ok(ScaffoldResolveStatus::CacheHit {
-                layer: rel.to_string(),
-                version,
-                path: root.path().to_path_buf(),
-            });
-        }
+        let version = extract_cached_version(&root);
+        return Ok(ScaffoldResolveStatus::CacheHit {
+            layer: rel.to_string(),
+            version,
+            path: root.path().to_path_buf(),
+        });
     }
 
-    // Registry fetch khi chưa có. Core lấy từ segment đầu của rel (web/... → web,
-    // game/bevy → game) để package name khớp mgc-create-<core>-<name>.
-    let core = rel.split('/').next().unwrap_or("web").to_string();
-    let registry = select_registry(None)
-        .map_err(|e| ScaffoldResolveError::Other(format!("Failed to select registry: {}", e)))?;
+    // 5. Registry fetch (Phase 2 - NEW)
+    use crate::scaffold::registry::ScaffoldRegistry;
+    let registry_client = ScaffoldRegistry::new();
 
-    let args = TemplateFetchArgs {
-        core: core.clone(),
-        name: rel.to_string(),
-        registry: Some(registry.clone()),
-        tag: Some("latest".to_string()), // Default tag
+    // Resolve version from dist-tag (latest → 15.5.0)
+    let version = match registry_client.resolve_version(&spec).await {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(ScaffoldResolveError::RequiredLayerMissing {
+                layer: rel.to_string(),
+                core: core_str.to_string(),
+                template: name.to_string(),
+                tag: "latest".to_string(),
+                attempted_sources: format!(
+                    "- Embedded kernel: not available\n\
+                     - Versioned cache: empty\n\
+                     - Legacy cache: empty\n\
+                     - Registry fetch failed: {}",
+                    e
+                ),
+            });
+        }
     };
 
-    match fetch(args.clone()).await {
-        Ok(_path) => {
-            // Re-check sau fetch, write version metadata
-            let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
-            let version = args.tag.unwrap_or_else(|| "latest".to_string());
-            write_cache_version_metadata(&root, &version).map_err(|e| {
-                ScaffoldResolveError::Other(format!("Failed to write version metadata: {}", e))
-            })?;
-            Ok(ScaffoldResolveStatus::Fetched {
+    // Fetch tarball
+    let tarball = match registry_client.fetch(&spec, &version).await {
+        Ok(data) => data,
+        Err(e) => {
+            return Err(ScaffoldResolveError::RequiredLayerMissing {
                 layer: rel.to_string(),
-                version,
-                path: root.path().to_path_buf(),
-            })
+                core: core_str.to_string(),
+                template: name.to_string(),
+                tag: version.clone(),
+                attempted_sources: format!(
+                    "- Registry fetch failed for version {}: {}",
+                    version, e
+                ),
+            });
         }
-        Err(_e) => Err(ScaffoldResolveError::RequiredLayerMissing {
-            layer: rel.to_string(),
-            core,
-            template: rel.to_string(),
-            tag: "latest".to_string(),
-            attempted_sources: format!(
-                "- Embedded kernel\n- Local cache\n- Registry: {}",
-                registry
-            ),
-        }),
-    }
+    };
+
+    // Write to versioned cache
+    ScaffoldCache::write(&spec, &version, &tarball).map_err(|e| {
+        ScaffoldResolveError::Other(format!("Failed to write cache: {}", e))
+    })?;
+
+    let path = ScaffoldCache::path(&spec, &version);
+    Ok(ScaffoldResolveStatus::Fetched {
+        layer: rel.to_string(),
+        version: version.clone(),
+        path,
+    })
 }
 
 /// Extract version từ cache metadata file

@@ -38,19 +38,18 @@ impl EmbeddedKernel {
 
     /// Kernel registry (core/name → embedded data).
     fn kernel_map() -> HashMap<String, EmbeddedLayer> {
-        let map = HashMap::new();
+        let mut map = HashMap::new();
 
         // Web kernel: vanilla
-        // TODO: Create cli/embedded/web-vanilla.tar.gz
-        // map.insert(
-        //     "web/vanilla".to_string(),
-        //     EmbeddedLayer {
-        //         name: "vanilla",
-        //         core: "web",
-        //         version: "1.0.0",
-        //         data: include_bytes!("../../embedded/web-vanilla.tar.gz"),
-        //     },
-        // );
+        map.insert(
+            "web/vanilla".to_string(),
+            EmbeddedLayer {
+                name: "vanilla",
+                core: "web",
+                version: "1.0.0",
+                data: include_bytes!("../../embedded/web-vanilla.tar.gz"),
+            },
+        );
 
         // Future kernels:
         // - ai/python-simple
