@@ -277,9 +277,11 @@ pub async fn ensure_layer(
                 layer: rel.to_string(),
             });
         } else {
+            // Extract version từ cache metadata nếu có
+            let version = extract_cached_version(&root);
             return Ok(ScaffoldResolveStatus::CacheHit {
                 layer: rel.to_string(),
-                version: None, // TODO: extract version từ cache metadata
+                version,
                 path: root.path().to_path_buf(),
             });
         }
@@ -298,13 +300,17 @@ pub async fn ensure_layer(
         tag: Some("latest".to_string()), // Default tag
     };
 
-    match fetch(args).await {
-        Ok(_) => {
-            // Re-check sau fetch
+    match fetch(args.clone()).await {
+        Ok(_path) => {
+            // Re-check sau fetch, write version metadata
             let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
+            let version = args.tag.unwrap_or_else(|| "latest".to_string());
+            write_cache_version_metadata(&root, &version).map_err(|e| {
+                ScaffoldResolveError::Other(format!("Failed to write version metadata: {}", e))
+            })?;
             Ok(ScaffoldResolveStatus::Fetched {
                 layer: rel.to_string(),
-                version: "latest".to_string(), // TODO: extract actual version
+                version,
                 path: root.path().to_path_buf(),
             })
         }
@@ -319,6 +325,24 @@ pub async fn ensure_layer(
             ),
         }),
     }
+}
+
+/// Extract version từ cache metadata file
+fn extract_cached_version(root: &crate::scaffold::template_root::TemplateRoot) -> Option<String> {
+    let metadata_path = root.path().join(".mgc-version");
+    std::fs::read_to_string(metadata_path)
+        .ok()
+        .and_then(|content| content.lines().next().map(|s| s.trim().to_string()))
+}
+
+/// Write version metadata vào cache directory
+fn write_cache_version_metadata(
+    root: &crate::scaffold::template_root::TemplateRoot,
+    version: &str,
+) -> Result<()> {
+    let metadata_path = root.path().join(".mgc-version");
+    std::fs::write(metadata_path, format!("{}\n", version))?;
+    Ok(())
 }
 
 /// Extract tarball entries vào target, bỏ segment đầu của entry name
