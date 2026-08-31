@@ -7,6 +7,10 @@ repository.workspace = true
 authors.workspace = true
 description = "MagiCore - Universal Package Manager CLI"
 
+[lib]
+name = "mgc"
+path = "src/lib.rs"
+
 [[bin]]
 name = "mgc"
 path = "src/main.rs"

@@ -15,7 +15,7 @@ mod dispatch;
 pub mod error;
 mod factory;
 mod offline; // T4.1: Offline mode state
-mod scaffold;
+pub mod scaffold;
 mod wizard;
 
 #[derive(Parser)]
