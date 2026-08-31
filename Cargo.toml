@@ -64,7 +64,7 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 toml = "0.8"
 toml_edit = "0.22"
-bincode = "1.3"  # RUSTSEC-2025-0141: No fix available yet in 1.x, consider migration to bincode 2.0 or postcard
+# Removed: bincode 1.3.3 has RUSTSEC-2025-0141, not actually used (mgc-store uses rmp-serde instead)
 rmp-serde = "1.3"
 
 # CLI

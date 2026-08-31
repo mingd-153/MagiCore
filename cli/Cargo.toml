@@ -77,7 +77,7 @@ notify = { workspace = true }
 # esbuild-rs = { workspace = true }  # REMOVED: requires Go compiler
 glob = { workspace = true }
 mime_guess = { workspace = true }
-lightningcss = { version = "1.0.0-alpha.72", features = ["serde"] }  # Updated (may fix rkyv RUSTSEC-2026-0235)
+# Removed: lightningcss not used, pulls rkyv 0.7.46 (RUSTSEC-2026-0235)
 futures-util = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }
