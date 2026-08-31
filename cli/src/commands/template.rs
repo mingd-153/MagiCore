@@ -268,23 +268,35 @@ pub async fn ensure_layer(
     use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
 
     // Parse layer path để lấy core/name (web/frontend/nextjs → core=web, name=nextjs)
+    // Layer rel có thể là:
+    // - "web/frontend/nextjs" → name="nextjs"
+    // - "app/flutter@stable" → name="flutter@stable" (đã có @tag)
     let segments: Vec<&str> = rel.split('/').collect();
     let core_str = segments.first().unwrap_or(&"web");
     let core = CoreKind::from_str_core(core_str).ok_or_else(|| {
         ScaffoldResolveError::Other(format!("Unknown core: {}", core_str))
     })?;
 
-    let name = segments.last().unwrap_or(&"unknown");
+    let name_segment = segments.last().unwrap_or(&"unknown");
 
-    // 1. Check embedded kernel first
-    if EmbeddedKernel::has_layer(core_str, name) {
+    // 1. Check embedded kernel first (without @tag)
+    let base_name = name_segment.split('@').next().unwrap_or(name_segment);
+    if EmbeddedKernel::has_layer(core_str, base_name) {
         return Ok(ScaffoldResolveStatus::Embedded {
             layer: rel.to_string(),
         });
     }
 
-    // 2. Parse spec for registry lookup (use name@latest as default)
-    let spec = parse_scaffold_spec(core, &format!("{}@latest", name)).map_err(|e| {
+    // 2. Parse spec for registry lookup
+    // Nếu name_segment đã có @tag (flutter@stable) → dùng nguyên
+    // Nếu không có @tag (flutter) → thêm @latest
+    let spec_input = if name_segment.contains('@') {
+        name_segment.to_string()
+    } else {
+        format!("{}@latest", name_segment)
+    };
+    
+    let spec = parse_scaffold_spec(core, &spec_input).map_err(|e| {
         ScaffoldResolveError::Other(format!("Failed to parse scaffold spec: {}", e))
     })?;
 
@@ -322,7 +334,7 @@ pub async fn ensure_layer(
             return Err(ScaffoldResolveError::RequiredLayerMissing {
                 layer: rel.to_string(),
                 core: core_str.to_string(),
-                template: name.to_string(),
+                template: spec.name.clone(),
                 tag: "latest".to_string(),
                 attempted_sources: format!(
                     "- Embedded kernel: not available\n\
@@ -342,7 +354,7 @@ pub async fn ensure_layer(
             return Err(ScaffoldResolveError::RequiredLayerMissing {
                 layer: rel.to_string(),
                 core: core_str.to_string(),
-                template: name.to_string(),
+                template: spec.name.clone(),
                 tag: version.clone(),
                 attempted_sources: format!(
                     "- Registry fetch failed for version {}: {}",
