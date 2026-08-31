@@ -22,7 +22,7 @@ sha2 = { workspace = true }
 time = { workspace = true }
 regex = { workspace = true }
 rustls = { version = "0.23", features = ["std", "tls12"] }
-rustls-pemfile = "1.0"
+rustls-pemfile = "2.2"  # Updated to fix RUSTSEC-2025-0134
 webpki-roots = "0.25"
 serde_json = { workspace = true }
 hex = { workspace = true }

@@ -69,7 +69,8 @@ impl TlsConfig {
         if let Some(ca_path) = &self.ca_bundle {
             let ca_pem = std::fs::read_to_string(ca_path)
                 .map_err(|e| anyhow::anyhow!("read CA bundle: {}", e))?;
-            let certs = rustls_pemfile::certs(&mut ca_pem.as_bytes())
+            let certs: Vec<_> = rustls_pemfile::certs(&mut ca_pem.as_bytes())
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| anyhow::anyhow!("parse CA certs: {}", e))?;
             for cert in certs {
                 root_store
@@ -195,7 +196,8 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let file = std::fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader)?
+    let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .map(CertificateDer::from)
         .collect();
@@ -206,22 +208,26 @@ fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
 fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
     let file = std::fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
-    let keys = rustls_pemfile::pkcs8_private_keys(&mut reader)?;
-    let keys = if keys.is_empty() {
+    let mut keys: Vec<PrivateKeyDer> = rustls_pemfile::pkcs8_private_keys(&mut reader)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(PrivateKeyDer::Pkcs8)
+        .collect();
+
+    if keys.is_empty() {
         // Try RSA
         let file = std::fs::File::open(path)?;
         let mut reader = std::io::BufReader::new(file);
-        rustls_pemfile::rsa_private_keys(&mut reader)?
-    } else {
-        keys
-    };
-    let key = keys
-        .into_iter()
+        keys = rustls_pemfile::rsa_private_keys(&mut reader)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(PrivateKeyDer::Pkcs1)
+            .collect();
+    }
+
+    keys.into_iter()
         .next()
-        .ok_or_else(|| anyhow::anyhow!("no private key found"))?;
-    // Convert Vec<u8> to PrivateKeyDer::Pkcs8
-    let pkcs8_key = rustls::pki_types::PrivatePkcs8KeyDer::from(key);
-    Ok(PrivateKeyDer::Pkcs8(pkcs8_key))
+        .ok_or_else(|| anyhow::anyhow!("no private key found"))
 }
 
 /// Security headers & token handling (12 §10)
