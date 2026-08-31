@@ -14,8 +14,11 @@ impl TemplateRoot {
     }
 
     /// Resolve a template rel (relative to templates/) against the source
-    /// priority: MAGICORE_TEMPLATE_DIR env → workspace disk → registry cache.
+    /// priority: MAGICORE_TEMPLATE_DIR env → registry cache ONLY.
+    /// 
+    /// **workspace templates/ NO LONGER USED** — binary must be independent.
     pub fn resolve(rel: &str) -> TemplateRoot {
+        // 1. Dev override env var (tests, local dev)
         if let Ok(dir) = env::var("MAGICORE_TEMPLATE_DIR") {
             let candidate = PathBuf::from(dir).join(rel);
             if candidate.is_dir() {
@@ -23,19 +26,15 @@ impl TemplateRoot {
             }
         }
 
-        let disk = workspace_root().join("templates").join(rel);
-        if disk.is_dir() && has_template_contract(&disk) {
-            return TemplateRoot::disk(disk);
-        }
-
-        // Registry cache fallback: ~/.mgc/templates/{rel} (mgc template fetch).
+        // 2. Registry cache ONLY: ~/.mgc/templates/{rel} (mgc template fetch).
         let cached = crate::commands::template::templates_cache_dir().join(rel);
         if cached.is_dir() {
             return TemplateRoot::disk(cached);
         }
 
-        // Fallthrough to workspace disk bails with a clear error on first access.
-        TemplateRoot::disk(disk)
+        // 3. No workspace fallback! Fail with clear message.
+        // (caller must handle missing template via embedded kernel or registry fetch)
+        TemplateRoot::disk(cached) // Will fail on first .read() with clear error
     }
 
     /// Join a sub-path inside this root.
