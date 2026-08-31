@@ -1602,9 +1602,8 @@ pub async fn run_create_with_options(
 
     // Phase 4: Parse scaffold spec sớm với typo detection
     use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
-    let spec = parse_scaffold_spec(CoreKind::Web, framework).map_err(|e| {
-        anyhow::anyhow!("Invalid framework specification '{}': {}", framework, e)
-    })?;
+    let spec = parse_scaffold_spec(CoreKind::Web, framework)
+        .map_err(|e| anyhow::anyhow!("Invalid framework specification '{}': {}", framework, e))?;
 
     // Use normalized name cho resolve
     let fe_framework = resolve_framework(Some(&spec.name), &flags)?;

@@ -255,12 +255,14 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
 
 /// Đảm bảo template layer có sẵn (disk / cache) — nếu thiếu và registry có config,
 /// tự fetch. Registry-first: klass pnpm đua `create-*` từ registry.
-/// 
+///
 /// Returns typed ScaffoldResolveStatus thay vì bool - KHÔNG được bỏ qua!
 pub async fn ensure_layer(
     rel: &str,
-) -> Result<crate::scaffold::resolver::ScaffoldResolveStatus, crate::scaffold::resolver::ScaffoldResolveError>
-{
+) -> Result<
+    crate::scaffold::resolver::ScaffoldResolveStatus,
+    crate::scaffold::resolver::ScaffoldResolveError,
+> {
     use crate::scaffold::resolver::{ScaffoldResolveError, ScaffoldResolveStatus};
 
     // Check disk / cache trước (TemplateRoot::resolve đã theo đúng priority
@@ -286,9 +288,8 @@ pub async fn ensure_layer(
     // Registry fetch khi chưa có. Core lấy từ segment đầu của rel (web/... → web,
     // game/bevy → game) để package name khớp mgc-create-<core>-<name>.
     let core = rel.split('/').next().unwrap_or("web").to_string();
-    let registry = select_registry(None).map_err(|e| {
-        ScaffoldResolveError::Other(format!("Failed to select registry: {}", e))
-    })?;
+    let registry = select_registry(None)
+        .map_err(|e| ScaffoldResolveError::Other(format!("Failed to select registry: {}", e)))?;
 
     let args = TemplateFetchArgs {
         core: core.clone(),
@@ -312,7 +313,10 @@ pub async fn ensure_layer(
             core,
             template: rel.to_string(),
             tag: "latest".to_string(),
-            attempted_sources: format!("- Embedded kernel\n- Local cache\n- Registry: {}", registry),
+            attempted_sources: format!(
+                "- Embedded kernel\n- Local cache\n- Registry: {}",
+                registry
+            ),
         }),
     }
 }

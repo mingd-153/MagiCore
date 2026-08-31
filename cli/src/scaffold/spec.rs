@@ -49,7 +49,7 @@ impl CoreKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_core(s: &str) -> Option<Self> {
         match s {
             "web" => Some(CoreKind::Web),
             "ai" => Some(CoreKind::Ai),
@@ -111,14 +111,12 @@ impl ScaffoldRef {
     /// Suggest common typos
     pub fn suggest_if_typo(&self) -> Option<String> {
         match self {
-            ScaffoldRef::DistTag(tag) => {
-                match tag.as_str() {
-                    "laster" => Some("latest".to_string()),
-                    "stabl" | "stabel" => Some("stable".to_string()),
-                    "betta" => Some("beta".to_string()),
-                    _ => None,
-                }
-            }
+            ScaffoldRef::DistTag(tag) => match tag.as_str() {
+                "laster" => Some("latest".to_string()),
+                "stabl" | "stabel" => Some("stable".to_string()),
+                "betta" => Some("beta".to_string()),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -138,8 +136,7 @@ pub fn parse_scaffold_spec(core: CoreKind, input: &str) -> Result<ScaffoldSpec> 
     }
 
     let requested_ref = match ref_str {
-        None => ScaffoldRef::Default,
-        Some(r) if r.is_empty() => ScaffoldRef::Default,
+        None | Some("") => ScaffoldRef::Default,
         Some(r) => {
             // Heuristic: nếu bắt đầu bằng số → version, không thì tag
             if r.chars().next().unwrap_or('a').is_ascii_digit() {
@@ -168,10 +165,7 @@ pub fn parse_scaffold_spec(core: CoreKind, input: &str) -> Result<ScaffoldSpec> 
 
 /// Normalize template name: lowercase, kebab-case
 fn normalize_template_name(name: &str) -> String {
-    name.to_lowercase()
-        .replace('_', "-")
-        .trim()
-        .to_string()
+    name.to_lowercase().replace('_', "-").trim().to_string()
 }
 
 /// Artifact package naming: `mgc-create-<core>-<name>`

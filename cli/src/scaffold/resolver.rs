@@ -10,9 +10,7 @@ use crate::scaffold::spec::{CoreKind, ScaffoldSpec};
 #[derive(Debug, Clone)]
 pub enum ScaffoldResolveStatus {
     /// Có trong embedded kernel
-    Embedded {
-        layer: String,
-    },
+    Embedded { layer: String },
     /// Cache hit (đã fetch trước)
     CacheHit {
         layer: String,
@@ -26,10 +24,7 @@ pub enum ScaffoldResolveStatus {
         path: PathBuf,
     },
     /// Missing nhưng optional (không block)
-    OptionalMissing {
-        layer: String,
-        reason: String,
-    },
+    OptionalMissing { layer: String, reason: String },
 }
 
 impl ScaffoldResolveStatus {
@@ -146,11 +141,7 @@ impl fmt::Display for ScaffoldResolveError {
                 )
             }
             ScaffoldResolveError::UnsupportedTemplate { core, template } => {
-                write!(
-                    f,
-                    "Unsupported template '{}' for core '{}'",
-                    template, core
-                )
+                write!(f, "Unsupported template '{}' for core '{}'", template, core)
             }
             ScaffoldResolveError::Other(msg) => {
                 write!(f, "Scaffold resolve failed: {}", msg)

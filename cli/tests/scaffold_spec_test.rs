@@ -71,10 +71,7 @@ fn test_parse_rust_lib() {
     let spec = parse_scaffold_spec(CoreKind::Lib, "rust@1.80").unwrap();
     assert_eq!(spec.core, CoreKind::Lib);
     assert_eq!(spec.name, "rust");
-    assert_eq!(
-        spec.requested_ref,
-        ScaffoldRef::Version("1.80".to_string())
-    );
+    assert_eq!(spec.requested_ref, ScaffoldRef::Version("1.80".to_string()));
 }
 
 #[test]
@@ -115,10 +112,7 @@ fn test_artifact_name_app() {
 
 #[test]
 fn test_artifact_name_lib() {
-    assert_eq!(
-        artifact_name(CoreKind::Lib, "rust"),
-        "mgc-create-lib-rust"
-    );
+    assert_eq!(artifact_name(CoreKind::Lib, "rust"), "mgc-create-lib-rust");
 }
 
 #[test]
@@ -155,11 +149,11 @@ fn test_version_range_not_supported_yet() {
 
 #[test]
 fn test_core_kind_from_str() {
-    assert_eq!(CoreKind::from_str("web"), Some(CoreKind::Web));
-    assert_eq!(CoreKind::from_str("ai"), Some(CoreKind::Ai));
-    assert_eq!(CoreKind::from_str("app"), Some(CoreKind::App));
-    assert_eq!(CoreKind::from_str("lib"), Some(CoreKind::Lib));
-    assert_eq!(CoreKind::from_str("invalid"), None);
+    assert_eq!(CoreKind::from_str_core("web"), Some(CoreKind::Web));
+    assert_eq!(CoreKind::from_str_core("ai"), Some(CoreKind::Ai));
+    assert_eq!(CoreKind::from_str_core("app"), Some(CoreKind::App));
+    assert_eq!(CoreKind::from_str_core("lib"), Some(CoreKind::Lib));
+    assert_eq!(CoreKind::from_str_core("invalid"), None);
 }
 
 #[test]

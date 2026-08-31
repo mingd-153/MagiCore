@@ -7,7 +7,11 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
     if !framework.is_empty() {
         let _spec = parse_scaffold_spec(CoreKind::Cicd, framework).map_err(|e| {
-            anyhow::anyhow!("Invalid CI/CD framework specification '{}': {}", framework, e)
+            anyhow::anyhow!(
+                "Invalid CI/CD framework specification '{}': {}",
+                framework,
+                e
+            )
         })?;
     }
 
