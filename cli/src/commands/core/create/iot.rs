@@ -3,6 +3,14 @@
 use anyhow::Result;
 
 pub async fn run(framework: &str, project_name: &str) -> Result<()> {
+    // Phase 4: Parse scaffold spec sớm với typo detection
+    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+    if !framework.is_empty() {
+        let _spec = parse_scaffold_spec(CoreKind::Iot, framework).map_err(|e| {
+            anyhow::anyhow!("Invalid IoT framework specification '{}': {}", framework, e)
+        })?;
+    }
+
     let mut config = crate::wizard::iot::IotWizard::run();
     config.project_name = project_name.to_string();
     if !framework.is_empty() {

@@ -85,9 +85,9 @@ impl ScaffoldRef {
                 if tag.is_empty() {
                     bail!("Empty dist tag");
                 }
-                // Kiểm tra typo phổ biến
-                if tag == "laster" {
-                    bail!("Unknown tag 'laster'. Did you mean 'latest'?");
+                // Kiểm tra typo phổ biến - dùng suggest_if_typo
+                if let Some(suggestion) = self.suggest_if_typo() {
+                    bail!("Unknown tag '{}'. Did you mean '{}'?", tag, suggestion);
                 }
                 Ok(())
             }
