@@ -1725,6 +1725,22 @@ pub async fn run_create_with_options(
     );
     proj_config.save(&project_dir)?;
 
+    // Write scaffold provenance (R10 - supply chain tracking)
+    let provenance = crate::scaffold::provenance::ScaffoldProvenance::new(
+        spec.name.clone(),
+        "web".to_string(),
+        match &spec.requested_ref {
+            crate::scaffold::spec::ScaffoldRef::DistTag(t) => t.clone(),
+            crate::scaffold::spec::ScaffoldRef::Version(v) => v.clone(),
+            _ => "default".to_string(),
+        },
+        None, // Registry URL would come from ensure_layer results
+        rels.clone(),
+    );
+    if let Err(e) = provenance.write(&project_dir) {
+        mgc_ui::warning(&format!("Failed to write provenance: {}", e));
+    }
+
     let frontend = parse_framework_request(&fe_framework);
     let be_name = detect_backend_framework(&flags);
     let backend = be_name
