@@ -53,7 +53,7 @@ pub enum BlobBackend {
     S3(std::sync::Arc<object_store::aws::AmazonS3>),
 }
 
-use object_store::{ObjectStore as _, ObjectStoreExt};
+use object_store::ObjectStoreExt;
 
 impl BlobBackend {
     /// "local" hoặc "s3://bucket/prefix"

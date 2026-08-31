@@ -1562,13 +1562,17 @@ fn resolve_local_bin(project_root: &Path, bin_name: &str) -> Result<PathBuf> {
 }
 
 fn local_bin_candidates(bin_dir: &Path, bin_name: &str) -> Vec<PathBuf> {
-    let mut candidates = vec![bin_dir.join(bin_name)];
+    #[cfg(not(windows))]
+    {
+        vec![bin_dir.join(bin_name)]
+    }
     #[cfg(windows)]
     {
+        let mut candidates = vec![bin_dir.join(bin_name)];
         candidates.push(bin_dir.join(format!("{bin_name}.cmd")));
         candidates.push(bin_dir.join(format!("{bin_name}.exe")));
+        candidates
     }
-    candidates
 }
 
 fn prepend_path(local_bin: &Path) -> Result<OsString> {
