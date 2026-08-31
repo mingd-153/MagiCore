@@ -386,6 +386,7 @@ fn extract_cached_version(root: &crate::scaffold::template_root::TemplateRoot) -
 }
 
 /// Write version metadata vào cache directory
+#[allow(dead_code)] // Used by legacy cache path, kept for backward compatibility
 fn write_cache_version_metadata(
     root: &crate::scaffold::template_root::TemplateRoot,
     version: &str,

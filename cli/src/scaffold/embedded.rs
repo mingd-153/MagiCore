@@ -62,6 +62,7 @@ impl EmbeddedKernel {
 
 /// Embedded layer metadata.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used during extraction, read indirectly via include_bytes!
 struct EmbeddedLayer {
     name: &'static str,
     core: &'static str,

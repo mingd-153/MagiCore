@@ -85,6 +85,7 @@ pub fn workspace_root() -> PathBuf {
 /// contract anywhere below). Workspace trees holding only doc placeholders
 /// (README files, e.g. the scaffold-structure docs) must not shadow the
 /// registry cache.
+#[allow(dead_code)] // Legacy cache validation, kept for backward compatibility
 fn has_template_contract(dir: &Path) -> bool {
     if dir.join("template.toml").is_file() {
         return true;
