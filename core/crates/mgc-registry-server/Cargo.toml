@@ -37,7 +37,7 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 tempfile = { workspace = true }
 clap = { workspace = true }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "json", "migrate"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls", "sqlite", "uuid", "chrono", "json", "migrate"] }  # 0.9: runtime-tokio-rustls → runtime-tokio + tls-rustls
 chrono = { workspace = true }
 
 [dev-dependencies]
