@@ -385,6 +385,7 @@ fn is_sensitive(key: &str) -> bool {
     key.contains("_authToken") || key.contains("_password") || key.contains("token")
 }
 
+#[allow(dead_code)]
 fn merge_file(merged: &mut BTreeMap<String, String>, path: &Path) {
     if !path.exists() {
         return;

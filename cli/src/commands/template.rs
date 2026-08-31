@@ -270,18 +270,39 @@ pub async fn ensure_layer(
     // Parse layer path để lấy core/name (web/frontend/nextjs → core=web, name=nextjs)
     // Layer rel có thể là:
     // - "web/frontend/nextjs" → name="nextjs"
+    // - "web/shared/partials/base" → full path
     // - "app/flutter@stable" → name="flutter@stable" (đã có @tag)
     let segments: Vec<&str> = rel.split('/').collect();
     let core_str = segments.first().unwrap_or(&"web");
-    let core = CoreKind::from_str_core(core_str).ok_or_else(|| {
-        ScaffoldResolveError::Other(format!("Unknown core: {}", core_str))
-    })?;
+    let core = CoreKind::from_str_core(core_str)
+        .ok_or_else(|| ScaffoldResolveError::Other(format!("Unknown core: {}", core_str)))?;
 
     let name_segment = segments.last().unwrap_or(&"unknown");
 
-    // 1. Check embedded kernel first (without @tag)
+    // 1. Check embedded kernel first
+    // Try full path first (web/shared/base), then short form (web/vanilla)
+    if EmbeddedKernel::has_layer_path(rel) {
+        // Extract embedded to legacy cache location so processor can find it
+        let cache_target = crate::commands::template::templates_cache_dir().join(rel);
+        if !cache_target.exists() {
+            EmbeddedKernel::extract_layer_path(rel, &cache_target).map_err(|e| {
+                ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
+            })?;
+        }
+        return Ok(ScaffoldResolveStatus::Embedded {
+            layer: rel.to_string(),
+        });
+    }
+
     let base_name = name_segment.split('@').next().unwrap_or(name_segment);
     if EmbeddedKernel::has_layer(core_str, base_name) {
+        // Extract to cache
+        let cache_target = crate::commands::template::templates_cache_dir().join(rel);
+        if !cache_target.exists() {
+            EmbeddedKernel::extract_layer(core_str, base_name, &cache_target).map_err(|e| {
+                ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
+            })?;
+        }
         return Ok(ScaffoldResolveStatus::Embedded {
             layer: rel.to_string(),
         });
@@ -295,7 +316,7 @@ pub async fn ensure_layer(
     } else {
         format!("{}@latest", name_segment)
     };
-    
+
     let spec = parse_scaffold_spec(core, &spec_input).map_err(|e| {
         ScaffoldResolveError::Other(format!("Failed to parse scaffold spec: {}", e))
     })?;
@@ -365,9 +386,8 @@ pub async fn ensure_layer(
     };
 
     // Write to versioned cache
-    ScaffoldCache::write(&spec, &version, &tarball).map_err(|e| {
-        ScaffoldResolveError::Other(format!("Failed to write cache: {}", e))
-    })?;
+    ScaffoldCache::write(&spec, &version, &tarball)
+        .map_err(|e| ScaffoldResolveError::Other(format!("Failed to write cache: {}", e)))?;
 
     let path = ScaffoldCache::path(&spec, &version);
     Ok(ScaffoldResolveStatus::Fetched {

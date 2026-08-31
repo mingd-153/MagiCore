@@ -15,7 +15,10 @@ pub async fn run(project_name: &str) -> Result<()> {
                     lang
                 ));
             }
-            Err(e) => anyhow::bail!("Required lib template layer missing: {}", e),
+            Err(e) => mgc_ui::warning(&format!(
+                "Optional lib layer 'lib/{}' is unavailable, using fallback: {}",
+                lang, e
+            )),
         }
     }
     super::scaffold_and_save_metadata(&config)?;

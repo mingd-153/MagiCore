@@ -1379,6 +1379,8 @@ fn render_core_target_path(target: &str, context: &CoreTemplateContext) -> Strin
 
 #[derive(Debug, Deserialize)]
 struct TemplateManifest {
+    #[serde(default)]
+    tokens: Vec<TemplateToken>,
     files: Vec<TemplateFile>,
 }
 
@@ -1394,8 +1396,33 @@ impl TemplateManifest {
         }
 
         let contents = String::from_utf8(layer.read("template.toml")?)?;
-        Ok(Some(toml::from_str(&contents)?))
+        let mut manifest: Self = toml::from_str(&contents)?;
+        manifest.apply_root_token_contracts();
+        Ok(Some(manifest))
     }
+
+    fn apply_root_token_contracts(&mut self) {
+        if self.tokens.is_empty() {
+            return;
+        }
+
+        let root_tokens = self
+            .tokens
+            .iter()
+            .map(|token| token.name.clone())
+            .collect::<Vec<_>>();
+
+        for file in &mut self.files {
+            if file.required_context.is_empty() {
+                file.required_context = root_tokens.clone();
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TemplateToken {
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]

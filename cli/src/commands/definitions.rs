@@ -5,7 +5,7 @@ use clap::Subcommand;
 
 #[derive(Subcommand, Clone)]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum Commands {
+pub enum Commands {
     // ── Common / Global commands ────────────────────────────────────────
     #[command(about = "Interactive project wizard")]
     Init {

@@ -1615,79 +1615,12 @@ pub async fn run_create_with_options(
         project_name, fe_framework
     ));
 
-    // Registry-first preflight: ensure mọi layer scaffold sẽ dùng (frontend leaf,
-    // backend leaf theo lang/fw, monorepo base/partials) — pnpm-style delegate.
-    // Embedded kernel + cache + disk được kiểm trước; thiếu thì fetch registry.
+    let config = build_web_config(&fe_framework, project_name, &flags)?;
+
+    // Registry-first preflight — ensure only layers this scaffold mode uses.
+    // Kiểm đúng layer theo mode, không bắt backend/monorepo partials cho frontend.
     let frontend = parse_framework_request(&fe_framework);
-    let be_from_flags = detect_backend_framework(&flags);
-    let be_name = be_from_flags
-        .clone()
-        .or_else(|| fullstack_backend_framework(&frontend.raw).map(str::to_string))
-        .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string));
-    let be_ref = be_name.as_deref();
-    let mut rels: Vec<String> = vec![format!("web/frontend/{}", frontend.normalized)];
-    match be_ref {
-        Some(be) => {
-            if let Some(lang) = crate::scaffold::processor::infer_backend_language(be) {
-                // Backend-only mode dùng web/backend/{lang}/{be}; monorepo dùng
-                // web/monorepo/backend/{lang}/{be} — fetch cả 2 (registry-first).
-                rels.push(format!("web/backend/{lang}/{be}"));
-                rels.push(format!("web/monorepo/backend/{lang}/{be}"));
-            }
-            // Fullstack combo Node (react-express, vue-laravel...) — be đến từ
-            // framework name, không phải flag → cần split leaf riêng theo combo.
-            if be_from_flags.is_none() {
-                rels.push(format!("web/fullstack/split/{}", frontend.raw));
-            }
-        }
-        // Backend-only mode khi framework name là backend thuần (express, fastapi...):
-        // scaffold dùng web/backend/{lang}/{fe}, không có frontend leaf.
-        None => {
-            if let Some(lang) =
-                crate::scaffold::processor::infer_backend_language(&frontend.normalized)
-            {
-                rels.push(format!("web/backend/{lang}/{}", frontend.normalized));
-                rels.push(format!(
-                    "web/monorepo/backend/{lang}/{}",
-                    frontend.normalized
-                ));
-            } else {
-                // Không có backend riêng → fullstack split combo Node
-                // (react-express...) hoặc all-in-one (nextjs/remix/...) —
-                // ensure đúng bucket theo framework.
-                let bucket =
-                    if crate::scaffold::processor::is_all_in_one_fullstack(&frontend.normalized) {
-                        "all-in-one"
-                    } else {
-                        "split"
-                    };
-                rels.push(format!("web/fullstack/{bucket}/{}", frontend.normalized));
-            }
-        }
-    }
-    if flags.monorepo {
-        rels.push("web/monorepo/base".to_string());
-        rels.push(format!("web/monorepo/frontend/{}", frontend.normalized));
-    }
-    // Shared partials (processor dùng mọi mode): fetch hết — layer nhỏ, an toàn.
-    for partial in [
-        "base",
-        "backend",
-        "frontend",
-        "frontend-common",
-        "frontend-foundation",
-        "frontend-rust-ready",
-        "fullstack",
-        "monorepo",
-        "monorepo-backend",
-        "monorepo-frontend",
-        "monorepo-frontend-common",
-        "monorepo-frontend-foundation",
-        "monorepo-frontend-rust-ready",
-        "monorepo-packages",
-    ] {
-        rels.push(format!("web/shared/partials/{partial}"));
-    }
+    let rels = required_web_layers_for_config(&config, &frontend);
 
     // Phase 3: Typed resolution với MissingLayersReport thay vì warning spam
     use crate::scaffold::resolver::MissingLayersReport;
@@ -1701,8 +1634,11 @@ pub async fn run_create_with_options(
                 }
             }
             Err(_) => {
-                // Required layers - fail fast
-                report.add_required(rel.clone());
+                if web_layer_has_scaffold_fallback(&config, rel) {
+                    report.add_optional(rel.clone());
+                } else {
+                    report.add_required(rel.clone());
+                }
             }
         }
     }
@@ -1712,7 +1648,6 @@ pub async fn run_create_with_options(
         bail!(report.format_error("web", &frontend.normalized));
     }
 
-    let config = build_web_config(&fe_framework, project_name, &flags)?;
     let project_dir = crate::scaffold::Scaffolder::scaffold(&config)?;
 
     let proj_config = mgc_config::project::ProjectConfig::from_scaffold(
@@ -1757,6 +1692,73 @@ pub async fn run_create_with_options(
     ));
 
     Ok(())
+}
+
+fn required_web_layers_for_config(
+    config: &crate::wizard::engine::ScaffoldConfig,
+    frontend: &FrameworkRequest,
+) -> Vec<String> {
+    let mut rels = vec!["web/shared/partials/base".to_string()];
+    let primary = config
+        .frameworks
+        .first()
+        .cloned()
+        .unwrap_or_else(|| frontend.normalized.clone());
+
+    match config.sub_type.as_str() {
+        "frontend" => {
+            rels.push("web/shared/partials/frontend-foundation".to_string());
+            rels.push("web/shared/partials/frontend-rust-ready".to_string());
+            rels.push("web/shared/partials/frontend".to_string());
+            if matches!(primary.as_str(), "react-vite" | "solidjs") {
+                rels.push("web/shared/partials/frontend-common".to_string());
+            }
+            rels.push(format!("web/frontend/{primary}"));
+        }
+        "backend" => {
+            rels.push("web/shared/partials/backend".to_string());
+            if let Some(lang) = crate::scaffold::processor::infer_backend_language(&primary) {
+                rels.push(format!("web/backend/{lang}/{primary}"));
+            }
+        }
+        "fullstack" => {
+            rels.push("web/shared/partials/fullstack".to_string());
+            let bucket = if crate::scaffold::processor::is_all_in_one_fullstack(&primary) {
+                "all-in-one"
+            } else {
+                "split"
+            };
+            rels.push(format!("web/fullstack/{bucket}/{primary}"));
+        }
+        "monorepo" => {
+            rels.push("web/shared/partials/monorepo".to_string());
+            rels.push("web/monorepo/base".to_string());
+            rels.push(format!("web/monorepo/frontend/{primary}"));
+            if let Some(backend) = config.frameworks.get(1) {
+                if let Some(lang) = crate::scaffold::processor::infer_backend_language(backend) {
+                    rels.push(format!("web/monorepo/backend/{lang}/{backend}"));
+                }
+            }
+        }
+        _ => rels.push(format!("web/frontend/{primary}")),
+    }
+
+    rels
+}
+
+fn web_layer_has_scaffold_fallback(
+    config: &crate::wizard::engine::ScaffoldConfig,
+    rel: &str,
+) -> bool {
+    let framework = config.frameworks.first().map(String::as_str).unwrap_or("");
+    let frontend_leaf = format!("web/frontend/{framework}");
+    if rel == frontend_leaf {
+        return crate::scaffold::embedded_kernel::get_embedded_template("web", framework).is_some();
+    }
+
+    let backend_leaf = crate::scaffold::processor::infer_backend_language(framework)
+        .map(|lang| format!("web/backend/{lang}/{framework}"));
+    backend_leaf.as_deref() == Some(rel)
 }
 
 fn resolve_framework(pos: Option<&str>, flags: &ScaffoldFlags) -> Result<String> {

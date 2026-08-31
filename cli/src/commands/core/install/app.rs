@@ -54,6 +54,7 @@ fn install_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
 }
 
 /// Lệnh dev theo language — Q20 (flutter run / gradle run / swift run).
+#[allow(dead_code)]
 fn dev_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
     match lang {
         mgc_app_adapter::AppLanguage::Flutter => InstallCommand {
@@ -292,6 +293,7 @@ pub fn dev_scheme(root: &Path) -> Option<String> {
 }
 
 /// objC dev — có [app] dev_scheme → xcodebuild build (simulator), không → mở Xcode.
+#[allow(dead_code)]
 async fn dev_objc(root: &Path, dry_run: bool) -> Result<()> {
     let Some(scheme) = dev_scheme(root) else {
         let Some(proj) = find_xcode_project(root) else {

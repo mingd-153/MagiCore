@@ -5,16 +5,18 @@ use anyhow::Result;
 pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     // Phase 4: Parse scaffold spec sớm với typo detection
     use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
-    if !framework.is_empty() {
-        let _spec = parse_scaffold_spec(CoreKind::Ai, framework).map_err(|e| {
+    let parsed_framework = if !framework.is_empty() {
+        Some(parse_scaffold_spec(CoreKind::Ai, framework).map_err(|e| {
             anyhow::anyhow!("Invalid AI framework specification '{}': {}", framework, e)
-        })?;
-    }
+        })?)
+    } else {
+        None
+    };
 
     let mut config = crate::wizard::ai::AiWizard::run();
     config.project_name = project_name.to_string();
-    if !framework.is_empty() {
-        config.frameworks = vec![framework.to_string()];
+    if let Some(spec) = &parsed_framework {
+        config.frameworks = vec![spec.normalized_name.clone()];
     }
     if let Some(fw) = config.frameworks.first() {
         // Phase 3: Handle typed result, không bỏ qua
@@ -29,7 +31,10 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
                 ));
             }
             Err(e) => {
-                anyhow::bail!("Required AI template layer missing: {}", e);
+                mgc_ui::warning(&format!(
+                    "Optional AI layer 'ai/{}' is unavailable, using fallback: {}",
+                    fw, e
+                ));
             }
         }
     }

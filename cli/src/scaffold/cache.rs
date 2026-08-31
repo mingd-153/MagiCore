@@ -11,7 +11,7 @@ pub struct ScaffoldCache;
 
 impl ScaffoldCache {
     /// Cache path for a specific scaffold version.
-    /// 
+    ///
     /// Example: `~/.mgc/scaffolds/web/nextjs/15.5.0/`
     pub fn path(spec: &ScaffoldSpec, version: &str) -> PathBuf {
         Self::cache_root()
@@ -27,7 +27,7 @@ impl ScaffoldCache {
     }
 
     /// Write scaffold data to versioned cache.
-    /// 
+    ///
     /// `data` is expected to be a tarball or zip that will be extracted.
     pub fn write(spec: &ScaffoldSpec, version: &str, tarball: &[u8]) -> Result<()> {
         let target = Self::path(spec, version);

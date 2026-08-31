@@ -51,11 +51,7 @@ impl ScaffoldRegistry {
             .context(format!("Failed to fetch scaffold from {}", url))?;
 
         if !response.status().is_success() {
-            bail!(
-                "Registry returned error {}: {}",
-                response.status(),
-                url
-            );
+            bail!("Registry returned error {}: {}", response.status(), url);
         }
 
         let bytes = response
@@ -70,8 +66,12 @@ impl ScaffoldRegistry {
     pub async fn resolve_version(&self, spec: &ScaffoldSpec) -> Result<String> {
         match &spec.requested_ref {
             ScaffoldRef::Version(v) => Ok(v.clone()),
-            ScaffoldRef::DistTag(tag) if tag == "latest" => self.fetch_dist_tag(spec, "latest").await,
-            ScaffoldRef::DistTag(tag) if tag == "stable" => self.fetch_dist_tag(spec, "stable").await,
+            ScaffoldRef::DistTag(tag) if tag == "latest" => {
+                self.fetch_dist_tag(spec, "latest").await
+            }
+            ScaffoldRef::DistTag(tag) if tag == "stable" => {
+                self.fetch_dist_tag(spec, "stable").await
+            }
             ScaffoldRef::DistTag(tag) if tag == "beta" => self.fetch_dist_tag(spec, "beta").await,
             ScaffoldRef::DistTag(tag) => bail!("Unknown dist tag: {}", tag),
             ScaffoldRef::Range(_) => bail!("Version ranges not supported yet"),
@@ -109,17 +109,9 @@ impl ScaffoldRegistry {
             .await
             .context("Failed to parse dist-tags JSON")?;
 
-        dist_tags
-            .tags
-            .get(tag)
-            .cloned()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Dist-tag '{}' not found for scaffold {}",
-                    tag,
-                    package_name
-                )
-            })
+        dist_tags.tags.get(tag).cloned().ok_or_else(|| {
+            anyhow::anyhow!("Dist-tag '{}' not found for scaffold {}", tag, package_name)
+        })
     }
 
     /// Package name convention: mgc-create-{core}-{name}.

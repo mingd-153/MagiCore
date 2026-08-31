@@ -88,11 +88,11 @@ run_test_expect_output \
     "$MGC_BIN create-web nextjs@laster test-typo" \
     "Did you mean"
 
-# Test 3: All-core spec parsing (flutter@stable)
+# Test 3: All-core spec parsing (no double @tag bug)
 run_test_expect_output \
-    "All-core spec parsing (no double @tag)" \
+    "All-core spec parsing (no @stable@latest)" \
     "$MGC_BIN create-app flutter@stable test-app" \
-    "flutter@stable"
+    "app/flutter"
 
 # Test 4: Registry-first error message
 run_test_expect_output \

@@ -45,6 +45,7 @@ use std::sync::Arc;
 
 use crate::commands::core::shared;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn add(
     packages: Vec<String>,
     version: Option<String>,

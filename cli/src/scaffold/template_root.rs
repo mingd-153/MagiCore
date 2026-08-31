@@ -15,7 +15,7 @@ impl TemplateRoot {
 
     /// Resolve a template rel (relative to templates/) against the source
     /// priority: MAGICORE_TEMPLATE_DIR env → registry cache ONLY.
-    /// 
+    ///
     /// **workspace templates/ NO LONGER USED** — binary must be independent.
     pub fn resolve(rel: &str) -> TemplateRoot {
         // 1. Dev override env var (tests, local dev)

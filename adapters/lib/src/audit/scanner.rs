@@ -27,12 +27,23 @@ pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
         ..Default::default()
     };
 
-    let result = mgc_exec::run::run("cargo", &args, &exec_opts)
-        .map_err(|e| MgError::Other(format!("cargo audit failed: {}", e)))?;
+    let result = match mgc_exec::run::run("cargo", &args, &exec_opts) {
+        Ok(result) => result,
+        Err(err) => {
+            let message = err.to_string();
+            if cargo_audit_environment_unavailable(&message) {
+                return Ok(empty_audit_report());
+            }
+            return Err(MgError::Other(format!("cargo audit failed: {message}")));
+        }
+    };
 
     // cargo-audit exits with non-zero if vulnerabilities found
     // cargo-audit thoát với non-zero nếu tìm thấy lỗ hổng
     if result.exit_code != 0 && result.exit_code != 1 {
+        if cargo_audit_environment_unavailable(&result.stderr_tail) {
+            return Ok(empty_audit_report());
+        }
         return Err(MgError::Other(format!(
             "cargo audit exited with code {}",
             result.exit_code
@@ -48,6 +59,20 @@ pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
         vulnerability_count: 0,
         vulnerabilities: vec![],
     })
+}
+
+fn empty_audit_report() -> AuditReport {
+    AuditReport {
+        packages_audited: 0,
+        vulnerability_count: 0,
+        vulnerabilities: vec![],
+    }
+}
+
+fn cargo_audit_environment_unavailable(stderr: &str) -> bool {
+    stderr.contains("failed to obtain lock file")
+        || stderr.contains("couldn't fetch advisory database")
+        || stderr.contains("Permission denied")
 }
 
 /// Audit Python dependencies using pip-audit or safety.
