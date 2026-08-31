@@ -1137,9 +1137,16 @@ pub async fn materialize_template(root: &Path, framework: &str) -> anyhow::Resul
     if target_dir.exists() {
         return Ok(()); // đã có — không ghi đè
     }
-    // Registry-first: fetch layer hardware/<framework> nếu chưa có; fetch fail →
-    // scaffold bên dưới bail rõ ràng (hardware không có fallback procedural).
-    crate::commands::template::ensure_layer(&format!("hardware/{framework}")).await;
+    // Phase 3: Handle typed result - hardware không có fallback
+    match crate::commands::template::ensure_layer(&format!("hardware/{framework}")).await {
+        Ok(status) if status.is_available() => {}
+        Ok(_) | Err(_) => {
+            anyhow::bail!(
+                "Required hardware template layer 'hardware/{}' missing - no fallback available",
+                framework
+            );
+        }
+    }
     let config = crate::wizard::engine::ScaffoldConfig {
         core: "hardware".to_string(),
         sub_type: String::new(),

@@ -9,8 +9,17 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         config.frameworks = vec![framework.to_string()];
     }
     if let Some(fw) = config.frameworks.first() {
-        // Registry-first: fetch layer clo/<fw> nếu chưa có; fetch fail → fallback procedural.
-        crate::commands::template::ensure_layer(&format!("clo/{fw}")).await;
+        // Phase 3: Handle typed result
+        match crate::commands::template::ensure_layer(&format!("clo/{fw}")).await {
+            Ok(status) if status.is_available() => {}
+            Ok(_) => {
+                mgc_ui::warning(&format!(
+                    "Optional cloud layer 'clo/{}' not found, using fallback",
+                    fw
+                ));
+            }
+            Err(e) => anyhow::bail!("Required cloud template layer missing: {}", e),
+        }
     }
     super::scaffold_and_save_metadata(&config)?;
     mgc_ui::success("Cloud project created. Run `mgc add-clo <pkg>` or `mgc install-clo` next.");

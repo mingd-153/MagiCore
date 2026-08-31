@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 // use mgc_lockfile::{
 //     serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
 // };
@@ -1682,13 +1682,28 @@ pub async fn run_create_with_options(
     ] {
         rels.push(format!("web/shared/partials/{partial}"));
     }
+
+    // Phase 3: Typed resolution với MissingLayersReport thay vì warning spam
+    use crate::scaffold::resolver::MissingLayersReport;
+    let mut report = MissingLayersReport::new();
+
     for rel in &rels {
-        if !crate::commands::template::ensure_layer(rel).await {
-            mgc_ui::warning(&format!(
-                "Template layer '{}' not in embedded kernel, cache, or registry; scaffold may fail if no local templates/ dir matches",
-                rel
-            ));
+        match crate::commands::template::ensure_layer(rel).await {
+            Ok(status) => {
+                if !status.is_available() {
+                    report.add_optional(rel.clone());
+                }
+            }
+            Err(_) => {
+                // Required layers - fail fast
+                report.add_required(rel.clone());
+            }
         }
+    }
+
+    // Fail early nếu có required layers missing
+    if report.has_required_missing() {
+        bail!(report.format_error("web", &frontend.normalized));
     }
 
     let config = build_web_config(&fe_framework, project_name, &flags)?;

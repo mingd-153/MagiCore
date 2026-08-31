@@ -9,8 +9,21 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         config.frameworks = vec![framework.to_string()];
     }
     if let Some(fw) = config.frameworks.first() {
-        // Registry-first: fetch layer ai/<fw> nếu chưa có; fetch fail → fallback procedural.
-        crate::commands::template::ensure_layer(&format!("ai/{fw}")).await;
+        // Phase 3: Handle typed result, không bỏ qua
+        match crate::commands::template::ensure_layer(&format!("ai/{fw}")).await {
+            Ok(status) if status.is_available() => {
+                // Layer OK - proceed
+            }
+            Ok(_) => {
+                mgc_ui::warning(&format!(
+                    "Optional AI layer 'ai/{}' not found, using fallback",
+                    fw
+                ));
+            }
+            Err(e) => {
+                anyhow::bail!("Required AI template layer missing: {}", e);
+            }
+        }
     }
     super::scaffold_and_save_metadata(&config)?;
     mgc_ui::success(

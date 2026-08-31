@@ -255,29 +255,66 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
 
 /// Đảm bảo template layer có sẵn (disk / cache) — nếu thiếu và registry có config,
 /// tự fetch. Registry-first: klass pnpm đua `create-*` từ registry.
-/// Trả về true nếu template khả dụng (có template.toml + sources).
-pub async fn ensure_layer(rel: &str) -> bool {
+/// 
+/// Returns typed ScaffoldResolveStatus thay vì bool - KHÔNG được bỏ qua!
+pub async fn ensure_layer(
+    rel: &str,
+) -> Result<crate::scaffold::resolver::ScaffoldResolveStatus, crate::scaffold::resolver::ScaffoldResolveError>
+{
+    use crate::scaffold::resolver::{ScaffoldResolveError, ScaffoldResolveStatus};
+
     // Check disk / cache trước (TemplateRoot::resolve đã theo đúng priority
     // env → workspace disk → cache).
     let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
     if root.exists("") && root.exists("template.toml") && root.exists("sources") {
-        return true;
+        // Phân biệt embedded vs cache - check nếu trong embedded kernel
+        let path_str = root.path().display().to_string();
+        let is_embedded = path_str.contains("embedded");
+        if is_embedded {
+            return Ok(ScaffoldResolveStatus::Embedded {
+                layer: rel.to_string(),
+            });
+        } else {
+            return Ok(ScaffoldResolveStatus::CacheHit {
+                layer: rel.to_string(),
+                version: None, // TODO: extract version từ cache metadata
+                path: root.path().to_path_buf(),
+            });
+        }
     }
+
     // Registry fetch khi chưa có. Core lấy từ segment đầu của rel (web/... → web,
     // game/bevy → game) để package name khớp mgc-create-<core>-<name>.
     let core = rel.split('/').next().unwrap_or("web").to_string();
-    if let Ok(registry) = select_registry(None) {
-        let args = TemplateFetchArgs {
-            core,
-            name: rel.to_string(),
-            registry: Some(registry),
-            tag: None,
-        };
-        if fetch(args).await.is_ok() {
-            return true;
+    let registry = select_registry(None).map_err(|e| {
+        ScaffoldResolveError::Other(format!("Failed to select registry: {}", e))
+    })?;
+
+    let args = TemplateFetchArgs {
+        core: core.clone(),
+        name: rel.to_string(),
+        registry: Some(registry.clone()),
+        tag: Some("latest".to_string()), // Default tag
+    };
+
+    match fetch(args).await {
+        Ok(_) => {
+            // Re-check sau fetch
+            let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
+            Ok(ScaffoldResolveStatus::Fetched {
+                layer: rel.to_string(),
+                version: "latest".to_string(), // TODO: extract actual version
+                path: root.path().to_path_buf(),
+            })
         }
+        Err(_e) => Err(ScaffoldResolveError::RequiredLayerMissing {
+            layer: rel.to_string(),
+            core,
+            template: rel.to_string(),
+            tag: "latest".to_string(),
+            attempted_sources: format!("- Embedded kernel\n- Local cache\n- Registry: {}", registry),
+        }),
     }
-    false
 }
 
 /// Extract tarball entries vào target, bỏ segment đầu của entry name

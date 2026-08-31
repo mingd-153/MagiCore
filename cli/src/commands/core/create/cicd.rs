@@ -9,8 +9,17 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         config.frameworks = vec![framework.to_string()];
     }
     if let Some(fw) = config.frameworks.first() {
-        // Registry-first: fetch layer cicd/<fw> nếu chưa có; fetch fail → fallback procedural.
-        crate::commands::template::ensure_layer(&format!("cicd/{fw}")).await;
+        // Phase 3: Handle typed result
+        match crate::commands::template::ensure_layer(&format!("cicd/{fw}")).await {
+            Ok(status) if status.is_available() => {}
+            Ok(_) => {
+                mgc_ui::warning(&format!(
+                    "Optional cicd layer 'cicd/{}' not found, using fallback",
+                    fw
+                ));
+            }
+            Err(e) => anyhow::bail!("Required cicd template layer missing: {}", e),
+        }
     }
     super::scaffold_and_save_metadata(&config)?;
     mgc_ui::success("CICD project created. Run `mgc deploy` (dry-run) to preview deployment.");
