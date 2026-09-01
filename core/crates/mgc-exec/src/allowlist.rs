@@ -102,6 +102,7 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "mvn",
     "composer",
     "node",
+    "deno", // Runtime adapter: Deno projects (optimizer support)
     "swift",
     "cargo",
     "espflash",
