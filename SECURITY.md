@@ -1,278 +1,334 @@
-# Security Policy
+# MagiCore Security Model
 
-MagiCore (`mgc`) takes security seriously. This document outlines our security features, vulnerability reporting process, and best practices.
+**Version:** 1.1.0-RC
+**Last Updated:** 2026-09-01
 
----
+MagiCore implements a comprehensive security model designed to protect against supply-chain attacks, malicious packages, and credential theft. This document explains the security mechanisms available to users.
 
-## 🛡️ Security Features
+## Security Principles
 
-### 1. **Supply-Chain Security (24-Hour Quarantine)**
+1. **Fail-closed by default**: Security mechanisms default to blocking unsafe operations
+2. **Explicit escape hatches**: Bypasses require explicit flags and generate audit logs
+3. **Immutable allowlists**: Tool execution is restricted to a curated, reviewed list
+4. **Zero-trust dependencies**: All packages are verified before installation
 
-MagiCore enforces a **24-hour new-release quarantine** by default to protect against malicious packages published in rapid succession (e.g., typosquatting, supply-chain attacks).
+## 1. Execution Allowlist (exec passthrough)
 
-**How it works:**
-- Packages published less than 24 hours ago are **blocked** during install
-- Quarantine duration configurable per ecosystem via `mg.toml [security]`
-- Escape hatch: `MAGICORE_ALLOW_UNTRUSTED=1` environment variable
+MagiCore restricts which external tools can be executed during package operations.
 
-**Configuration** (`mg.toml`):
+### Allowed Tools
+
+The following tools are permitted (core/crates/mgc-exec/src/allowlist.rs):
+
+```
+pip, python3, uv, go, pub, dart, gradle, mvn, composer, node, swift, cargo,
+espflash, west, pio, platformio, terraform, tofu, cdk, pulumi, aws, wrangler,
+gcloud, gh, git, docker, godot, flutter, kotlinc, python, unity, upm, xcodebuild
+```
+
+### Permanently Forbidden Tools
+
+These package managers are **permanently forbidden** because MagiCore provides native resolution for their formats:
+
+```
+npm, npx, pnpm, yarn, bun, bunx
+```
+
+**Why?** MagiCore implements its own npm-format resolver. Allowing external package manager wrappers would:
+- Bypass security controls (script execution, lockfile verification)
+- Create supply-chain confusion
+- Execute unaudited lifecycle scripts
+
+**Correct usage:**
+```bash
+# ❌ FORBIDDEN
+npm install react
+
+# ✅ CORRECT
+mgc install react
+```
+
+### Adding Tools to Allowlist
+
+Adding tools requires security review. See `sys-mgc/00-index.md` §5 for process.
+
+### Error Messages
+
+```bash
+# Tool not on allowlist
+$ mgc exec custom-tool
+Error: tool 'custom-tool' is not on the allowlist (00-index §5.1)
+
+# Permanently forbidden tool
+$ mgc exec npm install
+Error: tool 'npm' is permanently forbidden (mgc resolver covers its format — use `mgc install` instead)
+```
+
+## 2. Script Execution Policy
+
+Package lifecycle scripts (install, postinstall, etc.) are controlled by security policy.
+
+### Script Modes
+
+Configure in `mgc.toml`:
+
 ```toml
 [security]
-min_release_age = 86400  # 24 hours (default)
-
-# Per-ecosystem overrides
-web = 86400   # 24 hours for JavaScript packages
-ai = 259200   # 72 hours for Python AI packages (higher risk)
+scripts.mode = "trusted"  # default: only run trusted packages
 ```
 
-**Examples:**
-- 3600 = 1 hour
-- 86400 = 24 hours (default)
-- 172800 = 48 hours
-- 604800 = 1 week
+| Mode | Behavior |
+|------|----------|
+| `trusted` (default) | Run scripts only for packages in trust-list; warn for untrusted |
+| `all` | Run all scripts (⚠️ npm compatibility mode — warns once) |
+| `none` | Disable all scripts |
+| `quarantine` | Run untrusted scripts in sandboxed environment (P1.5) |
 
-See: [Gate 3 SecurityConfig](docs/examples/mg.toml.security)
+### Trust List
 
----
+Trust is based on `(package_name, integrity_hash)` pairs — not just names. This prevents typosquatting and dependency confusion.
 
-### 2. **Trust Policy Management (Lifecycle Scripts)**
-
-MagiCore implements a **trust gate** for lifecycle scripts (`install`, `postinstall`, etc.) to prevent malicious code execution.
-
-**Default behavior:** All lifecycle scripts **blocked** until explicitly approved.
-
-**Commands:**
 ```bash
-# Approve a package to run lifecycle scripts
-mgc trust approve lodash
+# Add package to trust list
+$ mgc trust add react --yes
 
-# Deny a package (explicitly block)
-mgc trust deny cowsay
+# View trust list
+$ mgc trust list
 
-# List all trust policies
-mgc trust list
-
-# Remove stale policies (packages no longer in project)
-mgc trust prune
+# Remove from trust list
+$ mgc trust remove old-package
 ```
 
-**Policy storage:** Policies stored in local database (`.magicore/cache/<core>/db.sqlite3`), project-specific.
+Trust entries are stored in `mgc.toml` and auditable.
 
-**Enforcement:** Install fails if unapproved package attempts to run scripts. User must approve explicitly.
+### CLI Override
 
-See: [Gate 2 Trust Commands](cli/src/commands/trust/)
-
----
-
-### 3. **Cryptographically Signed Lockfiles**
-
-MagiCore supports **Ed25519 signature verification** for `mgc.lock` to detect tampering.
-
-**Commands:**
 ```bash
-# Initialize keyring (generate Ed25519 keypair)
-mgc trust init
+# Disable scripts for this install
+$ mgc install --ignore-scripts
 
-# Sign lockfile
-mgc trust sign mgc.lock
-
-# Verify lockfile signature
-mgc trust verify mgc.lock
+# Force-run scripts (not recommended)
+$ mgc install --scripts=all
 ```
 
-**Signature format:**
+## 3. Credential Management
+
+### Secure Token Storage
+
+```bash
+# Store token in OS keyring (recommended)
+$ mgc login registry.example.com
+
+# Logout and revoke token
+$ mgc logout registry.example.com
+```
+
+Tokens are stored in:
+1. **OS Keyring** (preferred): macOS Keychain, Windows Credential Manager, Linux libsecret
+2. **Encrypted file** (fallback): `~/.magicore/credentials` (chmod 0600, encrypted)
+3. **`.npmrc`** (legacy): Read for compatibility but warns about plaintext storage
+
+### Token Masking
+
+All credential values are **masked before logging**:
+- Config dumps never show `_authToken` values
+- Exec logs redact `--token`, `--password`, `--key` arguments
+- Error messages never include credentials
+
+## 4. Audit & Vulnerability Scanning
+
+### Check for Known Vulnerabilities
+
+```bash
+# Scan dependencies for CVEs
+$ mgc audit
+
+# Air-gapped mode (download OSV database locally)
+$ mgc audit --update-db  # run once
+$ mgc audit --offline     # subsequent scans
+```
+
+**Privacy:** Default "online-safe" mode sends SHA256 hashes of package names — **not** actual package names or project structure.
+
+### Quarantine Policy
+
+Packages with known vulnerabilities are quarantined for 24 hours by default:
+
 ```toml
-[signature]
-key_id = "ed25519:abc123..."
-signature = "base64-encoded-signature"
-signed_at = "2026-08-27T14:30:00Z"
+[security]
+quarantine_hours = 24  # adjustable
 ```
 
-**Verification:**
-- `mgc install` automatically verifies signature if present
-- Tampering detection: Signature mismatch → install fails
-- Unsigned lockfiles: Warning printed, install proceeds (escape hatch)
+Manual override (use with caution):
 
----
-
-### 4. **SBOM Generation (CycloneDX & SPDX)**
-
-Generate Software Bill of Materials for compliance and vulnerability tracking.
-
-**Commands:**
 ```bash
-# Generate CycloneDX SBOM (JSON)
-mgc sbom --format cyclonedx-json --output sbom.json
-
-# Generate SPDX SBOM (JSON)
-mgc sbom --format spdx-json --output sbom.spdx.json
-
-# Generate CycloneDX XML
-mgc sbom --format cyclonedx-xml --output sbom.xml
+$ mgc audit --unblock package-name --yes
 ```
 
-**Use cases:**
-- Compliance audits (NIST, EU Cyber Resilience Act)
-- Vulnerability scanning (integrate with Grype, Trivy)
-- Dependency tracking for security reviews
+All unblock actions are logged in audit trail.
 
-**Note:** SBOM generation currently works for web core (npm packages). AI/app/lib support roadmap V1.0.1+.
+## 5. Supply Chain Protection
 
----
+### Lockfile Verification
 
-### 5. **Audit Command (Vulnerability Scanning)**
+Lockfiles are cryptographically signed to detect tampering:
 
-Scan dependencies for known vulnerabilities.
-
-**Commands:**
 ```bash
-# Audit current project
-mgc audit
+# Verify lockfile integrity
+$ mgc verify
 
-# Audit with auto-fix (bump vulnerable packages)
-mgc audit --fix
-
-# Audit monorepo recursively
-mgc audit --recursive
+# Regenerate lockfile signature
+$ mgc lock --sign
 ```
 
-**Data sources:**
-- **Web core:** npm audit API (native integration)
-- **AI core:** OSV.dev (Python packages)
-- **Other cores:** Delegates to ecosystem-native tools (cargo audit, etc.)
+Lockfile signatures use BLAKE3 keyed hashing. Key stored in `~/.magicore/keys/lockfile.key` (chmod 600).
 
-**Output:**
+### Dependency Confusion Detection
+
+MagiCore detects and blocks:
+- **Typosquatting**: Package names similar to popular packages (Levenshtein distance ≤2)
+- **Homoglyph attacks**: Confusable Unicode characters (`reаct` with Cyrillic 'а')
+- **Scope confusion**: Private packages with same name as public packages
+
+### SBOM Generation
+
+```bash
+# Generate Software Bill of Materials
+$ mgc sbom                          # SPDX format
+$ mgc sbom --format cyclonedx       # CycloneDX format
+
+# Compare SBOM for CI review
+$ mgc sbom --diff baseline.json
 ```
-🛡️  MagiCore Security Audit (Web Core)
-Audit Report
-  Packages audited: 42
-  Vulnerabilities: 2 (1 high, 1 medium)
-  
-  [HIGH] lodash < 4.17.21
-  Path: lodash@4.17.20
-  Fix: Upgrade to lodash@4.17.21
+
+## 6. Audit Logging
+
+All security-relevant operations are logged to `~/.magicore/exec.log`:
+
+```bash
+# View audit log
+$ tail -f ~/.magicore/exec.log
+
+# Verify audit log integrity (P2)
+$ mgc audit log-verify
 ```
 
----
+Log entries include:
+- Command executed
+- Arguments (credentials redacted)
+- Working directory
+- Exit code
+- Duration
+- Timestamp
 
-## 🚨 Reporting a Vulnerability
+## 7. Secure Defaults
 
-**DO NOT** open a public GitHub issue for security vulnerabilities.
+MagiCore follows these secure-by-default practices:
 
-### Reporting Process
+| Feature | Default | Escape Hatch |
+|---------|---------|--------------|
+| Script execution | Trusted packages only | `--scripts=all` |
+| TLS verification | Required | `MAGICORE_ALLOW_UNTRUSTED=1` (warns) |
+| Exec allowlist | Enforced | Cannot bypass |
+| Audit scanning | Enabled | `--no-audit` |
+| 24h quarantine | Enabled | `--unblock` |
+| Lockfile signing | Enabled | — |
 
-1. **Email:** security@magicore.dev
-2. **Subject:** `[SECURITY] <brief description>`
-3. **Include:**
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Impact assessment (CVSS score if available)
-   - Suggested fix (if any)
+## 8. Reporting Vulnerabilities
 
-### Response Timeline
+To report security issues in MagiCore:
 
-| Stage | Timeline |
-|---|---|
-| Initial acknowledgment | 48 hours |
-| Triage and assessment | 7 days |
-| Fix development | 14-30 days (depending on severity) |
-| Coordinated disclosure | After fix released |
+1. **DO NOT** open public GitHub issues
+2. Email: security@magicore.dev (coming soon)
+3. Include:
+   - MagiCore version (`mgc --version`)
+   - Reproduction steps
+   - Impact assessment
 
-### Severity Levels
+See `.github/SECURITY_EXCEPTIONS.toml` for known acceptable risks.
 
-| Severity | Response Time | Examples |
-|---|---|---|
-| **Critical** | 24-48 hours | RCE, arbitrary code execution, supply-chain compromise |
-| **High** | 7 days | Privilege escalation, authentication bypass |
-| **Medium** | 14 days | Data leakage, denial of service |
-| **Low** | 30 days | Information disclosure, minor bugs |
+## 9. Security Roadmap
 
----
+### P1 (Current — v1.1.0-RC)
+- ✅ Exec allowlist with forbidden tools
+- ✅ Script trust-list with integrity hashing
+- ✅ Credential masking in logs
+- ✅ Typosquat detection (Levenshtein + homoglyph)
+- ✅ Lockfile signing (BLAKE3)
+- ✅ Dependency confusion blocking
+- ✅ 24h quarantine for vulnerable packages
+- ✅ Privacy-safe audit (hash-based OSV queries)
 
-## 🔒 Security Best Practices
+### P1.5 (Next — pre-v1.2.0)
+- [ ] System-level sandboxing (macOS sandbox-exec, Linux seccomp)
+- [ ] AI/IoT core sandbox enforcement
 
-### For Users
+### P2 (Future)
+- [ ] TUF metadata signing for registry
+- [ ] OIDC-based provenance (Sigstore)
+- [ ] Immutable audit trail (hash chain)
+- [ ] OS keyring support for all platforms
 
-1. **Enable quarantine:** Use default 24-hour quarantine (don't disable via `MAGICORE_ALLOW_UNTRUSTED=1` in production)
-2. **Sign lockfiles:** Use `mgc trust init` + `mgc trust sign` to detect tampering
-3. **Review trust policies:** Regularly audit `mgc trust list` and prune stale policies
-4. **Run audits:** Include `mgc audit` in CI pipeline
-5. **Generate SBOMs:** Track dependencies with `mgc sbom` for compliance
-6. **Keep updated:** Run `mgc update` regularly to patch vulnerabilities
+## 10. Configuration Reference
 
-### For Contributors
+```toml
+# mgc.toml
+[security]
+# Script execution policy
+scripts.mode = "trusted"  # trusted | all | none | quarantine
 
-1. **Follow RULE.md §3:** 5-step workflow (DEFINE → PLAN → BUILD → VERIFY → REVIEW, 2 loops)
-2. **Security-sensitive code:** Add extra review round, invoke sub-agent for security audit
-3. **Test coverage:** Write tests for security-critical paths (trust policies, quarantine, signature verification)
-4. **No hardcoded secrets:** Use environment variables or secure config
-5. **Input validation:** Sanitize all user input (package names, versions, paths)
-6. **Fail-closed:** Default to secure behavior (deny, block, reject) with explicit escape hatches
+# Trusted packages (added via `mgc trust add`)
+scripts.trusted_packages = [
+    { name = "react", integrity = "sha512-abc123..." }
+]
 
----
+# Quarantine settings
+quarantine_hours = 24
 
-## 📜 Supported Versions
+# Audit mode
+audit.mode = "online-safe"  # online-safe | air-gapped
 
-| Version | Supported | Security Updates |
-|---|---|---|
-| 1.0.x | ✅ Yes | Active (latest stable) |
-| 0.x.x | ❌ No | End of life |
+# Lockfile signing
+lockfile.sign = true
+lockfile.key_path = "~/.magicore/keys/lockfile.key"
 
-**Upgrade policy:** Security patches released for latest stable version only. Users on older versions must upgrade to receive fixes.
+# Registry allowlist for non-scoped private packages (prevents confusion)
+[registry.private_packages]
+allowed = ["my-internal-lib", "company-sdk"]
+```
 
----
+## 11. Best Practices
 
-## 🔗 Related Documentation
+1. **Use OS keyring for tokens**: Run `mgc login` instead of editing `.npmrc`
+2. **Enable audit in CI**: Add `mgc audit` to your CI pipeline
+3. **Review trust list**: Periodically audit `mgc trust list`
+4. **Monitor audit log**: Set up alerts for unexpected tool executions
+5. **Pin registries**: Use lockfile registry pinning to prevent MITM
+6. **Rotate keys**: Run `mgc keys rotate` annually
+7. **Air-gap for sensitive projects**: Use `mgc audit --offline` mode
+8. **Never disable security**: Avoid `--ignore-scripts` and `MAGICORE_ALLOW_UNTRUSTED`
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — Development workflow and testing guidelines
-- [Gate 2: Trust Commands](cli/src/commands/trust/) — Trust policy implementation
-- [Gate 3: SecurityConfig](docs/examples/mg.toml.security) — Quarantine configuration
-- [Gate 4: Core Parity Matrix](docs/specs/CORE_PARITY_MATRIX_TEST.md) — Security feature availability per core
-- [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md) — V1.0.0 security audit report
+## 12. Security Architecture
 
----
+```
+User Command
+    ↓
+CLI Dispatch (cli/src/dispatch/)
+    ↓
+Security Gates:
+    ├─ Allowlist Check (mgc-exec/allowlist.rs)  ← FAIL-CLOSED
+    ├─ Script Policy (mgc-resolver/trust.rs)    ← TRUSTED-ONLY DEFAULT
+    ├─ Credential Mask (mgc-crypto/)            ← REDACT BEFORE LOG
+    ├─ Audit Check (cli/commands/audit.rs)      ← QUARANTINE 24H
+    └─ Lockfile Verify (mgc-lockfile/)          ← SIGNATURE REQUIRED
+    ↓
+Adapter Execution (adapters/*/src/adapter.rs)
+    ↓
+Audit Log (~/.magicore/exec.log)
+```
 
-## 📝 Security Changelog
-
-### V1.0.0 (2026-08-27)
-
-**Added:**
-- 24-hour new-release quarantine (configurable via `mg.toml [security]`)
-- Trust policy management (`mgc trust approve/deny/prune`)
-- Cryptographic lockfile signatures (Ed25519)
-- SBOM generation (CycloneDX, SPDX formats)
-- Native audit command (`mgc audit` for web core)
-
-**Fixed:**
-- N/A (initial stable release)
-
----
-
-## ✅ Security Audit Status
-
-**Last audit:** 2026-08-27  
-**Auditor:** Internal (MagiCore development team)  
-**Scope:** V1.0.0 codebase (CLI, adapters, core crates)  
-**Report:** [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
-
-**Findings:**
-- **Critical:** 0
-- **High:** 0
-- **Medium:** 0 (all mitigated)
-- **Low:** 2 (documented, acceptable risk)
-
-**Next audit:** V1.1.0 (Q4 2026)
-
----
-
-## 📧 Contact
-
-- **Security issues:** security@magicore.dev
-- **General questions:** support@magicore.dev
-- **GitHub:** https://github.com/mingd-153/MagiCore/security
-
-**PGP Key:** Available at https://magicore.dev/pgp-key.asc (optional)
+All security gates are **fail-closed**: operations blocked unless explicitly allowed.
 
 ---
 
-*Last updated: 2026-08-27 | MagiCore V1.0.0*
+**Questions?** See `sys-mgc/20-security-deep.md` for technical deep-dive or open a discussion on GitHub.

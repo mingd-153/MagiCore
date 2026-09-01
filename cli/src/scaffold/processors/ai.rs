@@ -18,7 +18,7 @@ impl AiProcessor {
                 "[project]\n\
                  name = \"{slug}\"\n\
                  version = \"0.1.0\"\n\
-                 description = \"MagiCore High-Performance AI Project with Ultra-Compression & Token Pruning\"\n\
+                 description = \"MagiCore High-Performance AI Project\"\n\
                  requires-python = \">=3.11\"\n\
                  dependencies = [\n\
                      \"torch>=2.4.0\",\n\
@@ -29,9 +29,7 @@ impl AiProcessor {
                  ]\n\n\
                  [tool.magicore]\n\
                  framework = \"{framework}\"\n\
-                 core = \"ai\"\n\
-                 ultra_compression = true\n\
-                 activation_token_pruning = true\n"
+                 core = \"ai\"\n"
             ),
         )?;
 
@@ -55,10 +53,10 @@ impl AiProcessor {
             ),
         )?;
 
-        // 3. src/core/compression.py : Module Siêu Nén Mô Hình & Token Caching
+        // 3. src/core/compression.py : Model optimization utilities — tiện ích tối ưu mô hình
         write_file(
             &target.join("src").join("compression.py"),
-            "\"\"\"\nMagiCore AI Ultra-Compression & Token Activation Engine.\nKích hoạt sparse token cache, nén ma trận trọng số và tỉa bớt token không hoạt động.\n\"\"\"\n\nclass UltraModelCompressor:\n    def __init__(self, target_bits: int = 8):\n        self.target_bits = target_bits\n\n    def prune_inactive_tokens(self, token_tensor, attention_mask):\n        \"\"\"Chỉ kích hoạt những token cần thiết trong context window lớn (330B/70B)\"\"\"\n        active_indices = attention_mask.nonzero(as_tuple=True)[0]\n        return token_tensor[active_indices]\n\n    def compress_kv_cache(self, kv_cache):\n        \"\"\"Siêu nén KV-Cache giảm 60% VRAM sử dụng\"\"\"\n        return kv_cache\n",
+            "\"\"\"\nMagiCore AI model optimization utilities.\nProvides quantization and memory management helpers.\n\"\"\"\n\nclass ModelOptimizer:\n    def __init__(self, target_bits: int = 8):\n        self.target_bits = target_bits\n\n    def optimize_memory(self, model):\n        \"\"\"Apply memory-efficient optimizations to model — áp dụng tối ưu bộ nhớ\"\"\"\n        # Implement quantization, offloading, etc.\n        return model\n",
         )?;
 
         // 4. src/agent.py hoặc server.py
@@ -66,11 +64,11 @@ impl AiProcessor {
             write_file(
                 &target.join("src").join("server.py"),
                 &format!(
-                    "\"\"\"MagiCore Fast MCP Server with Token Optimization\"\"\"\n\
-                     from src.compression import UltraModelCompressor\n\n\
+                    "\"\"\"MagiCore Fast MCP Server\"\"\"\n\
+                     from src.compression import ModelOptimizer\n\n\
                      def main() -> None:\n\
-                         compressor = UltraModelCompressor()\n\
-                         print(\"MagiCore MCP Server ({package}) initialized with Ultra-Compression!\")\n\n\
+                         optimizer = ModelOptimizer()\n\
+                         print(\"MagiCore MCP Server ({package}) initialized!\")\n\n\
                      if __name__ == \"__main__\":\n\
                          main()\n"
                 ),
@@ -79,13 +77,13 @@ impl AiProcessor {
             write_file(
                 &target.join("src").join("agent.py"),
                 "\"\"\"MagiCore AI High-Performance Agent\"\"\"\n\
-                     from src.compression import UltraModelCompressor\n\n\
+                     from src.compression import ModelOptimizer\n\n\
                      class AIAgent:\n\
                          def __init__(self):\n\
-                             self.compressor = UltraModelCompressor()\n\n\
+                             self.optimizer = ModelOptimizer()\n\n\
                          def run(self, prompt: str) -> str:\n\
                              print(f\"Executing agent with prompt: {prompt[:50]}...\")\n\
-                             return \"Agent processed successfully with Ultra-Compression & Token Pruning!\"\n\n\
+                             return \"Agent processed successfully!\"\n\n\
                      if __name__ == \"__main__\":\n\
                          agent = AIAgent()\n\
                          print(agent.run(\"Hello MagiCore AI\"))\n",
@@ -101,7 +99,7 @@ impl AiProcessor {
         // 6. models/README.md hướng dẫn quản lý model CAS
         write_file(
             &target.join("models").join("README.md"),
-            "# AI Models Directory\n\nTải và quản lý mô hình siêu lớn (ví dụ Llama 330B, DeepSeek, Qwen) bằng lệnh MagiCore:\n```bash\nmgc model pull hf://org/repo\n```\nCác trọng số mô hình sẽ được lưu trong Store CAS và tự động áp dụng Token Activation Pruning.\n",
+            "# AI Models Directory\n\nTải và quản lý mô hình bằng lệnh MagiCore:\n```bash\nmgc model pull hf://org/repo\n```\nCác trọng số mô hình sẽ được lưu trong Store CAS.\n",
         )?;
 
         Ok(())

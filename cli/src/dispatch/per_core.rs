@@ -50,6 +50,8 @@ pub fn command_to_dispatch(
             dir,
         }),
         Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
+        Commands::Test { args } => Some(CommonCommand::Test { args }),
+        Commands::Optimizer { force } => Some(CommonCommand::Optimizer { force }),
         Commands::Build { target } => Some(CommonCommand::Build { target }),
         Commands::Flash { board, skip_build } => Some(CommonCommand::Flash { board, skip_build }),
         Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),

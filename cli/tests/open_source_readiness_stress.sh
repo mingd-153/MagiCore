@@ -86,7 +86,11 @@ else
 fi
 
 test_case "version-matches-cargo" "Binary version matches Cargo.toml"
-CARGO_VERSION=$(grep '^version = ' "$PROJECT_ROOT/cli/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+# Check workspace.package.version first, then fallback to cli/Cargo.toml
+CARGO_VERSION=$(grep -A 1 '\[workspace.package\]' "$PROJECT_ROOT/Cargo.toml" | grep '^version = ' | sed 's/.*"\(.*\)".*/\1/')
+if [ -z "$CARGO_VERSION" ]; then
+    CARGO_VERSION=$(grep '^version = ' "$PROJECT_ROOT/cli/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+fi
 BINARY_VERSION=$(echo "$VERSION_OUTPUT" | awk '{print $2}')
 if [ "$BINARY_VERSION" = "$CARGO_VERSION" ]; then
     pass
@@ -101,7 +105,7 @@ echo
 echo "=== SECTION 2: CLI Surface Completeness ==="
 
 # Core commands — lệnh core
-for cmd in create-web create-ai create-app create-lib create-game create-iot create-cloud create-cicd create-hardware; do
+for cmd in create-web create-ai create-app create-lib create-game create-iot create-clo create-cicd create-hardware; do
     test_case "cli-$cmd" "Command $cmd exists and shows help"
     if $MGC_BIN $cmd --help >/dev/null 2>&1; then
         pass
@@ -178,11 +182,13 @@ fi
 
 test_case "e2e-web-optimizer" "Optimizer can run on web project"
 cd test-web-e2e
-if $MGC_BIN optimizer >/dev/null 2>&1 || true; then
-    # Optimizer may skip if no runtime detected, that's OK — có thể skip nếu không detect runtime
+OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
+EXIT_CODE=$?
+# Optimizer may skip if no runtime detected (exit 0) or run successfully (exit 0)
+if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
     pass
 else
-    warn "optimizer command failed"
+    fail "optimizer exit=$EXIT_CODE, output unclear"
 fi
 cd ..
 
@@ -203,10 +209,12 @@ fi
 
 test_case "e2e-ai-optimizer" "Optimizer can run on AI project"
 cd test-ai-e2e
-if $MGC_BIN optimizer >/dev/null 2>&1 || true; then
+OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
     pass
 else
-    warn "optimizer command failed"
+    fail "optimizer exit=$EXIT_CODE, output unclear"
 fi
 cd ..
 
@@ -242,10 +250,12 @@ fi
 
 test_case "e2e-lib-optimizer" "Optimizer can run on lib project"
 cd test-lib-e2e
-if $MGC_BIN optimizer >/dev/null 2>&1 || true; then
+OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
     pass
 else
-    warn "optimizer command failed"
+    fail "optimizer exit=$EXIT_CODE, output unclear"
 fi
 cd ..
 
@@ -312,18 +322,23 @@ fi
 echo
 echo "=== SECTION 7: Security Checks ==="
 
-test_case "security-no-hardcoded-secrets" "No hardcoded secrets in binary"
-if strings "$MGC_BIN" | grep -iE "password|secret|token|api[_-]?key" | grep -v "MGC_\|placeholder\|example" >/dev/null; then
-    fail "potential hardcoded secrets found"
+test_case "security-no-hardcoded-secrets" "No hardcoded actual secret values in binary"
+# Check for actual secret patterns like password="value", token="xyz", api_key="abc"
+# NOT just presence of words "password" or "token" (which are in SQL schemas, parsers, etc.)
+SUSPECT_STRINGS=$(strings "$MGC_BIN" | grep -iE '(password|token|api_?key|secret)\s*=\s*["\047][^"\047]{8,}["\047]' | head -5)
+if [ -n "$SUSPECT_STRINGS" ]; then
+    echo "    Actual secret values found:"
+    echo "$SUSPECT_STRINGS"
+    fail "hardcoded secret values detected"
 else
     pass
 fi
 
 test_case "security-allowlist-present" "Allowlist mechanism present"
-if grep -r "FORBIDDEN\|ALLOWLIST\|ALLOWED" "$PROJECT_ROOT/cli/src" >/dev/null 2>&1; then
+if grep -r "ALLOWED_TOOLS\|FORBIDDEN_TOOLS" "$PROJECT_ROOT/core/crates/mgc-exec/src" >/dev/null 2>&1; then
     pass
 else
-    warn "no allowlist mechanism found"
+    fail "no allowlist mechanism found in mgc-exec"
 fi
 
 # ============================================
@@ -476,21 +491,23 @@ if $MGC_BIN create-game --help >/dev/null 2>&1; then pass; else fail "missing"; 
 
 test_case "parity-optimizer-web" "Optimizer works for web projects"
 cd test-web-e2e
-OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1 || true)
-if echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
+OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
     pass
 else
-    fail "optimizer output unclear"
+    fail "optimizer exit=$EXIT_CODE or output unclear"
 fi
 cd ..
 
 test_case "parity-optimizer-ai" "Optimizer works for AI projects"
 cd test-ai-e2e
-OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1 || true)
-if echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
+OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
     pass
 else
-    fail "optimizer output unclear"
+    fail "optimizer exit=$EXIT_CODE or output unclear"
 fi
 cd ..
 
@@ -508,7 +525,16 @@ echo
 
 if [ "$FAILED" -eq 0 ]; then
     echo -e "${GREEN}✓ ALL TESTS PASSED${NC}"
-    echo "MagiCore is READY for open-source release"
+    echo "Internal RC checks PASS — infrastructure solid"
+    echo
+    echo "⚠️  PUBLIC RC: NO-GO until:"
+    echo "  1. Full E2E tests (create → install → build → test)"
+    echo "  2. Distribution tested (Homebrew/Scoop/binary)"
+    echo "  3. Benchmark data collected (vs pnpm/bun/deno/moon/proto)"
+    echo "  4. Security claims audited"
+    echo "  5. Test runner security policy documented"
+    echo
+    echo "See docs/INTERNAL_RC_STATUS.md for details"
     exit 0
 else
     echo -e "${RED}✗ SOME TESTS FAILED${NC}"

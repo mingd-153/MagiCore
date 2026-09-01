@@ -69,8 +69,7 @@ pub fn generate_ai_docker_files(project_root: &Path) -> Result<()> {
                        memory: {}G\n\
                  environment:\n\
                    - OMP_NUM_THREADS={}\n\
-                   - TOKENIZERS_PARALLELISM=true\n\
-                   - MGC_AI_TOKEN_ACTIVATION_PRUNING=1\n",
+                   - TOKENIZERS_PARALLELISM=true\n",
             (hw.cpu_cores as f64) * 0.9,
             memory_limit,
             hw.cpu_cores.max(1)

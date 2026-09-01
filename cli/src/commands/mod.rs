@@ -35,6 +35,7 @@ pub mod start_config;
 pub mod store;
 pub mod telemetry;
 pub mod template;
+pub mod test;
 pub mod trust;
 pub mod web_registry_config;
 pub mod workspace;

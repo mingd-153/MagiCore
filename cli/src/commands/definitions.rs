@@ -188,6 +188,16 @@ pub enum Commands {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    #[command(about = "Run tests (auto-detect test runner: cargo/go/pytest/npm test)")]
+    Test {
+        #[arg(last = true, help = "Arguments passed to test runner")]
+        args: Vec<String>,
+    },
+    #[command(about = "Optimize project for hardware (runtime detection + adapter pattern)")]
+    Optimizer {
+        #[arg(long, help = "Overwrite existing optimized files")]
+        force: bool,
+    },
     #[command(about = "Build the project")]
     Build {
         #[arg(long, help = "Build target (e.g., native, browser, server)")]
