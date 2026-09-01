@@ -1,7 +1,7 @@
 //! Exec runner — chạy tool qua allowlist, args Vec riêng (00-index §5.5–§5.8)
 //! (passthrough run: dry-run, audit log, không shell injection, fail → bail kèm log trích)
 
-use crate::allowlist::{check_tool_scoped, FORBIDDEN_TOOLS};
+use crate::allowlist::FORBIDDEN_TOOLS;
 use crate::audit::{append, now_ts, AuditEntry};
 use crate::sanitizer::redact_args;
 use anyhow::{bail, Result};
@@ -36,6 +36,9 @@ pub struct ExecOptions {
     pub clean_env: bool,
     /// Không áp timeout — dùng cho dev server chạy dài, vẫn giữ guard process.
     pub disable_timeout: bool,
+    /// Execution scope (TestRunner/BuildRunner/DevServer allow PM tools, Install forbids them).
+    /// None defaults to Install scope (most restrictive).
+    pub execution_scope: Option<crate::allowlist::ExecutionScope>,
 }
 
 /// Kết quả chạy — args trong report ĐÃ redact (không lộ secret).
@@ -52,7 +55,8 @@ pub struct ExecReport {
 
 /// Chạy `cmd args` sau khi check allowlist. Không dùng shell — args là Vec riêng (§5.6).
 pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    check_tool_scoped(cmd, opts.cwd.as_deref())?;
+    let scope = opts.execution_scope.unwrap_or(crate::allowlist::ExecutionScope::Install);
+    crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -62,7 +66,8 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
 /// Run an allowlisted tool while inheriting stdio for interactive/streaming commands.
 /// Chạy tool allowlist với stdio trực tiếp cho build/dev mà vẫn giữ guard chung.
 pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    check_tool_scoped(cmd, opts.cwd.as_deref())?;
+    let scope = opts.execution_scope.unwrap_or(crate::allowlist::ExecutionScope::Install);
+    crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }

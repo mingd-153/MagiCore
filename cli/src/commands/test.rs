@@ -40,6 +40,7 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
         let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(project_root.to_path_buf()),
             timeout: Some(std::time::Duration::from_secs(600)), // 10min test timeout
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner), // TestRunner scope allows PM tools
             ..Default::default()
         };
 
