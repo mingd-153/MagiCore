@@ -67,12 +67,16 @@ echo "--- Cold Install (empty cache) ---"
 pnpm store prune --force >/dev/null 2>&1 || true
 PNPM_COLD=$(benchmark "pnpm" "$PNPM_DIR" "pnpm install --no-lockfile --force")
 
-# mgc cold (if available)
+# mgc cold (REQUIRED - no fallback)
 if command -v mgc &>/dev/null; then
     MGC_COLD=$(benchmark "mgc" "$MGC_DIR" "mgc install --force")
 else
-    echo "⚠️  mgc not in PATH, using cache_tracking_stress.sh data as reference"
-    MGC_COLD="N/A"
+    echo "✗ FAIL: mgc not in PATH - cannot benchmark without mgc binary"
+    echo ""
+    echo "Benchmark requires mgc to be installed or in PATH."
+    echo "Build with: cargo build --release -p mgc"
+    echo "Then add target/release to PATH or install system-wide."
+    exit 1
 fi
 
 echo
@@ -80,9 +84,9 @@ echo "--- Results Summary ---"
 echo "pnpm cold install: ${PNPM_COLD}ms"
 echo "mgc cold install: ${MGC_COLD}ms"
 
-# Determine result
-if [ "$MGC_COLD" != "N/A" ] && [ "$MGC_COLD" != "-1" ]; then
-    if [ "$PNPM_COLD" -gt 0 ]; then
+# Determine result (mgc now required, no N/A)
+if [ "$MGC_COLD" != "-1" ] && [ "$PNPM_COLD" != "-1" ]; then
+    if [ "$PNPM_COLD" -gt 0 ] && [ "$MGC_COLD" -gt 0 ]; then
         SPEEDUP=$(echo "scale=2; $PNPM_COLD / $MGC_COLD" | bc)
         if (( $(echo "$SPEEDUP > 1" | bc -l) )); then
             echo "✓ mgc is ${SPEEDUP}x faster than pnpm (cold install)"
@@ -91,6 +95,9 @@ if [ "$MGC_COLD" != "N/A" ] && [ "$MGC_COLD" != "-1" ]; then
             echo "⚠️  mgc is ${SLOWDOWN}x slower than pnpm (cold install)"
         fi
     fi
+else
+    echo "✗ FAIL: Benchmark execution failed (mgc: $MGC_COLD, pnpm: $PNPM_COLD)"
+    exit 1
 fi
 
 echo
@@ -108,8 +115,8 @@ echo "  - Statistical significance (10+ runs, p95)"
 echo "  - Hardware profiling"
 echo "  - Raw data export (JSON)"
 
-# Exit with success if we got any measurements
-if [ "$PNPM_COLD" != "-1" ]; then
+# Exit with success if we got valid measurements
+if [ "$PNPM_COLD" != "-1" ] && [ "$MGC_COLD" != "-1" ]; then
     echo
     echo "✓ PASS: Basic competitive benchmark complete"
     exit 0

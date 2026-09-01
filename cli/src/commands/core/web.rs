@@ -947,6 +947,42 @@ fn build_dev_launch(
         .collect();
 
     match tokens.as_slice() {
+        // Bun runtime (allowed in DevServer scope with project script)
+        // Runtime Bun (cho phép trong scope DevServer với script của project)
+        ["bun", "run", rest @ ..] => Ok(DevLaunch {
+            program: PathBuf::from("bun"),
+            args: {
+                let mut args = vec![OsString::from("run")];
+                args.extend(rest.iter().map(OsString::from));
+                args
+            },
+            envs: base_envs.clone(),
+        }),
+        ["bun", rest @ ..] => Ok(DevLaunch {
+            program: PathBuf::from("bun"),
+            args: rest.iter().map(OsString::from).collect(),
+            envs: base_envs.clone(),
+        }),
+        // Deno runtime (allowed in DevServer scope with project script)
+        // Runtime Deno (cho phép trong scope DevServer với script của project)
+        ["deno", "run", rest @ ..] => Ok(DevLaunch {
+            program: PathBuf::from("deno"),
+            args: {
+                let mut args = vec![OsString::from("run")];
+                args.extend(rest.iter().map(OsString::from));
+                args
+            },
+            envs: base_envs.clone(),
+        }),
+        ["deno", "task", rest @ ..] => Ok(DevLaunch {
+            program: PathBuf::from("deno"),
+            args: {
+                let mut args = vec![OsString::from("task")];
+                args.extend(rest.iter().map(OsString::from));
+                args
+            },
+            envs: base_envs.clone(),
+        }),
         ["vite"] | ["vite", "dev"] => {
             let mut args = Vec::new();
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
@@ -1110,6 +1146,16 @@ fn build_dev_launch(
 }
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
+    // Allow bun/deno when used as runtime (not package manager)
+    // Cho phép bun/deno khi dùng như runtime (không phải package manager)
+    let script_lower = script.to_lowercase();
+    if script_lower.starts_with("bun run ") 
+        || script_lower.starts_with("deno run ")
+        || script_lower.starts_with("deno task ")
+    {
+        return Ok(()); // Runtime usage allowed in DevServer scope
+    }
+
     if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
         return Err(crate::error::web_forbidden_pm(script, manifest_path, pm));
     }
