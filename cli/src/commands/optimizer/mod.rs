@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod detect;
+pub mod env_loader;
 pub mod generators;
 pub mod runtime_detect;
 

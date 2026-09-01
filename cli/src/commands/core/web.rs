@@ -937,6 +937,15 @@ fn build_dev_launch(
         return Err(crate::error::web_empty_dev_script(project_root));
     }
 
+    // Load optimizer env vars (Bun/Deno/Node config)
+    // Tải env vars từ optimizer (cấu hình Bun/Deno/Node)
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(project_root)
+        .unwrap_or_default();
+    let base_envs: Vec<(OsString, OsString)> = optimizer_envs
+        .into_iter()
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+        .collect();
+
     match tokens.as_slice() {
         ["vite"] | ["vite", "dev"] => {
             let mut args = Vec::new();
@@ -944,7 +953,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["vite", rest @ ..] => {
@@ -953,7 +962,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["next", "dev"] => {
@@ -962,7 +971,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["next", "dev", rest @ ..] => {
@@ -972,44 +981,48 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["nuxt", "dev"] | ["nuxt", "dev", "--host"] => {
             let mut args = vec![OsString::from("dev")];
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (
+                    OsString::from("NUXT_TELEMETRY_DISABLED"),
+                    OsString::from("1"),
+                ),
+                (
+                    OsString::from("NUXT_TELEMETRY_CONSENT"),
+                    OsString::from("0"),
+                ),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
-                envs: vec![
-                    (
-                        OsString::from("NUXT_TELEMETRY_DISABLED"),
-                        OsString::from("1"),
-                    ),
-                    (
-                        OsString::from("NUXT_TELEMETRY_CONSENT"),
-                        OsString::from("0"),
-                    ),
-                ],
+                envs,
             })
         }
         ["nuxt", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (
+                    OsString::from("NUXT_TELEMETRY_DISABLED"),
+                    OsString::from("1"),
+                ),
+                (
+                    OsString::from("NUXT_TELEMETRY_CONSENT"),
+                    OsString::from("0"),
+                ),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
-                envs: vec![
-                    (
-                        OsString::from("NUXT_TELEMETRY_DISABLED"),
-                        OsString::from("1"),
-                    ),
-                    (
-                        OsString::from("NUXT_TELEMETRY_CONSENT"),
-                        OsString::from("0"),
-                    ),
-                ],
+                envs,
             })
         }
         ["astro", "dev"] => {
@@ -1018,7 +1031,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["astro", "dev", rest @ ..] => {
@@ -1028,7 +1041,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["remix", "vite:dev"] => {
@@ -1037,7 +1050,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["remix", "vite:dev", rest @ ..] => {
@@ -1047,43 +1060,47 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["ng", "serve"] => {
             let mut args = vec![OsString::from("serve")];
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
+                (OsString::from("CI"), OsString::from("1")),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
-                envs: vec![
-                    (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
-                    (OsString::from("CI"), OsString::from("1")),
-                ],
+                envs,
             })
         }
         ["ng", "serve", rest @ ..] => {
             let mut args = vec![OsString::from("serve")];
             args.extend(rest.iter().map(OsString::from));
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
+                (OsString::from("CI"), OsString::from("1")),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
-                envs: vec![
-                    (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
-                    (OsString::from("CI"), OsString::from("1")),
-                ],
+                envs,
             })
         }
         ["node", rest @ ..] => Ok(DevLaunch {
             program: PathBuf::from("node"),
             args: rest.iter().map(OsString::from).collect(),
-            envs: vec![],
+            envs: base_envs.clone(),
         }),
         ["tsx", rest @ ..] => Ok(DevLaunch {
             program: resolve_local_bin(project_root, "tsx")?,
             args: rest.iter().map(OsString::from).collect(),
-            envs: vec![],
+            envs: base_envs,
         }),
         _ => Err(crate::error::web_unsupported_dev_script(
             &script,
