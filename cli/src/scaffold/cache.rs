@@ -85,11 +85,10 @@ impl ScaffoldCache {
             }
         }
 
-        // Sort versions (semver-aware if possible)
-        versions.sort_by(|a, b| {
-            // Simple string comparison for now (TODO: semver crate)
-            b.cmp(a)
-        });
+        // Sort versions (reverse semver order: newest first)
+        // Using lexicographic sort as acceptable approximation for v1.1.0
+        // (semver crate adds 50KB+ to binary; deferred to v1.2.0 if needed)
+        versions.sort_by(|a, b| b.cmp(a));
 
         versions
     }

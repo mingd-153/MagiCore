@@ -248,7 +248,7 @@ pub async fn remove(
         return Ok(());
     }
     info("Re-installing dependency graph...");
-    // FIXME(V1.0.1): load_pruned_locked_graph disabled - restore after v2 migration
+    // Issue #4: load_pruned_locked_graph disabled - restore after lockfile v2 migration complete
     let graph = None;
     if let Some(graph) = graph {
         info("Using mgc.lock for remaining dependency graph.");
@@ -805,7 +805,7 @@ fn load_locked_graph(
         }
         return Ok(None);
     };
-    // FIXME(V1.0.1): Re-enable lock.core, lock.version, lock.resolution checks after v2 migration
+    // Issue #4: Re-enable lock.core, lock.version, lock.resolution checks after lockfile v2 migration
     // let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
     // if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
     if lock.packages.is_empty() {
@@ -833,7 +833,7 @@ fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
     })
 }
 
-// FIXME(V1.0.1): Disabled due to lockfile v2 migration
+// Issue #4: Disabled due to lockfile v2 migration
 // fn load_pruned_locked_graph(
 //     project_root: &Path,
 //     adapter_name: &str,
@@ -936,7 +936,7 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, _package: &str) -> R
     if !lock_path.exists() {
         return Err(crate::error::lock_missing_install());
     }
-    // FIXME(V1.0.1): Reimplement with lockfile v2 schema (no pkg.direct field)
+    // Issue #4: Reimplement with lockfile v2 schema (no pkg.direct field)
     unimplemented!("why command requires lockfile v2 migration")
 }
 

@@ -257,7 +257,7 @@ pub async fn install(
     allow_scripts: bool,
     prefer_dedupe: bool,
     repair: bool,
-    _offline: bool, // FIXME(V1.0.1): Implement offline mode
+    _offline: bool, // Issue #3: Implement offline mode (v1.2.0 milestone)
 ) -> Result<()> {
     let root = project_root()?;
     let adapter: Arc<dyn PackageAdapter> = web_adapter();
@@ -280,7 +280,7 @@ pub async fn install(
                 .filter(|target| target.join("package.json").exists())
                 .map(|target| target.as_path()),
         );
-        // FIXME(V1.0.1): existing_versions_from disabled - restore after v2 migration
+        // Issue #4: existing_versions_from disabled - restore after lockfile v2 migration complete
         // if let Ok(existing) = mgc_lockfile::existing_versions_from(&lock_roots) {
         if let Ok(_existing) = Ok::<Vec<String>, ()>(Vec::new()) {
             // Skipping set_existing_versions call until v2 migration complete
@@ -336,7 +336,7 @@ pub async fn install(
                 &packages,
                 ignore_scripts,
                 allow_scripts,
-                false, // offline - FIXME: pass from command args
+                false, // offline - Issue #3: pass from command args when offline mode implemented
             )
             .await?;
         }
@@ -768,7 +768,7 @@ async fn install_web_target_quiet(
     Ok(())
 }
 
-// FIXME(V1.0.1): Disabled due to lockfile v2 migration (uses LockPackage, WorkspaceLock, ResolutionMeta)
+// Issue #4: Disabled due to lockfile v2 migration (uses LockPackage, WorkspaceLock, ResolutionMeta)
 fn write_monorepo_root_lockfile(_project_root: &Path, _targets: &[PathBuf]) -> Result<()> {
     // Workspace lockfile merging requires v2 schema rewrite
     // For now, each workspace maintains its own lockfile
