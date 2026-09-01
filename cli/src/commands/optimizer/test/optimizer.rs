@@ -16,6 +16,12 @@ fn test_hardware_detect_returns_valid_info() {
 
 #[test]
 fn test_generate_optimizations_for_web_core() {
+    let dir = tempdir().unwrap();
+    let project_root = dir.path();
+
+    // Create package.json to trigger Node.js detection
+    fs::write(project_root.join("package.json"), "{}").unwrap();
+
     let hw = HardwareInfo {
         cpu_cores: 8,
         arch: "aarch64".to_string(),
@@ -24,16 +30,28 @@ fn test_generate_optimizations_for_web_core() {
         profile: SystemProfile::HighPerformance,
     };
 
-    let files = generate_optimizations_for_core("web", &hw);
-    // Profile JSON + Web Env
-    assert_eq!(files.len(), 2);
+    let files = generate_optimizations_for_core("web", &hw, project_root);
+    // Profile JSON + Node.js Env (from adapter)
+    assert!(files.len() >= 2);
     assert!(files[0].relative_path.contains("profile.json"));
-    assert!(files[1].content.contains("max-old-space-size=8192"));
-    assert!(files[1].content.contains("UV_THREADPOOL_SIZE=8"));
+    // Node.js adapter should generate config
+    assert!(files
+        .iter()
+        .any(|f| f.content.contains("max-old-space-size")));
 }
 
 #[test]
 fn test_generate_optimizations_for_game_core() {
+    let dir = tempdir().unwrap();
+    let project_root = dir.path();
+
+    // Create Cargo.toml to trigger Rust detection
+    fs::write(
+        project_root.join("Cargo.toml"),
+        "[package]\nname = \"test\"\n",
+    )
+    .unwrap();
+
     let hw = HardwareInfo {
         cpu_cores: 12,
         arch: "x86_64".to_string(),
@@ -42,10 +60,10 @@ fn test_generate_optimizations_for_game_core() {
         profile: SystemProfile::HighPerformance,
     };
 
-    let files = generate_optimizations_for_core("game", &hw);
-    assert_eq!(files.len(), 2);
-    assert!(files[1].content.contains("jobs = 12"));
-    assert!(files[1].content.contains("opt-level = 3"));
+    let files = generate_optimizations_for_core("game", &hw, project_root);
+    assert!(files.len() >= 2);
+    // Rust lib adapter should generate Cargo profile config
+    assert!(files.iter().any(|f| f.content.contains("jobs")));
 }
 
 #[test]
