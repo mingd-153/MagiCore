@@ -200,7 +200,13 @@ pub fn command_to_dispatch(
             framework,
             project_name,
         }),
-        Commands::CreateLib { project_name } => Some(CoreCommand::CreateLib { project_name }),
+        Commands::CreateLib {
+            framework,
+            project_name,
+        } => Some(CoreCommand::CreateLib {
+            framework,
+            project_name,
+        }),
         Commands::CreateHardware {
             framework,
             project_name,

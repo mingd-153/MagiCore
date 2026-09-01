@@ -160,9 +160,15 @@ fn test_create_core_commands_follow_create_core_name_shape() {
         _ => panic!("expected create-app command"),
     }
 
-    let lib = Cli::try_parse_from(["mgc", "create-lib", "demo-lib"]).unwrap();
+    let lib = Cli::try_parse_from(["mgc", "create-lib", "rust", "demo-lib"]).unwrap();
     match lib.command.unwrap() {
-        Commands::CreateLib { project_name } => assert_eq!(project_name, "demo-lib"),
+        Commands::CreateLib {
+            framework,
+            project_name,
+        } => {
+            assert_eq!(framework, "rust");
+            assert_eq!(project_name, "demo-lib");
+        }
         _ => panic!("expected create-lib command"),
     }
 }

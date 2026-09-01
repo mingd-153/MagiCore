@@ -193,6 +193,7 @@ pub enum CoreCommand {
         project_name: String,
     },
     CreateLib {
+        framework: String,
         project_name: String,
     },
     CreateHardware {
@@ -748,9 +749,13 @@ impl TryFrom<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            Commands::CreateLib { project_name } => {
-                SomeCore(CoreCommand::CreateLib { project_name })
-            }
+            Commands::CreateLib {
+                framework,
+                project_name,
+            } => SomeCore(CoreCommand::CreateLib {
+                framework,
+                project_name,
+            }),
             Commands::InstallWeb {
                 packages,
                 frozen,

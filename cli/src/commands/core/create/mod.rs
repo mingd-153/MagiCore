@@ -61,7 +61,7 @@ pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> 
         #[cfg(not(feature = "cicd"))]
         "cicd" => Err(crate::error::core_not_in_build("cicd")),
         #[cfg(feature = "lib")]
-        "lib" | "library" => library::run(project_name).await,
+        "lib" | "library" => library::run(framework, project_name).await,
         #[cfg(not(feature = "lib"))]
         "lib" | "library" => Err(crate::error::core_not_in_build("lib")),
         #[cfg(feature = "hardware")]

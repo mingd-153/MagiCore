@@ -76,9 +76,10 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         #[cfg(not(feature = "app"))]
         CoreCommand::CreateApp { .. } => Err(crate::error::core_not_in_build("app")),
         #[cfg(feature = "lib")]
-        CoreCommand::CreateLib { project_name } => {
-            commands::core::create::library::run(&project_name).await
-        }
+        CoreCommand::CreateLib {
+            framework,
+            project_name,
+        } => commands::core::create::library::run(&framework, &project_name).await,
         #[cfg(not(feature = "lib"))]
         CoreCommand::CreateLib { .. } => Err(crate::error::core_not_in_build("lib")),
         #[cfg(feature = "hardware")]

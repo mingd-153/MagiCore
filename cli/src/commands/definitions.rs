@@ -471,6 +471,9 @@ pub enum Commands {
         visible_alias = "cre-l"
     )]
     CreateLib {
+        /// Language/framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
+        framework: String,
         /// Project directory name
         #[arg(value_name = "PROJECT")]
         project_name: String,
