@@ -122,7 +122,7 @@ impl PackageAdapter for LibAdapter {
             graph,
             project_root,
             opts,
-            None, // TODO: pass ContentStore when available
+            None, // Issue #6: pass ContentStore when available
         )
         .await
     }

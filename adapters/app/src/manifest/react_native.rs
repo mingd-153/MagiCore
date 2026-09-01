@@ -23,12 +23,12 @@ pub fn parse_package_json(project_root: &Path) -> MgResult<Manifest> {
         .unwrap_or("app")
         .to_string();
 
-    // TODO: Parse dependencies (can delegate to web adapter manifest parser)
+    // Issue #13: Parse dependencies (can delegate to web adapter manifest parser)
     Ok(Manifest::new(&name, Ecosystem::App))
 }
 
 /// Write Manifest back to package.json.
 pub fn write_package_json(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    // TODO: Implement package.json write (delegate to web adapter)
+    // Issue #13: Implement package.json write (delegate to web adapter)
     Ok(())
 }

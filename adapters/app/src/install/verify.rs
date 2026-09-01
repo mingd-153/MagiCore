@@ -16,7 +16,7 @@ pub fn verify_pubspec_lock(project_root: &Path) -> MgResult<()> {
         ));
     }
 
-    // TODO: parse pubspec.lock YAML and verify package checksums
+    // Issue #13: parse pubspec.lock YAML and verify package checksums
     // pubspec.lock contains resolved: version and archive_sha256
     Ok(())
 }
@@ -31,7 +31,7 @@ pub fn verify_gradle_lockfile(project_root: &Path) -> MgResult<()> {
         return Ok(());
     }
 
-    // TODO: parse gradle.lockfile format
+    // Issue #13: parse gradle.lockfile format
     // Format: artifact=group:name:version=sha256:hash
     Ok(())
 }
@@ -47,7 +47,7 @@ pub fn verify_package_resolved(project_root: &Path) -> MgResult<()> {
         ));
     }
 
-    // TODO: parse Package.resolved JSON
+    // Issue #13: parse Package.resolved JSON
     // Contains: state.revision (git commit hash) or state.version
     Ok(())
 }
@@ -63,7 +63,7 @@ pub fn verify_podfile_lock(project_root: &Path) -> MgResult<()> {
         ));
     }
 
-    // TODO: parse Podfile.lock YAML
+    // Issue #13: parse Podfile.lock YAML
     // Contains PODS section with version locks
     Ok(())
 }

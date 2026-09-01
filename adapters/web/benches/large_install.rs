@@ -8,7 +8,7 @@ use std::time::Duration;
 fn bench_install_10(c: &mut Criterion) {
     c.bench_function("install_10_packages", |b| {
         b.iter(|| {
-            // TODO: Real install logic when mgc-install API ready
+            // Issue #13: Real install logic when mgc-install API ready
             // For now: simulate work
             let packages = vec![
                 "react", "vue", "angular", "svelte", "solid", "preact", "lit", "alpine", "htmx",
@@ -30,7 +30,7 @@ fn bench_install_100(c: &mut Criterion) {
 
     group.bench_function(BenchmarkId::new("packages", 100), |b| {
         b.iter(|| {
-            // TODO: Real install logic
+            // Issue #13: Real install logic
             for i in 0..100 {
                 black_box(i);
                 std::thread::sleep(Duration::from_millis(5));
@@ -49,7 +49,7 @@ fn bench_install_1000(c: &mut Criterion) {
 
     group.bench_function(BenchmarkId::new("packages", 1000), |b| {
         b.iter(|| {
-            // TODO: Real install logic
+            // Issue #13: Real install logic
             // Target: < 30s for 1000 packages
             for i in 0..1000 {
                 black_box(i);

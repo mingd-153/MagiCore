@@ -161,7 +161,7 @@ pub fn check_tool_with_scope(
             let constraints = scope.constraints();
 
             if constraints.cwd_locked {
-                // TODO: verify project_root is valid (not /tmp, not parent of workspace)
+                // Issue #12: Verify project_root is valid (not /tmp, not parent of workspace)
                 // For now, just require it's provided
                 if project_root.is_none() {
                     bail!(

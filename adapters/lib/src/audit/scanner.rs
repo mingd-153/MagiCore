@@ -132,7 +132,7 @@ pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
 ///
 /// Format: https://github.com/rustsec/rustsec/blob/main/cargo-audit/README.md#json-output
 fn _parse_cargo_audit_json(_json: &str) -> MgResult<Vec<Vulnerability>> {
-    // TODO: implement JSON parsing
+    // Issue #14: implement JSON parsing
     // Format example:
     // {
     //   "vulnerabilities": {
@@ -149,7 +149,7 @@ fn _parse_cargo_audit_json(_json: &str) -> MgResult<Vec<Vulnerability>> {
 ///
 /// Format: https://pypi.org/project/pip-audit/
 fn _parse_pip_audit_json(_json: &str) -> MgResult<Vec<Vulnerability>> {
-    // TODO: implement JSON parsing
+    // Issue #14: implement JSON parsing
     // Format example:
     // {
     //   "vulnerabilities": [

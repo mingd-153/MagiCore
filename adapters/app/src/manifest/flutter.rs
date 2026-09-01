@@ -50,7 +50,7 @@ pub fn parse_pubspec(project_root: &Path) -> MgResult<Manifest> {
 
 /// Write Manifest back to pubspec.yaml.
 pub fn write_pubspec(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    // TODO: Implement write with YAML preservation
+    // Issue #13: Implement write with YAML preservation
     Ok(())
 }
 
@@ -65,7 +65,7 @@ pub fn parse_podfile(project_root: &Path) -> MgResult<Manifest> {
         return Ok(Manifest::new(&name, Ecosystem::App));
     }
 
-    // TODO: Parse Podfile (Ruby DSL format)
+    // Issue #13: Parse Podfile (Ruby DSL format)
     let name = project_root
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -75,7 +75,7 @@ pub fn parse_podfile(project_root: &Path) -> MgResult<Manifest> {
 
 /// Write Manifest back to Podfile.
 pub fn write_podfile(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    // TODO: Implement Podfile write
+    // Issue #13: Implement Podfile write
     Ok(())
 }
 
