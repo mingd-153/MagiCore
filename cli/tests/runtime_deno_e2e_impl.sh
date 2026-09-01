@@ -12,6 +12,21 @@ if ! command -v deno &>/dev/null; then
     exit 77
 fi
 
+# Find mgc binary (prefer local build over system install)
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+if [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
+    MGC_BIN="$PROJECT_ROOT/target/release/mgc"
+elif [ -f "$PROJECT_ROOT/target/debug/mgc" ]; then
+    MGC_BIN="$PROJECT_ROOT/target/debug/mgc"
+elif command -v mgc &>/dev/null; then
+    MGC_BIN="mgc"
+else
+    echo "⚠️  SKIP: mgc binary not found"
+    exit 77
+fi
+
+echo "Using mgc: $MGC_BIN"
+
 # Create temp project
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
@@ -32,9 +47,12 @@ console.log("Deno runtime test");
 console.log("DENO_V8_FLAGS:", Deno.env.get("DENO_V8_FLAGS") || "not set");
 EOF
 
+# Mark as web core for optimizer
+echo "web" > .mgc.core
+
 # Run mgc optimizer
 echo "Running mgc optimizer..."
-if ! mgc optimizer 2>&1; then
+if ! "$MGC_BIN" optimizer 2>&1; then
     echo "✗ FAIL: mgc optimizer failed"
     exit 1
 fi

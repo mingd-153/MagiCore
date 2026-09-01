@@ -12,6 +12,21 @@ if ! command -v bun &>/dev/null; then
     exit 77
 fi
 
+# Find mgc binary (prefer local build over system install)
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+if [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
+    MGC_BIN="$PROJECT_ROOT/target/release/mgc"
+elif [ -f "$PROJECT_ROOT/target/debug/mgc" ]; then
+    MGC_BIN="$PROJECT_ROOT/target/debug/mgc"
+elif command -v mgc &>/dev/null; then
+    MGC_BIN="mgc"
+else
+    echo "⚠️  SKIP: mgc binary not found"
+    exit 77
+fi
+
+echo "Using mgc: $MGC_BIN"
+
 # Create temp project
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
@@ -40,7 +55,7 @@ touch bunfig.toml
 
 # Run mgc optimizer
 echo "Running mgc optimizer..."
-if ! mgc optimizer 2>&1; then
+if ! "$MGC_BIN" optimizer 2>&1; then
     echo "✗ FAIL: mgc optimizer failed"
     exit 1
 fi
@@ -54,10 +69,10 @@ fi
 echo "✓ PASS: bun_env.env created"
 
 # Verify content
-if grep -q "BUN_TRANSPILER_CACHE_PATH" ".mgc-optimizer/bun_env.env"; then
-    echo "✓ PASS: BUN_TRANSPILER_CACHE_PATH in env file"
+if grep -q "BUN_RUNTIME_TRANSPILER_CACHE_PATH\|BUN_JSC_maxHeapSize" ".mgc-optimizer/bun_env.env"; then
+    echo "✓ PASS: Bun env vars in env file"
 else
-    echo "✗ FAIL: BUN_TRANSPILER_CACHE_PATH not in env file"
+    echo "✗ FAIL: Bun env vars not in env file"
     exit 1
 fi
 

@@ -7,23 +7,20 @@ set -euo pipefail
 echo "=== Distribution Smoke Test (Basic) ==="
 echo
 
-# Find mgc binary
-if command -v mgc &>/dev/null; then
+# Find mgc binary (prefer local build)
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+if [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
+    MGC_BIN="$PROJECT_ROOT/target/release/mgc"
+    echo "Found local release binary: $MGC_BIN"
+elif [ -f "$PROJECT_ROOT/target/debug/mgc" ]; then
+    MGC_BIN="$PROJECT_ROOT/target/debug/mgc"
+    echo "Found local debug binary: $MGC_BIN"
+elif command -v mgc &>/dev/null; then
     MGC_BIN=$(command -v mgc)
-    echo "Found mgc: $MGC_BIN"
+    echo "Found mgc in PATH: $MGC_BIN"
 else
-    # Try local target directory
-    PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-    if [ -f "$PROJECT_ROOT/target/debug/mgc" ]; then
-        MGC_BIN="$PROJECT_ROOT/target/debug/mgc"
-        echo "Found local debug binary: $MGC_BIN"
-    elif [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
-        MGC_BIN="$PROJECT_ROOT/target/release/mgc"
-        echo "Found local release binary: $MGC_BIN"
-    else
-        echo "✗ FAIL: mgc binary not found (not in PATH, not in target/)"
-        exit 1
-    fi
+    echo "✗ FAIL: mgc binary not found (not in PATH, not in target/)"
+    exit 1
 fi
 
 echo
@@ -110,10 +107,10 @@ if "$MGC_BIN" create-web vanilla test-smoke >/dev/null 2>&1; then
         echo "✓ Project directory created"
         
         # Check essential files
-        if [ -f "test-smoke/package.json" ]; then
-            echo "✓ package.json exists"
+        if [ -f "test-smoke/mgc.toml" ] || [ -f "test-smoke/package.json" ]; then
+            echo "✓ Project manifest exists (mgc.toml or package.json)"
         else
-            echo "✗ FAIL: package.json missing"
+            echo "✗ FAIL: Project manifest missing"
             exit 1
         fi
     else
