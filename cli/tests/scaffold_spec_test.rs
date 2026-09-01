@@ -1,5 +1,7 @@
 //! Tests for scaffold spec parser (cli/src/scaffold/spec.rs)
 
+#![allow(clippy::unwrap_used)]
+
 use mgc::scaffold::spec::{artifact_name, parse_scaffold_spec, CoreKind, ScaffoldRef};
 
 #[test]

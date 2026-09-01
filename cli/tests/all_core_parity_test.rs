@@ -2,6 +2,9 @@
 //! All-core parity test: web/ai/app/lib must create projects equally.
 //! Hermetic: temp HOME, no workspace templates/ — hermetic: HOME tạm, không dùng workspace templates/.
 
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

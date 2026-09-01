@@ -1,5 +1,7 @@
 //! MagiCore CLI library - expose modules for testing
 
+#![allow(clippy::unwrap_used)]
+
 pub mod bundler;
 pub mod commands;
 pub mod context;

@@ -7,6 +7,8 @@
 //! - Shell injection is prevented
 //! - Audit log records all tool executions
 
+#![allow(clippy::unwrap_used)]
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;

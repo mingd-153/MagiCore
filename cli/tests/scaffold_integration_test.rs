@@ -1,5 +1,7 @@
 //! Integration tests for scaffold system - early validation
 
+#![allow(clippy::unwrap_used)]
+
 use mgc::scaffold::spec::{parse_scaffold_spec, CoreKind};
 
 #[test]

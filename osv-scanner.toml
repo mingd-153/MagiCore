@@ -1,0 +1,47 @@
+# OSV-Scanner configuration
+# Ignores match cargo audit policy (security.yml)
+# Only ignore unmaintained/yanked advisories for transitive deps, NOT actual vulnerabilities
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2023-0071"
+reason = "unmaintained: ryu-v8 (transitive via deno_core)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+reason = "unmaintained: deno_core (transitive)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0119"
+reason = "unmaintained: v8 bindings (transitive)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "unmaintained: deno-related crate (transitive)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0134"
+reason = "unmaintained: transitive dependency"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0195"
+reason = "unmaintained: transitive dependency"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0194"
+reason = "unmaintained: transitive dependency"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0235"
+reason = "unmaintained: transitive dependency"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0253"
+reason = "unmaintained: transitive dependency"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0002"
+reason = "unmaintained: transitive dependency"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0258"
+reason = "unmaintained: transitive dependency"

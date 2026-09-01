@@ -1,5 +1,7 @@
 //! Tests for scaffold resolver (cli/src/scaffold/resolver.rs)
 
+#![allow(clippy::unwrap_used)]
+
 use mgc::scaffold::resolver::{MissingLayersReport, ScaffoldResolveStatus};
 use mgc::scaffold::spec::{parse_scaffold_spec, CoreKind};
 use std::path::PathBuf;
