@@ -64,6 +64,72 @@ $ mgc exec npm install
 Error: tool 'npm' is permanently forbidden (mgc resolver covers its format — use `mgc install` instead)
 ```
 
+## 1.1. Test Runner Security Model
+
+**Status:** Implemented in v1.1.0-RC (P0-1)
+
+### Execution Scopes
+
+MagiCore distinguishes between different execution contexts with different security postures:
+
+| Scope | Package Managers Allowed? | Use Case |
+|-------|---------------------------|----------|
+| `Install` | ❌ Forbidden | Scaffold, install, dependency resolution |
+| `TestRunner` | ✅ Allowed | Running project test suites (`mgc test`) |
+| `BuildRunner` | ✅ Allowed | Building projects (`mgc build`) |
+| `DevServer` | ✅ Allowed | Development servers (`mgc dev`) |
+
+**Why different scopes?**
+
+- **Install scope** = HIGH RISK: Runs before user sees project code, must use MagiCore's resolver
+- **TestRunner scope** = MEDIUM RISK: Runs after user control, delegates to project's declared test runner
+
+### Test Runner Behavior
+
+When you run `mgc test`, the system:
+
+1. **Auto-detects** project test runner from:
+   - `package.json` `scripts.test` (Node.js)
+   - `Cargo.toml` (Rust)
+   - `pyproject.toml` or `pytest` (Python)
+   - `go.mod` + `go test` (Go)
+   - `pubspec.yaml` + `flutter test` (Flutter)
+
+2. **Executes** the detected runner with `ExecutionScope::TestRunner`
+
+3. **Logs** execution to audit trail (if enabled)
+
+### Security Tests
+
+Verification tests at `cli/tests/test_runner_security.rs`:
+
+| Test | Status | Description |
+|------|--------|-------------|
+| `test_npm_allowed_in_test_runner_scope` | ✅ PASS | npm/pnpm/yarn allowed in TestRunner |
+| `test_npm_forbidden_in_install_scope` | ✅ PASS | npm/pnpm/yarn rejected in Install |
+| `test_pnpm_allowed_in_test_runner_scope` | ✅ PASS | Explicit runner selection works |
+| `test_audit_log_records_execution` | ✅ PASS | Tool executions logged |
+| `test_cwd_lock_prevents_traversal` | ⚠️ IGNORED | TODO: cwd lock not yet enforced |
+| `test_shell_injection_prevented` | ⚠️ IGNORED | TODO: shell escaping not yet implemented |
+
+**Known Gaps (P1 follow-up):**
+
+1. **No cwd lock**: Test runners can `cd` outside project root
+2. **Shell injection**: Scripts can use shell metacharacters to escape sandboxing
+3. **No resource limits**: No CPU/memory/network constraints on test processes
+
+These gaps are documented and tracked for P1 milestone.
+
+### Manual Override
+
+```bash
+# Use specific test runner
+$ mgc test --runner jest
+
+# Disable test runner (fail if auto-detect fails)
+$ mgc test --no-auto-detect
+```
+
 ## 2. Script Execution Policy
 
 Package lifecycle scripts (install, postinstall, etc.) are controlled by security policy.
