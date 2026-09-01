@@ -525,13 +525,16 @@ else
     fail "insufficient test coverage: only $TEST_COUNT test files"
 fi
 
-test_case "evidence-no-todo-fixme" "No TODO/FIXME in production code"
+test_case "evidence-no-todo-fixme" "No TODO/FIXME in production code (cli/core/adapters)"
 # CRITICAL: TODO/FIXME indicates incomplete implementation
-TODO_COUNT=$(grep -r "TODO\|FIXME" "$PROJECT_ROOT/cli/src" --include="*.rs" | grep -v "test\|example" | wc -l | tr -d ' ')
-if [ "$TODO_COUNT" -eq 0 ]; then
+TODO_CLI=$(grep -r "TODO\|FIXME" "$PROJECT_ROOT/cli/src" --include="*.rs" | grep -v "test\|example" | wc -l | tr -d ' ')
+TODO_CORE=$(grep -r "TODO\|FIXME" "$PROJECT_ROOT/core/crates" --include="*.rs" | grep -v "test\|example" | wc -l | tr -d ' ')
+TODO_ADAPTERS=$(grep -r "TODO\|FIXME" "$PROJECT_ROOT/adapters" --include="*.rs" | grep -v "test\|example" | wc -l | tr -d ' ')
+TODO_TOTAL=$((TODO_CLI + TODO_CORE + TODO_ADAPTERS))
+if [ "$TODO_TOTAL" -eq 0 ]; then
     pass
 else
-    fail "$TODO_COUNT TODO/FIXME found in production code — incomplete features"
+    fail "$TODO_TOTAL TODO/FIXME found (cli: $TODO_CLI, core: $TODO_CORE, adapters: $TODO_ADAPTERS) — incomplete features"
 fi
 
 test_case "evidence-benchmark-data" "Performance benchmark data exists"
