@@ -131,10 +131,11 @@ echo
 echo "=== SECTION 3: Core Parity — Optimizer Shared Across All Cores ==="
 
 test_case "optimizer-web" "Optimizer command accepts web core"
+# CRITICAL: Must mention supported cores in help
 if $MGC_BIN optimizer --help 2>&1 | grep -iq "web\|core"; then
     pass
 else
-    warn "optimizer help doesn't mention cores"
+    fail "optimizer help doesn't mention cores — users can't discover which cores supported"
 fi
 
 test_case "optimizer-ai" "Optimizer supports ai core"
@@ -382,16 +383,23 @@ echo
 echo "=== SECTION 9: Package Manager Competition Readiness ==="
 
 test_case "pms-cache-isolation" "Cache isolation (vs pnpm store, bun cache)"
+# CRITICAL: Cannot claim "better than pnpm/bun" if cache conflicts with theirs
 # Check cache doesn't conflict with other PMs — kiểm tra cache không xung đột với PMs khác
 if [ -d "$MGC_CACHE_DIR" ] && ! [ -d "$MGC_CACHE_DIR/pnpm" ] && ! [ -d "$MGC_CACHE_DIR/bun" ]; then
     pass
 else
-    warn "cache structure may conflict with other PMs"
+    fail "cache structure conflicts with other PMs (pnpm/bun) — cannot coexist"
 fi
 
 test_case "pms-performance-baseline" "Performance baseline exists (cache speedup data)"
+# CRITICAL: Need actual benchmark data to claim competitive performance
 if [ -f "$PROJECT_ROOT/cli/tests/cache_tracking_stress.sh" ]; then
-    pass
+    # Verify it's executable and not just a stub
+    if bash "$PROJECT_ROOT/cli/tests/cache_tracking_stress.sh" >/dev/null 2>&1; then
+        pass
+    else
+        fail "cache stress test exists but FAILS to run — no valid performance data"
+    fi
 else
     fail "no cache performance baseline test"
 fi
@@ -418,11 +426,12 @@ echo
 echo "=== SECTION 10: Distribution Readiness ==="
 
 test_case "dist-binary-size" "Binary size reasonable (<50MB)"
+# CRITICAL for distribution: Large binaries slow download, hurt adoption
 BINARY_SIZE=$(stat -f%z "$MGC_BIN" 2>/dev/null || stat -c%s "$MGC_BIN" 2>/dev/null || echo "0")
 if [ "$BINARY_SIZE" -lt 52428800 ]; then  # 50MB in bytes
     pass
 else
-    warn "binary size large: $((BINARY_SIZE / 1024 / 1024))MB"
+    fail "binary size too large: $((BINARY_SIZE / 1024 / 1024))MB (limit: 50MB) — bloats distribution"
 fi
 
 test_case "dist-license-file" "LICENSE file exists"
@@ -433,10 +442,11 @@ else
 fi
 
 test_case "dist-cargo-metadata" "Cargo.toml has distribution metadata"
+# CRITICAL: crates.io publication requires license/repository/homepage
 if grep -q "license\|repository\|homepage" "$PROJECT_ROOT/cli/Cargo.toml"; then
     pass
 else
-    warn "Cargo.toml missing distribution metadata"
+    fail "Cargo.toml missing distribution metadata (license/repository/homepage) — cannot publish to crates.io"
 fi
 
 # ============================================
@@ -454,11 +464,12 @@ else
 fi
 
 test_case "evidence-no-todo-fixme" "No TODO/FIXME in production code"
+# CRITICAL: TODO/FIXME indicates incomplete implementation
 TODO_COUNT=$(grep -r "TODO\|FIXME" "$PROJECT_ROOT/cli/src" --include="*.rs" | grep -v "test\|example" | wc -l | tr -d ' ')
 if [ "$TODO_COUNT" -eq 0 ]; then
     pass
 else
-    warn "$TODO_COUNT TODO/FIXME found in production code"
+    fail "$TODO_COUNT TODO/FIXME found in production code — incomplete features"
 fi
 
 test_case "evidence-benchmark-data" "Performance benchmark data exists"
