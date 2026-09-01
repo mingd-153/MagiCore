@@ -103,16 +103,17 @@ echo "Cache size before: $CACHE_SIZE_BEFORE bytes"
 COLD_START=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time()*1000')
 
 # NO || true — MUST succeed
-echo "Running: $MGC_BIN create-web vanilla test-cold --ts --no-install"
-$MGC_BIN create-web vanilla test-cold --ts --no-install
+# vanilla creates index.html + mgc.toml (not package.json)
+echo "Running: $MGC_BIN create-web vanilla test-cold --ts"
+$MGC_BIN create-web vanilla test-cold --ts
 
 COLD_END=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time()*1000')
 COLD_DURATION=$((COLD_END - COLD_START))
 
 # Assert scaffold succeeded — kiểm tra scaffold thành công
 assert_dir_exists "test-cold" "Cold run scaffold created directory"
-assert_file_exists "test-cold/package.json" "Cold run scaffold created package.json"
 assert_file_exists "test-cold/index.html" "Cold run scaffold created index.html"
+assert_file_exists "test-cold/mgc.toml" "Cold run scaffold created mgc.toml"
 
 CACHE_SIZE_AFTER=$(get_dir_size "$MGC_CACHE_DIR")
 CACHE_FILES=$(count_files "$MGC_CACHE_DIR")
@@ -137,15 +138,15 @@ echo "=== WARM RUN TEST (cache populated) ==="
 # Run same command again — chạy lại lệnh giống
 WARM_START=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time()*1000')
 
-echo "Running: $MGC_BIN create-web vanilla test-warm --ts --no-install"
-$MGC_BIN create-web vanilla test-warm --ts --no-install
+echo "Running: $MGC_BIN create-web vanilla test-warm --ts"
+$MGC_BIN create-web vanilla test-warm --ts
 
 WARM_END=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time()*1000')
 WARM_DURATION=$((WARM_END - WARM_START))
 
 # Assert warm run succeeded — kiểm tra warm run thành công
 assert_dir_exists "test-warm" "Warm run scaffold created directory"
-assert_file_exists "test-warm/package.json" "Warm run scaffold created package.json"
+assert_file_exists "test-warm/index.html" "Warm run scaffold created index.html"
 
 CACHE_SIZE_WARM=$(get_dir_size "$MGC_CACHE_DIR")
 
@@ -180,12 +181,12 @@ HIT_THRESHOLD=10000  # bytes — below this is considered a cache hit
 for i in {1..5}; do
     CACHE_BEFORE=$(get_dir_size "$MGC_CACHE_DIR")
     
-    echo "  Iteration $i: $MGC_BIN create-web vanilla test-hit-$i --ts --no-install"
-    $MGC_BIN create-web vanilla "test-hit-$i" --ts --no-install
+    echo "  Iteration $i: $MGC_BIN create-web vanilla test-hit-$i --ts"
+    $MGC_BIN create-web vanilla "test-hit-$i" --ts
     
     # Assert scaffold succeeded — kiểm tra scaffold thành công
     assert_dir_exists "test-hit-$i" "Hit/miss test iteration $i created directory"
-    assert_file_exists "test-hit-$i/package.json" "Hit/miss test iteration $i created package.json"
+    assert_file_exists "test-hit-$i/index.html" "Hit/miss test iteration $i created index.html"
     
     CACHE_AFTER=$(get_dir_size "$MGC_CACHE_DIR")
     DELTA=$((CACHE_AFTER - CACHE_BEFORE))
@@ -214,8 +215,8 @@ echo "=== SHARED OBJECT REUSE TEST ==="
 # For now, measure per-core growth; real shared cache needs CAS key verification
 CACHE_BASELINE=$(get_dir_size "$MGC_CACHE_DIR")
 
-echo "Running: $MGC_BIN create-web vanilla test-shared-web --ts --no-install"
-$MGC_BIN create-web vanilla test-shared-web --ts --no-install
+echo "Running: $MGC_BIN create-web vanilla test-shared-web --ts"
+$MGC_BIN create-web vanilla test-shared-web --ts
 assert_dir_exists "test-shared-web" "Shared test web created directory"
 CACHE_WEB=$(get_dir_size "$MGC_CACHE_DIR")
 
