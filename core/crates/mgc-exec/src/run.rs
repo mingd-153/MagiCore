@@ -55,7 +55,9 @@ pub struct ExecReport {
 
 /// Chạy `cmd args` sau khi check allowlist. Không dùng shell — args là Vec riêng (§5.6).
 pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    let scope = opts.execution_scope.unwrap_or(crate::allowlist::ExecutionScope::Install);
+    let scope = opts
+        .execution_scope
+        .unwrap_or(crate::allowlist::ExecutionScope::Install);
     crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
@@ -66,7 +68,9 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
 /// Run an allowlisted tool while inheriting stdio for interactive/streaming commands.
 /// Chạy tool allowlist với stdio trực tiếp cho build/dev mà vẫn giữ guard chung.
 pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    let scope = opts.execution_scope.unwrap_or(crate::allowlist::ExecutionScope::Install);
+    let scope = opts
+        .execution_scope
+        .unwrap_or(crate::allowlist::ExecutionScope::Install);
     crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;

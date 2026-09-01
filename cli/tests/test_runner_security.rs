@@ -98,10 +98,7 @@ fn test_npm_forbidden_in_install_scope() {
     let result = check_tool_with_scope("npm", ExecutionScope::Install, None);
 
     // ASSERT: Must be rejected
-    assert!(
-        result.is_err(),
-        "npm must be forbidden in Install scope"
-    );
+    assert!(result.is_err(), "npm must be forbidden in Install scope");
 
     let err_msg = result.unwrap_err().to_string();
     assert!(

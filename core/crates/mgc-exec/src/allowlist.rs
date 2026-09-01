@@ -1,6 +1,6 @@
 //! Allowlist check — kiểm tra tool trước khi exec (00-index §5.1, §5.2)
 //! (Exec passthrough allowlist: 00-index §5.1 allowlist bất biến + §5.2 cấm vĩnh viễn)
-//! 
+//!
 //! ## ExecutionScope (2026-09-01)
 //! Test-runner security model: npm/pnpm/yarn/bun FORBIDDEN for Install scope,
 //! but ALLOWED for TestRunner/BuildRunner/DevServer scopes (project-local scripts only).
@@ -17,15 +17,15 @@ pub enum ExecutionScope {
     /// HIGH RISK: Package installation, fetch from registry, install scripts.
     /// npm/pnpm/yarn/bun FORBIDDEN in this scope.
     Install,
-    
+
     /// MEDIUM RISK: Test runner execution (project-local test scripts only).
     /// npm/pnpm/yarn/bun ALLOWED with constraints: cwd locked, audit log, no shell injection.
     TestRunner,
-    
+
     /// MEDIUM RISK: Build runner execution (project-local build scripts).
     /// npm/pnpm/yarn/bun ALLOWED with constraints: cwd locked, audit log.
     BuildRunner,
-    
+
     /// MEDIUM RISK: Dev server execution (project-local dev scripts).
     /// npm/pnpm/yarn/bun ALLOWED with constraints: cwd locked, audit log.
     DevServer,
@@ -36,16 +36,16 @@ pub enum ExecutionScope {
 pub struct ScopeConstraints {
     /// Must run in project root (not arbitrary cwd).
     pub cwd_locked: bool,
-    
+
     /// Network access forbidden (not yet enforced, roadmap).
     pub no_network: bool,
-    
+
     /// Only predefined args (not yet enforced, roadmap).
     pub no_arbitrary_args: bool,
-    
+
     /// Must log to audit trail.
     pub audit_log_required: bool,
-    
+
     /// Validate args for shell injection.
     pub shell_injection_check: bool,
 }
@@ -64,15 +64,15 @@ impl ExecutionScope {
             ExecutionScope::TestRunner
             | ExecutionScope::BuildRunner
             | ExecutionScope::DevServer => ScopeConstraints {
-                cwd_locked: true, // Must run in project root
-                no_network: false, // Tests may need network (integration tests)
+                cwd_locked: true,        // Must run in project root
+                no_network: false,       // Tests may need network (integration tests)
                 no_arbitrary_args: true, // Only predefined commands
                 audit_log_required: true,
                 shell_injection_check: true,
             },
         }
     }
-    
+
     /// Check if PM tools (npm/pnpm/yarn/bun) are allowed in this scope.
     pub fn allows_pm_tools(self) -> bool {
         matches!(
@@ -149,9 +149,9 @@ pub fn check_tool_with_scope(
     if name.is_empty() {
         bail!("tool name is empty");
     }
-    
+
     let normalized = normalize_script_token(name).unwrap_or_else(|| name.to_ascii_lowercase());
-    
+
     // PM tools: forbidden in Install scope, allowed in others
     let is_pm_tool = FORBIDDEN_TOOLS.contains(&normalized.as_str());
     if is_pm_tool {
@@ -159,7 +159,7 @@ pub fn check_tool_with_scope(
             // ALLOWED: TestRunner/BuildRunner/DevServer scope
             // Verify constraints
             let constraints = scope.constraints();
-            
+
             if constraints.cwd_locked {
                 // TODO: verify project_root is valid (not /tmp, not parent of workspace)
                 // For now, just require it's provided
@@ -170,7 +170,7 @@ pub fn check_tool_with_scope(
                     );
                 }
             }
-            
+
             // Audit log handled by caller (run.rs)
             return Ok(());
         } else {
@@ -181,14 +181,14 @@ pub fn check_tool_with_scope(
             );
         }
     }
-    
+
     // Non-PM tools: check against general allowlist
     if !ALLOWED_TOOLS.contains(&normalized.as_str()) {
         bail!(
             "tool '{name}' is not on the allowlist (00-index §5.1) — add it there only after review"
         );
     }
-    
+
     Ok(())
 }
 
