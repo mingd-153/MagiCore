@@ -29,4 +29,5 @@ echo "  - [ ] Run mgc test → assert deno allowed (not forbidden)"
 echo "  - [ ] Check audit.log → assert deno execution logged"
 echo
 echo "⚠️  SKIP: E2E test not implemented (roadmap v1.2.0)"
-exit 0
+echo "Exit code 77: test not implemented (standard skip code)"
+exit 77

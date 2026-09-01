@@ -61,13 +61,5 @@ echo "  - ❌ No reproducible harness"
 echo "  - ⚠️  cache_tracking_stress.sh exists but only tests mgc (no comparison)"
 echo
 echo "⚠️  SKIP: Competitive benchmarks not implemented (roadmap v1.2.0)"
-echo
-echo "Cannot claim:"
-echo "  - ❌ 'Faster than pnpm' (no data)"
-echo "  - ❌ 'Better than moon/proto' (no comparison)"
-echo "  - ❌ 'Most efficient cache' (no measurement)"
-echo
-echo "Can claim (with caveats):"
-echo "  - ✅ 'Cache hit speedup: 3.19x' (mgc cold vs warm, internal test)"
-echo "  - ✅ 'Supports 4+ cores' (web/ai/app/lib verified)"
-exit 0
+echo "Exit code 77: test not implemented (standard skip code)"
+exit 77

@@ -28,4 +28,5 @@ echo "  - [ ] Run mgc test → assert bun allowed in TestRunner scope"
 echo "  - [ ] Check audit.log → assert bun execution logged"
 echo
 echo "⚠️  SKIP: E2E test not implemented (roadmap v1.2.0)"
-exit 0
+echo "Exit code 77: test not implemented (standard skip code)"
+exit 77

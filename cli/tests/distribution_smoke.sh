@@ -63,8 +63,9 @@ echo "  6. Update packaging/scoop/magicore.json with new URL + hash"
 echo "  7. Test installations on actual machines"
 echo
 echo "⚠️  SKIP: Distribution testing blocked by missing v1.1.0-RC release"
+echo "Exit code 77: test not implemented (standard skip code)"
 echo
 echo "Action required before public RC:"
 echo "  → Create release artifacts first"
 echo "  → Then run this test suite"
-exit 0
+exit 77
