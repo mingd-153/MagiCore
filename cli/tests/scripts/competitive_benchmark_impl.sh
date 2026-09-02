@@ -115,7 +115,7 @@ for i in $(seq 1 $NUM_RUNS); do
     # Clear mgc cache (safe: isolated HOME)
     rm -rf ~/.magicore/store ~/.mgc/cache 2>/dev/null || true
     START=$(date +%s%N)
-    if "$MGC_BIN" install --force >/dev/null 2>&1; then
+    if "$MGC_BIN" --core web install >/dev/null 2>&1; then
         END=$(date +%s%N)
         DURATION=$(( (END - START) / 1000000 ))
         MGC_TIMES+=("$DURATION")

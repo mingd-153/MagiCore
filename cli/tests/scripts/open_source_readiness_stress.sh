@@ -6,8 +6,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-MGC_BIN="${MGC_BIN:-$PROJECT_ROOT/target/debug/mgc}"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+MGC_BIN="${MGC_BIN:-$PROJECT_ROOT/target/release/mgc}"
 TEST_DIR="/tmp/mgc-opensource-readiness-$$"
 TEST_HOME="$TEST_DIR/home"
 
