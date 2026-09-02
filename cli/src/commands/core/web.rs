@@ -919,6 +919,30 @@ fn append_dev_endpoint_args(
     }
 }
 
+/// Validate runtime args for Bun/Deno - reject dangerous flags
+/// Kiểm tra args runtime cho Bun/Deno - từ chối flags nguy hiểm
+fn validate_runtime_args(runtime: &str, args: &[&str]) -> Result<()> {
+    let dangerous_flags = match runtime {
+        "bun" => vec!["--eval", "-e", "--print", "-p"],
+        "deno" => vec!["--eval", "-e", "--allow-all", "-A"],
+        _ => vec![],
+    };
+
+    for arg in args {
+        for flag in &dangerous_flags {
+            if arg.starts_with(flag) {
+                return Err(anyhow::anyhow!(
+                    "Rejected dangerous {} flag: {}. Use project scripts only.",
+                    runtime,
+                    flag
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn build_dev_launch(
     project_root: &Path,
     script_name: &str,
@@ -949,40 +973,54 @@ fn build_dev_launch(
     match tokens.as_slice() {
         // Bun runtime (allowed in DevServer scope with project script)
         // Runtime Bun (cho phép trong scope DevServer với script của project)
-        ["bun", "run", rest @ ..] => Ok(DevLaunch {
-            program: PathBuf::from("bun"),
-            args: {
-                let mut args = vec![OsString::from("run")];
-                args.extend(rest.iter().map(OsString::from));
-                args
-            },
-            envs: base_envs.clone(),
-        }),
-        ["bun", rest @ ..] => Ok(DevLaunch {
-            program: PathBuf::from("bun"),
-            args: rest.iter().map(OsString::from).collect(),
-            envs: base_envs.clone(),
-        }),
+        // SAFETY: Validate args - no --eval, no arbitrary code execution
+        ["bun", "run", rest @ ..] => {
+            validate_runtime_args("bun", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("bun"),
+                args: {
+                    let mut args = vec![OsString::from("run")];
+                    args.extend(rest.iter().map(OsString::from));
+                    args
+                },
+                envs: base_envs.clone(),
+            })
+        }
+        ["bun", rest @ ..] => {
+            validate_runtime_args("bun", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("bun"),
+                args: rest.iter().map(OsString::from).collect(),
+                envs: base_envs.clone(),
+            })
+        }
         // Deno runtime (allowed in DevServer scope with project script)
         // Runtime Deno (cho phép trong scope DevServer với script của project)
-        ["deno", "run", rest @ ..] => Ok(DevLaunch {
-            program: PathBuf::from("deno"),
-            args: {
-                let mut args = vec![OsString::from("run")];
-                args.extend(rest.iter().map(OsString::from));
-                args
-            },
-            envs: base_envs.clone(),
-        }),
-        ["deno", "task", rest @ ..] => Ok(DevLaunch {
-            program: PathBuf::from("deno"),
-            args: {
-                let mut args = vec![OsString::from("task")];
-                args.extend(rest.iter().map(OsString::from));
-                args
-            },
-            envs: base_envs.clone(),
-        }),
+        // SAFETY: Validate args - no --eval, restrict dangerous permissions
+        ["deno", "run", rest @ ..] => {
+            validate_runtime_args("deno", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("deno"),
+                args: {
+                    let mut args = vec![OsString::from("run")];
+                    args.extend(rest.iter().map(OsString::from));
+                    args
+                },
+                envs: base_envs.clone(),
+            })
+        }
+        ["deno", "task", rest @ ..] => {
+            validate_runtime_args("deno", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("deno"),
+                args: {
+                    let mut args = vec![OsString::from("task")];
+                    args.extend(rest.iter().map(OsString::from));
+                    args
+                },
+                envs: base_envs.clone(),
+            })
+        }
         ["vite"] | ["vite", "dev"] => {
             let mut args = Vec::new();
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
@@ -1585,12 +1623,18 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
         .iter()
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
+
+    // SAFETY: Enable audit log for dev server execution
+    let audit_log = target.dir.join(".mgc").join("exec.log");
+    std::fs::create_dir_all(audit_log.parent().unwrap())?;
+
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(target.dir.clone()),
         env,
         clean_env: true,
         disable_timeout: true,
         execution_scope: Some(mgc_exec::prelude::ExecutionScope::DevServer),
+        log_path: Some(audit_log),
         ..Default::default()
     };
 

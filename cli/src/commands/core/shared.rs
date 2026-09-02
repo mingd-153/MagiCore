@@ -1114,10 +1114,17 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
         mgc_ai_adapter::adapter_for(&root).ok_or_else(|| crate::error::no_ai_framework(&root))?;
     let script = framework.framework.entry_script().to_string();
 
+    // Load optimizer env vars (Python/Rust/Go AI runtime config)
+    let optimizer_envs =
+        crate::commands::optimizer::env_loader::load_optimizer_env(&root).unwrap_or_default();
+    let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.clone()),
         log_path: Some(root.join(".magicore").join("exec.log")),
+        env,
         clean_env: true,
+        execution_scope: Some(mgc_exec::prelude::ExecutionScope::DevServer),
         ..Default::default()
     };
     let cmd = "python3".to_string();
