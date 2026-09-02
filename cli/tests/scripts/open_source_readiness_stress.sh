@@ -475,6 +475,19 @@ else
     fail "no distribution smoke test"
 fi
 
+test_case "dist-runtime-full-e2e" "Full runtime E2E (dev server + env + audit)"
+# CRITICAL: Comprehensive E2E - background dev, env verification, audit log
+FULL_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_full_e2e.sh"
+if [ -f "$FULL_E2E" ]; then
+    if bash "$FULL_E2E" >/dev/null 2>&1; then
+        pass
+    else
+        fail "comprehensive E2E failed (see runtime_full_e2e.sh)"
+    fi
+else
+    warn "comprehensive E2E script not found"
+fi
+
 test_case "dist-runtime-bun-e2e" "Bun runtime E2E test"
 # CRITICAL: Cannot claim "Bun support" without end-to-end verification
 BUN_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_bun_e2e.sh"
