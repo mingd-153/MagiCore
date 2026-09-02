@@ -2,7 +2,7 @@
 //! `adapters/bun.rs` — Adapter tối ưu hóa Bun
 
 use super::OptimizerAdapter;
-use crate::commands::optimizer::detect::{HardwareInfo, SystemProfile};
+use crate::commands::optimizer::detect::HardwareInfo;
 use crate::commands::optimizer::generators::OptimizedConfigFile;
 use crate::commands::optimizer::runtime_detect::DetectedRuntime;
 
@@ -19,12 +19,6 @@ impl OptimizerAdapter for BunAdapter {
 
     fn generate(&self, hw: &HardwareInfo) -> Vec<OptimizedConfigFile> {
         let mut files = vec![];
-
-        let heap_size = match hw.profile {
-            SystemProfile::HighPerformance => 8192,
-            SystemProfile::Standard => 4096,
-            SystemProfile::Constrained => 2048,
-        };
 
         files.push(OptimizedConfigFile {
             relative_path: ".mgc-optimizer/bun_env.env".to_string(),
