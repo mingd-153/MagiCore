@@ -8,7 +8,7 @@ echo "=== Distribution Smoke Test (Basic) ==="
 echo
 
 # Find mgc binary (prefer local build)
-PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 if [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
     MGC_BIN="$PROJECT_ROOT/target/release/mgc"
     echo "Found local release binary: $MGC_BIN"

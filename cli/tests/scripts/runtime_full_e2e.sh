@@ -20,7 +20,15 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
 fi
 
 # Find mgc binary
-PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+
+# Validate PROJECT_ROOT (must be repo root with Cargo.toml)
+if [ ! -f "$PROJECT_ROOT/Cargo.toml" ]; then
+    echo "✗ FAIL: Invalid PROJECT_ROOT ($PROJECT_ROOT) - Cargo.toml not found"
+    echo "Expected repo root, got: $PROJECT_ROOT"
+    exit 1
+fi
+
 if [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
     MGC_BIN="$PROJECT_ROOT/target/release/mgc"
 elif [ -f "$PROJECT_ROOT/target/debug/mgc" ]; then
@@ -82,9 +90,19 @@ version = "1.0.0"
 core = "web"
 EOF
 
+# Create Bun marker file (required for runtime detection)
+cat > bunfig.toml <<EOF
+[install]
+cache = ".bun-cache"
+EOF
+
 # Run optimizer to generate env config
 echo "Running optimizer..."
-"$MGC_BIN" optimizer >/dev/null 2>&1 || true
+if ! "$MGC_BIN" optimizer 2>&1 | tee optimizer.log; then
+    echo "✗ FAIL: Optimizer failed"
+    cat optimizer.log
+    exit 1
+fi
 
 # Check optimizer output exists
 if [ ! -d ".mgc-optimizer" ]; then
@@ -94,29 +112,36 @@ fi
 
 # Start mgc dev in background with timeout
 echo "Starting mgc dev (background, 5s timeout)..."
-timeout 5s "$MGC_BIN" dev >/dev/null 2>&1 || DEV_EXIT=$?
-
-# Check exit code (124 = timeout, 0 = normal exit, others = error)
-if [ "${DEV_EXIT:-0}" -eq 124 ]; then
-    echo "⚠️  Dev server timed out (5s) - may still be running"
-elif [ "${DEV_EXIT:-0}" -eq 0 ]; then
-    echo "✓ Dev server exited cleanly"
+"$MGC_BIN" dev >/dev/null 2>&1 &
+DEV_PID=$!
+sleep 5
+if kill -0 "$DEV_PID" 2>/dev/null; then
+    kill "$DEV_PID" 2>/dev/null || true
+    wait "$DEV_PID" 2>/dev/null || DEV_EXIT=0
+    echo "✓ Dev server ran for 5s then stopped"
 else
-    echo "✗ FAIL: Dev server exited with error code ${DEV_EXIT:-unknown}"
-    exit 1
+    wait "$DEV_PID" 2>/dev/null || DEV_EXIT=$?
+    if [ "${DEV_EXIT:-0}" -eq 0 ]; then
+        echo "✓ Dev server exited cleanly"
+    else
+        echo "✗ FAIL: Dev server exited with error code ${DEV_EXIT:-unknown}"
+        exit 1
+    fi
 fi
 
 # Verify env was loaded (check marker file)
 if [ -f ".env_proof.txt" ]; then
     ENV_CONTENT=$(cat .env_proof.txt)
-    if echo "$ENV_CONTENT" | grep -q "BUN_ENV="; then
-        echo "✓ Bun process received env vars"
+    if echo "$ENV_CONTENT" | grep -q "BUN_ENV=" && ! echo "$ENV_CONTENT" | grep -q "=NONE"; then
+        echo "✓ Bun process received env vars (BUN_RUNTIME_TRANSPILER_CACHE_PATH set)"
     else
-        echo "✗ FAIL: Env marker exists but no BUN_ENV found"
+        echo "✗ FAIL: Env marker exists but BUN_RUNTIME_TRANSPILER_CACHE_PATH not set or NONE"
+        cat .env_proof.txt
         exit 1
     fi
 else
-    echo "⚠️  WARNING: No .env_proof.txt (server may not have started)"
+    echo "✗ FAIL: No .env_proof.txt - server did not run or env not loaded"
+    exit 1
 fi
 
 # Verify audit log was created
@@ -156,12 +181,12 @@ EOF
 
 cat > server.ts <<'EOF'
 // Simple Deno server that prints env and exits after 2s
-console.log("DENO_DIR:", Deno.env.get("DENO_DIR") || "NOT_SET");
-console.log("NODE_ENV:", Deno.env.get("NODE_ENV") || "NOT_SET");
-console.log("MAGICORE_OPTIMIZER_RAN:", Deno.env.get("MAGICORE_OPTIMIZER_RAN") || "NOT_SET");
+console.log("DENO_V8_FLAGS:", Deno.env.get("DENO_V8_FLAGS") || "NOT_SET");
+console.log("DENO_JOBS:", Deno.env.get("DENO_JOBS") || "NOT_SET");
+console.log("NO_COLOR:", Deno.env.get("NO_COLOR") || "NOT_SET");
 
 // Create marker file with env proof
-Deno.writeTextFileSync(".env_proof.txt", `DENO_ENV=${Deno.env.get("DENO_DIR") || "NONE"}\n`);
+Deno.writeTextFileSync(".env_proof.txt", `DENO_V8_FLAGS=${Deno.env.get("DENO_V8_FLAGS") || "NONE"}\n`);
 
 setTimeout(() => {
   console.log("Deno server stopping...");
@@ -188,7 +213,11 @@ EOF
 
 # Run optimizer
 echo "Running optimizer..."
-"$MGC_BIN" optimizer >/dev/null 2>&1 || true
+if ! "$MGC_BIN" optimizer 2>&1 | tee optimizer.log; then
+    echo "✗ FAIL: Optimizer failed"
+    cat optimizer.log
+    exit 1
+fi
 
 if [ ! -d ".mgc-optimizer" ]; then
     echo "✗ FAIL: Optimizer did not create .mgc-optimizer/"
@@ -197,28 +226,36 @@ fi
 
 # Start mgc dev in background with timeout
 echo "Starting mgc dev (background, 5s timeout)..."
-timeout 5s "$MGC_BIN" dev >/dev/null 2>&1 || DEV_EXIT=$?
-
-if [ "${DEV_EXIT:-0}" -eq 124 ]; then
-    echo "⚠️  Dev server timed out (5s) - may still be running"
-elif [ "${DEV_EXIT:-0}" -eq 0 ]; then
-    echo "✓ Dev server exited cleanly"
+"$MGC_BIN" dev >/dev/null 2>&1 &
+DEV_PID=$!
+sleep 5
+if kill -0 "$DEV_PID" 2>/dev/null; then
+    kill "$DEV_PID" 2>/dev/null || true
+    wait "$DEV_PID" 2>/dev/null || DEV_EXIT=0
+    echo "✓ Dev server ran for 5s then stopped"
 else
-    echo "✗ FAIL: Dev server exited with error code ${DEV_EXIT:-unknown}"
-    exit 1
+    wait "$DEV_PID" 2>/dev/null || DEV_EXIT=$?
+    if [ "${DEV_EXIT:-0}" -eq 0 ]; then
+        echo "✓ Dev server exited cleanly"
+    else
+        echo "✗ FAIL: Dev server exited with error code ${DEV_EXIT:-unknown}"
+        exit 1
+    fi
 fi
 
 # Verify env was loaded
 if [ -f ".env_proof.txt" ]; then
     ENV_CONTENT=$(cat .env_proof.txt)
-    if echo "$ENV_CONTENT" | grep -q "DENO_ENV="; then
-        echo "✓ Deno process received env vars"
+    if echo "$ENV_CONTENT" | grep -q "DENO_V8_FLAGS=" && ! echo "$ENV_CONTENT" | grep -q "=NONE"; then
+        echo "✓ Deno process received env vars (DENO_V8_FLAGS set)"
     else
-        echo "✗ FAIL: Env marker exists but no DENO_ENV found"
+        echo "✗ FAIL: Env marker exists but DENO_V8_FLAGS not set or NONE"
+        cat .env_proof.txt
         exit 1
     fi
 else
-    echo "⚠️  WARNING: No .env_proof.txt (server may not have started)"
+    echo "✗ FAIL: No .env_proof.txt - server did not run or env not loaded"
+    exit 1
 fi
 
 # Verify audit log

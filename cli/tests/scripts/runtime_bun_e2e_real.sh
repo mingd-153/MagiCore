@@ -13,7 +13,7 @@ if ! command -v bun &>/dev/null; then
 fi
 
 # Find mgc binary
-PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 if [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
     MGC_BIN="$PROJECT_ROOT/target/release/mgc"
 elif [ -f "$PROJECT_ROOT/target/debug/mgc" ]; then

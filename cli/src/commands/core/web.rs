@@ -921,6 +921,9 @@ fn append_dev_endpoint_args(
 
 /// Validate runtime args for Bun/Deno - reject dangerous flags
 /// Kiểm tra args runtime cho Bun/Deno - từ chối flags nguy hiểm
+///
+/// SAFETY: Blocks arbitrary code execution (--eval, -e) and dangerous permissions (--allow-all, -A)
+/// AN TOÀN: Chặn thực thi code tùy ý (--eval, -e) và quyền nguy hiểm (--allow-all, -A)
 fn validate_runtime_args(runtime: &str, args: &[&str]) -> Result<()> {
     let dangerous_flags = match runtime {
         "bun" => vec!["--eval", "-e", "--print", "-p"],
@@ -931,11 +934,7 @@ fn validate_runtime_args(runtime: &str, args: &[&str]) -> Result<()> {
     for arg in args {
         for flag in &dangerous_flags {
             if arg.starts_with(flag) {
-                return Err(anyhow::anyhow!(
-                    "Rejected dangerous {} flag: {}. Use project scripts only.",
-                    runtime,
-                    flag
-                ));
+                return Err(crate::error::runtime_dangerous_flag_rejected(runtime, flag));
             }
         }
     }
