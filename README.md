@@ -19,6 +19,8 @@
 **Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 
 > **🚧 Beta Release:** `v1.1.0-RC` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) have partial support. **Native package managers** (Maven, CocoaPods, pub.dev) are P2 features. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
+>
+> **📊 Capability Matrix:** For detailed status by core (web/ai/app/lib/game/iot), see [docs/CAPABILITY_MATRIX.md](docs/CAPABILITY_MATRIX.md).
 
 ---
 
@@ -331,6 +333,8 @@ These features will be **restored in V1.0.1 hotfix (Week 7)** — estimated 1 we
 > unified TOML v2 lockfile writer, and a full black-box E2E suite (`tests/e2e`).
 
 See [docs/specs/magiCoreChangeLog.md](docs/specs/magiCoreChangeLog.md) for migration details.
+
+**📊 For detailed capability status by core**: See [docs/CAPABILITY_MATRIX.md](docs/CAPABILITY_MATRIX.md) for honest assessments of what works, what's experimental, and what's planned.
 
 ---
 
