@@ -1,5 +1,11 @@
 // E2E test for optimizer env consumption via mgc CLI
-// Verifies RUSTFLAGS actually reach cargo via mgc build
+// Verifies RUSTFLAGS reach cargo via mgc build
+//
+// LIMITATION: This test verifies mgc's output shows "Applying RUSTFLAGS",
+// which proves the loader extracted and attempted to pass RUSTFLAGS.
+// It does NOT verify cargo child process actually received the env var
+// (would need cargo -vv output or wrapper compiler to observe rustc invocation).
+// This is integration-level verification, not full process-level E2E.
 
 use std::process::Command;
 use tempfile::TempDir;
@@ -119,22 +125,24 @@ MGC_OPTIMIZER_MARKER = "RUSTFLAGS_INJECTED"
         "Library artifact not found after build"
     );
 
-    // PROOF: Check cargo verbose output for RUSTFLAGS or cfg marker
-    // Cargo verbose shows: Running `rustc ... --cfg mgc_optimizer_injected`
+    // PROOF: Check mgc's output for RUSTFLAGS marker
+    // NOTE: This verifies mgc extracted and attempted to pass RUSTFLAGS,
+    // but doesn't prove cargo child process received it (would need cargo -vv or wrapper)
     let combined = format!("{}{}", stdout, stderr);
     let has_cfg_marker = combined.contains("mgc_optimizer_injected")
         || combined.contains("opt-level=2");
 
     assert!(
         has_cfg_marker,
-        "RUSTFLAGS marker not found in cargo output. This means optimizer env was not passed to cargo.\n\
-        Expected to find '--cfg mgc_optimizer_injected' or 'opt-level=2' in cargo verbose output.\n\
+        "RUSTFLAGS marker not found in mgc output. This means optimizer env was not extracted/attempted.\n\
+        Expected to find '--cfg mgc_optimizer_injected' or 'opt-level=2' in mgc's log output.\n\
         STDOUT: {}\nSTDERR: {}",
         stdout,
         stderr
     );
 
-    println!("✅ E2E VERIFIED: mgc build → optimizer config → RUSTFLAGS → cargo (marker found in output)");
+    println!("✅ E2E PARTIAL VERIFIED: mgc extracted RUSTFLAGS from config (marker in mgc output)");
+    println!("   NOTE: This doesn't prove cargo child process received it (would need cargo -vv parsing)");
 }
 
 #[test]

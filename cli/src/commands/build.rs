@@ -449,6 +449,7 @@ async fn build_web(
         ) {
             if let Some(engine_crate) = find_native_engine_crate(root) {
                 let binary = build_native_engine(
+                    root, // project root for optimizer config
                     &engine_crate,
                     matches!(resolved_target, WebBuildTarget::CompiledExecutable),
                 )?;
@@ -493,6 +494,7 @@ async fn build_web(
     ) {
         if let Some(engine_crate) = find_native_engine_crate(root) {
             let binary = build_native_engine(
+                root, // project root for optimizer config
                 &engine_crate,
                 matches!(resolved_target, WebBuildTarget::CompiledExecutable),
             )?;
@@ -792,17 +794,18 @@ fn find_native_engine_crate(root: &Path) -> Option<PathBuf> {
         .find(|path| path.join("Cargo.toml").exists())
 }
 
-fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
+fn build_native_engine(project_root: &Path, crate_dir: &Path, release: bool) -> Result<PathBuf> {
     let start = Instant::now();
     info(&format!(
         "Building native engine crate at {}...",
         crate_dir.display()
     ));
 
-    // Load optimizer env for native engine Rust builds
+    // Load optimizer env from project root (not crate subdirectory)
+    // Optimizer config is generated at project root: .mgc-optimizer/rust_cargo_profile.toml
     let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
     let optimizer_envs =
-        crate::commands::optimizer::env_loader::load_optimizer_env(crate_dir, &runtime)
+        crate::commands::optimizer::env_loader::load_optimizer_env(project_root, &runtime)
             .map_err(|e| {
                 mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
                 e
