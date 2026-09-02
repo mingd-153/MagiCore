@@ -87,7 +87,22 @@ See `.github/workflows/release.yml` for automated artifact building and hash com
 
 ## Notes
 
-- **Beta releases** use placeholder `COMPUTED_AFTER_ARTIFACT_BUILD` until CI builds artifacts
-- **Production releases** must have real SHA256 hashes before publishing
+- **Beta releases (v1.1.0-rc.1)**: Only macOS ARM64 has verified SHA256 (54be70e8...). Other platforms use placeholder `COMPUTED_AFTER_ARTIFACT_BUILD` pending CI build.
+- **Verified platforms**: 1/4 (macOS ARM64 only)
+- **Pending CI**: macOS Intel, Linux x64, Windows x64
+- **Production releases** must have real SHA256 hashes for ALL platforms before publishing
 - Homebrew requires `version` field in formula
 - Scoop uses `hash` field (not `sha256`)
+
+## BLOCKER Status (v1.1.0-RC)
+
+**BLOCKER 3: PARTIALLY CLOSED**
+
+✅ Mechanism verified: SHA computation works (macOS ARM64 tested)  
+✅ Formula structure correct: Homebrew/Scoop configs ready  
+❌ Incomplete: Only 1/4 platforms have real SHA  
+❌ Not installable: Other platforms fail brew/scoop install (placeholder SHA invalid)
+
+**Why not "closed"**: Cannot call packaging "ready" when 75% of platforms use placeholders.
+
+**To fully close**: Either cross-compile locally OR wait for CI artifacts OR document as "macOS ARM64 only" release.
