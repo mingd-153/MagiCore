@@ -18,7 +18,7 @@
 
 **Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 
-> **🚧 Beta Release:** `v1.0.0` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) remain experimental. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.1 roadmap toward full core parity.
+> **🚧 Beta Release:** `v1.1.0-RC` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) have partial support. **Native package managers** (Maven, CocoaPods, pub.dev) are P2 features. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
 
 ---
 
@@ -301,7 +301,13 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 
 ---
 
-## ⚠️ Known Limitations (V1.0.1 Roadmap)
+## ⚠️ Known Limitations (V1.1.0-RC Roadmap)
+
+**P2 Features** (post-v1.1.0 - next release cycle):
+- ❌ Maven Central support (Kotlin/Android packages)
+- ❌ CocoaPods support (iOS/macOS packages)  
+- ❌ pub.dev support (Dart/Flutter packages)
+- ℹ️ Current behavior: Clear error messages directing users to native PM tools
 
 **Temporarily Disabled Features** (stubbed for rapid V1.0.0 release):
 - ❌ Workspace lockfile merging (monorepo root lockfiles)
