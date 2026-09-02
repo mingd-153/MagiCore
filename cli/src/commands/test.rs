@@ -118,30 +118,41 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
 /// Detect runtime for optimizer env loading based on test runner
 /// Phát hiện runtime để load env optimizer dựa trên test runner
 fn detect_test_runtime(project_root: &Path) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
-    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
-
-    if project_root.join("Cargo.toml").exists() {
-        DetectedRuntime::RustLib
-    } else if project_root.join("go.mod").exists() {
-        DetectedRuntime::GoLib
-    } else if project_root.join("pyproject.toml").exists() || project_root.join("setup.py").exists() {
-        DetectedRuntime::PythonLib
-    } else if project_root.join("pubspec.yaml").exists() {
-        DetectedRuntime::Flutter
-    } else if project_root.join("deno.json").exists() || project_root.join("deno.jsonc").exists() {
-        DetectedRuntime::Deno
-    } else if project_root.join("package.json").exists() {
-        let pm = detect_package_manager(project_root);
-        if pm == "bun" {
-            DetectedRuntime::Bun
-        } else if pm == "deno" {
-            DetectedRuntime::Deno
-        } else {
-            DetectedRuntime::NodeJs { package_manager: crate::commands::optimizer::runtime_detect::PackageManager::Npm }
-        }
+    use crate::commands::optimizer::runtime_detect::{detect_runtimes, DetectedRuntime};
+    
+    // Detect core type first
+    let core = if project_root.join(".mgc.core").exists() {
+        std::fs::read_to_string(project_root.join(".mgc.core"))
+            .unwrap_or_default()
+            .trim()
+            .to_string()
     } else {
-        DetectedRuntime::Unknown
-    }
+        // Fallback: infer from files
+        if project_root.join("Cargo.toml").exists() {
+            "lib".to_string()
+        } else if project_root.join("pyproject.toml").exists() {
+            // Check if AI project (has torch/pytorch)
+            if let Ok(content) = std::fs::read_to_string(project_root.join("pyproject.toml")) {
+                if content.contains("torch") || content.contains("pytorch") || content.contains("[tool.magicore]") {
+                    "ai".to_string()
+                } else {
+                    "lib".to_string()
+                }
+            } else {
+                "lib".to_string()
+            }
+        } else if project_root.join("pubspec.yaml").exists() {
+            "app".to_string()
+        } else if project_root.join("package.json").exists() {
+            "web".to_string()
+        } else {
+            "lib".to_string()
+        }
+    };
+    
+    // Use detect_runtimes from optimizer (core-aware)
+    let runtimes = detect_runtimes(project_root, &core);
+    runtimes.first().cloned().unwrap_or(DetectedRuntime::Unknown)
 }
 
 /// Detect package manager for Node.js projects — phát hiện package manager cho project Node.js

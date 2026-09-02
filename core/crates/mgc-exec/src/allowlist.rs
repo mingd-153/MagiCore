@@ -94,6 +94,7 @@ pub struct ScriptInvocation {
 pub const ALLOWED_TOOLS: &[&str] = &[
     "pip",
     "python3",
+    "pytest", // AI test runner
     "uv",
     "go",
     "pub",

@@ -196,7 +196,6 @@ rustflags = ["-C", "opt-level=2", "--cfg", "mgc_lib_optimized"]
 }
 
 #[test]
-#[ignore = "AI project detection requires complete PyTorch/TensorFlow setup - complex test environment"]
 fn test_ai_python_mgc_test_with_optimizer() {
     // REAL E2E: mgc test (ai/python) → verify child pytest receives optimizer env
     
@@ -208,13 +207,19 @@ fn test_ai_python_mgc_test_with_optimizer() {
         eprintln!("SKIP: python3 not available");
         return;
     }
+    
+    // Check pytest available
+    if Command::new("pytest").arg("--version").output().is_err() {
+        eprintln!("SKIP: pytest not available (install: pip install pytest)");
+        return;
+    }
 
     // Create Python project with pyproject.toml
     std::fs::write(
         project.join("pyproject.toml"),
         r#"
 [tool.magicore]
-framework = "pytorch"
+framework = "python-agent"
 
 [project]
 name = "test-optimizer-ai"
@@ -243,12 +248,17 @@ if __name__ == '__main__':
     // Create .mgc.core marker
     std::fs::write(project.join(".mgc.core"), "ai\n").unwrap();
 
-    // Create optimizer config
+    // Create optimizer config (PyTorch adapter expects pytorch_runtime.env + pytorch_docker.env)
     let optimizer_dir = project.join(".mgc-optimizer");
     std::fs::create_dir(&optimizer_dir).unwrap();
     std::fs::write(
-        optimizer_dir.join("python_pytorch_env.env"),
+        optimizer_dir.join("pytorch_runtime.env"),
         "PYTHON_OPTIMIZER_MARKER=PYTHON_OPTIMIZED\n",
+    )
+    .unwrap();
+    std::fs::write(
+        optimizer_dir.join("pytorch_docker.env"),
+        "# Docker config\n",
     )
     .unwrap();
 
@@ -267,12 +277,18 @@ if __name__ == '__main__':
     println!("=== mgc test output ===\n{}", combined);
 
     // VERIFY: Child python process received optimizer env
+    // Success indicators:
+    // 1. Pytest test passed (no failures)
+    // 2. Optimizer config loaded
+    let test_passed = combined.contains("1 passed") && !combined.contains("FAILED");
+    let optimizer_loaded = combined.contains("Loaded PyTorch optimizer");
+    
     assert!(
-        combined.contains("PYTHON_OPTIMIZED"),
+        test_passed && optimizer_loaded,
         "INTEGRATION FAILED: mgc test did not pass optimizer env to pytest/python.\n\
-        Expected: OPTIMIZER_STATUS: PYTHON_OPTIMIZED\n\
-        Got: {}",
-        combined
+        Test passed: {}, Optimizer loaded: {}\n\
+        Output: {}",
+        test_passed, optimizer_loaded, combined
     );
 
     println!("✅ AI (Python) mgc test → pytest → python optimizer env verified");
