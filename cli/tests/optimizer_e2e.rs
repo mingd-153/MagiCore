@@ -97,44 +97,40 @@ pub fn proof() -> i32 {
 
 #[test]
 fn test_optimizer_rustflags_integration_level() {
-    // INTEGRATION-LEVEL E2E: mgc loads config and attempts to pass RUSTFLAGS
-    // This verifies mgc's side of the contract (load, extract, attempt to pass)
+    // INTEGRATION-LEVEL E2E: mgc build with optimizer RUSTFLAGS → verify compiled artifact
+    // This verifies the COMPLETE chain: mgc loads config → passes to cargo → rustc compiles with flag → binary reflects it
 
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
-    // Create minimal Rust lib project
+    // Create Rust bin project with cfg-dependent behavior
     std::fs::write(
         project.join("Cargo.toml"),
         r#"
 [package]
-name = "test-optimizer-lib"
+name = "test-optimizer-bin"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "test_optimizer_lib"
-path = "src/lib.rs"
+[[bin]]
+name = "test_optimizer_bin"
+path = "src/main.rs"
 "#,
     )
     .unwrap();
 
     std::fs::create_dir(project.join("src")).unwrap();
     std::fs::write(
-        project.join("src/lib.rs"),
+        project.join("src/main.rs"),
         r#"
-// Test lib to verify optimizer RUSTFLAGS consumption
-pub fn test_function() -> i32 {
-    42
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        assert_eq!(test_function(), 42);
+fn main() {
+    #[cfg(mgc_optimizer_marker)]
+    {
+        println!("MGC_OPTIMIZER_ACTIVE");
+    }
+    #[cfg(not(mgc_optimizer_marker))]
+    {
+        println!("MGC_OPTIMIZER_INACTIVE");
     }
 }
 "#,
@@ -148,30 +144,26 @@ mod tests {
         optimizer_dir.join("rust_cargo_profile.toml"),
         r#"
 [build]
-rustflags = ["-C", "opt-level=2", "--cfg", "mgc_optimizer_injected"]
+rustflags = ["-C", "opt-level=2", "--cfg", "mgc_optimizer_marker"]
 
 [env]
-MGC_OPTIMIZER_MARKER = "RUSTFLAGS_INJECTED"
+MGC_OPTIMIZER_MARKER = "INJECTED"
 "#,
     )
     .unwrap();
 
-    // Find mgc binary using CARGO_BIN_EXE_mgc or fallback
+    // Find mgc binary
     let mgc_binary = std::env::var("CARGO_BIN_EXE_mgc")
         .ok()
         .map(std::path::PathBuf::from)
         .or_else(|| {
-            // Fallback: target/debug/mgc relative to test binary
             std::env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                 .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                 .map(|p| p.join("mgc"))
-        });
-
-    let mgc_binary = mgc_binary.expect(
-        "mgc binary not found. Run `cargo build -p mgc` first or use `cargo test` (sets CARGO_BIN_EXE_mgc)"
-    );
+        })
+        .expect("mgc binary not found");
 
     assert!(
         mgc_binary.exists(),
@@ -179,7 +171,7 @@ MGC_OPTIMIZER_MARKER = "RUSTFLAGS_INJECTED"
         mgc_binary
     );
 
-    // Run mgc build (stdout captured, not verbose cargo)
+    // Run mgc build
     let output = Command::new(&mgc_binary)
         .arg("build")
         .current_dir(project)
@@ -190,7 +182,6 @@ MGC_OPTIMIZER_MARKER = "RUSTFLAGS_INJECTED"
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Print output for debugging
     println!("=== mgc build STDOUT ===\n{}", stdout);
     println!("=== mgc build STDERR ===\n{}", stderr);
 
@@ -202,30 +193,43 @@ MGC_OPTIMIZER_MARKER = "RUSTFLAGS_INJECTED"
         stdout
     );
 
-    // Verify library was built
-    let lib_path = project.join("target/debug/libtest_optimizer_lib.rlib");
-    assert!(
-        lib_path.exists() || project.join("target/debug/libtest_optimizer_lib.a").exists(),
-        "Library artifact not found after build"
-    );
-
-    // PROOF: Check mgc's output for RUSTFLAGS marker
-    // This verifies mgc extracted and attempted to pass RUSTFLAGS
-    let combined = format!("{}{}", stdout, stderr);
-    let has_cfg_marker = combined.contains("mgc_optimizer_injected")
-        || combined.contains("opt-level=2")
-        || combined.contains("Applying RUSTFLAGS");
+    // CRITICAL: Verify binary artifact was compiled with optimizer flag
+    // This is the ONLY proof that matters: does the compiled code reflect the cfg?
+    let bin_path = project.join("target/debug/test_optimizer_bin");
+    #[cfg(target_os = "windows")]
+    let bin_path = project.join("target/debug/test_optimizer_bin.exe");
 
     assert!(
-        has_cfg_marker,
-        "RUSTFLAGS marker not found in mgc output. This means optimizer env was not extracted/attempted.\n\
-        Expected to find 'Applying RUSTFLAGS' or '--cfg mgc_optimizer_injected' in mgc's log output.\n\
-        STDOUT: {}\nSTDERR: {}",
-        stdout,
-        stderr
+        bin_path.exists(),
+        "Binary artifact not found at {:?} after mgc build",
+        bin_path
     );
 
-    println!("✅ INTEGRATION-LEVEL VERIFIED: mgc extracted RUSTFLAGS from config and attempted to pass to cargo");
+    // Run the compiled binary and check its output
+    let bin_output = Command::new(&bin_path)
+        .output()
+        .expect("Failed to run compiled binary");
+
+    let bin_stdout = String::from_utf8_lossy(&bin_output.stdout);
+    let bin_stderr = String::from_utf8_lossy(&bin_output.stderr);
+
+    println!("=== Binary Output STDOUT ===\n{}", bin_stdout);
+    println!("=== Binary Output STDERR ===\n{}", bin_stderr);
+
+    // PROOF: Binary must print "MGC_OPTIMIZER_ACTIVE" (means cfg was set during compilation)
+    // If it prints "MGC_OPTIMIZER_INACTIVE", that means RUSTFLAGS did NOT reach rustc
+    assert!(
+        bin_stdout.contains("MGC_OPTIMIZER_ACTIVE"),
+        "INTEGRATION TEST FAILED: Compiled binary shows optimizer cfg was NOT active.\n\
+        This means RUSTFLAGS from optimizer config did NOT reach the rustc compiler.\n\
+        Expected: MGC_OPTIMIZER_ACTIVE\n\
+        Got: {}\n\
+        This proves the integration chain is BROKEN: mgc → cargo → rustc → compiled binary",
+        bin_stdout.trim()
+    );
+
+    println!("✅ INTEGRATION-LEVEL VERIFIED: mgc build → cargo → rustc compiled with optimizer RUSTFLAGS");
+    println!("   Proof: Compiled binary behavior reflects --cfg mgc_optimizer_marker");
 }
 
 #[test]
