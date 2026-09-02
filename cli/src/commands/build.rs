@@ -410,10 +410,6 @@ fn find_root() -> anyhow::Result<PathBuf> {
     Err(crate::error::no_project_found_build())
 }
 
-fn build_rust(root: &Path) -> Result<()> {
-    build_rust_with_env(root, None)
-}
-
 async fn build_web(
     root: &Path,
     execution: &ProjectExecutionConfig,
