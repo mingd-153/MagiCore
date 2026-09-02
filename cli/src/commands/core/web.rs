@@ -1149,7 +1149,7 @@ fn reject_external_package_manager_script(script: &str, manifest_path: &Path) ->
     // Allow bun/deno when used as runtime (not package manager)
     // Cho phép bun/deno khi dùng như runtime (không phải package manager)
     let script_lower = script.to_lowercase();
-    if script_lower.starts_with("bun run ") 
+    if script_lower.starts_with("bun run ")
         || script_lower.starts_with("deno run ")
         || script_lower.starts_with("deno task ")
     {
@@ -1590,6 +1590,7 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
         env,
         clean_env: true,
         disable_timeout: true,
+        execution_scope: Some(mgc_exec::prelude::ExecutionScope::DevServer),
         ..Default::default()
     };
 

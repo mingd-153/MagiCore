@@ -31,13 +31,13 @@ pub fn load_optimizer_env(project_root: &Path) -> Result<HashMap<String, String>
         if env_file.exists() {
             let vars = parse_env_file(&env_file)
                 .with_context(|| format!("Failed to parse {} env file", runtime_name))?;
-            
+
             mgc_ui::info(&format!(
                 "Loaded {} optimizer config: {} variables",
                 runtime_name,
                 vars.len()
             ));
-            
+
             env_vars.extend(vars);
         }
     }
@@ -52,10 +52,10 @@ pub(crate) fn parse_env_file(path: &Path) -> Result<HashMap<String, String>> {
         .with_context(|| format!("Failed to read env file: {}", path.display()))?;
 
     let mut vars = HashMap::new();
-    
+
     for line in content.lines() {
         let line = line.trim();
-        
+
         // Skip empty lines and comments
         // Bỏ qua dòng trống và comment
         if line.is_empty() || line.starts_with('#') {
@@ -67,7 +67,7 @@ pub(crate) fn parse_env_file(path: &Path) -> Result<HashMap<String, String>> {
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
             let value = value.trim().to_string();
-            
+
             // Remove quotes if present
             // Xóa dấu ngoặc kép nếu có
             let value = if (value.starts_with('"') && value.ends_with('"'))

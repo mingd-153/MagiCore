@@ -11,8 +11,8 @@ pub mod prelude {
     //! Mọi thứ adapter/core cần cho passthrough — một import duy nhất.
     pub use crate::allowlist::{
         check_tool, check_tool_scoped, find_forbidden_tool_in_script, parse_script_invocation,
-        parse_simple_script, reject_forbidden_pm_script, reject_shell_control, ScriptInvocation,
-        ALLOWED_TOOLS, FORBIDDEN_TOOLS,
+        parse_simple_script, reject_forbidden_pm_script, reject_shell_control, ExecutionScope,
+        ScriptInvocation, ALLOWED_TOOLS, FORBIDDEN_TOOLS,
     };
     pub use crate::audit::{append, AuditEntry};
     pub use crate::run::{

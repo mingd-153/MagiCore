@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Competitive Benchmark — mgc vs pnpm (10 runs, median, p95, JSON output)
 # Status: STATISTICAL IMPLEMENTATION (real data collection)
+# SAFETY: Uses isolated HOME to avoid destroying user's real cache
 
 set -euo pipefail
 
@@ -46,9 +47,15 @@ TOTAL_RAM=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024
 echo "Hardware: $OS $ARCH, ${CPU_CORES} cores, ${TOTAL_RAM}GB RAM"
 echo
 
+# SAFETY: Create isolated HOME to prevent destroying user's real cache
+ISOLATED_HOME=$(mktemp -d)
+export HOME="$ISOLATED_HOME"
+echo "🔒 Using isolated HOME: $ISOLATED_HOME"
+echo
+
 # Create temp workspaces
 TEMP_BASE=$(mktemp -d)
-trap "rm -rf $TEMP_BASE" EXIT
+trap "rm -rf $TEMP_BASE $ISOLATED_HOME" EXIT
 
 # Test manifest (small but realistic)
 TEST_MANIFEST=$(cat <<'EOF'
@@ -75,13 +82,13 @@ declare -a MGC_TIMES=()
 # Run benchmarks
 for i in $(seq 1 $NUM_RUNS); do
     echo "--- Run $i/$NUM_RUNS ---"
-    
+
     # pnpm
     PNPM_DIR="$TEMP_BASE/pnpm-run-$i"
     mkdir -p "$PNPM_DIR"
     echo "$TEST_MANIFEST" > "$PNPM_DIR/package.json"
     cd "$PNPM_DIR"
-    
+
     pnpm store prune --force >/dev/null 2>&1 || true
     START=$(date +%s%N)
     if pnpm install --no-lockfile --force >/dev/null 2>&1; then
@@ -93,14 +100,14 @@ for i in $(seq 1 $NUM_RUNS); do
         echo "  pnpm: FAILED"
         PNPM_TIMES+=("-1")
     fi
-    
+
     # mgc
     MGC_DIR="$TEMP_BASE/mgc-run-$i"
     mkdir -p "$MGC_DIR"
     echo "$TEST_MANIFEST" > "$MGC_DIR/package.json"
     cd "$MGC_DIR"
-    
-    # Clear mgc cache
+
+    # Clear mgc cache (safe: isolated HOME)
     rm -rf ~/.magicore/store ~/.mgc/cache 2>/dev/null || true
     START=$(date +%s%N)
     if "$MGC_BIN" install --force >/dev/null 2>&1; then
@@ -112,7 +119,7 @@ for i in $(seq 1 $NUM_RUNS); do
         echo "  mgc:  FAILED"
         MGC_TIMES+=("-1")
     fi
-    
+
     echo
 done
 
@@ -122,7 +129,7 @@ calc_median() {
     local sorted=($(printf '%s\n' "${arr[@]}" | sort -n))
     local len=${#sorted[@]}
     local mid=$(( len / 2 ))
-    
+
     if [ $(( len % 2 )) -eq 0 ]; then
         # Even: average of two middle values
         echo $(( (sorted[mid-1] + sorted[mid]) / 2 ))
