@@ -100,7 +100,10 @@ fn test_bun_adapter_generate() {
     };
     let files = adapter.generate(&hw);
     assert_eq!(files.len(), 1);
-    assert!(files[0].content.contains("BUN_JSC_maxHeapSize=4096m"));
+    // BUN_JSC_maxHeapSize removed - invalid Bun env var (rejected by Bun runtime)
+    assert!(files[0]
+        .content
+        .contains("BUN_RUNTIME_TRANSPILER_CACHE_PATH"));
     assert!(files[0].content.contains("BUN_CONFIG_MAX_HTTP_REQUESTS=80"));
 }
 

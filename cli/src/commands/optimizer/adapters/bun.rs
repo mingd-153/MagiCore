@@ -36,10 +36,7 @@ impl OptimizerAdapter for BunAdapter {
                 hw.profile,
                 hw.cpu_cores * 10
             ),
-            description: format!(
-                "Bun cache & HTTP concurrency ({})",
-                hw.cpu_cores * 10
-            ),
+            description: format!("Bun cache & HTTP concurrency ({})", hw.cpu_cores * 10),
         });
 
         files
