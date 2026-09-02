@@ -915,7 +915,6 @@ pub fn dir_missing(dir: &str, cause: String) -> Error {
     anyhow!("cannot change to directory '{dir}': {cause}")
 }
 
-
 pub fn runtime_dangerous_flag_rejected(runtime: &str, flag: &str) -> Error {
     anyhow!(
         "Rejected dangerous {} flag: {}. Use project scripts only.\n\
@@ -926,7 +925,6 @@ pub fn runtime_dangerous_flag_rejected(runtime: &str, flag: &str) -> Error {
         flag
     )
 }
-
 
 pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) -> Error {
     anyhow!(

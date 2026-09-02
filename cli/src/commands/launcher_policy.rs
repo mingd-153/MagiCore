@@ -32,9 +32,7 @@ impl Runtime {
     fn dangerous_flags(&self) -> Vec<&'static str> {
         match self {
             Runtime::Bun => vec![
-                "--eval",
-                "-e",
-                "--print",
+                "--eval", "-e", "--print",
                 "-p",
                 // Block direct file execution without project script
                 // Chặn thực thi file trực tiếp không qua project script
@@ -47,12 +45,7 @@ impl Runtime {
                 // Individual --allow-* flags checked separately
                 // Các flags --allow-* riêng lẻ kiểm tra riêng
             ],
-            Runtime::Node => vec![
-                "--eval",
-                "-e",
-                "--print",
-                "-p",
-            ],
+            Runtime::Node => vec!["--eval", "-e", "--print", "-p"],
         }
     }
 
@@ -81,11 +74,11 @@ pub struct LauncherPolicy {
     /// Runtime type being validated
     /// Loại runtime đang kiểm tra
     pub runtime: Runtime,
-    
+
     /// Whether to allow dangerous permissions (default: false)
     /// Cho phép quyền nguy hiểm hay không (mặc định: false)
     pub allow_dangerous_permissions: bool,
-    
+
     /// Whether this is a DevServer context (more permissive than Install)
     /// Context DevServer hay không (dễ dãi hơn Install)
     pub is_dev_server: bool,
@@ -173,8 +166,12 @@ mod tests {
     #[test]
     fn test_deno_rejects_dangerous_permissions() {
         let policy = LauncherPolicy::dev_server(Runtime::Deno);
-        assert!(policy.validate_args(&["--allow-read", "script.ts"]).is_err());
-        assert!(policy.validate_args(&["--allow-write", "script.ts"]).is_err());
+        assert!(policy
+            .validate_args(&["--allow-read", "script.ts"])
+            .is_err());
+        assert!(policy
+            .validate_args(&["--allow-write", "script.ts"])
+            .is_err());
         assert!(policy.validate_args(&["--allow-net", "script.ts"]).is_err());
         assert!(policy.validate_args(&["--allow-run", "script.ts"]).is_err());
     }

@@ -1620,8 +1620,11 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
         .collect::<Vec<_>>();
 
     // SAFETY: Enable audit log for dev server execution
+    // AN TOÀN: Bật audit log cho dev server execution
     let audit_log = target.dir.join(".mgc").join("exec.log");
-    std::fs::create_dir_all(audit_log.parent().unwrap())?;
+    if let Some(parent) = audit_log.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(target.dir.clone()),
