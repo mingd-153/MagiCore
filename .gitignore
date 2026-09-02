@@ -120,3 +120,4 @@ tools/*/docs/
 !README.md
 !CHANGELOG.md
 !CONTRIBUTING.md
+packaging/artifacts/
