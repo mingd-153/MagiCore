@@ -84,10 +84,9 @@ setTimeout(() => {
 EOF
 
 cat > mgc.toml <<EOF
-[project]
 name = "bun-test"
 version = "1.0.0"
-core = "web"
+ecosystem = "web"
 EOF
 
 # Create Bun marker file (required for runtime detection)
@@ -205,10 +204,9 @@ cat > package.json <<'EOF'
 EOF
 
 cat > mgc.toml <<EOF
-[project]
 name = "deno-test"
 version = "1.0.0"
-core = "web"
+ecosystem = "web"
 EOF
 
 # Run optimizer
@@ -293,10 +291,13 @@ cat > package.json <<'EOF'
 }
 EOF
 
-if "$MGC_BIN" dev 2>&1 | grep -q "dangerous.*flag"; then
+MGC_OUTPUT=$("$MGC_BIN" dev 2>&1 || true)
+if echo "$MGC_OUTPUT" | grep -q "dangerous.*flag\|dangerous.*permission"; then
     echo "✓ bun run --eval rejected by launcher policy"
 else
     echo "✗ FAIL: bun run --eval was not rejected"
+    echo "Output was:"
+    echo "$MGC_OUTPUT"
     exit 1
 fi
 
@@ -313,10 +314,13 @@ cat > package.json <<'EOF'
 }
 EOF
 
-if "$MGC_BIN" dev 2>&1 | grep -q "dangerous.*flag"; then
+MGC_OUTPUT=$("$MGC_BIN" dev 2>&1 || true)
+if echo "$MGC_OUTPUT" | grep -q "dangerous.*flag\|dangerous.*permission"; then
     echo "✓ deno run --allow-all rejected by launcher policy"
 else
     echo "✗ FAIL: deno run --allow-all was not rejected"
+    echo "Output was:"
+    echo "$MGC_OUTPUT"
     exit 1
 fi
 

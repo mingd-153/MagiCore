@@ -143,7 +143,16 @@ fn execute_command(
 
     // Forbidden PM tools stay blocked in every cwd.
     // PM ngoài bị chặn tuyệt đối, không còn ngoại lệ React Native.
-    let scoped_exempt: &[&str] = &[];
+    // Scoped exempt: PM tools allowed in TestRunner/BuildRunner/DevServer scopes (00-index §5.2 + TEST_RUNNER_SECURITY_MODEL.md)
+    // PM tools allowed in TestRunner/BuildRunner/DevServer: không tạo blocker shim
+    let scope = opts
+        .execution_scope
+        .unwrap_or(crate::allowlist::ExecutionScope::Install);
+    let scoped_exempt: &[&str] = if scope.allows_pm_tools() {
+        crate::allowlist::FORBIDDEN_TOOLS
+    } else {
+        &[]
+    };
 
     if opts.dry_run {
         // dry-run: in lệnh, không chạy, vẫn ghi audit với exit_code 0 + dry_run flag (§5.5)
