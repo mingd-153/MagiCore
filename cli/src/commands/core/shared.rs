@@ -1114,9 +1114,16 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
         mgc_ai_adapter::adapter_for(&root).ok_or_else(|| crate::error::no_ai_framework(&root))?;
     let script = framework.framework.entry_script().to_string();
 
-    // Load optimizer env vars (Python/Rust/Go AI runtime config)
+    // Detect AI runtime for optimizer env loading
+    // Phát hiện runtime AI để load env optimizer
+    let runtime = detect_ai_runtime(&root, framework.framework.as_str());
     let optimizer_envs =
-        crate::commands::optimizer::env_loader::load_optimizer_env(&root).unwrap_or_default();
+        crate::commands::optimizer::env_loader::load_optimizer_env(&root, &runtime)
+            .map_err(|e| {
+                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                e
+            })
+            .unwrap_or_default();
     let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
 
     let opts = mgc_exec::prelude::ExecOptions {
@@ -1132,6 +1139,28 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
     mgc_exec::prelude::run_inherited(&cmd, &[script], &opts)
         .map_err(|e| crate::error::python3_failed(&e))?;
     Ok(())
+}
+
+/// Detect AI runtime from project
+/// Phát hiện runtime AI từ project
+fn detect_ai_runtime(
+    _root: &std::path::Path,
+    framework: &str,
+) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+
+    match framework {
+        "python-agent" | "mcp-server" => {
+            // SAFETY: Don't assume PyTorch for generic Python AI frameworks
+            // AN TOÀN: Không giả định PyTorch cho framework Python AI chung
+            // TODO: Parse requirements.txt/pyproject.toml to detect actual framework
+            DetectedRuntime::Unknown
+        }
+        "pytorch" | "PyTorch" => DetectedRuntime::PythonPyTorch,
+        "candle" | "Candle" => DetectedRuntime::RustCandle,
+        "tensorflow-go" | "TensorFlow" => DetectedRuntime::GoTensorFlow,
+        _ => DetectedRuntime::Unknown, // Safe fallback, no env injection
+    }
 }
 
 /// Hardware core — optimizer/bench packages (shared cho game/ai/cloud).

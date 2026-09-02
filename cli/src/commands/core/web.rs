@@ -938,6 +938,27 @@ fn validate_runtime_args(runtime: &str, args: &[&str]) -> Result<()> {
     policy.validate_args(args)
 }
 
+/// Detect runtime from script tokens for optimizer env loading
+/// Phát hiện runtime từ script tokens để load env optimizer
+fn detect_runtime_from_tokens(tokens: &[&str]) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::{DetectedRuntime, PackageManager};
+
+    if tokens.is_empty() {
+        return DetectedRuntime::Unknown;
+    }
+
+    match tokens[0] {
+        "bun" => DetectedRuntime::Bun,
+        "deno" => DetectedRuntime::Deno,
+        "node" | "npm" | "pnpm" | "yarn" | "vite" | "next" | "webpack" | "react-scripts" => {
+            DetectedRuntime::NodeJs {
+                package_manager: PackageManager::Npm, // Default, actual PM doesn't matter for env loading
+            }
+        }
+        _ => DetectedRuntime::Unknown,
+    }
+}
+
 fn build_dev_launch(
     project_root: &Path,
     script_name: &str,
@@ -956,10 +977,16 @@ fn build_dev_launch(
         return Err(crate::error::web_empty_dev_script(project_root));
     }
 
-    // Load optimizer env vars (Bun/Deno/Node config)
-    // Tải env vars từ optimizer (cấu hình Bun/Deno/Node)
-    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(project_root)
-        .unwrap_or_default();
+    // Detect runtime from script to load correct optimizer config
+    // Phát hiện runtime từ script để load đúng config optimizer
+    let runtime = detect_runtime_from_tokens(&tokens);
+    let optimizer_envs =
+        crate::commands::optimizer::env_loader::load_optimizer_env(project_root, &runtime)
+            .map_err(|e| {
+                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                e
+            })
+            .unwrap_or_default();
     let base_envs: Vec<(OsString, OsString)> = optimizer_envs
         .into_iter()
         .map(|(k, v)| (OsString::from(k), OsString::from(v)))

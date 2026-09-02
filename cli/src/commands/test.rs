@@ -37,10 +37,24 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
         let mut full_args = runner_args;
         full_args.extend(args);
 
+        // Load optimizer env for test runtime
+        // Tải env optimizer cho runtime test
+        let runtime = detect_test_runtime(project_root);
+        let optimizer_envs =
+            crate::commands::optimizer::env_loader::load_optimizer_env(project_root, &runtime)
+                .map_err(|e| {
+                    mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                    e
+                })
+                .unwrap_or_default();
+        let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+
         let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(project_root.to_path_buf()),
             timeout: Some(std::time::Duration::from_secs(600)), // 10min test timeout
             execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner), // TestRunner scope allows PM tools
+            env,
+            clean_env: false, // Preserve existing env
             ..Default::default()
         };
 
@@ -81,6 +95,11 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
         return Ok(Some(("flutter".to_string(), vec!["test".to_string()])));
     }
 
+    // Check deno.json/deno.jsonc (Deno) — kiểm tra deno.json
+    if project_root.join("deno.json").exists() || project_root.join("deno.jsonc").exists() {
+        return Ok(Some(("deno".to_string(), vec!["test".to_string()])));
+    }
+
     // Check package.json (Node.js/Web) — kiểm tra package.json
     let package_json_path = project_root.join("package.json");
     if package_json_path.exists() {
@@ -96,8 +115,43 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
     Ok(None)
 }
 
+/// Detect runtime for optimizer env loading based on test runner
+/// Phát hiện runtime để load env optimizer dựa trên test runner
+fn detect_test_runtime(project_root: &Path) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+
+    if project_root.join("Cargo.toml").exists() {
+        DetectedRuntime::RustLib
+    } else if project_root.join("go.mod").exists() {
+        DetectedRuntime::GoLib
+    } else if project_root.join("pyproject.toml").exists() || project_root.join("setup.py").exists() {
+        DetectedRuntime::PythonLib
+    } else if project_root.join("pubspec.yaml").exists() {
+        DetectedRuntime::Flutter
+    } else if project_root.join("deno.json").exists() || project_root.join("deno.jsonc").exists() {
+        DetectedRuntime::Deno
+    } else if project_root.join("package.json").exists() {
+        let pm = detect_package_manager(project_root);
+        if pm == "bun" {
+            DetectedRuntime::Bun
+        } else if pm == "deno" {
+            DetectedRuntime::Deno
+        } else {
+            DetectedRuntime::NodeJs { package_manager: crate::commands::optimizer::runtime_detect::PackageManager::Npm }
+        }
+    } else {
+        DetectedRuntime::Unknown
+    }
+}
+
 /// Detect package manager for Node.js projects — phát hiện package manager cho project Node.js
 fn detect_package_manager(project_root: &Path) -> String {
+    // Check for Deno first (deno.json/deno.jsonc)
+    // Kiểm tra Deno trước (deno.json/deno.jsonc)
+    if project_root.join("deno.json").exists() || project_root.join("deno.jsonc").exists() {
+        return "deno".to_string();
+    }
+
     if project_root.join("pnpm-lock.yaml").exists() {
         "pnpm".to_string()
     } else if project_root.join("yarn.lock").exists() {
