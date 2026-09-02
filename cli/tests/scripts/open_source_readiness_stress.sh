@@ -394,7 +394,7 @@ fi
 test_case "pms-performance-baseline" "Performance baseline with competitor data"
 # CRITICAL: Need comparative benchmark data (pnpm/bun/deno/moon) to claim competitive
 # Internal mgc cold/warm is smoke test only, NOT competitive claim
-COMPETITIVE_BENCH="$PROJECT_ROOT/cli/tests/competitive_benchmark.sh"
+COMPETITIVE_BENCH="$PROJECT_ROOT/cli/tests/scripts/competitive_benchmark.sh"
 if [ -f "$COMPETITIVE_BENCH" ]; then
     # Check if it's real implementation or stub
     if bash "$COMPETITIVE_BENCH" >/dev/null 2>&1; then
@@ -459,7 +459,7 @@ fi
 
 test_case "dist-smoke-test" "Distribution smoke test (Homebrew/Scoop/binary)"
 # CRITICAL: Must verify installations work on real platforms before public release
-DIST_SMOKE="$PROJECT_ROOT/cli/tests/distribution_smoke.sh"
+DIST_SMOKE="$PROJECT_ROOT/cli/tests/scripts/distribution_smoke.sh"
 if [ -f "$DIST_SMOKE" ]; then
     if bash "$DIST_SMOKE" >/dev/null 2>&1; then
         pass
@@ -477,7 +477,7 @@ fi
 
 test_case "dist-runtime-bun-e2e" "Bun runtime E2E test"
 # CRITICAL: Cannot claim "Bun support" without end-to-end verification
-BUN_E2E="$PROJECT_ROOT/cli/tests/runtime_bun_e2e.sh"
+BUN_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_bun_e2e.sh"
 if [ -f "$BUN_E2E" ]; then
     if bash "$BUN_E2E" >/dev/null 2>&1; then
         pass
@@ -495,7 +495,7 @@ fi
 
 test_case "dist-runtime-deno-e2e" "Deno runtime E2E test"
 # CRITICAL: Cannot claim "Deno support" without end-to-end verification
-DENO_E2E="$PROJECT_ROOT/cli/tests/runtime_deno_e2e.sh"
+DENO_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_deno_e2e.sh"
 if [ -f "$DENO_E2E" ]; then
     if bash "$DENO_E2E" >/dev/null 2>&1; then
         pass
@@ -538,7 +538,7 @@ else
 fi
 
 test_case "evidence-benchmark-data" "Performance benchmark data exists"
-if [ -f "$PROJECT_ROOT/cli/tests/cache_tracking_stress.sh" ] && [ -f "$PROJECT_ROOT/cli/tests/all_core_scaffold_stress.sh" ]; then
+if [ -f "$PROJECT_ROOT/cli/tests/scripts/cache_tracking_stress.sh" ] && [ -f "$PROJECT_ROOT/cli/tests/scripts/all_core_scaffold_stress.sh" ]; then
     pass
 else
     fail "benchmark/stress test scripts missing"
