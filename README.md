@@ -236,7 +236,7 @@ MagiCore/
 | `cicd`     | GitHub Actions, GitLab CI, ArgoCD, Docker Compose                         |
 | `game`     | Godot, Unity, Unreal, Bevy (Rust)                                         |
 | `iot`      | PlatformIO, Zephyr RTOS, ESP32 toolchains                                 |
-| `app`      | Flutter, Swift Package Manager, Kotlin/Gradle, React Native               |
+| `app`      | Flutter, Swift Package Manager, Kotlin/Gradle (React Native: beta-blocked) |
 | `lib`      | Universal polyglot libraries (Rust crates, Python packages, npm packages) |
 | `hardware` | Benchmark tooling, hardware-aware resource allocation                     |
 
@@ -302,6 +302,11 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 ---
 
 ## ⚠️ Known Limitations (V1.1.0-RC Roadmap)
+
+**Blocked in Beta** (requires MagiCore-native app runner):
+- ❌ React Native dev/build (scaffold exists, runtime pending)
+- ℹ️ Current behavior: Clear error message blocking dev/build operations
+- ℹ️ Timeline: Available when MagiCore-native app runner is complete
 
 **P2 Features** (post-v1.1.0 - next release cycle):
 - ❌ Maven Central support (Kotlin/Android packages)
