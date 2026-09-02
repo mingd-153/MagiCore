@@ -89,7 +89,12 @@ for i in $(seq 1 $NUM_RUNS); do
     echo "$TEST_MANIFEST" > "$PNPM_DIR/package.json"
     cd "$PNPM_DIR"
 
-    pnpm store prune --force >/dev/null 2>&1 || true
+    # pnpm store prune must succeed
+    if ! pnpm store prune --force >/dev/null 2>&1; then
+        echo "✗ FAIL: pnpm store prune failed (run $i)"
+        exit 1
+    fi
+    
     START=$(date +%s%N)
     if pnpm install --no-lockfile --force >/dev/null 2>&1; then
         END=$(date +%s%N)
@@ -97,8 +102,8 @@ for i in $(seq 1 $NUM_RUNS); do
         PNPM_TIMES+=("$DURATION")
         echo "  pnpm: ${DURATION}ms"
     else
-        echo "  pnpm: FAILED"
-        PNPM_TIMES+=("-1")
+        echo "✗ FAIL: pnpm install failed (run $i) - benchmark aborted"
+        exit 1
     fi
 
     # mgc
@@ -116,8 +121,8 @@ for i in $(seq 1 $NUM_RUNS); do
         MGC_TIMES+=("$DURATION")
         echo "  mgc:  ${DURATION}ms"
     else
-        echo "  mgc:  FAILED"
-        MGC_TIMES+=("-1")
+        echo "✗ FAIL: mgc install failed (run $i) - benchmark aborted"
+        exit 1
     fi
 
     echo
@@ -169,8 +174,14 @@ if [ "$PNPM_MEDIAN" -gt 0 ] && [ "$MGC_MEDIAN" -gt 0 ]; then
     fi
 fi
 
-# Generate JSON output
-JSON_FILE="$TEMP_BASE/benchmark_results.json"
+# Generate JSON output (persistent location, not temp)
+JSON_OUTPUT_DIR="$PROJECT_ROOT/cli/tests/benchmark-results"
+mkdir -p "$JSON_OUTPUT_DIR"
+TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
+JSON_FILE="$JSON_OUTPUT_DIR/competitive-pnpm-${TIMESTAMP}.json"
+
+echo "Saving benchmark results to: $JSON_FILE"
+
 cat > "$JSON_FILE" <<EOF
 {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -235,6 +246,7 @@ echo "  - Fresh environment per run (Docker/VM)"
 if [ "$PNPM_MEDIAN" -gt 0 ] && [ "$MGC_MEDIAN" -gt 0 ]; then
     echo
     echo "✓ PASS: Statistical competitive benchmark complete"
+    echo "Results saved: $JSON_FILE"
     exit 0
 else
     echo

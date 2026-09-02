@@ -919,27 +919,23 @@ fn append_dev_endpoint_args(
     }
 }
 
-/// Validate runtime args for Bun/Deno - reject dangerous flags
-/// Kiểm tra args runtime cho Bun/Deno - từ chối flags nguy hiểm
+/// Validate runtime args for Bun/Deno using shared launcher policy
+/// Kiểm tra args runtime cho Bun/Deno dùng policy launcher chung
 ///
-/// SAFETY: Blocks arbitrary code execution (--eval, -e) and dangerous permissions (--allow-all, -A)
-/// AN TOÀN: Chặn thực thi code tùy ý (--eval, -e) và quyền nguy hiểm (--allow-all, -A)
+/// SAFETY: Uses centralized launcher_policy module for consistent validation
+/// AN TOÀN: Dùng module launcher_policy tập trung để kiểm tra nhất quán
 fn validate_runtime_args(runtime: &str, args: &[&str]) -> Result<()> {
-    let dangerous_flags = match runtime {
-        "bun" => vec!["--eval", "-e", "--print", "-p"],
-        "deno" => vec!["--eval", "-e", "--allow-all", "-A"],
-        _ => vec![],
+    use crate::commands::launcher_policy::{LauncherPolicy, Runtime};
+
+    let rt = match runtime {
+        "bun" => Runtime::Bun,
+        "deno" => Runtime::Deno,
+        "node" => Runtime::Node,
+        _ => return Ok(()), // Unknown runtime, skip validation
     };
 
-    for arg in args {
-        for flag in &dangerous_flags {
-            if arg.starts_with(flag) {
-                return Err(crate::error::runtime_dangerous_flag_rejected(runtime, flag));
-            }
-        }
-    }
-
-    Ok(())
+    let policy = LauncherPolicy::dev_server(rt);
+    policy.validate_args(args)
 }
 
 fn build_dev_launch(

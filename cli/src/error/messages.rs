@@ -926,3 +926,15 @@ pub fn runtime_dangerous_flag_rejected(runtime: &str, flag: &str) -> Error {
         flag
     )
 }
+
+
+pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) -> Error {
+    anyhow!(
+        "Rejected dangerous {} permission: {}. Explicitly allow in deno.json tasks if needed.\n\
+         Bị từ chối quyền {} nguy hiểm: {}. Cho phép rõ ràng trong deno.json tasks nếu cần.",
+        runtime,
+        permission,
+        runtime,
+        permission
+    )
+}
