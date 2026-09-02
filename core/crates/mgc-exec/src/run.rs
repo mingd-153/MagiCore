@@ -128,12 +128,53 @@ enum OutputMode {
     Inherit,
 }
 
+/// Validate args không chứa path traversal patterns
+/// Returns Err nếu phát hiện pattern nguy hiểm
+fn validate_args_no_traversal(args: &[String]) -> Result<()> {
+    for arg in args {
+        // Check for .. trong path (parent directory traversal)
+        if arg.contains("..") {
+            bail!(
+                "Argument contains path traversal pattern: '{}'\n\
+                Path traversal (../) is not allowed for security.\n\
+                This prevents commands from accessing files outside the project directory.",
+                arg
+            );
+        }
+        
+        // Check for absolute paths trying to escape project
+        // (Allow absolute paths within project in future, but reject for now)
+        #[cfg(unix)]
+        if arg.starts_with('/') && !arg.starts_with("/tmp") {
+            bail!(
+                "Absolute path argument rejected: '{}'\n\
+                Only relative paths within project directory are allowed.",
+                arg
+            );
+        }
+        
+        #[cfg(windows)]
+        if arg.len() >= 3 && arg.chars().nth(1) == Some(':') {
+            // Windows absolute path like C:\...
+            bail!(
+                "Absolute path argument rejected: '{}'\n\
+                Only relative paths within project directory are allowed.",
+                arg
+            );
+        }
+    }
+    Ok(())
+}
+
 fn execute_command(
     cmd: &str,
     args: &[String],
     opts: &ExecOptions,
     mode: OutputMode,
 ) -> Result<ExecReport> {
+    // SECURITY: Validate args không chứa path traversal
+    validate_args_no_traversal(args)?;
+    
     // args REDACTED từ nguồn — console/report/audit không bao giờ chứa secret (§5.4)
     let safe_args = redact_args(args);
     let cwd = opts
