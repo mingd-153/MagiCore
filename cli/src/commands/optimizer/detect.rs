@@ -1,4 +1,6 @@
-//! `optimizer/detect.rs` — Hardware detection (CPU/RAM/GPU/Platform).
+//! `optimizer/detect.rs` — Hardware detection (CPU/RAM/OS/arch).
+//! LIMITATION: GPU detection not yet implemented (v1.1.0-rc.1)
+//! HẠN CHẾ: Chưa phát hiện GPU (v1.1.0-rc.1)
 
 use serde::{Deserialize, Serialize};
 
