@@ -87,6 +87,7 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
     // Check pyproject.toml or setup.py (Python) — kiểm tra pyproject.toml hoặc setup.py
     if project_root.join("pyproject.toml").exists() || project_root.join("setup.py").exists() {
         // Try pytest first, fall back to python -m unittest — thử pytest trước
+        // Note: pytest auto-discovers test_*.py and *_test.py in current directory
         return Ok(Some(("pytest".to_string(), vec![])));
     }
 
