@@ -7,3 +7,19 @@ description = "Next.js test fixture"
 [scaffold]
 framework = "nextjs"
 mode = "frontend"
+
+[[files]]
+source = "package.json.hbs"
+target = "package.json"
+
+[[files]]
+source = "tsconfig.json"
+target = "tsconfig.json"
+
+[[files]]
+source = "next.config.js"
+target = "next.config.js"
+
+[[files]]
+source = "README.md"
+target = "README.md"

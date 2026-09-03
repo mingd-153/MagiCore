@@ -1,0 +1,9 @@
+[template]
+core = "web"
+name = "frontend-common"
+version = "1.0.0"
+description = "Common frontend test partial"
+category = "shared/partials"
+
+# Empty partial - no files to materialize
+files = []
