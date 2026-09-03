@@ -287,24 +287,42 @@ if __name__ == '__main__':
 
     println!("=== mgc test output ===\n{}", combined);
 
-    // VERIFY: Child python process received optimizer env
+    // VERIFY: Child python/pytest process received optimizer env
     // Success indicators:
-    // 1. Pytest test passed (no failures)
-    // 2. Optimizer config loaded
-    let test_passed = combined.contains("1 passed") && !combined.contains("FAILED");
-    let optimizer_loaded = combined.contains("Loaded PyTorch optimizer");
+    // 1. Command succeeded
+    // 2. Pytest test passed (marker assertion passed)
+    // 3. Optimizer env reached child process (OPTIMIZER_STATUS in output)
 
     assert!(
-        test_passed && optimizer_loaded,
-        "INTEGRATION FAILED: mgc test did not pass optimizer env to pytest/python.\n\
-        Test passed: {}, Optimizer loaded: {}\n\
+        output.status.success(),
+        "INTEGRATION FAILED: mgc test exited with error.\n\
+        Exit code: {:?}\n\
         Output: {}",
-        test_passed,
-        optimizer_loaded,
+        output.status.code(),
         combined
     );
 
-    println!("✅ AI (Python) mgc test → pytest → python optimizer env verified");
+    let test_passed = combined.contains("1 passed") && !combined.contains("FAILED");
+    let env_marker_present = combined.contains("OPTIMIZER_STATUS: PYTHON_OPTIMIZED");
+
+    assert!(
+        test_passed,
+        "INTEGRATION FAILED: pytest test did not pass.\n\
+        This means optimizer env did NOT reach pytest child process.\n\
+        Output: {}",
+        combined
+    );
+
+    assert!(
+        env_marker_present,
+        "INTEGRATION FAILED: Optimizer env marker not found in pytest output.\n\
+        Expected: OPTIMIZER_STATUS: PYTHON_OPTIMIZED\n\
+        This proves env did not propagate to child process.\n\
+        Output: {}",
+        combined
+    );
+
+    println!("✅ AI (Python) mgc test → pytest → python: optimizer env VERIFIED in child process");
 }
 
 #[test]
@@ -341,8 +359,19 @@ environment:
     std::fs::write(
         project.join("lib/main.dart"),
         r#"
+import 'dart:io';
+
 void main() {
-  print('Flutter app');
+  // Check if optimizer env marker propagated
+  final marker = Platform.environment['FLUTTER_OPTIMIZER_MARKER'] ?? 'NOT_SET';
+  print('OPTIMIZER_STATUS: $marker');
+  
+  if (marker != 'FLUTTER_OPTIMIZED') {
+    print('ERROR: Expected FLUTTER_OPTIMIZED, got $marker');
+    exit(1);
+  }
+  
+  print('Flutter app - optimizer env verified');
 }
 "#,
     )
@@ -374,23 +403,10 @@ void main() {
 
     println!("=== mgc build output ===\n{}", combined);
 
-    // VERIFY: mgc loaded optimizer config AND command succeeded
-    // Check 1: Optimizer loaded
-    let optimizer_loaded = combined.contains("Loaded") && combined.contains("optimizer");
-
-    // Check 2: Exit code success (không chỉ log)
-    let build_succeeded = output.status.success();
-
+    // VERIFY: mgc build succeeded AND optimizer env reached Flutter child process
+    // Check 1: Exit code success
     assert!(
-        optimizer_loaded,
-        "INTEGRATION FAILED: mgc build did not load Flutter optimizer config.\n\
-        Expected: Log showing optimizer config loaded\n\
-        Got: {}",
-        combined
-    );
-
-    assert!(
-        build_succeeded,
+        output.status.success(),
         "INTEGRATION FAILED: mgc build exited with error.\n\
         Exit code: {:?}\n\
         Output: {}",
@@ -398,5 +414,17 @@ void main() {
         combined
     );
 
-    println!("✅ App (Flutter) mgc build → optimizer loaded + build succeeded");
+    // Check 2: Optimizer env marker in Flutter output
+    let env_marker_present = combined.contains("OPTIMIZER_STATUS: FLUTTER_OPTIMIZED");
+
+    assert!(
+        env_marker_present,
+        "INTEGRATION FAILED: Optimizer env marker not found in Flutter output.\n\
+        Expected: OPTIMIZER_STATUS: FLUTTER_OPTIMIZED\n\
+        This proves env did not propagate to Flutter child process.\n\
+        Output: {}",
+        combined
+    );
+
+    println!("✅ App (Flutter) mgc build → flutter: optimizer env VERIFIED in child process");
 }
