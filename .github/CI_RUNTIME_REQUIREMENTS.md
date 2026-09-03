@@ -68,7 +68,7 @@ strategy:
           sudo apt-get update
           sudo apt-get install -y python3 python3-pip nodejs npm
           pip3 install pytest
-          
+
       - os: macos-latest
         setup: |
           brew install python3 node
@@ -79,7 +79,7 @@ strategy:
 
 **Implementation**: See `.github/workflows/ci.yml` - test-with-runtimes job now includes:
 - Python3 + pytest ✅
-- Node + npm ✅  
+- Node + npm ✅
 - Flutter 3.24.0 ✅ (via subosito/flutter-action@v2)
 
 ## Current Test Status Without Runtimes
@@ -143,8 +143,8 @@ When CI is properly provisioned, expect:
 
 ## Why This Matters
 
-**Before**: Tests returned early (SKIP) → appeared to pass → false confidence  
-**Now**: Tests panic UNVERIFIED → fail loudly → honest status  
+**Before**: Tests returned early (SKIP) → appeared to pass → false confidence
+**Now**: Tests panic UNVERIFIED → fail loudly → honest status
 **Future**: CI provisions runtimes → tests PASS with real evidence → verified confidence
 
 This document explains WHY tests fail and HOW to make them pass.

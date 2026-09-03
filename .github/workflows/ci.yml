@@ -130,26 +130,26 @@ jobs:
             python-setup: |
               brew install python3 node
               pip3 install pytest
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      
+
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
           cache: true
-      
+
       - name: Setup Python + Node runtimes
         run: ${{ matrix.python-setup }}
-      
+
       - name: Verify runtimes available
         run: |
           python3 --version
@@ -158,27 +158,27 @@ jobs:
           npm --version
           flutter --version
           flutter doctor -v
-      
+
       - name: Build mgc binary
         run: cargo build -p mgc --locked
-      
+
       - name: Run security tests
         run: cargo test -p mgc --test test_runner_security --locked
-      
+
       - name: Run optimizer tests (All cores: Web, AI, Lib PASS; App VERIFIED with Flutter)
         run: cargo test -p mgc --test optimizer_lifecycle_e2e --locked -- --nocapture || true
         # Note: With Flutter, App optimizer test will PASS
-      
+
       - name: Run lifecycle tests
         run: cargo test -p mgc --test full_lifecycle_e2e --locked -- --nocapture || true
         # Note: Lib, AI PASS; App will PASS with Flutter; Web still needs templates
-      
+
       - name: Run cache stress tests
         run: cargo test -p mgc --test cache_stress_test --locked -- --nocapture
-      
+
       - name: Run CLI surface tests
         run: cargo test -p mgc --test cli_surface_errors_test --locked -- --nocapture
-      
+
       - name: Summary
         if: always()
         run: |
