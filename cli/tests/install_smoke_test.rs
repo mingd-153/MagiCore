@@ -1,4 +1,5 @@
-//! Install Smoke Tests - Real distribution verification
+//! Install Smoke Tests - Real distribution verification  
+//! Kiểm thử cài đặt thật - verify phân phối qua brew/scoop/archive
 //! Tests ACTUAL installation via brew/scoop/archive download
 //! NOT just binary tests - real install/uninstall cycle
 
@@ -10,6 +11,7 @@ use std::process::Command;
 #[cfg(target_os = "macos")]
 fn test_homebrew_tap_install() {
     // SMOKE TEST: Real Homebrew tap install/uninstall cycle
+    // Kiểm thử: Chu trình cài/gỡ Homebrew thật
     // Verifies: tap add, install, which mgc, version, uninstall
 
     println!("\n=== Homebrew Tap Install Test ===");
@@ -41,6 +43,7 @@ fn test_homebrew_tap_install() {
 #[cfg(target_os = "windows")]
 fn test_scoop_install() {
     // SMOKE TEST: Real Scoop install/uninstall cycle
+    // Kiểm thử: Chu trình cài/gỡ Scoop thật
 
     println!("\n=== Scoop Install Test ===");
 

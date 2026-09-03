@@ -45,6 +45,7 @@ fn test_web_full_lifecycle() {
     let mgc = find_mgc_binary();
 
     // === STEP 1: CREATE (REAL mgc create-web call) ===
+    // Bước 1: TẠO (gọi mgc create-web thật)
     println!("\n=== STEP 1: mgc create-web vanilla (embedded) ===");
     let create_output = Command::new(&mgc)
         .arg("create-web")
@@ -68,6 +69,7 @@ fn test_web_full_lifecycle() {
     assert!(project_path.exists(), "Project not created");
 
     // Vanilla creates index.html and mgc.toml (no package.json - it's pure HTML/JS)
+    // Vanilla tạo index.html và mgc.toml (không có package.json - thuần HTML/JS)
     assert!(
         project_path.join("index.html").exists(),
         "index.html not created by scaffold"
