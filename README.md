@@ -286,6 +286,21 @@ MORE:
 - ✅ `mgc audit` scans for known CVEs via the advisory database
 - ✅ Lifecycle scripts are **opt-in only** (trust gate)
 
+### Threat Model: PM Tool Scope Policy
+
+**MagiCore orchestrates package managers, not sandboxes them.** Two security boundaries:
+
+1. **Install scope (HIGH RISK)**: Package installation, registry fetch, transitive deps
+   - PM tools (npm/pnpm/yarn/bun) **FORBIDDEN** → use `mgc install` (resolver + audit)
+   - Rationale: Prevent arbitrary package fetch bypassing mgc resolver
+
+2. **Test/Build/Dev scopes (MEDIUM RISK)**: Project-local scripts execution
+   - PM tools **ALLOWED** with constraints: cwd locked to project root, audit log
+   - Rationale: `package.json` scripts are user code, run under user's permission
+   - mgc doesn't sandbox npm scripts (would require OS-level isolation)
+
+See [docs/architecture/TEST_RUNNER_SECURITY_MODEL.md](docs/architecture/TEST_RUNNER_SECURITY_MODEL.md) for full threat model.
+
 ### Security Advisory (V1.0.0)
 **Recommendation**:
 - ✅ **Safe for CLI usage**: install, add, remove, SBOM, lockfile operations
