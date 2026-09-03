@@ -2,6 +2,8 @@
 //! Tests: aliases, typos, offline, existing dir, error clarity
 //! English-only errors, no warning spam
 
+#![allow(clippy::unwrap_used)] // Test code: unwrap acceptable for setup/assertions
+
 use std::process::Command;
 use tempfile::TempDir;
 

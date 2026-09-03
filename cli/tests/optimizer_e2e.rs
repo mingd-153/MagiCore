@@ -3,6 +3,9 @@
 //
 // Two-level verification:
 // 1. Integration-level: mgc loads config and attempts to pass RUSTFLAGS (mgc output)
+
+#![allow(clippy::unwrap_used)] // Test code: unwrap acceptable for assertions
+
 // 2. Process-level: cargo child process receives RUSTFLAGS (cargo -vv output)
 
 use std::process::Command;

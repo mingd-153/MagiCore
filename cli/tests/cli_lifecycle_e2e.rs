@@ -4,6 +4,8 @@
 //! These are REAL integration tests that call mgc binary and verify actual behavior.
 //! No mocks, no simulations - tests fail if commands don't work.
 
+#![allow(clippy::unwrap_used)] // Test code: unwrap acceptable for setup
+
 use std::process::Command;
 use tempfile::TempDir;
 

@@ -2,6 +2,8 @@
 //! Tests: cold/warm cache, concurrent install, corruption recovery, version invalidation
 //! Real workloads, no multipliers - honest raw numbers
 
+#![allow(clippy::unwrap_used)] // Test code: unwrap acceptable for setup
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -188,15 +190,13 @@ fn test_corrupted_cache_recovery() {
     // Step 2: Corrupt cache (write garbage to cache files)
     println!("\n=== Corrupt cache ===");
     if cache_dir.exists() {
-        for entry in std::fs::read_dir(&cache_dir).unwrap() {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() {
-                    // Overwrite with garbage
-                    std::fs::write(&path, "CORRUPTED_DATA_INVALID").ok();
-                    println!("Corrupted: {:?}", path);
-                    break; // Corrupt one file is enough
-                }
+        for entry in std::fs::read_dir(&cache_dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                // Overwrite with garbage
+                std::fs::write(&path, "CORRUPTED_DATA_INVALID").ok();
+                println!("Corrupted: {:?}", path);
+                break; // Corrupt one file is enough
             }
         }
     }

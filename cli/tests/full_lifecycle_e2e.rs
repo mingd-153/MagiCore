@@ -3,6 +3,8 @@
 //! Tests all 4 cores: web, ai, app, lib
 //! Each step asserts: exit code, artifacts, markers proving optimizer/config propagation
 
+#![allow(clippy::unwrap_used)] // Test code: unwrap acceptable for setup
+
 use std::process::Command;
 use tempfile::TempDir;
 

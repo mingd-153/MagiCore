@@ -1,6 +1,8 @@
 //! E2E lifecycle tests for optimizer consumption across web/ai/app/lib
 //! REAL TESTS: Call mgc commands (dev/build/test/run) and verify child process output
 
+#![allow(clippy::unwrap_used)] // Test code: unwrap acceptable for setup
+
 use std::process::Command;
 use tempfile::TempDir;
 
