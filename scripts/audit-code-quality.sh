@@ -119,13 +119,42 @@ echo "=== Audit Summary ==="
 echo "Issues found: $ISSUES_FOUND"
 echo ""
 
+# Determine if issues are blocking
+BLOCKING=0
+
+# Check for blocking issues:
+# - TODOs > 50 files (technical debt too high)
+# - unwrap() > 3000 calls (risk too high)
+# - panic! > 10 in production (stability risk)
+if [[ "$TODO_COUNT" -gt 50 ]]; then
+    echo "❌ BLOCKING: Too many TODOs ($TODO_COUNT files) - technical debt too high"
+    BLOCKING=1
+fi
+
+if [[ "$UNWRAP_COUNT" -gt 3000 ]]; then
+    echo "❌ BLOCKING: Too many .unwrap() calls ($UNWRAP_COUNT) - crash risk too high"
+    BLOCKING=1
+fi
+
+if [[ "$PANIC_COUNT" -gt 10 ]]; then
+    echo "❌ BLOCKING: Too many panic! calls ($PANIC_COUNT) - stability risk"
+    BLOCKING=1
+fi
+
+if [[ $BLOCKING -eq 1 ]]; then
+    echo ""
+    echo "❌ AUDIT FAILED - Blocking issues found"
+    echo "Fix blocking issues before release"
+    exit 1
+fi
+
 if [[ $ISSUES_FOUND -eq 0 ]]; then
-    echo "✅ All checks passed"
+    echo "✅ All checks passed - no issues"
     exit 0
 else
-    echo "⚠️  $ISSUES_FOUND issue(s) found - review and fix manually"
+    echo "⚠️  $ISSUES_FOUND non-blocking issue(s) found"
+    echo "Review findings, document decisions"
     echo ""
     echo "This audit does NOT auto-delete code."
-    echo "Review each finding, document decisions, then fix or mark as false positive."
-    exit 0  # Don't fail - audit is informational
+    exit 0  # Non-blocking issues don't fail gate
 fi

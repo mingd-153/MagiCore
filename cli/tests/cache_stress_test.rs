@@ -318,16 +318,30 @@ fn test_concurrent_install_safety() {
     }
 
     // At least one should succeed (lock contention may cause one to fail/retry)
+    // FIXED: BOTH must succeed - no partial failures acceptable
     assert!(
-        success1 || success2,
-        "Both concurrent installs failed - cache locking broken"
+        success1 && success2,
+        "❌ CONCURRENT INSTALL FAILED - Cache locking broken.\n\
+        Both installs MUST succeed. Got: install1={}, install2={}",
+        success1,
+        success2
     );
 
-    if success1 && success2 {
-        println!("✅ Both concurrent installs succeeded - cache locking works");
-    } else {
-        println!("⚠️  One install failed - acceptable if cache locking caused retry/abort");
-    }
+    println!("✅ Both concurrent installs succeeded - cache locking works");
+
+    // Verify cache integrity
+    assert!(
+        cache_dir.exists(),
+        "Cache directory should exist after concurrent installs"
+    );
+
+    // Verify node_modules in both projects
+    assert!(
+        project1.join("node_modules").exists() && project2.join("node_modules").exists(),
+        "Both projects should have node_modules after successful install"
+    );
+
+    println!("✅ Cache integrity verified - both projects have dependencies");
 
     std::env::remove_var("MGC_CACHE_DIR");
 }
@@ -409,18 +423,29 @@ fn test_cache_version_invalidation() {
     );
 
     // Verify version updated (cache should NOT serve old version)
-    if let Ok(pkg_json) = std::fs::read_to_string(project.join("node_modules/lodash/package.json"))
-    {
-        if pkg_json.contains("4.17.21") {
-            println!("✅ Cache correctly invalidated - new version installed");
-        } else if pkg_json.contains("4.17.20") {
-            panic!("❌ CACHE BUG: Old version served despite package.json change");
-        } else {
-            println!("⚠️  Could not verify version from package.json");
-        }
-    } else {
-        println!("⚠️  node_modules/lodash/package.json not found");
-    }
+    let pkg_json_path = project.join("node_modules/lodash/package.json");
+    assert!(
+        pkg_json_path.exists(),
+        "lodash package.json not found after install"
+    );
+
+    let pkg_json =
+        std::fs::read_to_string(&pkg_json_path).expect("Failed to read lodash package.json");
+
+    assert!(
+        pkg_json.contains("4.17.21"),
+        "❌ CACHE BUG: Version not updated.\n\
+        Expected: 4.17.21\n\
+        package.json content: {}",
+        pkg_json
+    );
+
+    assert!(
+        !pkg_json.contains("4.17.20"),
+        "❌ CACHE BUG: Old version 4.17.20 still present despite upgrade"
+    );
+
+    println!("✅ Cache correctly invalidated - new version 4.17.21 installed");
 
     std::env::remove_var("MGC_CACHE_DIR");
 }

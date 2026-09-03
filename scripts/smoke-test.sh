@@ -47,21 +47,27 @@ echo ""
 
 # Test 2: Binary location
 echo "Test 2: Binary location"
+LOCATION_FOUND=0
 if command -v which >/dev/null 2>&1; then
   if which_output=$(which "$MGC_PATH" 2>&1); then
     echo "✅ PASS: Binary found at: $which_output"
+    LOCATION_FOUND=1
   else
-    echo "⚠️  WARN: which mgc failed (binary may not be in PATH)"
+    echo "❌ FAIL: which mgc failed - binary not in PATH"
+    ((FAIL_COUNT++))
   fi
 elif command -v where >/dev/null 2>&1; then
   # Windows
   if where_output=$(where "$MGC_PATH" 2>&1); then
     echo "✅ PASS: Binary found at: $where_output"
+    LOCATION_FOUND=1
   else
-    echo "⚠️  WARN: where mgc failed (binary may not be in PATH)"
+    echo "❌ FAIL: where mgc failed - binary not in PATH"
+    ((FAIL_COUNT++))
   fi
 else
-  echo "⚠️  SKIP: No which/where command available"
+  echo "❌ FAIL: No which/where command available - cannot verify binary location"
+  ((FAIL_COUNT++))
 fi
 echo ""
 
@@ -86,7 +92,9 @@ echo "Test 4: mgc version (subcommand)"
 if version_cmd=$("$MGC_PATH" version 2>&1); then
   echo "✅ PASS: $version_cmd"
 else
-  echo "⚠️  WARN: mgc version subcommand failed (may not be implemented)"
+  echo "❌ FAIL: mgc version subcommand not working"
+  echo "This command should be implemented for consistency"
+  ((FAIL_COUNT++))
 fi
 echo ""
 

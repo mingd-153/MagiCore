@@ -3,16 +3,16 @@
     "description": "Universal package manager with multi-core runtime",
     "homepage": "https://github.com/mingd-153/MagiCore",
     "license": "MIT",
-    "notes": "Hashes auto-updated by scripts/update-release-hashes.sh during release CI. Install via: scoop bucket add magicore https://github.com/mingd-153/MagiCore && scoop install magicore",
+    "notes": "⚠️  PLACEHOLDER HASHES - Release CI will replace with real SHA256. Manual install not supported - wait for GitHub Release.",
     "architecture": {
         "64bit": {
             "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-X64.zip",
-            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "PLACEHOLDER_WILL_BE_REPLACED_BY_CI",
             "bin": "mgc.exe"
         },
         "arm64": {
             "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-ARM64.zip",
-            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "PLACEHOLDER_WILL_BE_REPLACED_BY_CI",
             "bin": "mgc.exe"
         }
     },
