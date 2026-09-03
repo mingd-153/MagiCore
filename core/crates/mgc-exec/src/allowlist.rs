@@ -105,6 +105,7 @@ pub struct ScriptInvocation {
 /// Mỗi core khai báo subset; thêm tool phải review + ghi lý do.
 pub const ALLOWED_TOOLS: &[&str] = &[
     "pip",
+    "pip3", // pip3 fallback on systems without pip alias
     "python3",
     "pytest", // AI test runner
     "uv",

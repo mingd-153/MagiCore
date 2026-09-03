@@ -12,11 +12,29 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
             packages
         ));
     }
+
+    // Determine pip command (pip3 fallback for systems without pip alias)
+    let pip_cmd = if std::process::Command::new("pip")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        "pip"
+    } else if std::process::Command::new("pip3")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        "pip3"
+    } else {
+        "pip" // Fallback - will error clearly if neither exists
+    };
+
     let (tool, args): (&str, Vec<String>) = if root.join("uv.lock").exists() {
         ("uv", vec!["sync".to_string()])
     } else if root.join("requirements.lock").exists() {
         (
-            "pip",
+            pip_cmd,
             vec![
                 "install".to_string(),
                 "-r".to_string(),
