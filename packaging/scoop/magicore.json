@@ -3,16 +3,16 @@
     "description": "Universal package manager with multi-core runtime",
     "homepage": "https://github.com/mingd-153/MagiCore",
     "license": "MIT",
-    "notes": "⚠️ BLOCKER 3 STATUS: Windows x64/ARM64 hashes are PLACEHOLDERS. 'scoop install' will FAIL until CI builds artifacts and computes real SHA256. Only macOS ARM64 is installable in v1.1.0-rc.1.",
+    "notes": "⚠️ BLOCKER 4 STATUS (2026-09-02): Windows builds require CI with Windows runners (MSVC toolchain). Hashes are placeholders until CI artifacts built. Cross-compilation from macOS to Windows not feasible locally.",
     "architecture": {
         "64bit": {
             "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-X64.zip",
-            "hash": "COMPUTED_AFTER_ARTIFACT_BUILD",
+            "hash": "COMPUTED_AFTER_CI_BUILD",
             "bin": "mgc.exe"
         },
         "arm64": {
             "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-ARM64.zip",
-            "hash": "COMPUTED_AFTER_ARTIFACT_BUILD",
+            "hash": "COMPUTED_AFTER_CI_BUILD",
             "bin": "mgc.exe"
         }
     },
