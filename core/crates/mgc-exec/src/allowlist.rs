@@ -1,18 +1,18 @@
 //! Allowlist check — kiểm tra tool trước khi exec (00-index §5.1, §5.2)
 //!
 //! ## Threat Model (2026-09-02)
-//! 
+//!
 //! MagiCore orchestrates package managers, NOT sandboxes them. Two security boundaries:
-//! 
+//!
 //! 1. **Install scope (HIGH RISK)**: Package installation, registry fetch, transitive deps
 //!    - PM tools (npm/pnpm/yarn/bun) FORBIDDEN → use `mgc install` (resolver + audit)
 //!    - Rationale: Prevent arbitrary package fetch bypassing mgc resolver
-//! 
+//!
 //! 2. **Test/Build/Dev scopes (MEDIUM RISK)**: Project-local scripts execution
 //!    - PM tools ALLOWED with constraints: cwd locked to project root, audit log
 //!    - Rationale: package.json scripts are user code, run under user's permission
 //!    - mgc doesn't sandbox npm scripts (would require OS-level isolation)
-//! 
+//!
 //! ## ExecutionScope
 //! Test-runner security model: npm/pnpm/yarn/bun FORBIDDEN for Install scope,
 //! but ALLOWED for TestRunner/BuildRunner/DevServer scopes (project-local scripts only).

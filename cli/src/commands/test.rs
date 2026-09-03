@@ -117,9 +117,11 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
 
 /// Detect runtime for optimizer env loading based on test runner
 /// Phát hiện runtime để load env optimizer dựa trên test runner
-fn detect_test_runtime(project_root: &Path) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+fn detect_test_runtime(
+    project_root: &Path,
+) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
     use crate::commands::optimizer::runtime_detect::{detect_runtimes, DetectedRuntime};
-    
+
     // Detect core type first
     let core = if project_root.join(".mgc.core").exists() {
         std::fs::read_to_string(project_root.join(".mgc.core"))
@@ -133,7 +135,10 @@ fn detect_test_runtime(project_root: &Path) -> crate::commands::optimizer::runti
         } else if project_root.join("pyproject.toml").exists() {
             // Check if AI project (has torch/pytorch)
             if let Ok(content) = std::fs::read_to_string(project_root.join("pyproject.toml")) {
-                if content.contains("torch") || content.contains("pytorch") || content.contains("[tool.magicore]") {
+                if content.contains("torch")
+                    || content.contains("pytorch")
+                    || content.contains("[tool.magicore]")
+                {
                     "ai".to_string()
                 } else {
                     "lib".to_string()
@@ -149,10 +154,13 @@ fn detect_test_runtime(project_root: &Path) -> crate::commands::optimizer::runti
             "lib".to_string()
         }
     };
-    
+
     // Use detect_runtimes from optimizer (core-aware)
     let runtimes = detect_runtimes(project_root, &core);
-    runtimes.first().cloned().unwrap_or(DetectedRuntime::Unknown)
+    runtimes
+        .first()
+        .cloned()
+        .unwrap_or(DetectedRuntime::Unknown)
 }
 
 /// Detect package manager for Node.js projects — phát hiện package manager cho project Node.js

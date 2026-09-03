@@ -141,7 +141,7 @@ fn validate_args_no_traversal(args: &[String]) -> Result<()> {
                 arg
             );
         }
-        
+
         // Check for absolute paths trying to escape project
         // (Allow absolute paths within project in future, but reject for now)
         #[cfg(unix)]
@@ -152,7 +152,7 @@ fn validate_args_no_traversal(args: &[String]) -> Result<()> {
                 arg
             );
         }
-        
+
         #[cfg(windows)]
         if arg.len() >= 3 && arg.chars().nth(1) == Some(':') {
             // Windows absolute path like C:\...
@@ -174,7 +174,7 @@ fn execute_command(
 ) -> Result<ExecReport> {
     // SECURITY: Validate args không chứa path traversal
     validate_args_no_traversal(args)?;
-    
+
     // args REDACTED từ nguồn — console/report/audit không bao giờ chứa secret (§5.4)
     let safe_args = redact_args(args);
     let cwd = opts

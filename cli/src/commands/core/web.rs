@@ -940,7 +940,9 @@ fn validate_runtime_args(runtime: &str, args: &[&str]) -> Result<()> {
 
 /// Detect runtime from script tokens for optimizer env loading
 /// Phát hiện runtime từ script tokens để load env optimizer
-fn detect_runtime_from_tokens(tokens: &[&str]) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+fn detect_runtime_from_tokens(
+    tokens: &[&str],
+) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
     use crate::commands::optimizer::runtime_detect::{DetectedRuntime, PackageManager};
 
     if tokens.is_empty() {

@@ -293,12 +293,7 @@ async fn dev_ios(
         return Ok(());
     }
     mgc_ui::info("App dev (Swift): swift run");
-    crate::commands::core::install::app::run_tool_with_env(
-        root,
-        "swift",
-        &["run".to_string()],
-        env,
-    )
+    crate::commands::core::install::app::run_tool_with_env(root, "swift", &["run".to_string()], env)
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -467,7 +462,7 @@ fn detect_app_runtime(
             DetectedRuntime::RustNative // iOS native
         }
         mgc_app_adapter::AppLanguage::Kotlin => DetectedRuntime::RustNative, // Android native
-        mgc_app_adapter::AppLanguage::Multi => DetectedRuntime::Flutter,    // Multi defaults to Flutter
+        mgc_app_adapter::AppLanguage::Multi => DetectedRuntime::Flutter, // Multi defaults to Flutter
     }
 }
 

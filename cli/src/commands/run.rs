@@ -101,13 +101,12 @@ fn execute_task_with_bin(
     // Load optimizer env for run command
     // Tải env optimizer cho lệnh run
     let runtime = detect_run_runtime(cwd);
-    let optimizer_envs =
-        crate::commands::optimizer::env_loader::load_optimizer_env(cwd, &runtime)
-            .map_err(|e| {
-                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
-                e
-            })
-            .unwrap_or_default();
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(cwd, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
     env.extend(optimizer_envs);
 
     let opts = mgc_exec::prelude::ExecOptions {
@@ -150,7 +149,9 @@ fn detect_run_runtime(cwd: &Path) -> crate::commands::optimizer::runtime_detect:
         } else if cwd.join("deno.json").exists() || cwd.join("deno.jsonc").exists() {
             DetectedRuntime::Deno
         } else {
-            DetectedRuntime::NodeJs { package_manager: PackageManager::Npm }
+            DetectedRuntime::NodeJs {
+                package_manager: PackageManager::Npm,
+            }
         }
     } else {
         DetectedRuntime::Unknown

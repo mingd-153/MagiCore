@@ -149,14 +149,14 @@ fn test_cwd_lock_sets_working_directory() {
     //
     // This is npm's responsibility, not mgc's. mgc is a package manager ORCHESTRATOR,
     // not a sandbox. Users trust their own package.json just as they trust their own code.
-    
+
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let parent_dir = temp_dir.path();
-    
+
     // Create project root INSIDE temp dir
     let project_root = parent_dir.join("project");
     fs::create_dir(&project_root).expect("Failed to create project dir");
-    
+
     // Create package.json that logs CWD
     fs::write(
         project_root.join("package.json"),
@@ -192,19 +192,22 @@ fn test_cwd_lock_sets_working_directory() {
         let logged_cwd = fs::read_to_string(&cwd_file).expect("Failed to read cwd.txt");
         let logged_cwd = logged_cwd.trim();
         let expected_cwd = project_root.canonicalize().expect("Failed to canonicalize");
-        
+
         let logged_path = PathBuf::from(logged_cwd)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(logged_cwd));
-        
+
         assert!(
             logged_path == expected_cwd || logged_path.starts_with(&expected_cwd),
             "mgc did not set correct cwd for child process.\nExpected: {}\nActual: {}",
             expected_cwd.display(),
             logged_path.display()
         );
-        
-        println!("✅ CWD correctly set to project root: {}", logged_path.display());
+
+        println!(
+            "✅ CWD correctly set to project root: {}",
+            logged_path.display()
+        );
     } else {
         eprintln!("SKIP: cwd.txt not created (npm may have failed)");
     }
@@ -214,23 +217,23 @@ fn test_cwd_lock_sets_working_directory() {
 fn test_shell_injection_prevented() {
     // TEST: Shell metacharacters in tool names should be rejected
     // NEGATIVE TEST: Try to execute tool with shell injection → must FAIL
-    
+
     use mgc_exec::allowlist::check_tool_with_scope;
     use mgc_exec::allowlist::ExecutionScope;
 
     // ATTACK 1: Try to inject shell command via tool name
     let malicious_tools = vec![
-        "npm; rm -rf /",           // Command chaining
-        "npm && cat /etc/passwd",  // Command chaining
-        "npm | tee evil.txt",      // Pipe injection
-        "npm $(whoami)",           // Command substitution
-        "npm `whoami`",            // Command substitution (backticks)
-        "npm > /dev/null",         // Redirection
+        "npm; rm -rf /",          // Command chaining
+        "npm && cat /etc/passwd", // Command chaining
+        "npm | tee evil.txt",     // Pipe injection
+        "npm $(whoami)",          // Command substitution
+        "npm `whoami`",           // Command substitution (backticks)
+        "npm > /dev/null",        // Redirection
     ];
 
     for tool in malicious_tools {
         let result = check_tool_with_scope(tool, ExecutionScope::TestRunner, None);
-        
+
         // ASSERT: Must be rejected (either not in allowlist or contains forbidden chars)
         assert!(
             result.is_err(),
@@ -239,15 +242,18 @@ fn test_shell_injection_prevented() {
             This could lead to command injection attacks.",
             tool
         );
-        
+
         let err_msg = result.unwrap_err().to_string();
-        println!("✅ Blocked shell injection attempt: '{}' → {}", tool, err_msg);
+        println!(
+            "✅ Blocked shell injection attempt: '{}' → {}",
+            tool, err_msg
+        );
     }
 
     // ATTACK 2: Verify mgc-exec uses Command::args() not shell
     // This is verified by code inspection: mgc-exec/run.rs uses command.args(args)
     // No shell involvement means shell metacharacters are passed as literal strings, not interpreted
-    
+
     println!("✅ Shell injection prevented: mgc-exec uses Command::args(), malicious tool names rejected");
 }
 
@@ -293,17 +299,17 @@ fn test_audit_log_records_execution() {
 fn test_path_traversal_in_args_rejected() {
     // TEST: Path traversal attempts in command arguments should be handled safely
     // NEGATIVE TEST: Try to pass ../../ paths → verify no unintended file access
-    
+
     use mgc_exec::prelude::{run, ExecOptions};
-    
+
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = temp_dir.path();
-    
+
     // Create a sensitive file OUTSIDE project root
     let parent = project_root.parent().unwrap();
     let sensitive_file = parent.join("sensitive.txt");
     fs::write(&sensitive_file, "SECRET_DATA").expect("Failed to write sensitive file");
-    
+
     // Try to read file via path traversal in args
     let result = run(
         "cat",
@@ -313,13 +319,13 @@ fn test_path_traversal_in_args_rejected() {
             ..Default::default()
         },
     );
-    
+
     // ASSERT: Either command fails (file not found due to cwd lock)
     // Or mgc sanitizes the path
     match result {
         Ok(report) => {
             let combined = format!("{}{}", report.stdout_tail, report.stderr_tail);
-            
+
             // Should NOT be able to read secret data
             assert!(
                 !combined.contains("SECRET_DATA"),
@@ -328,7 +334,7 @@ fn test_path_traversal_in_args_rejected() {
                 Got: {}",
                 combined
             );
-            
+
             println!("✅ Path traversal blocked: command could not escape project root");
         }
         Err(e) => {

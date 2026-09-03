@@ -22,7 +22,7 @@ fn find_mgc_binary() -> std::path::PathBuf {
 #[test]
 fn test_web_node_mgc_test_with_optimizer() {
     // REAL E2E: mgc test (web/node) → verify child npm/node receives optimizer env
-    
+
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
@@ -179,7 +179,9 @@ rustflags = ["-C", "opt-level=2", "--cfg", "mgc_lib_optimized"]
 
     assert!(bin_path.exists(), "Binary not found after mgc build");
 
-    let bin_output = Command::new(&bin_path).output().expect("Failed to run binary");
+    let bin_output = Command::new(&bin_path)
+        .output()
+        .expect("Failed to run binary");
     let bin_stdout = String::from_utf8_lossy(&bin_output.stdout);
 
     // VERIFY: Binary behavior reflects optimizer cfg
@@ -198,7 +200,7 @@ rustflags = ["-C", "opt-level=2", "--cfg", "mgc_lib_optimized"]
 #[test]
 fn test_ai_python_mgc_test_with_optimizer() {
     // REAL E2E: mgc test (ai/python) → verify child pytest receives optimizer env
-    
+
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
@@ -207,7 +209,7 @@ fn test_ai_python_mgc_test_with_optimizer() {
         eprintln!("SKIP: python3 not available");
         return;
     }
-    
+
     // Check pytest available
     if Command::new("pytest").arg("--version").output().is_err() {
         eprintln!("SKIP: pytest not available (install: pip install pytest)");
@@ -282,13 +284,15 @@ if __name__ == '__main__':
     // 2. Optimizer config loaded
     let test_passed = combined.contains("1 passed") && !combined.contains("FAILED");
     let optimizer_loaded = combined.contains("Loaded PyTorch optimizer");
-    
+
     assert!(
         test_passed && optimizer_loaded,
         "INTEGRATION FAILED: mgc test did not pass optimizer env to pytest/python.\n\
         Test passed: {}, Optimizer loaded: {}\n\
         Output: {}",
-        test_passed, optimizer_loaded, combined
+        test_passed,
+        optimizer_loaded,
+        combined
     );
 
     println!("✅ AI (Python) mgc test → pytest → python optimizer env verified");
@@ -297,7 +301,7 @@ if __name__ == '__main__':
 #[test]
 fn test_app_flutter_mgc_build_with_optimizer() {
     // REAL E2E: mgc build (app/flutter) → verify child flutter receives optimizer env
-    
+
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 

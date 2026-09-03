@@ -72,10 +72,9 @@ fn get_env_files_for_runtime(runtime: &DetectedRuntime) -> Vec<(&'static str, &'
             ("pytorch_docker.env", "PyTorch Docker"),
         ],
         DetectedRuntime::RustCandle => vec![("candle_runtime.env", "Candle")],
-        DetectedRuntime::GoTensorFlow => vec![
-            ("go_ai_runtime.env", "Go AI"),
-            ("go_build.env", "Go Build"),
-        ],
+        DetectedRuntime::GoTensorFlow => {
+            vec![("go_ai_runtime.env", "Go AI"), ("go_build.env", "Go Build")]
+        }
 
         // Lib runtimes — runtime thư viện
         DetectedRuntime::RustLib => vec![("rust_cargo_profile.toml", "Rust Lib")],

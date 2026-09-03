@@ -152,13 +152,12 @@ async fn build_lib(root: &Path) -> Result<()> {
     // Load optimizer env for lib runtime
     // Tải env optimizer cho runtime thư viện
     let runtime = detect_lib_runtime(root);
-    let optimizer_envs =
-        crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
-            .map_err(|e| {
-                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
-                e
-            })
-            .unwrap_or_default();
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
     // Apply RUSTFLAGS for Rust builds
     // Áp dụng RUSTFLAGS cho Rust build
     let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
@@ -192,7 +191,7 @@ async fn build_lib(root: &Path) -> Result<()> {
             "PATH".to_string(),
             prepend_path(&local_bin)?.to_string_lossy().to_string(),
         )];
-        env.extend(optimizer_envs.into_iter());
+        env.extend(optimizer_envs);
 
         info(&format!("tsc: node {}", args.join(" ")));
         let opts = mgc_exec::prelude::ExecOptions {

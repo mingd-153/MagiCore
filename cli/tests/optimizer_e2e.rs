@@ -277,8 +277,14 @@ ANOTHER_VAR = "another_value"
 
     // Verify env section structure
     let env = toml["env"].as_table().expect("env should be table");
-    assert_eq!(env.get("TEST_VAR").and_then(|v| v.as_str()), Some("test_value"));
-    assert_eq!(env.get("ANOTHER_VAR").and_then(|v| v.as_str()), Some("another_value"));
+    assert_eq!(
+        env.get("TEST_VAR").and_then(|v| v.as_str()),
+        Some("test_value")
+    );
+    assert_eq!(
+        env.get("ANOTHER_VAR").and_then(|v| v.as_str()),
+        Some("another_value")
+    );
 
     println!("✅ Integration test passed: Optimizer config structure valid for loader");
 }

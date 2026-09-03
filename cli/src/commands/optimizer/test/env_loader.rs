@@ -83,7 +83,7 @@ fn test_load_optimizer_env_runtime_mismatch() {
 
     // Request Deno runtime - should only load deno_env.env
     let vars = load_optimizer_env(temp.path(), &DetectedRuntime::Deno).unwrap();
-    assert!(vars.get("BUN_RUNTIME_TRANSPILER_CACHE_PATH").is_none());
+    assert!(!vars.contains_key("BUN_RUNTIME_TRANSPILER_CACHE_PATH"));
     assert_eq!(
         vars.get("DENO_V8_FLAGS"),
         Some(&"--max-old-space-size=4096".to_string())
