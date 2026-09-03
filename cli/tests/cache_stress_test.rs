@@ -96,8 +96,8 @@ fn test_cache_cold_vs_warm() {
     let project2 = create_test_project(&temp, "project2", "web");
 
     // Custom cache dir for test isolation
+    // FIXED: Use per-Command .env() instead of global std::env::set_var
     let cache_dir = temp.path().join("test-cache");
-    std::env::set_var("MGC_CACHE_DIR", &cache_dir);
 
     // === COLD CACHE ===
     println!("\n=== COLD CACHE TEST ===");
@@ -107,6 +107,7 @@ fn test_cache_cold_vs_warm() {
     let cold_output = Command::new(&mgc)
         .arg("install")
         .current_dir(&project1)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
     let cold_duration = cold_start.elapsed();
@@ -127,6 +128,7 @@ fn test_cache_cold_vs_warm() {
     let warm_output = Command::new(&mgc)
         .arg("install")
         .current_dir(&project2)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
     let warm_duration = warm_start.elapsed();
@@ -152,8 +154,7 @@ fn test_cache_cold_vs_warm() {
         println!("⚠️  Warm cache not faster (cache may not be effective)");
     }
 
-    // Cleanup env
-    std::env::remove_var("MGC_CACHE_DIR");
+    println!("✅ Cache performance: cold → warm verified");
 }
 
 #[test]
@@ -174,36 +175,50 @@ fn test_corrupted_cache_recovery() {
     let project = create_test_project(&temp, "corrupt-test", "web");
 
     let cache_dir = temp.path().join("test-cache");
-    std::env::set_var("MGC_CACHE_DIR", &cache_dir);
 
     // Step 1: Normal install to populate cache
     println!("\n=== Populate cache ===");
     let output1 = Command::new(&mgc)
         .arg("install")
         .current_dir(&project)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
 
-    assert!(output1.status.success(), "Initial install failed");
+    assert!(
+        output1.status.success(),
+        "Initial install failed:\n{}",
+        String::from_utf8_lossy(&output1.stderr)
+    );
 
     // Web adapter may not use MGC_CACHE_DIR (npm manages its own cache)
     if !cache_dir.exists() {
-        println!("⚠️  Cache dir not created - Web may use npm cache directly");
-        println!("   Skipping cache corruption test (not applicable)");
-        std::env::remove_var("MGC_CACHE_DIR");
-        return;
+        panic!(
+            "Cache dir not created after install.\n\
+            Web adapter must create cache directory.\n\
+            This is a BLOCKING FAILURE - cannot verify corruption recovery."
+        );
     }
 
     // Step 2: Corrupt cache (write garbage to cache files)
     println!("\n=== Corrupt cache ===");
+    let mut corrupted = false;
     for entry in std::fs::read_dir(&cache_dir).unwrap().flatten() {
         let path = entry.path();
         if path.is_file() {
             // Overwrite with garbage
             std::fs::write(&path, "CORRUPTED_DATA_INVALID").ok();
             println!("Corrupted: {:?}", path);
+            corrupted = true;
             break; // Corrupt one file is enough
         }
+    }
+
+    if !corrupted {
+        panic!(
+            "No cache files found to corrupt.\n\
+            Cache directory empty - cannot verify recovery."
+        );
     }
 
     // Step 3: Try install with corrupted cache
@@ -211,6 +226,7 @@ fn test_corrupted_cache_recovery() {
     let output2 = Command::new(&mgc)
         .arg("install")
         .current_dir(&project)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
 
@@ -221,24 +237,16 @@ fn test_corrupted_cache_recovery() {
     );
 
     // Should either: recover gracefully OR clear cache and retry
-    if output2.status.success() {
-        println!("✅ Recovered from corrupted cache");
-    } else {
-        // Check if error message is reasonable
-        assert!(
-            combined.contains("cache")
-                || combined.contains("corrupted")
-                || combined.contains("invalid"),
-            "Error should mention cache/corruption issue:\n{}",
-            combined
-        );
-        println!(
-            "⚠️  Failed with cache error (expected behavior):\n{}",
+    // MUST succeed or give reasonable error
+    if !output2.status.success() {
+        panic!(
+            "Corrupted cache recovery FAILED:\n{}\n\
+            mgc MUST either recover from corruption or give clear error.",
             combined
         );
     }
 
-    std::env::remove_var("MGC_CACHE_DIR");
+    println!("✅ Recovered from corrupted cache");
 }
 
 #[test]
@@ -260,7 +268,6 @@ fn test_concurrent_install_safety() {
     let project2 = create_test_project(&temp, "concurrent2", "web");
 
     let cache_dir = temp.path().join("test-cache");
-    std::env::set_var("MGC_CACHE_DIR", &cache_dir);
     clear_cache(&cache_dir);
 
     println!("\n=== Concurrent install test ===");
@@ -268,19 +275,23 @@ fn test_concurrent_install_safety() {
     // Spawn 2 installs concurrently
     let mgc1 = mgc.clone();
     let proj1 = project1.clone();
+    let cache1 = cache_dir.clone();
     let handle1 = std::thread::spawn(move || {
         Command::new(&mgc1)
             .arg("install")
             .current_dir(&proj1)
+            .env("MGC_CACHE_DIR", &cache1)
             .output()
     });
 
     let mgc2 = mgc.clone();
     let proj2 = project2.clone();
+    let cache2 = cache_dir.clone();
     let handle2 = std::thread::spawn(move || {
         Command::new(&mgc2)
             .arg("install")
             .current_dir(&proj2)
+            .env("MGC_CACHE_DIR", &cache2)
             .output()
     });
 
@@ -322,35 +333,24 @@ fn test_concurrent_install_safety() {
         );
     }
 
-    // At least one should succeed (lock contention may cause one to fail/retry)
-    // FIXED: BOTH must succeed - no partial failures acceptable
+    // BOTH must succeed - no lock contention acceptable
     assert!(
         success1 && success2,
-        "❌ CONCURRENT INSTALL FAILED - Cache locking broken.\n\
-        Both installs MUST succeed. Got: install1={}, install2={}",
-        success1,
-        success2
+        "Both concurrent installs MUST succeed.\n\
+        Install 1: {}\nInstall 2: {}",
+        String::from_utf8_lossy(&result1.stderr),
+        String::from_utf8_lossy(&result2.stderr)
     );
 
-    println!("✅ Both concurrent installs succeeded - cache locking works");
+    println!("✅ Both concurrent installs succeeded - cache safe");
 
-    // Verify node_modules in both projects (actual success indicator)
+    // Verify node_modules in both projects
     assert!(
         project1.join("node_modules").exists() && project2.join("node_modules").exists(),
-        "Both projects should have node_modules after successful install"
+        "Both projects must have node_modules"
     );
 
-    println!("✅ Cache integrity verified - both projects have dependencies");
-
-    // Cache dir may or may not exist (Web adapter may not use MGC_CACHE_DIR)
-    // The important verification is: both installs succeeded + node_modules present
-    if cache_dir.exists() {
-        println!("   Cache directory created at: {:?}", cache_dir);
-    } else {
-        println!("   No cache directory (Web may use npm cache directly)");
-    }
-
-    std::env::remove_var("MGC_CACHE_DIR");
+    println!("✅ Cache integrity verified");
 }
 
 #[test]
@@ -371,7 +371,6 @@ fn test_cache_version_invalidation() {
     std::fs::create_dir_all(&project).unwrap();
 
     let cache_dir = temp.path().join("test-cache");
-    std::env::set_var("MGC_CACHE_DIR", &cache_dir);
     clear_cache(&cache_dir);
 
     // Step 1: Install lodash@4.17.20
@@ -392,16 +391,17 @@ fn test_cache_version_invalidation() {
     let output1 = Command::new(&mgc)
         .arg("install")
         .current_dir(&project)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
 
-    assert!(output1.status.success(), "Install 4.17.20 failed");
+    assert!(
+        output1.status.success(),
+        "Install 4.17.20 failed:\n{}",
+        String::from_utf8_lossy(&output1.stderr)
+    );
 
-    // Verify lodash 4.17.20 installed
-    let lock_or_modules = project.join("node_modules/lodash/package.json").exists();
-    if lock_or_modules {
-        println!("✅ lodash@4.17.20 installed");
-    }
+    println!("✅ lodash@4.17.20 installed");
 
     // Step 2: Change to lodash@4.17.21
     println!("\n=== Update to lodash@4.17.21 ===");
@@ -420,6 +420,7 @@ fn test_cache_version_invalidation() {
     let output2 = Command::new(&mgc)
         .arg("install")
         .current_dir(&project)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
 
@@ -436,25 +437,23 @@ fn test_cache_version_invalidation() {
         "lodash package.json not found after install"
     );
 
-    let pkg_json =
-        std::fs::read_to_string(&pkg_json_path).expect("Failed to read lodash package.json");
+    println!("✅ lodash@4.17.21 installed");
 
+    // Verify version updated (check node_modules)
+    let pkg_json_path = project.join("node_modules/lodash/package.json");
+    assert!(
+        pkg_json_path.exists(),
+        "lodash package.json not found after install"
+    );
+
+    let pkg_json = std::fs::read_to_string(&pkg_json_path).unwrap();
     assert!(
         pkg_json.contains("4.17.21"),
-        "❌ CACHE BUG: Version not updated.\n\
-        Expected: 4.17.21\n\
-        package.json content: {}",
+        "Version not updated - cache invalidation failed.\nContent: {}",
         pkg_json
     );
 
-    assert!(
-        !pkg_json.contains("4.17.20"),
-        "❌ CACHE BUG: Old version 4.17.20 still present despite upgrade"
-    );
-
-    println!("✅ Cache correctly invalidated - new version 4.17.21 installed");
-
-    std::env::remove_var("MGC_CACHE_DIR");
+    println!("✅ Cache version invalidation verified");
 }
 
 #[test]
@@ -472,7 +471,6 @@ fn test_cross_core_cache_isolation() {
     let temp = TempDir::new().unwrap();
     let mgc = find_mgc_binary();
     let cache_dir = temp.path().join("test-cache");
-    std::env::set_var("MGC_CACHE_DIR", &cache_dir);
     clear_cache(&cache_dir);
 
     // Step 1: Install Web project with lodash
@@ -481,10 +479,15 @@ fn test_cross_core_cache_isolation() {
     let output1 = Command::new(&mgc)
         .arg("install")
         .current_dir(&web_project)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
 
-    assert!(output1.status.success(), "Web install failed");
+    assert!(
+        output1.status.success(),
+        "Web install failed:\n{}",
+        String::from_utf8_lossy(&output1.stderr)
+    );
     println!("✅ Web project installed");
 
     // Step 2: Install Lib project with serde
@@ -493,24 +496,30 @@ fn test_cross_core_cache_isolation() {
     let output2 = Command::new(&mgc)
         .arg("install")
         .current_dir(&lib_project)
+        .env("MGC_CACHE_DIR", &cache_dir)
         .output()
         .expect("mgc install failed");
 
-    // Lib install should NOT use Web cache (different runtime)
-    if output2.status.success() {
-        println!("✅ Lib project installed");
+    assert!(
+        output2.status.success(),
+        "Lib install failed:\n{}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
+    println!("✅ Lib project installed");
 
-        // Verify Web deps not in Lib project
-        let web_in_lib = lib_project.join("node_modules").exists();
-        assert!(
-            !web_in_lib,
-            "❌ CACHE BUG: Web node_modules leaked into Lib project"
-        );
+    // Verify cache isolation: Web deps not in Lib
+    assert!(
+        !lib_project.join("node_modules").exists(),
+        "CACHE BUG: Web node_modules leaked into Lib project"
+    );
 
-        println!("✅ Cross-core cache isolation verified");
-    } else {
-        println!("⚠️  Lib install failed (may need cargo available)");
-    }
+    // Verify Lib has its own deps (Cargo.lock or target/)
+    let has_lib_artifacts =
+        lib_project.join("Cargo.lock").exists() || lib_project.join("target").exists();
+    assert!(
+        has_lib_artifacts,
+        "Lib install did not create Cargo artifacts"
+    );
 
-    std::env::remove_var("MGC_CACHE_DIR");
+    println!("✅ Cross-core cache isolation verified");
 }
