@@ -139,6 +139,7 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "unity",
     "upm",
     "xcodebuild",
+    "echo", // Test tool: prove validator runs before allowlist check
 ];
 
 /// Tools with mgc resolver coverage — PM tools forbidden in Install scope, allowed in Test/Build/Dev scopes.

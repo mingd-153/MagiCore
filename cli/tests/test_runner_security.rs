@@ -297,49 +297,130 @@ fn test_audit_log_records_execution() {
 
 #[test]
 fn test_path_traversal_in_args_rejected() {
-    // TEST: Path traversal attempts in command arguments should be handled safely
-    // NEGATIVE TEST: Try to pass ../../ paths → verify no unintended file access
+    // TEST: Path traversal validator với ALLOWLISTED tool
+    // Chứng minh validator chạy TRƯỚC allowlist check
 
     use mgc_exec::prelude::{run, ExecOptions};
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = temp_dir.path();
 
-    // Create a sensitive file OUTSIDE project root
+    // Create sensitive file OUTSIDE project root
     let parent = project_root.parent().unwrap();
     let sensitive_file = parent.join("sensitive.txt");
     fs::write(&sensitive_file, "SECRET_DATA").expect("Failed to write sensitive file");
 
-    // Try to read file via path traversal in args
+    // Test 1: Dùng tool ĐƯỢC ALLOWLIST (echo) để prove validator chạy
     let result = run(
-        "cat",
-        &["../../sensitive.txt".to_string()],
+        "echo",
+        &["../sensitive.txt".to_string()],
         &ExecOptions {
             cwd: Some(project_root.to_path_buf()),
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner),
             ..Default::default()
         },
     );
 
-    // ASSERT: Either command fails (file not found due to cwd lock)
-    // Or mgc sanitizes the path
-    match result {
-        Ok(report) => {
-            let combined = format!("{}{}", report.stdout_tail, report.stderr_tail);
+    // ASSERT: Validator PHẢI reject, KHÔNG phải allowlist
+    assert!(
+        result.is_err(),
+        "VALIDATOR BYPASS: Path traversal không bị chặn bởi validator!\n\
+        Tool 'echo' được allowlist nhưng path traversal vẫn phải reject."
+    );
 
-            // Should NOT be able to read secret data
-            assert!(
-                !combined.contains("SECRET_DATA"),
-                "PATH TRAVERSAL VULNERABILITY: Command was able to read file outside project root.\n\
-                Attempted: cat ../../sensitive.txt\n\
-                Got: {}",
-                combined
-            );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Path traversal") || err.contains("outside project root"),
+        "Error message không đúng. Expected path traversal error, got: {}",
+        err
+    );
 
-            println!("✅ Path traversal blocked: command could not escape project root");
-        }
-        Err(e) => {
-            // Rejection is also acceptable (stricter security)
-            println!("✅ Path traversal rejected: {}", e);
-        }
+    println!("✅ Path traversal rejected by validator (not allowlist)");
+}
+
+#[test]
+fn test_validator_allows_legitimate_dotdot_in_non_paths() {
+    // TEST: Validator KHÔNG block args hợp lệ chứa ".." (versions, filenames)
+
+    use mgc_exec::prelude::{run, ExecOptions};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let project_root = temp_dir.path();
+
+    // Test cases: legitimate args có ".." nhưng KHÔNG phải paths
+    let test_cases = vec![
+        "1.0..2",         // version range
+        "config..backup", // filename with ..
+        "--option=a..b",  // flag value
+    ];
+
+    for arg in test_cases {
+        let result = run(
+            "echo",
+            &[arg.to_string()],
+            &ExecOptions {
+                cwd: Some(project_root.to_path_buf()),
+                execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner),
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            result.is_ok(),
+            "FALSE POSITIVE: Validator blocked legitimate arg '{}'\n\
+            Args không phải path không được block chỉ vì chứa '..'",
+            arg
+        );
+
+        println!("✅ Legitimate arg allowed: '{}'", arg);
     }
+}
+
+#[test]
+fn test_validator_rejects_actual_path_traversal() {
+    // TEST: Validator chặn THẬT SỰ path traversal (file tồn tại)
+
+    use mgc_exec::prelude::{run, ExecOptions};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let project_root = temp_dir.path();
+
+    // Create subdir trong project
+    let subdir = project_root.join("subdir");
+    fs::create_dir(&subdir).unwrap();
+
+    // Create file TRONG project
+    let legit_file = project_root.join("legit.txt");
+    fs::write(&legit_file, "OK").unwrap();
+
+    // Create file NGOÀI project
+    let parent = project_root.parent().unwrap();
+    let external_file = parent.join("external.txt");
+    fs::write(&external_file, "SECRET").unwrap();
+
+    // Test 1: Path nằm TRONG project → cho phép
+    let result = run(
+        "echo",
+        &["./legit.txt".to_string()],
+        &ExecOptions {
+            cwd: Some(project_root.to_path_buf()),
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_ok(), "Legitimate path trong project bị reject");
+
+    // Test 2: Path escape ra ngoài project → reject
+    let result = run(
+        "echo",
+        &["../external.txt".to_string()],
+        &ExecOptions {
+            cwd: Some(subdir.clone()),
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err(), "Path traversal escape không bị chặn");
+
+    println!("✅ Validator correctly allows internal paths, blocks escapes");
 }

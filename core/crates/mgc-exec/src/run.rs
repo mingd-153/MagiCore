@@ -4,7 +4,7 @@
 use crate::allowlist::FORBIDDEN_TOOLS;
 use crate::audit::{append, now_ts, AuditEntry};
 use crate::sanitizer::redact_args;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -129,38 +129,110 @@ enum OutputMode {
 }
 
 /// Validate args không chứa path traversal patterns
-/// Returns Err nếu phát hiện pattern nguy hiểm
-fn validate_args_no_traversal(args: &[String]) -> Result<()> {
-    for arg in args {
-        // Check for .. trong path (parent directory traversal)
-        if arg.contains("..") {
-            bail!(
-                "Argument contains path traversal pattern: '{}'\n\
-                Path traversal (../) is not allowed for security.\n\
-                This prevents commands from accessing files outside the project directory.",
-                arg
-            );
+/// Validator path-aware: canonicalize paths relative to project_root, chặn escape
+/// Returns Err nếu phát hiện path escape khỏi project boundary
+fn validate_args_no_traversal(args: &[String], project_root: Option<&Path>) -> Result<()> {
+    // Nếu không có project_root, không thể validate paths → fail-closed
+    let root = match project_root {
+        Some(r) => r,
+        None => {
+            // Không có project_root → không thể verify path safety
+            // Chặn mọi arg có ".." hoặc absolute path (conservative)
+            for arg in args {
+                if arg.contains("..") || arg.starts_with('/') {
+                    #[cfg(windows)]
+                    if arg.len() >= 2 && arg.chars().nth(1) == Some(':') {
+                        bail!(
+                            "Path argument rejected without project_root context: '{}'\n\
+                            Cannot verify path safety without project boundary.",
+                            arg
+                        );
+                    }
+                    #[cfg(unix)]
+                    bail!(
+                        "Path argument rejected without project_root context: '{}'\n\
+                        Cannot verify path safety without project boundary.",
+                        arg
+                    );
+                }
+            }
+            return Ok(());
         }
+    };
 
-        // Check for absolute paths trying to escape project
-        // (Allow absolute paths within project in future, but reject for now)
-        #[cfg(unix)]
-        if arg.starts_with('/') && !arg.starts_with("/tmp") {
-            bail!(
-                "Absolute path argument rejected: '{}'\n\
-                Only relative paths within project directory are allowed.",
-                arg
-            );
-        }
+    // Canonicalize project root once
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize project root: {:?}", root))?;
+
+    for arg in args {
+        // Heuristic: arg là path nếu chứa path separator hoặc bắt đầu với . hoặc /
+        // Args khác (versions "1.0..2", flags "--option") không validate
+        let looks_like_path =
+            arg.contains('/') || arg.contains('\\') || arg.starts_with('.') || arg.starts_with('/');
 
         #[cfg(windows)]
-        if arg.len() >= 3 && arg.chars().nth(1) == Some(':') {
-            // Windows absolute path like C:\...
-            bail!(
-                "Absolute path argument rejected: '{}'\n\
-                Only relative paths within project directory are allowed.",
-                arg
-            );
+        let looks_like_path =
+            looks_like_path || (arg.len() >= 2 && arg.chars().nth(1) == Some(':'));
+
+        if !looks_like_path {
+            // Không phải path → skip (cho phép "1.0..2", "config..backup")
+            continue;
+        }
+
+        // Thử resolve path relative to project root
+        let resolved = if arg.starts_with('/') {
+            #[cfg(unix)]
+            {
+                // Absolute path Unix
+                PathBuf::from(arg)
+            }
+            #[cfg(windows)]
+            {
+                // Không bao giờ đến đây trên Windows (checked bên dưới)
+                PathBuf::from(arg)
+            }
+        } else {
+            // Relative path
+            canonical_root.join(arg)
+        };
+
+        // Canonicalize để resolve .. và symlinks
+        match resolved.canonicalize() {
+            Ok(canonical_arg) => {
+                // Check nếu canonical path nằm trong project root
+                if !canonical_arg.starts_with(&canonical_root) {
+                    bail!(
+                        "Path traversal detected: '{}' resolves to '{}' which is outside project root '{}'",
+                        arg,
+                        canonical_arg.display(),
+                        canonical_root.display()
+                    );
+                }
+            }
+            Err(_) => {
+                // File không tồn tại → không thể canonicalize
+                // Kiểm tra lexical: nếu có .. và có thể escape, reject
+                if arg.contains("..") {
+                    // Parse path và check số lượng .. có thể escape không
+                    let components: Vec<_> = Path::new(arg).components().collect();
+                    let mut depth = 0i32;
+                    for comp in components {
+                        match comp {
+                            std::path::Component::ParentDir => depth -= 1,
+                            std::path::Component::Normal(_) => depth += 1,
+                            _ => {}
+                        }
+                        if depth < 0 {
+                            bail!(
+                                "Path traversal pattern detected: '{}' attempts to escape project root.\n\
+                                Path contains '..' that would traverse above project boundary.",
+                                arg
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -173,7 +245,9 @@ fn execute_command(
     mode: OutputMode,
 ) -> Result<ExecReport> {
     // SECURITY: Validate args không chứa path traversal
-    validate_args_no_traversal(args)?;
+    // Pass project_root (from cwd) để validator có context
+    let project_root = opts.cwd.as_deref();
+    validate_args_no_traversal(args, project_root)?;
 
     // args REDACTED từ nguồn — console/report/audit không bao giờ chứa secret (§5.4)
     let safe_args = redact_args(args);
