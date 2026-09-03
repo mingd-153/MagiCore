@@ -241,6 +241,17 @@ async fn build_app(root: &Path) -> Result<()> {
         }
     }
 
+    // Load optimizer env for app runtime
+    let runtime = detect_app_runtime(root);
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
+    let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+    let env_opt = if env.is_empty() { None } else { Some(env) };
+
     let (tool, args): (&str, &[&str]) = match language {
         "kotlin" => ("gradle", &["build"]),
         "swift" => ("swift", &["build"]),
@@ -249,7 +260,7 @@ async fn build_app(root: &Path) -> Result<()> {
     if tool_unavailable(tool) {
         return Err(crate::error::build_toolchain_missing(tool));
     }
-    run_allowlisted_tool(root, tool, args)?;
+    run_allowlisted_tool_with_env(root, tool, args, env_opt)?;
     mgc_ui::success(&format!("App build completed ({language})"));
     Ok(())
 }
@@ -875,6 +886,16 @@ fn detect_lib_runtime(root: &Path) -> crate::commands::optimizer::runtime_detect
     } else {
         DetectedRuntime::Unknown
     }
+}
+
+/// Detect app runtime for optimizer env loading
+/// Phát hiện runtime ứng dụng để load env optimizer
+fn detect_app_runtime(root: &Path) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+    crate::commands::optimizer::runtime_detect::detect_runtimes(root, "app")
+        .first()
+        .cloned()
+        .unwrap_or(DetectedRuntime::Unknown)
 }
 
 /// Build Rust with optional RUSTFLAGS from optimizer
