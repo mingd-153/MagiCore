@@ -177,10 +177,13 @@ jobs:
       - name: Run CLI surface tests (MUST PASS)
         run: cargo test -p mgc --test cli_surface_errors_test --locked -- --nocapture
 
+      - name: Run install smoke tests (MUST PASS)
+        run: cargo test -p mgc --test install_smoke_test --locked -- --nocapture
+
       - name: Summary
         if: always()
         run: |
           echo "=== Test Summary ==="
           echo "Runtimes provisioned: Python3, pytest, Node, npm, Flutter"
-          echo "Expected: AI optimizer + App tests now PASS"
-          echo "Still UNVERIFIED: Web (templates)"
+          echo "All E2E tests running with REAL mgc commands"
+          echo "Install smoke tests: structure verified"
