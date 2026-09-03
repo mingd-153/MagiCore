@@ -143,8 +143,8 @@ jobs:
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
-          channel: 'stable'
+          flutter-version: "3.24.0"
+          channel: "stable"
           cache: true
 
       - name: Setup Python + Node runtimes
@@ -165,18 +165,16 @@ jobs:
       - name: Run security tests
         run: cargo test -p mgc --test test_runner_security --locked
 
-      - name: Run optimizer tests (All cores: Web, AI, Lib PASS; App VERIFIED with Flutter)
-        run: cargo test -p mgc --test optimizer_lifecycle_e2e --locked -- --nocapture || true
-        # Note: With Flutter, App optimizer test will PASS
+      - name: Run optimizer tests (MUST PASS - no || true)
+        run: cargo test -p mgc --test optimizer_lifecycle_e2e --locked -- --nocapture
 
-      - name: Run lifecycle tests
-        run: cargo test -p mgc --test full_lifecycle_e2e --locked -- --nocapture || true
-        # Note: Lib, AI PASS; App will PASS with Flutter; Web still needs templates
+      - name: Run lifecycle tests (MUST PASS - no || true)
+        run: cargo test -p mgc --test full_lifecycle_e2e --locked -- --nocapture
 
-      - name: Run cache stress tests
+      - name: Run cache stress tests (MUST PASS)
         run: cargo test -p mgc --test cache_stress_test --locked -- --nocapture
 
-      - name: Run CLI surface tests
+      - name: Run CLI surface tests (MUST PASS)
         run: cargo test -p mgc --test cli_surface_errors_test --locked -- --nocapture
 
       - name: Summary

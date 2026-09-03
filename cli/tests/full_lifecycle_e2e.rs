@@ -27,15 +27,14 @@ fn find_mgc_binary() -> String {
 
 #[test]
 fn test_web_full_lifecycle() {
-    // FULL E2E: web core - install → test
-    // REQUIRES: node, npm
-    // Uses minimal test project (no template fetch needed)
+    // REAL E2E: web core - MUST call mgc create-web
+    // NO manual package.json creation allowed
+    // REQUIRES: node, npm, templates provisioned
 
-    // Check Node available
     if Command::new("node").arg("--version").output().is_err() {
         panic!(
             "UNVERIFIED: node not available\n\
-            This test requires Node.js to verify Web full lifecycle.\n\
+            This test requires Node.js.\n\
             Status: IMPLEMENTED-UNVERIFIED"
         );
     }
@@ -43,38 +42,44 @@ fn test_web_full_lifecycle() {
     let temp = TempDir::new().unwrap();
     let project_name = "test-web-full";
     let project_path = temp.path().join(project_name);
-
-    // === STEP 1: CREATE minimal project ===
-    println!("\n=== STEP 1: Create minimal Next.js project ===");
-
-    std::fs::create_dir_all(&project_path).unwrap();
-
-    // Create minimal package.json
-    std::fs::write(
-        project_path.join("package.json"),
-        format!(
-            r#"{{
-  "name": "{}",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {{
-    "dev": "echo 'Dev server would start'",
-    "build": "echo 'Build would run'",
-    "test": "echo 'Tests would run' && exit 0"
-  }},
-  "dependencies": {{}}
-}}"#,
-            project_name
-        ),
-    )
-    .unwrap();
-
-    // Create .mgc.core
-    std::fs::write(project_path.join(".mgc.core"), "web\n").unwrap();
-
-    println!("✅ Minimal Web project created");
-
     let mgc = find_mgc_binary();
+
+    // === STEP 1: CREATE - MUST use real mgc create-web ===
+    println!("\n=== STEP 1: mgc create-web nextjs ===");
+    let create_output = Command::new(&mgc)
+        .arg("create-web")
+        .arg("nextjs")
+        .arg(project_name)
+        .current_dir(temp.path())
+        .output()
+        .expect("mgc create-web failed to execute");
+
+    // MUST succeed - no fallback
+    if !create_output.status.success() {
+        let stderr = String::from_utf8_lossy(&create_output.stderr);
+        panic!(
+            "CREATE FAILED - test blocked:\n{}\n\
+            Templates must be provisioned in CI or test registry.\n\
+            This test MUST call mgc create-web, not create files manually.",
+            stderr
+        );
+    }
+
+    assert!(project_path.exists(), "Project not created");
+    assert!(
+        project_path.join("package.json").exists(),
+        "package.json not created by scaffold"
+    );
+    assert!(
+        project_path.join(".mgc.core").exists(),
+        ".mgc.core not created by scaffold"
+    );
+
+    // Verify scaffold created proper structure
+    let core_content = std::fs::read_to_string(project_path.join(".mgc.core")).unwrap();
+    assert_eq!(core_content.trim(), "web");
+
+    println!("✅ CREATE verified: scaffold created project");
 
     // === STEP 2: INSTALL ===
     println!("\n=== STEP 2: mgc install ===");
@@ -82,27 +87,21 @@ fn test_web_full_lifecycle() {
         .arg("install")
         .current_dir(&project_path)
         .output()
-        .expect("mgc install failed to execute");
+        .expect("mgc install failed");
 
-    // Install should succeed (even with no real dependencies)
     if !install_output.status.success() {
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&install_output.stdout),
+        panic!(
+            "INSTALL FAILED:\n{}",
             String::from_utf8_lossy(&install_output.stderr)
         );
-        // If npm not working, that's expected without real Next.js setup
-        if combined.contains("npm") || combined.contains("node_modules") {
-            println!("⚠️  Install command works but needs real Next.js template");
-            println!("   Skipping remaining steps (would need template provisioning)");
-            println!("✅ Web lifecycle PARTIAL: install command verified");
-            return;
-        }
-        panic!("INSTALL FAILED:\n{}", combined);
     }
 
-    // node_modules may or may not exist (no real dependencies)
-    println!("✅ Install completed");
+    assert!(
+        project_path.join("node_modules").exists(),
+        "node_modules not created"
+    );
+
+    println!("✅ INSTALL verified");
 
     // === STEP 3: TEST ===
     println!("\n=== STEP 3: mgc test ===");
@@ -110,7 +109,14 @@ fn test_web_full_lifecycle() {
         .arg("test")
         .current_dir(&project_path)
         .output()
-        .expect("mgc test failed to execute");
+        .expect("mgc test failed");
+
+    if !test_output.status.success() {
+        panic!(
+            "TEST FAILED:\n{}",
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+    }
 
     let test_combined = format!(
         "{}{}",
@@ -118,28 +124,14 @@ fn test_web_full_lifecycle() {
         String::from_utf8_lossy(&test_output.stderr)
     );
 
-    // VERIFY: Test command executed
-    println!("Test output: {}", test_combined);
-
-    if test_output.status.success() {
-        println!("✅ Web full lifecycle VERIFIED: install → test");
-    } else {
-        println!("⚠️  Test step failed (expected without real template)");
-        println!("✅ Web lifecycle PARTIAL: install verified, test needs template");
-    }
-
-    // Verify npm/node invoked
     assert!(
-        test_combined.contains("npm")
-            || test_combined.contains("test")
-            || test_combined.contains("echo"),
-        "TEST did not invoke test command:\n{}",
+        test_combined.contains("npm") || test_combined.contains("test"),
+        "TEST did not invoke npm:\n{}",
         test_combined
     );
 
-    println!("✅ Web lifecycle VERIFIED (minimal): install + test commands work");
-    println!("   Full template validation needs real Next.js template");
-    // Skip build step - would need real Next.js setup
+    println!("✅ TEST verified");
+    println!("✅ Web FULL LIFECYCLE VERIFIED: create → install → test");
 }
 
 #[test]
@@ -226,28 +218,33 @@ fn test_lib_full_lifecycle() {
 
 #[test]
 fn test_ai_full_lifecycle() {
-    // FULL E2E: ai core - create → install → test
-    // REQUIRES: python3, pip (or uv)
-    // NOTE: pytest not required for install, only for test step
+    // REAL E2E: ai core - MUST call mgc create-ai
+    // MUST verify dependencies installed and pytest runs
+    // REQUIRES: python3, pip/uv, pytest
 
     if Command::new("python3").arg("--version").output().is_err() {
         panic!(
             "UNVERIFIED: python3 not available\n\
-            This test requires Python to verify AI lifecycle.\n\
             Status: IMPLEMENTED-UNVERIFIED"
         );
     }
 
-    // Check if pip or uv available (either works)
-    let has_pip = Command::new("pip").arg("--version").output().is_ok()
-        || Command::new("pip3").arg("--version").output().is_ok();
-    let has_uv = Command::new("uv").arg("--version").output().is_ok();
-
-    if !has_pip && !has_uv {
+    // pip/pip3 check
+    let has_pip = Command::new("pip3").arg("--version").output().is_ok()
+        || Command::new("pip").arg("--version").output().is_ok();
+    if !has_pip {
         panic!(
-            "UNVERIFIED: pip or uv not available\n\
-            This test requires pip or uv for dependency install.\n\
-            Install: pip (bundled with Python) or uv (cargo install uv)\n\
+            "UNVERIFIED: pip not available\n\
+            Status: IMPLEMENTED-UNVERIFIED"
+        );
+    }
+
+    // pytest REQUIRED for test step
+    if Command::new("pytest").arg("--version").output().is_err() {
+        panic!(
+            "UNVERIFIED: pytest not available\n\
+            AI test step requires pytest.\n\
+            Install: pip install pytest\n\
             Status: IMPLEMENTED-UNVERIFIED"
         );
     }
@@ -257,92 +254,75 @@ fn test_ai_full_lifecycle() {
     let project_path = temp.path().join(project_name);
     let mgc = find_mgc_binary();
 
-    // === STEP 1: CREATE ===
-    println!("\n=== STEP 1: mgc create-ai ===");
+    // === STEP 1: CREATE - MUST use real mgc create-ai ===
+    println!("\n=== STEP 1: mgc create-ai python-agent ===");
     let create_output = Command::new(&mgc)
         .arg("create-ai")
         .arg("python-agent")
         .arg(project_name)
         .current_dir(temp.path())
         .output()
-        .expect("mgc create-ai failed to execute");
+        .expect("mgc create-ai failed");
 
-    assert!(
-        create_output.status.success(),
-        "CREATE FAILED:\n{}",
-        String::from_utf8_lossy(&create_output.stderr)
-    );
-    assert!(project_path.exists(), "Project directory not created");
+    if !create_output.status.success() {
+        panic!(
+            "CREATE FAILED:\n{}",
+            String::from_utf8_lossy(&create_output.stderr)
+        );
+    }
+
+    assert!(project_path.exists(), "Project not created");
     assert!(
         project_path.join("pyproject.toml").exists(),
-        "pyproject.toml not created"
+        "pyproject.toml not created by scaffold"
     );
 
-    // VERIFY: .mgc.core file
     let core_content = std::fs::read_to_string(project_path.join(".mgc.core")).unwrap();
-    assert_eq!(core_content.trim(), "ai", ".mgc.core should contain 'ai'");
+    assert_eq!(core_content.trim(), "ai");
 
-    // === STEP 2: INSTALL ===
-    println!("\n=== STEP 2: mgc install (AI dependencies) ===");
+    println!("✅ CREATE verified: scaffold created project");
 
-    // AI install needs either uv.lock or requirements.lock
-    // If template doesn't create lock, create minimal one for test
-    if !project_path.join("uv.lock").exists() && !project_path.join("requirements.lock").exists() {
-        println!("Creating minimal requirements.lock for test");
-        std::fs::write(
-            project_path.join("requirements.lock"),
-            "# Minimal lock for test\n",
-        )
-        .unwrap();
+    // === STEP 2: INSTALL - MUST NOT create fake lockfile ===
+    println!("\n=== STEP 2: mgc install ===");
+
+    // Scaffold MUST create lockfile - if missing, test blocks
+    if !project_path.join("requirements.lock").exists() && !project_path.join("uv.lock").exists() {
+        panic!(
+            "BLOCKED: Scaffold did not create lockfile\n\
+            requirements.lock or uv.lock must exist after create-ai.\n\
+            Test cannot proceed without real lockfile."
+        );
     }
 
     let install_output = Command::new(&mgc)
         .arg("install")
         .current_dir(&project_path)
         .output()
-        .expect("mgc install failed to execute");
+        .expect("mgc install failed");
 
-    let install_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&install_output.stdout),
-        String::from_utf8_lossy(&install_output.stderr)
-    );
-
-    // VERIFY: install completed (accept either success or "no packages" case)
     if !install_output.status.success() {
-        // If install failed, check if it's because template is incomplete
-        if install_combined.contains("no lockfile") || install_combined.contains("not found") {
-            println!("⚠️  AI template incomplete - lockfile missing");
-            println!("   This is expected if templates not provisioned");
-            println!("   Skipping install/test steps");
-            println!("✅ AI lifecycle PARTIAL: create verified, install needs template");
-            return;
-        }
         panic!(
-            "INSTALL FAILED:\n{}\n\
-            This indicates mgc install command has issues.",
-            install_combined
+            "INSTALL FAILED:\n{}",
+            String::from_utf8_lossy(&install_output.stderr)
         );
     }
 
-    println!("Install output: {}", install_combined);
+    println!("✅ INSTALL verified");
 
-    // === STEP 3: TEST (if pytest available) ===
-    println!("\n=== STEP 3: mgc test (optional - needs pytest) ===");
-
-    if Command::new("pytest").arg("--version").output().is_err() {
-        println!("⚠️  pytest not available - skipping test step");
-        println!("✅ AI lifecycle VERIFIED: create → install");
-        println!("   Full test requires pytest (see optimizer_lifecycle_e2e.rs)");
-        return;
-    }
-
-    // If pytest available, try running tests
+    // === STEP 3: TEST - MUST run pytest ===
+    println!("\n=== STEP 3: mgc test ===");
     let test_output = Command::new(&mgc)
         .arg("test")
         .current_dir(&project_path)
         .output()
-        .expect("mgc test failed to execute");
+        .expect("mgc test failed");
+
+    if !test_output.status.success() {
+        panic!(
+            "TEST FAILED:\n{}",
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+    }
 
     let test_combined = format!(
         "{}{}",
@@ -350,15 +330,15 @@ fn test_ai_full_lifecycle() {
         String::from_utf8_lossy(&test_output.stderr)
     );
 
-    println!("Test output: {}", test_combined);
+    // MUST invoke pytest
+    assert!(
+        test_combined.contains("pytest") || test_combined.contains("test"),
+        "TEST did not invoke pytest:\n{}",
+        test_combined
+    );
 
-    // Test step is optional - templates might not have tests yet
-    if test_output.status.success() {
-        println!("✅ AI full lifecycle VERIFIED: create → install → test");
-    } else {
-        println!("⚠️  Test step failed (template might lack tests)");
-        println!("✅ AI lifecycle VERIFIED: create → install (test needs template work)");
-    }
+    println!("✅ TEST verified: pytest ran");
+    println!("✅ AI FULL LIFECYCLE VERIFIED: create → install → test");
 }
 
 #[test]
