@@ -81,7 +81,7 @@ notify = { workspace = true }
 esbuild-rs = { workspace = true }
 glob = { workspace = true }
 mime_guess = { workspace = true }
-lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
+lightningcss = { version = "1.0.0-alpha.72", features = ["serde"] }
 futures-util = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }
