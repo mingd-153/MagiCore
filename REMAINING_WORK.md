@@ -14,15 +14,13 @@ Current blockers documented here.
 
 **Action**: Push branch, run CI, verify pytest tests pass
 
-### 2. Flutter Provisioning ❌ TODO
-**Status**: Not started  
-**Blocker**: App optimizer + lifecycle tests panic without Flutter  
-**Options**:
-1. Add Flutter to CI matrix (official action exists)
-2. Mock Flutter adapter for tests
-3. Mark App tests as #[ignore] until Flutter provisioned
+### 2. Flutter Provisioning ✅ DONE
+**Status**: Added to CI matrix  
+**Implementation**: subosito/flutter-action@v2 in .github/workflows/ci.yml  
+**What**: Flutter 3.24.0 stable installed on ubuntu + macos  
+**Expected**: App optimizer + lifecycle tests will PASS in CI
 
-**Action**: Research Flutter GitHub Actions, add to matrix
+**Action**: Test in CI after push
 
 ### 3. Template Provisioning ❌ TODO
 **Status**: Not started  
