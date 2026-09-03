@@ -1,0 +1,6 @@
+[template]
+name = "base"
+
+[[files]]
+source = "README.md"
+target = "README-base.md"

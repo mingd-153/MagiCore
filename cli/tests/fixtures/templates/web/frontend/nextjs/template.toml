@@ -1,0 +1,9 @@
+[template]
+core = "web"
+name = "nextjs"
+version = "14.0.0"
+description = "Next.js test fixture"
+
+[scaffold]
+framework = "nextjs"
+mode = "frontend"

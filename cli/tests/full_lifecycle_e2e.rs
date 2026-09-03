@@ -44,13 +44,19 @@ fn test_web_full_lifecycle() {
     let project_path = temp.path().join(project_name);
     let mgc = find_mgc_binary();
 
-    // === STEP 1: CREATE - MUST use real mgc create-web ===
+    // Set test fixtures as template directory
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let fixtures_templates =
+        std::path::PathBuf::from(&manifest_dir).join("tests/fixtures/templates");
+
+    // === STEP 1: CREATE (REAL mgc create-web call) ===
     println!("\n=== STEP 1: mgc create-web nextjs ===");
     let create_output = Command::new(&mgc)
         .arg("create-web")
         .arg("nextjs")
         .arg(project_name)
         .current_dir(temp.path())
+        .env("MAGICORE_TEMPLATE_DIR", &fixtures_templates)
         .output()
         .expect("mgc create-web failed to execute");
 
@@ -254,6 +260,11 @@ fn test_ai_full_lifecycle() {
     let project_path = temp.path().join(project_name);
     let mgc = find_mgc_binary();
 
+    // Set test fixtures as template directory
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let fixtures_templates =
+        std::path::PathBuf::from(&manifest_dir).join("tests/fixtures/templates");
+
     // === STEP 1: CREATE - MUST use real mgc create-ai ===
     println!("\n=== STEP 1: mgc create-ai python-agent ===");
     let create_output = Command::new(&mgc)
@@ -261,6 +272,7 @@ fn test_ai_full_lifecycle() {
         .arg("python-agent")
         .arg(project_name)
         .current_dir(temp.path())
+        .env("MAGICORE_TEMPLATE_DIR", &fixtures_templates)
         .output()
         .expect("mgc create-ai failed");
 

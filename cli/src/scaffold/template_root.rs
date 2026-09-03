@@ -20,7 +20,7 @@ impl TemplateRoot {
     pub fn resolve(rel: &str) -> TemplateRoot {
         // 1. Dev override env var (tests, local dev)
         if let Ok(dir) = env::var("MAGICORE_TEMPLATE_DIR") {
-            let candidate = PathBuf::from(dir).join(rel);
+            let candidate = PathBuf::from(&dir).join(rel);
             if candidate.is_dir() {
                 return TemplateRoot::disk(candidate);
             }

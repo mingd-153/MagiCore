@@ -1,0 +1,12 @@
+[layer]
+core = "web"
+category = "frontend"
+name = "nextjs"
+description = "Next.js test template"
+version = "14.0.0"
+
+[files]
+"package.json.hbs" = { render = "package.json" }
+"tsconfig.json" = { copy = true }
+"next.config.js" = { copy = true }
+"README.md" = { copy = true }

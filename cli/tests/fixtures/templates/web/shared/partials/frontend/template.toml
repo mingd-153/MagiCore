@@ -1,0 +1,6 @@
+[template]
+name = "frontend"
+
+[[files]]
+source = "README.md"
+target = "README-frontend.md"
