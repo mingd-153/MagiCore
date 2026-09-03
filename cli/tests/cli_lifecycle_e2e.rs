@@ -128,14 +128,22 @@ fn test_lib_rust_lifecycle_create_build() {
 
     println!("=== mgc build ===\n{}", build_combined);
 
-    // Build might fail due to missing dependencies, but should at least try cargo
+    // ASSERT: Build should succeed (exit code 0)
+    assert!(
+        build_output.status.success(),
+        "mgc build failed (exit code: {:?}):\n{}",
+        build_output.status.code(),
+        build_combined
+    );
+
+    // VERIFY: Build invoked cargo and compiled
     assert!(
         build_combined.contains("cargo") || build_combined.contains("Compiling"),
         "mgc build did not invoke cargo:\n{}",
         build_combined
     );
 
-    println!("✅ Lib (Rust) lifecycle: create + build verified");
+    println!("✅ Lib (Rust) lifecycle: create + build (exit success) verified");
 }
 
 #[test]
@@ -185,11 +193,16 @@ fn test_ai_lifecycle_create_only() {
 #[test]
 fn test_app_lifecycle_create_only() {
     // MINIMAL E2E: Test mgc create for app core
+    // REQUIRES: flutter installed
 
     // Check if flutter available
     if Command::new("flutter").arg("--version").output().is_err() {
-        eprintln!("SKIP: flutter not available");
-        return;
+        panic!(
+            "UNVERIFIED: flutter not available\n\
+            This test requires Flutter SDK to verify App lifecycle.\n\
+            Install Flutter or provision in CI matrix.\n\
+            Status: IMPLEMENTED-UNVERIFIED (not PASS)"
+        );
     }
 
     let temp = TempDir::new().unwrap();

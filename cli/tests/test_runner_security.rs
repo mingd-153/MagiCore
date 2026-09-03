@@ -260,6 +260,8 @@ fn test_shell_injection_prevented() {
 #[test]
 fn test_audit_log_records_execution() {
     // TEST: All tool executions should be logged to audit trail
+    // NOTE: Audit logging not yet fully implemented - test documents requirement
+
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = create_node_project(&temp_dir);
 
@@ -269,30 +271,42 @@ fn test_audit_log_records_execution() {
         .output()
         .is_err()
     {
-        eprintln!("SKIP: npm not available");
-        return;
+        panic!(
+            "UNVERIFIED: npm not available\n\
+            This test requires npm to verify audit logging.\n\
+            Install Node.js/npm or provision in CI matrix.\n\
+            Status: IMPLEMENTED-UNVERIFIED"
+        );
     }
 
     // Run: mgc test
-    let _output = run_mgc(&["test"], Some(&project_root));
+    let output = run_mgc(&["test"], Some(&project_root));
 
-    // ASSERT: Audit log should exist (check common locations)
-    let mut possible_log_paths = vec![
-        project_root.join(".mgc").join("audit.log"),
-        project_root.join("mgc-audit.log"),
-    ];
-    if let Some(home) = dirs::home_dir() {
-        possible_log_paths.push(home.join(".magicore").join("audit.log"));
-    }
+    // ASSERT: Command should succeed
+    assert!(
+        output.status.success(),
+        "mgc test failed (required for audit log test):\n{:?}",
+        output
+    );
 
-    let log_exists = possible_log_paths.iter().any(|p| p.exists());
+    // ASSERT: Audit log implementation
+    // TODO: When audit logging is implemented, check:
+    // 1. Log file exists at expected location
+    // 2. Contains entry for this execution
+    // 3. Includes: timestamp, command, args (redacted), exit code
 
-    // NOTE: This is a placeholder check; actual audit log implementation may vary
-    if !log_exists {
-        eprintln!(
-            "WARNING: No audit log found at expected locations. Audit logging may not be implemented yet."
-        );
-    }
+    // For now: Document requirement clearly
+    println!("⚠️  AUDIT LOG: Not yet implemented");
+    println!("    Required: Log all tool executions");
+    println!("    Format: timestamp, command, redacted args, exit code");
+    println!("    Location: TBD (.mgc-audit/ or system audit trail)");
+
+    // Fail test to mark as UNVERIFIED until implemented
+    panic!(
+        "UNVERIFIED: Audit logging not yet implemented\n\
+        This test will pass when audit log infrastructure exists.\n\
+        Status: FEATURE-INCOMPLETE (not PASS)"
+    );
 }
 
 #[test]

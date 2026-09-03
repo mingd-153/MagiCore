@@ -200,20 +200,29 @@ rustflags = ["-C", "opt-level=2", "--cfg", "mgc_lib_optimized"]
 #[test]
 fn test_ai_python_mgc_test_with_optimizer() {
     // REAL E2E: mgc test (ai/python) → verify child pytest receives optimizer env
+    // REQUIRES: python3 + pytest installed
 
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
     // Check python available
     if Command::new("python3").arg("--version").output().is_err() {
-        eprintln!("SKIP: python3 not available");
-        return;
+        panic!(
+            "UNVERIFIED: python3 not available\n\
+            This test requires python3 to verify AI optimizer.\n\
+            Install python3 or provision in CI matrix.\n\
+            Status: IMPLEMENTED-UNVERIFIED (not PASS)"
+        );
     }
 
     // Check pytest available
     if Command::new("pytest").arg("--version").output().is_err() {
-        eprintln!("SKIP: pytest not available (install: pip install pytest)");
-        return;
+        panic!(
+            "UNVERIFIED: pytest not available\n\
+            This test requires pytest to verify AI optimizer.\n\
+            Install: pip install pytest, or provision in CI matrix.\n\
+            Status: IMPLEMENTED-UNVERIFIED (not PASS)"
+        );
     }
 
     // Create Python project with pyproject.toml
@@ -301,14 +310,19 @@ if __name__ == '__main__':
 #[test]
 fn test_app_flutter_mgc_build_with_optimizer() {
     // REAL E2E: mgc build (app/flutter) → verify child flutter receives optimizer env
+    // REQUIRES: flutter installed
 
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
     // Check flutter available
     if Command::new("flutter").arg("--version").output().is_err() {
-        eprintln!("SKIP: flutter not available");
-        return;
+        panic!(
+            "UNVERIFIED: flutter not available\n\
+            This test requires Flutter SDK to verify App optimizer.\n\
+            Install Flutter or provision in CI matrix.\n\
+            Status: IMPLEMENTED-UNVERIFIED (not PASS)"
+        );
     }
 
     // Create minimal Flutter project
@@ -360,16 +374,29 @@ void main() {
 
     println!("=== mgc build output ===\n{}", combined);
 
-    // VERIFY: mgc loaded optimizer config and attempted flutter build
-    // (Full Flutter build may fail without complete project structure,
-    // but we verify optimizer loading happened)
+    // VERIFY: mgc loaded optimizer config AND command succeeded
+    // Check 1: Optimizer loaded
+    let optimizer_loaded = combined.contains("Loaded") && combined.contains("optimizer");
+
+    // Check 2: Exit code success (không chỉ log)
+    let build_succeeded = output.status.success();
+
     assert!(
-        combined.contains("Loaded") && combined.contains("optimizer"),
+        optimizer_loaded,
         "INTEGRATION FAILED: mgc build did not load Flutter optimizer config.\n\
         Expected: Log showing optimizer config loaded\n\
         Got: {}",
         combined
     );
 
-    println!("✅ App (Flutter) mgc build optimizer loading verified");
+    assert!(
+        build_succeeded,
+        "INTEGRATION FAILED: mgc build exited with error.\n\
+        Exit code: {:?}\n\
+        Output: {}",
+        output.status.code(),
+        combined
+    );
+
+    println!("✅ App (Flutter) mgc build → optimizer loaded + build succeeded");
 }
