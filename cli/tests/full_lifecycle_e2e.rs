@@ -89,17 +89,82 @@ fn test_web_full_lifecycle() {
 
     println!("✅ CREATE verified: scaffold created project");
 
-    // === STEP 2: INSTALL (vanilla has no dependencies - skip) ===
-    println!("\n=== STEP 2: mgc install (vanilla - no deps) ===");
-    // Vanilla doesn't need npm install
-    println!("✅ INSTALL verified (vanilla has no dependencies)");
+    // === STEP 2: INSTALL ===
+    println!("\n=== STEP 2: mgc install ===");
+    
+    // Check npm available - REQUIRED
+    if Command::new("npm").arg("--version").output().is_err() {
+        panic!("TEST FAILED: npm not available (required for web full lifecycle test)");
+    }
 
-    // === STEP 3: TEST (vanilla has no test command - skip) ===
-    println!("\n=== STEP 3: mgc test (vanilla - no tests) ===");
-    // Vanilla doesn't have tests
-    println!("✅ TEST verified (vanilla has no tests)");
+    // Create package.json with real dependencies
+    std::fs::write(
+        project_path.join("package.json"),
+        r#"{
+                "name": "test-web-full",
+                "version": "1.0.0",
+                "scripts": {
+                    "test": "echo \"Test passed\" && exit 0"
+                },
+                "dependencies": {
+                    "lodash": "^4.17.21"
+                }
+        }"#,
+    )
+    .unwrap();
 
-    println!("✅ Web FULL LIFECYCLE VERIFIED: create (vanilla embedded)");
+    let install_output = Command::new(&mgc)
+        .arg("install")
+        .current_dir(&project_path)
+        .output()
+        .expect("Failed to run mgc install");
+
+    if !install_output.status.success() {
+        panic!(
+            "mgc install failed:\n{}",
+            String::from_utf8_lossy(&install_output.stderr)
+        );
+    }
+
+    // Verify node_modules created
+    assert!(
+        project_path.join("node_modules").exists(),
+        "node_modules not created"
+    );
+
+    // Verify mgc.lock created
+    assert!(
+        project_path.join("mgc.lock").exists(),
+        "mgc.lock not created"
+    );
+
+    println!("✅ INSTALL verified: dependencies installed + lockfile created");
+
+    // === STEP 3: TEST ===
+    println!("\n=== STEP 3: mgc test ===");
+
+    let test_output = Command::new(&mgc)
+        .arg("test")
+        .current_dir(&project_path)
+        .output()
+        .expect("Failed to run mgc test");
+
+    if !test_output.status.success() {
+        panic!(
+            "mgc test failed:\n{}",
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+    }
+
+    let test_stdout = String::from_utf8_lossy(&test_output.stdout);
+    assert!(
+        test_stdout.contains("Test passed"),
+        "Test did not produce expected output"
+    );
+
+    println!("✅ TEST verified: test command executed successfully");
+
+    println!("✅ Web FULL LIFECYCLE VERIFIED: create → install → test");
 }
 
 #[test]
@@ -208,13 +273,8 @@ fn test_ai_full_lifecycle() {
     }
 
     // pytest REQUIRED for test step
-    // Check pytest available - skip test if missing
     if Command::new("pytest").arg("--version").output().is_err() {
-        eprintln!("⚠️  SKIPPED: pytest not available");
-        eprintln!("   AI test step requires pytest.");
-        eprintln!("   Install: pip install pytest");
-        eprintln!("   Status: SKIPPED");
-        return;
+        panic!("TEST FAILED: pytest not available (required for AI full lifecycle test). Install: pip install pytest");
     }
 
     let temp = TempDir::new().unwrap();
@@ -326,16 +386,13 @@ fn test_ai_full_lifecycle() {
 
 #[test]
 fn test_app_full_lifecycle_limited() {
-    // LIMITED E2E: app core - create → verify structure
+    // PARTIAL E2E: app core - create → verify structure
     // Full test (build → test) requires Flutter SDK
     // REQUIRES: flutter
 
-    // Check flutter available - skip test if missing
+    // Check flutter available - REQUIRED
     if Command::new("flutter").arg("--version").output().is_err() {
-        eprintln!("⚠️  SKIPPED: flutter not available");
-        eprintln!("   This test requires Flutter SDK to verify App lifecycle.");
-        eprintln!("   Status: SKIPPED");
-        return;
+        panic!("TEST FAILED: flutter not available (required for App full lifecycle test). Install Flutter SDK");
     }
 
     let temp = TempDir::new().unwrap();

@@ -30,8 +30,7 @@ fn test_web_node_mgc_test_with_optimizer() {
 
     // Check npm available
     if Command::new("npm").arg("--version").output().is_err() {
-        eprintln!("SKIP: npm not available");
-        return;
+        panic!("TEST FAILED: npm not available (required for web optimizer test)");
     }
 
     // Create Node.js test project
@@ -208,21 +207,14 @@ fn test_ai_python_mgc_test_with_optimizer() {
     let project = temp.path();
 
     // Check python available
-    // Check python3 available - skip test if missing
+    // Check python3 available - REQUIRED for test
     if Command::new("python3").arg("--version").output().is_err() {
-        eprintln!("⚠️  SKIPPED: python3 not available");
-        eprintln!("   This test requires python3 to verify AI optimizer.");
-        eprintln!("   Status: SKIPPED (not FAIL)");
-        return;
+        panic!("TEST FAILED: python3 not available (required for AI optimizer test)");
     }
 
-    // Check pytest available - skip test if missing (CI should have it)
+    // Check pytest available - REQUIRED (CI should have it)
     if Command::new("pytest").arg("--version").output().is_err() {
-        eprintln!("⚠️  SKIPPED: pytest not available");
-        eprintln!("   This test requires pytest to verify AI optimizer.");
-        eprintln!("   Install: pip install pytest, or provision in CI matrix.");
-        eprintln!("   Status: SKIPPED (not FAIL)");
-        return; // Skip test gracefully
+        panic!("TEST FAILED: pytest not available (required for AI optimizer test). Install: pip install pytest");
     }
 
     // Create Python project with pyproject.toml
@@ -345,13 +337,9 @@ fn test_app_flutter_mgc_build_with_optimizer() {
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
-    // Check flutter available - skip test if missing
+    // Check flutter available - REQUIRED for test
     if Command::new("flutter").arg("--version").output().is_err() {
-        eprintln!("⚠️  SKIPPED: flutter not available");
-        eprintln!("   This test requires Flutter SDK to verify App optimizer.");
-        eprintln!("   Install Flutter or provision in CI matrix.");
-        eprintln!("   Status: SKIPPED (not FAIL)");
-        return;
+        panic!("TEST FAILED: flutter not available (required for App optimizer test). Install Flutter SDK or provision in CI");
     }
 
     // Create minimal Flutter project
