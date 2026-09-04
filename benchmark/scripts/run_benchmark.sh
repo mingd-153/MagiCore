@@ -5,11 +5,18 @@
 
 set -euo pipefail
 
+# Get script directory for relative paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BENCHMARK_ROOT="$(dirname "$SCRIPT_DIR")"
+
 PM_NAME="${1:-mgc}"
 RUN_NUM="${2:-1}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_DIR="/benchmark/results"
-PACKAGE_JSON="/benchmark/env/package.json"
+RESULTS_DIR="$BENCHMARK_ROOT/results"
+PACKAGE_JSON="${PACKAGE_JSON:-$BENCHMARK_ROOT/env/package.json}"
+
+# Find mgc binary
+MGC_BIN=$(which mgc 2>/dev/null || echo "/opt/homebrew/bin/mgc")
 
 # Colors for output
 RED='\033[0;31m'
@@ -25,11 +32,11 @@ echo ""
 echo -e "${YELLOW}[1/6] Collecting machine spec...${NC}"
 MACHINE_SPEC=$(cat <<EOF
 {
-  "cpu": "$(lscpu | grep 'Model name' | sed 's/Model name: *//' | xargs)",
-  "cores": $(nproc),
-  "memory_gb": $(free -g | awk '/^Mem:/{print $2}'),
+  "cpu": "$(if command -v lscpu &> /dev/null; then lscpu | grep 'Model name' | sed 's/Model name: *//' | xargs; else sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Unknown CPU'; fi)",
+  "cores": $(if command -v nproc &> /dev/null; then nproc; else sysctl -n hw.ncpu 2>/dev/null || echo 0; fi),
+  "memory_gb": $(if command -v free &> /dev/null; then free -g | awk '/^Mem:/{print $2}'; else echo $(($(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024)); fi),
   "os": "$(uname -s) $(uname -r)",
-  "node_version": "$(node --version)",
+  "node_version": "$(node --version 2>/dev/null || echo 'N/A')",
   "timestamp": "$TIMESTAMP"
 }
 EOF
@@ -67,20 +74,36 @@ sleep 2
 # Run benchmark (cold install)
 echo -e "${YELLOW}[4/6] Running COLD install with $PM_NAME...${NC}"
 START_TIME=$(date +%s.%N)
-START_MEMORY=$(free -m | awk '/^Mem:/{print $3}')
+START_MEMORY=$(if command -v free &> /dev/null; then free -m | awk '/^Mem:/{print $3}'; else echo 0; fi)
 
 case "$PM_NAME" in
   mgc)
-    /usr/bin/time -v /benchmark/mgc install > install.log 2>&1 || true
+    if command -v gtime &> /dev/null; then
+      gtime -v "$MGC_BIN" install > install.log 2>&1 || true
+    else
+      "$MGC_BIN" install > install.log 2>&1 || true
+    fi
     ;;
   pnpm)
-    /usr/bin/time -v pnpm install > install.log 2>&1 || true
+    if command -v gtime &> /dev/null; then
+      gtime -v pnpm install > install.log 2>&1 || true
+    else
+      pnpm install > install.log 2>&1 || true
+    fi
     ;;
   bun)
-    /usr/bin/time -v bun install > install.log 2>&1 || true
+    if command -v gtime &> /dev/null; then
+      gtime -v bun install > install.log 2>&1 || true
+    else
+      bun install > install.log 2>&1 || true
+    fi
     ;;
   npm)
-    /usr/bin/time -v npm install > install.log 2>&1 || true
+    if command -v gtime &> /dev/null; then
+      gtime -v npm install > install.log 2>&1 || true
+    else
+      npm install > install.log 2>&1 || true
+    fi
     ;;
   *)
     echo -e "${RED}Unknown PM: $PM_NAME${NC}"
@@ -89,7 +112,7 @@ case "$PM_NAME" in
 esac
 
 END_TIME=$(date +%s.%N)
-END_MEMORY=$(free -m | awk '/^Mem:/{print $3}')
+END_MEMORY=$(if command -v free &> /dev/null; then free -m | awk '/^Mem:/{print $3}'; else echo 0; fi)
 
 # Calculate metrics
 DURATION=$(echo "$END_TIME - $START_TIME" | bc)
@@ -110,7 +133,7 @@ sleep 1
 WARM_START=$(date +%s.%N)
 case "$PM_NAME" in
   mgc)
-    /benchmark/mgc install > install_warm.log 2>&1 || true
+    "$MGC_BIN" install > install_warm.log 2>&1 || true
     ;;
   pnpm)
     pnpm install > install_warm.log 2>&1 || true

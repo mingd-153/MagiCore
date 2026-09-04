@@ -91,7 +91,7 @@ fn test_web_full_lifecycle() {
 
     // === STEP 2: INSTALL ===
     println!("\n=== STEP 2: mgc install ===");
-    
+
     // Check npm available - REQUIRED
     if Command::new("npm").arg("--version").output().is_err() {
         panic!("TEST FAILED: npm not available (required for web full lifecycle test)");

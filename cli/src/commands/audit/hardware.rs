@@ -29,7 +29,9 @@ pub async fn audit() -> Result<()> {
                 );
             } else {
                 eprintln!("  Status: UNVERIFIED (pass with warning)");
-                eprintln!("  Set MGC_AUDIT_STRICT=1 to fail on unavailable scanner (recommended for CI)");
+                eprintln!(
+                    "  Set MGC_AUDIT_STRICT=1 to fail on unavailable scanner (recommended for CI)"
+                );
                 return Ok(());
             }
         }

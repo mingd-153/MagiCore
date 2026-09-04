@@ -175,10 +175,10 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                     // Call REAL install command
                     match crate::commands::install::run(
                         packages.clone(),
-                        None,  // core: detect from project
-                        false, // ignore_scripts
-                        true,  // allow_scripts (default)
-                        false, // offline
+                        None,   // core: detect from project
+                        false,  // ignore_scripts
+                        true,   // allow_scripts (default)
+                        false,  // offline
                         frozen, // frozen mode (CI): fail if lockfile needs update
                     )
                     .await

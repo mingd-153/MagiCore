@@ -125,7 +125,11 @@ fn test_10_concurrent_installs() {
         successful
     );
 
-    println!("✅ 10 concurrent installs: {}% success rate ({}/ 10)", (successful * 100) / 10, successful);
+    println!(
+        "✅ 10 concurrent installs: {}% success rate ({}/ 10)",
+        (successful * 100) / 10,
+        successful
+    );
 }
 
 #[test]

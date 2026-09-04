@@ -19,8 +19,8 @@ class Magicore < Formula
   # Test: scripts/update-release-hashes.sh --artifacts <dir> (see packaging/README.md)
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-macOS-ARM64.tar.gz"
-      sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-1.1.0-rc.1-macos-aarch64.tar.gz"
+      sha256 "9b7593fee3317aea2867075fe17082b427f70213fc135e88f7a0b35ccb8b6e93"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-macOS-X64.tar.gz"
       sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"

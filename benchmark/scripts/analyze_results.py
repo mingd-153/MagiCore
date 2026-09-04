@@ -34,12 +34,26 @@ def extract_metrics(results: List[Dict]) -> Dict[str, List[float]]:
     }
 
     for result in results:
-        if 'cold_time_sec' in result:
-            metrics['cold_time'].append(result['cold_time_sec'])
-        if 'warm_time_sec' in result:
-            metrics['warm_time'].append(result['warm_time_sec'])
-        if 'disk_mb' in result:
-            metrics['disk_mb'].append(result['disk_mb'])
+        try:
+            # Handle nested JSON structure
+            if 'cold_install' in result:
+                if 'duration_seconds' in result['cold_install']:
+                    metrics['cold_time'].append(float(result['cold_install']['duration_seconds']))
+                if 'disk_mb' in result['cold_install']:
+                    metrics['disk_mb'].append(float(result['cold_install']['disk_mb']))
+            if 'warm_install' in result and 'duration_seconds' in result['warm_install']:
+                metrics['warm_time'].append(float(result['warm_install']['duration_seconds']))
+
+            # Fallback for old flat structure
+            if 'cold_time_sec' in result:
+                metrics['cold_time'].append(float(result['cold_time_sec']))
+            if 'warm_time_sec' in result:
+                metrics['warm_time'].append(float(result['warm_time_sec']))
+            if 'disk_mb' in result and not ('cold_install' in result):
+                metrics['disk_mb'].append(float(result['disk_mb']))
+        except (ValueError, TypeError) as e:
+            # Skip malformed values
+            continue
 
     return metrics
 

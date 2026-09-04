@@ -1,0 +1,12 @@
+{
+  "name": "benchmark-small",
+  "version": "1.0.0",
+  "description": "Small workload for quick validation (5 packages)",
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "next": "^14.2.0",
+    "typescript": "^5.5.0",
+    "lodash": "^4.17.21"
+  }
+}
