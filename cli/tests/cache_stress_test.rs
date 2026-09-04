@@ -122,10 +122,7 @@ fn test_cache_cold_vs_warm() {
             eprintln!("   Status: SKIPPED (not FAIL)");
             return;
         }
-        panic!(
-            "Cold install failed:\n{}",
-            stderr
-        );
+        panic!("Cold install failed:\n{}", stderr);
     }
 
     println!("Cold cache install: {:?}", cold_duration);
@@ -199,17 +196,17 @@ fn test_corrupted_cache_recovery() {
     // Accept transient cache corruption errors from parallel test runs
     if !output1.status.success() {
         let stderr = String::from_utf8_lossy(&output1.stderr);
-        if stderr.contains("No such file") || stderr.contains("reflink failed") || stderr.contains("Directory not empty") {
+        if stderr.contains("No such file")
+            || stderr.contains("reflink failed")
+            || stderr.contains("Directory not empty")
+        {
             eprintln!("⚠️  SKIPPED: Cache corruption from parallel tests");
             eprintln!("   System cache may be corrupted by concurrent test runs");
             eprintln!("   This is a known issue with shared cache across tests");
             eprintln!("   Status: SKIPPED (not FAIL)");
             return;
         }
-        panic!(
-            "Initial install failed:\n{}",
-            stderr
-        );
+        panic!("Initial install failed:\n{}", stderr);
     }
 
     // Web adapter may not always create MGC_CACHE_DIR (npm has its own cache)
