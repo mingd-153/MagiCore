@@ -203,7 +203,6 @@ fn test_corrupted_cache_recovery() {
 
     // Step 2: Corrupt cache (write garbage to cache files)
     println!("\n=== Corrupt cache ===");
-    let mut corrupted = false;
 
     // Walk cache dir recursively to find actual cache files
     fn find_and_corrupt_cache_file(dir: &Path) -> bool {
@@ -216,17 +215,15 @@ fn test_corrupted_cache_recovery() {
                         println!("Corrupted: {:?}", path);
                         return true;
                     }
-                } else if path.is_dir() {
-                    if find_and_corrupt_cache_file(&path) {
-                        return true;
-                    }
+                } else if path.is_dir() && find_and_corrupt_cache_file(&path) {
+                    return true;
                 }
             }
         }
         false
     }
 
-    corrupted = find_and_corrupt_cache_file(&cache_dir);
+    let corrupted = find_and_corrupt_cache_file(&cache_dir);
 
     if !corrupted {
         eprintln!("⚠️  SKIPPED: No cache files found to corrupt");
