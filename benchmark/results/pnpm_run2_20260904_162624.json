@@ -1,0 +1,26 @@
+{
+  "pm": "pnpm",
+  "run": 2,
+  "timestamp": "20260904_162624",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_162624"
+},
+  "cold_install": {
+    "duration_seconds": 36.945806000,
+    "disk_mb": 362,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 1.556523000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "Progress: resolved 1, reused 0, downloaded 0, added 0 [WARN] deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options. Progress: resolved 10, reused 0, downloaded 6, added 0 Progress: resolved 15, reused 0, downloaded 7, added 0 Progress: resolved 16, reused 0, downloaded 12, added 0 Progress: resolved 17, reused 0, downloaded 16, added 0 Progress: resolved 18, reused 0, downloaded 17, added 0 Progress: resolved 19, reused 0, downloaded 18, added 0 Progress: resolved 19, reused 0, downloaded 19, added 0 Progress: resolved 20, reused 0, downloaded 19, added 0 Progress: resolved 98, reused 0, downloaded 77, added 0 Progress: resolved 107, reused 0, downloaded 88, added 0 [WARN] Tarball download average speed 14 KiB/s (size 16 KiB) is below 50 KiB/s: https://registry.npmjs.org/@vitest/runner/-/runner-1.6.1.tgz (GET) Progress: resolved 109, reused 0, downloaded 94, added 0 [WARN] Tarball download average speed 17 KiB/s (size 19 KiB) is below 50 KiB/s: https://registry.npmjs.org/busboy/-/busboy-1.6.0.tgz (GET) [WARN] Tarball download average speed 31 KiB/s (size 33 KiB) is below 50 KiB/s: https://registry.npmjs.org/fraction.js/-/fraction.js-5.3.4.tgz (GET) [WARN] Tarball download average speed 13 KiB/s (size 34 KiB) is below 50 KiB/s: https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz (GET) [WARN] Tarball download average speed 2 KiB/s (size 5 KiB) is below 50 KiB/s: https://registry.npmjs.org/@vitest/spy/-/spy-1.6.1.tgz (GET) [WARN] Tarball download average speed 6 KiB/s (size 13 KiB) is below 50 KiB/s: https://registry.npmjs.org/tinypool/-/tinypool-0.8.4.tgz (GET) Progress: resolved 116, reused 0, downloaded 105, added 0 ",
+    "warm": "✓ Lockfile passes supply-chain policies (verified 2s ago) Lockfile is up to date, resolution step is skipped Progress: resolved 1, reused 0, downloaded 0, added 0 Packages: +286 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ Packages are cloned from the content-addressable store to the virtual store.   Content-addressable store is at: /Users/doanmihh/Library/pnpm/store/v11   Virtual store is at:             node_modules/.pnpm Progress: resolved 286, reused 286, downloaded 0, added 285 Progress: resolved 286, reused 286, downloaded 0, added 286, done  dependencies: + axios 1.20.0 + clsx 2.1.1 + date-fns 2.30.0 + framer-motion 10.18.0 + lodash 4.18.1 + next 14.2.35 + react 18.3.1 + react-dom 18.3.1 "
+  }
+}

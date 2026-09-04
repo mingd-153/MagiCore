@@ -1,0 +1,26 @@
+{
+  "pm": "bun",
+  "run": 18,
+  "timestamp": "20260904_214652",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_214652"
+},
+  "cold_install": {
+    "duration_seconds": .127471000,
+    "disk_mb": 0,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": .065380000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "bun install v1.3.14 (0d9b296a) Resolving dependencies Resolved, downloaded and extracted [120] error: FailedToOpenSocket downloading package manifest zod  error: FailedToOpenSocket downloading package manifest autoprefixer  error: ConnectionRefused downloading package manifest eslint  error: ConnectionRefused downloading package manifest @types/lodash  error: ConnectionRefused downloading package manifest @types/node  error: ConnectionRefused downloading package manifest @types/react  error: FailedToOpenSocket downloading package manifest typescript  error: ConnectionRefused downloading package manifest vitest  error: ConnectionRefused downloading package manifest postcss ",
+    "warm": "bun install v1.3.14 (0d9b296a) Resolving dependencies Resolved, downloaded and extracted [120] error: FailedToOpenSocket downloading package manifest typescript  error: ConnectionRefused downloading package manifest eslint  error: ConnectionRefused downloading package manifest postcss  error: ConnectionRefused downloading package manifest prettier  error: ConnectionRefused downloading package manifest tailwindcss  error: FailedToOpenSocket downloading package manifest autoprefixer  error: ConnectionRefused downloading package manifest zod  error: ConnectionRefused downloading package manifest @types/lodash  error: ConnectionRefused downloading package manifest @types/node "
+  }
+}

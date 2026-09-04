@@ -1,0 +1,26 @@
+{
+  "pm": "yarn",
+  "run": 4,
+  "timestamp": "20260904_191521",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_191521"
+},
+  "cold_install": {
+    "duration_seconds": 241.848178000,
+    "disk_mb": 0,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 188.793286000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "yarn install v1.22.22 info No lockfile found. [1/4] Resolving packages... (node:7315) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities. (Use `node --trace-deprecation ...` to show where the warning was created) info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... error Error: getaddrinfo ENOTFOUND registry.npmjs.org     at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26) info Visit https://yarnpkg.com/en/docs/cli/install for documentation about this command. ",
+    "warm": "yarn install v1.22.22 info No lockfile found. [1/4] Resolving packages... (node:7385) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities. (Use `node --trace-deprecation ...` to show where the warning was created) info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... error Couldn't find package \"nanoid@^3.3.6\" required by \"postcss@8.4.31\" on the \"npm\" registry. info Visit https://yarnpkg.com/en/docs/cli/install for documentation about this command. Error: Couldn't find package \"@next/swc-linux-arm64-gnu@14.2.33\" required by \"next@^14.0.0\" on the \"npm\" registry.     at MessageError.ExtendableBuiltin (/opt/homebrew/Cellar/yarn/1.22.22/libexec/lib/cli.js:721:66)     at new MessageError (/opt/homebrew/Cellar/yarn/1.22.22/libexec/lib/cli.js:750:123)     at PackageRequest.<anonymous> (/opt/homebrew/Cellar/yarn/1.22.22/libexec/lib/cli.js:36620:17)     at Generator.throw (<anonymous>)     at step (/opt/homebrew/Cellar/yarn/1.22.22/libexec/lib/cli.js:310:30)     at /opt/homebrew/Cellar/yarn/1.22.22/libexec/lib/cli.js:323:13     at process.processTicksAndRejections (node:internal/process/task_queues:104:5) Error: Couldn't find package \"@next/swc-win32-x64-msvc@14.2.33\" required by \"next@^14.0.0\" on the \"npm\" registry. "
+  }
+}

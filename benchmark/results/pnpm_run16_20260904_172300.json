@@ -1,0 +1,26 @@
+{
+  "pm": "pnpm",
+  "run": 16,
+  "timestamp": "20260904_172300",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_172300"
+},
+  "cold_install": {
+    "duration_seconds": 69.358658000,
+    "disk_mb": 362,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 1.470337000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "Progress: resolved 1, reused 0, downloaded 0, added 0 Progress: resolved 7, reused 0, downloaded 2, added 0 Progress: resolved 8, reused 0, downloaded 4, added 0 [WARN] deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options. Progress: resolved 11, reused 0, downloaded 4, added 0 Progress: resolved 12, reused 0, downloaded 6, added 0 Progress: resolved 16, reused 0, downloaded 8, added 0 Progress: resolved 16, reused 0, downloaded 13, added 0 Progress: resolved 18, reused 0, downloaded 15, added 0 Progress: resolved 18, reused 0, downloaded 16, added 0 Progress: resolved 18, reused 0, downloaded 18, added 0 Progress: resolved 19, reused 0, downloaded 18, added 0 Progress: resolved 50, reused 0, downloaded 33, added 0 Progress: resolved 75, reused 0, downloaded 59, added 0 Progress: resolved 98, reused 0, downloaded 79, added 0 Progress: resolved 109, reused 0, downloaded 101, added 0 Progress: resolved 119, reused 0, downloaded 107, added 0 Progress: resolved 123, reused 0, downloaded 112, added 0 [WARN] GET https://registry.npmjs.org/next/-/next-14.2.35.tgz error (UND_ERR_SOCKET). Will retry in 10 seconds. 2 retries left. Progress: resolved 124, reused 0, downloaded 115, added 0 ",
+    "warm": "✓ Lockfile passes supply-chain policies (verified 2s ago) Lockfile is up to date, resolution step is skipped Progress: resolved 1, reused 0, downloaded 0, added 0 Packages: +286 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ Packages are cloned from the content-addressable store to the virtual store.   Content-addressable store is at: /Users/doanmihh/Library/pnpm/store/v11   Virtual store is at:             node_modules/.pnpm Progress: resolved 286, reused 286, downloaded 0, added 285 Progress: resolved 286, reused 286, downloaded 0, added 286, done  dependencies: + axios 1.20.0 + clsx 2.1.1 + date-fns 2.30.0 + framer-motion 10.18.0 + lodash 4.18.1 + next 14.2.35 + react 18.3.1 + react-dom 18.3.1 "
+  }
+}

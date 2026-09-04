@@ -1,0 +1,26 @@
+{
+  "pm": "mgc",
+  "run": 10,
+  "timestamp": "20260904_161051",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_161051"
+},
+  "cold_install": {
+    "duration_seconds": 4.367675000,
+    "disk_mb": 441,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 2.395287000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": " thread 'mgc-web-hardlink-5' (18162424) has overflowed its stack fatal runtime error: stack overflow, aborting ",
+    "warm": "  ℹ Using mgc.lock for install state.  thread 'mgc-web-hardlink-3' (18162631) has overflowed its stack fatal runtime error: stack overflow, aborting "
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "pm": "yarn",
+  "run": 10,
+  "timestamp": "20260904_221506",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_221506"
+},
+  "cold_install": {
+    "duration_seconds": 1001.864368000,
+    "disk_mb": 0,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 2005.739514000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "yarn install v1.22.22 info No lockfile found. [1/4] Resolving packages... (node:10315) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities. (Use `node --trace-deprecation ...` to show where the warning was created) info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... error Error: getaddrinfo ENOTFOUND registry.npmjs.org     at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26) info Visit https://yarnpkg.com/en/docs/cli/install for documentation about this command. ",
+    "warm": "yarn install v1.22.22 info No lockfile found. [1/4] Resolving packages... (node:10382) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities. (Use `node --trace-deprecation ...` to show where the warning was created) info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... info There appears to be trouble with your network connection. Retrying... error Error: getaddrinfo ENOTFOUND registry.npmjs.org     at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26) info Visit https://yarnpkg.com/en/docs/cli/install for documentation about this command. "
+  }
+}

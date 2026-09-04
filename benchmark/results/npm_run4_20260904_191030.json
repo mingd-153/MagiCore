@@ -1,0 +1,26 @@
+{
+  "pm": "npm",
+  "run": 4,
+  "timestamp": "20260904_191030",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_191030"
+},
+  "cold_install": {
+    "duration_seconds": 8071.888140000,
+    "disk_mb": 0,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 1735.640878000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful. npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options. npm error code EIDLETIMEOUT npm error Idle timeout reached for host `registry.npmjs.org:443` npm error A complete log of this run can be found in: /Users/doanmihh/.npm/_logs/2026-09-04T12_10_33_433Z-debug-0.log ",
+    "warm": "npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful. npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.  added 287 packages, and audited 288 packages in 29m  78 packages are looking for funding   run `npm fund` for details  6 vulnerabilities (2 moderate, 3 high, 1 critical)  To address all issues (including breaking changes), run:   npm audit fix --force  Run `npm audit` for details. "
+  }
+}
