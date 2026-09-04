@@ -28,7 +28,8 @@ pub mod web;
 pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> {
     // T5: Thử fetch starter kit `create-mgc-<core>` từ MagiCore registry trước.
     // Nếu offline / không tìm thấy → fallback vào local template + wizard (hiện hành).
-    // (Registry fetch chưa có endpoint thật → fallback ngay, TODO khi registry staging live)
+    // Registry fetch endpoint not yet live → using fallback templates
+    // (Issue #5: Enable registry fetching when staging environment ready)
     let result = match core {
         "web" => {
             // Forward tới web create với cờ mặc định
@@ -61,7 +62,7 @@ pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> 
         #[cfg(not(feature = "cicd"))]
         "cicd" => Err(crate::error::core_not_in_build("cicd")),
         #[cfg(feature = "lib")]
-        "lib" | "library" => library::run(project_name).await,
+        "lib" | "library" => library::run(framework, project_name).await,
         #[cfg(not(feature = "lib"))]
         "lib" | "library" => Err(crate::error::core_not_in_build("lib")),
         #[cfg(feature = "hardware")]

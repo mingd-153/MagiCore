@@ -50,6 +50,8 @@ pub fn command_to_dispatch(
             dir,
         }),
         Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
+        Commands::Test { args } => Some(CommonCommand::Test { args }),
+        Commands::Optimizer { force } => Some(CommonCommand::Optimizer { force }),
         Commands::Build { target } => Some(CommonCommand::Build { target }),
         Commands::Flash { board, skip_build } => Some(CommonCommand::Flash { board, skip_build }),
         Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),
@@ -200,7 +202,13 @@ pub fn command_to_dispatch(
             framework,
             project_name,
         }),
-        Commands::CreateLib { project_name } => Some(CoreCommand::CreateLib { project_name }),
+        Commands::CreateLib {
+            framework,
+            project_name,
+        } => Some(CoreCommand::CreateLib {
+            framework,
+            project_name,
+        }),
         Commands::CreateHardware {
             framework,
             project_name,

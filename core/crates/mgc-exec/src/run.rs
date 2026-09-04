@@ -1,10 +1,10 @@
 //! Exec runner — chạy tool qua allowlist, args Vec riêng (00-index §5.5–§5.8)
 //! (passthrough run: dry-run, audit log, không shell injection, fail → bail kèm log trích)
 
-use crate::allowlist::{check_tool_scoped, FORBIDDEN_TOOLS};
+use crate::allowlist::FORBIDDEN_TOOLS;
 use crate::audit::{append, now_ts, AuditEntry};
 use crate::sanitizer::redact_args;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -36,6 +36,9 @@ pub struct ExecOptions {
     pub clean_env: bool,
     /// Không áp timeout — dùng cho dev server chạy dài, vẫn giữ guard process.
     pub disable_timeout: bool,
+    /// Execution scope (TestRunner/BuildRunner/DevServer allow PM tools, Install forbids them).
+    /// None defaults to Install scope (most restrictive).
+    pub execution_scope: Option<crate::allowlist::ExecutionScope>,
 }
 
 /// Kết quả chạy — args trong report ĐÃ redact (không lộ secret).
@@ -52,7 +55,10 @@ pub struct ExecReport {
 
 /// Chạy `cmd args` sau khi check allowlist. Không dùng shell — args là Vec riêng (§5.6).
 pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    check_tool_scoped(cmd, opts.cwd.as_deref())?;
+    let scope = opts
+        .execution_scope
+        .unwrap_or(crate::allowlist::ExecutionScope::Install);
+    crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -62,7 +68,10 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
 /// Run an allowlisted tool while inheriting stdio for interactive/streaming commands.
 /// Chạy tool allowlist với stdio trực tiếp cho build/dev mà vẫn giữ guard chung.
 pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
-    check_tool_scoped(cmd, opts.cwd.as_deref())?;
+    let scope = opts
+        .execution_scope
+        .unwrap_or(crate::allowlist::ExecutionScope::Install);
+    crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -119,12 +128,127 @@ enum OutputMode {
     Inherit,
 }
 
+/// Validate args không chứa path traversal patterns
+/// Validator path-aware: canonicalize paths relative to project_root, chặn escape
+/// Returns Err nếu phát hiện path escape khỏi project boundary
+fn validate_args_no_traversal(args: &[String], project_root: Option<&Path>) -> Result<()> {
+    // Nếu không có project_root, không thể validate paths → fail-closed
+    let root = match project_root {
+        Some(r) => r,
+        None => {
+            // Không có project_root → không thể verify path safety
+            // Chặn mọi arg có ".." hoặc absolute path (conservative)
+            for arg in args {
+                if arg.contains("..") || arg.starts_with('/') {
+                    #[cfg(windows)]
+                    if arg.len() >= 2 && arg.chars().nth(1) == Some(':') {
+                        bail!(
+                            "Path argument rejected without project_root context: '{}'\n\
+                            Cannot verify path safety without project boundary.",
+                            arg
+                        );
+                    }
+                    #[cfg(unix)]
+                    bail!(
+                        "Path argument rejected without project_root context: '{}'\n\
+                        Cannot verify path safety without project boundary.",
+                        arg
+                    );
+                }
+            }
+            return Ok(());
+        }
+    };
+
+    // Canonicalize project root once
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize project root: {:?}", root))?;
+
+    for arg in args {
+        // Heuristic: arg là path nếu chứa path separator hoặc bắt đầu với . hoặc /
+        // Args khác (versions "1.0..2", flags "--option") không validate
+        let looks_like_path =
+            arg.contains('/') || arg.contains('\\') || arg.starts_with('.') || arg.starts_with('/');
+
+        #[cfg(windows)]
+        let looks_like_path =
+            looks_like_path || (arg.len() >= 2 && arg.chars().nth(1) == Some(':'));
+
+        if !looks_like_path {
+            // Không phải path → skip (cho phép "1.0..2", "config..backup")
+            continue;
+        }
+
+        // Thử resolve path relative to project root
+        let resolved = if arg.starts_with('/') {
+            #[cfg(unix)]
+            {
+                // Absolute path Unix
+                PathBuf::from(arg)
+            }
+            #[cfg(windows)]
+            {
+                // Không bao giờ đến đây trên Windows (checked bên dưới)
+                PathBuf::from(arg)
+            }
+        } else {
+            // Relative path
+            canonical_root.join(arg)
+        };
+
+        // Canonicalize để resolve .. và symlinks
+        match resolved.canonicalize() {
+            Ok(canonical_arg) => {
+                // Check nếu canonical path nằm trong project root
+                if !canonical_arg.starts_with(&canonical_root) {
+                    bail!(
+                        "Path traversal detected: '{}' resolves to '{}' which is outside project root '{}'",
+                        arg,
+                        canonical_arg.display(),
+                        canonical_root.display()
+                    );
+                }
+            }
+            Err(_) => {
+                // File không tồn tại → không thể canonicalize
+                // Kiểm tra lexical: nếu có .. và có thể escape, reject
+                if arg.contains("..") {
+                    // Parse path và check số lượng .. có thể escape không
+                    let components: Vec<_> = Path::new(arg).components().collect();
+                    let mut depth = 0i32;
+                    for comp in components {
+                        match comp {
+                            std::path::Component::ParentDir => depth -= 1,
+                            std::path::Component::Normal(_) => depth += 1,
+                            _ => {}
+                        }
+                        if depth < 0 {
+                            bail!(
+                                "Path traversal pattern detected: '{}' attempts to escape project root.\n\
+                                Path contains '..' that would traverse above project boundary.",
+                                arg
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn execute_command(
     cmd: &str,
     args: &[String],
     opts: &ExecOptions,
     mode: OutputMode,
 ) -> Result<ExecReport> {
+    // SECURITY: Validate args không chứa path traversal
+    // Pass project_root (from cwd) để validator có context
+    let project_root = opts.cwd.as_deref();
+    validate_args_no_traversal(args, project_root)?;
+
     // args REDACTED từ nguồn — console/report/audit không bao giờ chứa secret (§5.4)
     let safe_args = redact_args(args);
     let cwd = opts
@@ -134,7 +258,16 @@ fn execute_command(
 
     // Forbidden PM tools stay blocked in every cwd.
     // PM ngoài bị chặn tuyệt đối, không còn ngoại lệ React Native.
-    let scoped_exempt: &[&str] = &[];
+    // Scoped exempt: PM tools allowed in TestRunner/BuildRunner/DevServer scopes (00-index §5.2 + TEST_RUNNER_SECURITY_MODEL.md)
+    // PM tools allowed in TestRunner/BuildRunner/DevServer: không tạo blocker shim
+    let scope = opts
+        .execution_scope
+        .unwrap_or(crate::allowlist::ExecutionScope::Install);
+    let scoped_exempt: &[&str] = if scope.allows_pm_tools() {
+        crate::allowlist::FORBIDDEN_TOOLS
+    } else {
+        &[]
+    };
 
     if opts.dry_run {
         // dry-run: in lệnh, không chạy, vẫn ghi audit với exit_code 0 + dry_run flag (§5.5)

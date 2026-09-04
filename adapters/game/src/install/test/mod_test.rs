@@ -11,6 +11,7 @@ fn tmp() -> TempDir {
 }
 
 #[tokio::test]
+#[ignore = "runs cargo fetch against crates.io — run manually with network access"]
 async fn test_install_bevy_stub() {
     let tmp = tmp();
     // Create Cargo.toml

@@ -54,6 +54,7 @@ fn install_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
 }
 
 /// Lệnh dev theo language — Q20 (flutter run / gradle run / swift run).
+#[allow(dead_code)]
 fn dev_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
     match lang {
         mgc_app_adapter::AppLanguage::Flutter => InstallCommand {
@@ -82,10 +83,22 @@ fn dev_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
 }
 
 pub fn run_tool(root: &Path, cmd: &str, args: &[String]) -> Result<()> {
+    run_tool_with_env(root, cmd, args, None)
+}
+
+/// Run tool with optional env vars from optimizer
+/// Chạy tool với env vars tùy chọn từ optimizer
+pub fn run_tool_with_env(
+    root: &Path,
+    cmd: &str,
+    args: &[String],
+    env: Option<Vec<(String, String)>>,
+) -> Result<()> {
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
-        clean_env: true,
+        env: env.unwrap_or_default(),
+        clean_env: false, // Preserve env when custom env provided
         ..Default::default()
     };
     mgc_exec::prelude::run_inherited(cmd, args, &opts)
@@ -292,6 +305,7 @@ pub fn dev_scheme(root: &Path) -> Option<String> {
 }
 
 /// objC dev — có [app] dev_scheme → xcodebuild build (simulator), không → mở Xcode.
+#[allow(dead_code)]
 async fn dev_objc(root: &Path, dry_run: bool) -> Result<()> {
     let Some(scheme) = dev_scheme(root) else {
         let Some(proj) = find_xcode_project(root) else {

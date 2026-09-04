@@ -10,7 +10,8 @@ use std::io::{self, BufRead, Write};
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
-    jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    _jsonrpc: String,
     id: Option<Value>,
     method: String,
     #[serde(default)]

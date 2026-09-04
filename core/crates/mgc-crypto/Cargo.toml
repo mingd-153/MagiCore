@@ -1,10 +1,10 @@
 [package]
 name = "mgc-crypto"
-version = "1.0.0"
-edition = "2021"
-authors = ["MagiCore Contributors"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Cryptographic primitives for MagiCore supply chain security"
-license = "MIT"
+license.workspace = true
 
 [lib]
 path = "src/lib.rs"

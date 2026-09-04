@@ -233,8 +233,14 @@ if [[ "$verify_only" -eq 1 ]]; then
   verify_scoop_hash "$web_core_scoop" "magicore-web-Windows-X64.zip" "$magicore_web_windows_x64_hash"
   verify_scoop_hash "$web_core_scoop" "magicore-web-Windows-ARM64.zip" "$magicore_web_windows_arm64_hash"
 
-  if grep -R "UPDATE_ME" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
-    echo "error: packaging still contains UPDATE_ME placeholders" >&2
+  if grep -R "UPDATE_ME\|0000000000000000" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
+    echo "error: packaging still contains UPDATE_ME or zero-hash placeholders" >&2
+    exit 1
+  fi
+
+  if grep -R "PLACEHOLDER_WILL_BE_REPLACED_BY_CI" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
+    echo "error: packaging still contains PLACEHOLDER_WILL_BE_REPLACED_BY_CI" >&2
+    echo "       All placeholders should have been replaced with real hashes" >&2
     exit 1
   fi
 

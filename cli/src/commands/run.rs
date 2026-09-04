@@ -98,6 +98,17 @@ fn execute_task_with_bin(
     ];
     env.extend(invocation.env);
 
+    // Load optimizer env for run command
+    // Tải env optimizer cho lệnh run
+    let runtime = detect_run_runtime(cwd);
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(cwd, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
+    env.extend(optimizer_envs);
+
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(cwd.to_path_buf()),
         timeout: Some(run_script_timeout()),
@@ -116,6 +127,35 @@ fn run_script_timeout() -> Duration {
         .filter(|secs| *secs > 0)
         .map(Duration::from_secs)
         .unwrap_or(Duration::from_secs(DEFAULT_RUN_SCRIPT_TIMEOUT_SECS))
+}
+
+/// Detect runtime for optimizer env loading based on project files
+/// Phát hiện runtime để load env optimizer dựa trên file project
+fn detect_run_runtime(cwd: &Path) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::{DetectedRuntime, PackageManager};
+
+    if cwd.join("Cargo.toml").exists() {
+        DetectedRuntime::RustLib
+    } else if cwd.join("go.mod").exists() {
+        DetectedRuntime::GoLib
+    } else if cwd.join("pyproject.toml").exists() || cwd.join("setup.py").exists() {
+        DetectedRuntime::PythonLib
+    } else if cwd.join("pubspec.yaml").exists() {
+        DetectedRuntime::Flutter
+    } else if cwd.join("package.json").exists() {
+        // Detect package manager for web runtime
+        if cwd.join("bun.lockb").exists() {
+            DetectedRuntime::Bun
+        } else if cwd.join("deno.json").exists() || cwd.join("deno.jsonc").exists() {
+            DetectedRuntime::Deno
+        } else {
+            DetectedRuntime::NodeJs {
+                package_manager: PackageManager::Npm,
+            }
+        }
+    } else {
+        DetectedRuntime::Unknown
+    }
 }
 
 #[cfg(test)]

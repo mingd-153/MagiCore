@@ -20,6 +20,12 @@ pub struct HmrManager {
     version: Arc<AtomicU64>,
 }
 
+impl Default for HmrManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HmrManager {
     pub fn new() -> Self {
         let (tx, _rx) = broadcast::channel(100);

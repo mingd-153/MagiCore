@@ -7,6 +7,10 @@ repository.workspace = true
 authors.workspace = true
 description = "MagiCore - Universal Package Manager CLI"
 
+[lib]
+name = "mgc"
+path = "src/lib.rs"
+
 [[bin]]
 name = "mgc"
 path = "src/main.rs"
@@ -77,7 +81,7 @@ notify = { workspace = true }
 esbuild-rs = { workspace = true }
 glob = { workspace = true }
 mime_guess = { workspace = true }
-lightningcss = { version = "1.0.0-alpha.71", features = ["serde"] }
+lightningcss = { version = "1.0.0-alpha.72", features = ["serde"] }
 futures-util = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }

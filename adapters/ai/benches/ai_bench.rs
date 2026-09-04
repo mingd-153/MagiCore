@@ -25,26 +25,5 @@ core = "ai"
     });
 }
 
-fn bench_ai_token_pruning_simulation(c: &mut Criterion) {
-    // Mô phỏng đo tốc độ xử lý lọc token mask (32.768 context length)
-    let context_tokens: Vec<u32> = (0..32768).collect();
-    let attention_mask: Vec<bool> = (0..32768).map(|i| i % 4 == 0).collect();
-
-    c.bench_function("ai_sparse_token_pruning_32k", |b| {
-        b.iter(|| {
-            let active: Vec<u32> = context_tokens
-                .iter()
-                .zip(attention_mask.iter())
-                .filter_map(|(&tok, &active)| if active { Some(tok) } else { None })
-                .collect();
-            black_box(active);
-        });
-    });
-}
-
-criterion_group!(
-    benches,
-    bench_ai_framework_detection,
-    bench_ai_token_pruning_simulation
-);
+criterion_group!(benches, bench_ai_framework_detection);
 criterion_main!(benches);

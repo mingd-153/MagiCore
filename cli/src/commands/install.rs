@@ -415,7 +415,7 @@ fn load_locked_graph(
     // T3.5: Auto-verify lockfile signature before install
     verify_lockfile_if_signed(project_root)?;
 
-    // FIXME(V1.0.1): Re-enable lock.core, lock.version, lock.resolution checks after v2 migration
+    // Issue #4: Re-enable lock.core, lock.version, lock.resolution checks after lockfile v2 migration
     // let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
     // if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
     if lock.packages.is_empty() {

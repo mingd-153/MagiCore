@@ -215,6 +215,8 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::List
             | Commands::Build { .. }
             | Commands::Run { .. }
+            | Commands::Test { .. }
+            | Commands::Optimizer { .. }
             | Commands::Audit { .. }
             | Commands::Outdated { .. }
             | Commands::Dev { .. }
@@ -323,6 +325,8 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Mcp => "mcp",
         Commands::Dev { .. } => "dev",
         Commands::Run { .. } => "run",
+        Commands::Test { .. } => "test",
+        Commands::Optimizer { .. } => "optimizer",
         Commands::Build { .. } => "build",
         Commands::Flash { .. } => "flash",
         Commands::Deploy { .. } => "deploy",

@@ -4,17 +4,17 @@
 ///
 /// Giống Vite, nhưng viết 100% bằng Rust, không cần Node.js:
 ///
-/// ```
+/// ```text
 /// Browser request                 MgDevServer xử lý
 /// ─────────────────────────────────────────────────────
-/// GET /                        → serve index.html (inject HMR script)
-/// GET /@magicore/hmr.js        → serve HMR client script
-/// GET /@magicore/hmr           → WebSocket endpoint
-/// GET /@magicore/deps/react    → DepsCache: bundle react từ node_modules
-/// GET /src/App.tsx             → CompiledCache → esbuild (transpile only)
-///                                + rewrite bare imports → /@magicore/deps/…
-/// GET /src/App.css             → serve as text/css
-/// GET /public/logo.png         → serve static
+/// GET /                        -> serve index.html (inject HMR script)
+/// GET /@magicore/hmr.js        -> serve HMR client script
+/// GET /@magicore/hmr           -> WebSocket endpoint
+/// GET /@magicore/deps/react    -> DepsCache: bundle react từ node_modules
+/// GET /src/App.tsx             -> CompiledCache -> esbuild (transpile only)
+///                                + rewrite bare imports -> /@magicore/deps/...
+/// GET /src/App.css             -> serve as text/css
+/// GET /public/logo.png         -> serve static
 /// ```
 ///
 /// # Import Rewriting

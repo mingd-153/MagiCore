@@ -26,7 +26,7 @@ pub use writer::{
     serialize_lockfile, sign_and_write_lockfile, sign_lockfile_with_default_key, write_lockfile,
 };
 
-// FIXME(V1.0.1): Temporary stub — replace with proper v2 implementation
+// Issue #4: Lockfile V2 - Temporary stub, replace with proper v2 implementation
 pub fn read_lockfile_checked(project_root: &std::path::Path) -> LockfileResult<Option<Lockfile>> {
     let lockfile_path = project_root.join("mgc.lock");
     if !lockfile_path.exists() {
@@ -35,7 +35,7 @@ pub fn read_lockfile_checked(project_root: &std::path::Path) -> LockfileResult<O
     load_lockfile(&lockfile_path).map(Some)
 }
 
-// FIXME(V1.0.1): Temporary stub — checksum writing deferred to v2
+// Issue #4: Lockfile V2 - Temporary stub, checksum writing deferred to v2
 pub fn write_lockfile_checksum(
     _project_root: &std::path::Path,
     _content: &[u8],

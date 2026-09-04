@@ -5,7 +5,7 @@ use clap::Subcommand;
 
 #[derive(Subcommand, Clone)]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum Commands {
+pub enum Commands {
     // ── Common / Global commands ────────────────────────────────────────
     #[command(about = "Interactive project wizard")]
     Init {
@@ -187,6 +187,16 @@ pub(crate) enum Commands {
         script: String,
         #[arg(last = true)]
         args: Vec<String>,
+    },
+    #[command(about = "Run tests (auto-detect test runner: cargo/go/pytest/npm test)")]
+    Test {
+        #[arg(last = true, help = "Arguments passed to test runner")]
+        args: Vec<String>,
+    },
+    #[command(about = "Optimize project for hardware (runtime detection + adapter pattern)")]
+    Optimizer {
+        #[arg(long, help = "Overwrite existing optimized files")]
+        force: bool,
     },
     #[command(about = "Build the project")]
     Build {
@@ -471,6 +481,9 @@ pub(crate) enum Commands {
         visible_alias = "cre-l"
     )]
     CreateLib {
+        /// Language/framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
+        framework: String,
         /// Project directory name
         #[arg(value_name = "PROJECT")]
         project_name: String,

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Currently delegates to cargo fetch (exec passthrough).
 /// Hiện tại delegate cho cargo fetch (exec passthrough).
-/// TODO P2: native crates.io resolver to avoid cargo dependency.
+/// Issue #14: native crates.io resolver to avoid cargo dependency.
 pub fn fetch_rust_crate(_project_root: &Path, package_id: &PackageId) -> MgResult<PathBuf> {
     // Cargo fetch downloads to ~/.cargo/registry/cache/
     // cargo fetch tải về ~/.cargo/registry/cache/
@@ -40,7 +40,7 @@ pub fn fetch_rust_crate(_project_root: &Path, package_id: &PackageId) -> MgResul
 ///
 /// Currently delegates to pip download (exec passthrough).
 /// Hiện tại delegate cho pip download (exec passthrough).
-/// TODO P2: native PyPI client (PEP 503 Simple Repository API).
+/// Issue #14: native PyPI client (PEP 503 Simple Repository API).
 pub fn fetch_python_package(project_root: &Path, package_id: &PackageId) -> MgResult<PathBuf> {
     // pip download stores in current directory by default
     // pip download lưu trong thư mục hiện tại mặc định

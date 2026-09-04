@@ -23,8 +23,7 @@ pub fn generate_ai_docker_files(project_root: &Path) -> Result<()> {
              WORKDIR /app\n\
              ENV PYTHONUNBUFFERED=1 \\\n\
                  PYTHONDONTWRITEBYTECODE=1 \\\n\
-                 OMP_NUM_THREADS={} \\\n\
-                 MGC_AI_ULTRA_COMPRESSION=1\n\n\
+                 OMP_NUM_THREADS={}\n\n\
              # Install system dependencies\n\
              RUN apt-get update && apt-get install -y --no-install-recommends \\\n\
                  curl build-essential git && \\\n\
@@ -69,8 +68,7 @@ pub fn generate_ai_docker_files(project_root: &Path) -> Result<()> {
                        memory: {}G\n\
                  environment:\n\
                    - OMP_NUM_THREADS={}\n\
-                   - TOKENIZERS_PARALLELISM=true\n\
-                   - MGC_AI_TOKEN_ACTIVATION_PRUNING=1\n",
+                   - TOKENIZERS_PARALLELISM=true\n",
             (hw.cpu_cores as f64) * 0.9,
             memory_limit,
             hw.cpu_cores.max(1)

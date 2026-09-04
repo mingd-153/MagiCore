@@ -473,7 +473,9 @@ async fn verify_token(registry_url: &str, auth: &mgc_publish::auth::Auth) -> Res
     Ok(())
 }
 
-/// Publish PUT to registry
+/// Publish PUT to registry.
+/// Gửi payload publish lên registry bằng request đã xác thực.
+#[allow(clippy::too_many_arguments)]
 async fn publish_put(
     registry_url: &str,
     auth: &mgc_publish::auth::Auth,

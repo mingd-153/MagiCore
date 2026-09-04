@@ -18,7 +18,7 @@
 
 **Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 
-> **🚧 Beta Release:** `v1.0.0` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) remain experimental. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.1 roadmap toward full core parity.
+> **🚧 Beta Release:** `v1.1.0-RC` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) have partial support. **Native package managers** (Maven, CocoaPods, pub.dev) are P2 features. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
 
 ---
 
@@ -236,7 +236,7 @@ MagiCore/
 | `cicd`     | GitHub Actions, GitLab CI, ArgoCD, Docker Compose                         |
 | `game`     | Godot, Unity, Unreal, Bevy (Rust)                                         |
 | `iot`      | PlatformIO, Zephyr RTOS, ESP32 toolchains                                 |
-| `app`      | Flutter, Swift Package Manager, Kotlin/Gradle, React Native               |
+| `app`      | Flutter, Swift Package Manager, Kotlin/Gradle (React Native: beta-blocked) |
 | `lib`      | Universal polyglot libraries (Rust crates, Python packages, npm packages) |
 | `hardware` | Benchmark tooling, hardware-aware resource allocation                     |
 
@@ -286,6 +286,21 @@ MORE:
 - ✅ `mgc audit` scans for known CVEs via the advisory database
 - ✅ Lifecycle scripts are **opt-in only** (trust gate)
 
+### Threat Model: PM Tool Scope Policy
+
+**MagiCore orchestrates package managers, not sandboxes them.** Two security boundaries:
+
+1. **Install scope (HIGH RISK)**: Package installation, registry fetch, transitive deps
+   - PM tools (npm/pnpm/yarn/bun) **FORBIDDEN** → use `mgc install` (resolver + audit)
+   - Rationale: Prevent arbitrary package fetch bypassing mgc resolver
+
+2. **Test/Build/Dev scopes (MEDIUM RISK)**: Project-local scripts execution
+   - PM tools **ALLOWED** with constraints: cwd locked to project root, audit log
+   - Rationale: `package.json` scripts are user code, run under user's permission
+   - mgc doesn't sandbox npm scripts (would require OS-level isolation)
+
+See [docs/architecture/TEST_RUNNER_SECURITY_MODEL.md](docs/architecture/TEST_RUNNER_SECURITY_MODEL.md) for full threat model.
+
 ### Security Advisory (V1.0.0)
 **Recommendation**:
 - ✅ **Safe for CLI usage**: install, add, remove, SBOM, lockfile operations
@@ -301,7 +316,18 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 
 ---
 
-## ⚠️ Known Limitations (V1.0.1 Roadmap)
+## ⚠️ Known Limitations (V1.1.0-RC Roadmap)
+
+**Blocked in Beta** (requires MagiCore-native app runner):
+- ❌ React Native dev/build (scaffold exists, runtime pending)
+- ℹ️ Current behavior: Clear error message blocking dev/build operations
+- ℹ️ Timeline: Available when MagiCore-native app runner is complete
+
+**P2 Features** (post-v1.1.0 - next release cycle):
+- ❌ Maven Central support (Kotlin/Android packages)
+- ❌ CocoaPods support (iOS/macOS packages)  
+- ❌ pub.dev support (Dart/Flutter packages)
+- ℹ️ Current behavior: Clear error messages directing users to native PM tools
 
 **Temporarily Disabled Features** (stubbed for rapid V1.0.0 release):
 - ❌ Workspace lockfile merging (monorepo root lockfiles)

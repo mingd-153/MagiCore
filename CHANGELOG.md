@@ -8,6 +8,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+- Test infrastructure improvements (E2E lifecycle tests honest verification)
+- CI workflow now triggers on feature/** branches
+- Cache tests fixed (race condition removed)
+- Install smoke tests added (structure verification)
+
+### Fixed
+- Web/AI lifecycle tests now call REAL mgc create commands
+- Cache tests use per-command env (no global set_var)
+- Removed `|| true` from CI (no silent failures)
+
+### Dependencies
+- Updated lightningcss to 1.0.0-alpha.72
+
+---
+
+## [1.1.0-rc.1] - 2026-09-03 (Pending Release)
+
+### 🎯 RC Release - Multi-Core Support
+
+**Status**: Release Candidate for multi-language project management (Web, AI, App, Lib cores).
+
+### Added
+- ✅ **Multi-Core Architecture**: Unified CLI for Web, AI, App, Lib ecosystems
+- ✅ **Embedded Templates**: Vanilla web, Python AI agent, Flutter app, Rust lib
+- ✅ **Lifecycle Commands**: create, install, build, test, run, clean per core
+- ✅ **Core Detection**: Auto-detect project type via .mgc.core marker
+- ✅ **Adapter System**: Pluggable runtime adapters (npm, pip, cargo, flutter)
+- ✅ **Cache System**: Multi-core cache with integrity checks
+- ✅ **Security Gates**: Allowlist validation, test runner sandboxing
+
+### Testing
+- ✅ Web lifecycle E2E (vanilla embedded template)
+- ✅ AI lifecycle E2E (python-agent embedded)
+- ✅ Lib lifecycle E2E (Rust/Cargo native)
+- ✅ App lifecycle E2E (Flutter - requires SDK)
+- ✅ Cache stress tests (5/5 scenarios)
+- ✅ Security tests (9/9 allowlist checks)
+- ✅ CLI surface tests (7/7 error cases)
+- ✅ Install smoke tests (4/4 structure checks)
+
+### Quality Gates
+- Clippy: PASS (all targets, -D warnings)
+- Format: PASS (rustfmt --check)
+- Build: PASS (locked dependencies)
+- Tests: 2/4 local (Web ✅, Lib ✅, AI/App require CI runtimes)
+
+### Known Limitations
+- Template system uses embedded for core templates (registry-first architecture)
+- Some transitive dependencies have security advisories (documented in SECURITY_EXCEPTIONS.toml)
+- Install via brew/scoop requires published distributions
+
 ---
 
 ## [1.0.0] - 2026-08-27

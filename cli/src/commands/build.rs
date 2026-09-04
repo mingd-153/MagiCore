@@ -20,7 +20,18 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
     info(&format!("Project root: {}", root.display()));
 
     if root.join("Cargo.toml").exists() {
-        return build_rust(&root);
+        // Load optimizer env for standalone Rust projects
+        // Tải env optimizer cho Rust project độc lập
+        let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
+        let optimizer_envs =
+            crate::commands::optimizer::env_loader::load_optimizer_env(&root, &runtime)
+                .map_err(|e| {
+                    mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                    e
+                })
+                .unwrap_or_default();
+        let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
+        return build_rust_with_env(&root, rustflags);
     }
 
     let ctx = ProjectContext::load_with_core(core)?;
@@ -67,7 +78,19 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
 async fn build_game(root: &Path) -> Result<()> {
     let engine = mgc_game_adapter::detect_engine(root);
     match engine {
-        Some(mgc_game_adapter::GameEngine::Bevy) => build_rust(root),
+        Some(mgc_game_adapter::GameEngine::Bevy) => {
+            // Load optimizer env for Bevy (Rust) builds
+            let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
+            let optimizer_envs =
+                crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+                    .map_err(|e| {
+                        mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                        e
+                    })
+                    .unwrap_or_default();
+            let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
+            build_rust_with_env(root, rustflags)
+        }
         Some(mgc_game_adapter::GameEngine::Godot) => Err(crate::error::build_not_supported(
             "game/godot",
             "configure an export preset and run Godot export (03 §4 P2)",
@@ -101,12 +124,23 @@ async fn build_iot(root: &Path) -> Result<()> {
         return run_allowlisted_tool(root, "west", &["build", "-b", "native_sim"]);
     }
     if root.join("Cargo.toml").exists() {
-        // esp32-rust: build_rust giữ cargo build; --target esp theo [iot] board là P1.5
-        // (04 §5: cần espup toolchain — detect + lỗi rõ)
+        // esp32-rust: build_rust with optimizer env
+        // esp32-rust: build với env optimizer
         if tool_unavailable("cargo") {
             return Err(crate::error::build_toolchain_missing("cargo"));
         }
-        return build_rust(root);
+
+        // Load optimizer env for IoT Rust builds
+        let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
+        let optimizer_envs =
+            crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+                .map_err(|e| {
+                    mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                    e
+                })
+                .unwrap_or_default();
+        let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
+        return build_rust_with_env(root, rustflags);
     }
     Err(crate::error::no_framework_detected("iot", root))
 }
@@ -115,15 +149,33 @@ async fn build_iot(root: &Path) -> Result<()> {
 /// full resolver — không wrapper PM); python → python -m build (fail-closed nếu thiếu module build).
 #[cfg(feature = "lib")]
 async fn build_lib(root: &Path) -> Result<()> {
+    // Load optimizer env for lib runtime
+    // Tải env optimizer cho runtime thư viện
+    let runtime = detect_lib_runtime(root);
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
+    // Apply RUSTFLAGS for Rust builds
+    // Áp dụng RUSTFLAGS cho Rust build
+    let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
+
     if root.join("Cargo.toml").exists() {
-        return build_rust(root);
+        return build_rust_with_env(root, rustflags);
     }
     if root.join("pyproject.toml").exists() {
         if tool_unavailable("python") {
             return Err(crate::error::build_toolchain_missing("python"));
         }
         info("Building python lib: python -m build");
-        return run_allowlisted_tool(root, "python", &["-m", "build"])
+
+        // Load optimizer env for Python
+        let env: Vec<(String, String)> = optimizer_envs.clone().into_iter().collect();
+        let env_opt = if env.is_empty() { None } else { Some(env) };
+
+        return run_allowlisted_tool_with_env(root, "python", &["-m", "build"], env_opt)
             .map_err(|e| crate::error::python_build_failed(&e));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
@@ -133,15 +185,19 @@ async fn build_lib(root: &Path) -> Result<()> {
             .map(|a| a.to_string_lossy().to_string())
             .collect::<Vec<_>>();
         let local_bin = root.join("node_modules").join(".bin");
-        let env = vec![(
+
+        // Merge PATH with optimizer env
+        let mut env = vec![(
             "PATH".to_string(),
             prepend_path(&local_bin)?.to_string_lossy().to_string(),
         )];
+        env.extend(optimizer_envs);
+
         info(&format!("tsc: node {}", args.join(" ")));
         let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(root.to_path_buf()),
             env,
-            clean_env: true,
+            clean_env: false, // Preserve env with optimizer config
             ..Default::default()
         };
         return mgc_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
@@ -185,6 +241,17 @@ async fn build_app(root: &Path) -> Result<()> {
         }
     }
 
+    // Load optimizer env for app runtime
+    let runtime = detect_app_runtime(root);
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
+    let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+    let env_opt = if env.is_empty() { None } else { Some(env) };
+
     let (tool, args): (&str, &[&str]) = match language {
         "kotlin" => ("gradle", &["build"]),
         "swift" => ("swift", &["build"]),
@@ -193,7 +260,7 @@ async fn build_app(root: &Path) -> Result<()> {
     if tool_unavailable(tool) {
         return Err(crate::error::build_toolchain_missing(tool));
     }
-    run_allowlisted_tool(root, tool, args)?;
+    run_allowlisted_tool_with_env(root, tool, args, env_opt)?;
     mgc_ui::success(&format!("App build completed ({language})"));
     Ok(())
 }
@@ -353,17 +420,6 @@ fn find_root() -> anyhow::Result<PathBuf> {
     Err(crate::error::no_project_found_build())
 }
 
-fn build_rust(root: &Path) -> Result<()> {
-    let start = Instant::now();
-    info("Detected Rust project — running cargo build...");
-
-    run_allowlisted_tool(root, "cargo", &["build"])?;
-
-    let elapsed = start.elapsed();
-    mgc_ui::success(&format!("Rust build completed in {:?}", elapsed));
-    Ok(())
-}
-
 async fn build_web(
     root: &Path,
     execution: &ProjectExecutionConfig,
@@ -399,6 +455,7 @@ async fn build_web(
         ) {
             if let Some(engine_crate) = find_native_engine_crate(root) {
                 let binary = build_native_engine(
+                    root, // project root for optimizer config
                     &engine_crate,
                     matches!(resolved_target, WebBuildTarget::CompiledExecutable),
                 )?;
@@ -443,6 +500,7 @@ async fn build_web(
     ) {
         if let Some(engine_crate) = find_native_engine_crate(root) {
             let binary = build_native_engine(
+                root, // project root for optimizer config
                 &engine_crate,
                 matches!(resolved_target, WebBuildTarget::CompiledExecutable),
             )?;
@@ -742,19 +800,32 @@ fn find_native_engine_crate(root: &Path) -> Option<PathBuf> {
         .find(|path| path.join("Cargo.toml").exists())
 }
 
-fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
+fn build_native_engine(project_root: &Path, crate_dir: &Path, release: bool) -> Result<PathBuf> {
     let start = Instant::now();
     info(&format!(
         "Building native engine crate at {}...",
         crate_dir.display()
     ));
 
+    // Load optimizer env from project root (not crate subdirectory)
+    // Optimizer config is generated at project root: .mgc-optimizer/rust_cargo_profile.toml
+    let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
+    let optimizer_envs =
+        crate::commands::optimizer::env_loader::load_optimizer_env(project_root, &runtime)
+            .map_err(|e| {
+                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                e
+            })
+            .unwrap_or_default();
+    let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
+    let env_opt = rustflags.map(|flags| vec![("RUSTFLAGS".to_string(), flags)]);
+
     let mut args = vec!["build"];
     if release {
         args.push("--release");
     }
 
-    run_allowlisted_tool(crate_dir, "cargo", &args)?;
+    run_allowlisted_tool_with_env(crate_dir, "cargo", &args, env_opt)?;
 
     let binary_name = if cfg!(windows) {
         "mgc-web-engine.exe"
@@ -778,14 +849,77 @@ fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
 }
 
 fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()> {
+    run_allowlisted_tool_with_env(root, program, args, None)
+}
+
+fn run_allowlisted_tool_with_env(
+    root: &Path,
+    program: &str,
+    args: &[&str],
+    env: Option<Vec<(String, String)>>,
+) -> Result<()> {
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
-        clean_env: true,
+        env: env.unwrap_or_default(),
+        clean_env: false, // Preserve env when custom env provided
         ..Default::default()
     };
     let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
     mgc_exec::prelude::run(program, &args, &opts)?;
+    Ok(())
+}
+
+/// Detect lib runtime for optimizer env loading
+/// Phát hiện runtime thư viện để load env optimizer
+fn detect_lib_runtime(root: &Path) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+
+    if root.join("Cargo.toml").exists() {
+        DetectedRuntime::RustLib
+    } else if root.join("pyproject.toml").exists() {
+        DetectedRuntime::PythonLib
+    } else if root.join("go.mod").exists() {
+        DetectedRuntime::GoLib
+    } else if root.join("package.json").exists() {
+        DetectedRuntime::TypeScriptLib
+    } else {
+        DetectedRuntime::Unknown
+    }
+}
+
+/// Detect app runtime for optimizer env loading
+/// Phát hiện runtime ứng dụng để load env optimizer
+fn detect_app_runtime(root: &Path) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+    crate::commands::optimizer::runtime_detect::detect_runtimes(root, "app")
+        .first()
+        .cloned()
+        .unwrap_or(DetectedRuntime::Unknown)
+}
+
+/// Build Rust with optional RUSTFLAGS from optimizer
+/// Build Rust với RUSTFLAGS tùy chọn từ optimizer
+fn build_rust_with_env(root: &Path, rustflags: Option<String>) -> Result<()> {
+    let start = Instant::now();
+    info("Detected Rust project — running cargo build...");
+
+    let opts = mgc_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".magicore").join("exec.log")),
+        env: rustflags
+            .map(|flags| {
+                mgc_ui::info(&format!("Applying RUSTFLAGS: {}", flags));
+                vec![("RUSTFLAGS".to_string(), flags)]
+            })
+            .unwrap_or_default(),
+        clean_env: false, // Preserve existing env
+        ..Default::default()
+    };
+    mgc_exec::prelude::run("cargo", &["build".to_string()], &opts)?;
+
+    let elapsed = start.elapsed();
+    mgc_ui::success(&format!("Rust build completed in {:?}", elapsed));
     Ok(())
 }
 

@@ -255,29 +255,165 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
 
 /// Đảm bảo template layer có sẵn (disk / cache) — nếu thiếu và registry có config,
 /// tự fetch. Registry-first: klass pnpm đua `create-*` từ registry.
-/// Trả về true nếu template khả dụng (có template.toml + sources).
-pub async fn ensure_layer(rel: &str) -> bool {
-    // Check disk / cache trước (TemplateRoot::resolve đã theo đúng priority
-    // env → workspace disk → cache).
+///
+/// Returns typed ScaffoldResolveStatus thay vì bool - KHÔNG được bỏ qua!
+pub async fn ensure_layer(
+    rel: &str,
+) -> Result<
+    crate::scaffold::resolver::ScaffoldResolveStatus,
+    crate::scaffold::resolver::ScaffoldResolveError,
+> {
+    use crate::scaffold::embedded::EmbeddedKernel;
+    use crate::scaffold::resolver::{ScaffoldResolveError, ScaffoldResolveStatus};
+    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+
+    // Parse layer path để lấy core/name (web/frontend/nextjs → core=web, name=nextjs)
+    // Layer rel có thể là:
+    // - "web/frontend/nextjs" → name="nextjs"
+    // - "web/shared/partials/base" → full path
+    // - "app/flutter@stable" → name="flutter@stable" (đã có @tag)
+    let segments: Vec<&str> = rel.split('/').collect();
+    let core_str = segments.first().unwrap_or(&"web");
+    let core = CoreKind::from_str_core(core_str)
+        .ok_or_else(|| ScaffoldResolveError::Other(format!("Unknown core: {}", core_str)))?;
+
+    let name_segment = segments.last().unwrap_or(&"unknown");
+
+    // 1. Check embedded kernel first
+    // Try full path first (web/shared/base), then short form (web/vanilla)
+    if EmbeddedKernel::has_layer_path(rel) {
+        // Extract embedded to legacy cache location so processor can find it
+        let cache_target = crate::commands::template::templates_cache_dir().join(rel);
+        if !cache_target.exists() {
+            EmbeddedKernel::extract_layer_path(rel, &cache_target).map_err(|e| {
+                ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
+            })?;
+        }
+        return Ok(ScaffoldResolveStatus::Embedded {
+            layer: rel.to_string(),
+        });
+    }
+
+    let base_name = name_segment.split('@').next().unwrap_or(name_segment);
+    if EmbeddedKernel::has_layer(core_str, base_name) {
+        // Extract to cache
+        let cache_target = crate::commands::template::templates_cache_dir().join(rel);
+        if !cache_target.exists() {
+            EmbeddedKernel::extract_layer(core_str, base_name, &cache_target).map_err(|e| {
+                ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
+            })?;
+        }
+        return Ok(ScaffoldResolveStatus::Embedded {
+            layer: rel.to_string(),
+        });
+    }
+
+    // 2. Parse spec for registry lookup
+    // Nếu name_segment đã có @tag (flutter@stable) → dùng nguyên
+    // Nếu không có @tag (flutter) → thêm @latest
+    let spec_input = if name_segment.contains('@') {
+        name_segment.to_string()
+    } else {
+        format!("{}@latest", name_segment)
+    };
+
+    let spec = parse_scaffold_spec(core, &spec_input).map_err(|e| {
+        ScaffoldResolveError::Other(format!("Failed to parse scaffold spec: {}", e))
+    })?;
+
+    // 3. Check versioned cache (Phase 2 - NEW)
+    use crate::scaffold::cache::ScaffoldCache;
+    let cached_versions = ScaffoldCache::list_versions(&spec);
+    if let Some(version) = cached_versions.first() {
+        let path = ScaffoldCache::path(&spec, version);
+        return Ok(ScaffoldResolveStatus::CacheHit {
+            layer: rel.to_string(),
+            version: Some(version.clone()),
+            path,
+        });
+    }
+
+    // 4. Legacy cache fallback (old ~/.mgc/templates/{rel})
     let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
     if root.exists("") && root.exists("template.toml") && root.exists("sources") {
-        return true;
+        let version = extract_cached_version(&root);
+        return Ok(ScaffoldResolveStatus::CacheHit {
+            layer: rel.to_string(),
+            version,
+            path: root.path().to_path_buf(),
+        });
     }
-    // Registry fetch khi chưa có. Core lấy từ segment đầu của rel (web/... → web,
-    // game/bevy → game) để package name khớp mgc-create-<core>-<name>.
-    let core = rel.split('/').next().unwrap_or("web").to_string();
-    if let Ok(registry) = select_registry(None) {
-        let args = TemplateFetchArgs {
-            core,
-            name: rel.to_string(),
-            registry: Some(registry),
-            tag: None,
-        };
-        if fetch(args).await.is_ok() {
-            return true;
+
+    // 5. Registry fetch (Phase 2 - NEW)
+    use crate::scaffold::registry::ScaffoldRegistry;
+    let registry_client = ScaffoldRegistry::new();
+
+    // Resolve version from dist-tag (latest → 15.5.0)
+    let version = match registry_client.resolve_version(&spec).await {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(ScaffoldResolveError::RequiredLayerMissing {
+                layer: rel.to_string(),
+                core: core_str.to_string(),
+                template: spec.name.clone(),
+                tag: "latest".to_string(),
+                attempted_sources: format!(
+                    "- Embedded kernel: not available\n\
+                     - Versioned cache: empty\n\
+                     - Legacy cache: empty\n\
+                     - Registry fetch failed: {}",
+                    e
+                ),
+            });
         }
-    }
-    false
+    };
+
+    // Fetch tarball
+    let tarball = match registry_client.fetch(&spec, &version).await {
+        Ok(data) => data,
+        Err(e) => {
+            return Err(ScaffoldResolveError::RequiredLayerMissing {
+                layer: rel.to_string(),
+                core: core_str.to_string(),
+                template: spec.name.clone(),
+                tag: version.clone(),
+                attempted_sources: format!(
+                    "- Registry fetch failed for version {}: {}",
+                    version, e
+                ),
+            });
+        }
+    };
+
+    // Write to versioned cache
+    ScaffoldCache::write(&spec, &version, &tarball)
+        .map_err(|e| ScaffoldResolveError::Other(format!("Failed to write cache: {}", e)))?;
+
+    let path = ScaffoldCache::path(&spec, &version);
+    Ok(ScaffoldResolveStatus::Fetched {
+        layer: rel.to_string(),
+        version: version.clone(),
+        path,
+    })
+}
+
+/// Extract version từ cache metadata file
+fn extract_cached_version(root: &crate::scaffold::template_root::TemplateRoot) -> Option<String> {
+    let metadata_path = root.path().join(".mgc-version");
+    std::fs::read_to_string(metadata_path)
+        .ok()
+        .and_then(|content| content.lines().next().map(|s| s.trim().to_string()))
+}
+
+/// Write version metadata vào cache directory
+#[allow(dead_code)] // Used by legacy cache path, kept for backward compatibility
+fn write_cache_version_metadata(
+    root: &crate::scaffold::template_root::TemplateRoot,
+    version: &str,
+) -> Result<()> {
+    let metadata_path = root.path().join(".mgc-version");
+    std::fs::write(metadata_path, format!("{}\n", version))?;
+    Ok(())
 }
 
 /// Extract tarball entries vào target, bỏ segment đầu của entry name

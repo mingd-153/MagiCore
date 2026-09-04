@@ -54,6 +54,12 @@ pub enum CommonCommand {
         script: String,
         args: Vec<String>,
     },
+    Test {
+        args: Vec<String>,
+    },
+    Optimizer {
+        force: bool,
+    },
     Build {
         target: Option<String>,
     },
@@ -193,6 +199,7 @@ pub enum CoreCommand {
         project_name: String,
     },
     CreateLib {
+        framework: String,
         project_name: String,
     },
     CreateHardware {
@@ -495,6 +502,8 @@ impl TryFrom<Commands> for DispatchCommand {
             Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
             Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
             Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
+            Commands::Test { args } => Some(CommonCommand::Test { args }),
+            Commands::Optimizer { force } => Some(CommonCommand::Optimizer { force }),
             Commands::Build { target } => Some(CommonCommand::Build { target }),
             Commands::Flash { board, skip_build } => {
                 Some(CommonCommand::Flash { board, skip_build })
@@ -748,9 +757,13 @@ impl TryFrom<Commands> for DispatchCommand {
                 framework,
                 project_name,
             }),
-            Commands::CreateLib { project_name } => {
-                SomeCore(CoreCommand::CreateLib { project_name })
-            }
+            Commands::CreateLib {
+                framework,
+                project_name,
+            } => SomeCore(CoreCommand::CreateLib {
+                framework,
+                project_name,
+            }),
             Commands::InstallWeb {
                 packages,
                 frozen,

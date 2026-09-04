@@ -914,3 +914,25 @@ pub fn config_key_missing(key: &str) -> Error {
 pub fn dir_missing(dir: &str, cause: String) -> Error {
     anyhow!("cannot change to directory '{dir}': {cause}")
 }
+
+pub fn runtime_dangerous_flag_rejected(runtime: &str, flag: &str) -> Error {
+    anyhow!(
+        "Rejected dangerous {} flag: {}. Use project scripts only.\n\
+         Bị từ chối flag {} nguy hiểm: {}. Chỉ dùng project scripts.",
+        runtime,
+        flag,
+        runtime,
+        flag
+    )
+}
+
+pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) -> Error {
+    anyhow!(
+        "Rejected dangerous {} permission: {}. Explicitly allow in deno.json tasks if needed.\n\
+         Bị từ chối quyền {} nguy hiểm: {}. Cho phép rõ ràng trong deno.json tasks nếu cần.",
+        runtime,
+        permission,
+        runtime,
+        permission
+    )
+}

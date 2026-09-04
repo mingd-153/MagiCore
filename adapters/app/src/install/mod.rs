@@ -66,7 +66,7 @@ async fn install_flutter(project_root: &Path, opts: InstallOptions) -> MgResult<
         )));
     }
 
-    // TODO: parse pubspec.lock to build InstallSummary
+    // Issue #13: parse pubspec.lock to build InstallSummary
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,
@@ -104,7 +104,7 @@ async fn install_kotlin(project_root: &Path, opts: InstallOptions) -> MgResult<I
         )));
     }
 
-    // TODO: parse gradle.lockfile / build.gradle
+    // Issue #13: parse gradle.lockfile / build.gradle
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,
@@ -131,7 +131,7 @@ async fn install_swift(project_root: &Path, _opts: InstallOptions) -> MgResult<I
         )));
     }
 
-    // TODO: parse Package.resolved
+    // Issue #13: parse Package.resolved
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,
@@ -163,7 +163,7 @@ async fn install_objc(project_root: &Path, opts: InstallOptions) -> MgResult<Ins
         )));
     }
 
-    // TODO: parse Podfile.lock
+    // Issue #13: parse Podfile.lock
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,

@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 // use mgc_lockfile::{
 //     serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
 // };
@@ -257,7 +257,7 @@ pub async fn install(
     allow_scripts: bool,
     prefer_dedupe: bool,
     repair: bool,
-    _offline: bool, // FIXME(V1.0.1): Implement offline mode
+    _offline: bool, // Issue #3: Implement offline mode (v1.2.0 milestone)
 ) -> Result<()> {
     let root = project_root()?;
     let adapter: Arc<dyn PackageAdapter> = web_adapter();
@@ -280,7 +280,7 @@ pub async fn install(
                 .filter(|target| target.join("package.json").exists())
                 .map(|target| target.as_path()),
         );
-        // FIXME(V1.0.1): existing_versions_from disabled - restore after v2 migration
+        // Issue #4: existing_versions_from disabled - restore after lockfile v2 migration complete
         // if let Ok(existing) = mgc_lockfile::existing_versions_from(&lock_roots) {
         if let Ok(_existing) = Ok::<Vec<String>, ()>(Vec::new()) {
             // Skipping set_existing_versions call until v2 migration complete
@@ -336,7 +336,7 @@ pub async fn install(
                 &packages,
                 ignore_scripts,
                 allow_scripts,
-                false, // offline - FIXME: pass from command args
+                false, // offline - Issue #3: pass from command args when offline mode implemented
             )
             .await?;
         }
@@ -768,7 +768,7 @@ async fn install_web_target_quiet(
     Ok(())
 }
 
-// FIXME(V1.0.1): Disabled due to lockfile v2 migration (uses LockPackage, WorkspaceLock, ResolutionMeta)
+// Issue #4: Disabled due to lockfile v2 migration (uses LockPackage, WorkspaceLock, ResolutionMeta)
 fn write_monorepo_root_lockfile(_project_root: &Path, _targets: &[PathBuf]) -> Result<()> {
     // Workspace lockfile merging requires v2 schema rewrite
     // For now, each workspace maintains its own lockfile
@@ -919,6 +919,48 @@ fn append_dev_endpoint_args(
     }
 }
 
+/// Validate runtime args for Bun/Deno using shared launcher policy
+/// Kiểm tra args runtime cho Bun/Deno dùng policy launcher chung
+///
+/// SAFETY: Uses centralized launcher_policy module for consistent validation
+/// AN TOÀN: Dùng module launcher_policy tập trung để kiểm tra nhất quán
+fn validate_runtime_args(runtime: &str, args: &[&str]) -> Result<()> {
+    use crate::commands::launcher_policy::{LauncherPolicy, Runtime};
+
+    let rt = match runtime {
+        "bun" => Runtime::Bun,
+        "deno" => Runtime::Deno,
+        "node" => Runtime::Node,
+        _ => return Ok(()), // Unknown runtime, skip validation
+    };
+
+    let policy = LauncherPolicy::dev_server(rt);
+    policy.validate_args(args)
+}
+
+/// Detect runtime from script tokens for optimizer env loading
+/// Phát hiện runtime từ script tokens để load env optimizer
+fn detect_runtime_from_tokens(
+    tokens: &[&str],
+) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::{DetectedRuntime, PackageManager};
+
+    if tokens.is_empty() {
+        return DetectedRuntime::Unknown;
+    }
+
+    match tokens[0] {
+        "bun" => DetectedRuntime::Bun,
+        "deno" => DetectedRuntime::Deno,
+        "node" | "npm" | "pnpm" | "yarn" | "vite" | "next" | "webpack" | "react-scripts" => {
+            DetectedRuntime::NodeJs {
+                package_manager: PackageManager::Npm, // Default, actual PM doesn't matter for env loading
+            }
+        }
+        _ => DetectedRuntime::Unknown,
+    }
+}
+
 fn build_dev_launch(
     project_root: &Path,
     script_name: &str,
@@ -937,14 +979,79 @@ fn build_dev_launch(
         return Err(crate::error::web_empty_dev_script(project_root));
     }
 
+    // Detect runtime from script to load correct optimizer config
+    // Phát hiện runtime từ script để load đúng config optimizer
+    let runtime = detect_runtime_from_tokens(&tokens);
+    let optimizer_envs =
+        crate::commands::optimizer::env_loader::load_optimizer_env(project_root, &runtime)
+            .map_err(|e| {
+                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                e
+            })
+            .unwrap_or_default();
+    let base_envs: Vec<(OsString, OsString)> = optimizer_envs
+        .into_iter()
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+        .collect();
+
     match tokens.as_slice() {
+        // Bun runtime (allowed in DevServer scope with project script)
+        // Runtime Bun (cho phép trong scope DevServer với script của project)
+        // SAFETY: Validate args - no --eval, no arbitrary code execution
+        ["bun", "run", rest @ ..] => {
+            validate_runtime_args("bun", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("bun"),
+                args: {
+                    let mut args = vec![OsString::from("run")];
+                    args.extend(rest.iter().map(OsString::from));
+                    args
+                },
+                envs: base_envs.clone(),
+            })
+        }
+        ["bun", rest @ ..] => {
+            validate_runtime_args("bun", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("bun"),
+                args: rest.iter().map(OsString::from).collect(),
+                envs: base_envs.clone(),
+            })
+        }
+        // Deno runtime (allowed in DevServer scope with project script)
+        // Runtime Deno (cho phép trong scope DevServer với script của project)
+        // SAFETY: Validate args - no --eval, restrict dangerous permissions
+        ["deno", "run", rest @ ..] => {
+            validate_runtime_args("deno", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("deno"),
+                args: {
+                    let mut args = vec![OsString::from("run")];
+                    args.extend(rest.iter().map(OsString::from));
+                    args
+                },
+                envs: base_envs.clone(),
+            })
+        }
+        ["deno", "task", rest @ ..] => {
+            validate_runtime_args("deno", rest)?;
+            Ok(DevLaunch {
+                program: PathBuf::from("deno"),
+                args: {
+                    let mut args = vec![OsString::from("task")];
+                    args.extend(rest.iter().map(OsString::from));
+                    args
+                },
+                envs: base_envs.clone(),
+            })
+        }
         ["vite"] | ["vite", "dev"] => {
             let mut args = Vec::new();
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["vite", rest @ ..] => {
@@ -953,7 +1060,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "vite")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["next", "dev"] => {
@@ -962,7 +1069,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["next", "dev", rest @ ..] => {
@@ -972,44 +1079,48 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "next")?,
                 args,
-                envs: vec![],
+                envs: base_envs,
             })
         }
         ["nuxt", "dev"] | ["nuxt", "dev", "--host"] => {
             let mut args = vec![OsString::from("dev")];
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (
+                    OsString::from("NUXT_TELEMETRY_DISABLED"),
+                    OsString::from("1"),
+                ),
+                (
+                    OsString::from("NUXT_TELEMETRY_CONSENT"),
+                    OsString::from("0"),
+                ),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
-                envs: vec![
-                    (
-                        OsString::from("NUXT_TELEMETRY_DISABLED"),
-                        OsString::from("1"),
-                    ),
-                    (
-                        OsString::from("NUXT_TELEMETRY_CONSENT"),
-                        OsString::from("0"),
-                    ),
-                ],
+                envs,
             })
         }
         ["nuxt", "dev", rest @ ..] => {
             let mut args = vec![OsString::from("dev")];
             args.extend(rest.iter().map(OsString::from));
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (
+                    OsString::from("NUXT_TELEMETRY_DISABLED"),
+                    OsString::from("1"),
+                ),
+                (
+                    OsString::from("NUXT_TELEMETRY_CONSENT"),
+                    OsString::from("0"),
+                ),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "nuxt")?,
                 args,
-                envs: vec![
-                    (
-                        OsString::from("NUXT_TELEMETRY_DISABLED"),
-                        OsString::from("1"),
-                    ),
-                    (
-                        OsString::from("NUXT_TELEMETRY_CONSENT"),
-                        OsString::from("0"),
-                    ),
-                ],
+                envs,
             })
         }
         ["astro", "dev"] => {
@@ -1018,7 +1129,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["astro", "dev", rest @ ..] => {
@@ -1028,7 +1139,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "astro")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["remix", "vite:dev"] => {
@@ -1037,7 +1148,7 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["remix", "vite:dev", rest @ ..] => {
@@ -1047,43 +1158,47 @@ fn build_dev_launch(
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "remix")?,
                 args,
-                envs: vec![],
+                envs: base_envs.clone(),
             })
         }
         ["ng", "serve"] => {
             let mut args = vec![OsString::from("serve")];
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
+                (OsString::from("CI"), OsString::from("1")),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
-                envs: vec![
-                    (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
-                    (OsString::from("CI"), OsString::from("1")),
-                ],
+                envs,
             })
         }
         ["ng", "serve", rest @ ..] => {
             let mut args = vec![OsString::from("serve")];
             args.extend(rest.iter().map(OsString::from));
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            let mut envs = base_envs.clone();
+            envs.extend(vec![
+                (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
+                (OsString::from("CI"), OsString::from("1")),
+            ]);
             Ok(DevLaunch {
                 program: resolve_local_bin(project_root, "ng")?,
                 args,
-                envs: vec![
-                    (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
-                    (OsString::from("CI"), OsString::from("1")),
-                ],
+                envs,
             })
         }
         ["node", rest @ ..] => Ok(DevLaunch {
             program: PathBuf::from("node"),
             args: rest.iter().map(OsString::from).collect(),
-            envs: vec![],
+            envs: base_envs.clone(),
         }),
         ["tsx", rest @ ..] => Ok(DevLaunch {
             program: resolve_local_bin(project_root, "tsx")?,
             args: rest.iter().map(OsString::from).collect(),
-            envs: vec![],
+            envs: base_envs,
         }),
         _ => Err(crate::error::web_unsupported_dev_script(
             &script,
@@ -1093,6 +1208,16 @@ fn build_dev_launch(
 }
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
+    // Allow bun/deno when used as runtime (not package manager)
+    // Cho phép bun/deno khi dùng như runtime (không phải package manager)
+    let script_lower = script.to_lowercase();
+    if script_lower.starts_with("bun run ")
+        || script_lower.starts_with("deno run ")
+        || script_lower.starts_with("deno task ")
+    {
+        return Ok(()); // Runtime usage allowed in DevServer scope
+    }
+
     if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
         return Err(crate::error::web_forbidden_pm(script, manifest_path, pm));
     }
@@ -1522,11 +1647,21 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
         .iter()
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
+
+    // SAFETY: Enable audit log for dev server execution
+    // AN TOÀN: Bật audit log cho dev server execution
+    let audit_log = target.dir.join(".mgc").join("exec.log");
+    if let Some(parent) = audit_log.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(target.dir.clone()),
         env,
         clean_env: true,
         disable_timeout: true,
+        execution_scope: Some(mgc_exec::prelude::ExecutionScope::DevServer),
+        log_path: Some(audit_log),
         ..Default::default()
     };
 
@@ -1600,7 +1735,13 @@ pub async fn run_create_with_options(
         apply_preset(preset_name, &mut flags);
     }
 
-    let fe_framework = resolve_framework(Some(framework), &flags)?;
+    // Phase 4: Parse scaffold spec sớm với typo detection
+    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+    let spec = parse_scaffold_spec(CoreKind::Web, framework)
+        .map_err(|e| anyhow::anyhow!("Invalid framework specification '{}': {}", framework, e))?;
+
+    // Use normalized name cho resolve
+    let fe_framework = resolve_framework(Some(&spec.name), &flags)?;
     enforce_framework_language_defaults(&fe_framework, &mut flags);
     validate_flags(&flags, &fe_framework)?;
 
@@ -1609,89 +1750,39 @@ pub async fn run_create_with_options(
         project_name, fe_framework
     ));
 
-    // Registry-first preflight: ensure mọi layer scaffold sẽ dùng (frontend leaf,
-    // backend leaf theo lang/fw, monorepo base/partials) — pnpm-style delegate.
-    // Embedded kernel + cache + disk được kiểm trước; thiếu thì fetch registry.
+    let config = build_web_config(&fe_framework, project_name, &flags)?;
+
+    // Registry-first preflight — ensure only layers this scaffold mode uses.
+    // Kiểm đúng layer theo mode, không bắt backend/monorepo partials cho frontend.
     let frontend = parse_framework_request(&fe_framework);
-    let be_from_flags = detect_backend_framework(&flags);
-    let be_name = be_from_flags
-        .clone()
-        .or_else(|| fullstack_backend_framework(&frontend.raw).map(str::to_string))
-        .or_else(|| fullstack_backend_framework(&frontend.normalized).map(str::to_string));
-    let be_ref = be_name.as_deref();
-    let mut rels: Vec<String> = vec![format!("web/frontend/{}", frontend.normalized)];
-    match be_ref {
-        Some(be) => {
-            if let Some(lang) = crate::scaffold::processor::infer_backend_language(be) {
-                // Backend-only mode dùng web/backend/{lang}/{be}; monorepo dùng
-                // web/monorepo/backend/{lang}/{be} — fetch cả 2 (registry-first).
-                rels.push(format!("web/backend/{lang}/{be}"));
-                rels.push(format!("web/monorepo/backend/{lang}/{be}"));
-            }
-            // Fullstack combo Node (react-express, vue-laravel...) — be đến từ
-            // framework name, không phải flag → cần split leaf riêng theo combo.
-            if be_from_flags.is_none() {
-                rels.push(format!("web/fullstack/split/{}", frontend.raw));
-            }
-        }
-        // Backend-only mode khi framework name là backend thuần (express, fastapi...):
-        // scaffold dùng web/backend/{lang}/{fe}, không có frontend leaf.
-        None => {
-            if let Some(lang) =
-                crate::scaffold::processor::infer_backend_language(&frontend.normalized)
-            {
-                rels.push(format!("web/backend/{lang}/{}", frontend.normalized));
-                rels.push(format!(
-                    "web/monorepo/backend/{lang}/{}",
-                    frontend.normalized
-                ));
-            } else {
-                // Không có backend riêng → fullstack split combo Node
-                // (react-express...) hoặc all-in-one (nextjs/remix/...) —
-                // ensure đúng bucket theo framework.
-                let bucket =
-                    if crate::scaffold::processor::is_all_in_one_fullstack(&frontend.normalized) {
-                        "all-in-one"
-                    } else {
-                        "split"
-                    };
-                rels.push(format!("web/fullstack/{bucket}/{}", frontend.normalized));
-            }
-        }
-    }
-    if flags.monorepo {
-        rels.push("web/monorepo/base".to_string());
-        rels.push(format!("web/monorepo/frontend/{}", frontend.normalized));
-    }
-    // Shared partials (processor dùng mọi mode): fetch hết — layer nhỏ, an toàn.
-    for partial in [
-        "base",
-        "backend",
-        "frontend",
-        "frontend-common",
-        "frontend-foundation",
-        "frontend-rust-ready",
-        "fullstack",
-        "monorepo",
-        "monorepo-backend",
-        "monorepo-frontend",
-        "monorepo-frontend-common",
-        "monorepo-frontend-foundation",
-        "monorepo-frontend-rust-ready",
-        "monorepo-packages",
-    ] {
-        rels.push(format!("web/shared/partials/{partial}"));
-    }
+    let rels = required_web_layers_for_config(&config, &frontend);
+
+    // Phase 3: Typed resolution với MissingLayersReport thay vì warning spam
+    use crate::scaffold::resolver::MissingLayersReport;
+    let mut report = MissingLayersReport::new();
+
     for rel in &rels {
-        if !crate::commands::template::ensure_layer(rel).await {
-            mgc_ui::warning(&format!(
-                "Template layer '{}' not in embedded kernel, cache, or registry; scaffold may fail if no local templates/ dir matches",
-                rel
-            ));
+        match crate::commands::template::ensure_layer(rel).await {
+            Ok(status) => {
+                if !status.is_available() {
+                    report.add_optional(rel.clone());
+                }
+            }
+            Err(_) => {
+                if web_layer_has_scaffold_fallback(&config, rel) {
+                    report.add_optional(rel.clone());
+                } else {
+                    report.add_required(rel.clone());
+                }
+            }
         }
     }
 
-    let config = build_web_config(&fe_framework, project_name, &flags)?;
+    // Fail early nếu có required layers missing
+    if report.has_required_missing() {
+        bail!(report.format_error("web", &frontend.normalized));
+    }
+
     let project_dir = crate::scaffold::Scaffolder::scaffold(&config)?;
 
     let proj_config = mgc_config::project::ProjectConfig::from_scaffold(
@@ -1703,6 +1794,22 @@ pub async fn run_create_with_options(
         config.features.clone(),
     );
     proj_config.save(&project_dir)?;
+
+    // Write scaffold provenance (R10 - supply chain tracking)
+    let provenance = crate::scaffold::provenance::ScaffoldProvenance::new(
+        spec.name.clone(),
+        "web".to_string(),
+        match &spec.requested_ref {
+            crate::scaffold::spec::ScaffoldRef::DistTag(t) => t.clone(),
+            crate::scaffold::spec::ScaffoldRef::Version(v) => v.clone(),
+            _ => "default".to_string(),
+        },
+        None, // Registry URL would come from ensure_layer results
+        rels.clone(),
+    );
+    if let Err(e) = provenance.write(&project_dir) {
+        mgc_ui::warning(&format!("Failed to write provenance: {}", e));
+    }
 
     let frontend = parse_framework_request(&fe_framework);
     let be_name = detect_backend_framework(&flags);
@@ -1720,6 +1827,73 @@ pub async fn run_create_with_options(
     ));
 
     Ok(())
+}
+
+fn required_web_layers_for_config(
+    config: &crate::wizard::engine::ScaffoldConfig,
+    frontend: &FrameworkRequest,
+) -> Vec<String> {
+    let mut rels = vec!["web/shared/partials/base".to_string()];
+    let primary = config
+        .frameworks
+        .first()
+        .cloned()
+        .unwrap_or_else(|| frontend.normalized.clone());
+
+    match config.sub_type.as_str() {
+        "frontend" => {
+            rels.push("web/shared/partials/frontend-foundation".to_string());
+            rels.push("web/shared/partials/frontend-rust-ready".to_string());
+            rels.push("web/shared/partials/frontend".to_string());
+            if matches!(primary.as_str(), "react-vite" | "solidjs") {
+                rels.push("web/shared/partials/frontend-common".to_string());
+            }
+            rels.push(format!("web/frontend/{primary}"));
+        }
+        "backend" => {
+            rels.push("web/shared/partials/backend".to_string());
+            if let Some(lang) = crate::scaffold::processor::infer_backend_language(&primary) {
+                rels.push(format!("web/backend/{lang}/{primary}"));
+            }
+        }
+        "fullstack" => {
+            rels.push("web/shared/partials/fullstack".to_string());
+            let bucket = if crate::scaffold::processor::is_all_in_one_fullstack(&primary) {
+                "all-in-one"
+            } else {
+                "split"
+            };
+            rels.push(format!("web/fullstack/{bucket}/{primary}"));
+        }
+        "monorepo" => {
+            rels.push("web/shared/partials/monorepo".to_string());
+            rels.push("web/monorepo/base".to_string());
+            rels.push(format!("web/monorepo/frontend/{primary}"));
+            if let Some(backend) = config.frameworks.get(1) {
+                if let Some(lang) = crate::scaffold::processor::infer_backend_language(backend) {
+                    rels.push(format!("web/monorepo/backend/{lang}/{backend}"));
+                }
+            }
+        }
+        _ => rels.push(format!("web/frontend/{primary}")),
+    }
+
+    rels
+}
+
+fn web_layer_has_scaffold_fallback(
+    config: &crate::wizard::engine::ScaffoldConfig,
+    rel: &str,
+) -> bool {
+    let framework = config.frameworks.first().map(String::as_str).unwrap_or("");
+    let frontend_leaf = format!("web/frontend/{framework}");
+    if rel == frontend_leaf {
+        return crate::scaffold::embedded_kernel::get_embedded_template("web", framework).is_some();
+    }
+
+    let backend_leaf = crate::scaffold::processor::infer_backend_language(framework)
+        .map(|lang| format!("web/backend/{lang}/{framework}"));
+    backend_leaf.as_deref() == Some(rel)
 }
 
 fn resolve_framework(pos: Option<&str>, flags: &ScaffoldFlags) -> Result<String> {

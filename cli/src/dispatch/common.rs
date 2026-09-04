@@ -71,6 +71,8 @@ pub async fn dispatch_common(
         CommonCommand::Audit { fix } => commands::audit::run(core, fix).await,
         CommonCommand::SelfUpdate => commands::self_update::run().await,
         CommonCommand::Run { script, args } => commands::run::run(script, args, core).await,
+        CommonCommand::Test { args } => commands::test::test(args, core).await,
+        CommonCommand::Optimizer { force } => commands::optimizer::run(core, force).await,
         CommonCommand::Dlx { package, args } => commands::dlx::run(package, args).await,
         CommonCommand::Cache {
             action,

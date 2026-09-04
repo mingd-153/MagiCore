@@ -1,0 +1,4 @@
+# Test lockfile for AI agent template
+pytest==7.4.0
+pluggy==1.2.0
+packaging==23.1

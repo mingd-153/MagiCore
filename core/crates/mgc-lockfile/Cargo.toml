@@ -1,10 +1,10 @@
 [package]
 name = "mgc-lockfile"
-version = "1.0.0"
-edition = "2021"
-authors = ["MagiCore Contributors"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Cryptographically signed lockfile for Zero-Trust Supply Chain"
-license = "MIT"
+license.workspace = true
 
 [lib]
 path = "src/lib.rs"
@@ -28,7 +28,7 @@ path = "tests/import.rs"
 
 [dependencies]
 # Crypto primitives (local crate)
-mgc-crypto = { path = "../mgc-crypto", version = "1.0.0" }
+mgc-crypto = { path = "../mgc-crypto" }
 
 # TOML parsing/serialization
 toml = "0.8"

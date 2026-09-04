@@ -248,7 +248,7 @@ pub async fn remove(
         return Ok(());
     }
     info("Re-installing dependency graph...");
-    // FIXME(V1.0.1): load_pruned_locked_graph disabled - restore after v2 migration
+    // Issue #4: load_pruned_locked_graph disabled - restore after lockfile v2 migration complete
     let graph = None;
     if let Some(graph) = graph {
         info("Using mgc.lock for remaining dependency graph.");
@@ -805,7 +805,7 @@ fn load_locked_graph(
         }
         return Ok(None);
     };
-    // FIXME(V1.0.1): Re-enable lock.core, lock.version, lock.resolution checks after v2 migration
+    // Issue #4: Re-enable lock.core, lock.version, lock.resolution checks after lockfile v2 migration
     // let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
     // if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
     if lock.packages.is_empty() {
@@ -833,7 +833,7 @@ fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
     })
 }
 
-// FIXME(V1.0.1): Disabled due to lockfile v2 migration
+// Issue #4: Disabled due to lockfile v2 migration
 // fn load_pruned_locked_graph(
 //     project_root: &Path,
 //     adapter_name: &str,
@@ -936,7 +936,7 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, _package: &str) -> R
     if !lock_path.exists() {
         return Err(crate::error::lock_missing_install());
     }
-    // FIXME(V1.0.1): Reimplement with lockfile v2 schema (no pkg.direct field)
+    // Issue #4: Reimplement with lockfile v2 schema (no pkg.direct field)
     unimplemented!("why command requires lockfile v2 migration")
 }
 
@@ -1114,10 +1114,24 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
         mgc_ai_adapter::adapter_for(&root).ok_or_else(|| crate::error::no_ai_framework(&root))?;
     let script = framework.framework.entry_script().to_string();
 
+    // Detect AI runtime for optimizer env loading
+    // Phát hiện runtime AI để load env optimizer
+    let runtime = detect_ai_runtime(&root, framework.framework.as_str());
+    let optimizer_envs =
+        crate::commands::optimizer::env_loader::load_optimizer_env(&root, &runtime)
+            .map_err(|e| {
+                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                e
+            })
+            .unwrap_or_default();
+    let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.clone()),
         log_path: Some(root.join(".magicore").join("exec.log")),
+        env,
         clean_env: true,
+        execution_scope: Some(mgc_exec::prelude::ExecutionScope::DevServer),
         ..Default::default()
     };
     let cmd = "python3".to_string();
@@ -1125,6 +1139,28 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
     mgc_exec::prelude::run_inherited(&cmd, &[script], &opts)
         .map_err(|e| crate::error::python3_failed(&e))?;
     Ok(())
+}
+
+/// Detect AI runtime from project
+/// Phát hiện runtime AI từ project
+fn detect_ai_runtime(
+    _root: &std::path::Path,
+    framework: &str,
+) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+
+    match framework {
+        "python-agent" | "mcp-server" => {
+            // SAFETY: Don't assume PyTorch for generic Python AI frameworks
+            // AN TOÀN: Không giả định PyTorch cho framework Python AI chung
+            // TODO: Parse requirements.txt/pyproject.toml to detect actual framework
+            DetectedRuntime::Unknown
+        }
+        "pytorch" | "PyTorch" => DetectedRuntime::PythonPyTorch,
+        "candle" | "Candle" => DetectedRuntime::RustCandle,
+        "tensorflow-go" | "TensorFlow" => DetectedRuntime::GoTensorFlow,
+        _ => DetectedRuntime::Unknown, // Safe fallback, no env injection
+    }
 }
 
 /// Hardware core — optimizer/bench packages (shared cho game/ai/cloud).
@@ -1137,9 +1173,16 @@ pub async fn materialize_template(root: &Path, framework: &str) -> anyhow::Resul
     if target_dir.exists() {
         return Ok(()); // đã có — không ghi đè
     }
-    // Registry-first: fetch layer hardware/<framework> nếu chưa có; fetch fail →
-    // scaffold bên dưới bail rõ ràng (hardware không có fallback procedural).
-    crate::commands::template::ensure_layer(&format!("hardware/{framework}")).await;
+    // Phase 3: Handle typed result - hardware không có fallback
+    match crate::commands::template::ensure_layer(&format!("hardware/{framework}")).await {
+        Ok(status) if status.is_available() => {}
+        Ok(_) | Err(_) => {
+            anyhow::bail!(
+                "Required hardware template layer 'hardware/{}' missing - no fallback available",
+                framework
+            );
+        }
+    }
     let config = crate::wizard::engine::ScaffoldConfig {
         core: "hardware".to_string(),
         sub_type: String::new(),

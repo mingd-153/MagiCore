@@ -15,7 +15,7 @@ pub fn parse_build_gradle(project_root: &Path) -> MgResult<Manifest> {
         return Err(MgError::Other("build.gradle not found".to_string()));
     }
 
-    // TODO: Parse Gradle DSL (Groovy/Kotlin)
+    // Issue #13: Parse Gradle DSL (Groovy/Kotlin)
     // For now, return empty manifest with project name
     let name = project_root
         .file_name()
@@ -27,6 +27,6 @@ pub fn parse_build_gradle(project_root: &Path) -> MgResult<Manifest> {
 
 /// Write Manifest back to build.gradle.
 pub fn write_build_gradle(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    // TODO: Implement Gradle DSL write
+    // Issue #13: Implement Gradle DSL write
     Ok(())
 }

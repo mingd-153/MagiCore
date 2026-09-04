@@ -11,7 +11,7 @@ pub fn parse_package_swift(project_root: &Path) -> MgResult<Manifest> {
         return Err(MgError::Other("Package.swift not found".to_string()));
     }
 
-    // TODO: Parse Package.swift (Swift code parsing)
+    // Issue #13: Parse Package.swift (Swift code parsing)
     // For now, return empty manifest with project name
     let name = project_root
         .file_name()
@@ -23,6 +23,6 @@ pub fn parse_package_swift(project_root: &Path) -> MgResult<Manifest> {
 
 /// Write Manifest back to Package.swift.
 pub fn write_package_swift(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    // TODO: Implement Package.swift write
+    // Issue #13: Implement Package.swift write
     Ok(())
 }

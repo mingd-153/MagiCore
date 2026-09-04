@@ -1,0 +1,7 @@
+[template]
+core = "web"
+name = "frontend-rust-ready"
+version = "1.0.0"
+description = "Test partial: frontend-rust-ready"
+
+files = []
