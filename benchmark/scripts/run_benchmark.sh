@@ -65,6 +65,9 @@ case "$PM_NAME" in
   npm)
     npm cache clean --force || true
     ;;
+  yarn)
+    yarn cache clean || true
+    ;;
 esac
 
 # Pre-benchmark sync
@@ -105,6 +108,13 @@ case "$PM_NAME" in
       npm install > install.log 2>&1 || true
     fi
     ;;
+  yarn)
+    if command -v gtime &> /dev/null; then
+      gtime -v yarn install > install.log 2>&1 || true
+    else
+      yarn install > install.log 2>&1 || true
+    fi
+    ;;
   *)
     echo -e "${RED}Unknown PM: $PM_NAME${NC}"
     exit 1
@@ -143,6 +153,9 @@ case "$PM_NAME" in
     ;;
   npm)
     npm install > install_warm.log 2>&1 || true
+    ;;
+  yarn)
+    yarn install > install_warm.log 2>&1 || true
     ;;
 esac
 WARM_END=$(date +%s.%N)
