@@ -16,6 +16,30 @@ pub async fn audit(
 
     info("Auditing lockfile through the native web adapter...");
     let report = adapter.audit(project_root).await?;
+
+    // Check scanner availability before reporting results
+    if !report.scanner_available() {
+        if let mgc_types::adapter::ScannerStatus::Unavailable(reason) = &report.scanner_status {
+            let strict_mode = std::env::var("MGC_AUDIT_STRICT")
+                .map(|v| v == "1" || v.to_lowercase() == "true")
+                .unwrap_or(false);
+
+            eprintln!("⚠ Audit scanner unavailable: {}", reason);
+            eprintln!("  Audit NOT performed - cannot verify security");
+
+            if strict_mode {
+                anyhow::bail!(
+                    "Audit failed: scanner unavailable in strict mode\n\
+                     Set MGC_AUDIT_STRICT=0 to allow unverified state (not recommended in CI)"
+                );
+            } else {
+                eprintln!("  Status: UNVERIFIED (pass with warning)");
+                eprintln!("  Set MGC_AUDIT_STRICT=1 to fail on unavailable scanner (recommended for CI)");
+                return Ok(());
+            }
+        }
+    }
+
     print_report(&report);
 
     if report.vulnerability_count > 0 {
