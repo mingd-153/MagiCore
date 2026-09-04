@@ -356,6 +356,8 @@ name: test_optimizer_flutter
 version: 1.0.0
 environment:
   sdk: ">=3.0.0 <4.0.0"
+dev_dependencies:
+  test: any
 "#,
     )
     .unwrap();
@@ -363,20 +365,27 @@ environment:
     std::fs::create_dir_all(project.join("lib")).unwrap();
     std::fs::write(
         project.join("lib/main.dart"),
+        r#"void main() {
+  print('Flutter app');
+}
+"#,
+    )
+    .unwrap();
+
+    // Create Flutter test that checks env
+    std::fs::create_dir_all(project.join("test")).unwrap();
+    std::fs::write(
+        project.join("test/optimizer_test.dart"),
         r#"
 import 'dart:io';
+import 'package:test/test.dart';
 
 void main() {
-  // Check if optimizer env marker propagated
-  final marker = Platform.environment['FLUTTER_OPTIMIZER_MARKER'] ?? 'NOT_SET';
-  print('OPTIMIZER_STATUS: $marker');
-  
-  if (marker != 'FLUTTER_OPTIMIZED') {
-    print('ERROR: Expected FLUTTER_OPTIMIZED, got $marker');
-    exit(1);
-  }
-  
-  print('Flutter app - optimizer env verified');
+  test('optimizer env propagates to Flutter test', () {
+    final marker = Platform.environment['FLUTTER_OPTIMIZER_MARKER'] ?? 'NOT_SET';
+    print('OPTIMIZER_STATUS: $marker');
+    expect(marker, equals('FLUTTER_OPTIMIZED'), reason: 'Optimizer env should propagate');
+  });
 }
 "#,
     )
@@ -394,43 +403,43 @@ void main() {
     )
     .unwrap();
 
-    // Run mgc build
+    // Run mgc test (Flutter test)
     let mgc = find_mgc_binary();
     let output = Command::new(&mgc)
-        .arg("build")
+        .arg("test")
         .current_dir(project)
         .output()
-        .expect("mgc build failed to execute");
+        .expect("mgc test failed to execute");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}{}", stdout, stderr);
 
-    println!("=== mgc build output ===\n{}", combined);
+    println!("=== mgc test output (Flutter) ===\n{}", combined);
 
-    // VERIFY: mgc build succeeded AND optimizer env reached Flutter child process
+    // VERIFY: mgc test succeeded AND optimizer env reached Flutter test process
 
     println!("=== Verification ===");
     println!("Exit success: {}", output.status.success());
 
     if !output.status.success() {
-        eprintln!("❌ INTEGRATION FAILED: mgc build exited with error");
+        eprintln!("❌ INTEGRATION FAILED: mgc test (Flutter) exited with error");
         eprintln!("   Exit code: {:?}", output.status.code());
         eprintln!("   Output: {}", combined);
-        panic!("mgc build failed");
+        panic!("mgc test (Flutter) failed");
     }
 
-    // Check 2: Optimizer env marker in Flutter output
+    // Check 2: Optimizer env marker in Flutter test output
     let env_marker_present = combined.contains("OPTIMIZER_STATUS: FLUTTER_OPTIMIZED");
     println!("env_marker_present: {}", env_marker_present);
 
     if !env_marker_present {
-        eprintln!("❌ INTEGRATION FAILED: Optimizer env marker not found");
+        eprintln!("❌ INTEGRATION FAILED: Optimizer env marker not found in Flutter test");
         eprintln!("   Expected: 'OPTIMIZER_STATUS: FLUTTER_OPTIMIZED'");
-        eprintln!("   This means env did not propagate to Flutter child process");
+        eprintln!("   This means env did not propagate to Flutter test process");
         eprintln!("   Output: {}", combined);
-        panic!("Optimizer env not passed to Flutter");
+        panic!("Optimizer env not passed to Flutter test");
     }
 
-    println!("✅ App (Flutter) mgc build → flutter: optimizer env VERIFIED");
+    println!("✅ App (Flutter) mgc test → flutter test: optimizer env VERIFIED");
 }
