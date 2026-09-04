@@ -277,8 +277,14 @@ if __name__ == '__main__':
     println!("=== Test Setup ===");
     println!("Project: {:?}", project);
     println!(".mgc.core exists: {}", project.join(".mgc.core").exists());
-    println!("pytorch_runtime.env exists: {}", optimizer_dir.join("pytorch_runtime.env").exists());
-    println!("test_optimizer.py exists: {}", project.join("test_optimizer.py").exists());
+    println!(
+        "pytorch_runtime.env exists: {}",
+        optimizer_dir.join("pytorch_runtime.env").exists()
+    );
+    println!(
+        "test_optimizer.py exists: {}",
+        project.join("test_optimizer.py").exists()
+    );
 
     // Run mgc test
     let mgc = find_mgc_binary();
