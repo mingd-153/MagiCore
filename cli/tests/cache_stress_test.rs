@@ -95,9 +95,8 @@ fn test_cache_cold_vs_warm() {
     let project1 = create_test_project(&temp, "project1", "web");
     let project2 = create_test_project(&temp, "project2", "web");
 
-    // Custom cache dir for test isolation
-    // FIXED: Use per-Command .env() instead of global std::env::set_var
-    let cache_dir = temp.path().join("test-cache");
+    // Custom cache dir for test isolation - unique per test
+    let cache_dir = temp.path().join("cache-cold-vs-warm");
 
     // === COLD CACHE ===
     println!("\n=== COLD CACHE TEST ===");
@@ -174,7 +173,7 @@ fn test_corrupted_cache_recovery() {
     let mgc = find_mgc_binary();
     let project = create_test_project(&temp, "corrupt-test", "web");
 
-    let cache_dir = temp.path().join("test-cache");
+    let cache_dir = temp.path().join("cache-corrupted");
 
     // Step 1: Normal install to populate cache
     println!("\n=== Populate cache ===");
@@ -278,7 +277,7 @@ fn test_concurrent_install_safety() {
     let project1 = create_test_project(&temp, "concurrent1", "web");
     let project2 = create_test_project(&temp, "concurrent2", "web");
 
-    let cache_dir = temp.path().join("test-cache");
+    let cache_dir = temp.path().join("cache-concurrent");
     clear_cache(&cache_dir);
 
     println!("\n=== Concurrent install test ===");
@@ -395,7 +394,7 @@ fn test_cache_version_invalidation() {
     let project = temp.path().join("version-test");
     std::fs::create_dir_all(&project).unwrap();
 
-    let cache_dir = temp.path().join("test-cache");
+    let cache_dir = temp.path().join("cache-version");
     clear_cache(&cache_dir);
 
     // Step 1: Install lodash@4.17.20
@@ -495,7 +494,7 @@ fn test_cross_core_cache_isolation() {
 
     let temp = TempDir::new().unwrap();
     let mgc = find_mgc_binary();
-    let cache_dir = temp.path().join("test-cache");
+    let cache_dir = temp.path().join("cache-cross-core");
     clear_cache(&cache_dir);
 
     // Step 1: Install Web project with lodash
