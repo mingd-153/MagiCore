@@ -10,6 +10,9 @@ pub async fn audit_flutter(project_root: &Path) -> MgResult<AuditReport> {
             packages_audited: 0,
             vulnerability_count: 0,
             vulnerabilities: vec![],
+            scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+                "flutter CLI not installed".to_string(),
+            ), // P0.6 FIX
         });
     }
 
@@ -38,6 +41,9 @@ pub async fn audit_flutter(project_root: &Path) -> MgResult<AuditReport> {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+            "flutter pub outdated JSON parsing not implemented".to_string(),
+        ), // P0.6 FIX
     })
 }
 
@@ -51,6 +57,9 @@ pub async fn audit_kotlin(project_root: &Path) -> MgResult<AuditReport> {
             packages_audited: 0,
             vulnerability_count: 0,
             vulnerabilities: vec![],
+            scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+                "gradle/gradlew not available".to_string(),
+            ), // P0.6 FIX
         });
     };
 
@@ -67,6 +76,9 @@ pub async fn audit_kotlin(project_root: &Path) -> MgResult<AuditReport> {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+            "OWASP dependency-check not configured or parsing not implemented".to_string(),
+        ), // P0.6 FIX
     })
 }
 
@@ -76,6 +88,9 @@ pub async fn audit_swift(_project_root: &Path) -> MgResult<AuditReport> {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+            "Swift Package Manager has no built-in audit scanner".to_string(),
+        ), // P0.6 FIX
     })
 }
 
@@ -85,6 +100,9 @@ pub async fn audit_cocoapods(_project_root: &Path) -> MgResult<AuditReport> {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+            "CocoaPods has no built-in audit scanner".to_string(),
+        ), // P0.6 FIX
     })
 }
 
@@ -100,5 +118,8 @@ pub async fn audit_multi(project_root: &Path) -> MgResult<AuditReport> {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+            "No recognized app manifest found (pubspec.yaml, build.gradle)".to_string(),
+        ), // P0.6 FIX
     })
 }

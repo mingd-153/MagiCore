@@ -3,7 +3,7 @@
     "description": "Universal package manager with multi-core runtime",
     "homepage": "https://github.com/mingd-153/MagiCore",
     "license": "MIT",
-    "notes": "⚠️  PLACEHOLDER HASHES - Release CI will replace with real SHA256. Manual install not supported - wait for GitHub Release.",
+    "notes": "⚠️  P0.5 FIX: PLACEHOLDER HASHES are EXPECTED until GitHub Release CI completes. Release workflow (.github/workflows/release.yml) builds artifacts → computes SHA256 → runs scripts/update-release-hashes.sh to replace ALL placeholders. Manual install NOT supported before release. Test: see packaging/README.md.",
     "architecture": {
         "64bit": {
             "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-X64.zip",

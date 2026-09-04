@@ -55,6 +55,7 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
             execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner), // TestRunner scope allows PM tools
             env,
             clean_env: false, // Preserve existing env
+            log_path: Some(project_root.join(".magicore").join("exec.log")), // P0.7 FIX: Enable audit logging
             ..Default::default()
         };
 

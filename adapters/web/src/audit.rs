@@ -177,6 +177,7 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
         packages_audited: package_count,
         vulnerability_count: vuln_count,
         vulnerabilities,
+        scanner_status: mgc_types::adapter::ScannerStatus::Available, // P0.6 FIX: Web has OSV scanner
     })
 }
 

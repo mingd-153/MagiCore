@@ -103,7 +103,10 @@ impl PackageAdapter for HardwareAdapter {
     }
 
     async fn audit(&self, _project_root: &Path) -> MgResult<AuditReport> {
-        Ok(AuditReport::clean(0))
+        // P0.6 FIX: Return unavailable instead of fake clean
+        Ok(AuditReport::unavailable(
+            "No audit scanner available for Hardware core (template packages only)",
+        ))
     }
 }
 

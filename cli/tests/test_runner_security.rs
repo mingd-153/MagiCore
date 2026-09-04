@@ -258,10 +258,9 @@ fn test_shell_injection_prevented() {
 }
 
 #[test]
-#[ignore = "Audit logging not yet implemented - FEATURE-INCOMPLETE"]
 fn test_audit_log_records_execution() {
-    // TEST: All tool executions should be logged to audit trail
-    // NOTE: Audit logging not yet fully implemented - test documents requirement
+    // P0.7 FIX: Audit logging already implemented in mgc-exec
+    // Test verifies log file creation and content
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = create_node_project(&temp_dir);
@@ -290,18 +289,62 @@ fn test_audit_log_records_execution() {
         output
     );
 
-    // ASSERT: Audit log implementation
-    // TODO: When audit logging is implemented, check:
-    // 1. Log file exists at expected location
-    // 2. Contains entry for this execution
-    // 3. Includes: timestamp, command, args (redacted), exit code
+    // P0.7 FIX: Verify audit log exists and contains execution
+    let audit_log = project_root.join(".magicore").join("exec.log");
 
-    // For now: Document requirement clearly
-    println!("⚠️  AUDIT LOG: Not yet implemented");
-    println!("    Required: Log all tool executions");
-    println!("    Format: timestamp, command, redacted args, exit code");
-    println!("    Location: TBD (.mgc-audit/ or system audit trail)");
-    println!("    Status: FEATURE-INCOMPLETE - test ignored until implemented");
+    assert!(
+        audit_log.exists(),
+        "Audit log not found at {:?}\n\
+        mgc-exec should create .magicore/exec.log when log_path is provided",
+        audit_log
+    );
+
+    let log_content = fs::read_to_string(&audit_log).expect("Failed to read audit log");
+
+    // Verify log format: JSON lines with required fields
+    let mut found_entry = false;
+    for line in log_content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        // Parse as JSON
+        let entry: serde_json::Value =
+            serde_json::from_str(line).expect("Audit log line is not valid JSON");
+
+        // Verify required fields exist
+        assert!(entry.get("cmd").is_some(), "Missing 'cmd' field");
+        assert!(entry.get("args").is_some(), "Missing 'args' field");
+        assert!(
+            entry.get("exit_code").is_some(),
+            "Missing 'exit_code' field"
+        );
+        assert!(entry.get("ts").is_some(), "Missing 'ts' (timestamp) field");
+        assert!(
+            entry.get("duration_ms").is_some(),
+            "Missing 'duration_ms' field"
+        );
+
+        // Verify args are redacted (no secrets)
+        let args = entry["args"].as_array().expect("args not an array");
+        for arg in args {
+            let arg_str = arg.as_str().expect("arg not a string");
+            assert!(
+                !arg_str.contains("secret") && !arg_str.contains("password"),
+                "Audit log contains non-redacted secret in args"
+            );
+        }
+
+        found_entry = true;
+    }
+
+    assert!(found_entry, "Audit log is empty - no executions recorded");
+
+    println!("✅ Audit log verification passed:");
+    println!("   - Log file exists at {:?}", audit_log);
+    println!("   - Contains valid JSON entries");
+    println!("   - Required fields present: cmd, args, exit_code, ts, duration_ms");
+    println!("   - Args properly redacted (no secrets)");
 }
 
 #[test]

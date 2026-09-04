@@ -272,7 +272,11 @@ impl PackageAdapter for LibAdapter {
         }
         let manifest = self.parse_manifest(project_root).await?;
         let count = manifest.all_dependencies().count();
-        Ok(AuditReport::clean(count))
+        // P0.6 FIX: Return unavailable instead of fake clean
+        Ok(AuditReport::unavailable(format!(
+            "No audit scanner available for lib core ({} dependencies not scanned)",
+            count
+        )))
     }
 
     fn set_dedupe_pref(&self, enabled: bool) {

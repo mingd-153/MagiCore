@@ -11,6 +11,16 @@ pub async fn audit() -> Result<()> {
     for p in &pkgs {
         println!("      {}@{}", p.id.name().as_str(), p.id.version());
     }
+
+    // P0.6 FIX: Check scanner availability before reporting clean
+    if !report.scanner_available() {
+        if let mgc_types::adapter::ScannerStatus::Unavailable(reason) = &report.scanner_status {
+            println!("  ⚠   audit scanner unavailable: {}", reason);
+            println!("      Audit NOT performed - scanner status returned instead of fake clean");
+            return Ok(());
+        }
+    }
+
     if report.is_clean() {
         println!("  ✔   audit clean (template packages — no registry dependencies to check)");
     }

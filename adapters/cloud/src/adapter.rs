@@ -152,7 +152,11 @@ impl PackageAdapter for CloudAdapter {
             return web.audit(project_root).await;
         }
         let manifest = self.parse_manifest(project_root).await?;
-        Ok(AuditReport::clean(manifest.all_dependencies().count()))
+        // P0.6 FIX: Return unavailable instead of fake clean
+        Ok(AuditReport::unavailable(format!(
+            "No audit scanner available for Cloud core ({} dependencies not scanned)",
+            manifest.all_dependencies().count()
+        )))
     }
 
     fn set_dedupe_pref(&self, enabled: bool) {

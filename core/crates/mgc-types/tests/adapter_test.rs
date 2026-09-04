@@ -32,6 +32,7 @@ fn audit_report_not_clean_with_vulnerabilities_vec() {
             patched_versions: None,
             url: None,
         }],
+        scanner_status: ScannerStatus::Available,
     };
     assert!(!report.is_clean());
 }
@@ -42,6 +43,7 @@ fn audit_report_not_clean_with_nonzero_count() {
         packages_audited: 3,
         vulnerability_count: 3,
         vulnerabilities: vec![],
+        scanner_status: ScannerStatus::Available,
     };
     assert!(!report.is_clean());
 }

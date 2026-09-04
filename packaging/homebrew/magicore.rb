@@ -13,7 +13,10 @@ class Magicore < Formula
   # DO NOT install from this formula until after release CI completes
   #
   # ⚠️  PLACEHOLDER HASHES - Release CI will replace with real SHA256
-  # Manual install not supported - wait for GitHub Release artifacts
+  # P0.5 FIX: Placeholders are EXPECTED until GitHub Release artifacts exist.
+  # Manual install not supported - wait for GitHub Release CI to complete.
+  # CI automation: .github/workflows/release.yml → builds artifacts → runs update-release-hashes.sh
+  # Test: scripts/update-release-hashes.sh --artifacts <dir> (see packaging/README.md)
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-macOS-ARM64.tar.gz"

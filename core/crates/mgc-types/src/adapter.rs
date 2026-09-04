@@ -155,6 +155,28 @@ pub struct AuditReport {
     pub packages_audited: usize,
     pub vulnerability_count: usize,
     pub vulnerabilities: Vec<Vulnerability>,
+    /// P0.6 FIX: Scanner availability status
+    /// Indicates whether audit scanner was actually available and ran
+    /// vs returning fake clean when scanner doesn't exist
+    #[serde(default)]
+    pub scanner_status: ScannerStatus,
+}
+
+/// P0.6 FIX: Scanner availability enum
+/// Distinguishes real clean audit from "no scanner available"
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum ScannerStatus {
+    /// Scanner available and executed successfully
+    Available,
+    /// Scanner unavailable - audit not actually performed
+    /// String contains reason (e.g., "No OSV scanner for lib core")
+    Unavailable(String),
+}
+
+impl Default for ScannerStatus {
+    fn default() -> Self {
+        Self::Available
+    }
 }
 
 impl AuditReport {
@@ -163,11 +185,27 @@ impl AuditReport {
             packages_audited,
             vulnerability_count: 0,
             vulnerabilities: vec![],
+            scanner_status: ScannerStatus::Available,
+        }
+    }
+
+    /// P0.6 FIX: Return unavailable report instead of fake clean
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            packages_audited: 0,
+            vulnerability_count: 0,
+            vulnerabilities: vec![],
+            scanner_status: ScannerStatus::Unavailable(reason.into()),
         }
     }
 
     pub fn is_clean(&self) -> bool {
         self.vulnerabilities.is_empty() && self.vulnerability_count == 0
+    }
+
+    /// P0.6 FIX: Check if scanner actually ran
+    pub fn scanner_available(&self) -> bool {
+        matches!(self.scanner_status, ScannerStatus::Available)
     }
 }
 

@@ -111,19 +111,13 @@ fn test_cache_cold_vs_warm() {
         .expect("mgc install failed");
     let cold_duration = cold_start.elapsed();
 
-    // Web adapter may use system cache despite MGC_CACHE_DIR
-    // Accept transient cache corruption errors from parallel test runs
-    if !cold_output.status.success() {
-        let stderr = String::from_utf8_lossy(&cold_output.stderr);
-        if stderr.contains("No such file") || stderr.contains("reflink failed") {
-            eprintln!("⚠️  SKIPPED: Cache corruption from parallel tests");
-            eprintln!("   System cache may be corrupted by concurrent test runs");
-            eprintln!("   This is a known issue with shared cache across tests");
-            eprintln!("   Status: SKIPPED (not FAIL)");
-            return;
-        }
-        panic!("Cold install failed:\n{}", stderr);
-    }
+    // P0.2 FIX: No longer skip on corruption - MUST FAIL to detect bugs
+    // Web adapter now respects MGC_CACHE_DIR → cache isolation works → corruption = real bug
+    assert!(
+        cold_output.status.success(),
+        "Cold install failed (P0.2 - no skip on corruption):\n{}",
+        String::from_utf8_lossy(&cold_output.stderr)
+    );
 
     println!("Cold cache install: {:?}", cold_duration);
 
@@ -192,32 +186,18 @@ fn test_corrupted_cache_recovery() {
         .output()
         .expect("mgc install failed");
 
-    // Web adapter may use system cache despite MGC_CACHE_DIR
-    // Accept transient cache corruption errors from parallel test runs
-    if !output1.status.success() {
-        let stderr = String::from_utf8_lossy(&output1.stderr);
-        if stderr.contains("No such file")
-            || stderr.contains("reflink failed")
-            || stderr.contains("Directory not empty")
-        {
-            eprintln!("⚠️  SKIPPED: Cache corruption from parallel tests");
-            eprintln!("   System cache may be corrupted by concurrent test runs");
-            eprintln!("   This is a known issue with shared cache across tests");
-            eprintln!("   Status: SKIPPED (not FAIL)");
-            return;
-        }
-        panic!("Initial install failed:\n{}", stderr);
-    }
+    // P0.2 FIX: No longer skip on corruption - MUST FAIL to detect bugs
+    assert!(
+        output1.status.success(),
+        "Initial install failed (P0.2 - no skip on corruption):\n{}",
+        String::from_utf8_lossy(&output1.stderr)
+    );
 
-    // Web adapter may not always create MGC_CACHE_DIR (npm has its own cache)
-    // If cache dir wasn't created, skip this test gracefully
-    if !cache_dir.exists() {
-        eprintln!("⚠️  SKIPPED: Cache dir not created after install");
-        eprintln!("   Web adapter may use npm's own cache, not MGC_CACHE_DIR");
-        eprintln!("   Cannot verify corruption recovery without cache files");
-        eprintln!("   Status: SKIPPED (not FAIL)");
-        return;
-    }
+    // P0.2 FIX: MGC_CACHE_DIR now enforced - must exist after install
+    assert!(
+        cache_dir.exists(),
+        "Cache dir not created - Web adapter bug (P0.2 fix required MGC_CACHE_DIR)"
+    );
 
     // Step 2: Corrupt cache (write garbage to cache files)
     println!("\n=== Corrupt cache ===");
@@ -243,12 +223,11 @@ fn test_corrupted_cache_recovery() {
 
     let corrupted = find_and_corrupt_cache_file(&cache_dir);
 
-    if !corrupted {
-        eprintln!("⚠️  SKIPPED: No cache files found to corrupt");
-        eprintln!("   Cache directory exists but empty - cannot verify recovery");
-        eprintln!("   Status: SKIPPED (not FAIL)");
-        return;
-    }
+    // P0.2 FIX: Cache must exist and have files - no skip
+    assert!(
+        corrupted,
+        "No cache files found to corrupt - Web adapter cache bug (P0.2)"
+    );
 
     // Step 3: Try install with corrupted cache
     println!("\n=== Install with corrupted cache ===");

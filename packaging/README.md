@@ -6,7 +6,67 @@ Packaging configurations for Homebrew and Scoop.
 
 **v1.1.0-rc.1** (Beta Release)
 
-## Updating Release Artifacts
+## ⚠️ SHA256 Placeholders (P0.5 Fix)
+
+**IMPORTANT:** Distribution manifests contain `PLACEHOLDER_WILL_BE_REPLACED_BY_CI` for SHA256 hashes.
+
+### Why Placeholders?
+
+- **Real artifacts don't exist yet** until GitHub Release CI completes
+- **Cannot compute hashes** for non-existent files
+- **CI automation** replaces placeholders with real SHA256 values after build
+
+### Automated Hash Update (CI Only)
+
+The release workflow (`.github/workflows/release.yml`) automatically:
+
+1. Builds release artifacts for all platforms (Linux/macOS/Windows × X64/ARM64)
+2. Computes SHA256 for each artifact
+3. Runs `scripts/update-release-hashes.sh --artifacts <dir>` to replace ALL placeholders
+4. Commits updated manifests to release branch
+5. Creates GitHub Release with artifacts + verified manifests
+
+### Manual Testing (Local Development)
+
+```bash
+# P0.5 VERIFICATION: Test hash updater with mock artifacts
+mkdir -p /tmp/mgc-test-artifacts
+# Create mock artifacts (real CI builds actual binaries)
+for artifact in magicore-{Linux,macOS,Windows}-{X64,ARM64}.tar.gz magicore-{Linux,macOS,Windows}-{X64,ARM64}.zip magicore-web-{Linux,macOS,Windows}-{X64,ARM64}.tar.gz magicore-web-{Linux,macOS,Windows}-{X64,ARM64}.zip; do
+  echo "mock-$artifact" > "/tmp/mgc-test-artifacts/$artifact"
+done
+
+# Test updater (on copy, not real manifests)
+mkdir -p /tmp/mgc-pkg-test/packaging/{homebrew,scoop}
+cp packaging/homebrew/*.rb /tmp/mgc-pkg-test/packaging/homebrew/
+cp packaging/scoop/*.json /tmp/mgc-pkg-test/packaging/scoop/
+MAGICORE_REPO_ROOT=/tmp/mgc-pkg-test bash scripts/update-release-hashes.sh --artifacts /tmp/mgc-test-artifacts
+
+# Verify placeholders replaced
+grep -c "PLACEHOLDER" /tmp/mgc-pkg-test/packaging/homebrew/magicore.rb
+# Should output: 1 (only in comment, not hash values)
+
+# Verify script --verify-only mode
+MAGICORE_REPO_ROOT=/tmp/mgc-pkg-test bash scripts/update-release-hashes.sh --artifacts /tmp/mgc-test-artifacts --verify-only
+# Should output: "Release hashes are current."
+```
+
+### DO NOT Manually Edit Hashes
+
+- ❌ **DO NOT** replace placeholders manually
+- ❌ **DO NOT** commit fake SHA256 values
+- ✅ **DO** let CI replace them after artifact build
+- ✅ **DO** verify `update-release-hashes.sh` works (test above)
+
+### Verification Before Release
+
+CI verifies:
+1. All artifacts built successfully
+2. SHA256 computed for each artifact
+3. No `PLACEHOLDER_WILL_BE_REPLACED_BY_CI` remains in manifests (checked by `--verify-only`)
+4. Brew/Scoop formulas pass syntax checks
+
+## Updating Release Artifacts (Post-CI)
 
 ### 1. Build Release Artifacts
 

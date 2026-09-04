@@ -26,11 +26,13 @@ This document describes the methodology used to benchmark MagiCore against other
 - **Documented**: Platform specs + methodology recorded
 - **Open**: Raw JSON data committed for verification
 
-### 3. Statistical Rigor
-- **Multiple runs**: Minimum 5 runs per PM per phase
-- **Variance reporting**: Mean + StdDev + CV (Coefficient of Variation)
+### 3. Statistical Rigor (P1.1 Update)
+- **Multiple runs**: **20-30 runs per PM per phase** (increased from 5 for P1.1)
+- **Variance reporting**: Mean + StdDev + CV (Coefficient of Variation) + **Median + P95**
 - **Outlier handling**: Report all runs, note anomalies
 - **No cherry-picking**: Report all data, including failures
+- **P95 confidence**: 95th percentile for worst-case analysis
+- **Median robustness**: More resistant to outliers than mean
 
 ### 4. Honesty
 - **Caveats disclosed**: Known issues documented (vitest crash, cache speedup)

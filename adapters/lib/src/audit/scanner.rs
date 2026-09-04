@@ -17,6 +17,9 @@ pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
             packages_audited: 0,
             vulnerability_count: 0,
             vulnerabilities: vec![],
+            scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+                "cargo-audit not installed".to_string(),
+            ), // P0.6 FIX
         });
     }
 
@@ -58,6 +61,9 @@ pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+            "cargo-audit JSON parsing not implemented".to_string(),
+        ), // P0.6 FIX
     })
 }
 
@@ -66,6 +72,9 @@ fn empty_audit_report() -> AuditReport {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+            "cargo-audit environment unavailable".to_string(),
+        ), // P0.6 FIX
     }
 }
 
@@ -92,6 +101,9 @@ pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
             packages_audited: 0,
             vulnerability_count: 0,
             vulnerabilities: vec![],
+            scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(
+                "pip-audit and safety not installed".to_string(),
+            ), // P0.6 FIX
         });
     };
 
@@ -124,6 +136,10 @@ pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
         packages_audited: 0,
         vulnerability_count: 0,
         vulnerabilities: vec![],
+        scanner_status: mgc_types::adapter::ScannerStatus::Unavailable(format!(
+            "{} JSON parsing not implemented",
+            tool
+        )), // P0.6 FIX
     })
 }
 

@@ -186,7 +186,11 @@ impl PackageAdapter for IotAdapter {
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
         let manifest = self.parse_manifest(project_root).await?;
-        Ok(AuditReport::clean(manifest.all_dependencies().count()))
+        // P0.6 FIX: Return unavailable instead of fake clean
+        Ok(AuditReport::unavailable(format!(
+            "No audit scanner available for IoT core ({} dependencies not scanned)",
+            manifest.all_dependencies().count()
+        )))
     }
 }
 
