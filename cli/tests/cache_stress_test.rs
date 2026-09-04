@@ -75,7 +75,6 @@ fn clear_cache(cache_dir: &Path) {
 }
 
 #[test]
-#[ignore = "Cache tests may fail in CI - environment-specific filesystem behavior"]
 fn test_cache_cold_vs_warm() {
     // STRESS TEST: Cold cache vs warm cache install performance
     // Measures REAL times, reports raw numbers (no multipliers)
@@ -159,7 +158,6 @@ fn test_cache_cold_vs_warm() {
 }
 
 #[test]
-#[ignore = "Cache corruption recovery may fail in CI - environment-specific"]
 fn test_corrupted_cache_recovery() {
     // STRESS TEST: Cache corruption recovery
     // Corrupt cache entry → verify mgc recovers gracefully
@@ -253,7 +251,6 @@ fn test_corrupted_cache_recovery() {
 }
 
 #[test]
-#[ignore = "Cache tests may fail in CI - environment-specific filesystem behavior"]
 fn test_concurrent_install_safety() {
     // STRESS TEST: Concurrent installs shouldn't corrupt cache
     // Run 2 installs simultaneously → verify both succeed
@@ -358,7 +355,6 @@ fn test_concurrent_install_safety() {
 }
 
 #[test]
-#[ignore = "Cache tests may fail in CI - environment-specific filesystem behavior"]
 fn test_cache_version_invalidation() {
     // STRESS TEST: Version change should invalidate cache
     // Install lodash@4.17.20 → change to 4.17.21 → verify cache updates
@@ -462,7 +458,6 @@ fn test_cache_version_invalidation() {
 }
 
 #[test]
-#[ignore = "Cache tests may fail in CI - environment-specific filesystem behavior"]
 fn test_cross_core_cache_isolation() {
     // STRESS TEST: Different cores should not share cache inappropriately
     // Web lodash should not be used for Lib projects

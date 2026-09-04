@@ -193,7 +193,6 @@ fn test_ai_lifecycle_create_only() {
 }
 
 #[test]
-#[ignore = "App lifecycle needs Flutter - may fail in CI"]
 fn test_app_lifecycle_create_only() {
     // MINIMAL E2E: Test mgc create for app core
     // REQUIRES: flutter installed
