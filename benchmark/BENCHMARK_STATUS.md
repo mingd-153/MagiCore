@@ -181,11 +181,19 @@ Update `BENCHMARK_SUMMARY_V1.0_FINAL.md` with:
 - [x] Create `analyze_results.py` script
 - [x] Update methodology (5 runs → 20-30 runs)
 - [x] Document statistical measures (median/p95/stddev)
-- [ ] Execute mgc 20-run suite (manual step - requires 1-2 hours)
-- [ ] Execute pnpm 20-run suite (manual step - requires 2-3 hours)
-- [ ] Run analysis scripts
-- [ ] Update BENCHMARK_SUMMARY with P1.1 data
+- [ ] Execute mgc 20-run suite (manual step - requires 1-2 hours) **BLOCKING**
+- [ ] Execute pnpm 20-run suite (manual step - requires 2-3 hours) **BLOCKING**
+- [ ] Run analysis scripts **BLOCKING**
+- [ ] Update BENCHMARK_SUMMARY with P1.1 data **BLOCKING**
 
-**Status**: Infrastructure COMPLETE. Execution pending (can run async/overnight).
+**Status**: Infrastructure COMPLETE. **Data collection INCOMPLETE**.
 
-**Note**: Scripts verified, ready for execution. Actual runs can be performed by user or CI after review. P1.1 delivered automation + analysis tooling.
+**⚠️ CRITICAL**: Until 20-30 run data collected, analyzed, and documented:
+- **DO NOT make comparative performance claims** (45x, 36x, "fastest", etc.)
+- **DO NOT cite 5-run data** as representative
+- **DO NOT claim production validation** without cross-platform testing
+
+**P1.1 delivered**: Automation + analysis tooling
+**P1.1 NOT delivered**: Actual statistical benchmark data
+
+**For public beta**: Use generic claims only ("fast", "CAS-based") until data complete.
