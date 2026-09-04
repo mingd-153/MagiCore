@@ -337,6 +337,7 @@ pub async fn install(
                 ignore_scripts,
                 allow_scripts,
                 false, // offline - Issue #3: pass from command args when offline mode implemented
+                frozen, // frozen mode
             )
             .await?;
         }

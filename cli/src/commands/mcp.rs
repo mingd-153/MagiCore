@@ -67,7 +67,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                 },
                 "serverInfo": {
                     "name": "magicore-native-mcp",
-                    "version": "0.3.0"
+                    "version": env!("CARGO_PKG_VERSION")
                 }
             })),
             error: None,
@@ -179,6 +179,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         false, // ignore_scripts
                         true,  // allow_scripts (default)
                         false, // offline
+                        frozen, // frozen mode (CI): fail if lockfile needs update
                     )
                     .await
                     {

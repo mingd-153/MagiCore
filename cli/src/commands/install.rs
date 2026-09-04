@@ -21,6 +21,7 @@ pub async fn run(
     ignore_scripts: bool,
     allow_scripts: bool,
     offline: bool, // T4.1: offline mode flag
+    frozen: bool,  // Frozen mode: fail if lockfile needs update (CI mode)
 ) -> Result<()> {
     // T4.1: Set thread-local offline mode (R6 fix)
     if offline {
@@ -85,6 +86,7 @@ pub async fn run(
                         ignore_scripts,
                         allow_scripts,
                         offline,
+                        frozen, // frozen mode
                     )
                     .await
                 }
@@ -116,6 +118,7 @@ pub async fn run(
         ignore_scripts,
         allow_scripts,
         offline, // T4.1
+        frozen,  // frozen mode
     )
     .await
 }
@@ -127,6 +130,7 @@ async fn install_into_root(
     ignore_scripts: bool,
     allow_scripts: bool,
     offline: bool, // T4.1: offline mode
+    frozen: bool,  // Frozen mode: fail if lockfile needs update
 ) -> Result<()> {
     // T4.1: Offline mode validation
     if offline {
@@ -275,7 +279,7 @@ async fn install_into_root(
         ignore_scripts,
         allow_scripts,
         legacy_flat: crate::commands::core::shared::should_use_legacy_flat_layout(adapter.name()),
-        frozen: false,
+        frozen,
         ..Default::default()
     };
     let mut summary = adapter.install(&graph, project_root, opts).await?;
@@ -303,6 +307,7 @@ pub(crate) async fn install_into_root_ws(
     ignore_scripts: bool,
     allow_scripts: bool,
     offline: bool, // T4.1
+    frozen: bool,  // Frozen mode: fail if lockfile needs update
 ) -> Result<()> {
     install_into_root(
         adapter,
@@ -311,6 +316,7 @@ pub(crate) async fn install_into_root_ws(
         ignore_scripts,
         allow_scripts,
         offline, // T4.1
+        frozen,
     )
     .await
 }
