@@ -528,3 +528,91 @@ fn test_process_kill_recovery() {
 
     println!("✅ Recovery after process kill successful");
 }
+
+#[test]
+fn test_frozen_mode_blocks_lockfile_mutation() {
+    // P1.2 STRESS: Frozen mode must fail when lockfile needs update
+    // Tests: frozen flag enforcement, CI reproducibility
+
+    println!("\n=== Frozen Mode Lockfile Protection ===");
+
+    let mgc = find_mgc_binary();
+    let temp = TempDir::new().unwrap();
+    let project = temp.path();
+
+    // Create project with dependencies
+    fs::write(
+        project.join("package.json"),
+        r#"{
+  "name": "test-frozen",
+  "version": "1.0.0",
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(project.join(".mgc.core"), "web\n").unwrap();
+
+    // Step 1: Initial install (creates lockfile)
+    println!("Initial install to create lockfile...");
+    let install1 = Command::new(&mgc)
+        .arg("install")
+        .current_dir(project)
+        .output()
+        .expect("Failed mgc install");
+
+    assert!(
+        install1.status.success(),
+        "Initial install should succeed.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&install1.stdout),
+        String::from_utf8_lossy(&install1.stderr)
+    );
+    assert!(
+        project.join("mgc.lock").exists(),
+        "Lockfile should be created"
+    );
+
+    // Step 2: Modify manifest (add new dependency)
+    fs::write(
+        project.join("package.json"),
+        r#"{
+  "name": "test-frozen",
+  "version": "1.0.0",
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "axios": "^1.0.0"
+  }
+}"#,
+    )
+    .unwrap();
+
+    // Step 3: Try install --frozen (should FAIL because lockfile outdated)
+    println!("Attempting frozen install with modified manifest...");
+    let install2 = Command::new(&mgc)
+        .arg("install")
+        .arg("--frozen")
+        .current_dir(project)
+        .output()
+        .expect("Failed mgc install --frozen");
+
+    // Frozen mode MUST fail when lockfile doesn't match manifest
+    if install2.status.success() {
+        panic!(
+            "BUG: Frozen mode allowed lockfile mutation!\n\
+             Manifest added axios but frozen install succeeded.\n\
+             Frozen mode MUST fail when dependencies change."
+        );
+    }
+
+    let stderr = String::from_utf8_lossy(&install2.stderr);
+    println!("Frozen install correctly failed: {}", stderr);
+
+    // Verify error mentions frozen or lockfile
+    assert!(
+        stderr.contains("frozen") || stderr.contains("lockfile") || stderr.contains("outdated"),
+        "Error should mention frozen mode or lockfile mismatch"
+    );
+
+    println!("✅ Frozen mode correctly blocked lockfile mutation");
+}
