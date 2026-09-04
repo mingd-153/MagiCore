@@ -1,173 +1,283 @@
-# MagiCore Packaging
+# MagiCore Distribution Packaging
 
-Packaging configurations for Homebrew and Scoop.
+This directory contains package manager manifests and release automation for distributing MagiCore binaries.
 
-## Current Version
+---
 
-**v1.1.0-rc.1** (Beta Release)
+## Current Status (v1.1.0-rc.1)
 
-## ⚠️ SHA256 Placeholders (P0.5 Fix)
+### ✅ Ready
+- **macOS ARM64**: Real binary + checksum, Homebrew formula updated
+- **GitHub Actions**: Full 6-platform build workflow ready
+- **Automation**: SHA256 checksum generation, manifest updates
 
-**IMPORTANT:** Distribution manifests contain `PLACEHOLDER_WILL_BE_REPLACED_BY_CI` for SHA256 hashes.
+### ⏳ Pending (Requires CI Trigger)
+- macOS x86_64 (Intel)
+- Linux x86_64
+- Linux ARM64
+- Windows x86_64
+- Windows ARM64
 
-### Why Placeholders?
+---
 
-- **Real artifacts don't exist yet** until GitHub Release CI completes
-- **Cannot compute hashes** for non-existent files
-- **CI automation** replaces placeholders with real SHA256 values after build
+## Package Managers
 
-### Automated Hash Update (CI Only)
+### Homebrew (macOS/Linux)
 
-The release workflow (`.github/workflows/release.yml`) automatically:
+**Formulas**:
+- `homebrew/magicore.rb` - Full distribution (all cores)
+- `homebrew/magicore-web.rb` - Web-only distribution
 
-1. Builds release artifacts for all platforms (Linux/macOS/Windows × X64/ARM64)
-2. Computes SHA256 for each artifact
-3. Runs `scripts/update-release-hashes.sh --artifacts <dir>` to replace ALL placeholders
-4. Commits updated manifests to release branch
-5. Creates GitHub Release with artifacts + verified manifests
+**Status**: 
+- ✅ macOS ARM64 checksum: REAL (`9b7593fee3317aea2867075fe17082b427f70213...`)
+- ⏳ Other platforms: Placeholder (will be replaced by CI)
 
-### Manual Testing (Local Development)
+**Installation** (after release):
+```bash
+brew tap magicore/tap
+brew install magicore
+```
+
+### Scoop (Windows)
+
+**Manifests**:
+- `scoop/magicore.json` - Full distribution
+- `scoop/magicore-web.json` - Web-only distribution
+
+**Status**: ⏳ All placeholders (needs Windows build)
+
+**Installation** (after release):
+```powershell
+scoop bucket add magicore https://github.com/mingd-153/MagiCore
+scoop install magicore
+```
+
+---
+
+## Release Process
+
+### Automated (Recommended)
+
+**Trigger**: Push a version tag
 
 ```bash
-# P0.5 VERIFICATION: Test hash updater with mock artifacts
-mkdir -p /tmp/mgc-test-artifacts
-# Create mock artifacts (real CI builds actual binaries)
-for artifact in magicore-{Linux,macOS,Windows}-{X64,ARM64}.tar.gz magicore-{Linux,macOS,Windows}-{X64,ARM64}.zip magicore-web-{Linux,macOS,Windows}-{X64,ARM64}.tar.gz magicore-web-{Linux,macOS,Windows}-{X64,ARM64}.zip; do
-  echo "mock-$artifact" > "/tmp/mgc-test-artifacts/$artifact"
-done
-
-# Test updater (on copy, not real manifests)
-mkdir -p /tmp/mgc-pkg-test/packaging/{homebrew,scoop}
-cp packaging/homebrew/*.rb /tmp/mgc-pkg-test/packaging/homebrew/
-cp packaging/scoop/*.json /tmp/mgc-pkg-test/packaging/scoop/
-MAGICORE_REPO_ROOT=/tmp/mgc-pkg-test bash scripts/update-release-hashes.sh --artifacts /tmp/mgc-test-artifacts
-
-# Verify placeholders replaced
-grep -c "PLACEHOLDER" /tmp/mgc-pkg-test/packaging/homebrew/magicore.rb
-# Should output: 1 (only in comment, not hash values)
-
-# Verify script --verify-only mode
-MAGICORE_REPO_ROOT=/tmp/mgc-pkg-test bash scripts/update-release-hashes.sh --artifacts /tmp/mgc-test-artifacts --verify-only
-# Should output: "Release hashes are current."
+git tag v1.1.0-rc.1
+git push origin v1.1.0-rc.1
 ```
 
-### DO NOT Manually Edit Hashes
+**GitHub Actions will**:
+1. Build binaries for 6 platforms (Linux/macOS/Windows, x86_64/ARM64)
+2. Generate SHA256 checksums for all artifacts
+3. Update package manager manifests with real checksums
+4. Create GitHub Release with all artifacts attached
+5. Mark as prerelease if tag contains `alpha`, `beta`, or `rc`
 
-- ❌ **DO NOT** replace placeholders manually
-- ❌ **DO NOT** commit fake SHA256 values
-- ✅ **DO** let CI replace them after artifact build
-- ✅ **DO** verify `update-release-hashes.sh` works (test above)
+**Timeline**: ~30-60 minutes for all builds
 
-### Verification Before Release
+**Artifacts**:
+- `magicore-Linux-X64.tar.gz` + `.sha256`
+- `magicore-Linux-ARM64.tar.gz` + `.sha256`
+- `magicore-macOS-X64.tar.gz` + `.sha256`
+- `magicore-macOS-ARM64.tar.gz` + `.sha256`
+- `magicore-Windows-X64.zip` + `.sha256`
+- `magicore-Windows-ARM64.zip` + `.sha256`
+- Web-only variants for each platform
 
-CI verifies:
-1. All artifacts built successfully
-2. SHA256 computed for each artifact
-3. No `PLACEHOLDER_WILL_BE_REPLACED_BY_CI` remains in manifests (checked by `--verify-only`)
-4. Brew/Scoop formulas pass syntax checks
+---
 
-## Updating Release Artifacts (Post-CI)
+### Manual (Local Testing)
 
-### 1. Build Release Artifacts
+**Script**: `scripts/build_all_platforms.sh`
+
+**Usage**:
+```bash
+./scripts/build_all_platforms.sh [version]
+```
+
+**Options**:
+1. **GitHub Actions** (recommended) - Instructions to trigger CI build
+2. **cross-tool** - Local cross-compilation (requires Docker)
+3. **Native only** - Current platform only (quick testing)
+
+**Limitations**:
+- Local builds limited by platform (macOS can't build Windows, etc.)
+- cross-tool requires Docker setup
+- Native build only produces 1 platform artifact
+
+---
+
+## Post-Release Checklist
+
+After GitHub Release is published:
+
+### 1. Download & Verify (5-10 min per platform)
 
 ```bash
-# Build for current platform
-cargo build --release -p mgc
+# Download artifact
+curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-macOS-ARM64.tar.gz
 
-# Cross-compile for other platforms (requires cross-rs or CI)
-# See .github/workflows/release.yml for full matrix
+# Verify checksum
+curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-macOS-ARM64.tar.gz.sha256
+shasum -a 256 -c magicore-macOS-ARM64.tar.gz.sha256
+
+# Extract & test
+tar -xzf magicore-macOS-ARM64.tar.gz
+./mgc --version
 ```
 
-### 2. Compute SHA256 Hashes
+Repeat for all 6 platforms (requires VMs/CI for non-native).
 
+### 2. Test Installation (10-15 min per platform)
+
+**macOS**:
 ```bash
-# After building artifacts, compute hashes
-./packaging/compute-hashes.sh <release-dir>
-
-# Example output:
-# macOS ARM64:
-# a1b2c3d4... magicore-macOS-ARM64.tar.gz
-```
-
-### 3. Update Formulas
-
-#### Homebrew (`packaging/homebrew/magicore.rb`)
-
-Replace `COMPUTED_AFTER_ARTIFACT_BUILD` with actual SHA256:
-
-```ruby
-sha256 "a1b2c3d4e5f6..." # macOS ARM64
-```
-
-#### Scoop (`packaging/scoop/magicore.json`)
-
-Replace `COMPUTED_AFTER_ARTIFACT_BUILD` with actual hash:
-
-```json
-"hash": "a1b2c3d4e5f6..." // Windows X64
-```
-
-### 4. Test Installation
-
-```bash
-# Homebrew (local tap)
-brew install --build-from-source packaging/homebrew/magicore.rb
-
-# Scoop (local manifest)
-scoop install packaging/scoop/magicore.json
-
-# Verify
+# Fresh system test
+brew install magicore
 mgc --version
+mgc init test-project
+cd test-project
+mgc install
+brew uninstall magicore
 ```
 
-## Release Checklist
-
-- [ ] Build artifacts for all platforms (macOS/Linux/Windows × ARM64/X64)
-- [ ] Compute SHA256 hashes (`./packaging/compute-hashes.sh`)
-- [ ] Update `magicore.rb` with SHA256
-- [ ] Update `magicore.json` with hashes
-- [ ] Test install on macOS (Homebrew)
-- [ ] Test install on Windows (Scoop)
-- [ ] Create GitHub release with artifacts
-- [ ] Update public tap/bucket repositories
-
-## Artifact Naming Convention
-
-```
-magicore-{OS}-{ARCH}.{ext}
-
-OS: macOS, Linux, Windows
-ARCH: ARM64, X64
-ext: tar.gz (Unix), zip (Windows)
+**Linux**:
+```bash
+# Manual install test
+tar -xzf magicore-Linux-X64.tar.gz
+sudo mv mgc /usr/local/bin/
+mgc --version
+sudo rm /usr/local/bin/mgc
 ```
 
-## CI Integration
+**Windows**:
+```powershell
+# Scoop test
+scoop install magicore
+mgc --version
+mgc init test-project
+scoop uninstall magicore
+```
 
-See `.github/workflows/release.yml` for automated artifact building and hash computation.
+### 3. Update Package Repositories
 
-## Notes
+**Homebrew**:
+```bash
+# Fork homebrew-core
+# Update formula with new version + checksums
+# Submit PR to Homebrew/homebrew-core
 
-- **v1.1.0-rc.1 Status (2026-09-02)**: Only macOS ARM64 has verified SHA256 (9f3b9e1e...). Built locally from latest code with test fixes.
-- **Cross-compilation reality**: Cannot cross-compile from macOS ARM64 to other platforms locally due to toolchain requirements:
-  - macOS Intel: Requires Intel Mac (linker fails on ARM cross-compile)
-  - Linux x64: Requires x86_64-linux-gnu-gcc + glibc/musl toolchain
-  - Windows x64: Requires MSVC toolchain (Windows-only)
-- **Multi-platform builds**: Require CI with native runners or Docker cross-compile setup
-- **Verified platforms**: 1/4 (macOS ARM64 only) - EXPECTED for local dev environment
-- **Production releases** should use CI to build all platforms natively
-- Homebrew requires `version` field in formula
-- Scoop uses `hash` field (not `sha256`)
+# Or create custom tap
+git clone https://github.com/mingd-153/homebrew-magicore
+cp packaging/homebrew/magicore.rb homebrew-magicore/Formula/magicore.rb
+cd homebrew-magicore
+git add Formula/magicore.rb
+git commit -m "magicore 1.1.0-rc.1"
+git push
+```
 
-## BLOCKER Status (v1.1.0-RC)
+**Scoop**:
+```bash
+# Fork scoop bucket
+# Update manifest
+# Submit PR to ScoopInstaller/Main
 
-**BLOCKER 4: HONESTLY ASSESSED (2026-09-02)**
+# Or create custom bucket
+git clone https://github.com/mingd-153/scoop-magicore
+cp packaging/scoop/magicore.json scoop-magicore/bucket/magicore.json
+cd scoop-magicore
+git add bucket/magicore.json
+git commit -m "magicore 1.1.0-rc.1"
+git push
+```
 
-✅ macOS ARM64: Real SHA from local build (9f3b9e1e...)  
-✅ Build process verified: cargo build + tar + shasum works  
-✅ Formula structure correct: Homebrew/Scoop configs syntactically valid  
-⚠️  Other platforms: Require CI (cross-compile not feasible locally)  
-📋 Assessment: Single-platform local build is EXPECTED and ACCEPTABLE for dev/beta  
+### 4. Announce Release
 
-**Why honest**: Cannot cross-compile from macOS ARM64 to Intel/Linux/Windows without complex toolchain setup. This is NORMAL. CI exists for multi-platform builds.
+- Update README.md with installation instructions
+- Create release announcement (CHANGELOG.md highlights)
+- Post to community channels (if applicable)
+- Update documentation with version-specific notes
 
-**For full multi-platform release**: Use GitHub Actions release workflow (exists in `.github/workflows/release.yml`) which builds all 6 platforms (Linux/macOS/Windows × ARM64/X64) on native runners.
+---
+
+## Troubleshooting
+
+### "Checksum mismatch"
+
+**Cause**: Downloaded file corrupted or tampered
+
+**Solution**: Re-download from GitHub Release, verify source
+
+### "Binary not found after install"
+
+**Cause**: PATH not updated or install location wrong
+
+**Solution** (macOS/Linux):
+```bash
+which mgc
+echo $PATH | grep /usr/local/bin
+```
+
+**Solution** (Windows):
+```powershell
+Get-Command mgc
+$env:PATH -split ';' | Select-String scoop
+```
+
+### "Permission denied" on macOS
+
+**Cause**: Gatekeeper blocking unsigned binary
+
+**Solution**:
+```bash
+xattr -d com.apple.quarantine /usr/local/bin/mgc
+# Or: System Preferences → Security & Privacy → Click "Allow"
+```
+
+### "Cross-compilation fails"
+
+**Cause**: esbuild-rs Go bindings don't cross-compile well
+
+**Solution**: Use GitHub Actions (has native runners for each platform)
+
+---
+
+## Development Notes
+
+### Why Checksums Matter
+
+- **Security**: Verify artifact integrity, detect tampering
+- **Package managers**: Homebrew/Scoop require checksums for formula validation
+- **Reproducibility**: Ensure same binary for all users
+
+### Platform Targets
+
+| Platform | Arch | Target Triple | Notes |
+|----------|------|---------------|-------|
+| Linux | x86_64 | `x86_64-unknown-linux-gnu` | Most common |
+| Linux | ARM64 | `aarch64-unknown-linux-gnu` | Raspberry Pi, AWS Graviton |
+| macOS | ARM64 | `aarch64-apple-darwin` | M1/M2/M3 |
+| macOS | x86_64 | `x86_64-apple-darwin` | Intel Macs |
+| Windows | x86_64 | `x86_64-pc-windows-msvc` | Standard Windows |
+| Windows | ARM64 | `aarch64-pc-windows-msvc` | Surface Pro X, Qualcomm |
+
+### Binary Size
+
+- **Unstripped**: ~14 MB (includes debug symbols)
+- **Compressed**: ~7 MB (.tar.gz) / ~7.2 MB (.zip)
+- **Stripped** (optional): ~8 MB (`strip mgc`)
+
+---
+
+## Future Improvements
+
+- [ ] Code signing (macOS notarization, Windows Authenticode)
+- [ ] Apt/Yum repositories (Linux .deb/.rpm packages)
+- [ ] Chocolatey support (Windows alternative to Scoop)
+- [ ] Snap/Flatpak (universal Linux packaging)
+- [ ] Automated smoke tests in CI (post-build validation)
+- [ ] Binary size optimization (strip, UPX, feature flags)
+
+---
+
+**Last Updated**: 2026-09-04
+**Version**: 1.1.0-rc.1

@@ -181,19 +181,25 @@ Update `BENCHMARK_SUMMARY_V1.0_FINAL.md` with:
 - [x] Create `analyze_results.py` script
 - [x] Update methodology (5 runs → 20-30 runs)
 - [x] Document statistical measures (median/p95/stddev)
-- [ ] Execute mgc 20-run suite (manual step - requires 1-2 hours) **BLOCKING**
-- [ ] Execute pnpm 20-run suite (manual step - requires 2-3 hours) **BLOCKING**
-- [ ] Run analysis scripts **BLOCKING**
-- [ ] Update BENCHMARK_SUMMARY with P1.1 data **BLOCKING**
+- [x] Execute mgc 20-run suite (31 runs completed 2026-09-04) ✅
+- [x] Execute pnpm 20-run suite (24 runs completed 2026-09-04) ✅
+- [x] Run analysis scripts ✅
+- [x] Update BENCHMARK_SUMMARY with P1.1 data ✅
 
-**Status**: Infrastructure COMPLETE. **Data collection INCOMPLETE**.
+**Status**: ✅ **COMPLETE** (2026-09-04 17:35)
 
-**⚠️ CRITICAL**: Until 20-30 run data collected, analyzed, and documented:
-- **DO NOT make comparative performance claims** (45x, 36x, "fastest", etc.)
-- **DO NOT cite 5-run data** as representative
-- **DO NOT claim production validation** without cross-platform testing
+**✅ VALIDATED CLAIMS** (24-31 runs, macOS ARM64):
+- **mgc cold install is 26x faster than pnpm** (median: 2.43s vs 62.97s)
+- **mgc P95 is 21x faster** (11.86s vs 247.29s)
+- **pnpm warm install is 1.4x faster** (1.53s vs 2.18s) - honest trade-off
+- **pnpm uses 25% less disk** (362MB vs 454MB) - mgc CAS overhead
 
-**P1.1 delivered**: Automation + analysis tooling
-**P1.1 NOT delivered**: Actual statistical benchmark data
+**⚠️ CANNOT CLAIM** (not validated):
+- ❌ "45x faster" - actual data shows 26x median
+- ❌ "36x faster than bun" - bun not tested
+- ❌ "Fastest overall" - pnpm wins warm installs
 
-**For public beta**: Use generic claims only ("fast", "CAS-based") until data complete.
+**P1.1 delivered**: Infrastructure + statistical data + validated comparison
+**Documentation**: `benchmark/results/MGC_VS_PNPM_VALIDATED.md`
+
+**For public beta**: Can claim **"26x faster cold install than pnpm"** with confidence (macOS ARM64, 20-pkg workload). Cross-platform validation still needed.
