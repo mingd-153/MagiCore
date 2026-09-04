@@ -1,9 +1,9 @@
 [package]
 name = "mgc-search"
-version = "1.0.0"
-edition = "2021"
-license = "MIT"
-authors = ["MagiCore Contributors"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
 description = "Multi-registry search engine for MagiCore - search packages across npm, crates.io, pkg.go.dev, PyPI"
 rust-version = "1.75"
 

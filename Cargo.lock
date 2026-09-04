@@ -2476,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-crypto"
-version = "1.0.0"
+version = "1.1.0-rc.1"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
@@ -2682,7 +2682,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-lockfile"
-version = "1.0.0"
+version = "1.1.0-rc.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2838,7 +2838,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-search"
-version = "1.0.0"
+version = "1.1.0-rc.1"
 dependencies = [
  "anyhow",
  "async-trait",
