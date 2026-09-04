@@ -257,7 +257,7 @@ fn test_ai_full_lifecycle() {
     // Run `mgc add` to create lockfile before `mgc install`
     let add_output = Command::new(&mgc)
         .arg("add")
-        .arg("pytest")  // Add pytest as a dev dependency
+        .arg("pytest") // Add pytest as a dev dependency
         .current_dir(&project_path)
         .output()
         .expect("mgc add failed");
@@ -281,7 +281,10 @@ fn test_ai_full_lifecycle() {
 
     if !install_output.status.success() {
         eprintln!("WARN: mgc install failed");
-        eprintln!("Stderr: {}", String::from_utf8_lossy(&install_output.stderr));
+        eprintln!(
+            "Stderr: {}",
+            String::from_utf8_lossy(&install_output.stderr)
+        );
         // Continue - AI test can still run without install
     }
 
@@ -306,10 +309,7 @@ fn test_ai_full_lifecycle() {
         if test_output.status.code() == Some(5) || test_combined.contains("no tests ran") {
             eprintln!("WARN: No tests in scaffold (expected for minimal python-agent)");
         } else {
-            panic!(
-                "TEST FAILED unexpectedly:\n{}",
-                test_combined
-            );
+            panic!("TEST FAILED unexpectedly:\n{}", test_combined);
         }
     }
 
