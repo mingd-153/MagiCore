@@ -88,7 +88,8 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
     if project_root.join("pyproject.toml").exists() || project_root.join("setup.py").exists() {
         // Try pytest first, fall back to python -m unittest — thử pytest trước
         // Note: pytest auto-discovers test_*.py and *_test.py in current directory
-        return Ok(Some(("pytest".to_string(), vec![])));
+        // -s: no output capture, -v: verbose
+        return Ok(Some(("pytest".to_string(), vec!["-s".to_string(), "-v".to_string()])));
     }
 
     // Check pubspec.yaml (Flutter/Dart) — kiểm tra pubspec.yaml
