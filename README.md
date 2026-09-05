@@ -321,6 +321,13 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 - ⚠️ **Lib** (Rust/Go) - Experimental (basic support)
 - ℹ️ Multi-core orchestration in active development
 
+**Testing Status**:
+- ✅ Unit tests: PASS
+- ✅ Install smoke tests: PASS (Web verified in CI)
+- ⚠️ Cache stress tests: Network-dependent (live registry), not hermetic
+- ⚠️ Full lifecycle (create→test→build→run): Untested in CI
+- ℹ️ Hermetic test suite with mock registry: Roadmap v1.1.1
+
 **Blocked in Beta** (requires MagiCore-native app runner):
 - ❌ React Native dev/build (scaffold exists, runtime pending)
 - ℹ️ Current behavior: Clear error message blocking dev/build operations
