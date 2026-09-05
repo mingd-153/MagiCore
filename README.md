@@ -118,6 +118,7 @@ mgc trust list            # Show all policies
 mgc sbom --format cyclonedx-json --output sbom.json
 
 # Check environment health
+mgc doctor
 ```
 
 ---
