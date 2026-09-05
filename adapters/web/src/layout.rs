@@ -37,7 +37,7 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
     if let Err(e) = symlink_dir(target, link) {
         #[cfg(not(unix))]
         {
-            if let Err(e2) = crate::hardlink_tree(target, link) {
+            if let Err(e2) = crate::install::link_tree::hardlink_tree(target, link) {
                 return Err(mgc_types::MgError::Other(format!(
                     "failed to create symlink (or fallback hardlink tree) from {} to {}: {} (fallback error: {})",
                     target.display(), link.display(), e, e2
