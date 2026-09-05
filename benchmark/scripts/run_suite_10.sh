@@ -11,13 +11,13 @@ echo "Start time: $(date)"
 for i in {1..10}; do
   echo ""
   echo "[Run $i/10] Starting $PM_NAME benchmark..."
-  
+
   "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" || {
     echo "⚠️  Run $i failed (exit code $?)"
   }
-  
+
   echo "✅ Run $i completed"
-  
+
   if [ $i -lt 10 ]; then
     echo "Sleeping 30s before next run..."
     sleep 30

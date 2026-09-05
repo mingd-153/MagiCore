@@ -25,10 +25,10 @@ jobs:
             is_windows: false
 
           # macOS Intel (x86_64)
-          - os: macos-13
+          - os: macos-14
             target: x86_64-apple-darwin
-            artifact_name: magicore-1.1.0-rc.2-macos-x64.tar.gz
-            web_artifact_name: magicore-web-1.1.0-rc.2-macos-x64.tar.gz
+            artifact_name: magicore-1.1.0-rc.2.1-macos-x64.tar.gz
+            web_artifact_name: magicore-web-1.1.0-rc.2.1-macos-x64.tar.gz
             use_cross: false
             is_windows: false
 
@@ -134,8 +134,9 @@ jobs:
 
       - name: Verify release packaging hashes
         run: |
-          ./scripts/update-release-hashes.sh --artifacts release-assets
-          ./scripts/update-release-hashes.sh --artifacts release-assets --verify-only
+          VERSION="${GITHUB_REF_NAME#v}"
+          ./scripts/update-release-hashes.sh --artifacts release-assets --version "$VERSION"
+          ./scripts/update-release-hashes.sh --artifacts release-assets --version "$VERSION" --verify-only
 
       - name: Stage package manager manifests
         run: |
@@ -148,8 +149,118 @@ jobs:
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/packaging/homebrew/*.rb
+            release-assets/packaging/scoop/*.json
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
           generate_release_notes: false
           body_path: CHANGELOG.md
+
+  test-release-lifecycle:
+    name: Test Release Lifecycle
+    needs: publish-github-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_name: linux
+            ext: tar.gz
+            binary: mgc
+          - os: windows-latest
+            os_name: windows
+            ext: zip
+            binary: mgc.exe
+          - os: macos-14
+            os_name: macos
+            ext: tar.gz
+            binary: mgc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Download release artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARTIFACT_NAME="magicore-${VERSION}-${{ matrix.os_name }}-x64.${{ matrix.ext }}"
+          echo "Downloading: $ARTIFACT_NAME"
+          gh release download "${GITHUB_REF_NAME}" -p "$ARTIFACT_NAME" -R "${{ github.repository }}"
+        shell: bash
+
+      - name: Extract archive (Unix)
+        if: matrix.ext == 'tar.gz'
+        run: |
+          mkdir -p test-install
+          tar -xzf magicore-*-${{ matrix.os_name }}-x64.tar.gz -C test-install
+          chmod +x test-install/${{ matrix.binary }}
+          ls -la test-install/
+
+      - name: Extract archive (Windows)
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path test-install
+          $archive = Get-ChildItem -Filter "magicore-*-windows-x64.zip" | Select-Object -First 1
+          Expand-Archive -Path $archive.FullName -DestinationPath test-install -Force
+          Get-ChildItem test-install
+
+      - name: Test mgc --version
+        run: |
+          ./test-install/${{ matrix.binary }} --version
+        shell: bash
+
+      - name: Test lifecycle (create + install)
+        if: runner.os != 'Windows'
+        run: |
+          # Create isolated test directory
+          mkdir -p lifecycle-test/web-project
+          cd lifecycle-test/web-project
+
+          # Create minimal package.json
+          echo '{"name":"test","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' > package.json
+
+          # Run mgc install
+          ../../test-install/${{ matrix.binary }} install
+
+          # Verify installation
+          if [ ! -d "node_modules" ]; then
+            echo "❌ node_modules not created"
+            exit 1
+          fi
+
+          if [ ! -d "node_modules/express" ]; then
+            echo "❌ express not installed"
+            exit 1
+          fi
+
+          echo "✅ Lifecycle test passed"
+
+      - name: Test lifecycle (create + install) - Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Create isolated test directory
+          New-Item -ItemType Directory -Force -Path lifecycle-test/web-project
+          Set-Location lifecycle-test/web-project
+
+          # Create minimal package.json
+          '{"name":"test","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' | Out-File -FilePath package.json -Encoding utf8
+
+          # Run mgc install
+          & "../../test-install/${{ matrix.binary }}" install
+
+          # Verify installation
+          if (-not (Test-Path "node_modules")) {
+            Write-Error "node_modules not created"
+            exit 1
+          }
+
+          if (-not (Test-Path "node_modules/express")) {
+            Write-Error "express not installed"
+            exit 1
+          }
+
+          Write-Host "✅ Lifecycle test passed"

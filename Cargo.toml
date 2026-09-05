@@ -10,7 +10,7 @@ exclude = ["tools/core-web-lab", "tools/mgc-mcp"]
 resolver = "2"
 
 [workspace.package]
-version = "1.1.0-rc.1"
+version = "1.1.0-rc.2.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/mingd-153/MagiCore"
