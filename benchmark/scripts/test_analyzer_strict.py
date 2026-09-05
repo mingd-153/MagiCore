@@ -168,5 +168,148 @@ def main():
         print(f"❌ {tests_total - tests_passed} test(s) failed")
         return 1
 
+
+# NEW TESTS: Enhanced validations from RC-3
+
+def test_new_validations():
+    """Test new validation rules added in RC-3"""
+    print("\n=== Testing RC-3 Enhanced Validations ===\n")
+
+    tests_passed = 0
+    tests_total = 0
+
+    # Test 16: Invalid ISO-8601 timestamp
+    tests_total += 1
+    sample = valid_sample()
+    sample['timestamp'] = "not-iso-format"
+    if test_case("Invalid ISO timestamp", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 17: Negative run number
+    tests_total += 1
+    sample = valid_sample()
+    sample['run'] = -1
+    if test_case("Negative run number", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 18: Zero run number
+    tests_total += 1
+    sample = valid_sample()
+    sample['run'] = 0
+    if test_case("Zero run number", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 19: Invalid pm_version (if present)
+    tests_total += 1
+    sample = valid_sample()
+    sample['pm_version'] = ""
+    if test_case("Empty pm_version", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 20: Invalid mgc_commit (too short)
+    tests_total += 1
+    sample = valid_sample()
+    sample['mgc_commit'] = "abc"
+    if test_case("Short mgc_commit (<7 chars)", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 21: Invalid session_id
+    tests_total += 1
+    sample = valid_sample()
+    sample['session_id'] = ""
+    if test_case("Empty session_id", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 22: Invalid manifest_hash (too short)
+    tests_total += 1
+    sample = valid_sample()
+    sample['manifest_hash'] = "abc123"
+    if test_case("Short manifest_hash (<8 chars)", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 23: Invalid lockfile_hash (too short)
+    tests_total += 1
+    sample = valid_sample()
+    sample['lockfile_hash'] = "xyz"
+    if test_case("Short lockfile_hash (<8 chars)", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 24: Valid sample with all provenance fields
+    tests_total += 1
+    sample = valid_sample()
+    sample['pm_version'] = "1.1.0-rc.3"
+    sample['mgc_commit'] = "cedd3c28645"
+    sample['session_id'] = "test-session-001"
+    sample['manifest_hash'] = "deadbeef12345678"
+    sample['lockfile_hash'] = "cafebabe87654321"
+    if test_case("Valid with provenance", sample, should_fail=False):
+        tests_passed += 1
+
+    # Test 25: Publish mode requires provenance
+    tests_total += 1
+    from analyze_results_strict import validate_result
+    sample = valid_sample()
+    try:
+        validate_result(sample, "test.json", publish_mode=True)
+        print(f"❌ FAIL: Publish mode without provenance - Should have been rejected")
+    except ValidationError as e:
+        if "provenance" in str(e).lower():
+            print(f"✅ PASS: Publish mode without provenance - Rejected as expected")
+            tests_passed += 1
+        else:
+            print(f"❌ FAIL: Publish mode - Wrong error: {e}")
+
+    # Test 26: Publish mode accepts complete provenance
+    tests_total += 1
+    sample = valid_sample()
+    sample['pm_version'] = "1.1.0"
+    sample['mgc_commit'] = "abc123def"
+    sample['session_id'] = "sess-001"
+    sample['manifest_hash'] = "hash1234567"
+    sample['lockfile_hash'] = "lock5678901"
+    try:
+        validate_result(sample, "test.json", publish_mode=True)
+        print(f"✅ PASS: Publish mode with provenance - Accepted")
+        tests_passed += 1
+    except ValidationError as e:
+        print(f"❌ FAIL: Publish mode with provenance - Unexpected rejection: {e}")
+
+    # Test 27: Non-integer run type
+    tests_total += 1
+    sample = valid_sample()
+    sample['run'] = "1"
+    if test_case("String run number", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 28: Float run number
+    tests_total += 1
+    sample = valid_sample()
+    sample['run'] = 1.5
+    if test_case("Float run number", sample, should_fail=True):
+        tests_passed += 1
+
+    print(f"\n{'='*60}")
+    print(f"RC-3 Tests: {tests_passed}/{tests_total} passed")
+
+    return tests_passed, tests_total
+
 if __name__ == '__main__':
-    exit(main())
+    # Run original tests
+    original_result = main()
+
+    # Run new RC-3 tests
+    new_passed, new_total = test_new_validations()
+
+    # Combined summary
+    print(f"\n{'='*60}")
+    print(f"COMBINED RESULTS:")
+    print(f"  Original tests: 15/15 passed" if original_result == 0 else f"  Original tests: FAILED")
+    print(f"  RC-3 tests: {new_passed}/{new_total} passed")
+    print(f"  TOTAL: {15 + new_passed}/{15 + new_total} tests")
+
+    if original_result == 0 and new_passed == new_total:
+        print("\n✅ ALL TESTS PASSED")
+        exit(0)
+    else:
+        print(f"\n❌ SOME TESTS FAILED")
+        exit(1)

@@ -11,9 +11,15 @@ Validates:
 - Run uniqueness (no duplicate run IDs)
 - ISO-8601 timestamp parsing
 - Workload consistency (same package_count)
-- Optional metadata (pm_version, mgc_commit, session_id, manifest_hash, lockfile_hash)
+- Provenance metadata (REQUIRED in --publish mode)
 
 Enhanced for RC-3: Strict validation ensures benchmark claims are defensible.
+
+Usage:
+  ./analyze_results_strict.py <pm_name> [results_dir] [expected_packages] [--publish]
+
+Flags:
+  --publish: Enable publish mode (requires provenance fields)
 """
 
 import json
@@ -32,8 +38,14 @@ REQUIRED_WARM = ['duration_seconds', 'exit_code']
 class ValidationError(Exception):
     pass
 
-def validate_result(data: Dict, filename: str) -> None:
-    """Strict validation - raise on any issue"""
+def validate_result(data: Dict, filename: str, publish_mode: bool = False) -> None:
+    """Strict validation - raise on any issue
+    
+    Args:
+        data: Benchmark result dictionary
+        filename: Source filename for error messages
+        publish_mode: If True, require provenance fields (pm_version, mgc_commit, etc.)
+    """
     # Check top-level required fields
     missing = [f for f in REQUIRED_FIELDS if f not in data]
     if missing:
@@ -111,7 +123,16 @@ def validate_result(data: Dict, filename: str) -> None:
     except (ValueError, AttributeError) as e:
         raise ValidationError(f"Invalid ISO-8601 timestamp: {data['timestamp']} ({e})")
 
-    # Enhanced metadata validation (optional but validated if present)
+    # Provenance metadata validation
+    provenance_fields = ['pm_version', 'mgc_commit', 'session_id', 'manifest_hash', 'lockfile_hash']
+
+    if publish_mode:
+        # REQUIRED in publish mode for defensible claims
+        missing_provenance = [f for f in provenance_fields if f not in data or not data[f]]
+        if missing_provenance:
+            raise ValidationError(f"Publish mode requires provenance fields: {missing_provenance}")
+
+    # Validate if present (even in non-publish mode)
     if 'pm_version' in data:
         if not isinstance(data['pm_version'], str) or not data['pm_version'].strip():
             raise ValidationError(f"Invalid pm_version: {data.get('pm_version')}")
@@ -132,9 +153,16 @@ def validate_result(data: Dict, filename: str) -> None:
         if not isinstance(data['lockfile_hash'], str) or len(data['lockfile_hash']) < 8:
             raise ValidationError(f"Invalid lockfile_hash (need 8+ chars): {data.get('lockfile_hash')}")
 
-def load_results_strict(results_dir: Path, pm_name: str, expected_packages: Optional[int] = None) -> Tuple[List[Dict], List[str]]:
+def load_results_strict(results_dir: Path, pm_name: str, expected_packages: Optional[int] = None, publish_mode: bool = False) -> Tuple[List[Dict], List[str]]:
     """
     Load and validate results
+    
+    Args:
+        results_dir: Directory containing benchmark JSON files
+        pm_name: Package manager name to filter
+        expected_packages: Expected package count (inferred from first valid if None)
+        publish_mode: If True, require provenance fields
+        
     Returns: (valid_results, rejection_reasons)
     """
     valid = []
@@ -166,7 +194,7 @@ def load_results_strict(results_dir: Path, pm_name: str, expected_packages: Opti
                 data = json.load(f)
 
             # Validate schema
-            validate_result(data, json_file.name)
+            validate_result(data, json_file.name, publish_mode=publish_mode)
 
             # Validate PM match (data['pm'] must match requested pm_name)
             if data['pm'].lower() != pm_name.lower():
@@ -310,13 +338,21 @@ def save_analysis(pm_name: str, metrics: Dict[str, List[float]], rejections: Lis
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: ./analyze_results_strict.py <pm_name> [results_dir] [expected_packages]")
+        print("Usage: ./analyze_results_strict.py <pm_name> [results_dir] [expected_packages] [--publish]")
         print("Example: ./analyze_results_strict.py mgc results/ 20")
+        print("Example: ./analyze_results_strict.py mgc results/ 20 --publish")
         sys.exit(1)
 
     pm_name = sys.argv[1]
-    results_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).parent.parent / 'results'
-    expected_packages = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    results_dir = Path(sys.argv[2]) if len(sys.argv) > 2 and not sys.argv[2].startswith('--') else Path(__file__).parent.parent / 'results'
+    expected_packages = None
+    publish_mode = '--publish' in sys.argv
+
+    # Parse expected_packages if provided
+    for arg in sys.argv[2:]:
+        if arg.isdigit():
+            expected_packages = int(arg)
+            break
 
     if not results_dir.exists():
         print(f"❌ Results directory not found: {results_dir}")
@@ -325,8 +361,10 @@ def main():
     print(f"Loading results for {pm_name} from {results_dir}...")
     if expected_packages:
         print(f"Expected workload: {expected_packages} packages")
+    if publish_mode:
+        print("🔒 PUBLISH MODE: Provenance fields required")
 
-    results, rejections = load_results_strict(results_dir, pm_name, expected_packages)
+    results, rejections = load_results_strict(results_dir, pm_name, expected_packages, publish_mode)
 
     if not results:
         print(f"\n❌ No valid results found for {pm_name}")
