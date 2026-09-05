@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-STRICT benchmark analyzer with schema validation
+STRICT benchmark analyzer with comprehensive validation
 Rejects malformed/incomplete samples, reports what was rejected
 
 Validates:
-- Schema completeness
-- Numeric validity (finite, positive)
-- Exit codes (success = 0)
-- Workload consistency (same manifest/lockfile)
-- PM version tracking
-- Session/commit metadata
+- Schema completeness (required fields present)
+- Numeric validity (finite, positive durations/sizes)
+- Exit codes (success = 0 only)
+- PM match (data['pm'] must match requested PM)
+- Run uniqueness (no duplicate run IDs)
+- ISO-8601 timestamp parsing
+- Workload consistency (same package_count)
+- Optional metadata (pm_version, mgc_commit, session_id, manifest_hash, lockfile_hash)
+
+Enhanced for RC-3: Strict validation ensures benchmark claims are defensible.
 """
 
 import json
@@ -97,9 +101,36 @@ def validate_result(data: Dict, filename: str) -> None:
     if not isinstance(data['timestamp'], str) or not data['timestamp'].strip():
         raise ValidationError(f"Invalid timestamp: {data.get('timestamp')}")
 
-    # Optional metadata validation (warn but don't fail)
-    # - pm_version, commit, session, manifest_hash, lockfile_hash
-    # These should exist for full traceability but are optional for now
+    # Validate run number (must be positive integer)
+    if not isinstance(data['run'], int) or data['run'] <= 0:
+        raise ValidationError(f"Invalid run number: {data.get('run')}")
+
+    # Parse ISO-8601 timestamp
+    try:
+        datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+    except (ValueError, AttributeError) as e:
+        raise ValidationError(f"Invalid ISO-8601 timestamp: {data['timestamp']} ({e})")
+
+    # Enhanced metadata validation (optional but validated if present)
+    if 'pm_version' in data:
+        if not isinstance(data['pm_version'], str) or not data['pm_version'].strip():
+            raise ValidationError(f"Invalid pm_version: {data.get('pm_version')}")
+
+    if 'mgc_commit' in data:
+        if not isinstance(data['mgc_commit'], str) or len(data['mgc_commit']) < 7:
+            raise ValidationError(f"Invalid mgc_commit (need 7+ chars): {data.get('mgc_commit')}")
+
+    if 'session_id' in data:
+        if not isinstance(data['session_id'], str) or not data['session_id'].strip():
+            raise ValidationError(f"Invalid session_id: {data.get('session_id')}")
+
+    if 'manifest_hash' in data:
+        if not isinstance(data['manifest_hash'], str) or len(data['manifest_hash']) < 8:
+            raise ValidationError(f"Invalid manifest_hash (need 8+ chars): {data.get('manifest_hash')}")
+
+    if 'lockfile_hash' in data:
+        if not isinstance(data['lockfile_hash'], str) or len(data['lockfile_hash']) < 8:
+            raise ValidationError(f"Invalid lockfile_hash (need 8+ chars): {data.get('lockfile_hash')}")
 
 def load_results_strict(results_dir: Path, pm_name: str, expected_packages: Optional[int] = None) -> Tuple[List[Dict], List[str]]:
     """
@@ -109,6 +140,7 @@ def load_results_strict(results_dir: Path, pm_name: str, expected_packages: Opti
     valid = []
     rejections = []
     pattern = f"{pm_name}_run*.json"
+    seen_runs = set()  # Track run IDs for uniqueness
 
     # Filter out runlarge files
     files = [f for f in results_dir.glob(pattern) if 'runlarge' not in f.name]
@@ -135,6 +167,18 @@ def load_results_strict(results_dir: Path, pm_name: str, expected_packages: Opti
 
             # Validate schema
             validate_result(data, json_file.name)
+
+            # Validate PM match (data['pm'] must match requested pm_name)
+            if data['pm'].lower() != pm_name.lower():
+                rejections.append(f"{json_file.name}: PM mismatch (file has '{data['pm']}', expected '{pm_name}')")
+                continue
+
+            # Check run uniqueness
+            run_id = data['run']
+            if run_id in seen_runs:
+                rejections.append(f"{json_file.name}: Duplicate run ID {run_id}")
+                continue
+            seen_runs.add(run_id)
 
             # Check workload consistency
             if expected_packages and data['package_count'] != expected_packages:
