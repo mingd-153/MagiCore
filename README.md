@@ -59,13 +59,18 @@ scoop install magicore
 
 Download the latest release from [**GitHub Releases →**](https://github.com/mingd-153/MagiCore/releases/latest)
 
-| Platform            | File                          |
-| ------------------- | ----------------------------- |
-| macOS Apple Silicon | `magicore-macOS-ARM64.tar.gz` |
-| macOS Intel         | `magicore-macOS-X64.tar.gz`   |
-| Linux x64           | `magicore-Linux-X64.tar.gz`   |
-| Linux ARM64         | `magicore-Linux-ARM64.tar.gz` |
-| Windows x64         | `magicore-Windows-X64.zip`    |
+**RC-3 Platform Support** (x86_64 only):
+
+| Platform      | File                                 | Status |
+| ------------- | ------------------------------------ | ------ |
+| macOS Intel   | `magicore-{version}-macos-x64.tar.gz` | ✅ Supported |
+| Linux x64     | `magicore-{version}-linux-x64.tar.gz` | ✅ Supported |
+| Windows x64   | `magicore-{version}-windows-x64.zip`  | ✅ Supported |
+| macOS ARM64   | -                                     | ⚠️ Not yet (use Rosetta 2) |
+| Linux ARM64   | -                                     | ⚠️ Not yet |
+| Windows ARM64 | -                                     | ⚠️ Not yet |
+
+> **Note**: ARM64 support deferred to future release. macOS Apple Silicon users can run x86_64 binary via Rosetta 2.
 
 ```bash
 # macOS/Linux
@@ -316,7 +321,23 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 
 ---
 
-## ⚠️ Known Limitations (V1.1.0-RC Roadmap)
+## ⚠️ Known Limitations (V1.1.0-RC-3)
+
+**Platform Support** (x86_64 only in RC-3):
+- ✅ macOS Intel (x86_64)
+- ✅ Linux x86_64
+- ✅ Windows x86_64
+- ⚠️ macOS Apple Silicon - Use Rosetta 2 for now
+- ❌ Linux ARM64 - Not yet supported
+- ❌ Windows ARM64 - Not yet supported
+- ℹ️ ARM64 support planned for future release
+
+**Core Runtime Status**:
+- ✅ **Web** (npm/yarn/pnpm replacement) - Production ready
+- ⚠️ **AI** (Python) - Experimental (create + install verified, test/build/run untested in CI)
+- ⚠️ **App** (Flutter/React Native) - Experimental (requires Flutter SDK)
+- ⚠️ **Lib** (Rust/Go) - Experimental (basic support)
+- ℹ️ Multi-core orchestration in active development
 
 **Blocked in Beta** (requires MagiCore-native app runner):
 - ❌ React Native dev/build (scaffold exists, runtime pending)
