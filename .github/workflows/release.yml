@@ -27,8 +27,38 @@ permissions:
   contents: read # Default: read-only; only publish job gets write
 
 jobs:
+  resolve-version:
+    name: Resolve Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      is_tag: ${{ steps.resolve.outputs.is_tag }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - name: Resolve version and context
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            IS_TAG="false"
+            PUBLISH="${{ inputs.publish }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            IS_TAG="true"
+            PUBLISH="true"
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is_tag=$IS_TAG" >> $GITHUB_OUTPUT
+          echo "publish=$PUBLISH" >> $GITHUB_OUTPUT
+
+          echo "Resolved version: $VERSION"
+          echo "Is tag push: $IS_TAG"
+          echo "Will publish: $PUBLISH"
+
   build-release:
     name: Build (${{ matrix.target }})
+    needs: resolve-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -66,13 +96,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
+          VERSION="${{ needs.resolve-version.outputs.version }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
+          echo "Using version: $VERSION"
 
       - name: Set artifact names (via contract)
         id: artifacts
@@ -276,7 +302,7 @@ jobs:
 
   test-release-artifacts:
     name: Smoke Test - ${{ matrix.variant }} (${{ matrix.os_name }})
-    needs: build-release
+    needs: [resolve-version, build-release]
     strategy:
       fail-fast: false
       matrix:
@@ -334,7 +360,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ needs.resolve-version.outputs.version }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Get artifact name via contract
@@ -423,7 +449,7 @@ jobs:
 
   pre-publish-verification:
     name: Pre-Publish Verification (Fail-Closed)
-    needs: test-release-artifacts
+    needs: [resolve-version, test-release-artifacts]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -439,7 +465,7 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ needs.resolve-version.outputs.version }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Verify all 6 archives present
@@ -586,8 +612,8 @@ jobs:
 
   publish-github-release:
     name: Create GitHub Release
-    needs: pre-publish-verification
-    if: ${{ github.event_name == 'push' || inputs.publish == true }}
+    needs: [resolve-version, pre-publish-verification]
+    if: ${{ needs.resolve-version.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to create release and upload assets
@@ -746,15 +772,15 @@ jobs:
 
   dry-run-summary:
     name: Dry-Run Summary
-    needs: [pre-publish-verification]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == false }}
+    needs: [resolve-version, pre-publish-verification]
+    if: ${{ needs.resolve-version.outputs.publish == 'false' }}
     runs-on: ubuntu-latest
     steps:
       - name: Dry-run results
         run: |
           echo "=== DRY-RUN COMPLETED ==="
           echo ""
-          echo "Version: ${{ inputs.version }}"
+          echo "Version: ${{ needs.resolve-version.outputs.version }}"
           echo "Build: ✅ PASS (6 archives)"
           echo "Smoke: ✅ PASS (6 variants)"
           echo "Pre-publish: ✅ PASS (6 archives + 6 checksums + 4 SBOMs)"
