@@ -178,4 +178,8 @@ fn test_go_ai_adapter_generate() {
     assert!(files[0].content.contains("GOMAXPROCS=24"));
     assert!(files[0].content.contains("GOGC=100"));
     assert!(files[1].content.contains("CGO_ENABLED=1"));
+    assert!(
+        files.iter().all(|file| !file.content.contains("${")),
+        "generated env files must not contain shell expansion syntax"
+    );
 }

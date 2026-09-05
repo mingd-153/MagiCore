@@ -64,6 +64,65 @@ fn test_scaffold_writes_baseline_for_all_cores() {
 }
 
 #[test]
+fn test_ai_python_agent_scaffold_is_syntactically_valid() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("ai-agent");
+
+    crate::scaffold::processors::ai::AiProcessor::files(&target, "ai-agent", "python-agent")
+        .unwrap();
+
+    let output = std::process::Command::new("python3")
+        .args(["-m", "py_compile"])
+        .arg(target.join("src/agent.py"))
+        .arg(target.join("src/compression.py"))
+        .env("PYTHONPYCACHEPREFIX", target.join(".pycache"))
+        .output()
+        .expect("python3 is required by the AI scaffold lifecycle gate");
+
+    assert!(
+        output.status.success(),
+        "generated AI Python must compile: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let pyproject = std::fs::read_to_string(target.join("pyproject.toml")).unwrap();
+    assert!(
+        pyproject.contains("build-backend = \"setuptools.build_meta\""),
+        "AI scaffold must support mgc build"
+    );
+    assert!(
+        pyproject.contains("package-dir = {\"\" = \"src\"}"),
+        "AI scaffold must package modules from src"
+    );
+}
+
+#[test]
+fn test_flutter_scaffold_has_testable_package_contract() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("app-demo");
+
+    crate::scaffold::processors::app::AppProcessor::files(&target, "app-demo", "flutter").unwrap();
+
+    let pubspec = std::fs::read_to_string(target.join("pubspec.yaml")).unwrap();
+    assert!(
+        pubspec.contains("environment:"),
+        "Flutter SDK range missing"
+    );
+    assert!(
+        pubspec.contains("sdk: flutter"),
+        "Flutter SDK dependency missing"
+    );
+    assert!(
+        pubspec.contains("flutter_test:"),
+        "Flutter test dependency missing"
+    );
+    assert!(
+        target.join("test/widget_test.dart").exists(),
+        "Flutter lifecycle needs a real test target"
+    );
+}
+
+#[test]
 fn test_display_name_uses_last_path_segment() {
     let path = Path::new("/tmp/my-project");
     assert_eq!(Scaffolder::display_name(path), "my-project");

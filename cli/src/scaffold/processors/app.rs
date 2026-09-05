@@ -43,13 +43,17 @@ impl AppProcessor {
                 write_file(
                     &target.join("pubspec.yaml"),
                     &format!(
-                        "name: {}\ndescription: MagiCore Flutter app\nversion: 0.1.0\n",
-                        slugify(name)
+                        "name: {}\ndescription: MagiCore Flutter app\npublish_to: none\nversion: 0.1.0+1\nenvironment:\n  sdk: '>=3.4.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\nflutter:\n  uses-material-design: true\n",
+                        slugify(name).replace('-', "_")
                     ),
                 )?;
                 write_file(
                     &target.join("lib").join("main.dart"),
-                    "void main() {\n  print('MagiCore Flutter app scaffold');\n}\n",
+                    "import 'package:flutter/material.dart';\n\nvoid main() => runApp(const MagiCoreApp());\n\nclass MagiCoreApp extends StatelessWidget {\n  const MagiCoreApp({super.key});\n\n  @override\n  Widget build(BuildContext context) {\n    return const MaterialApp(\n      home: Scaffold(body: Center(child: Text('MagiCore Flutter app'))),\n    );\n  }\n}\n",
+                )?;
+                write_file(
+                    &target.join("test").join("widget_test.dart"),
+                    "import 'package:flutter_test/flutter_test.dart';\n\nimport '../lib/main.dart';\n\nvoid main() {\n  testWidgets('renders the MagiCore app', (tester) async {\n    await tester.pumpWidget(const MagiCoreApp());\n    expect(find.text('MagiCore Flutter app'), findsOneWidget);\n  });\n}\n",
                 )?;
             }
         }

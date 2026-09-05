@@ -162,21 +162,16 @@ pub struct AuditReport {
     pub scanner_status: ScannerStatus,
 }
 
-/// P0.6 FIX: Scanner availability enum
-/// Distinguishes real clean audit from "no scanner available"
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// Scanner availability state — trạng thái sẵn sàng của trình quét.
+/// Distinguishes a clean audit from an unavailable scanner — không báo sạch giả khi thiếu scanner.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub enum ScannerStatus {
-    /// Scanner available and executed successfully
+    /// Scanner available and executed successfully — trình quét đã chạy thành công.
+    #[default]
     Available,
     /// Scanner unavailable - audit not actually performed
     /// String contains reason (e.g., "No OSV scanner for lib core")
     Unavailable(String),
-}
-
-impl Default for ScannerStatus {
-    fn default() -> Self {
-        Self::Available
-    }
 }
 
 impl AuditReport {

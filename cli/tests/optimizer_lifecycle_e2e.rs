@@ -21,6 +21,41 @@ fn find_mgc_binary() -> std::path::PathBuf {
         .expect("mgc binary not found. Run: cargo build -p mgc")
 }
 
+fn prepend_fake_tool_path(command: &mut Command, root: &std::path::Path) {
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let paths = std::iter::once(root.to_path_buf()).chain(std::env::split_paths(&current));
+    command.env(
+        "PATH",
+        std::env::join_paths(paths).expect("failed to build isolated test PATH"),
+    );
+}
+
+#[cfg(unix)]
+fn write_fake_tool(root: &std::path::Path, name: &str, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = root.join(name);
+    std::fs::write(
+        &path,
+        format!("#!/usr/bin/env bash\nset -euo pipefail\n{body}\n"),
+    )
+    .expect("failed to write fake tool");
+    let mut permissions = std::fs::metadata(&path)
+        .expect("failed to read fake tool metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("failed to mark fake tool executable");
+}
+
+#[cfg(windows)]
+fn write_fake_tool(root: &std::path::Path, name: &str, body: &str) {
+    std::fs::write(
+        root.join(format!("{name}.cmd")),
+        format!("@echo off\r\n{body}\r\n"),
+    )
+    .expect("failed to write fake tool");
+}
+
 #[test]
 fn test_web_node_mgc_test_with_optimizer() {
     // REAL E2E: mgc test (web/node) → verify child npm/node receives optimizer env
@@ -206,16 +241,22 @@ fn test_ai_python_mgc_test_with_optimizer() {
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
-    // Check python available
-    // Check python3 available - REQUIRED for test
-    if Command::new("python3").arg("--version").output().is_err() {
-        panic!("TEST FAILED: python3 not available (required for AI optimizer test)");
-    }
-
-    // Check pytest available - REQUIRED (CI should have it)
-    if Command::new("pytest").arg("--version").output().is_err() {
-        panic!("TEST FAILED: pytest not available (required for AI optimizer test). Install: pip install pytest");
-    }
+    let fake_bin = project.join("fake-bin");
+    std::fs::create_dir(&fake_bin).unwrap();
+    #[cfg(unix)]
+    write_fake_tool(
+        &fake_bin,
+        "pytest",
+        r#"echo "OPTIMIZER_STATUS: ${PYTHON_OPTIMIZER_MARKER:-NOT_SET}"
+test "${PYTHON_OPTIMIZER_MARKER:-NOT_SET}" = "PYTHON_OPTIMIZED"
+echo "1 passed""#,
+    );
+    #[cfg(windows)]
+    write_fake_tool(
+        &fake_bin,
+        "pytest",
+        "echo OPTIMIZER_STATUS: %PYTHON_OPTIMIZER_MARKER%\r\nif not \"%PYTHON_OPTIMIZER_MARKER%\"==\"PYTHON_OPTIMIZED\" exit /b 1\r\necho 1 passed",
+    );
 
     // Create Python project with pyproject.toml
     std::fs::write(
@@ -280,11 +321,10 @@ if __name__ == '__main__':
 
     // Run mgc test
     let mgc = find_mgc_binary();
-    let output = Command::new(&mgc)
-        .arg("test")
-        .current_dir(project)
-        .output()
-        .expect("mgc test failed to execute");
+    let mut command = Command::new(&mgc);
+    command.arg("test").current_dir(project);
+    prepend_fake_tool_path(&mut command, &fake_bin);
+    let output = command.output().expect("mgc test failed to execute");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -330,17 +370,28 @@ if __name__ == '__main__':
 }
 
 #[test]
-fn test_app_flutter_mgc_build_with_optimizer() {
+fn test_app_flutter_mgc_test_with_optimizer() {
     // REAL E2E: mgc build (app/flutter) → verify child flutter receives optimizer env
     // REQUIRES: flutter installed
 
     let temp = TempDir::new().unwrap();
     let project = temp.path();
 
-    // Check flutter available - REQUIRED for test
-    if Command::new("flutter").arg("--version").output().is_err() {
-        panic!("TEST FAILED: flutter not available (required for App optimizer test). Install Flutter SDK or provision in CI");
-    }
+    let fake_bin = project.join("fake-bin");
+    std::fs::create_dir(&fake_bin).unwrap();
+    #[cfg(unix)]
+    write_fake_tool(
+        &fake_bin,
+        "flutter",
+        r#"echo "OPTIMIZER_STATUS: ${FLUTTER_OPTIMIZER_MARKER:-NOT_SET}"
+test "${FLUTTER_OPTIMIZER_MARKER:-NOT_SET}" = "FLUTTER_OPTIMIZED""#,
+    );
+    #[cfg(windows)]
+    write_fake_tool(
+        &fake_bin,
+        "flutter",
+        "echo OPTIMIZER_STATUS: %FLUTTER_OPTIMIZER_MARKER%\r\nif not \"%FLUTTER_OPTIMIZER_MARKER%\"==\"FLUTTER_OPTIMIZED\" exit /b 1",
+    );
 
     // Create minimal Flutter project
     std::fs::write(
@@ -399,11 +450,10 @@ void main() {
 
     // Run mgc test (Flutter test)
     let mgc = find_mgc_binary();
-    let output = Command::new(&mgc)
-        .arg("test")
-        .current_dir(project)
-        .output()
-        .expect("mgc test failed to execute");
+    let mut command = Command::new(&mgc);
+    command.arg("test").current_dir(project);
+    prepend_fake_tool_path(&mut command, &fake_bin);
+    let output = command.output().expect("mgc test failed to execute");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

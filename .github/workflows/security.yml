@@ -15,10 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.20.1 --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Prove advisory-only RSA is unreachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo tree -i rsa --workspace --all-features --target all | grep -q '^rsa '; then
+            echo "RUSTSEC-2023-0071 is reachable from the compiled workspace"
+            exit 1
+          fi
       - name: Run audit
-        # Ignore unmaintained warnings for trans-deps while maintaining vulnerability checks
-        run: cargo audit --color never --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0195 --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0235 --ignore RUSTSEC-2026-0253 --ignore RUSTSEC-2026-0002 --ignore RUSTSEC-2026-0258
+        # Ignore known unmaintained transitive crates and unreachable SQLx metadata only.
+        # Chỉ bỏ qua crate gián tiếp không còn bảo trì và RSA không nằm trong graph biên dịch.
+        run: cargo audit --color never --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2025-0134
       - name: Verify lockfile is reproducible
         run: cargo check --workspace --locked
 
@@ -29,9 +38,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install and Run OSV-Scanner
         run: |
-          OSV_VERSION="1.9.1"
+          OSV_VERSION="2.5.1"
           OSV_URL="https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_${OSV_VERSION}_linux_amd64"
-          OSV_SHA="6e9cb8e68c31c47e587ef24b5b86f1b05b9e6a66e19f1f68c92e73f16b4da866"
+          OSV_SHA="f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
 
           # Download specific version with checksum
           curl -fsSL "$OSV_URL" -o /tmp/osv-scanner
@@ -39,4 +48,4 @@ jobs:
           sudo mv /tmp/osv-scanner /usr/local/bin/osv-scanner
           sudo chmod +x /usr/local/bin/osv-scanner
 
-          osv-scanner -r . --config=osv-scanner.toml
+          osv-scanner scan source -r . --config osv-scanner.toml

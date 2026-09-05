@@ -12,7 +12,7 @@ echo ""
 
 # Build
 echo "Building mgc with all features..."
-cargo build --release --features all
+cargo build --release --bin mgc --no-default-features --features all --locked
 MGC="$WORKSPACE_ROOT/target/release/mgc"
 
 if [[ ! -x "$MGC" ]]; then
@@ -22,7 +22,7 @@ fi
 
 # Temp dir
 TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
+trap 'rm -rf "$TEMP_DIR"' EXIT
 cd "$TEMP_DIR"
 
 FAIL_COUNT=0
@@ -33,15 +33,15 @@ echo "--- Web Lifecycle ---"
 if "$MGC" create-web react test-web --yes && \
    test -f test-web/package.json && \
    cd test-web && \
-   npm install && \
+   "$MGC" install && \
    test -d node_modules && \
-   npm run build && \
+   "$MGC" build && \
    { test -d dist || test -d build; } && \
    cd ..; then
     echo "✅ Web: PASS"
 else
     echo "❌ Web: FAIL"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Test AI
@@ -53,13 +53,18 @@ if command -v python3 >/dev/null 2>&1 && \
    cd test-ai && \
    python3 -m venv .venv && \
    . .venv/bin/activate && \
-   pip install -e . && \
-   python -c "import sys" && \
+   python -m pip install build pytest && \
+   "$MGC" install && \
+   mkdir -p tests && \
+   printf 'from agent import AIAgent\n\ndef test_agent():\n    assert AIAgent().run("local")\n' > tests/test_agent.py && \
+   PYTHONPATH=src "$MGC" test && \
+   "$MGC" build && \
+   test -d dist && \
    cd ..; then
     echo "✅ AI: PASS"
 else
     echo "❌ AI: FAIL"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Test App
@@ -69,13 +74,16 @@ if command -v flutter >/dev/null 2>&1 && \
    "$MGC" create-app flutter test_app && \
    test -f test_app/pubspec.yaml && \
    cd test_app && \
-   flutter pub get && \
+   "$MGC" install && \
    test -f pubspec.lock && \
-   flutter test && \
+   "$MGC" test && \
+   "$MGC" build && \
+   test -d build/flutter_assets && \
    cd ..; then
     echo "✅ App: PASS"
 else
-    echo "⚠️  App: SKIP (Flutter not available)"
+    echo "❌ App: FAIL (Flutter is required for all-core verification)"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Test Lib (Rust)
@@ -84,13 +92,14 @@ echo "--- Lib Lifecycle (Rust) ---"
 if "$MGC" create-lib rust test-lib && \
    test -f test-lib/Cargo.toml && \
    cd test-lib && \
-   cargo build --release && \
-   cargo test --release && \
+   "$MGC" install && \
+   "$MGC" build && \
+   "$MGC" test && \
    cd ..; then
     echo "✅ Lib: PASS"
 else
     echo "❌ Lib: FAIL"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Summary

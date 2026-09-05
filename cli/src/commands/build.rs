@@ -19,7 +19,7 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
     }
     info(&format!("Project root: {}", root.display()));
 
-    if root.join("Cargo.toml").exists() {
+    if root.join("Cargo.toml").exists() && !root.join(".mgc.core").exists() {
         // Load optimizer env for standalone Rust projects
         // Tải env optimizer cho Rust project độc lập
         let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
@@ -30,8 +30,7 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
                     e
                 })
                 .unwrap_or_default();
-        let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
-        return build_rust_with_env(&root, rustflags);
+        return build_rust_with_env(&root, optimizer_envs);
     }
 
     let ctx = ProjectContext::load_with_core(core)?;
@@ -63,14 +62,64 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
         #[cfg(not(feature = "hardware"))]
         "hardware" => Err(crate::error::core_not_in_build("hardware")),
         #[cfg(feature = "ai")]
-        "ai" => Err(crate::error::build_not_supported(
-            "ai",
-            "AI projects run with `mgc run` or `mgc dev` (05 §7)",
-        )),
+        "ai" => build_ai(&root).await,
         #[cfg(not(feature = "ai"))]
         "ai" => Err(crate::error::core_not_in_build("ai")),
         other => bail!("'mgc build' not implemented for '{}' core yet", other),
     }
+}
+
+/// Build an AI project with its native language toolchain — build project AI bằng toolchain gốc.
+#[cfg(feature = "ai")]
+async fn build_ai(root: &Path) -> Result<()> {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+
+    let runtime = if root.join("pyproject.toml").exists() {
+        DetectedRuntime::PythonPyTorch
+    } else if root.join("Cargo.toml").exists() {
+        DetectedRuntime::RustCandle
+    } else if root.join("go.mod").exists() {
+        DetectedRuntime::GoTensorFlow
+    } else {
+        return Err(crate::error::no_framework_detected("ai build", root));
+    };
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|error| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {error}"));
+            error
+        })
+        .unwrap_or_default();
+
+    match runtime {
+        DetectedRuntime::PythonPyTorch => {
+            if tool_unavailable("python") {
+                return Err(crate::error::build_toolchain_missing("python"));
+            }
+            info("Building Python AI package: python -m build");
+            let env = optimizer_envs.into_iter().collect::<Vec<_>>();
+            let env = (!env.is_empty()).then_some(env);
+            run_allowlisted_tool_with_env(root, "python", &["-m", "build"], env)
+                .map_err(|error| crate::error::python_build_failed(&error))?;
+        }
+        DetectedRuntime::RustCandle => {
+            if tool_unavailable("cargo") {
+                return Err(crate::error::build_toolchain_missing("cargo"));
+            }
+            build_rust_with_env(root, optimizer_envs)?;
+        }
+        DetectedRuntime::GoTensorFlow => {
+            if tool_unavailable("go") {
+                return Err(crate::error::build_toolchain_missing("go"));
+            }
+            let env = optimizer_envs.into_iter().collect::<Vec<_>>();
+            let env = (!env.is_empty()).then_some(env);
+            run_allowlisted_tool_with_env(root, "go", &["build", "./..."], env)?;
+        }
+        _ => unreachable!("AI build selects only an AI runtime"),
+    }
+
+    mgc_ui::success("AI build completed");
+    Ok(())
 }
 
 /// Game build routes only implemented engines — chỉ chạy engine đã có build contract.
@@ -88,8 +137,7 @@ async fn build_game(root: &Path) -> Result<()> {
                         e
                     })
                     .unwrap_or_default();
-            let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
-            build_rust_with_env(root, rustflags)
+            build_rust_with_env(root, optimizer_envs)
         }
         Some(mgc_game_adapter::GameEngine::Godot) => Err(crate::error::build_not_supported(
             "game/godot",
@@ -139,8 +187,7 @@ async fn build_iot(root: &Path) -> Result<()> {
                     e
                 })
                 .unwrap_or_default();
-        let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
-        return build_rust_with_env(root, rustflags);
+        return build_rust_with_env(root, optimizer_envs);
     }
     Err(crate::error::no_framework_detected("iot", root))
 }
@@ -158,12 +205,8 @@ async fn build_lib(root: &Path) -> Result<()> {
             e
         })
         .unwrap_or_default();
-    // Apply RUSTFLAGS for Rust builds
-    // Áp dụng RUSTFLAGS cho Rust build
-    let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
-
     if root.join("Cargo.toml").exists() {
-        return build_rust_with_env(root, rustflags);
+        return build_rust_with_env(root, optimizer_envs);
     }
     if root.join("pyproject.toml").exists() {
         if tool_unavailable("python") {
@@ -255,7 +298,7 @@ async fn build_app(root: &Path) -> Result<()> {
     let (tool, args): (&str, &[&str]) = match language {
         "kotlin" => ("gradle", &["build"]),
         "swift" => ("swift", &["build"]),
-        _ => ("flutter", &["build"]),
+        _ => ("flutter", &["build", "bundle"]),
     };
     if tool_unavailable(tool) {
         return Err(crate::error::build_toolchain_missing(tool));
@@ -350,12 +393,27 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
 }
 
 fn tool_unavailable(tool: &str) -> bool {
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .map(|dir| Path::new(dir).join(tool))
-        .find(|p| p.is_file())
-        .is_none()
+    let Some(path) = std::env::var_os("PATH") else {
+        return true;
+    };
+
+    std::env::split_paths(&path).all(|directory| {
+        if directory.join(tool).is_file() {
+            return false;
+        }
+        #[cfg(windows)]
+        {
+            let extensions = std::env::var_os("PATHEXT")
+                .and_then(|value| value.into_string().ok())
+                .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string());
+            return !extensions
+                .split(';')
+                .filter(|extension| !extension.is_empty())
+                .any(|extension| directory.join(format!("{tool}{extension}")).is_file());
+        }
+        #[cfg(not(windows))]
+        true
+    })
 }
 
 /// Cloud build (06 §4): cdk synth (qua node_modules/.bin — npm-format, như web pattern),
@@ -898,21 +956,22 @@ fn detect_app_runtime(root: &Path) -> crate::commands::optimizer::runtime_detect
         .unwrap_or(DetectedRuntime::Unknown)
 }
 
-/// Build Rust with optional RUSTFLAGS from optimizer
-/// Build Rust với RUSTFLAGS tùy chọn từ optimizer
-fn build_rust_with_env(root: &Path, rustflags: Option<String>) -> Result<()> {
+/// Build Rust with the complete optimizer environment — build Rust với toàn bộ env optimizer.
+fn build_rust_with_env(
+    root: &Path,
+    optimizer_envs: std::collections::HashMap<String, String>,
+) -> Result<()> {
     let start = Instant::now();
     info("Detected Rust project — running cargo build...");
+
+    if let Some(rustflags) = optimizer_envs.get("RUSTFLAGS") {
+        mgc_ui::info(&format!("Applying RUSTFLAGS: {rustflags}"));
+    }
 
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
-        env: rustflags
-            .map(|flags| {
-                mgc_ui::info(&format!("Applying RUSTFLAGS: {}", flags));
-                vec![("RUSTFLAGS".to_string(), flags)]
-            })
-            .unwrap_or_default(),
+        env: optimizer_envs.into_iter().collect(),
         clean_env: false, // Preserve existing env
         ..Default::default()
     };

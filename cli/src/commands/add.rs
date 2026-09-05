@@ -4,6 +4,8 @@ use mgc_types::adapter::AddOptions;
 
 /// mgc add — add a dependency to the project
 #[allow(dead_code)]
+// Mirrors the public CLI flag surface — giữ nguyên ánh xạ trực tiếp với các cờ CLI công khai.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     package: String,
     version: Option<String>,
@@ -29,6 +31,8 @@ pub async fn run(
     .await
 }
 
+// Mirrors the public CLI flag surface — giữ nguyên ánh xạ trực tiếp với các cờ CLI công khai.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_many(
     packages: Vec<String>,
     version: Option<String>,

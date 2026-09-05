@@ -50,13 +50,8 @@ impl OptimizerAdapter for GoAiAdapter {
                  # CGO required for TensorFlow/ONNX bindings\n\
                  CGO_ENABLED=1\n\
                  GO111MODULE=on\n\
-                 # Module proxy: respects user settings via env override\n\
-                 # Default: official Go proxy with direct fallback\n\
-                 # Override via: export GOPROXY=<your-proxy>\n\
-                 GOPROXY=${{GOPROXY:-https://proxy.golang.org,direct}}\n\
-                 # Module cache: uses MagiCore shared cache structure\n\
-                 # Override via: export GOMODCACHE=<your-path>\n\
-                 GOMODCACHE=${{GOMODCACHE:-.mgc-optimizer/.go-mod-cache}}\n",
+                 # GOPROXY and GOMODCACHE remain inherited from the user environment.\n\
+                 # GOPROXY và GOMODCACHE được kế thừa từ môi trường của user.\n",
                 hw.profile
             ),
             description: "Go build flags for CGO-dependent AI libraries (TensorFlow/ONNX)"
