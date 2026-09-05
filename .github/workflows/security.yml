@@ -5,7 +5,11 @@ on:
   schedule:
     - cron: "0 0 * * 1" # thứ 2 hằng tuần
   push:
-    paths: ["Cargo.lock", "**/Cargo.toml"]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/security.yml"
+      - "osv-scanner.toml"
   workflow_dispatch:
 
 jobs:

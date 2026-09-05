@@ -14,11 +14,12 @@ on:
       - "scripts/**"
       - ".github/workflows/all-core-lifecycle.yml"
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
     paths:
       - "cli/**"
       - "core/**"
       - "adapters/**"
+      - "scripts/**"
       - ".github/workflows/all-core-lifecycle.yml"
 
 permissions:

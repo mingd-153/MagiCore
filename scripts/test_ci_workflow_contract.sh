@@ -16,6 +16,9 @@ fail() {
 
 grep -q '^  pull_request:' "$ALL_CORE" || fail "all-core lifecycle must run on pull requests"
 grep -q '"core/\*\*"' "$ALL_CORE" || fail "all-core lifecycle path filter misses the core directory"
+grep -q '"fix/\*\*"' "$ALL_CORE" || fail "all-core lifecycle must run on RC fix branches"
+grep -q '"fix/\*\*"' "$ROOT/.github/workflows/ci.yml" || fail "CI must run on RC fix branches"
+grep -q '".github/workflows/security.yml"' "$SECURITY" || fail "security workflow changes must retrigger security checks"
 
 if grep -Eq 'uses: [^ ]+@(v[0-9]+|main|master|stable|latest)([[:space:]]|$)' "$ALL_CORE"; then
   fail "all-core workflow contains floating action references"
