@@ -25,6 +25,7 @@ Flags:
 import json
 import sys
 import math
+import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import statistics
@@ -136,22 +137,38 @@ def validate_result(data: Dict, filename: str, publish_mode: bool = False) -> No
     if 'pm_version' in data:
         if not isinstance(data['pm_version'], str) or not data['pm_version'].strip():
             raise ValidationError(f"Invalid pm_version: {data.get('pm_version')}")
+        # Semantic version format check (basic)
+        if not re.match(r'^\d+\.\d+\.\d+', data['pm_version']):
+            raise ValidationError(f"Invalid pm_version format (expected semver): {data['pm_version']}")
 
     if 'mgc_commit' in data:
-        if not isinstance(data['mgc_commit'], str) or len(data['mgc_commit']) < 7:
-            raise ValidationError(f"Invalid mgc_commit (need 7+ chars): {data.get('mgc_commit')}")
+        commit = data['mgc_commit']
+        if not isinstance(commit, str) or len(commit) < 7:
+            raise ValidationError(f"Invalid mgc_commit (need 7+ chars): {commit}")
+        # Must be hex string
+        if not re.match(r'^[0-9a-fA-F]+$', commit):
+            raise ValidationError(f"Invalid mgc_commit (must be hex): {commit}")
 
     if 'session_id' in data:
         if not isinstance(data['session_id'], str) or not data['session_id'].strip():
             raise ValidationError(f"Invalid session_id: {data.get('session_id')}")
+        # Reasonable format: at least 8 chars, alphanumeric+dash
+        if len(data['session_id']) < 8 or not re.match(r'^[a-zA-Z0-9\-_]+$', data['session_id']):
+            raise ValidationError(f"Invalid session_id format: {data['session_id']}")
 
     if 'manifest_hash' in data:
-        if not isinstance(data['manifest_hash'], str) or len(data['manifest_hash']) < 8:
-            raise ValidationError(f"Invalid manifest_hash (need 8+ chars): {data.get('manifest_hash')}")
+        hash_val = data['manifest_hash']
+        if not isinstance(hash_val, str) or len(hash_val) != 64:
+            raise ValidationError(f"Invalid manifest_hash (expected 64-char SHA-256): {hash_val}")
+        if not re.match(r'^[0-9a-fA-F]{64}$', hash_val):
+            raise ValidationError(f"Invalid manifest_hash (must be hex SHA-256): {hash_val}")
 
     if 'lockfile_hash' in data:
-        if not isinstance(data['lockfile_hash'], str) or len(data['lockfile_hash']) < 8:
-            raise ValidationError(f"Invalid lockfile_hash (need 8+ chars): {data.get('lockfile_hash')}")
+        hash_val = data['lockfile_hash']
+        if not isinstance(hash_val, str) or len(hash_val) != 64:
+            raise ValidationError(f"Invalid lockfile_hash (expected 64-char SHA-256): {hash_val}")
+        if not re.match(r'^[0-9a-fA-F]{64}$', hash_val):
+            raise ValidationError(f"Invalid lockfile_hash (must be hex SHA-256): {hash_val}")
 
 def load_results_strict(results_dir: Path, pm_name: str, expected_packages: Optional[int] = None, publish_mode: bool = False) -> Tuple[List[Dict], List[str]]:
     """

@@ -129,13 +129,27 @@ jobs:
       - name: Generate SBOM
         if: ${{ !matrix.is_windows }}
         run: |
-          cargo install cargo-cyclonedx --locked
-          cargo cyclonedx --format json --output-cdx sbom-all.json --manifest-path Cargo.toml
-          cargo cyclonedx --format json --output-cdx sbom-web.json --manifest-path Cargo.toml --features web
-          # Rename with version for clarity
-          VERSION="${{ steps.version.outputs.version }}"
-          mv sbom-all.json "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json"
-          mv sbom-web.json "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json"
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          # Generate for all-features binary
+          cd cli
+          cargo cyclonedx --format json --spec-version 1.4
+          cd ..
+          mv cli/mgc.cdx.json "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json"
+
+          # Generate for web-only binary
+          cd cli
+          cargo cyclonedx --format json --spec-version 1.4 --no-default-features --features web
+          cd ..
+          mv cli/mgc.cdx.json "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json"
+
+          # Verify SBOMs exist and are valid CycloneDX
+          for sbom in *-sbom.json; do
+            if ! jq -e '.bomFormat == "CycloneDX"' "$sbom" > /dev/null; then
+              echo "❌ Invalid SBOM: $sbom"
+              exit 1
+            fi
+            echo "✅ Valid SBOM: $sbom ($(jq -r '.components | length') components)"
+          done
 
       # Package Windows (.zip)
       - name: Package Windows Archive
@@ -156,12 +170,28 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          cargo install cargo-cyclonedx --locked
-          cargo cyclonedx --format json --output-cdx sbom-all.json --manifest-path Cargo.toml
-          cargo cyclonedx --format json --output-cdx sbom-web.json --manifest-path Cargo.toml --features web
-          $VERSION = "${{ steps.version.outputs.version }}"
-          Move-Item -Path sbom-all.json -Destination "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json" -Force
-          Move-Item -Path sbom-web.json -Destination "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json" -Force
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          # Generate for all-features binary
+          Set-Location cli
+          cargo cyclonedx --format json --spec-version 1.4
+          Set-Location ..
+          Move-Item -Path cli/mgc.cdx.json -Destination "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json" -Force
+
+          # Generate for web-only binary
+          Set-Location cli
+          cargo cyclonedx --format json --spec-version 1.4 --no-default-features --features web
+          Set-Location ..
+          Move-Item -Path cli/mgc.cdx.json -Destination "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json" -Force
+
+          # Verify SBOMs
+          Get-ChildItem -Filter "*-sbom.json" | ForEach-Object {
+            $bomFormat = (Get-Content $_.FullName | ConvertFrom-Json).bomFormat
+            if ($bomFormat -ne "CycloneDX") {
+              Write-Error "Invalid SBOM: $($_.Name)"
+              exit 1
+            }
+            Write-Host "✅ Valid SBOM: $($_.Name)"
+          }
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
@@ -449,3 +479,68 @@ jobs:
           }
 
           Write-Host "✅ Lifecycle test passed"
+
+  verify-release:
+    name: Verify Published Release
+    needs: publish-github-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+      id-token: read
+    steps:
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO="${{ github.repository }}"
+
+          # Download Linux x64 binary + checksum
+          gh release download "v${VERSION}" \
+            --repo "$REPO" \
+            --pattern "magicore-${VERSION}-linux-x64.tar.gz*"
+
+          ls -lh magicore-*.tar.gz*
+
+      - name: Verify checksums
+        run: |
+          for checksum_file in *.sha256; do
+            echo "Verifying: $checksum_file"
+            sha256sum --check "$checksum_file"
+          done
+          echo "✅ All checksums verified"
+
+      - name: Verify artifact attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Install GitHub CLI if not available
+          if ! command -v gh &> /dev/null; then
+            echo "Installing GitHub CLI..."
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update
+            sudo apt install gh -y
+          fi
+
+          # Verify attestations
+          for artifact in magicore-*.tar.gz; do
+            echo "Verifying attestation for: $artifact"
+            gh attestation verify "$artifact" --repo "${{ github.repository }}"
+          done
+          echo "✅ All attestations verified"
+
+      - name: Verify SBOM presence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Check SBOM files exist in release
+          if gh release view "v${VERSION}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -q "sbom.json"; then
+            echo "✅ SBOM files present in release"
+          else
+            echo "❌ SBOM files missing from release"
+            exit 1
+          fi
