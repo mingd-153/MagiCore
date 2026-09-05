@@ -59,17 +59,23 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
-      - name: Set artifact names
+      - name: Set artifact names (via contract)
         id: artifacts
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          ARTIFACT_NAME="magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.${{ matrix.ext }}"
-          WEB_ARTIFACT_NAME="magicore-web-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.${{ matrix.ext }}"
+
+          # Use contract script as single source of truth
+          ALL_NAMES=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "all")
+          WEB_NAMES=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "web")
+
+          ARTIFACT_NAME=$(echo "$ALL_NAMES" | grep "^ARCHIVE=" | cut -d= -f2)
+          WEB_ARTIFACT_NAME=$(echo "$WEB_NAMES" | grep "^ARCHIVE=" | cut -d= -f2)
+
           echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
           echo "web_artifact_name=$WEB_ARTIFACT_NAME" >> $GITHUB_OUTPUT
-          echo "Building: $ARTIFACT_NAME"
-          echo "Building web: $WEB_ARTIFACT_NAME"
+          echo "Building all-core: $ARTIFACT_NAME"
+          echo "Building web-only: $WEB_ARTIFACT_NAME"
 
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -151,7 +157,7 @@ jobs:
             --features web \
             --target ${{ matrix.target }}
           cd ..
-          mv cli/mgc.cdx.json "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json"
+          mv cli/mgc.cdx.json "magicore-web-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json"
 
           # Verify SBOMs exist and are valid CycloneDX
           for sbom in *-sbom.json; do
@@ -188,26 +194,58 @@ jobs:
         shell: pwsh
         run: |
           cargo install cargo-cyclonedx --version 0.5.9 --locked
-          # Generate for all-features binary
+
+          # Generate for all-features binary (matches build flags exactly)
           Set-Location cli
-          cargo cyclonedx --format json --spec-version 1.4
+          cargo cyclonedx `
+            --format json `
+            --spec-version 1.4 `
+            --no-default-features `
+            --features all `
+            --target ${{ matrix.target }}
           Set-Location ..
           Move-Item -Path cli/mgc.cdx.json -Destination "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json" -Force
 
-          # Generate for web-only binary
+          # Generate for web-only binary (matches build flags exactly)
           Set-Location cli
-          cargo cyclonedx --format json --spec-version 1.4 --no-default-features --features web
+          cargo cyclonedx `
+            --format json `
+            --spec-version 1.4 `
+            --no-default-features `
+            --features web `
+            --target ${{ matrix.target }}
           Set-Location ..
-          Move-Item -Path cli/mgc.cdx.json -Destination "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json" -Force
+          Move-Item -Path cli/mgc.cdx.json -Destination "magicore-web-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json" -Force
 
           # Verify SBOMs
           Get-ChildItem -Filter "*-sbom.json" | ForEach-Object {
-            $bomFormat = (Get-Content $_.FullName | ConvertFrom-Json).bomFormat
-            if ($bomFormat -ne "CycloneDX") {
-              Write-Error "Invalid SBOM: $($_.Name)"
+            $sbomData = Get-Content $_.FullName | ConvertFrom-Json
+
+            # Check required fields (P1 finding #6)
+            if ($sbomData.bomFormat -ne "CycloneDX") {
+              Write-Error "Invalid bomFormat: $($_.Name)"
               exit 1
             }
-            Write-Host "✅ Valid SBOM: $($_.Name)"
+            if (-not $sbomData.specVersion) {
+              Write-Error "Missing specVersion: $($_.Name)"
+              exit 1
+            }
+            if (-not $sbomData.metadata.component) {
+              Write-Error "Missing metadata.component: $($_.Name)"
+              exit 1
+            }
+            if (-not $sbomData.components) {
+              Write-Error "Missing components: $($_.Name)"
+              exit 1
+            }
+
+            $componentCount = $sbomData.components.Count
+            if ($componentCount -lt 10) {
+              Write-Error "Too few components ($componentCount): $($_.Name)"
+              exit 1
+            }
+
+            Write-Host "✅ Valid SBOM: $($_.Name) ($componentCount components)"
           }
 
       - name: Upload Build Artifacts
@@ -222,29 +260,55 @@ jobs:
             *-sbom.json
 
   test-release-artifacts:
-    name: Smoke Test - Web Install (${{ matrix.os_name }})
+    name: Smoke Test - ${{ matrix.variant }} (${{ matrix.os_name }})
     needs: build-release
     strategy:
       fail-fast: false
       matrix:
         include:
+          # All-core variants
           - os: ubuntu-latest
             os_name: linux
             arch: x64
             ext: tar.gz
             binary: mgc
+            variant: all-core
           - os: windows-latest
             os_name: windows
             arch: x64
             ext: zip
             binary: mgc.exe
+            variant: all-core
           - os: macos-14
             os_name: macos
             arch: x64
             ext: tar.gz
             binary: mgc
+            variant: all-core
+          # Web-only variants (P0 blocker: must test)
+          - os: ubuntu-latest
+            os_name: linux
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: web
+          - os: windows-latest
+            os_name: windows
+            arch: x64
+            ext: zip
+            binary: mgc.exe
+            variant: web
+          - os: macos-14
+            os_name: macos
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: web
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Checkout (for contract script)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
       - name: Download build artifacts
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
@@ -258,12 +322,21 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Get artifact name via contract
+        id: artifact
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          names=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "${{ matrix.variant }}")
+          ARTIFACT=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
+          echo "name=$ARTIFACT" >> $GITHUB_OUTPUT
+          echo "Testing artifact: $ARTIFACT"
+
       - name: Extract archive (Unix)
         if: matrix.ext == 'tar.gz'
         run: |
-          ARTIFACT="magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
           mkdir -p test-binary
-          tar -xzf "artifacts/$ARTIFACT" -C test-binary
+          tar -xzf "artifacts/${{ steps.artifact.outputs.name }}" -C test-binary
           chmod +x test-binary/${{ matrix.binary }}
           ls -la test-binary/
 
@@ -271,8 +344,7 @@ jobs:
         if: matrix.ext == 'zip'
         shell: pwsh
         run: |
-          $VERSION = "${{ steps.version.outputs.version }}"
-          $ARTIFACT = "magicore-$VERSION-${{ matrix.os_name }}-${{ matrix.arch }}.zip"
+          $ARTIFACT = "${{ steps.artifact.outputs.name }}"
           New-Item -ItemType Directory -Force -Path test-binary
           Expand-Archive -Path "artifacts/$ARTIFACT" -DestinationPath test-binary -Force
           Get-ChildItem test-binary
@@ -359,25 +431,24 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
 
-          # Expected: 6 binaries (Linux/macOS/Windows × all/web)
-          EXPECTED_FILES=(
-            "magicore-${VERSION}-linux-x64.tar.gz"
-            "magicore-${VERSION}-linux-x64.tar.gz.sha256"
-            "magicore-${VERSION}-linux-x64-sbom.json"
-            "magicore-${VERSION}-linux-x64-web.tar.gz"
-            "magicore-${VERSION}-linux-x64-web.tar.gz.sha256"
-            "magicore-${VERSION}-linux-x64-web-sbom.json"
-            "magicore-${VERSION}-macos-x64.tar.gz"
-            "magicore-${VERSION}-macos-x64.tar.gz.sha256"
-            "magicore-${VERSION}-macos-x64-sbom.json"
-            "magicore-${VERSION}-macos-x64-web.tar.gz"
-            "magicore-${VERSION}-macos-x64-web.tar.gz.sha256"
-            "magicore-${VERSION}-macos-x64-web-sbom.json"
-            "magicore-${VERSION}-windows-x64.zip"
-            "magicore-${VERSION}-windows-x64.zip.sha256"
-            "magicore-${VERSION}-windows-x64-web.zip"
-            "magicore-${VERSION}-windows-x64-web.zip.sha256"
-          )
+          # Generate expected files via contract (single source of truth)
+          EXPECTED_FILES=()
+
+          for os in linux macos windows; do
+            for variant in all web; do
+              names=$(./scripts/release-artifact-contract.sh "$VERSION" "$os" "x64" "$variant")
+              archive=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
+              checksum=$(echo "$names" | grep "^CHECKSUM=" | cut -d= -f2)
+              sbom=$(echo "$names" | grep "^SBOM=" | cut -d= -f2)
+
+              EXPECTED_FILES+=("$archive")
+              EXPECTED_FILES+=("$checksum")
+              # Windows doesn't generate SBOM
+              if [[ "$os" != "windows" ]]; then
+                EXPECTED_FILES+=("$sbom")
+              fi
+            done
+          done
 
           cd verify-assets
           MISSING=0
@@ -394,7 +465,7 @@ jobs:
             echo "❌ $MISSING files missing - BLOCKING RELEASE"
             exit 1
           fi
-          echo "✅ All 6 archives + checksums + 4 SBOMs present"
+          echo "✅ All 6 archives + 6 checksums + 4 SBOMs present (Linux+macOS only)"
 
       - name: Verify all checksums
         run: |
@@ -421,7 +492,8 @@ jobs:
           for archive in *.tar.gz *.zip; do
             if [[ -f "$archive" ]]; then
               echo "Verifying attestation: $archive"
-              if gh attestation verify "$archive" --owner "${{ github.repository_owner }}" 2>&1 | grep -q "Verification succeeded"; then
+              # Use exit code, not grep string (P1 finding #5)
+              if gh attestation verify "$archive" --owner "${{ github.repository_owner }}"; then
                 echo "✅ Attestation verified: $archive"
               else
                 echo "❌ Attestation FAILED: $archive"
@@ -473,15 +545,20 @@ jobs:
               exit 1
             fi
 
-            # Verify SBOM metadata matches version
+            # Verify SBOM metadata matches version (MUST match, not warning)
             sbom_version=$(jq -r '.metadata.component.version // empty' "$sbom")
+            if [[ -z "$sbom_version" ]]; then
+              echo "❌ Missing metadata.component.version: $sbom"
+              exit 1
+            fi
             if [[ "$sbom_version" != "$VERSION" ]]; then
-              echo "⚠️  SBOM version mismatch: expected $VERSION, got $sbom_version"
+              echo "❌ SBOM version mismatch: expected $VERSION, got $sbom_version in $sbom"
+              exit 1
             fi
 
-            echo "✅ Valid SBOM: $sbom ($component_count components)"
+            echo "✅ Valid SBOM: $sbom ($component_count components, version $sbom_version)"
           done
-          echo "✅ All SBOMs validated (4/4 Linux+macOS)"
+          echo "✅ All SBOMs validated (6/6 Linux+macOS+Windows)"
 
       - name: Verification summary
         run: |
@@ -489,7 +566,7 @@ jobs:
           echo "✅ 6/6 archives present"
           echo "✅ 6/6 checksums verified"
           echo "✅ 6/6 attestations verified"
-          echo "✅ 4/4 SBOMs validated"
+          echo "✅ 6/6 SBOMs validated"
           echo "Safe to publish."
 
   publish-github-release:
@@ -527,12 +604,8 @@ jobs:
           cp packaging/scoop/magicore.json release-assets/packaging/scoop/magicore.json
           cp packaging/scoop/magicore-web.json release-assets/packaging/scoop/magicore-web.json
 
-      - name: Generate Artifact Attestations
-        uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v1.4.3
-        with:
-          subject-path: |
-            release-assets/*.tar.gz
-            release-assets/*.zip
+      # Note: Attestations already generated in pre-publish-verification
+      # No need to regenerate here (P1 finding #6)
 
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
@@ -544,7 +617,7 @@ jobs:
             release-assets/*-sbom.json
             release-assets/packaging/homebrew/*.rb
             release-assets/packaging/scoop/*.json
-          draft: false
+          draft: true # P0: Start as draft, promote after post-download smoke
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
           generate_release_notes: false
           body_path: CHANGELOG.md
