@@ -13,7 +13,7 @@ jobs:
     name: cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run audit
@@ -26,7 +26,7 @@ jobs:
     name: OSV scanner
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install and Run OSV-Scanner
         run: |
           GOBIN=/usr/local/bin go install github.com/google/osv-scanner/cmd/osv-scanner@latest 2>/dev/null

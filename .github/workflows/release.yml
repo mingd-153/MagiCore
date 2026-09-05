@@ -11,7 +11,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write # TODO: Scope to publish job only
+  contents: read # Default: read-only; only publish job gets write
 
 jobs:
   build-release:
@@ -73,7 +73,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-08-18
         with:
           targets: ${{ matrix.target }}
 
@@ -138,7 +138,7 @@ jobs:
           "$webHash  $WEB_ARTIFACT_NAME" | Out-File -FilePath "${WEB_ARTIFACT_NAME}.sha256" -Encoding ascii
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: ${{ steps.artifacts.outputs.artifact_name }}
           path: |
@@ -172,7 +172,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           path: artifacts
           merge-multiple: true
@@ -264,12 +264,14 @@ jobs:
     name: Create GitHub Release
     needs: test-release-artifacts
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create release and upload assets
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           path: release-assets
           merge-multiple: true

@@ -16,11 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-08-18
         with:
           components: rustfmt, clippy
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaff # v2.7.5
       - name: cargo fmt
         run: cargo fmt --all --check
       - name: cargo clippy
@@ -63,9 +63,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-08-18
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaff # v2.7.5
       - name: cargo test
         run: cargo test --workspace --locked --exclude mgc --exclude mgc-e2e -- --test-threads=4
       - name: Seed registry + cargo test (mgc + mgc-e2e, skip benchmarks)
@@ -111,9 +111,9 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-08-18
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaff # v2.7.5
       - name: cargo build --release
         run: cargo build --release --all-targets --locked
 
@@ -139,13 +139,13 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-08-18
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaff # v2.7.5
 
       - name: Setup Flutter SDK
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0
         with:
           flutter-version: "3.24.0"
           channel: "stable"

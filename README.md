@@ -38,7 +38,7 @@
 | 🤖 **Native MCP Server**     | `mgc mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
 | 🩺 **Smart Doctor**          | `mgc doctor --fix` auto-diagnoses and repairs environment issues                 |
 | 🗄️ **Embedded Registry**     | `mgc-registry-server` — host your own private package registry                   |
-| 🌍 **Cross-Platform**        | macOS (Apple Silicon + Intel), Linux x64/ARM64, Windows x64/ARM64               |
+| 🌍 **Cross-Platform**        | Linux/macOS/Windows x86_64 (RC-3); ARM64 support in future release              |
 
 ---
 
@@ -333,7 +333,7 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 - ℹ️ ARM64 support planned for future release
 
 **Core Runtime Status**:
-- ✅ **Web** (npm/yarn/pnpm replacement) - Production ready
+- ✅ **Web** (npm/yarn/pnpm replacement) - Beta/RC (install verified in CI; full lifecycle untested)
 - ⚠️ **AI** (Python) - Experimental (create + install verified, test/build/run untested in CI)
 - ⚠️ **App** (Flutter/React Native) - Experimental (requires Flutter SDK)
 - ⚠️ **Lib** (Rust/Go) - Experimental (basic support)
