@@ -19,28 +19,51 @@ jobs:
           # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: magicore-1.1.0-rc.2-linux-x64.tar.gz
-            web_artifact_name: magicore-web-1.1.0-rc.2-linux-x64.tar.gz
+            os_name: linux
+            arch: x64
+            ext: tar.gz
             use_cross: false
             is_windows: false
 
           # macOS Intel (x86_64)
           - os: macos-14
             target: x86_64-apple-darwin
-            artifact_name: magicore-1.1.0-rc.2.1-macos-x64.tar.gz
-            web_artifact_name: magicore-web-1.1.0-rc.2.1-macos-x64.tar.gz
+            os_name: macos
+            arch: x64
+            ext: tar.gz
             use_cross: false
             is_windows: false
 
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: magicore-1.1.0-rc.2-windows-x64.zip
-            web_artifact_name: magicore-web-1.1.0-rc.2-windows-x64.zip
+            os_name: windows
+            arch: x64
+            ext: zip
             use_cross: false
             is_windows: true
 
     steps:
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Set artifact names
+        id: artifacts
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARTIFACT_NAME="magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.${{ matrix.ext }}"
+          WEB_ARTIFACT_NAME="magicore-web-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.${{ matrix.ext }}"
+          echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "web_artifact_name=$WEB_ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "Building: $ARTIFACT_NAME"
+          echo "Building web: $WEB_ARTIFACT_NAME"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -88,36 +111,151 @@ jobs:
       - name: Package Unix Archive
         if: ${{ !matrix.is_windows }}
         run: |
-          tar -C dist/magicore -czvf "${{ matrix.artifact_name }}" mgc
-          shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
-          tar -C dist/magicore-web -czvf "${{ matrix.web_artifact_name }}" mgc
-          shasum -a 256 "${{ matrix.web_artifact_name }}" > "${{ matrix.web_artifact_name }}.sha256"
+          ARTIFACT_NAME="${{ steps.artifacts.outputs.artifact_name }}"
+          WEB_ARTIFACT_NAME="${{ steps.artifacts.outputs.web_artifact_name }}"
+          tar -C dist/magicore -czvf "$ARTIFACT_NAME" mgc
+          shasum -a 256 "$ARTIFACT_NAME" > "${ARTIFACT_NAME}.sha256"
+          tar -C dist/magicore-web -czvf "$WEB_ARTIFACT_NAME" mgc
+          shasum -a 256 "$WEB_ARTIFACT_NAME" > "${WEB_ARTIFACT_NAME}.sha256"
 
       # Package Windows (.zip)
       - name: Package Windows Archive
         if: matrix.is_windows
         shell: pwsh
         run: |
-          Compress-Archive -Path "dist/magicore/mgc.exe" -DestinationPath "${{ matrix.artifact_name }}" -Force
-          $hash = (Get-FileHash -Path "${{ matrix.artifact_name }}" -Algorithm SHA256).Hash.ToLower()
-          "$hash  ${{ matrix.artifact_name }}" | Out-File -FilePath "${{ matrix.artifact_name }}.sha256" -Encoding ascii
-          Compress-Archive -Path "dist/magicore-web/mgc.exe" -DestinationPath "${{ matrix.web_artifact_name }}" -Force
-          $webHash = (Get-FileHash -Path "${{ matrix.web_artifact_name }}" -Algorithm SHA256).Hash.ToLower()
-          "$webHash  ${{ matrix.web_artifact_name }}" | Out-File -FilePath "${{ matrix.web_artifact_name }}.sha256" -Encoding ascii
+          $ARTIFACT_NAME = "${{ steps.artifacts.outputs.artifact_name }}"
+          $WEB_ARTIFACT_NAME = "${{ steps.artifacts.outputs.web_artifact_name }}"
+          Compress-Archive -Path "dist/magicore/mgc.exe" -DestinationPath "$ARTIFACT_NAME" -Force
+          $hash = (Get-FileHash -Path "$ARTIFACT_NAME" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $ARTIFACT_NAME" | Out-File -FilePath "${ARTIFACT_NAME}.sha256" -Encoding ascii
+          Compress-Archive -Path "dist/magicore-web/mgc.exe" -DestinationPath "$WEB_ARTIFACT_NAME" -Force
+          $webHash = (Get-FileHash -Path "$WEB_ARTIFACT_NAME" -Algorithm SHA256).Hash.ToLower()
+          "$webHash  $WEB_ARTIFACT_NAME" | Out-File -FilePath "${WEB_ARTIFACT_NAME}.sha256" -Encoding ascii
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: ${{ steps.artifacts.outputs.artifact_name }}
           path: |
-            ${{ matrix.artifact_name }}
-            ${{ matrix.artifact_name }}.sha256
-            ${{ matrix.web_artifact_name }}
-            ${{ matrix.web_artifact_name }}.sha256
+            ${{ steps.artifacts.outputs.artifact_name }}
+            ${{ steps.artifacts.outputs.artifact_name }}.sha256
+            ${{ steps.artifacts.outputs.web_artifact_name }}
+            ${{ steps.artifacts.outputs.web_artifact_name }}.sha256
+
+  test-release-artifacts:
+    name: Test Artifacts (${{ matrix.os_name }})
+    needs: build-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_name: linux
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+          - os: windows-latest
+            os_name: windows
+            arch: x64
+            ext: zip
+            binary: mgc.exe
+          - os: macos-14
+            os_name: macos
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract archive (Unix)
+        if: matrix.ext == 'tar.gz'
+        run: |
+          ARTIFACT="magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
+          mkdir -p test-binary
+          tar -xzf "artifacts/$ARTIFACT" -C test-binary
+          chmod +x test-binary/${{ matrix.binary }}
+          ls -la test-binary/
+
+      - name: Extract archive (Windows)
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          $VERSION = "${{ steps.version.outputs.version }}"
+          $ARTIFACT = "magicore-$VERSION-${{ matrix.os_name }}-${{ matrix.arch }}.zip"
+          New-Item -ItemType Directory -Force -Path test-binary
+          Expand-Archive -Path "artifacts/$ARTIFACT" -DestinationPath test-binary -Force
+          Get-ChildItem test-binary
+
+      - name: Test version output
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          OUTPUT=$(./test-binary/${{ matrix.binary }} --version)
+          echo "Binary output: $OUTPUT"
+
+          # Parse version from output (expect: "mgc X.Y.Z")
+          BINARY_VERSION=$(echo "$OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+
+          if [ "$BINARY_VERSION" != "$VERSION" ]; then
+            echo "❌ Version mismatch: expected $VERSION, got $BINARY_VERSION"
+            exit 1
+          fi
+
+          echo "✅ Version matches: $VERSION"
+
+      - name: Test lifecycle - web core
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p lifecycle-test/web-project
+          cd lifecycle-test/web-project
+
+          # Create package.json
+          echo '{"name":"test-web","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' > package.json
+
+          # Install
+          ../../test-binary/${{ matrix.binary }} install
+
+          # Verify
+          if [ ! -d "node_modules/express" ]; then
+            echo "❌ express not installed"
+            exit 1
+          fi
+
+          echo "✅ Web install works"
+
+      - name: Test lifecycle - web core (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path lifecycle-test/web-project
+          Set-Location lifecycle-test/web-project
+
+          '{"name":"test-web","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' | Out-File -FilePath package.json -Encoding utf8
+
+          & "../../test-binary/${{ matrix.binary }}" install
+
+          if (-not (Test-Path "node_modules/express")) {
+            Write-Error "express not installed"
+            exit 1
+          }
+
+          Write-Host "✅ Web install works"
 
   publish-github-release:
     name: Create GitHub Release
-    needs: build-release
+    needs: test-release-artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -132,11 +270,11 @@ jobs:
       - name: Display downloaded release assets
         run: ls -la release-assets
 
-      - name: Verify release packaging hashes
+      - name: Update and verify manifests
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ./scripts/update-release-hashes.sh --artifacts release-assets --version "$VERSION"
-          ./scripts/update-release-hashes.sh --artifacts release-assets --version "$VERSION" --verify-only
+          ./scripts/update-manifests.sh --version "$VERSION" --artifacts release-assets
+          ./scripts/update-manifests.sh --version "$VERSION" --artifacts release-assets --verify-only
 
       - name: Stage package manager manifests
         run: |
@@ -152,6 +290,7 @@ jobs:
           files: |
             release-assets/*.tar.gz
             release-assets/*.zip
+            release-assets/*.sha256
             release-assets/packaging/homebrew/*.rb
             release-assets/packaging/scoop/*.json
           draft: false
@@ -159,8 +298,8 @@ jobs:
           generate_release_notes: false
           body_path: CHANGELOG.md
 
-  test-release-lifecycle:
-    name: Test Release Lifecycle
+  verify-github-release:
+    name: Verify GitHub Release (${{ matrix.os_name }})
     needs: publish-github-release
     strategy:
       fail-fast: false

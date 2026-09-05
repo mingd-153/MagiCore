@@ -250,6 +250,7 @@ fn test_lib_full_lifecycle() {
 }
 
 #[test]
+#[ignore = "Requires pytest - run with: cargo test -- --ignored"]
 fn test_ai_full_lifecycle() {
     // REAL E2E: ai core - MUST call mgc create-ai
     // MUST verify dependencies installed and pytest runs
@@ -385,6 +386,7 @@ fn test_ai_full_lifecycle() {
 }
 
 #[test]
+#[ignore = "Requires Flutter SDK - run with: cargo test -- --ignored"]
 fn test_app_full_lifecycle_limited() {
     // PARTIAL E2E: app core - create → verify structure
     // Full test (build → test) requires Flutter SDK

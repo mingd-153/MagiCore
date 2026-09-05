@@ -46,6 +46,10 @@ jobs:
           python3 -m json.tool packaging/scoop/magicore-web.json >/dev/null
       - name: benchmark provenance
         run: python3 benchmark/scripts/verify_benchmark_provenance.py
+      - name: analyzer regression tests
+        run: python3 benchmark/scripts/test_analyzer_strict.py
+      - name: manifest updater integration tests
+        run: bash scripts/test_manifest_updater.sh
       - name: internal specs stay ignored
         run: |
           git check-ignore -q docs/specs/magiCoreChangeLog.md
