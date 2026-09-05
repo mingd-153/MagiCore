@@ -1,6 +1,8 @@
-# Benchmark Status — 2026-09-04 (P1.1 Update)
+# Benchmark Status — INVALIDATED (RC-3 Audit)
 
-## P1.1 Complete: 20-Run Suite Infrastructure Ready
+> **⚠️ NOTICE (2026-09-05)**: All performance claims from prior releases (v1.0.x, RC-1, RC-2) have been **WITHDRAWN** due to validation gaps found in RC-2.1 audit. Data marked **INVALIDATED** pending rerun with strict analyzer.
+
+## Current Status: DATA VALIDATION IN PROGRESS
 
 **Status**: READY FOR EXECUTION
 

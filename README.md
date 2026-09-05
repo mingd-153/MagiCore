@@ -122,35 +122,17 @@ mgc sbom --format cyclonedx-json --output sbom.json
 
 ---
 
+
 ## ⚡ Performance
 
-**Preliminary benchmarks** (macOS M2, 20-package Next.js + React + TypeScript project):
+**Benchmarks under review.** Previous data withdrawn due to validation gaps (RC-2.1 audit findings):
+- Analyzer accepted negative metrics, NaN, failed exit codes
+- Run counts inconsistent, high coefficient of variation (>100%)
+- Workload normalization incomplete
 
-| Metric | mgc | pnpm | Notes |
-|--------|-----|------|-------|
-| **Cold Install** | 2.6s | 120s | Single dev workload, 5 runs |
-| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster (hardlink) |
-| **Disk Usage** | 462MB | 360MB | +28% CAS overhead |
-
-**Key Findings:**
-- ✅ **Cold install competitive** on test workload (2.6s vs 120s pnpm)
-- ✅ **Sub-3-second installs**: Consistent on tested manifest
-- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
-- ✅ **Consistency**: Lower variance in this dataset (25% CV vs pnpm 60%)
-
-**Beta Caveats:**
-- ⚠️ macOS-only data (Linux/Windows validation pending)
-- ⚠️ Single 20-package manifest (enterprise scale TBD)
-- ⚠️ vitest excluded (P0 crash), replaced with jest
-- Full methodology: [`benchmark/BENCHMARK_METHODOLOGY.md`](benchmark/BENCHMARK_METHODOLOGY.md)
-- Raw data: [`benchmark/results/`](benchmark/results/)
-
-> **Beta disclaimer**: Performance validated on dev workload only. Cross-platform and large-scale benchmarks deferred to V1.1 with CI automation. Current claims limited to tested configuration.
+New benchmark suite in development with strict validation, multi-platform coverage, and reproducible methodology. See [`benchmark/BENCHMARK_STATUS.md`](benchmark/BENCHMARK_STATUS.md) for progress.
 
 ---
-mgc doctor
-```
-
 ### Security & Trust (NEW!)
 ```bash
 # Configure quarantine (24h default)

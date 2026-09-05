@@ -1,9 +1,11 @@
 name: Release
 
 # Supply-chain security measures (RC-3):
-# - Actions pinned to commit SHA (not floating tags)
-# - Checksum files (.sha256) generated and published
-# - TODO (post-RC-3): SBOM generation, artifact attestation, signature verification
+# - Actions pinned to commit SHA (not floating tags) ✅
+# - Checksum files (.sha256) generated and published ✅
+# - SBOM generation (CycloneDX JSON format) ✅
+# - Artifact attestation (GitHub provenance) ✅
+# - Scoped permissions (read default, write for publish only) ✅
 
 on:
   push:
@@ -123,6 +125,18 @@ jobs:
           tar -C dist/magicore-web -czvf "$WEB_ARTIFACT_NAME" mgc
           shasum -a 256 "$WEB_ARTIFACT_NAME" > "${WEB_ARTIFACT_NAME}.sha256"
 
+      # Generate SBOM (CycloneDX format)
+      - name: Generate SBOM
+        if: ${{ !matrix.is_windows }}
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --output-cdx sbom-all.json --manifest-path Cargo.toml
+          cargo cyclonedx --format json --output-cdx sbom-web.json --manifest-path Cargo.toml --features web
+          # Rename with version for clarity
+          VERSION="${{ steps.version.outputs.version }}"
+          mv sbom-all.json "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json"
+          mv sbom-web.json "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json"
+
       # Package Windows (.zip)
       - name: Package Windows Archive
         if: matrix.is_windows
@@ -137,6 +151,18 @@ jobs:
           $webHash = (Get-FileHash -Path "$WEB_ARTIFACT_NAME" -Algorithm SHA256).Hash.ToLower()
           "$webHash  $WEB_ARTIFACT_NAME" | Out-File -FilePath "${WEB_ARTIFACT_NAME}.sha256" -Encoding ascii
 
+      # Generate SBOM (CycloneDX format) - Windows
+      - name: Generate SBOM (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --output-cdx sbom-all.json --manifest-path Cargo.toml
+          cargo cyclonedx --format json --output-cdx sbom-web.json --manifest-path Cargo.toml --features web
+          $VERSION = "${{ steps.version.outputs.version }}"
+          Move-Item -Path sbom-all.json -Destination "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json" -Force
+          Move-Item -Path sbom-web.json -Destination "magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}-web-sbom.json" -Force
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
@@ -146,6 +172,7 @@ jobs:
             ${{ steps.artifacts.outputs.artifact_name }}.sha256
             ${{ steps.artifacts.outputs.web_artifact_name }}
             ${{ steps.artifacts.outputs.web_artifact_name }}.sha256
+            *-sbom.json
 
   test-release-artifacts:
     name: Smoke Test - Web Install (${{ matrix.os_name }})
@@ -266,6 +293,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to create release and upload assets
+      attestations: write # Required for artifact attestation
+      id-token: write # Required for OIDC attestation
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -293,6 +322,13 @@ jobs:
           cp packaging/scoop/magicore.json release-assets/packaging/scoop/magicore.json
           cp packaging/scoop/magicore-web.json release-assets/packaging/scoop/magicore-web.json
 
+      - name: Generate Artifact Attestations
+        uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v1.4.3
+        with:
+          subject-path: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
         with:
@@ -300,6 +336,7 @@ jobs:
             release-assets/*.tar.gz
             release-assets/*.zip
             release-assets/*.sha256
+            release-assets/*-sbom.json
             release-assets/packaging/homebrew/*.rb
             release-assets/packaging/scoop/*.json
           draft: false

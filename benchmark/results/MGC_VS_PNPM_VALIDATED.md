@@ -1,7 +1,9 @@
-# mgc vs pnpm Comparison - STATUS: UNVERIFIED
+# mgc vs pnpm Comparison - INVALIDATED
 
-**Date**: 2026-09-05
-**Status**: ⚠️ **DATA UNDER REVIEW** - Do not use for claims
+> **⚠️ NOTICE (2026-09-05)**: This document is **INVALIDATED**. All prior benchmark data withdrawn due to validation gaps. Do not cite or use for performance claims.
+
+**Date**: 2026-09-05  
+**Status**: ⚠️ **INVALIDATED - DATA UNDER REVIEW**
 
 ---
 
