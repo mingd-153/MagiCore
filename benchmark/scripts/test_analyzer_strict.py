@@ -307,50 +307,68 @@ def test_adversarial_provenance():
     if test_case("Non-hex commit", sample, should_fail=True):
         tests_passed += 1
 
-    # Test 30: manifest_hash non-hex
+    # Test 30: mgc_commit too long
+    tests_total += 1
+    sample = valid_sample()
+    sample['mgc_commit'] = "a" * 100  # More than 64
+    if test_case("mgc_commit too long (>64)", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 31: pm_version with garbage suffix
+    tests_total += 1
+    sample = valid_sample()
+    sample['pm_version'] = "1.2.3garbage"
+    if test_case("pm_version with garbage suffix", sample, should_fail=True):
+        tests_passed += 1
+
+    # Test 32: manifest_hash non-hex
     tests_total += 1
     sample = valid_sample()
     sample['manifest_hash'] = "g" * 64
     if test_case("manifest_hash non-hex", sample, should_fail=True):
         tests_passed += 1
 
-    # Test 31: lockfile_hash wrong length
+    # Test 33: lockfile_hash wrong length
     tests_total += 1
     sample = valid_sample()
     sample['lockfile_hash'] = "abc" * 20  # 60 chars, not 64
     if test_case("lockfile_hash wrong length", sample, should_fail=True):
         tests_passed += 1
 
-    # Test 32: session_id too short
+    # Test 34: session_id too short
     tests_total += 1
     sample = valid_sample()
     sample['session_id'] = "short"  # Only 5 chars
     if test_case("session_id too short (<8)", sample, should_fail=True):
         tests_passed += 1
 
-    # Test 33: session_id with spaces
+    # Test 35: session_id with spaces
     tests_total += 1
     sample = valid_sample()
     sample['session_id'] = "invalid spaces"
     if test_case("session_id with spaces", sample, should_fail=True):
         tests_passed += 1
 
-    # Test 34: pm_version non-semver
+    # Test 36: Valid strict provenance with prerelease
     tests_total += 1
     sample = valid_sample()
-    sample['pm_version'] = "not-semver"
-    if test_case("pm_version non-semver", sample, should_fail=True):
-        tests_passed += 1
-
-    # Test 35: Valid strict provenance
-    tests_total += 1
-    sample = valid_sample()
-    sample['pm_version'] = "1.1.0"
-    sample['mgc_commit'] = "cedd3c28645f8a2d18464ebe02b4773ef7fae875"
+    sample['pm_version'] = "1.1.0-rc.3+build123"
+    sample['mgc_commit'] = "cedd3c2"  # 7 chars (short SHA)
     sample['session_id'] = "test-sess-20260905"
     sample['manifest_hash'] = "a1b2c3d4" * 8  # 64 hex chars
     sample['lockfile_hash'] = "e5f6a7b8" * 8  # 64 hex chars
-    if test_case("Valid strict provenance", sample, should_fail=False):
+    if test_case("Valid strict provenance (prerelease+build)", sample, should_fail=False):
+        tests_passed += 1
+
+    # Test 37: Valid with full 40-char commit
+    tests_total += 1
+    sample = valid_sample()
+    sample['pm_version'] = "1.1.0"
+    sample['mgc_commit'] = "cedd3c28645f8a2d18464ebe02b4773ef7fae875"  # 40 chars
+    sample['session_id'] = "production-run-001"
+    sample['manifest_hash'] = "a" * 64
+    sample['lockfile_hash'] = "b" * 64
+    if test_case("Valid with 40-char commit SHA", sample, should_fail=False):
         tests_passed += 1
 
     print(f"\n{'='*60}")
