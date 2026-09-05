@@ -186,20 +186,26 @@ Update `BENCHMARK_SUMMARY_V1.0_FINAL.md` with:
 - [x] Run analysis scripts ✅
 - [x] Update BENCHMARK_SUMMARY with P1.1 data ✅
 
-**Status**: ✅ **COMPLETE** (2026-09-04 17:35)
+**Status**: ⚠️ **DATA VALIDATION IN PROGRESS** (2026-09-05)
 
-**✅ VALIDATED CLAIMS** (24-31 runs, macOS ARM64):
-- **mgc cold install is 26x faster than pnpm** (median: 2.43s vs 62.97s)
-- **mgc P95 is 21x faster** (11.86s vs 247.29s)
-- **pnpm warm install is 1.4x faster** (1.53s vs 2.18s) - honest trade-off
-- **pnpm uses 25% less disk** (362MB vs 454MB) - mgc CAS overhead
+**⚠️ ALL CLAIMS UNVERIFIED** - Audit identified methodology issues:
+- Analyzer accepted negative metrics, NaN, failed exit codes
+- Run counts inconsistent (claimed 139, actual valid unknown)
+- High CV (>100%) indicates mixed conditions
+- Workload normalization incomplete
 
-**⚠️ CANNOT CLAIM** (not validated):
-- ❌ "45x faster" - actual data shows 26x median
-- ❌ "36x faster than bun" - bun not tested
-- ❌ "Fastest overall" - pnpm wins warm installs
+**Previous claims withdrawn pending clean benchmark**:
+- ~~"26x faster than pnpm"~~ - UNVERIFIED, rerun required
+- ~~"21x faster P95"~~ - UNVERIFIED
+- All comparative claims suspended
 
-**P1.1 delivered**: Infrastructure + statistical data + validated comparison
-**Documentation**: `benchmark/results/MGC_VS_PNPM_VALIDATED.md`
+**Next steps**:
+1. Run clean benchmark with strict validation
+2. Verify identical workload (manifest hash, lockfile hash)
+3. Controlled environment (cache state, network)
+4. Statistical significance with confidence intervals
 
-**For public beta**: Can claim **"26x faster cold install than pnpm"** with confidence (macOS ARM64, 20-pkg workload). Cross-platform validation still needed.
+**P1.1 status**: Infrastructure complete, data validation incomplete
+**Documentation**: See `benchmark/results/FULL_PM_COMPARISON.md` for current status
+
+**For public beta**: No performance claims until validation completes.
