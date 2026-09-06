@@ -19,6 +19,11 @@ grep -q '"core/\*\*"' "$ALL_CORE" || fail "all-core lifecycle path filter misses
 grep -q '"fix/\*\*"' "$ALL_CORE" || fail "all-core lifecycle must run on RC fix branches"
 grep -q '"fix/\*\*"' "$ROOT/.github/workflows/ci.yml" || fail "CI must run on RC fix branches"
 grep -q '".github/workflows/security.yml"' "$SECURITY" || fail "security workflow changes must retrigger security checks"
+grep -q '82a92a6e8fbeee089604da2575dc567ae9ddeaff' "$ROOT/.github/workflows/ci.yml" && fail "CI contains the invalid rust-cache SHA"
+grep -q '82a92a6e8fbeee089604da2575dc567ae9ddeaab' "$ROOT/.github/workflows/ci.yml" || fail "CI rust-cache pin must resolve to v2.7.5"
+grep -q '7b1c307e0dcbda6122208f10795a713336a9b35a' "$ROOT/.github/workflows/ci.yml" && fail "CI contains the broken Rust toolchain pin"
+grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ROOT/.github/workflows/ci.yml" || fail "CI Rust toolchain pin must resolve to stable"
+grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ALL_CORE" || fail "all-core Rust toolchain pin must resolve to stable"
 
 if grep -Eq 'uses: [^ ]+@(v[0-9]+|main|master|stable|latest)([[:space:]]|$)' "$ALL_CORE"; then
   fail "all-core workflow contains floating action references"

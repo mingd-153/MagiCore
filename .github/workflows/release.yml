@@ -131,7 +131,7 @@ jobs:
           echo "Building web-only: $WEB_ARTIFACT_NAME"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-08-18
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
         with:
           targets: ${{ matrix.target }}
 
