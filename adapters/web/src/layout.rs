@@ -106,13 +106,18 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
         }
         if metadata.file_type().is_symlink() {
             // Directory symlinks AND junction points both report as symlinks
-            // through symlink_metadata. Windows refuses remove_file on them
-            // with ACCESS_DENIED — remove_dir (non-recursive) is the correct
-            // primitive for both, and it never crosses into the target.
-            // Symlink dir & junction đều hiện là symlink qua symlink_metadata.
-            // Windows remove_file trả ACCESS_DENIED — remove_dir (không đệ
-            // quy) là primitive đúng cho cả hai và không chạm vào target.
-            std::fs::remove_dir(link).map_err(|err| {
+            // through symlink_metadata. Unix removes them with remove_file
+            // (the symlink itself is a file entry); Windows junctions refuse
+            // remove_file with ACCESS_DENIED and need remove_dir. Neither
+            // primitive is recursive, so the link target is never touched.
+            // Symlink dir & junction: Unix xóa bằng remove_file (symlink là
+            // entry file); Windows junction cần remove_dir. Cả hai không
+            // đệ quy nên không chạm target của link.
+            #[cfg(unix)]
+            let removal = std::fs::remove_file(link);
+            #[cfg(not(unix))]
+            let removal = std::fs::remove_dir(link);
+            removal.map_err(|err| {
                 MgError::Other(format!(
                     "failed to remove existing symlink/junction '{}': {}",
                     link.display(),
