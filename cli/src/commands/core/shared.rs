@@ -1012,6 +1012,7 @@ pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
 // thay vì duplic per file. Message giữ từng core để không mất context lỗi.
 
 /// project_root của core — seeded từ find_project_root (mgc.toml/.mgc.core/package.json...).
+#[cfg(any(feature = "game", feature = "clo"))]
 pub fn core_project_root(core: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let root = find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mgc_project_found(core))?;
@@ -1019,18 +1020,21 @@ pub fn core_project_root(core: &str) -> Result<PathBuf> {
 }
 
 /// Adapter của core — wrapper factory (expect giữ fail-closed như từng core cũ).
+#[cfg(any(feature = "game", feature = "clo"))]
 pub fn core_adapter(eco: &Ecosystem) -> Arc<dyn PackageAdapter> {
     crate::factory::create_adapter(eco, None, None)
         .expect("core adapter always available in this core build")
 }
 
 /// game: materialize optimizer template + hook dep (bevy). Dùng chung add/install game.
+#[cfg(feature = "game")]
 pub async fn game_optimizer_template(root: &Path) -> Result<()> {
     materialize_template(root, OPTIMIZER_PKG).await?;
     game_hook_optimizer_dep(root)
 }
 
 /// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
+#[cfg(feature = "game")]
 fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
     let manifest = root.join("Cargo.toml");
     if !manifest.exists() {
@@ -1067,6 +1071,7 @@ pub fn ai_project_root() -> Result<PathBuf> {
 }
 
 /// ai: chọn tool theo lock — uv.lock → uv, requirements.lock → pip, mặc định uv nếu có, else pip.
+#[cfg(feature = "ai")]
 pub fn ai_pick_tool(root: &std::path::Path) -> &'static str {
     if root.join("uv.lock").exists() {
         "uv"
@@ -1079,6 +1084,7 @@ pub fn ai_pick_tool(root: &std::path::Path) -> &'static str {
     }
 }
 
+#[cfg(feature = "ai")]
 fn ai_tool_uv_available() -> bool {
     std::env::var("PATH")
         .unwrap_or_default()
@@ -1087,6 +1093,7 @@ fn ai_tool_uv_available() -> bool {
         .any(|p| p.is_file())
 }
 
+#[cfg(feature = "ai")]
 pub fn ai_run_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Result<()> {
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
@@ -1099,6 +1106,7 @@ pub fn ai_run_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Resul
     Ok(())
 }
 
+#[cfg(feature = "ai")]
 pub fn ai_run_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) -> Result<String> {
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
@@ -1148,7 +1156,7 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
 
 /// Detect AI runtime from project
 /// Phát hiện runtime AI từ project
-fn detect_ai_runtime(
+pub(crate) fn detect_ai_runtime(
     root: &std::path::Path,
     framework: &str,
 ) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
@@ -1175,7 +1183,9 @@ fn detect_ai_runtime(
 
 /// Hardware core — optimizer/bench packages (shared cho game/ai/cloud).
 /// Không có native package manager: packages được materialize từ templates/hardware/.
+#[cfg(any(feature = "game", feature = "hardware"))]
 pub const OPTIMIZER_PKG: &str = "optimizer";
+#[cfg(any(feature = "game", feature = "hardware"))]
 pub const BENCH_PKG: &str = "bench";
 
 pub async fn materialize_template(root: &Path, framework: &str) -> anyhow::Result<()> {

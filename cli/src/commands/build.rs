@@ -401,7 +401,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
     Ok(())
 }
 
-fn tool_unavailable(tool: &str) -> bool {
+pub(crate) fn tool_unavailable(tool: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return true;
     };
