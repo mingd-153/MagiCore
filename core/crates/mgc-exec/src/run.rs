@@ -61,7 +61,6 @@ pub struct ExecReport {
 #[cfg(not(unix))]
 fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
     use std::ffi::OsString;
-    use std::os::windows::process::CommandExt;
 
     // Names that already carry an extension or path separators spawn as-is.
     if cmd.contains('.') || cmd.contains('\\') || cmd.contains('/') {
@@ -69,30 +68,45 @@ fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
     }
 
     let output = Command::new("where.exe")
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW — avoid console flash
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .arg(cmd)
         .output();
     if let Ok(out) = output
         && out.status.success()
     {
-        // where.exe lists all matches in PATH order. Prefer a real executable
-        // (.exe / extensionless) — spawning .cmd shims through cmd wrappers
-        // breaks some tools on Windows runners (node CSPRNG crash when
-        // launched via shim). Use a .cmd/.bat shim ONLY when no direct
-        // executable exists in PATH (npm-style .bin entries).
-        // where.exe liệt kê theo thứ tự PATH: ưu tiên exe thật trước — chạy
-        // qua wrapper .cmd làm một số tool crash (node CSPRNG trên runner);
-        // chỉ dùng shim .cmd/.bat khi KHÔNG có exe trực tiếp.
+        // Prefer real PE executable (.exe, .com) to avoid cmd.exe wrapper
+        // which can corrupt environment variables (Node CSPRNG crash on Windows runner).
+        // Only use .cmd/.bat if no PE executable available.
         let text = String::from_utf8_lossy(&out.stdout);
-        let lines: Vec<&str> = text.lines().map(str::trim).collect();
-        let is_direct = |l: &str| {
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        // Priority: .exe > .com > extensionless > .cmd > .bat
+        if let Some(exe) = lines
+            .iter()
+            .find(|l| l.to_ascii_lowercase().ends_with(".exe"))
+        {
+            return OsString::from(*exe);
+        }
+        if let Some(com) = lines
+            .iter()
+            .find(|l| l.to_ascii_lowercase().ends_with(".com"))
+        {
+            return OsString::from(*com);
+        }
+        // Extensionless (rare on Windows but possible)
+        let is_script = |l: &str| {
             let lower = l.to_ascii_lowercase();
-            !(lower.ends_with(".cmd") || lower.ends_with(".bat"))
+            lower.ends_with(".cmd") || lower.ends_with(".bat")
         };
-        if let Some(direct) = lines.iter().find(|l| is_direct(l)) {
+        if let Some(direct) = lines.iter().find(|l| !is_script(l)) {
             return OsString::from(*direct);
         }
-        if let Some(shim) = lines.iter().find(|l| !is_direct(l)) {
+        // Last resort: .cmd/.bat (will spawn via cmd.exe)
+        if let Some(shim) = lines.first() {
             return OsString::from(*shim);
         }
     }
@@ -346,6 +360,38 @@ fn execute_command(
     let resolved_cmd: &str = cmd;
     let mut command = Command::new(resolved_cmd);
     command.args(args).current_dir(&cwd);
+
+    // Windows: If resolved_cmd is .cmd/.bat, spawn via cmd.exe to avoid "not a valid Win32 application"
+    #[cfg(not(unix))]
+    let mut command = {
+        let resolved_str = resolved_cmd.to_string_lossy();
+        let is_script = resolved_str.to_ascii_lowercase().ends_with(".cmd")
+            || resolved_str.to_ascii_lowercase().ends_with(".bat");
+
+        if is_script {
+            // Spawn via cmd.exe /D /S /C "script.bat" args...
+            let mut cmd_exe = Command::new("cmd.exe");
+            cmd_exe.arg("/D").arg("/S").arg("/C");
+            // Quote the script path to handle spaces
+            let script_quoted = format!("\"{}\"", resolved_str);
+            cmd_exe.arg(&script_quoted);
+            cmd_exe.args(args);
+            cmd_exe.current_dir(&cwd);
+            cmd_exe
+        } else {
+            let mut cmd = Command::new(resolved_cmd);
+            cmd.args(args).current_dir(&cwd);
+            cmd
+        }
+    };
+
+    #[cfg(unix)]
+    let mut command = {
+        let mut cmd = Command::new(resolved_cmd);
+        cmd.args(args).current_dir(&cwd);
+        cmd
+    };
+
     match mode {
         OutputMode::Capture => {
             command
@@ -361,6 +407,26 @@ fn execute_command(
     }
     if opts.clean_env {
         configure_process_isolation(&mut command);
+    }
+
+    // Windows: Preserve critical system variables even in clean_env mode
+    // to prevent Node CSPRNG and other runtime crashes
+    #[cfg(not(unix))]
+    if opts.clean_env {
+        for critical_var in [
+            "SYSTEMROOT",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "ProgramData",
+        ] {
+            if let Ok(val) = std::env::var(critical_var) {
+                command.env(critical_var, val);
+            }
+        }
     }
 
     let _shadow_path = if opts.clean_env {
