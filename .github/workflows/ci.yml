@@ -39,12 +39,12 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
 
       - name: Setup Node.js (for spawn tests)
-        uses: actions/setup-node@39eca7ea2e641bf9839d2e80f41f2ffba3fb0c83 # v7.0.0 (node 24 verified)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
 
       - name: Setup Flutter (for .bat spawn tests)
-        uses: subosito/flutter-action@3f7b2e1bd85c53f4fd6a73c42e3ea52c3131ae25 # v2.14.0
+        uses: subosito/flutter-action@7814e4f6c70abd7a5641333f613efa098fe34381 # v2.14.0
         with:
           flutter-version: "3.47.2"
           channel: "stable"
