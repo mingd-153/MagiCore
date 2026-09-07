@@ -4,7 +4,6 @@
 /// MagiCore CLI - Universal Package Manager
 use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::Parser;
 
 mod bundler;
@@ -53,7 +52,14 @@ pub(crate) struct Cli {
 pub(crate) use crate::commands::definitions::Commands;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     tracing_subscriber::fmt::init();
-    dispatch::run(Cli::parse()).await
+    // Print the FULL error chain — bare anyhow print hides the context frames
+    // (source path, operation) that make CI failures diagnosable.
+    // In đầy chuỗi lỗi — in thường của anyhow giấu context (đường dẫn,
+    // thao tác) khiến CI fail không đoán được nguyên nhân.
+    if let Err(err) = dispatch::run(Cli::parse()).await {
+        eprintln!("Error: {err:#}");
+        std::process::exit(1);
+    }
 }

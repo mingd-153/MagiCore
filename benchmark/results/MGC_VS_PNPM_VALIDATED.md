@@ -113,3 +113,25 @@ To restore comparative claims, need:
 - Strict analyzer: `benchmark/scripts/analyze_results_strict.py`
 - Regression tests: `benchmark/scripts/test_analyzer_strict.py`
 - Audit report: User feedback 2026-09-05
+
+---
+
+## Observed Sample (2026-09-06, slow-network day — NOT a claim)
+
+**Conditions**: macOS arm64, isolated per-run HOME/store, 3-run observed sample,
+registry.npmjs.org metadata latency 5-12s/request from this network (verified
+with curl — affects BOTH tools equally). Workload: react + react-dom + lodash.
+
+| Tool | Runs (ms) | Observed median |
+|---|---|---|
+| pnpm 10.x | 10614, 9843, 11261 | 10614 ms |
+| mgc 1.1.0-rc.3 | 11211, 16404, 10308 | 11211 ms |
+
+**Interpretation (honest)**: on a metadata-latency-dominated network the gap
+shrinks to ~5% (earlier fast-network 10-run sample showed ~20% cold gap).
+mgc cold path is NOT yet faster than pnpm; the remaining gap is dominated by
+registry round-trips, not local work (resolver solve: ~90% of mgc time is
+metadata fetch; local materialize: 15ms for 1137 files via reflinks).
+
+**Still valid guidance**: no public performance claim until the strict 20+ run
+benchmark completes on a stable network.
