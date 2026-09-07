@@ -473,6 +473,11 @@ pub async fn run_install(
         profile.mark("prepare_extracted_roots", start);
     } else {
         let pipeline_step_started_at = std::time::Instant::now();
+        eprintln!(
+            "[magicore:debug] install:pipeline_start pkgs={} materialized={}",
+            fetch_graph.packages.len(),
+            already_materialized.len()
+        );
         let (pipeline_bytes, extracted_roots, persist_handles) = pipeline_download_and_extract(
             &fetch_graph,
             &already_materialized,
@@ -483,6 +488,10 @@ pub async fn run_install(
             store,
         )
         .await?;
+        eprintln!(
+            "[magicore:debug] install:pipeline_done extracted={}",
+            extracted_roots.len()
+        );
         summary.bytes_from_cache += pipeline_bytes;
         profile.mark_step(
             "pipeline_download_and_extract_step",
@@ -512,6 +521,7 @@ pub async fn run_install(
         affected_root_bin_links = root_packages_to_link.clone();
 
         let strict_materialize_step_started_at = std::time::Instant::now();
+        eprintln!("[magicore:debug] install:strict_materialize_start");
         materialize_strict_layout(
             &node_modules,
             graph,
@@ -525,6 +535,7 @@ pub async fn run_install(
             &mut packages_with_scripts,
             &extracted_roots,
         )?;
+        eprintln!("[magicore:debug] install:strict_materialize_done");
         profile.mark_step(
             "materialize_strict_layout_step",
             strict_materialize_step_started_at,
@@ -564,6 +575,7 @@ pub async fn run_install(
     if !node_modules.join(".bin").exists() && affected_root_bin_links.is_empty() {
         affected_root_bin_links = root_packages.to_vec();
     }
+    eprintln!("[magicore:debug] install:rebuild_bin_links_start");
     rebuild_bin_links(
         &node_modules,
         &root_packages,
@@ -572,8 +584,10 @@ pub async fn run_install(
     )?;
     profile.mark("rebuild_bin_links", start);
 
+    eprintln!("[magicore:debug] install:write_lockfile_start");
     write_web_lockfile_with_state(project_root, graph, "locked")?;
     profile.mark("write_lockfile", start);
+    eprintln!("[magicore:debug] install:prune_cache_start");
     prune_project_local_cache(&layout);
     profile.mark("prune_project_local_cache", start);
 
