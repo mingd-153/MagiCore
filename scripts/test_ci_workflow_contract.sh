@@ -41,7 +41,7 @@ grep -q 'App: SKIP' "$LOCAL_RUNNER" && fail "local all-core runner must not conv
 grep -q 'ALL CORES LIFECYCLE VERIFIED' "$LOCAL_RUNNER" || fail "local runner summary missing"
 grep -q 'publish=true' "$RELEASE" && fail "release instructions reference the removed publish input"
 
-grep -q 'node-version: "24"' "$ALL_CORE" || fail "Node.js lifecycle pin is stale"
+grep -q 'node-version: "22"' "$ALL_CORE" || fail "Node.js lifecycle pin is stale (must be 22 LTS — node 24 CSPRNG crash on GH Windows runners)"
 grep -q 'python-version: "3.14"' "$ALL_CORE" || fail "Python lifecycle pin is stale"
 grep -q 'flutter-version: "3.47.2"' "$ALL_CORE" || fail "Flutter lifecycle pin is stale"
 grep -q 'version: "0.12.10"' "$ALL_CORE" || fail "uv lifecycle pin is stale or floating"
