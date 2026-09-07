@@ -47,9 +47,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # node 24 crashes at process init (ncrypto::CSPRNG assertion) on
-          # current GitHub Windows runners — pin 22 LTS until fixed upstream.
-          node-version: "22"
+          # LATEST (T9-2026): node 24 is the current stable line. The runner
+          # CSPRNG crash was caused by spawning node through a .cmd wrapper
+          # (fixed in mgc-exec resolve_windows_shim) — NOT by node itself.
+          node-version: "24"
 
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features web --locked
@@ -273,9 +274,10 @@ jobs:
         if: matrix.lang == 'typescript'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # node 24 crashes at process init (ncrypto::CSPRNG assertion) on
-          # current GitHub Windows runners — pin 22 LTS until fixed upstream.
-          node-version: "22"
+          # LATEST (T9-2026): node 24 is the current stable line. The runner
+          # CSPRNG crash was caused by spawning node through a .cmd wrapper
+          # (fixed in mgc-exec resolve_windows_shim) — NOT by node itself.
+          node-version: "24"
 
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features lib --locked
