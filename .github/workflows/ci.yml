@@ -28,6 +28,43 @@ jobs:
       - name: mgc-exec allowlist tests
         run: cargo test -p mgc-exec --test test_run 2>&1
         timeout-minutes: 2
+
+  windows-spawn-tests:
+    name: Windows Spawn Tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Setup Node.js (for spawn tests)
+        uses: actions/setup-node@39eca7ea2e641bf9839d2e80f41f2ffba3fb0c83 # v7.0.0 (node 24 verified)
+        with:
+          node-version: "24"
+
+      - name: Setup Flutter (for .bat spawn tests)
+        uses: subosito/flutter-action@3f7b2e1bd85c53f4fd6a73c42e3ea52c3131ae25 # v2.14.0
+        with:
+          flutter-version: "3.47.2"
+          channel: "stable"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Run Windows spawn tests
+        shell: bash
+        run: |
+          echo "=== Windows Tool Resolution ==="
+          where.exe node || echo "Node not found"
+          where.exe flutter || echo "Flutter not found"
+          where.exe gradle || echo "Gradle not found (expected)"
+          where.exe swift || echo "Swift not found (expected)"
+          echo ""
+
+          echo "=== Running mgc-exec Windows Tests ==="
+          cargo test -p mgc-exec --test windows_spawn_test --test multiplatform_tools_test -- --nocapture
+        timeout-minutes: 5
       - name: single-core web CLI surface
         run: cargo test -p mgc --no-default-features --features web test_single_core_create_alias_parses --quiet
       - name: cargo check
