@@ -131,17 +131,15 @@ jobs:
         shell: bash
         run: |
           cd test-ai-app
-          # pypi.org intermittently rate-limits GitHub runner IPs — retry 3x
-          # to avoid false-red lifecycle gates (network flake, not code).
-          # pypi.org thỉnh thoảng rate-limit IP runner — retry 3 lần chống đỏ giả.
+          # pypi.org intermittently rate-limits/loses DNS on GitHub runner
+          # IPs — retry 3x to avoid false-red lifecycle gates (network flake,
+          # not code). uv lock is skipped: mgc install falls back to pip when
+          # no uv.lock exists, so lock generation is not a lifecycle gate.
+          # pypi.org rate-limit/mất DNS trên runner — retry 3 lần; bỏ uv lock
+          # vì mgc install tự fallback pip khi không có uv.lock.
           for i in 1 2 3; do
             if python -m pip install build pytest; then break; fi
             echo "pip install failed (attempt $i) — retrying in 20s"
-            sleep 20
-          done
-          for i in 1 2 3; do
-            if uv lock; then break; fi
-            echo "uv lock failed (attempt $i) — retrying in 20s"
             sleep 20
           done
           ../target/release/mgc install

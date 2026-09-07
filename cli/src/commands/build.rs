@@ -792,17 +792,52 @@ fn node_bin_args(project_root: &Path, bin_name: &str, args: &[&str]) -> Result<V
         }
     };
 
-    // Resolve symlink target when the entry is a real symlink (unix); on
-    // Windows shims are plain files, so read_link failure falls back to itself.
-    let entry = std::fs::read_link(&entry_path)
-        .map(|target| {
-            if target.is_absolute() {
-                target
-            } else {
-                entry_path.parent().unwrap_or(project_root).join(target)
+    // Resolve symlink target when the entry is a real symlink (unix). On
+    // Windows the npm .cmd shim wraps the real JS entry — parse the quoted
+    // script path from the shim body (npm shims end with: "<js path>" %*)
+    // so node receives the JS file, not the shim itself.
+    // Unix: đọc đích symlink. Windows: shim .cmd bọc JS thật — trích đường
+    // dẫn JS trong nháy kép từ thân shim để node chạy JS, không chạy shim.
+    let entry = {
+        #[cfg(unix)]
+        {
+            std::fs::read_link(&entry_path)
+                .map(|target| {
+                    if target.is_absolute() {
+                        target
+                    } else {
+                        entry_path.parent().unwrap_or(project_root).join(target)
+                    }
+                })
+                .unwrap_or_else(|_| entry_path.clone())
+        }
+        #[cfg(not(unix))]
+        {
+            let raw = std::fs::read_to_string(&entry_path).unwrap_or_default();
+            let mut resolved: Option<PathBuf> = None;
+            for line in raw.lines().rev() {
+                // npm shim target line:  "...path..." %*
+                if let Some(q1) = line.find('"')
+                    && let Some(q2) = line[q1 + 1..].find('"')
+                {
+                    let target_str = &line[q1 + 1..q1 + 1 + q2];
+                    if target_str.ends_with(".js")
+                        || target_str.ends_with(".cjs")
+                        || target_str.ends_with(".mjs")
+                        || target_str.ends_with(".ts")
+                    {
+                        resolved = Some(PathBuf::from(target_str));
+                        break;
+                    }
+                }
             }
-        })
-        .unwrap_or_else(|_| entry_path.clone());
+            match resolved {
+                Some(path) if path.is_absolute() => path,
+                Some(path) => entry_path.parent().unwrap_or(project_root).join(path),
+                None => entry_path.clone(),
+            }
+        }
+    };
 
     let mut result = vec![
         OsString::from("--preserve-symlinks"),
