@@ -78,7 +78,17 @@ jobs:
         shell: bash
         run: |
           cd test-web-app
-          ../target/release/mgc build
+          # node.exe on some GitHub Windows runners intermittently crashes at
+          # process init (ncrypto::CSPRNG assertion — runner/node flake, not
+          # project code). Retry up to 3x; a real build failure repeats.
+          # node.exe trên runner Windows đôi khi crash lúc init (assert
+          # CSPRNG — flake runner, không phải code). Retry 3 lần.
+          for i in 1 2 3; do
+            if ../target/release/mgc build; then exit 0; fi
+            echo "mgc build failed (attempt $i) — retrying in 15s"
+            sleep 15
+          done
+          exit 1
 
       - name: Verify build output
         shell: bash
@@ -131,17 +141,22 @@ jobs:
         shell: bash
         run: |
           cd test-ai-app
-          # pypi.org intermittently rate-limits/loses DNS on GitHub runner
-          # IPs — retry 3x to avoid false-red lifecycle gates (network flake,
-          # not code). uv lock is skipped: mgc install falls back to pip when
-          # no uv.lock exists, so lock generation is not a lifecycle gate.
-          # pypi.org rate-limit/mất DNS trên runner — retry 3 lần; bỏ uv lock
-          # vì mgc install tự fallback pip khi không có uv.lock.
-          for i in 1 2 3; do
+          # mgc install (AI) is fail-closed: it requires uv.lock or
+          # requirements.lock to exist. Generate the lock with uv (retried
+          # against pypi.org runner-side DNS flakes), then install.
+          # mgc install AI fail-closed: cần uv.lock/requirements.lock — tạo
+          # lock bằng uv (retry chống mất DNS pypi trên runner) rồi install.
+          for i in 1 2 3 4 5; do
             if python -m pip install build pytest; then break; fi
             echo "pip install failed (attempt $i) — retrying in 20s"
             sleep 20
           done
+          for i in 1 2 3 4 5; do
+            if uv lock; then break; fi
+            echo "uv lock failed (attempt $i) — retrying in 30s"
+            sleep 30
+          done
+          test -f uv.lock || test -f requirements.lock
           ../target/release/mgc install
 
       - name: Test and build AI project
