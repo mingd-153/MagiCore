@@ -47,7 +47,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "24"
+          # node 24 crashes at process init (ncrypto::CSPRNG assertion) on
+          # current GitHub Windows runners — pin 22 LTS until fixed upstream.
+          node-version: "22"
 
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features web --locked
@@ -271,7 +273,9 @@ jobs:
         if: matrix.lang == 'typescript'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "24"
+          # node 24 crashes at process init (ncrypto::CSPRNG assertion) on
+          # current GitHub Windows runners — pin 22 LTS until fixed upstream.
+          node-version: "22"
 
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features lib --locked
