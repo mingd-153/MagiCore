@@ -1,6 +1,6 @@
 //! Scaffold registry client (fetch artifacts from remote registry).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 

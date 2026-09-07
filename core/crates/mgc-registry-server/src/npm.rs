@@ -1,11 +1,11 @@
-use crate::{model::*, AppState};
+use crate::{AppState, model::*};
 use axum::{
+    Router,
     body::Bytes,
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::{delete, get, post, put},
-    Router,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -275,10 +275,12 @@ async fn publish_package(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let version = pkg.versions.keys().next().cloned().or_else(|| {
-        let v = pkg.dist_tags.get("latest").cloned();
-        v
-    });
+    let version = pkg
+        .versions
+        .keys()
+        .next()
+        .cloned()
+        .or_else(|| pkg.dist_tags.get("latest").cloned());
     let _ = store
         .audit("publish", &pkg.name, version.as_deref(), None)
         .await;
@@ -301,34 +303,34 @@ async fn download_tarball(
     let version = filename
         .strip_suffix(".tgz")
         .and_then(|s| s.strip_prefix(&format!("{}-", unscoped)));
-    if let Some(version) = version {
-        if let Some(pkg) = store.get_package(&name).await.ok().flatten() {
-            if let Some(v) = pkg.versions.get(version) {
-                let digest = &v.dist.integrity;
-                if !digest.is_empty() {
-                    if let Some(data) = store.get_blob(digest).await.ok().flatten() {
-                        let mut resp = axum::response::Response::new(axum::body::Body::from(data));
-                        resp.headers_mut().insert(
-                            axum::http::header::CONTENT_TYPE,
-                            HeaderValue::from_static("application/octet-stream"),
-                        );
-                        resp.headers_mut()
-                            .insert("content-disposition", content_disposition(&filename)?);
-                        return Ok(resp.into_response());
-                    }
-                    // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
-                    if let Ok(Some(data)) = store.fetch_upstream_tarball(&v.dist.tarball).await {
-                        let _ = store.put_blob(digest, &data).await;
-                        let mut resp = axum::response::Response::new(axum::body::Body::from(data));
-                        resp.headers_mut().insert(
-                            axum::http::header::CONTENT_TYPE,
-                            HeaderValue::from_static("application/octet-stream"),
-                        );
-                        resp.headers_mut()
-                            .insert("content-disposition", content_disposition(&filename)?);
-                        return Ok(resp.into_response());
-                    }
-                }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(version) = version
+        && let Some(pkg) = store.get_package(&name).await.ok().flatten()
+        && let Some(v) = pkg.versions.get(version)
+    {
+        let digest = &v.dist.integrity;
+        if !digest.is_empty() {
+            if let Some(data) = store.get_blob(digest).await.ok().flatten() {
+                let mut resp = axum::response::Response::new(axum::body::Body::from(data));
+                resp.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/octet-stream"),
+                );
+                resp.headers_mut()
+                    .insert("content-disposition", content_disposition(&filename)?);
+                return Ok(resp.into_response());
+            }
+            // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
+            if let Ok(Some(data)) = store.fetch_upstream_tarball(&v.dist.tarball).await {
+                let _ = store.put_blob(digest, &data).await;
+                let mut resp = axum::response::Response::new(axum::body::Body::from(data));
+                resp.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/octet-stream"),
+                );
+                resp.headers_mut()
+                    .insert("content-disposition", content_disposition(&filename)?);
+                return Ok(resp.into_response());
             }
         }
     }
@@ -590,13 +592,14 @@ async fn whoami(
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(String::from);
 
-    if let Some(token) = token {
-        if let Some(user) = auth.verify_token(&token) {
-            return Ok(Json(serde_json::json!({
-                "username": user.name,
-                "is_admin": user.is_admin
-            })));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(token) = token
+        && let Some(user) = auth.verify_token(&token)
+    {
+        return Ok(Json(serde_json::json!({
+            "username": user.name,
+            "is_admin": user.is_admin
+        })));
     }
 
     Err(StatusCode::UNAUTHORIZED)

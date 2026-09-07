@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use mgc::scaffold::spec::{artifact_name, parse_scaffold_spec, CoreKind, ScaffoldRef};
+use mgc::scaffold::spec::{CoreKind, ScaffoldRef, artifact_name, parse_scaffold_spec};
 
 #[test]
 fn test_parse_nextjs_latest() {

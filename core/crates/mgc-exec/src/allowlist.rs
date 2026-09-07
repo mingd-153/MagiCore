@@ -18,7 +18,7 @@
 //! but ALLOWED for TestRunner/BuildRunner/DevServer scopes (project-local scripts only).
 //! See docs/architecture/TEST_RUNNER_SECURITY_MODEL.md for full threat model.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
 
 /// Execution scope — determines security policy for tool execution.

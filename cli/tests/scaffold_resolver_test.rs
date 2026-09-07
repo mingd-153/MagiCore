@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used)]
 
 use mgc::scaffold::resolver::{MissingLayersReport, ScaffoldResolveStatus};
-use mgc::scaffold::spec::{parse_scaffold_spec, CoreKind};
+use mgc::scaffold::spec::{CoreKind, parse_scaffold_spec};
 use std::path::PathBuf;
 
 #[test]

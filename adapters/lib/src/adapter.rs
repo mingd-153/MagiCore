@@ -1,7 +1,7 @@
 //! PackageAdapter implementation for library cores.
 //! Điều phối TS/Rust/Python lib mà không nhồi mọi logic vào lib.rs.
 
-use crate::language::{detect_language, manifest_is_lib, LibLanguage};
+use crate::language::{LibLanguage, detect_language, manifest_is_lib};
 use crate::manifest::{
     parse_cargo_manifest, parse_pyproject_manifest, write_cargo_manifest, write_pyproject_manifest,
 };

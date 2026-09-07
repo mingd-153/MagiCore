@@ -54,13 +54,14 @@ pub async fn run(
 
     let _component_version = version.or_else(|| {
         // Try to read from package.json or mgc.toml
-        if let Ok(content) = std::fs::read_to_string(project_root.join("package.json")) {
-            if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
-                return pkg
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Ok(content) = std::fs::read_to_string(project_root.join("package.json"))
+            && let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content)
+        {
+            return pkg
+                .get("version")
+                .and_then(|v| v.as_str())
+                .map(String::from);
         }
         None
     });

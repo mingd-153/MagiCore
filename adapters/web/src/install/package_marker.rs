@@ -12,7 +12,7 @@ use tar;
 use walkdir::WalkDir;
 
 use crate::cache::{
-    shared_extracted_package_root, ExtractedPackageMarker, TarballContentSignature,
+    ExtractedPackageMarker, TarballContentSignature, shared_extracted_package_root,
 };
 use crate::lockfile::installed_package_matches;
 use crate::manifest::atomic_write;

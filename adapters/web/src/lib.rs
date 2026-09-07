@@ -8,21 +8,21 @@
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::sync::atomic::AtomicBool;
 
 use async_trait::async_trait;
 use mgc_adapter_base::BaseAdapter;
 use mgc_resolver::Resolver as CoreResolver;
 use mgc_store::ContentStore;
 use mgc_types::{
+    DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
     adapter::{
         AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
         ResolvedGraph, ResolvedPackage, UpdatedPackage,
     },
-    DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
 };
 
 pub mod audit;
@@ -54,13 +54,22 @@ pub use lockfile::{read_web_lockfile, read_web_lockfile_checked};
 pub use manifest::PackageJson;
 pub use prefetch::spawn_tarball_download;
 pub use registry_config::{
-    effective_registry_url, validate_registry_allowed, DEFAULT_NPM_REGISTRY,
+    DEFAULT_NPM_REGISTRY, effective_registry_url, validate_registry_allowed,
 };
 pub use resolution_cache::manifest_resolution_cache_key;
 pub use sbom::generate_sbom;
 
+/// Read a boolean env flag ("1"/"true"/"yes"/"on") — fail-closed reading helper.
+/// Đọc env flag boolean — helper đọc tập trung cho các cổng fail-closed.
+fn mgc_env_flag(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
 use crate::audit::{run_audit, run_audit_fix};
-use crate::cache::{resolve_prefetch_enabled, SharedWebCache};
+use crate::cache::{SharedWebCache, resolve_prefetch_enabled};
 use crate::install::run_install;
 use crate::lockfile::{build_graph_from_lockfile, lockfile_satisfies_manifest};
 use crate::manifest::{parse_manifest, write_manifest};
@@ -307,14 +316,14 @@ impl PackageAdapter for WebAdapter {
             return Ok(ResolvedGraph::empty());
         }
 
-        if let Some(lockfile) = read_web_lockfile_checked(Path::new("."))? {
-            if lockfile_satisfies_manifest(&lockfile, manifest) {
-                if let Ok(Some(graph)) = build_graph_from_lockfile(&lockfile, manifest) {
-                    profile.mark("lockfile_short_circuit", started_at);
-                    profile.flush(started_at.elapsed().as_millis() as u64);
-                    return Ok(graph);
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(lockfile) = read_web_lockfile_checked(Path::new("."))?
+            && lockfile_satisfies_manifest(&lockfile, manifest)
+            && let Ok(Some(graph)) = build_graph_from_lockfile(&lockfile, manifest)
+        {
+            profile.mark("lockfile_short_circuit", started_at);
+            profile.flush(started_at.elapsed().as_millis() as u64);
+            return Ok(graph);
         }
         profile.mark("lockfile_check", started_at);
 
@@ -322,16 +331,29 @@ impl PackageAdapter for WebAdapter {
             .shared_cache
             .as_ref()
             .map(|_| manifest_resolution_cache_key(manifest, &self.registry_url));
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
         if let (Some(shared_cache), Some(key)) =
             (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
+            && let Some(graph) = shared_cache.read_resolution(key, &self.registry_url)?
         {
-            if let Some(graph) = shared_cache.read_resolution(key, &self.registry_url)? {
-                profile.mark("shared_resolution_cache_hit", started_at);
-                profile.flush(started_at.elapsed().as_millis() as u64);
-                return Ok(graph);
-            }
+            profile.mark("shared_resolution_cache_hit", started_at);
+            profile.flush(started_at.elapsed().as_millis() as u64);
+            return Ok(graph);
         }
         profile.mark("shared_resolution_cache_check", started_at);
+
+        // Offline gate: lockfile short-circuit and shared resolution cache both
+        // missed — resolving further requires registry metadata. Fail closed with
+        // an explicit error instead of silently reaching for the network.
+        // Cổng offline: lockfile và shared resolution cache đều miss — resolve tiếp
+        // cần metadata registry. Báo lỗi rõ ràng thay vì âm thầm chạm network.
+        if mgc_env_flag("MGC_OFFLINE_MODE") {
+            return Err(mgc_types::MgError::Other(
+                "offline mode: cannot resolve dependencies (no lockfile match and no cached \
+                 resolution). Run 'mgc install' online first to create the lockfile."
+                    .to_string(),
+            ));
+        }
 
         let solve_started_at = std::time::Instant::now();
         let result = self
@@ -442,15 +464,16 @@ impl PackageAdapter for WebAdapter {
 
         enforce_resolution_supply_chain_guards(&result.resolutions, &metadata)?;
 
-        if resolve_prefetch_enabled() {
-            if let Some(shared_cache) = self.shared_cache.clone() {
-                let registry_url = self.registry_url.clone();
-                *self.prefetch_handle_guard() = Some(spawn_tarball_download(
-                    shared_cache,
-                    packages.clone(),
-                    registry_url,
-                ));
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if resolve_prefetch_enabled()
+            && let Some(shared_cache) = self.shared_cache.clone()
+        {
+            let registry_url = self.registry_url.clone();
+            *self.prefetch_handle_guard() = Some(spawn_tarball_download(
+                shared_cache,
+                packages.clone(),
+                registry_url,
+            ));
         }
         let graph = ResolvedGraph { packages };
         if let (Some(shared_cache), Some(key)) =

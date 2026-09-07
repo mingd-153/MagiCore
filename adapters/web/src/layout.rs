@@ -16,12 +16,12 @@ fn symlink_dir(original: &Path, link: &Path) -> std::io::Result<()> {
 
 pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
     if let Ok(metadata) = link.symlink_metadata() {
-        if metadata.file_type().is_symlink() {
-            if let Ok(existing_target) = std::fs::read_link(link) {
-                if existing_target == target {
-                    return Ok(());
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if metadata.file_type().is_symlink()
+            && let Ok(existing_target) = std::fs::read_link(link)
+            && existing_target == target
+        {
+            return Ok(());
         }
         if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
             std::fs::remove_dir_all(link)?;
@@ -40,7 +40,10 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
             if let Err(e2) = crate::install::link_tree::hardlink_tree(target, link) {
                 return Err(mgc_types::MgError::Other(format!(
                     "failed to create symlink (or fallback hardlink tree) from {} to {}: {} (fallback error: {})",
-                    target.display(), link.display(), e, e2
+                    target.display(),
+                    link.display(),
+                    e,
+                    e2
                 )));
             }
         }

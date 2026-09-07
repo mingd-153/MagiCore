@@ -11,6 +11,6 @@ pub mod deploy;
 pub mod install;
 pub mod scaffold;
 
-pub use adapter::{adapter_for, CloudAdapter};
-pub use cloud_type::{detect_type, CloudType};
+pub use adapter::{CloudAdapter, adapter_for};
+pub use cloud_type::{CloudType, detect_type};
 pub use sbom::generate_sbom;

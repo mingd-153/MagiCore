@@ -169,13 +169,23 @@ pub fn hardlink_tree_with_profile(
         })?;
     }
 
-    hardlink_pool()?.install(|| {
-        files
-            .into_par_iter()
-            .try_for_each(|(path, target)| -> MgResult<()> {
-                backing_link_file(&path, &target, profile, reflink_enabled)
-            })
-    })?;
+    // Avoid entering a second Rayon pool while package materialization already runs
+    // in an outer pool; nested pool recursion can overflow a worker stack.
+    // Tránh vào pool Rayon thứ hai khi materialize package đang chạy trong pool ngoài;
+    // recursion giữa hai pool có thể làm tràn stack worker.
+    if rayon::current_thread_index().is_some() {
+        files.into_iter().try_for_each(|(path, target)| {
+            backing_link_file(&path, &target, profile, reflink_enabled)
+        })?;
+    } else {
+        hardlink_pool()?.install(|| {
+            files
+                .into_par_iter()
+                .try_for_each(|(path, target)| -> MgResult<()> {
+                    backing_link_file(&path, &target, profile, reflink_enabled)
+                })
+        })?;
+    }
 
     Ok(())
 }
@@ -266,4 +276,33 @@ pub fn backing_link_file(
         profile.record_copy();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hardlink_tree;
+    use rayon::prelude::*;
+
+    #[test]
+    fn nested_parallel_package_materialization_does_not_reenter_custom_pool() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        std::fs::create_dir_all(source.join("nested")).expect("source dirs");
+        for index in 0..64 {
+            std::fs::write(
+                source.join("nested").join(format!("{index}.js")),
+                b"export {}",
+            )
+            .expect("source file");
+        }
+
+        (0..32usize)
+            .into_par_iter()
+            .try_for_each(|index| {
+                hardlink_tree(&source, &temp.path().join(format!("target-{index}")))
+            })
+            .expect("nested package materialization");
+
+        assert!(temp.path().join("target-31/nested/63.js").is_file());
+    }
 }

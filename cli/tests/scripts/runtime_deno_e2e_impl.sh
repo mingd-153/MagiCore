@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
-# Deno Runtime E2E Test — real implementation
-# Status: BASIC IMPLEMENTATION (env consumer verified)
+# Deno optimizer environment generation test
+# Status: CONFIG GENERATION (does not execute the Deno child process)
 
 set -euo pipefail
 
-echo "=== Deno Runtime E2E Test ==="
-
-# Check if deno is available
-if ! command -v deno &>/dev/null; then
-    echo "⚠️  SKIP: deno not installed"
-    exit 77
-fi
+echo "=== Deno Optimizer Environment Generation Test ==="
 
 # Find mgc binary (prefer local build over system install)
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
@@ -73,7 +67,7 @@ else
     exit 1
 fi
 
-echo "✓ PASS: Deno E2E basic checks complete"
+echo "✓ PASS: Deno optimizer environment generation complete"
 echo ""
 echo "Note: Full E2E (mgc dev with env consumer) requires integration test"
 echo "      Current test verifies: optimizer detection + env generation"

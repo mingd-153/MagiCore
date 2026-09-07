@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::context::ProjectContext;
 use anyhow::Result;
 use mgc_cache::PackageCache;
@@ -23,15 +21,18 @@ pub async fn run(
     offline: bool, // T4.1: offline mode flag
     frozen: bool,  // Frozen mode: fail if lockfile needs update (CI mode)
 ) -> Result<()> {
-    // T4.1: Set thread-local offline mode (R6 fix)
+    // T4.1: Offline mode — thread env flag; adapters read MGC_OFFLINE_MODE
+    // (web resolve gate) and receive InstallOptions.offline (install gate).
     if offline {
         crate::offline::set_offline_mode(true);
-        // R4 FIX (AUDIT VÒNG 2): Set env var to enforce offline in adapters
-        std::env::set_var("MGC_OFFLINE_MODE", "1");
     }
 
     let ctx = ProjectContext::load_with_core(core)?;
     let adapter = ctx.adapter();
+
+    // Pre-install hooks (mgc.hooks.toml [hooks.pre-install]) — fail → abort install
+    // (21 §9 fail-closed; hooks cannot bypass security checks).
+    crate::commands::hooks::run_event(ctx.root(), "pre-install")?;
 
     if let Some(workspaces) = discover_workspace_projects(ctx.root())? {
         if workspaces.is_empty() {
@@ -136,6 +137,7 @@ async fn install_into_root(
     if offline {
         // R2.1 FIX (AUDIT VÒNG 2): Atomic check-and-load (no TOCTOU)
         info("🔒 Offline mode enabled");
+        debug_assert!(crate::offline::is_offline_mode());
 
         // Try load lockfile immediately (check = use, atomic)
         let lockfile_path = project_root.join("mgc.lock");
@@ -280,6 +282,7 @@ async fn install_into_root(
         allow_scripts,
         legacy_flat: crate::commands::core::shared::should_use_legacy_flat_layout(adapter.name()),
         frozen,
+        offline,
         ..Default::default()
     };
     let mut summary = adapter.install(&graph, project_root, opts).await?;
@@ -295,6 +298,10 @@ async fn install_into_root(
 
     mgc_ui::blank_line();
     success("All dependencies installed");
+
+    // Post-install hooks (mgc.hooks.toml [hooks.post-install]) — fail → error
+    // Post-install chạy sau khi node_modules đã materialize xong.
+    crate::commands::hooks::run_event(project_root, "post-install")?;
 
     Ok(())
 }
@@ -365,13 +372,10 @@ pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<
     Ok(Some(workspaces))
 }
 
-/// package.json name (web) — dùng cho --filter match. Non-web fallback: None.
-pub(crate) fn workspace_package_name(project_root: &Path) -> Option<String> {
-    mgc_workspace::read_package_manifest(project_root)
-        .ok()
-        .flatten()
-        .map(|m| m.name)
-}
+// workspace_package_name moved to dispatch/engine.rs (its sole consumer,
+// next to both call sites) — it was dead in the lib target and private
+// to the recursive dispatch filter logic.
+// Hàm đã chuyển sang dispatch/engine.rs (caller duy nhất).
 
 fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result<()> {
     if !root.exists() || !root.is_dir() {

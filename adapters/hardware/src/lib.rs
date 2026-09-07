@@ -6,5 +6,5 @@ mod adapter;
 mod detection;
 mod sbom;
 
-pub use adapter::{adapter_for, HardwareAdapter};
+pub use adapter::{HardwareAdapter, adapter_for};
 pub use sbom::generate_sbom;

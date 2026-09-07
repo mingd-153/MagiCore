@@ -208,7 +208,8 @@ impl NpmRegistry {
             let result = with_retry("metadata", package, move || {
                 let resp_future = client.get(&endpoint_for_closure);
                 let token_owned = token_for_closure.clone();
-                let metadata_future = async move {
+                // Return the async block directly — trả thẳng async block (clippy let_and_return).
+                async move {
                     let req = if let Some(tok) = token_owned.as_deref() {
                         resp_future.header("Authorization", format!("Bearer {tok}"))
                     } else {
@@ -226,20 +227,21 @@ impl NpmRegistry {
                         .map(str::to_owned);
                     let metadata: PackageMetadata = resp.json().await?;
                     Ok((metadata, etag))
-                };
-                metadata_future
+                }
             })
             .await;
 
-            match result {
-                Ok(ok) => return Ok(ok),
-                Err(e) => {
-                    if is_auth_error(&e) {
-                        return Err(e);
-                    }
-                    last_err = Some(e);
-                }
+            // Return immediately on success — trả ngay khi thành công.
+            if let Ok(ok) = result {
+                return Ok(ok);
             }
+            let Err(e) = result else {
+                unreachable!("checked Ok arm above")
+            };
+            if is_auth_error(&e) {
+                return Err(e);
+            }
+            last_err = Some(e);
         }
 
         Err(last_err

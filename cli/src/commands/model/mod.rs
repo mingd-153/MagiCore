@@ -4,7 +4,7 @@
 //! AI core (Q11): `mgc model pull hf://org/model/file` hoặc `oci://registry/repo:tag`
 //! → CAS store (`~/.magicore/store/v3`, T1) + manifest model; list/rm local.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 use mgc_oci::client::OciClient;
 use mgc_oci::manifest::OciImageConfig;
@@ -19,10 +19,11 @@ const MODEL_MEDIA_TYPE: &str = "application/vnd.magicore.model.layer.v1+file";
 /* ─── Local model manifest (CAS AI core, Q11) ─────────────────────── */
 
 fn store_root() -> PathBuf {
-    if let Ok(root) = std::env::var("MAGICORE_STORE_ROOT") {
-        if !root.is_empty() {
-            return PathBuf::from(root);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(root) = std::env::var("MAGICORE_STORE_ROOT")
+        && !root.is_empty()
+    {
+        return PathBuf::from(root);
     }
     mgc_store::default_store_root()
 }
@@ -69,10 +70,11 @@ fn read_manifests_in(dir: PathBuf) -> Vec<ModelManifest> {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|x| x == "json") {
-                if let Ok(s) = std::fs::read_to_string(&p) {
-                    if let Ok(m) = serde_json::from_str(&s) {
-                        out.push(m);
-                    }
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if let Ok(s) = std::fs::read_to_string(&p)
+                    && let Ok(m) = serde_json::from_str(&s)
+                {
+                    out.push(m);
                 }
             }
         }

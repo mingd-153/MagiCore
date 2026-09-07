@@ -263,9 +263,10 @@ fn project_binary_rejects_script_that_references_forbidden_pm() {
         ..Default::default()
     };
     let err = run_project_binary(&fake_bin, &[], &opts).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("references forbidden package manager"));
+    assert!(
+        err.to_string()
+            .contains("references forbidden package manager")
+    );
 }
 
 #[test]
@@ -286,9 +287,10 @@ fn inherited_project_binary_rejects_script_that_references_forbidden_pm() {
         ..Default::default()
     };
     let err = run_project_binary_inherited(&fake_bin, &[], &opts).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("references forbidden package manager"));
+    assert!(
+        err.to_string()
+            .contains("references forbidden package manager")
+    );
 }
 
 #[test]

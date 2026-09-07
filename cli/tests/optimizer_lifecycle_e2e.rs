@@ -268,6 +268,7 @@ framework = "python-agent"
 [project]
 name = "test-optimizer-ai"
 version = "0.1.0"
+dependencies = ["torch>=2.8"]
 "#,
     )
     .unwrap();

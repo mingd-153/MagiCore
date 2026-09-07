@@ -3,6 +3,8 @@
 //! Hermetic: temp HOME, no workspace templates/ — hermetic: HOME tạm, không dùng workspace templates/.
 
 #![allow(clippy::unwrap_used)]
+// Tests mutate env single-threaded (edition 2024 unsafe rule) — test đổi env 1 luồng.
+#![allow(unsafe_code)]
 #![allow(clippy::needless_borrows_for_generic_args)]
 
 use std::fs;
@@ -22,8 +24,8 @@ fn mgc_binary() -> PathBuf {
 
 fn setup_hermetic_home() -> TempDir {
     let temp_home = TempDir::new().unwrap();
-    std::env::set_var("HOME", temp_home.path());
-    std::env::set_var("MGC_CACHE_DIR", temp_home.path().join(".mgc"));
+    unsafe { std::env::set_var("HOME", temp_home.path()) };
+    unsafe { std::env::set_var("MGC_CACHE_DIR", temp_home.path().join(".mgc")) };
     temp_home
 }
 

@@ -27,7 +27,9 @@ fn test_disk_template_root_reads_manifest() {
 #[test]
 fn test_scaffold_writes_baseline_for_all_cores() {
     if !template_layer_ready("web/frontend/react-vite") {
-        eprintln!("skipped: web/frontend/react-vite template layer not available offline (registry-first)");
+        eprintln!(
+            "skipped: web/frontend/react-vite template layer not available offline (registry-first)"
+        );
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -368,36 +370,41 @@ fn test_web_monorepo_uses_template_layers() {
     assert!(out.join("apps").join("frontend").join("README.md").exists());
     assert!(out.join("apps").join("backend").join("README.md").exists());
     assert!(out.join("packages").join("README.md").exists());
-    assert!(out
-        .join("apps")
-        .join("frontend")
-        .join("crates")
-        .join("engine")
-        .join("Cargo.toml")
-        .exists());
-    assert!(out
-        .join("apps")
-        .join("frontend")
-        .join("src")
-        .join("bridges")
-        .join("engine.js")
-        .exists());
-    assert!(out
-        .join("packages")
-        .join("contracts")
-        .join("package.json")
-        .exists());
-    assert!(out
-        .join("apps")
-        .join("frontend")
-        .join("vite.config.js")
-        .exists());
-    assert!(out
-        .join("apps")
-        .join("backend")
-        .join("src")
-        .join("server.js")
-        .exists());
+    assert!(
+        out.join("apps")
+            .join("frontend")
+            .join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists()
+    );
+    assert!(
+        out.join("apps")
+            .join("frontend")
+            .join("src")
+            .join("bridges")
+            .join("engine.js")
+            .exists()
+    );
+    assert!(
+        out.join("packages")
+            .join("contracts")
+            .join("package.json")
+            .exists()
+    );
+    assert!(
+        out.join("apps")
+            .join("frontend")
+            .join("vite.config.js")
+            .exists()
+    );
+    assert!(
+        out.join("apps")
+            .join("backend")
+            .join("src")
+            .join("server.js")
+            .exists()
+    );
 }
 
 #[test]
@@ -427,23 +434,25 @@ fn test_fullstack_axum_falls_back_to_monorepo_composite() {
 
     let out = Scaffolder::scaffold(&config).unwrap();
     assert!(out.join("magicore.workspace.toml").exists());
-    assert!(out
-        .join("apps")
-        .join("frontend")
-        .join("package.json")
-        .exists());
+    assert!(
+        out.join("apps")
+            .join("frontend")
+            .join("package.json")
+            .exists()
+    );
     let back_cargo =
         std::fs::read_to_string(out.join("apps").join("backend").join("Cargo.toml")).unwrap();
     assert!(
         back_cargo.contains("axum"),
         "backend Cargo.toml should pin axum, got: {back_cargo}"
     );
-    assert!(out
-        .join("apps")
-        .join("backend")
-        .join("src")
-        .join("main.rs")
-        .exists());
+    assert!(
+        out.join("apps")
+            .join("backend")
+            .join("src")
+            .join("main.rs")
+            .exists()
+    );
     assert!(
         !out.join("templates")
             .join("web")
@@ -521,28 +530,36 @@ fn test_web_leaf_templates_materialize_framework_specific_files() {
     assert!(react_out.join("package.json").exists());
     assert!(react_out.join("vite.config.js").exists());
     assert!(react_out.join("index.html").exists());
-    assert!(react_out
-        .join("crates")
-        .join("engine")
-        .join("Cargo.toml")
-        .exists());
+    assert!(
+        react_out
+            .join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists()
+    );
     assert!(react_out.join("src").join("main.jsx").exists());
     assert!(react_out.join("src").join("App.jsx").exists());
-    assert!(react_out
-        .join("src")
-        .join("bridges")
-        .join("engine.js")
-        .exists());
-    assert!(react_out
-        .join("src")
-        .join("styles")
-        .join("theme.css")
-        .exists());
-    assert!(react_out
-        .join("src")
-        .join("assets")
-        .join("magicore-grid.svg")
-        .exists());
+    assert!(
+        react_out
+            .join("src")
+            .join("bridges")
+            .join("engine.js")
+            .exists()
+    );
+    assert!(
+        react_out
+            .join("src")
+            .join("styles")
+            .join("theme.css")
+            .exists()
+    );
+    assert!(
+        react_out
+            .join("src")
+            .join("assets")
+            .join("magicore-grid.svg")
+            .exists()
+    );
     assert!(!react_out.join("tsconfig.json").exists());
 
     let next_dir = root.path().join("next-app");
@@ -556,17 +573,21 @@ fn test_web_leaf_templates_materialize_framework_specific_files() {
     };
     let next_out = Scaffolder::scaffold(&next).unwrap();
     assert!(next_out.join("next.config.mjs").exists());
-    assert!(next_out
-        .join("crates")
-        .join("engine")
-        .join("Cargo.toml")
-        .exists());
+    assert!(
+        next_out
+            .join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists()
+    );
     assert!(next_out.join("src").join("app").join("page.jsx").exists());
-    assert!(next_out
-        .join("src")
-        .join("bridges")
-        .join("engine.js")
-        .exists());
+    assert!(
+        next_out
+            .join("src")
+            .join("bridges")
+            .join("engine.js")
+            .exists()
+    );
     assert!(next_out.join("jsconfig.json").exists());
     assert!(!next_out.join("src").join("main.tsx").exists());
 
@@ -584,26 +605,34 @@ fn test_web_leaf_templates_materialize_framework_specific_files() {
     assert!(vue_out.join("vite.config.ts").exists());
     assert!(vue_out.join("src").join("main.ts").exists());
     assert!(vue_out.join("src").join("App.vue").exists());
-    assert!(vue_out
-        .join("src")
-        .join("components")
-        .join("AppShell.vue")
-        .exists());
-    assert!(vue_out
-        .join("src")
-        .join("router")
-        .join("AppRouter.vue")
-        .exists());
-    assert!(vue_out
-        .join("src")
-        .join("hooks")
-        .join("useProjectLinks.ts")
-        .exists());
-    assert!(!vue_out
-        .join("src")
-        .join("components")
-        .join("AppShell.tsx")
-        .exists());
+    assert!(
+        vue_out
+            .join("src")
+            .join("components")
+            .join("AppShell.vue")
+            .exists()
+    );
+    assert!(
+        vue_out
+            .join("src")
+            .join("router")
+            .join("AppRouter.vue")
+            .exists()
+    );
+    assert!(
+        vue_out
+            .join("src")
+            .join("hooks")
+            .join("useProjectLinks.ts")
+            .exists()
+    );
+    assert!(
+        !vue_out
+            .join("src")
+            .join("components")
+            .join("AppShell.tsx")
+            .exists()
+    );
 
     let vanilla_dir = root.path().join("vanilla-app");
     let vanilla = ScaffoldConfig {
@@ -619,16 +648,20 @@ fn test_web_leaf_templates_materialize_framework_specific_files() {
     assert!(vanilla_out.join("vite.config.ts").exists());
     assert!(vanilla_out.join("src").join("main.ts").exists());
     assert!(vanilla_out.join("src").join("App.ts").exists());
-    assert!(vanilla_out
-        .join("src")
-        .join("components")
-        .join("AppShell.ts")
-        .exists());
-    assert!(vanilla_out
-        .join("src")
-        .join("router")
-        .join("AppRouter.ts")
-        .exists());
+    assert!(
+        vanilla_out
+            .join("src")
+            .join("components")
+            .join("AppShell.ts")
+            .exists()
+    );
+    assert!(
+        vanilla_out
+            .join("src")
+            .join("router")
+            .join("AppRouter.ts")
+            .exists()
+    );
     assert!(!vanilla_out.join("src").join("main.tsx").exists());
 
     let react_express_dir = root.path().join("react-express-app");
@@ -644,16 +677,20 @@ fn test_web_leaf_templates_materialize_framework_specific_files() {
     assert!(react_express_out.join("package.json").exists());
     assert!(react_express_out.join("vite.config.ts").exists());
     assert!(react_express_out.join("src").join("main.tsx").exists());
-    assert!(react_express_out
-        .join("src")
-        .join("styles")
-        .join("theme.css")
-        .exists());
-    assert!(react_express_out
-        .join("server")
-        .join("src")
-        .join("server.ts")
-        .exists());
+    assert!(
+        react_express_out
+            .join("src")
+            .join("styles")
+            .join("theme.css")
+            .exists()
+    );
+    assert!(
+        react_express_out
+            .join("server")
+            .join("src")
+            .join("server.ts")
+            .exists()
+    );
 
     let solid_dir = root.path().join("solid-app");
     let solid = ScaffoldConfig {
@@ -669,16 +706,20 @@ fn test_web_leaf_templates_materialize_framework_specific_files() {
     assert!(solid_out.join("vite.config.ts").exists());
     assert!(solid_out.join("src").join("main.tsx").exists());
     assert!(solid_out.join("src").join("App.tsx").exists());
-    assert!(solid_out
-        .join("src")
-        .join("components")
-        .join("AppShell.tsx")
-        .exists());
-    assert!(solid_out
-        .join("src")
-        .join("router")
-        .join("AppRouter.tsx")
-        .exists());
+    assert!(
+        solid_out
+            .join("src")
+            .join("components")
+            .join("AppShell.tsx")
+            .exists()
+    );
+    assert!(
+        solid_out
+            .join("src")
+            .join("router")
+            .join("AppRouter.tsx")
+            .exists()
+    );
 
     let fastify_dir = root.path().join("fastify-api");
     let fastify = ScaffoldConfig {
@@ -691,28 +732,36 @@ fn test_web_leaf_templates_materialize_framework_specific_files() {
     };
     let fastify_out = Scaffolder::scaffold(&fastify).unwrap();
     assert!(fastify_out.join("src").join("server.js").exists());
-    assert!(fastify_out
-        .join("src")
-        .join("config")
-        .join("app.js")
-        .exists());
-    assert!(fastify_out
-        .join("src")
-        .join("routes")
-        .join("health.js")
-        .exists());
-    assert!(fastify_out
-        .join("src")
-        .join("services")
-        .join("status.js")
-        .exists());
+    assert!(
+        fastify_out
+            .join("src")
+            .join("config")
+            .join("app.js")
+            .exists()
+    );
+    assert!(
+        fastify_out
+            .join("src")
+            .join("routes")
+            .join("health.js")
+            .exists()
+    );
+    assert!(
+        fastify_out
+            .join("src")
+            .join("services")
+            .join("status.js")
+            .exists()
+    );
     assert!(!fastify_out.join("tsconfig.json").exists());
 }
 
 #[test]
 fn test_web_typescript_feature_switches_extensions() {
     if !template_layer_ready("web/frontend/react-vite") {
-        eprintln!("skipped: web/frontend/react-vite template layer not available offline (registry-first)");
+        eprintln!(
+            "skipped: web/frontend/react-vite template layer not available offline (registry-first)"
+        );
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -729,11 +778,12 @@ fn test_web_typescript_feature_switches_extensions() {
     let out = Scaffolder::scaffold(&config).unwrap();
     assert!(out.join("tsconfig.json").exists());
     assert!(out.join("vite.config.ts").exists());
-    assert!(out
-        .join("crates")
-        .join("engine")
-        .join("Cargo.toml")
-        .exists());
+    assert!(
+        out.join("crates")
+            .join("engine")
+            .join("Cargo.toml")
+            .exists()
+    );
     assert!(out.join("src").join("main.tsx").exists());
     assert!(out.join("src").join("App.tsx").exists());
     assert!(out.join("src").join("bridges").join("engine.ts").exists());
@@ -766,9 +816,11 @@ fn test_unknown_frameworks_fail_fast() {
         template_dir: PathBuf::new(),
     };
     let broken_mono_err = Scaffolder::scaffold(&broken_mono).unwrap_err();
-    assert!(broken_mono_err
-        .to_string()
-        .contains("Scaffold for monorepo frontend framework 'ember' is not implemented yet"));
+    assert!(
+        broken_mono_err
+            .to_string()
+            .contains("Scaffold for monorepo frontend framework 'ember' is not implemented yet")
+    );
 }
 
 #[test]

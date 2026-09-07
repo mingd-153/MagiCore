@@ -502,13 +502,12 @@ impl Scaffolder {
                         target, name, &files,
                     );
                 }
-                if effective_web_mode(config) == "backend" {
-                    if let Some(language) = infer_backend_language(framework) {
-                        Self::ensure_web_fallback_common_files(target, name, framework)?;
-                        return Self::write_minimal_backend_fallback(
-                            target, name, framework, language,
-                        );
-                    }
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if effective_web_mode(config) == "backend"
+                    && let Some(language) = infer_backend_language(framework)
+                {
+                    Self::ensure_web_fallback_common_files(target, name, framework)?;
+                    return Self::write_minimal_backend_fallback(target, name, framework, language);
                 }
                 Err(err)
             }

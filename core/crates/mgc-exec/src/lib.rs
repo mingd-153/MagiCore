@@ -10,14 +10,14 @@ pub mod sanitizer;
 pub mod prelude {
     //! Mọi thứ adapter/core cần cho passthrough — một import duy nhất.
     pub use crate::allowlist::{
-        check_tool, check_tool_scoped, find_forbidden_tool_in_script, parse_script_invocation,
-        parse_simple_script, reject_forbidden_pm_script, reject_shell_control, ExecutionScope,
-        ScriptInvocation, ALLOWED_TOOLS, FORBIDDEN_TOOLS,
+        ALLOWED_TOOLS, ExecutionScope, FORBIDDEN_TOOLS, ScriptInvocation, check_tool,
+        check_tool_scoped, find_forbidden_tool_in_script, parse_script_invocation,
+        parse_simple_script, reject_forbidden_pm_script, reject_shell_control,
     };
-    pub use crate::audit::{append, AuditEntry};
+    pub use crate::audit::{AuditEntry, append};
     pub use crate::run::{
-        process_tree_guard_available, run, run_inherited, run_project_binary,
-        run_project_binary_inherited, ExecOptions, ExecReport,
+        ExecOptions, ExecReport, process_tree_guard_available, run, run_inherited,
+        run_project_binary, run_project_binary_inherited,
     };
     pub use crate::sanitizer::redact_args;
 }

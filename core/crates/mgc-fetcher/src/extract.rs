@@ -1,5 +1,5 @@
 /// Archive extraction utilities
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use flate2::read::GzDecoder;
 use std::fs::File;
 use std::io::Read;

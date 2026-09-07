@@ -173,14 +173,14 @@ where
     };
     if canonical_root.join("package.json").exists() {
         let marker = read_extracted_package_marker(&canonical_root)?;
-        if let Some(marker) = marker.as_ref() {
-            if extracted_marker_matches_fast(marker, expected_marker)
-                && extracted_marker_has_content_signature(marker)
-                && (!extracted_cache_full_validation_enabled()
-                    || extracted_content_matches(&canonical_root, marker)?)
-            {
-                return Ok(canonical_root);
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(marker) = marker.as_ref()
+            && extracted_marker_matches_fast(marker, expected_marker)
+            && extracted_marker_has_content_signature(marker)
+            && (!extracted_cache_full_validation_enabled()
+                || extracted_content_matches(&canonical_root, marker)?)
+        {
+            return Ok(canonical_root);
         }
     }
 

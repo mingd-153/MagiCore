@@ -1,17 +1,19 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::await_holding_lock)]
+// Tests mutate env single-threaded (edition 2024 unsafe rule) — test đổi env 1 luồng.
+#![allow(unsafe_code)]
 use super::*;
 use base64::Engine;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use mgc_lockfile::Lockfile;
 use mgc_resolver::DependencyProvider;
 use mgc_store::{Layout, PackageCache};
 use sha2::{Digest, Sha512};
 use std::io::ErrorKind;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use std::sync::{Mutex, OnceLock};
 use tar::{Builder, Header};
@@ -108,18 +110,20 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
         .await
         .unwrap();
     assert_eq!(summary.added, vec![package_id]);
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("tailwindcss")
-        .join("package.json")
-        .exists());
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("tailwindcss")
-        .join("index.css")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("tailwindcss")
+            .join("package.json")
+            .exists()
+    );
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("tailwindcss")
+            .join("index.css")
+            .exists()
+    );
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
@@ -198,10 +202,12 @@ async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
-    assert!(parsed
-        .packages
-        .iter()
-        .any(|p| p.name == "react" && p.version == "19.0.0"));
+    assert!(
+        parsed
+            .packages
+            .iter()
+            .any(|p| p.name == "react" && p.version == "19.0.0")
+    );
 }
 
 #[tokio::test]
@@ -486,11 +492,11 @@ fn test_pending_scaffold_lockfile_without_checksum_is_allowed() {
 #[test]
 fn test_lifecycle_scripts_are_opt_in() {
     let old = std::env::var_os("MAGICORE_WEB_ALLOW_SCRIPTS");
-    std::env::remove_var("MAGICORE_WEB_ALLOW_SCRIPTS");
+    unsafe { std::env::remove_var("MAGICORE_WEB_ALLOW_SCRIPTS") };
     assert!(!should_run_lifecycle_scripts(false, false));
     assert!(should_run_lifecycle_scripts(false, true));
 
-    std::env::set_var("MAGICORE_WEB_ALLOW_SCRIPTS", "1");
+    unsafe { std::env::set_var("MAGICORE_WEB_ALLOW_SCRIPTS", "1") };
     assert!(should_run_lifecycle_scripts(false, false));
     assert!(!should_run_lifecycle_scripts(true, true));
     restore_env_var("MAGICORE_WEB_ALLOW_SCRIPTS", old);
@@ -773,9 +779,11 @@ async fn test_alias_dependency_uses_target_metadata_and_range() {
     assert_eq!(deps[0].spec, "^6.0.1");
 
     let versions = provider.get_versions(&deps[0].package).await.unwrap();
-    assert!(versions
-        .iter()
-        .any(|version| version.to_string() == "6.0.1"));
+    assert!(
+        versions
+            .iter()
+            .any(|version| version.to_string() == "6.0.1")
+    );
 }
 
 #[tokio::test]
@@ -798,10 +806,10 @@ async fn test_load_metadata_persists_etag_after_initial_fetch() {
             let _ = stream.read(&mut buf).await;
             let body = r#"{"name":"react","description":null,"versions":{"18.2.0":{"version":"18.2.0","dependencies":null,"optionalDependencies":null,"os":null,"cpu":null,"dist":{"tarball":"http://example.test/react.tgz","integrity":"sha512-react"}}},"dist-tags":{"latest":"18.2.0"}}"#;
             let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: \"react-v1\"\r\nContent-Length: {}\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: \"react-v1\"\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
             let _ = stream.write_all(response.as_bytes()).await;
         }
     });
@@ -938,7 +946,7 @@ async fn test_stale_metadata_failure_sets_retry_cooldown() {
         .unwrap();
 
     let previous_max_stale = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800");
+    unsafe { std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800") };
 
     let first = load_metadata_by_name_with_fallback("react", &registry, Some(&cache))
         .await
@@ -1012,7 +1020,7 @@ async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
         .unwrap();
 
     let previous = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60");
+    unsafe { std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60") };
     cache
         .write_metadata_record(
             "react",
@@ -1029,9 +1037,10 @@ async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
         .unwrap_err();
     restore_env_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous);
 
-    assert!(err
-        .to_string()
-        .contains("cached metadata is too old to reuse"));
+    assert!(
+        err.to_string()
+            .contains("cached metadata is too old to reuse")
+    );
 }
 
 #[tokio::test]
@@ -1066,7 +1075,7 @@ async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
         .unwrap();
 
     let previous = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60");
+    unsafe { std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60") };
     cache
         .write_metadata_record(
             "react",
@@ -1083,9 +1092,10 @@ async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
         .unwrap_err();
     restore_env_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous);
 
-    assert!(err
-        .to_string()
-        .contains("cached metadata is too old to reuse"));
+    assert!(
+        err.to_string()
+            .contains("cached metadata is too old to reuse")
+    );
 }
 
 #[tokio::test]
@@ -1302,10 +1312,11 @@ async fn test_install_multiple_packages_from_cache() {
     assert_eq!(summary.added.len(), 2);
     assert!(summary.bytes_from_cache > 0);
     assert!(dir.path().join("node_modules/react/index.js").exists());
-    assert!(dir
-        .path()
-        .join("node_modules/tailwindcss/index.css")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules/tailwindcss/index.css")
+            .exists()
+    );
 
     let installed = adapter.list(dir.path()).await.unwrap();
     assert_eq!(installed.len(), 2);
@@ -1390,10 +1401,11 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
         .unwrap();
     assert_eq!(summary.added.len(), 2);
     assert!(dir.path().join("node_modules/react/index.js").exists());
-    assert!(dir
-        .path()
-        .join("node_modules/@types/react/index.d.ts")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules/@types/react/index.d.ts")
+            .exists()
+    );
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
@@ -1527,12 +1539,14 @@ async fn test_install_uses_shared_tarball_cache_for_new_project() {
     assert_eq!(summary.added, vec![react.clone()]);
     assert!(summary.bytes_from_cache > 0);
     assert!(dir.path().join("node_modules/react/index.js").exists());
-    assert!(shared
-        .path()
-        .join("cache")
-        .join("react")
-        .join("18.2.0.tgz")
-        .exists());
+    assert!(
+        shared
+            .path()
+            .join("cache")
+            .join("react")
+            .join("18.2.0.tgz")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -1829,20 +1843,22 @@ async fn test_install_materializes_scoped_package() {
         .await
         .unwrap();
     assert_eq!(summary.added, vec![package_id]);
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("@types")
-        .join("node")
-        .join("package.json")
-        .exists());
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("@types")
-        .join("node")
-        .join("index.d.ts")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("@types")
+            .join("node")
+            .join("package.json")
+            .exists()
+    );
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("@types")
+            .join("node")
+            .join("index.d.ts")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -1972,10 +1988,12 @@ async fn test_install_materializes_nested_conflicting_dependency_versions() {
         .join("semver");
     assert!(!dir.path().join("node_modules").join("semver").exists());
     assert!(nested_nuxt_semver.exists());
-    assert!(nested_nuxt_semver
-        .join("functions")
-        .join("satisfies.js")
-        .exists());
+    assert!(
+        nested_nuxt_semver
+            .join("functions")
+            .join("satisfies.js")
+            .exists()
+    );
     assert_eq!(
         installed_package_version(&nested_nuxt_semver)
             .unwrap()
@@ -2421,10 +2439,12 @@ async fn test_install_rebuilds_cached_root_when_file_tree_is_incomplete() {
         .await
         .unwrap();
 
-    assert!(project
-        .path()
-        .join("node_modules/rollup/dist/es/parseAst.js")
-        .exists());
+    assert!(
+        project
+            .path()
+            .join("node_modules/rollup/dist/es/parseAst.js")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -2488,16 +2508,18 @@ async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing()
         .await
         .unwrap();
 
-    assert!(project
-        .path()
-        .join("node_modules/entities/dist/commonjs/decode.js")
-        .exists());
+    assert!(
+        project
+            .path()
+            .join("node_modules/entities/dist/commonjs/decode.js")
+            .exists()
+    );
 }
 
 #[tokio::test]
 async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplete() {
     let old = std::env::var_os("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE");
-    std::env::set_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", "1");
+    unsafe { std::env::set_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", "1") };
 
     let shared = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
@@ -2561,10 +2583,12 @@ async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplet
         .await
         .unwrap();
 
-    assert!(project
-        .path()
-        .join("node_modules/rollup/dist/es/parseAst.js")
-        .exists());
+    assert!(
+        project
+            .path()
+            .join("node_modules/rollup/dist/es/parseAst.js")
+            .exists()
+    );
     restore_env_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", old);
 }
 
@@ -2647,9 +2671,9 @@ fn sri_sha512(data: &[u8]) -> String {
 
 fn restore_env_var(key: &str, previous: Option<std::ffi::OsString>) {
     if let Some(value) = previous {
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
     } else {
-        std::env::remove_var(key);
+        unsafe { std::env::remove_var(key) };
     }
 }
 
@@ -2668,7 +2692,7 @@ fn env_test_lock() -> &'static Mutex<()> {
 fn test_prefetch_defaults_are_conservative() {
     let _guard = env_test_lock().lock().unwrap();
     let old_resolve = std::env::var_os("MAGICORE_WEB_RESOLVE_PREFETCH");
-    std::env::remove_var("MAGICORE_WEB_RESOLVE_PREFETCH");
+    unsafe { std::env::remove_var("MAGICORE_WEB_RESOLVE_PREFETCH") };
 
     assert!(!resolve_prefetch_enabled());
 
@@ -2679,7 +2703,7 @@ fn test_prefetch_defaults_are_conservative() {
 fn test_prefetch_flag_can_be_enabled_explicitly() {
     let _guard = env_test_lock().lock().unwrap();
     let old_resolve = std::env::var_os("MAGICORE_WEB_RESOLVE_PREFETCH");
-    std::env::set_var("MAGICORE_WEB_RESOLVE_PREFETCH", "1");
+    unsafe { std::env::set_var("MAGICORE_WEB_RESOLVE_PREFETCH", "1") };
 
     assert!(resolve_prefetch_enabled());
 

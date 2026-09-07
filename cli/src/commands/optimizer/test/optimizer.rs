@@ -35,9 +35,11 @@ fn test_generate_optimizations_for_web_core() {
     assert!(files.len() >= 2);
     assert!(files[0].relative_path.contains("profile.json"));
     // Node.js adapter should generate config
-    assert!(files
-        .iter()
-        .any(|f| f.content.contains("max-old-space-size")));
+    assert!(
+        files
+            .iter()
+            .any(|f| f.content.contains("max-old-space-size"))
+    );
 }
 
 #[test]

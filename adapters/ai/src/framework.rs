@@ -26,32 +26,27 @@ impl AiFramework {
 }
 
 pub fn detect_framework(root: &Path) -> Option<AiFramework> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(p) = v
-                .get("ai")
-                .and_then(|c| c.get("framework"))
-                .and_then(|p| p.as_str())
-            {
-                if let Some(fw) = framework_from_str(p) {
-                    return Some(fw);
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(p) = v
+            .get("ai")
+            .and_then(|c| c.get("framework"))
+            .and_then(|p| p.as_str())
+        && let Some(fw) = framework_from_str(p)
+    {
+        return Some(fw);
     }
-    if let Ok(content) = std::fs::read_to_string(root.join("pyproject.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(p) = v
-                .get("tool")
-                .and_then(|t| t.get("magicore"))
-                .and_then(|m| m.get("framework"))
-                .and_then(|p| p.as_str())
-            {
-                if let Some(fw) = framework_from_str(p) {
-                    return Some(fw);
-                }
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(root.join("pyproject.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(p) = v
+            .get("tool")
+            .and_then(|t| t.get("magicore"))
+            .and_then(|m| m.get("framework"))
+            .and_then(|p| p.as_str())
+        && let Some(fw) = framework_from_str(p)
+    {
+        return Some(fw);
     }
     None
 }

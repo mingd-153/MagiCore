@@ -12,15 +12,16 @@ pub fn check_symlink_ancestors(path: &Path) -> Result<(), StoreError> {
     })?;
 
     // Walk ancestors and check for symlinks
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
     let mut current = Some(canonical.as_path());
     while let Some(p) = current {
-        if let Ok(meta) = fs::symlink_metadata(p) {
-            if meta.file_type().is_symlink() {
-                return Err(StoreError::Io {
-                    path: p.to_path_buf(),
-                    msg: "symlink detected in path ancestry".to_string(),
-                });
-            }
+        if let Ok(meta) = fs::symlink_metadata(p)
+            && meta.file_type().is_symlink()
+        {
+            return Err(StoreError::Io {
+                path: p.to_path_buf(),
+                msg: "symlink detected in path ancestry".to_string(),
+            });
         }
         current = p.parent();
     }

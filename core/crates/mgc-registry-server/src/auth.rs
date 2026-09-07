@@ -103,17 +103,18 @@ impl AuthService {
 
     /// Verify token and return user (owned)
     pub fn verify_token(&self, token: &str) -> Option<User> {
-        if let Some(admin) = &self.admin_token {
-            if token == admin {
-                return Some(User {
-                    name: "admin".to_string(),
-                    is_admin: true,
-                    role: UserRole::Admin,
-                    scopes: vec![],
-                    password: None,
-                    email: None,
-                });
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(admin) = &self.admin_token
+            && token == admin
+        {
+            return Some(User {
+                name: "admin".to_string(),
+                is_admin: true,
+                role: UserRole::Admin,
+                scopes: vec![],
+                password: None,
+                email: None,
+            });
         }
         self.users_guard().get(token).cloned()
     }
@@ -130,11 +131,12 @@ impl AuthService {
             }
         }
         // Check scope mapping
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
         for scope in &user.scopes {
-            if let Some(packages) = self.scopes.get(scope) {
-                if packages.iter().any(|p| scope_matches(p, package)) {
-                    return true;
-                }
+            if let Some(packages) = self.scopes.get(scope)
+                && packages.iter().any(|p| scope_matches(p, package))
+            {
+                return true;
             }
         }
         false
@@ -201,13 +203,13 @@ pub fn extract_auth(headers: &HeaderMap) -> Option<(String, String)> {
         if let Some(token) = auth_str.strip_prefix("Bearer ") {
             return Some(("Bearer".to_string(), token.to_string()));
         }
-        if let Some(encoded) = auth_str.strip_prefix("Basic ") {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-                let decoded_str = String::from_utf8(decoded).ok()?;
-                let mut parts = decoded_str.splitn(2, ':');
-                if let (Some(user), Some(pass)) = (parts.next(), parts.next()) {
-                    return Some((user.to_string(), pass.to_string()));
-                }
+        if let Some(encoded) = auth_str.strip_prefix("Basic ")
+            && let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded)
+        {
+            let decoded_str = String::from_utf8(decoded).ok()?;
+            let mut parts = decoded_str.splitn(2, ':');
+            if let (Some(user), Some(pass)) = (parts.next(), parts.next()) {
+                return Some((user.to_string(), pass.to_string()));
             }
         }
     }
@@ -237,40 +239,42 @@ pub async fn auth_middleware(
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         };
 
-        if let Some(token) = auth_str.strip_prefix("Bearer ") {
-            if let Some(user) = auth.verify_token(token) {
-                let mut request = request;
-                request.extensions_mut().insert(user);
-                return next.run(request).await;
-            }
-        } else if let Some(encoded) = auth_str.strip_prefix("Basic ") {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-                let decoded_str = match String::from_utf8(decoded) {
-                    Ok(s) => s,
-                    Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-                };
-                let mut parts = decoded_str.splitn(2, ':');
-                if let (Some(_user), Some(pass)) = (parts.next(), parts.next()) {
-                    // pip/shared registry clients gửi Basic auth — admin token cũng chấp nhận
-                    if let Some(admin) = &auth.admin_token {
-                        if pass == admin {
-                            let mut request = request;
-                            request.extensions_mut().insert(User {
-                                name: "admin".to_string(),
-                                is_admin: true,
-                                role: UserRole::Admin,
-                                scopes: vec![],
-                                password: None,
-                                email: None,
-                            });
-                            return next.run(request).await;
-                        }
-                    }
-                    if let Some(stored_user) = auth.verify_password(_user, pass) {
-                        let mut request = request;
-                        request.extensions_mut().insert(stored_user);
-                        return next.run(request).await;
-                    }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(token) = auth_str.strip_prefix("Bearer ")
+            && let Some(user) = auth.verify_token(token)
+        {
+            let mut request = request;
+            request.extensions_mut().insert(user);
+            return next.run(request).await;
+        } else if let Some(encoded) = auth_str.strip_prefix("Basic ")
+            && let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded)
+        {
+            let decoded_str = match String::from_utf8(decoded) {
+                Ok(s) => s,
+                Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+            };
+            let mut parts = decoded_str.splitn(2, ':');
+            if let (Some(_user), Some(pass)) = (parts.next(), parts.next()) {
+                // pip/shared registry clients gửi Basic auth — admin token cũng chấp nhận
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if let Some(admin) = &auth.admin_token
+                    && pass == admin
+                {
+                    let mut request = request;
+                    request.extensions_mut().insert(User {
+                        name: "admin".to_string(),
+                        is_admin: true,
+                        role: UserRole::Admin,
+                        scopes: vec![],
+                        password: None,
+                        email: None,
+                    });
+                    return next.run(request).await;
+                }
+                if let Some(stored_user) = auth.verify_password(_user, pass) {
+                    let mut request = request;
+                    request.extensions_mut().insert(stored_user);
+                    return next.run(request).await;
                 }
             }
         }
@@ -299,16 +303,15 @@ pub async fn optional_auth(
 ) -> Response {
     let auth_header = request.headers().get("authorization");
 
-    if let Some(auth_value) = auth_header {
-        if let Ok(auth_str) = auth_value.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                if let Some(user) = auth.verify_token(token) {
-                    let mut request = request;
-                    request.extensions_mut().insert(user);
-                    return next.run(request).await;
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(auth_value) = auth_header
+        && let Ok(auth_str) = auth_value.to_str()
+        && let Some(token) = auth_str.strip_prefix("Bearer ")
+        && let Some(user) = auth.verify_token(token)
+    {
+        let mut request = request;
+        request.extensions_mut().insert(user);
+        return next.run(request).await;
     }
 
     next.run(request).await

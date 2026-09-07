@@ -1,6 +1,6 @@
 //! Versioned scaffold cache (~/.mgc/scaffolds/{core}/{name}/{version}/).
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -75,12 +75,13 @@ impl ScaffoldCache {
         }
 
         let mut versions = vec![];
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
         if let Ok(entries) = fs::read_dir(&base) {
             for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        versions.push(name.to_string());
-                    }
+                if entry.path().is_dir()
+                    && let Some(name) = entry.file_name().to_str()
+                {
+                    versions.push(name.to_string());
                 }
             }
         }

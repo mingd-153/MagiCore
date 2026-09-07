@@ -1,8 +1,11 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+// Tests mutate env vars single-threaded per test process (edition 2024 unsafe rule).
+// Test đổi env var đơn luồng theo từng process test (luật unsafe edition 2024).
+#![allow(unsafe_code)]
 //! Tests for AI model OCI operations
 
-use super::{cas_import, cas_pull, remove_local, save_manifest_in, ModelManifest};
+use super::{ModelManifest, cas_import, cas_pull, remove_local, save_manifest_in};
 use std::path::PathBuf;
 
 fn tmp_store(tag: &str) -> (PathBuf, PathBuf) {
@@ -53,7 +56,7 @@ fn manifest_save_and_list() {
 #[test]
 fn remove_local_missing_bails() {
     let (store_root, base) = tmp_store("missing");
-    std::env::set_var("MAGICORE_STORE_ROOT", &store_root);
+    unsafe { std::env::set_var("MAGICORE_STORE_ROOT", &store_root) };
     std::fs::create_dir_all(&store_root).unwrap();
     let _ = &base;
     assert!(remove_local("not-there").is_err());
@@ -62,7 +65,7 @@ fn remove_local_missing_bails() {
 #[test]
 fn unsupported_source_bails() {
     let (store_root, base) = tmp_store("unsupported");
-    std::env::set_var("MAGICORE_STORE_ROOT", &store_root);
+    unsafe { std::env::set_var("MAGICORE_STORE_ROOT", &store_root) };
     std::fs::create_dir_all(&store_root).unwrap();
     let _ = &base;
     let rt = tokio::runtime::Runtime::new().unwrap();

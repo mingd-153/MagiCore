@@ -10,7 +10,7 @@ use mgc_store::{Database, Layout};
 use mgc_types::MgResult;
 
 use crate::lockfile::project_cache_dir;
-use crate::native::npm_registry::{check_publish_age, PackageMetadata};
+use crate::native::npm_registry::{PackageMetadata, check_publish_age};
 
 const DEFAULT_QUARANTINE_SECS: u64 = 86400;
 
@@ -42,12 +42,12 @@ fn configured_store_min_age() -> Option<u64> {
     let cwd = std::env::current_dir().ok()?;
 
     // Read mg.toml config — Đọc config mg.toml
-    if let Ok(Some(project)) = ProjectConfig::load(&cwd) {
-        if let Some(security) = &project.security {
-            if let Some(min_age) = security.min_age_for_ecosystem("web") {
-                return Some(min_age);
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(Some(project)) = ProjectConfig::load(&cwd)
+        && let Some(security) = &project.security
+        && let Some(min_age) = security.min_age_for_ecosystem("web")
+    {
+        return Some(min_age);
     }
 
     // Fallback to database release_policy — Dự phòng đọc từ database

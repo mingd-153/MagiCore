@@ -1,7 +1,7 @@
 //! Approve package for lifecycle scripts — trust approve command
 //! Cho phép package chạy lifecycle scripts — lệnh trust approve
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use mgc_store::{Database, Layout};
 use std::env;
 

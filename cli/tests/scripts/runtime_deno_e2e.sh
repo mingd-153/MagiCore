@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Deno Runtime E2E Test — delegates to real implementation
-# Status: IMPLEMENTED (calls runtime_deno_e2e_impl.sh)
+# Deno optimizer environment test — delegates to implementation
+# Status: ENV GENERATION ONLY (calls runtime_deno_e2e_impl.sh)
 
 set -euo pipefail
 

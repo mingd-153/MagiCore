@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
-# Bun Runtime E2E Test — real implementation
-# Status: BASIC IMPLEMENTATION (env consumer verified)
+# Bun optimizer environment generation test
+# Status: CONFIG GENERATION (does not execute the Bun child process)
 
 set -euo pipefail
 
-echo "=== Bun Runtime E2E Test ==="
-
-# Check if bun is available
-if ! command -v bun &>/dev/null; then
-    echo "⚠️  SKIP: bun not installed"
-    exit 77
-fi
+echo "=== Bun Optimizer Environment Generation Test ==="
 
 # Find mgc binary (prefer local build over system install)
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
@@ -76,7 +70,7 @@ else
     exit 1
 fi
 
-echo "✓ PASS: Bun E2E basic checks complete"
+echo "✓ PASS: Bun optimizer environment generation complete"
 echo ""
 echo "Note: Full E2E (mgc dev with env consumer) requires web project setup"
 echo "      Current test verifies: optimizer detection + env generation"

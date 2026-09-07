@@ -12,6 +12,6 @@ pub mod install;
 pub mod native;
 pub mod registry;
 
-pub use adapter::{adapter_for, AiAdapter};
-pub use framework::{detect_framework, AiFramework};
+pub use adapter::{AiAdapter, adapter_for};
+pub use framework::{AiFramework, detect_framework};
 pub use sbom::generate_sbom;

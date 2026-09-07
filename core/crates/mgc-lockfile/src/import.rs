@@ -9,7 +9,7 @@
 // never executes/wraps any PM. Version policy: SHAPE-FIRST — acceptance by data
 // structure; version numbers only drive advisories for untested formats.)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

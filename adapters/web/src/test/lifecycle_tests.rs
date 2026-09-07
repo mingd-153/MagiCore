@@ -1,5 +1,8 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+// Tests mutate env vars single-threaded per test process (edition 2024 unsafe rule).
+// Test đổi env var đơn luồng theo từng process test (luật unsafe edition 2024).
+#![allow(unsafe_code)]
 
 // Lifecycle tests for core-web — kept outside production source bodies.
 // Test lifecycle của core-web — tách khỏi thân file production để dễ maintain.
@@ -118,8 +121,8 @@ fn lifecycle_timeout_kills_hung_process() {
     let package = tempfile::tempdir().unwrap();
     write_package_script(package.path(), "python3 -c \"import time; time.sleep(2)\"");
 
-    std::env::set_var("MGC_LIFECYCLE_TIMEOUT_SECS", "1");
+    unsafe { std::env::set_var("MGC_LIFECYCLE_TIMEOUT_SECS", "1") };
     let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
-    std::env::remove_var("MGC_LIFECYCLE_TIMEOUT_SECS");
+    unsafe { std::env::remove_var("MGC_LIFECYCLE_TIMEOUT_SECS") };
     assert!(err.to_string().contains("timed out"));
 }

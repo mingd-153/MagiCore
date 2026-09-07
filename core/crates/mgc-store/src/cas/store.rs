@@ -7,7 +7,7 @@ use super::integrity::{IntegrityHash, TarballEntry};
 use super::lifecycle::{ensure_cas_dirs, set_cas_root_permissions, validate_cas_root};
 use super::security::check_symlink_ancestors;
 use super::write::{
-    stream_write_verify_and_set_perms, write_all_verify_and_set_perms, STREAM_THRESHOLD,
+    STREAM_THRESHOLD, stream_write_verify_and_set_perms, write_all_verify_and_set_perms,
 };
 use crate::cas::integrity;
 
@@ -169,15 +169,17 @@ impl ContentStore {
             });
         }
 
-        if !dest.exists() {
-            if let Err(e) = fs::rename(&tmp, &dest) {
-                if !dest.exists() {
-                    let _ = fs::remove_file(&tmp);
-                    return Err(StoreError::Io {
-                        path: dest.clone(),
-                        msg: format!("move tmp file into CAS failed: {e}"),
-                    });
-                }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if !dest.exists()
+            && let Err(e) = fs::rename(&tmp, &dest)
+        {
+            // Lost the race: another writer moved it first — lose race an toàn.
+            if !dest.exists() {
+                let _ = fs::remove_file(&tmp);
+                return Err(StoreError::Io {
+                    path: dest.clone(),
+                    msg: format!("move tmp file into CAS failed: {e}"),
+                });
             }
         }
         let _ = fs::remove_file(&tmp);

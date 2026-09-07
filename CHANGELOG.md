@@ -76,15 +76,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - ✅ **Next.js/React/TypeScript support**: Tested with 20-package dev manifests
 - ✅ **Cross-PM Migration**: Import npm/pnpm/yarn/bun lockfiles
 
-### Performance (Beta — Limited Scope)
-- **Cold install**: 2.63s average on test workload (macOS M2, 20 packages)
-- **Warm install**: 2.01s (pnpm 1.2x faster due to hardlinks)
-- **Disk usage**: 462MB (CAS deduplication)
-- **Caveat**: Single platform, dev workload only. Cross-platform validation deferred to V1.1
+### Performance (Data Invalidated)
+- Prior V1.0 benchmark numbers were withdrawn after provenance and methodology gaps were found.
+- No comparative performance claim from that dataset should be cited.
 
 ### Known Issues
 - ⚠️ **vitest crash**: Projects with `vitest@^1.0.0` encounter "illegal hardware instruction" (workaround: use jest, fix in V1.1)
-- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
+- ⚠️ **Performance**: competitive benchmark rerun is required before publishing comparisons
 - ⚠️ **Multi-language cores**: ai/app/lib remain experimental, reaching parity in V1.1
 
 ### Documentation

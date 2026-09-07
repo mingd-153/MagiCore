@@ -275,7 +275,9 @@ fn test_ai_full_lifecycle() {
 
     // pytest REQUIRED for test step
     if Command::new("pytest").arg("--version").output().is_err() {
-        panic!("TEST FAILED: pytest not available (required for AI full lifecycle test). Install: pip install pytest");
+        panic!(
+            "TEST FAILED: pytest not available (required for AI full lifecycle test). Install: pip install pytest"
+        );
     }
 
     let temp = TempDir::new().unwrap();
@@ -394,7 +396,9 @@ fn test_app_full_lifecycle_limited() {
 
     // Check flutter available - REQUIRED
     if Command::new("flutter").arg("--version").output().is_err() {
-        panic!("TEST FAILED: flutter not available (required for App full lifecycle test). Install Flutter SDK");
+        panic!(
+            "TEST FAILED: flutter not available (required for App full lifecycle test). Install Flutter SDK"
+        );
     }
 
     let temp = TempDir::new().unwrap();

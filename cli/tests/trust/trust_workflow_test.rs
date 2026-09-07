@@ -1,5 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+// Tests mutate env single-threaded (edition 2024 unsafe rule) — test đổi env 1 luồng.
+#![allow(unsafe_code)]
 
 //! Integration tests for `mgc trust` workflow
 //! Test tích hợp cho workflow `mgc trust`
@@ -183,16 +185,16 @@ fn test_policy_strict_mode_fails_on_unsigned() {
     write_empty_lockfile(&lockfile_path);
 
     // Mock CI environment + strict policy
-    env::set_var("CI", "true");
-    env::set_var("MGC_TRUST_POLICY", "strict");
+    unsafe { env::set_var("CI", "true") };
+    unsafe { env::set_var("MGC_TRUST_POLICY", "strict") };
 
     // This would be called in install.rs
     // let result = crate::commands::trust::policy::auto_enforce_in_ci(&lockfile_path);
     // assert!(result.is_err());
 
     // Cleanup
-    env::remove_var("CI");
-    env::remove_var("MGC_TRUST_POLICY");
+    unsafe { env::remove_var("CI") };
+    unsafe { env::remove_var("MGC_TRUST_POLICY") };
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! Workspace discovery — scan apps/ + packages/ (layout từ magicore.workspace.toml).
 
 use crate::{
-    read_package_manifest, WorkspaceEdge, WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest,
+    WorkspaceEdge, WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest, read_package_manifest,
 };
 use std::path::{Path, PathBuf};
 

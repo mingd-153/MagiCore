@@ -3,7 +3,7 @@
 //!  Format: `[hooks.<event>]` = list of shell commands, run in order.
 //!  Chính sách: hook fail → command fail; hook không thể bỏ qua security check.)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

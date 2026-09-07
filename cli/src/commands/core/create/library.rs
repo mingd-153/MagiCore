@@ -5,7 +5,7 @@ use anyhow::Result;
 
 pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     // Parse scaffold spec sớm với typo detection (Phase 2 all-core parity) — parse sớm có typo detection (Phase 2 cân bằng cores)
-    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+    use crate::scaffold::spec::{CoreKind, parse_scaffold_spec};
 
     let parsed_framework = if !framework.is_empty() {
         Some(parse_scaffold_spec(CoreKind::Lib, framework).map_err(|e| {

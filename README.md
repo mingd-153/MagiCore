@@ -6,7 +6,7 @@
     <a href="https://github.com/mingd-153/MagiCore/releases"><img src="https://img.shields.io/github/v/release/mingd-153/MagiCore?label=latest&style=flat-square" alt="Latest Release" /></a>
     <a href="https://github.com/mingd-153/MagiCore/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mingd-153/MagiCore/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
-    <img src="https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square" alt="Rust 1.85+" />
+    <img src="https://img.shields.io/badge/rust-1.85%2B-edition2024-blue?style=flat-square" alt="Rust 1.85+ edition 2024" />
     <img src="https://img.shields.io/badge/MCP-native-blueviolet?style=flat-square" alt="Native MCP Server" />
     <img src="https://img.shields.io/badge/version-1.0.0-brightgreen?style=flat-square" alt="Version 1.0.0" />
   </p>
@@ -86,7 +86,7 @@ cd MagiCore
 cargo build --release --bin mgc
 # Binary at: target/release/mgc
 ```
-> **Requires:** Rust 1.85+
+> **Requires:** Rust 1.85+ (edition 2024)
 
 ---
 

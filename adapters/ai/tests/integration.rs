@@ -2,9 +2,9 @@
 //! Integration tests for mgc-ai-adapter — sát với src/lib.rs
 //! Kiểm thử: detect framework, adapter_for, PackageAdapter trait methods.
 
-use mgc_ai_adapter::{adapter_for, detect_framework, generate_sbom, AiAdapter, AiFramework};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_ai_adapter::{AiAdapter, AiFramework, adapter_for, detect_framework, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

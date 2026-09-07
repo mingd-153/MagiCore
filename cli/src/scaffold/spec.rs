@@ -7,7 +7,7 @@
 //! - `rust@1.80` → name="rust", ref=Version("1.80")
 //! - `react-vite` → name="react-vite", ref=Default
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Scaffold specification đã parse
 #[derive(Debug, Clone, PartialEq, Eq)]

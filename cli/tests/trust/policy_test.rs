@@ -1,5 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+// Tests mutate env single-threaded (edition 2024 unsafe rule) — test đổi env 1 luồng.
+#![allow(unsafe_code)]
 
 //! Trust policy enforcement tests
 //! Test thực thi policy trust
@@ -19,19 +21,19 @@ fn test_policy_mode_from_env() {
     use std::env;
 
     // Test strict mode
-    env::set_var("MGC_TRUST_POLICY", "strict");
+    unsafe { env::set_var("MGC_TRUST_POLICY", "strict") };
     // Would call PolicyMode::from_env() here
-    env::remove_var("MGC_TRUST_POLICY");
+    unsafe { env::remove_var("MGC_TRUST_POLICY") };
 
     // Test warn mode
-    env::set_var("MGC_TRUST_POLICY", "warn");
+    unsafe { env::set_var("MGC_TRUST_POLICY", "warn") };
     // Would call PolicyMode::from_env() here
-    env::remove_var("MGC_TRUST_POLICY");
+    unsafe { env::remove_var("MGC_TRUST_POLICY") };
 
     // Test audit mode
-    env::set_var("MGC_TRUST_POLICY", "audit");
+    unsafe { env::set_var("MGC_TRUST_POLICY", "audit") };
     // Would call PolicyMode::from_env() here
-    env::remove_var("MGC_TRUST_POLICY");
+    unsafe { env::remove_var("MGC_TRUST_POLICY") };
 }
 
 #[test]
@@ -39,19 +41,19 @@ fn test_ci_detection() {
     use std::env;
 
     // Test GitHub Actions detection
-    env::set_var("GITHUB_ACTIONS", "true");
+    unsafe { env::set_var("GITHUB_ACTIONS", "true") };
     // Would call is_ci_environment() here
-    env::remove_var("GITHUB_ACTIONS");
+    unsafe { env::remove_var("GITHUB_ACTIONS") };
 
     // Test GitLab CI detection
-    env::set_var("GITLAB_CI", "true");
+    unsafe { env::set_var("GITLAB_CI", "true") };
     // Would call is_ci_environment() here
-    env::remove_var("GITLAB_CI");
+    unsafe { env::remove_var("GITLAB_CI") };
 
     // Test generic CI detection
-    env::set_var("CI", "true");
+    unsafe { env::set_var("CI", "true") };
     // Would call is_ci_environment() here
-    env::remove_var("CI");
+    unsafe { env::remove_var("CI") };
 }
 
 #[test]

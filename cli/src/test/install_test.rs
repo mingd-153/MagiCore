@@ -3,6 +3,7 @@
 //! Tests for install command validation
 
 use super::*;
+use mgc_crypto::keyring::KeyPair;
 use mgc_lockfile::Package;
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
 use tempfile::tempdir;
@@ -94,17 +95,17 @@ fn test_load_locked_graph_rejects_unsupported_lock_version() {
 fn test_load_locked_graph_ignores_legacy_checksum_sidecar() {
     let dir = tempdir().unwrap();
     let manifest = Manifest::new("demo", Ecosystem::Web);
-    let lock = Lockfile::new();
-    std::fs::write(
-        dir.path().join("mgc.lock"),
-        mgc_lockfile::serialization::to_toml(&lock).unwrap(),
-    )
-    .unwrap();
+    let mut lock = Lockfile::new();
+    let lock_path = dir.path().join("mgc.lock");
+    let key = KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut lock, &lock_path, &key).unwrap();
     std::fs::write(dir.path().join("mgc.lock.sha256"), "bad").unwrap();
 
-    assert!(load_locked_graph(dir.path(), "web", &manifest)
-        .unwrap()
-        .is_none());
+    assert!(
+        load_locked_graph(dir.path(), "web", &manifest)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

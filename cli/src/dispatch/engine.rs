@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::Cli;
 use crate::Commands;
@@ -34,7 +34,13 @@ pub async fn run(cli: Cli) -> Result<()> {
         if let Some(command) = cli.command.as_ref() {
             reject_unsupported_audit_strict(command)?;
         }
-        std::env::set_var("MGC_AUDIT_STRICT", "1");
+        // SAFETY: dispatch entry runs before any worker thread is spawned;
+        // MGC_AUDIT_STRICT is read later but not concurrently mutated elsewhere.
+        // AN TOÀN: ghi ở entry dispatch trước khi spawn worker thread.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("MGC_AUDIT_STRICT", "1");
+        }
     }
 
     match cli.command {
@@ -51,6 +57,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// package.json name (web) — dùng cho --filter match. Non-web fallback: None.
+/// Web package name for --filter matching; None for non-web workspaces.
+fn workspace_package_name(project_root: &Path) -> Option<String> {
+    mgc_workspace::read_package_manifest(project_root)
+        .ok()
+        .flatten()
+        .map(|m| m.name)
 }
 
 /// Các lệnh workspace-aware khi chạy `--recursive` (pnpm -r parity).
@@ -70,7 +85,7 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         let mut selected: Vec<PathBuf> = Vec::new();
         for ws in &workspaces {
             let relative = ws.strip_prefix(&project_root).unwrap_or(ws);
-            let name = crate::commands::install::workspace_package_name(ws).unwrap_or_else(|| {
+            let name = workspace_package_name(ws).unwrap_or_else(|| {
                 ws.file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default()
@@ -97,21 +112,22 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     }
 
     // Xây dựng đồ thị phụ thuộc workspace và sắp xếp topo (level-by-level)
-    if let Ok(graph) = mgc_workspace::build_workspace_graph(&workspaces) {
-        if let Ok(levels) = mgc_workspace::topo_levels(&graph) {
-            let mut ordered = Vec::new();
-            for level in levels {
-                for idx in level {
-                    let node_path = &graph.nodes[idx].path;
-                    if let Some(pos) = workspaces.iter().position(|w| w == node_path) {
-                        ordered.push(workspaces.remove(pos));
-                    }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(graph) = mgc_workspace::build_workspace_graph(&workspaces)
+        && let Ok(levels) = mgc_workspace::topo_levels(&graph)
+    {
+        let mut ordered = Vec::new();
+        for level in levels {
+            for idx in level {
+                let node_path = &graph.nodes[idx].path;
+                if let Some(pos) = workspaces.iter().position(|w| w == node_path) {
+                    ordered.push(workspaces.remove(pos));
                 }
             }
-            // Thêm các workspace còn lại (nếu có)
-            ordered.append(&mut workspaces);
-            workspaces = ordered;
         }
+        // Thêm các workspace còn lại (nếu có)
+        ordered.append(&mut workspaces);
+        workspaces = ordered;
     }
 
     let name = command_name(&command);
@@ -132,26 +148,25 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         };
         let ws_core_str = ws_core.as_deref();
 
-        let ws_name = crate::commands::install::workspace_package_name(ws).unwrap_or_else(|| {
+        let ws_name = workspace_package_name(ws).unwrap_or_else(|| {
             ws.file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default()
         });
 
-        if is_build_cmd {
-            if let Ok((should_rebuild, _src_hash, comp_hash)) =
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if is_build_cmd
+            && let Ok((should_rebuild, _src_hash, comp_hash)) =
                 mgc_workspace::check_package_build_freshness(ws, &ws_composite_hashes)
-            {
-                if !should_rebuild {
-                    mgc_ui::info(&format!(
-                        "⚡ [cached] {} (core: {}) — source & deps unchanged",
-                        ws.display(),
-                        ws_core_str.unwrap_or("auto")
-                    ));
-                    ws_composite_hashes.insert(ws_name.clone(), comp_hash);
-                    continue;
-                }
-            }
+            && !should_rebuild
+        {
+            mgc_ui::info(&format!(
+                "⚡ [cached] {} (core: {}) — source & deps unchanged",
+                ws.display(),
+                ws_core_str.unwrap_or("auto")
+            ));
+            ws_composite_hashes.insert(ws_name.clone(), comp_hash);
+            continue;
         }
 
         mgc_ui::info(&format!(
@@ -167,16 +182,12 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         if let Err(e) = result {
             failed += 1;
             mgc_ui::error(&format!("{name} failed in '{}': {e:#}", ws.display()));
-        } else if is_build_cmd {
-            if let Ok(src_hash) = mgc_workspace::compute_package_source_hash(ws) {
-                if let Ok(cache) = mgc_workspace::save_package_build_cache(
-                    ws,
-                    src_hash,
-                    ws_composite_hashes.clone(),
-                ) {
-                    ws_composite_hashes.insert(ws_name, cache.composite_hash);
-                }
-            }
+        } else if is_build_cmd
+            && let Ok(src_hash) = mgc_workspace::compute_package_source_hash(ws)
+            && let Ok(cache) =
+                mgc_workspace::save_package_build_cache(ws, src_hash, ws_composite_hashes.clone())
+        {
+            ws_composite_hashes.insert(ws_name, cache.composite_hash);
         }
     }
     std::env::set_current_dir(&original_cwd)?;
@@ -287,7 +298,9 @@ fn reject_unsupported_filter(command: &Commands) -> Result<()> {
 }
 
 fn reject_filter_without_recursive() -> Result<()> {
-    bail!("--filter requires --recursive (it filters workspace targets). Use `mgc <cmd> --recursive --filter <glob>`.")
+    bail!(
+        "--filter requires --recursive (it filters workspace targets). Use `mgc <cmd> --recursive --filter <glob>`."
+    )
 }
 
 fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {

@@ -9,6 +9,111 @@ use std::process::Command;
 use std::time::Instant;
 use tempfile::TempDir;
 
+struct RegistryFixture {
+    _server: mockito::ServerGuard,
+    _mocks: Vec<mockito::Mock>,
+    url: String,
+}
+
+impl RegistryFixture {
+    fn new() -> Self {
+        let mut server = mockito::Server::new();
+        let url = server.url();
+        let metadata = serde_json::json!({
+            "name": "lodash",
+            "dist-tags": { "latest": "4.17.21" },
+            "versions": {
+                "4.17.20": package_metadata(&url, "4.17.20"),
+                "4.17.21": package_metadata(&url, "4.17.21")
+            }
+        });
+        let metadata_mock = server
+            .mock("GET", "/lodash")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(metadata.to_string())
+            .expect_at_least(1)
+            .create();
+        let tarball_420_mock = server
+            .mock("GET", "/lodash/-/lodash-4.17.20.tgz")
+            .with_status(200)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(package_tarball("4.17.20"))
+            .create();
+        let tarball_421_mock = server
+            .mock("GET", "/lodash/-/lodash-4.17.21.tgz")
+            .with_status(200)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(package_tarball("4.17.21"))
+            .create();
+
+        Self {
+            _server: server,
+            _mocks: vec![metadata_mock, tarball_420_mock, tarball_421_mock],
+            url,
+        }
+    }
+}
+
+fn package_metadata(registry_url: &str, version: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": "lodash",
+        "version": version,
+        "dependencies": {},
+        "dist": {
+            "tarball": format!("{registry_url}/lodash/-/lodash-{version}.tgz")
+        }
+    })
+}
+
+fn package_tarball(version: &str) -> Vec<u8> {
+    let package_json = serde_json::json!({
+        "name": "lodash",
+        "version": version,
+        "main": "index.js"
+    })
+    .to_string();
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    append_tar_file(
+        &mut archive,
+        "package/package.json",
+        package_json.as_bytes(),
+    );
+    append_tar_file(&mut archive, "package/index.js", b"module.exports = {};\n");
+    archive.finish().expect("finish package tarball");
+    archive
+        .into_inner()
+        .expect("extract gzip encoder")
+        .finish()
+        .expect("finish gzip stream")
+}
+
+fn append_tar_file(
+    archive: &mut tar::Builder<flate2::write::GzEncoder<Vec<u8>>>,
+    path: &str,
+    content: &[u8],
+) {
+    let mut header = tar::Header::new_gnu();
+    header.set_mode(0o644);
+    header.set_size(content.len() as u64);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, path, content)
+        .expect("append package file");
+}
+
+fn install_command(mgc: &str, project: &Path, cache_dir: &Path, registry_url: &str) -> Command {
+    let mut command = Command::new(mgc);
+    command
+        .arg("install")
+        .current_dir(project)
+        .env("MGC_CACHE_DIR", cache_dir)
+        .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
+        .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url);
+    command
+}
+
 fn find_mgc_binary() -> String {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let cli_dir = std::path::PathBuf::from(manifest_dir);
@@ -52,9 +157,6 @@ fn create_test_project(temp: &TempDir, name: &str, core: &str) -> PathBuf {
 name = "cache-test-lib"
 version = "0.1.0"
 edition = "2021"
-
-[dependencies]
-serde = "1.0"
 "#,
             )
             .unwrap();
@@ -90,6 +192,7 @@ fn test_cache_cold_vs_warm() {
 
     let temp = TempDir::new().unwrap();
     let mgc = find_mgc_binary();
+    let registry = RegistryFixture::new();
 
     // Test with Web core (npm packages)
     let project1 = create_test_project(&temp, "project1", "web");
@@ -103,10 +206,7 @@ fn test_cache_cold_vs_warm() {
     clear_cache(&cache_dir);
 
     let cold_start = Instant::now();
-    let cold_output = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project1)
-        .env("MGC_CACHE_DIR", &cache_dir)
+    let cold_output = install_command(&mgc, &project1, &cache_dir, &registry.url)
         .output()
         .expect("mgc install failed");
     let cold_duration = cold_start.elapsed();
@@ -126,10 +226,7 @@ fn test_cache_cold_vs_warm() {
     // Cache should exist from project1 install
 
     let warm_start = Instant::now();
-    let warm_output = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project2)
-        .env("MGC_CACHE_DIR", &cache_dir)
+    let warm_output = install_command(&mgc, &project2, &cache_dir, &registry.url)
         .output()
         .expect("mgc install failed");
     let warm_duration = warm_start.elapsed();
@@ -173,16 +270,14 @@ fn test_corrupted_cache_recovery() {
 
     let temp = TempDir::new().unwrap();
     let mgc = find_mgc_binary();
+    let registry = RegistryFixture::new();
     let project = create_test_project(&temp, "corrupt-test", "web");
 
     let cache_dir = temp.path().join("cache-corrupted");
 
     // Step 1: Normal install to populate cache
     println!("\n=== Populate cache ===");
-    let output1 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
-        .env("MGC_CACHE_DIR", &cache_dir)
+    let output1 = install_command(&mgc, &project, &cache_dir, &registry.url)
         .output()
         .expect("mgc install failed");
 
@@ -231,10 +326,7 @@ fn test_corrupted_cache_recovery() {
 
     // Step 3: Try install with corrupted cache
     println!("\n=== Install with corrupted cache ===");
-    let output2 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
-        .env("MGC_CACHE_DIR", &cache_dir)
+    let output2 = install_command(&mgc, &project, &cache_dir, &registry.url)
         .output()
         .expect("mgc install failed");
 
@@ -271,11 +363,13 @@ fn test_concurrent_install_safety() {
 
     let temp = TempDir::new().unwrap();
     let mgc = find_mgc_binary();
+    let registry = RegistryFixture::new();
 
     let project1 = create_test_project(&temp, "concurrent1", "web");
     let project2 = create_test_project(&temp, "concurrent2", "web");
 
     let cache_dir = temp.path().join("cache-concurrent");
+    let registry_url = registry.url.clone();
     clear_cache(&cache_dir);
 
     println!("\n=== Concurrent install test ===");
@@ -284,24 +378,16 @@ fn test_concurrent_install_safety() {
     let mgc1 = mgc.clone();
     let proj1 = project1.clone();
     let cache1 = cache_dir.clone();
-    let handle1 = std::thread::spawn(move || {
-        Command::new(&mgc1)
-            .arg("install")
-            .current_dir(&proj1)
-            .env("MGC_CACHE_DIR", &cache1)
-            .output()
-    });
+    let registry1 = registry_url.clone();
+    let handle1 =
+        std::thread::spawn(move || install_command(&mgc1, &proj1, &cache1, &registry1).output());
 
     let mgc2 = mgc.clone();
     let proj2 = project2.clone();
     let cache2 = cache_dir.clone();
-    let handle2 = std::thread::spawn(move || {
-        Command::new(&mgc2)
-            .arg("install")
-            .current_dir(&proj2)
-            .env("MGC_CACHE_DIR", &cache2)
-            .output()
-    });
+    let registry2 = registry_url;
+    let handle2 =
+        std::thread::spawn(move || install_command(&mgc2, &proj2, &cache2, &registry2).output());
 
     // Wait for both
     let result1 = handle1.join().unwrap().expect("Thread 1 failed");
@@ -389,6 +475,7 @@ fn test_cache_version_invalidation() {
 
     let temp = TempDir::new().unwrap();
     let mgc = find_mgc_binary();
+    let registry = RegistryFixture::new();
     let project = temp.path().join("version-test");
     std::fs::create_dir_all(&project).unwrap();
 
@@ -410,10 +497,7 @@ fn test_cache_version_invalidation() {
     .unwrap();
     std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
 
-    let output1 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
-        .env("MGC_CACHE_DIR", &cache_dir)
+    let output1 = install_command(&mgc, &project, &cache_dir, &registry.url)
         .output()
         .expect("mgc install failed");
 
@@ -439,10 +523,7 @@ fn test_cache_version_invalidation() {
     )
     .unwrap();
 
-    let output2 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
-        .env("MGC_CACHE_DIR", &cache_dir)
+    let output2 = install_command(&mgc, &project, &cache_dir, &registry.url)
         .output()
         .expect("mgc install failed");
 
@@ -492,16 +573,14 @@ fn test_cross_core_cache_isolation() {
 
     let temp = TempDir::new().unwrap();
     let mgc = find_mgc_binary();
+    let registry = RegistryFixture::new();
     let cache_dir = temp.path().join("cache-cross-core");
     clear_cache(&cache_dir);
 
     // Step 1: Install Web project with lodash
     println!("\n=== Install Web project (lodash) ===");
     let web_project = create_test_project(&temp, "web-proj", "web");
-    let output1 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&web_project)
-        .env("MGC_CACHE_DIR", &cache_dir)
+    let output1 = install_command(&mgc, &web_project, &cache_dir, &registry.url)
         .output()
         .expect("mgc install failed");
 

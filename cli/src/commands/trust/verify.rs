@@ -1,7 +1,7 @@
 //! mgc trust verify — Verify lockfile signature
 //! mgc trust verify — Xác minh chữ ký lockfile
 
-use mgc_lockfile::{verification_status_message, verify_lockfile, VerificationStatus};
+use mgc_lockfile::{VerificationStatus, verification_status_message, verify_lockfile};
 use std::path::Path;
 
 /// Execute `mgc trust verify` — Thực thi `mgc trust verify`

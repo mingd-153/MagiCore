@@ -1,7 +1,7 @@
 //! Deny package lifecycle scripts — trust deny command
 //! Từ chối package chạy lifecycle scripts — lệnh trust deny
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use mgc_store::{Database, Layout};
 use std::env;
 

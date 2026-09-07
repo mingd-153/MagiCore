@@ -1,5 +1,5 @@
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 use mgc_ui::info;
 
 pub async fn run() -> Result<()> {

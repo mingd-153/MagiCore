@@ -25,6 +25,14 @@ grep -q '7b1c307e0dcbda6122208f10795a713336a9b35a' "$ROOT/.github/workflows/ci.y
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ROOT/.github/workflows/ci.yml" || fail "CI Rust toolchain pin must resolve to stable"
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ALL_CORE" || fail "all-core Rust toolchain pin must resolve to stable"
 
+setup_go_sha='924ae3a1cded613372ab5595356fb5720e22ba16'
+setup_go_count="$(grep -c "actions/setup-go@${setup_go_sha}" "$ALL_CORE")"
+[[ "$setup_go_count" -eq 4 ]] || fail "all-core lifecycle must provision pinned Go for all four core jobs"
+go_version_count="$(grep -c 'go-version: "1.27.1"' "$ALL_CORE")"
+[[ "$go_version_count" -eq 4 ]] || fail "all-core lifecycle must pin Go 1.27.1 for all four core jobs"
+grep -q "actions/setup-go@${setup_go_sha}" "$RELEASE" || fail "release builds must provision pinned Go for esbuild-rs"
+grep -q 'go-version: "1.27.1"' "$RELEASE" || fail "release builds must pin Go 1.27.1"
+
 if grep -Eq 'uses: [^ ]+@(v[0-9]+|main|master|stable|latest)([[:space:]]|$)' "$ALL_CORE"; then
   fail "all-core workflow contains floating action references"
 fi

@@ -1,7 +1,7 @@
 //! Centralized CLI error messages (English only — RULE §7).
 //! Mọi error message của CLI định nghĩa tập trung tại đây.
 
-use anyhow::{anyhow, Error};
+use anyhow::{Error, anyhow};
 
 /// `mgc remove-ai <pkg> [pkg...]` — name packages to remove
 pub fn remove_ai_usage() -> Error {
@@ -157,18 +157,32 @@ pub fn cwd_deleted(e: &std::io::Error) -> Error {
 /// không detect được project theo core kind
 pub fn no_mgc_project_found(kind: &str) -> Error {
     let msg = match kind {
-        "game" => "No MagiCore game project found (missing mgc.toml with ecosystem = \"game\" \
-                   or project.godot/Packages/manifest.json/.uproject/Cargo.toml in the current project)",
-        "iot" => "No MagiCore IoT project found (missing mgc.toml with ecosystem = \"iot\" \
-                  or platformio.ini/west.yml/Cargo.toml in the current project)",
-        "lib" | "library" => "No MagiCore library project found (missing mgc.toml with \
-                  ecosystem = \"lib\" or Cargo.toml/package.json/pyproject.toml in the current project)",
-        "clo" | "cloud" => "No MagiCore cloud project found (missing mgc.toml with ecosystem = \"cloud\" \
-                  or Pulumi.yaml/*.tf/cdk package.json in the current project)",
-        "app" => "No MagiCore app project found (missing mgc.toml with ecosystem = \"app\" \
-                  or pubspec.yaml/build.gradle/.kts/Package.swift in the current project)",
-        "web" => "No MagiCore project found (missing .magicore/project.toml or package.json in the current project)",
-        _ => "No MagiCore project found (missing mgc.toml or known project manifest in the current directory tree)",
+        "game" => {
+            "No MagiCore game project found (missing mgc.toml with ecosystem = \"game\" \
+                   or project.godot/Packages/manifest.json/.uproject/Cargo.toml in the current project)"
+        }
+        "iot" => {
+            "No MagiCore IoT project found (missing mgc.toml with ecosystem = \"iot\" \
+                  or platformio.ini/west.yml/Cargo.toml in the current project)"
+        }
+        "lib" | "library" => {
+            "No MagiCore library project found (missing mgc.toml with \
+                  ecosystem = \"lib\" or Cargo.toml/package.json/pyproject.toml in the current project)"
+        }
+        "clo" | "cloud" => {
+            "No MagiCore cloud project found (missing mgc.toml with ecosystem = \"cloud\" \
+                  or Pulumi.yaml/*.tf/cdk package.json in the current project)"
+        }
+        "app" => {
+            "No MagiCore app project found (missing mgc.toml with ecosystem = \"app\" \
+                  or pubspec.yaml/build.gradle/.kts/Package.swift in the current project)"
+        }
+        "web" => {
+            "No MagiCore project found (missing .magicore/project.toml or package.json in the current project)"
+        }
+        _ => {
+            "No MagiCore project found (missing mgc.toml or known project manifest in the current directory tree)"
+        }
     };
     anyhow!(msg)
 }
@@ -750,7 +764,9 @@ pub fn build_not_supported(core: &str, guidance: &str) -> Error {
 
 /// Build completed without producing any artifact — build không tạo được artifact nào.
 pub fn build_no_artifact() -> Error {
-    anyhow!("build produced no artifact; fix the project configuration or install the required toolchain")
+    anyhow!(
+        "build produced no artifact; fix the project configuration or install the required toolchain"
+    )
 }
 
 pub fn workspace_failed(count: usize) -> Error {
@@ -787,13 +803,25 @@ pub fn core_not_in_build(core: &str) -> Error {
 
 pub fn detect_core_failed(kind: &str) -> Error {
     let msg = match kind {
-        "game" => "Cannot detect a game project here (missing mgc.toml/project.godot/manifest.json/.uproject).",
-        "ai" => "Cannot detect an ai project here (missing mgc.toml [ai] framework / pyproject [tool.magicore] framework).",
-        "clo" | "cloud" => "Cannot detect a cloud project here (missing mgc.toml/Pulumi.yaml/*.tf/cdk package.json).",
-        "cicd" => "Cannot detect a cicd project here (missing mgc.toml/wrangler.toml/argocd/.github/workflows).",
+        "game" => {
+            "Cannot detect a game project here (missing mgc.toml/project.godot/manifest.json/.uproject)."
+        }
+        "ai" => {
+            "Cannot detect an ai project here (missing mgc.toml [ai] framework / pyproject [tool.magicore] framework)."
+        }
+        "clo" | "cloud" => {
+            "Cannot detect a cloud project here (missing mgc.toml/Pulumi.yaml/*.tf/cdk package.json)."
+        }
+        "cicd" => {
+            "Cannot detect a cicd project here (missing mgc.toml/wrangler.toml/argocd/.github/workflows)."
+        }
         "iot" => "Cannot detect an iot project here (missing mgc.toml/platformio.ini/west.yml).",
-        "app" => "Cannot detect an app project here (missing mgc.toml/pubspec.yaml/build.gradle/Package.swift).",
-        "hardware" => "Cannot detect a hardware project here (missing mgc.toml with ecosystem = \"hardware\").",
+        "app" => {
+            "Cannot detect an app project here (missing mgc.toml/pubspec.yaml/build.gradle/Package.swift)."
+        }
+        "hardware" => {
+            "Cannot detect a hardware project here (missing mgc.toml with ecosystem = \"hardware\")."
+        }
         "lib" => "Cannot detect a lib project here (missing mgc.toml/lib marker).",
         _ => "Cannot detect a project here.",
     };

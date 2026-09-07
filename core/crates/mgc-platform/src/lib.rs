@@ -7,5 +7,5 @@
 pub mod fs_semaphore;
 pub mod paths;
 pub mod reflink;
-pub use fs_semaphore::{global_fs_write_semaphore, MAX_CONCURRENT_FS_WRITES};
+pub use fs_semaphore::{MAX_CONCURRENT_FS_WRITES, global_fs_write_semaphore};
 pub mod prelude {}

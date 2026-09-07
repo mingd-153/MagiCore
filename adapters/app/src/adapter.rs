@@ -1,7 +1,7 @@
 //! PackageAdapter implementation for app cores.
 //! Giữ orchestration app riêng khỏi phần detect language và SBOM.
 
-use crate::language::{detect_language, manifest_is_app, AppLanguage};
+use crate::language::{AppLanguage, detect_language, manifest_is_app};
 use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,

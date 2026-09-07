@@ -33,20 +33,23 @@ impl GameEngine {
 }
 
 pub fn detect_engine(root: &Path) -> Option<GameEngine> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco != "game" && v.get("game").is_none() {
-                    return None;
-                }
-            }
-            if let Some(engine) = v
-                .get("game")
-                .and_then(|g| g.get("engine"))
-                .and_then(|e| e.as_str())
-            {
-                return GameEngine::from_str(engine);
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem")
+            .and_then(|e| e.as_str())
+            .is_some_and(|eco| eco != "game")
+            && v.get("game").is_none()
+        {
+            return None;
+        }
+        if let Some(engine) = v
+            .get("game")
+            .and_then(|g| g.get("engine"))
+            .and_then(|e| e.as_str())
+        {
+            return GameEngine::from_str(engine);
         }
     }
     if root.join("project.godot").exists() {
@@ -69,16 +72,15 @@ pub fn detect_engine(root: &Path) -> Option<GameEngine> {
 }
 
 pub(crate) fn manifest_is_game(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco == "game" {
-                    return true;
-                }
-            }
-            if v.get("game").is_some() {
-                return true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem").and_then(|e| e.as_str()) == Some("game") {
+            return true;
+        }
+        if v.get("game").is_some() {
+            return true;
         }
     }
     root.join("project.godot").exists()

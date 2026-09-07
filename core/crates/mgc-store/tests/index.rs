@@ -106,9 +106,11 @@ fn missing_msgpack_rebuilds_empty_without_error() {
     let layout = Layout::new(dir.path().to_path_buf());
     let db = Database::open(&dir.path().join("store.db")).unwrap();
     let index = StoreIndex::open(&layout, db).unwrap();
-    assert!(index
-        .verify_package(&mgc_types::PackageId::parse("x@1.0.0").unwrap())
-        .is_none());
+    assert!(
+        index
+            .verify_package(&mgc_types::PackageId::parse("x@1.0.0").unwrap())
+            .is_none()
+    );
 }
 
 #[test]

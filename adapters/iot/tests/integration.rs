@@ -2,9 +2,9 @@
 //! Integration tests for mgc-iot-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_framework (ESP32-Rust, PlatformIO, Zephyr), board mapping, PackageAdapter trait.
 
-use mgc_iot_adapter::{adapter_for, detect_framework, generate_sbom, IotFramework};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_iot_adapter::{IotFramework, adapter_for, detect_framework, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

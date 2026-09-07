@@ -8,7 +8,7 @@ use mgc_store::{ContentStore, Layout, PackageCache};
 use mgc_types::adapter::ResolvedPackage;
 use mgc_types::{MgError, MgResult, PackageId};
 
-use crate::cache::{download_concurrency_limit, SharedWebCache};
+use crate::cache::{SharedWebCache, download_concurrency_limit};
 use crate::install::extract::{
     ensure_extracted_package_root, ensure_extracted_package_root_from_bytes, tarball_prefetch_lock,
 };
@@ -88,22 +88,22 @@ pub async fn prefetch_tarballs(
                 let _ = std::fs::remove_file(local_cache.tarball_path(&pkg_clone.id));
             }
 
-            if let Some(shared_package_cache) = shared_package_cache.as_ref() {
-                if let Some(bytes) = shared_package_cache
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(shared_package_cache) = shared_package_cache.as_ref()
+                && let Some(bytes) = shared_package_cache
                     .get_tarball(&pkg_clone.id)
                     .map_err(|e| MgError::Store(e.to_string()))?
-                {
-                    if verify_tarball_integrity(&pkg_clone, &bytes).is_ok() {
-                        local_cache
-                            .cache_tarball_from_path(
-                                &pkg_clone.id,
-                                &shared_package_cache.tarball_path(&pkg_clone.id),
-                            )
-                            .map_err(|e| MgError::Store(e.to_string()))?;
-                        return Ok::<_, MgError>(PrefetchOutcome::CacheHit(bytes.len() as u64));
-                    }
-                    let _ = std::fs::remove_file(shared_package_cache.tarball_path(&pkg_clone.id));
+            {
+                if verify_tarball_integrity(&pkg_clone, &bytes).is_ok() {
+                    local_cache
+                        .cache_tarball_from_path(
+                            &pkg_clone.id,
+                            &shared_package_cache.tarball_path(&pkg_clone.id),
+                        )
+                        .map_err(|e| MgError::Store(e.to_string()))?;
+                    return Ok::<_, MgError>(PrefetchOutcome::CacheHit(bytes.len() as u64));
                 }
+                let _ = std::fs::remove_file(shared_package_cache.tarball_path(&pkg_clone.id));
             }
 
             let url = package_tarball_url(registry.registry_url(), &pkg_clone);

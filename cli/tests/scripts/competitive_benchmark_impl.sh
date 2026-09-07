@@ -34,7 +34,8 @@ fi
 
 echo "Using mgc: $MGC_BIN"
 MGC_VERSION=$("$MGC_BIN" --version 2>/dev/null || echo "unknown")
-PNPM_VERSION=$(pnpm --version 2>/dev/null || echo "unknown")
+PNPM_BIN=$(command -v pnpm)
+PNPM_VERSION=$("$PNPM_BIN" --version 2>/dev/null || echo "unknown")
 echo "mgc version: $MGC_VERSION"
 echo "pnpm version: $PNPM_VERSION"
 echo
@@ -49,7 +50,6 @@ echo
 
 # SAFETY: Create isolated HOME to prevent destroying user's real cache
 ISOLATED_HOME=$(mktemp -d)
-export HOME="$ISOLATED_HOME"
 echo "🔒 Using isolated HOME: $ISOLATED_HOME"
 echo
 
@@ -83,20 +83,18 @@ declare -a MGC_TIMES=()
 for i in $(seq 1 $NUM_RUNS); do
     echo "--- Run $i/$NUM_RUNS ---"
 
-    # pnpm
+    # Give every tool a fresh HOME/store on every run so all samples are cold.
+    # Mỗi tool dùng HOME/store mới ở từng run để mọi sample đều là cold.
     PNPM_DIR="$TEMP_BASE/pnpm-run-$i"
+    PNPM_HOME="$ISOLATED_HOME/pnpm-run-$i"
     mkdir -p "$PNPM_DIR"
+    mkdir -p "$PNPM_HOME"
     echo "$TEST_MANIFEST" > "$PNPM_DIR/package.json"
     cd "$PNPM_DIR"
 
-    # pnpm store prune must succeed
-    if ! pnpm store prune --force >/dev/null 2>&1; then
-        echo "✗ FAIL: pnpm store prune failed (run $i)"
-        exit 1
-    fi
-    
     START=$(date +%s%N)
-    if pnpm install --no-lockfile --force >/dev/null 2>&1; then
+    if HOME="$PNPM_HOME" XDG_CACHE_HOME="$PNPM_HOME/.cache" \
+        "$PNPM_BIN" install --no-lockfile --force --store-dir "$PNPM_HOME/store" >/dev/null 2>&1; then
         END=$(date +%s%N)
         DURATION=$(( (END - START) / 1000000 ))
         PNPM_TIMES+=("$DURATION")
@@ -108,14 +106,15 @@ for i in $(seq 1 $NUM_RUNS); do
 
     # mgc
     MGC_DIR="$TEMP_BASE/mgc-run-$i"
+    MGC_HOME="$ISOLATED_HOME/mgc-run-$i"
     mkdir -p "$MGC_DIR"
+    mkdir -p "$MGC_HOME"
     echo "$TEST_MANIFEST" > "$MGC_DIR/package.json"
     cd "$MGC_DIR"
 
-    # Clear mgc cache (safe: isolated HOME)
-    rm -rf ~/.magicore/store ~/.mgc/cache 2>/dev/null || true
     START=$(date +%s%N)
-    if "$MGC_BIN" --core web install >/dev/null 2>&1; then
+    if HOME="$MGC_HOME" XDG_CACHE_HOME="$MGC_HOME/.cache" MGC_CACHE_DIR="$MGC_HOME/.mgc" \
+        "$MGC_BIN" --core web install >/dev/null 2>&1; then
         END=$(date +%s%N)
         DURATION=$(( (END - START) / 1000000 ))
         MGC_TIMES+=("$DURATION")
@@ -167,10 +166,10 @@ echo
 if [ "$PNPM_MEDIAN" -gt 0 ] && [ "$MGC_MEDIAN" -gt 0 ]; then
     SPEEDUP=$(echo "scale=2; $PNPM_MEDIAN / $MGC_MEDIAN" | bc)
     if (( $(echo "$SPEEDUP > 1" | bc -l) )); then
-        echo "Result: mgc ${SPEEDUP}x faster than pnpm (median)"
+        echo "Observed ratio in this run: mgc ${SPEEDUP}x pnpm median (not a public claim)"
     else
         SLOWDOWN=$(echo "scale=2; $MGC_MEDIAN / $PNPM_MEDIAN" | bc)
-        echo "Result: mgc ${SLOWDOWN}x slower than pnpm (median)"
+        echo "Observed ratio in this run: mgc uses ${SLOWDOWN}x pnpm median time (not a public claim)"
     fi
 fi
 
@@ -206,7 +205,7 @@ cat > "$JSON_FILE" <<EOF
   },
   "methodology": {
     "runs": $NUM_RUNS,
-    "cache_cleared": true,
+    "cache_mode": "fresh_home_per_tool_per_run",
     "metrics": ["median", "p95"]
   },
   "results": {

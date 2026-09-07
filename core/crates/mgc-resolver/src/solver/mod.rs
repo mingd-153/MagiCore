@@ -236,27 +236,28 @@ pub fn check_dependency_confusion(
                     "Dependency confusion: '{}' is both workspace package and external dep. Use \"workspace:*\".", dep.name
                 ));
         }
-        if dep.name.starts_with('@') {
-            if let Some(scope) = dep.name.split('/').next() {
-                if let Some(expected) = scoped_registries.get(scope) {
-                    if dep.registry.as_deref() != Some(expected.as_str()) {
-                        warnings.push(format!(
-                            "Dependency confusion: '{}' should resolve from '{}' but resolves from '{}'",
-                            dep.name, expected, dep.registry.as_deref().unwrap_or("public npm")
-                        ));
-                    }
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if dep.name.starts_with('@')
+            && let Some(scope) = dep.name.split('/').next()
+            && let Some(expected) = scoped_registries.get(scope)
+            && dep.registry.as_deref() != Some(expected.as_str())
+        {
+            warnings.push(format!(
+                "Dependency confusion: '{}' should resolve from '{}' but resolves from '{}'",
+                dep.name,
+                expected,
+                dep.registry.as_deref().unwrap_or("public npm")
+            ));
         }
-        if !trusted_registries.is_empty() {
-            if let Some(ref reg) = dep.registry {
-                if !trusted_registries.contains(reg) {
-                    warnings.push(format!(
-                        "Dependency confusion: '{}' from '{}' not in trusted registries",
-                        dep.name, reg
-                    ));
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if !trusted_registries.is_empty()
+            && let Some(ref reg) = dep.registry
+            && !trusted_registries.contains(reg)
+        {
+            warnings.push(format!(
+                "Dependency confusion: '{}' from '{}' not in trusted registries",
+                dep.name, reg
+            ));
         }
         // Typosquat check: Levenshtein distance against top npm packages
         if !dep.name.starts_with('@') && !dep.name.contains('/') {
@@ -420,12 +421,12 @@ impl Resolver {
         spec: &str,
         versions: &[Version],
     ) -> Option<Version> {
-        if *self.dedupe_pref.read().unwrap() == DedupePref::PreferExisting {
-            if let Some(existing) = self.existing_versions.read().unwrap().get(name) {
-                if constraint.matches(existing) {
-                    return Some(existing.clone());
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if *self.dedupe_pref.read().unwrap() == DedupePref::PreferExisting
+            && let Some(existing) = self.existing_versions.read().unwrap().get(name)
+            && constraint.matches(existing)
+        {
+            return Some(existing.clone());
         }
         Self::select_best_version(versions, constraint, spec)
     }
@@ -629,7 +630,7 @@ impl Resolver {
                     None => {
                         return Err(SolveError {
                             message: format!("no version of '{}' matches '{}'", name_str, spec),
-                        })
+                        });
                     }
                 }
             }

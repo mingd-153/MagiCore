@@ -13,6 +13,6 @@ pub mod cache;
 pub mod install;
 pub mod native;
 
-pub use adapter::{adapter_for, adapter_for_with_chain, LibAdapter};
+pub use adapter::{LibAdapter, adapter_for, adapter_for_with_chain};
 pub use sbom::generate_sbom;
 pub use tooling::check_pip_allowed;

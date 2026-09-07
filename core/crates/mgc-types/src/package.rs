@@ -189,12 +189,13 @@ impl DependencySpec {
     }
 
     pub fn parse(input: &str) -> MgResult<Self> {
-        if let Some(idx) = input.rfind('@') {
-            if idx > 0 {
-                let name = PackageName::new(&input[..idx])?;
-                let range = VersionRange::parse(&input[idx + 1..])?;
-                return Ok(Self::new(name, range));
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(idx) = input.rfind('@')
+            && idx > 0
+        {
+            let name = PackageName::new(&input[..idx])?;
+            let range = VersionRange::parse(&input[idx + 1..])?;
+            return Ok(Self::new(name, range));
         }
         Ok(Self::new(PackageName::new(input)?, VersionRange::star()))
     }
@@ -221,22 +222,22 @@ fn match_single_range(range: &str, version: &Version) -> bool {
             && version >= &target;
     }
     // Enhanced: Handle wildcard ranges with comparison operators (>=22.x, <=24.x)
-    if range.starts_with(">=")
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if (range.starts_with(">=")
         || range.starts_with("<=")
         || range.starts_with('>')
-        || range.starts_with('<')
+        || range.starts_with('<'))
+        && let Some((low, high)) = parse_wildcard_bounds(range)
     {
-        if let Some((low, high)) = parse_wildcard_bounds(range) {
-            // For >= and >, check lower bound; for <= and <, check upper bound
-            if range.starts_with(">=") {
-                return version >= &low;
-            } else if range.starts_with(">") {
-                return version > &low;
-            } else if range.starts_with("<=") {
-                return version < &high;
-            } else if range.starts_with("<") {
-                return version < &low;
-            }
+        // For >= and >, check lower bound; for <= and <, check upper bound
+        if range.starts_with(">=") {
+            return version >= &low;
+        } else if range.starts_with(">") {
+            return version > &low;
+        } else if range.starts_with("<=") {
+            return version < &high;
+        } else if range.starts_with("<") {
+            return version < &low;
         }
     }
     if let Some(target) = range

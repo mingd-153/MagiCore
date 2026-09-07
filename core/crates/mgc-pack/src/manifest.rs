@@ -1,6 +1,6 @@
 /// Manifest sanitize — exportable manifest như pnpm (01 §4.4)
 /// Bỏ private/publishConfig, ghi đè name/version theo trạng thái thật.
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::{Map, Value};
 
 /// Result: manifest sạch để đăng + các trường dependencies giữ nguyên.

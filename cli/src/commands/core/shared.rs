@@ -5,15 +5,15 @@ use anyhow::Result;
 use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
 use mgc_types::{
-    adapter::PreparedAdd, DependencySpec, Ecosystem, Manifest, PackageId, PackageName,
-    ResolvedGraph, ResolvedPackage, Version,
+    DependencySpec, Ecosystem, Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage,
+    Version, adapter::PreparedAdd,
 };
 use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
     print_install_summary, style_cmd, success,
 };
 #[cfg(feature = "web")]
-use time::{format_description::well_known::Rfc3339, Duration as TimeDuration, OffsetDateTime};
+use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 #[allow(dead_code)]
 pub fn find_project_root(cwd: &Path) -> Result<Option<PathBuf>> {
@@ -758,14 +758,14 @@ fn load_locked_graph(
                         Ok(()) => true,
                         Err(sign_err) => {
                             mgc_ui::warning(&format!(
-                                    "writing UNSIGNED mgc.lock (signing unavailable: {sign_err}) — run `mgc trust sign`"
-                                ));
+                                "writing UNSIGNED mgc.lock (signing unavailable: {sign_err}) — run `mgc trust sign`"
+                            ));
                             match mgc_lockfile::write_lockfile(&imported, &lock_path) {
                                 Ok(()) => false,
                                 Err(write_err) => {
                                     mgc_ui::warning(&format!(
-                                            "cannot persist imported mgc.lock: {write_err} — falling back to full resolution"
-                                        ));
+                                        "cannot persist imported mgc.lock: {write_err} — falling back to full resolution"
+                                    ));
                                     return Ok(None);
                                 }
                             }
@@ -1149,7 +1149,7 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
 /// Detect AI runtime from project
 /// Phát hiện runtime AI từ project
 fn detect_ai_runtime(
-    _root: &std::path::Path,
+    root: &std::path::Path,
     framework: &str,
 ) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
     use crate::commands::optimizer::runtime_detect::DetectedRuntime;
@@ -1158,8 +1158,13 @@ fn detect_ai_runtime(
         "python-agent" | "mcp-server" => {
             // SAFETY: Don't assume PyTorch for generic Python AI frameworks
             // AN TOÀN: Không giả định PyTorch cho framework Python AI chung
-            // TODO: Parse requirements.txt/pyproject.toml to detect actual framework
-            DetectedRuntime::Unknown
+            if crate::commands::optimizer::runtime_detect::python_project_declares_package(
+                root, "torch",
+            ) {
+                DetectedRuntime::PythonPyTorch
+            } else {
+                DetectedRuntime::Unknown
+            }
         }
         "pytorch" | "PyTorch" => DetectedRuntime::PythonPyTorch,
         "candle" | "Candle" => DetectedRuntime::RustCandle,

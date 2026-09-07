@@ -56,8 +56,7 @@ pub fn handle(cmd: TelemetryCmd) -> Result<()> {
             lines.push(format!("MAGICORE_TELEMETRY={}", if on { "1" } else { "0" }));
             std::fs::write(&env_file, lines.join("\n") + "\n")?;
             println!(
-                "telemetry: {} (add a line to ~/.config/magicore/env — the shell prompt must source it; default OFF if absent)"
-                ,
+                "telemetry: {} (add a line to ~/.config/magicore/env — the shell prompt must source it; default OFF if absent)",
                 if on { "ON" } else { "OFF" }
             );
         }

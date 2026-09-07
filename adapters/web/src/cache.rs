@@ -6,8 +6,8 @@ use std::sync::{Mutex, OnceLock};
 use mgc_resolver::DependencyError;
 use mgc_store::{Layout, PackageCache};
 use mgc_types::{
-    adapter::{ResolvedGraph, ResolvedPackage},
     MgResult,
+    adapter::{ResolvedGraph, ResolvedPackage},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

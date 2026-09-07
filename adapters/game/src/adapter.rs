@@ -1,7 +1,7 @@
 //! PackageAdapter implementation for game cores.
 //! Điều phối Bevy/Godot/Unity/Unreal riêng khỏi detect và helper tooling.
 
-use crate::engine::{detect_engine, manifest_is_game, GameEngine};
+use crate::engine::{GameEngine, detect_engine, manifest_is_game};
 use crate::tooling::{bevy_dep_version, exec_tool, placeholder_id};
 use async_trait::async_trait;
 use mgc_types::adapter::{
@@ -111,7 +111,8 @@ impl PackageAdapter for GameAdapter {
                 self.engine.as_str()
             ))),
             GameEngine::Unity => Err(mgc_types::MgError::Other(
-                "unity add via UPM CLI (Read-and-Verify) is P2 — awaiting spike (03 §7 Q1)".to_string(),
+                "unity add via UPM CLI (Read-and-Verify) is P2 — awaiting spike (03 §7 Q1)"
+                    .to_string(),
             )),
         }
     }

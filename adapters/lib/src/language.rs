@@ -14,25 +14,28 @@ type ManifestProbe = fn(&Path) -> Option<String>;
 
 pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
     let mgc_toml = root.join("mgc.toml");
-    if let Ok(content) = std::fs::read_to_string(&mgc_toml) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco != "lib" && v.get("lib").is_none() {
-                    return None;
-                }
-            }
-            if let Some(lang) = v
-                .get("lib")
-                .and_then(|l| l.get("language"))
-                .and_then(|l| l.as_str())
-            {
-                return match lang {
-                    "ts" | "typescript" => Some(LibLanguage::Ts),
-                    "rust" => Some(LibLanguage::Rust),
-                    "python" => Some(LibLanguage::Python),
-                    _ => None,
-                };
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(&mgc_toml)
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem")
+            .and_then(|e| e.as_str())
+            .is_some_and(|eco| eco != "lib")
+            && v.get("lib").is_none()
+        {
+            return None;
+        }
+        if let Some(lang) = v
+            .get("lib")
+            .and_then(|l| l.get("language"))
+            .and_then(|l| l.as_str())
+        {
+            return match lang {
+                "ts" | "typescript" => Some(LibLanguage::Ts),
+                "rust" => Some(LibLanguage::Rust),
+                "python" => Some(LibLanguage::Python),
+                _ => None,
+            };
         }
     }
     if root.join("package.json").exists() {
@@ -48,16 +51,15 @@ pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
 }
 
 pub(crate) fn manifest_is_lib(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco == "lib" {
-                    return true;
-                }
-            }
-            if v.get("lib").is_some() {
-                return true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem").and_then(|e| e.as_str()) == Some("lib") {
+            return true;
+        }
+        if v.get("lib").is_some() {
+            return true;
         }
     }
     let probes: [(&Path, ManifestProbe); 3] = [
@@ -66,12 +68,11 @@ pub(crate) fn manifest_is_lib(root: &Path) -> bool {
         (&root.join("pyproject.toml"), probe_pyproject),
     ];
     for (path, probe) in probes {
-        if path.exists() {
-            if let Some(eco) = probe(path) {
-                if eco == "lib" {
-                    return true;
-                }
-            }
+        if path.exists()
+            && let Some(eco) = probe(path)
+            && eco == "lib"
+        {
+            return true;
         }
     }
     false

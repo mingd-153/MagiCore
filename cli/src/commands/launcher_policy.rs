@@ -78,10 +78,6 @@ pub struct LauncherPolicy {
     /// Whether to allow dangerous permissions (default: false)
     /// Cho phép quyền nguy hiểm hay không (mặc định: false)
     pub allow_dangerous_permissions: bool,
-
-    /// Whether this is a DevServer context (more permissive than Install)
-    /// Context DevServer hay không (dễ dãi hơn Install)
-    pub is_dev_server: bool,
 }
 
 impl LauncherPolicy {
@@ -91,7 +87,6 @@ impl LauncherPolicy {
         Self {
             runtime,
             allow_dangerous_permissions: false,
-            is_dev_server: true,
         }
     }
 
@@ -101,7 +96,6 @@ impl LauncherPolicy {
         Self {
             runtime,
             allow_dangerous_permissions: false,
-            is_dev_server: false,
         }
     }
 
@@ -166,12 +160,16 @@ mod tests {
     #[test]
     fn test_deno_rejects_dangerous_permissions() {
         let policy = LauncherPolicy::dev_server(Runtime::Deno);
-        assert!(policy
-            .validate_args(&["--allow-read", "script.ts"])
-            .is_err());
-        assert!(policy
-            .validate_args(&["--allow-write", "script.ts"])
-            .is_err());
+        assert!(
+            policy
+                .validate_args(&["--allow-read", "script.ts"])
+                .is_err()
+        );
+        assert!(
+            policy
+                .validate_args(&["--allow-write", "script.ts"])
+                .is_err()
+        );
         assert!(policy.validate_args(&["--allow-net", "script.ts"]).is_err());
         assert!(policy.validate_args(&["--allow-run", "script.ts"]).is_err());
     }

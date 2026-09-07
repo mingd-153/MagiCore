@@ -122,10 +122,11 @@ impl PackageCache {
         let mut total = 0u64;
         let entries = walkdir::WalkDir::new(&self.root).into_iter();
         for entry in entries.flatten() {
-            if entry.file_type().is_file() {
-                if let Ok(meta) = entry.metadata() {
-                    total += meta.len();
-                }
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if entry.file_type().is_file()
+                && let Ok(meta) = entry.metadata()
+            {
+                total += meta.len();
             }
         }
         total

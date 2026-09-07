@@ -5,7 +5,7 @@ use crate::{
     cache::HttpCache,
     ratelimit::{RateLimitConfig, RateLimiter},
     retry::RetryStrategy,
-    timeout::{apply_timeouts, TimeoutConfig},
+    timeout::{TimeoutConfig, apply_timeouts},
     tls::TlsConfig,
 };
 use anyhow::Result;

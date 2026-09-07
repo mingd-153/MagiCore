@@ -4,9 +4,9 @@
 //! Native registry client tests — HERMETIC qua mockito (không mạng thật).
 //! Các dead-test trong block comment cũ đã được hồi sinh thành test offline thật.
 
+use mgc_lib_adapter::native::RegistryClient;
 use mgc_lib_adapter::native::cargo_client::CargoClient;
 use mgc_lib_adapter::native::pypi_client::PyPiClient;
-use mgc_lib_adapter::native::RegistryClient;
 use mgc_types::{PackageId, PackageName, Version};
 
 #[test]
@@ -36,7 +36,6 @@ fn pypi_client_with_custom_registry() {
 // ---------------------------------------------------------- cargo (sparse index NDJSON)
 
 #[tokio::test]
-#[ignore = "network: mockito binds localhost socket"]
 async fn cargo_fetch_metadata_parses_ndjson_skips_yanked() {
     let mut server = mockito::Server::new_async().await;
     // sparse index path cho "serde": /se/rd/serde — mỗi dòng 1 version entry
@@ -59,14 +58,15 @@ async fn cargo_fetch_metadata_parses_ndjson_skips_yanked() {
     assert_eq!(metadata.name.as_str(), "serde");
     // yanked 2.0.0 bị bỏ; versions giữ thứ tự parse
     assert_eq!(metadata.versions.len(), 2);
-    assert!(!metadata
-        .versions
-        .contains(&Version::parse("2.0.0").unwrap()));
+    assert!(
+        !metadata
+            .versions
+            .contains(&Version::parse("2.0.0").unwrap())
+    );
     assert_eq!(metadata.latest, Version::parse("1.5.0").unwrap());
 }
 
 #[tokio::test]
-#[ignore = "network: mockito binds localhost socket"]
 async fn cargo_list_versions_matches_metadata() {
     let mut server = mockito::Server::new_async().await;
     server
@@ -85,7 +85,6 @@ async fn cargo_list_versions_matches_metadata() {
 }
 
 #[tokio::test]
-#[ignore = "network: mockito binds localhost socket"]
 async fn cargo_metadata_404_fails_closed_with_clear_error() {
     let mut server = mockito::Server::new_async().await;
     server
@@ -103,7 +102,6 @@ async fn cargo_metadata_404_fails_closed_with_clear_error() {
 }
 
 #[tokio::test]
-#[ignore = "network: mockito binds localhost socket"]
 async fn cargo_all_versions_yanked_is_an_error_not_empty() {
     let mut server = mockito::Server::new_async().await;
     server
@@ -141,7 +139,6 @@ fn pypi_json(info_version: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore = "network: mockito binds localhost socket"]
 async fn pypi_fetch_metadata_parses_json_api() {
     let mut server = mockito::Server::new_async().await;
     let body = pypi_json("1.0.0").replace("__MOCK__", &server.url());
@@ -172,7 +169,6 @@ async fn pypi_fetch_metadata_parses_json_api() {
 }
 
 #[tokio::test]
-#[ignore = "network: mockito binds localhost socket"]
 async fn pypi_download_prefers_wheel_over_sdist() {
     let mut server = mockito::Server::new_async().await;
     let body = pypi_json("1.0.0").replace("__MOCK__", &server.url());
@@ -208,7 +204,6 @@ async fn pypi_download_prefers_wheel_over_sdist() {
 }
 
 #[tokio::test]
-#[ignore = "network: mockito binds localhost socket"]
 async fn pypi_download_missing_version_errors() {
     let mut server = mockito::Server::new_async().await;
     server

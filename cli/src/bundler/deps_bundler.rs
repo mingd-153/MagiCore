@@ -41,17 +41,17 @@ impl DepsCache {
         let pkg_dir = self.node_modules.join(pkg_name);
         let pkg_json = pkg_dir.join("package.json");
 
-        if pkg_json.exists() {
-            if let Ok(raw) = std::fs::read_to_string(&pkg_json) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    // Thử browser field trước (UMD/browser builds)
-                    for field in ["browser", "module", "main"] {
-                        if let Some(s) = val.get(field).and_then(|v| v.as_str()) {
-                            let entry = pkg_dir.join(s);
-                            if entry.exists() {
-                                return Some(entry);
-                            }
-                        }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if pkg_json.exists()
+            && let Ok(raw) = std::fs::read_to_string(&pkg_json)
+            && let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw)
+        {
+            // Thử browser field trước (UMD/browser builds)
+            for field in ["browser", "module", "main"] {
+                if let Some(s) = val.get(field).and_then(|v| v.as_str()) {
+                    let entry = pkg_dir.join(s);
+                    if entry.exists() {
+                        return Some(entry);
                     }
                 }
             }

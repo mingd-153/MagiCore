@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use colored::Colorize;
 use mgc_config::project::ProjectExecutionConfig;
 use mgc_ui::info;
@@ -278,10 +278,11 @@ async fn build_app(root: &Path) -> Result<()> {
         .or_else(|| infer_app_language(root))
         .unwrap_or("flutter");
 
-    if language == "multi" {
-        if let Some(v) = v {
-            return build_multi_app(root, &v);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if language == "multi"
+        && let Some(v) = v
+    {
+        return build_multi_app(root, &v);
     }
 
     // Load optimizer env for app runtime
@@ -493,12 +494,18 @@ async fn build_web(
             info("Engine Web: Running compatibility-shell bundler...");
         }
         WebBuildTarget::NativeReady => {
-            info("Engine Web: Running compatibility-shell build with native-ready bridge metadata...");
-            info("Native-ready lane keeps framework compatibility while preparing Rust/native execution surfaces.");
+            info(
+                "Engine Web: Running compatibility-shell build with native-ready bridge metadata...",
+            );
+            info(
+                "Native-ready lane keeps framework compatibility while preparing Rust/native execution surfaces.",
+            );
         }
         WebBuildTarget::CompiledExecutable => {
             info("Engine Web: Compiled executable lane selected.");
-            info("MagiCore will build web assets first, then compile the Rust-native engine executable.");
+            info(
+                "MagiCore will build web assets first, then compile the Rust-native engine executable.",
+            );
         }
     }
 
@@ -519,7 +526,9 @@ async fn build_web(
                 )?;
                 mgc_ui::success(&format!("Native engine binary ready: {}", binary.display()));
             } else {
-                info("No native engine crate detected for this project; compatibility artifact is still ready.");
+                info(
+                    "No native engine crate detected for this project; compatibility artifact is still ready.",
+                );
             }
         }
 
@@ -564,7 +573,9 @@ async fn build_web(
             )?;
             mgc_ui::success(&format!("Native engine binary ready: {}", binary.display()));
         } else {
-            info("No native engine crate detected for this project; compatibility artifact is still ready.");
+            info(
+                "No native engine crate detected for this project; compatibility artifact is still ready.",
+            );
         }
     }
 
@@ -841,7 +852,9 @@ fn find_entry_point(root: &Path) -> Result<PathBuf> {
         }
     }
 
-    bail!("Could not find entry point. Checked: src/index.ts, src/index.tsx, src/main.ts, src/main.tsx, and package.json main/module fields")
+    bail!(
+        "Could not find entry point. Checked: src/index.ts, src/index.tsx, src/main.ts, src/main.tsx, and package.json main/module fields"
+    )
 }
 
 fn find_native_engine_crate(root: &Path) -> Option<PathBuf> {

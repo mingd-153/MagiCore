@@ -11,7 +11,8 @@ resolver = "2"
 
 [workspace.package]
 version = "1.1.0-rc.3"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/mingd-153/MagiCore"
 authors = ["MagiCore Contributors"]
@@ -127,7 +128,11 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# deny (not forbid): edition 2024 makes env::set_var/remove_var unsafe; we gate
+# every remaining unsafe block behind an item-level allow with a SAFETY proof.
+# deny (không forbid): edition 2024 buộc env set/remove qua unsafe — mỗi block
+# còn lại phải có #[allow] + giải trình SAFETY cụ thể, không allow toàn file.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "warn"

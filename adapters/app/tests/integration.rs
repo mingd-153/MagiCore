@@ -2,9 +2,9 @@
 //! Integration tests for mgc-app-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_language (all 6 paths), adapter_for, PackageAdapter trait methods.
 
-use mgc_app_adapter::{adapter_for, detect_language, generate_sbom, AppAdapter, AppLanguage};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_app_adapter::{AppAdapter, AppLanguage, adapter_for, detect_language, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

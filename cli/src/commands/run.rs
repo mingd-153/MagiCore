@@ -16,20 +16,22 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
 
     // 1. Try mgc.toml first (native MagiCore task definition)
     let mgc_toml_path = project_root.join("mgc.toml");
-    if mgc_toml_path.exists() {
-        if let Some(cmd) = resolve_mgc_toml_script(&mgc_toml_path, &script)? {
-            return execute_task_with_bin(&cmd, &args, project_root, &script, None);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if mgc_toml_path.exists()
+        && let Some(cmd) = resolve_mgc_toml_script(&mgc_toml_path, &script)?
+    {
+        return execute_task_with_bin(&cmd, &args, project_root, &script, None);
     }
 
     // 2. Fall back to package.json (web ecosystem compatibility)
     let package_json_path = project_root.join("package.json");
-    if package_json_path.exists() {
-        if let Some(cmd) = resolve_package_json_script(&package_json_path, &script)? {
-            reject_external_package_manager_script(&cmd, &package_json_path)?;
-            let bin = project_root.join("node_modules").join(".bin");
-            return execute_task_with_bin(&cmd, &args, project_root, &script, Some(bin));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if package_json_path.exists()
+        && let Some(cmd) = resolve_package_json_script(&package_json_path, &script)?
+    {
+        reject_external_package_manager_script(&cmd, &package_json_path)?;
+        let bin = project_root.join("node_modules").join(".bin");
+        return execute_task_with_bin(&cmd, &args, project_root, &script, Some(bin));
     }
 
     Err(crate::error::script_not_found(&script))
@@ -85,10 +87,11 @@ fn execute_task_with_bin(
     let mut paths: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|value| std::env::split_paths(&value).collect())
         .unwrap_or_default();
-    if let Some(bin) = bin_path {
-        if bin.exists() {
-            paths.insert(0, bin);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(bin) = bin_path
+        && bin.exists()
+    {
+        paths.insert(0, bin);
     }
     let path_env = std::env::join_paths(paths)?;
 

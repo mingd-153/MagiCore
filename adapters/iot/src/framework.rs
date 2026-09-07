@@ -54,22 +54,23 @@ pub fn board_target(board: &str) -> Option<String> {
 }
 
 pub fn detect_framework(root: &Path) -> Option<IotFramework> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco != "iot" {
-                    return None;
-                }
-            }
-            if let Some(fw) = v
-                .get("iot")
-                .and_then(|i| i.get("framework"))
-                .and_then(|f| f.as_str())
-            {
-                if let Some(framework) = IotFramework::from_str(fw) {
-                    return Some(framework);
-                }
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem")
+            .and_then(|e| e.as_str())
+            .is_some_and(|eco| eco != "iot")
+        {
+            return None;
+        }
+        if let Some(fw) = v
+            .get("iot")
+            .and_then(|i| i.get("framework"))
+            .and_then(|f| f.as_str())
+            && let Some(framework) = IotFramework::from_str(fw)
+        {
+            return Some(framework);
         }
     }
     if root.join("platformio.ini").exists() {
@@ -85,16 +86,15 @@ pub fn detect_framework(root: &Path) -> Option<IotFramework> {
 }
 
 pub(crate) fn manifest_is_iot(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco == "iot" {
-                    return true;
-                }
-            }
-            if v.get("iot").is_some() {
-                return true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem").and_then(|e| e.as_str()) == Some("iot") {
+            return true;
+        }
+        if v.get("iot").is_some() {
+            return true;
         }
     }
     root.join("platformio.ini").exists()
@@ -103,16 +103,15 @@ pub(crate) fn manifest_is_iot(root: &Path) -> bool {
 }
 
 pub(crate) fn target_from_manifest(root: &Path) -> Option<String> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(target) = v
-                .get("iot")
-                .and_then(|i| i.get("target"))
-                .and_then(|t| t.as_str())
-            {
-                return Some(target.to_string());
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(target) = v
+            .get("iot")
+            .and_then(|i| i.get("target"))
+            .and_then(|t| t.as_str())
+    {
+        return Some(target.to_string());
     }
     None
 }

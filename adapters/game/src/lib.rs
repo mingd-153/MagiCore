@@ -12,6 +12,6 @@ pub mod dev;
 pub mod install;
 pub mod scaffold;
 
-pub use adapter::{adapter_for, GameAdapter};
-pub use engine::{detect_engine, GameEngine};
+pub use adapter::{GameAdapter, adapter_for};
+pub use engine::{GameEngine, detect_engine};
 pub use sbom::generate_sbom;

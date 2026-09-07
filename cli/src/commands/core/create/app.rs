@@ -4,7 +4,7 @@ use anyhow::Result;
 
 pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     // Phase 4: Parse scaffold spec sớm với typo detection
-    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+    use crate::scaffold::spec::{CoreKind, parse_scaffold_spec};
     let parsed_framework = if !framework.is_empty() {
         Some(parse_scaffold_spec(CoreKind::App, framework).map_err(|e| {
             anyhow::anyhow!("Invalid app framework specification '{}': {}", framework, e)

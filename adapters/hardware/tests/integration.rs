@@ -2,7 +2,7 @@
 //! Integration tests for mgc-hardware-adapter — sát với src/lib.rs
 //! Kiểm thử: adapter_for (detect qua mgc.toml ecosystem), list, audit, PackageAdapter trait.
 
-use mgc_hardware_adapter::{adapter_for, generate_sbom, HardwareAdapter};
+use mgc_hardware_adapter::{HardwareAdapter, adapter_for, generate_sbom};
 use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
 
@@ -136,8 +136,8 @@ async fn parse_manifest_uses_dir_name() {
 
 #[tokio::test]
 async fn add_fails_for_hardware_adapter() {
-    use mgc_types::adapter::AddOptions;
     use mgc_types::PackageName;
+    use mgc_types::adapter::AddOptions;
     let dir = tmp("add-fail");
     std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let name = PackageName::new("hal-crate").unwrap();

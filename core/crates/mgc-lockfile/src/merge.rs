@@ -10,7 +10,7 @@
 //! - Automatic resolution of Git Conflict Markers when both sides parse.
 // (v2 schema: no workspaces / direct / dev fields — simpler than the v1 merger.)
 
-use crate::{parser, Lockfile, Package};
+use crate::{Lockfile, Package, parser};
 use std::collections::BTreeMap;
 
 /// Parses and auto-resolves git conflict markers in a raw lockfile text when possible.

@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used)]
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use mgc_types::{
-    adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
-    ResolvedPackage, Version,
+    PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
+    adapter::InstallOptions,
 };
 use mgc_web_adapter::WebAdapter;
 use std::path::Path;

@@ -52,19 +52,19 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
         for dep in all_deps {
             if let Ok(meta) = registry.fetch_metadata(dep.name.as_str()).await {
                 let latest = meta.dist_tags.get("latest");
-                if let Some(latest_ver) = latest {
-                    if let Ok(lv) = mgc_types::Version::parse(latest_ver) {
-                        if !dep.range.matches(&lv) {
-                            outdated_pkgs.push(OutdatedPkg {
-                                name: dep.name.to_string(),
-                                current: dep.range.to_string(),
-                                latest: latest_ver.to_string(),
-                                major: lv.major,
-                                minor: lv.minor,
-                                patch: lv.patch,
-                            });
-                        }
-                    }
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if let Some(latest_ver) = latest
+                    && let Ok(lv) = mgc_types::Version::parse(latest_ver)
+                    && !dep.range.matches(&lv)
+                {
+                    outdated_pkgs.push(OutdatedPkg {
+                        name: dep.name.to_string(),
+                        current: dep.range.to_string(),
+                        latest: latest_ver.to_string(),
+                        major: lv.major,
+                        minor: lv.minor,
+                        patch: lv.patch,
+                    });
                 }
             }
         }

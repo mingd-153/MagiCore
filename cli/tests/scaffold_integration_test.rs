@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use mgc::scaffold::spec::{parse_scaffold_spec, CoreKind};
+use mgc::scaffold::spec::{CoreKind, parse_scaffold_spec};
 
 #[test]
 fn test_web_nextjs_laster_typo_fails_early() {

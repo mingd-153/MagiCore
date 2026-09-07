@@ -1,7 +1,7 @@
 //! Registry command — mgc registry serve / user add / user rm (10-task-plan Phase 3)
 //! (Lệnh registry: serve server, quản lý user — add/rm)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
 use tracing_subscriber::EnvFilter;
 

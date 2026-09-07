@@ -1,7 +1,7 @@
 //! PackageAdapter implementation for CI/CD cores.
 //! Điều phối dependency flow fail-closed riêng khỏi provider detection.
 
-use crate::provider::{detect_provider, manifest_is_cicd, CicdProvider};
+use crate::provider::{CicdProvider, detect_provider, manifest_is_cicd};
 use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,

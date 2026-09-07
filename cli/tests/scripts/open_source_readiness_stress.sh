@@ -125,13 +125,10 @@ for cmd in install run dev build test audit cache store doctor sbom template con
 done
 
 # ============================================
-# SECTION 3: CORE PARITY — OPTIMIZER SHARED
-# ============================================
-# SECTION 3: CORE PARITY — OPTIMIZER SHARED (WEB + AI SCOPE)
+# SECTION 3: CORE PARITY — OPTIMIZER CAPABILITY DECLARATIONS
 # ============================================
 echo
-echo "=== SECTION 3: Core Parity — Optimizer Shared (Web + AI Scope v1.1.0-rc.1) ==="
-echo "NOTE: App/Lib dev commands not yet implemented - scope limited to Web+AI"
+echo "=== SECTION 3: Core Parity — Optimizer Capability Declarations ==="
 
 test_case "optimizer-web" "Optimizer command accepts web core"
 # CRITICAL: Must mention supported cores in help
@@ -149,16 +146,14 @@ else
     fail "AI runtimes not in detection"
 fi
 
-test_case "optimizer-app" "Optimizer supports app core (detection only)"
-# App dev command not implemented yet, check detection exists
+test_case "optimizer-app" "Optimizer declares app runtime detection"
 if grep -q "Flutter\|ReactNative\|RustNative" "$PROJECT_ROOT/cli/src/commands/optimizer/runtime_detect.rs"; then
     pass
 else
-    warn "App runtimes not in detection (acceptable for v1.1.0-rc.1 scope)"
+    fail "App runtimes not in detection"
 fi
 
-test_case "optimizer-lib" "Optimizer supports lib core (detection only)"
-# Lib dev command not implemented yet, check detection exists
+test_case "optimizer-lib" "Optimizer declares lib runtime detection"
 if grep -q "RustLib\|GoLib\|PythonLib\|TypeScriptLib" "$PROJECT_ROOT/cli/src/commands/optimizer/runtime_detect.rs"; then
     pass
 else
@@ -187,14 +182,14 @@ else
 fi
 
 test_case "e2e-web-optimizer" "Optimizer can run on web project"
+printf '%s\n' '{"name":"test-web-e2e","scripts":{"dev":"node server.js"}}' > test-web-e2e/package.json
 cd test-web-e2e
 OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
 EXIT_CODE=$?
-# Optimizer may skip if no runtime detected (exit 0) or run successfully (exit 0)
-if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
+if [ $EXIT_CODE -eq 0 ] && [ -f ".mgc-optimizer/node_env.env" ]; then
     pass
 else
-    fail "optimizer exit=$EXIT_CODE, output unclear"
+    fail "optimizer exit=$EXIT_CODE or node_env.env missing"
 fi
 cd ..
 
@@ -214,13 +209,14 @@ else
 fi
 
 test_case "e2e-ai-optimizer" "Optimizer can run on AI project"
+printf '%s\n' 'torch>=2.8' > test-ai-e2e/requirements.txt
 cd test-ai-e2e
 OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
 EXIT_CODE=$?
-if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
+if [ $EXIT_CODE -eq 0 ] && [ -f ".mgc-optimizer/pytorch_runtime.env" ]; then
     pass
 else
-    fail "optimizer exit=$EXIT_CODE, output unclear"
+    fail "optimizer exit=$EXIT_CODE or pytorch_runtime.env missing"
 fi
 cd ..
 
@@ -238,6 +234,17 @@ if [ -f "test-app-e2e/mgc.toml" ]; then
 else
     fail "missing mgc.toml"
 fi
+
+test_case "e2e-app-optimizer" "Optimizer can run on app project"
+cd test-app-e2e
+OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ] && [ -f ".mgc-optimizer/flutter_env.env" ]; then
+    pass
+else
+    fail "optimizer exit=$EXIT_CODE or flutter_env.env missing"
+fi
+cd ..
 
 # Test 4: Lib project E2E — E2E project lib
 test_case "e2e-lib-create" "Create lib/rust project"
@@ -258,10 +265,10 @@ test_case "e2e-lib-optimizer" "Optimizer can run on lib project"
 cd test-lib-e2e
 OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
 EXIT_CODE=$?
-if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
+if [ $EXIT_CODE -eq 0 ] && [ -f ".mgc-optimizer/rust_cargo_profile.toml" ]; then
     pass
 else
-    fail "optimizer exit=$EXIT_CODE, output unclear"
+    fail "optimizer exit=$EXIT_CODE or rust_cargo_profile.toml missing"
 fi
 cd ..
 
@@ -387,8 +394,7 @@ fi
 echo
 echo "=== SECTION 9: Package Manager Competition Readiness ==="
 
-test_case "pms-cache-isolation" "Cache isolation (vs pnpm store, bun cache)"
-# CRITICAL: Cannot claim "better than pnpm/bun" if cache conflicts with theirs
+test_case "cache-namespace-separation" "MagiCore cache does not reuse pnpm/bun namespaces"
 # Check cache doesn't conflict with other PMs — kiểm tra cache không xung đột với PMs khác
 if [ -d "$MGC_CACHE_DIR" ] && ! [ -d "$MGC_CACHE_DIR/pnpm" ] && ! [ -d "$MGC_CACHE_DIR/bun" ]; then
     pass
@@ -417,14 +423,14 @@ else
     fail "no competitive benchmark test"
 fi
 
-test_case "pms-optimizer-unique" "Optimizer feature (unique vs moon/proto)"
+test_case "optimizer-module-present" "Optimizer implementation module exists"
 if [ -d "$PROJECT_ROOT/cli/src/commands/optimizer" ]; then
     pass
 else
     fail "optimizer feature missing"
 fi
 
-test_case "pms-core-agnostic" "Core-agnostic design (vs npm=web-only)"
+test_case "primary-core-command-surface" "Primary core command implementations exist"
 # Check supports multiple cores — kiểm tra hỗ trợ nhiều cores
 if grep -r "create-web\|create-ai\|create-app\|create-lib" "$PROJECT_ROOT/cli/src/commands" >/dev/null 2>&1; then
     pass
@@ -462,7 +468,7 @@ else
     fail "Cargo.toml missing distribution metadata (license/repository/homepage) — cannot publish to crates.io"
 fi
 
-test_case "dist-smoke-test" "Distribution smoke test (Homebrew/Scoop/binary)"
+test_case "dist-local-smoke-test" "Local release-binary smoke test"
 # CRITICAL: Must verify installations work on real platforms before public release
 DIST_SMOKE="$PROJECT_ROOT/cli/tests/scripts/distribution_smoke.sh"
 if [ -f "$DIST_SMOKE" ]; then
@@ -480,7 +486,7 @@ else
     fail "no distribution smoke test"
 fi
 
-test_case "dist-runtime-full-e2e" "Full runtime E2E (dev server + env + audit)"
+test_case "local-runtime-dev-e2e" "Local Bun/Deno dev process + env + audit"
 # CRITICAL: Comprehensive E2E - background dev, env verification, audit log
 FULL_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_full_e2e.sh"
 if [ -f "$FULL_E2E" ]; then
@@ -493,7 +499,7 @@ else
     warn "comprehensive E2E script not found"
 fi
 
-test_case "dist-runtime-bun-e2e" "Bun runtime E2E test"
+test_case "optimizer-bun-env-generation" "Bun optimizer environment generation"
 # CRITICAL: Cannot claim "Bun support" without end-to-end verification
 BUN_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_bun_e2e.sh"
 if [ -f "$BUN_E2E" ]; then
@@ -511,7 +517,7 @@ else
     fail "no Bun E2E test"
 fi
 
-test_case "dist-runtime-deno-e2e" "Deno runtime E2E test"
+test_case "optimizer-deno-env-generation" "Deno optimizer environment generation"
 # CRITICAL: Cannot claim "Deno support" without end-to-end verification
 DENO_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_deno_e2e.sh"
 if [ -f "$DENO_E2E" ]; then
@@ -555,7 +561,7 @@ else
     fail "$TODO_TOTAL TODO/FIXME found (cli: $TODO_CLI, core: $TODO_CORE, adapters: $TODO_ADAPTERS) — incomplete features"
 fi
 
-test_case "evidence-benchmark-data" "Performance benchmark data exists"
+test_case "stress-script-presence" "Cache and all-core stress scripts exist"
 if [ -f "$PROJECT_ROOT/cli/tests/scripts/cache_tracking_stress.sh" ] && [ -f "$PROJECT_ROOT/cli/tests/scripts/all_core_scaffold_stress.sh" ]; then
     pass
 else
@@ -587,10 +593,10 @@ test_case "parity-optimizer-web" "Optimizer works for web projects"
 cd test-web-e2e
 OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
 EXIT_CODE=$?
-if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
+if [ $EXIT_CODE -eq 0 ] && [ -f ".mgc-optimizer/node_env.env" ]; then
     pass
 else
-    fail "optimizer exit=$EXIT_CODE or output unclear"
+    fail "optimizer exit=$EXIT_CODE or node_env.env missing"
 fi
 cd ..
 
@@ -598,10 +604,10 @@ test_case "parity-optimizer-ai" "Optimizer works for AI projects"
 cd test-ai-e2e
 OPTIMIZER_OUTPUT=$($MGC_BIN optimizer 2>&1)
 EXIT_CODE=$?
-if [ $EXIT_CODE -eq 0 ] && echo "$OPTIMIZER_OUTPUT" | grep -iq "optimizer\|hardware\|detected\|skipped"; then
+if [ $EXIT_CODE -eq 0 ] && [ -f ".mgc-optimizer/pytorch_runtime.env" ]; then
     pass
 else
-    fail "optimizer exit=$EXIT_CODE or output unclear"
+    fail "optimizer exit=$EXIT_CODE or pytorch_runtime.env missing"
 fi
 cd ..
 
@@ -618,21 +624,21 @@ echo -e "Failed: ${RED}$FAILED${NC}"
 echo
 
 if [ "$FAILED" -eq 0 ]; then
-    echo -e "${GREEN}✓ ALL 77 CHECKS PASSED${NC}"
+    echo -e "${GREEN}✓ ALL $TOTAL CHECKS PASSED${NC}"
     echo "Current gate checks: PASS"
     echo
     echo "⚠️  ASSESSMENT: Infrastructure solid, but limited gate scope"
     echo ""
-    echo "What 77/77 PASS means:"
+    echo "What $PASSED/$TOTAL PASS means:"
     echo "  ✓ Core commands exist and run"
     echo "  ✓ Basic smoke tests pass"
     echo "  ✓ File structures valid"
     echo "  ✓ No TODO text tokens in production"
     echo ""
-    echo "What 77/77 PASS does NOT mean:"
-    echo "  ✗ Bun/Deno runtime verified working (launcher accepted, not tested in dev)"
+    echo "What $PASSED/$TOTAL PASS does NOT mean:"
+    echo "  ✓ Bun/Deno optimizer env generation and combined local dev E2E passed"
     echo "  ✗ Competitive performance proven (basic pnpm comparison only)"
-    echo "  ✗ Distribution tested (local binary only, no Homebrew/Scoop)"
+    echo "  ✗ Published Homebrew/Scoop installation verified (local binary only)"
     echo "  ✗ Full E2E lifecycle (create → install → build → test → run)"
     echo "  ✗ Security enforcement complete (policy exists, gaps remain)"
     echo ""
@@ -641,11 +647,10 @@ if [ "$FAILED" -eq 0 ]; then
     echo "  - Public RC: NO-GO (see above limitations)"
     echo ""
     echo "For honest readiness, need:"
-    echo "  1. Bun/Deno: Full E2E with background dev + env verification"
-    echo "  2. Benchmarks: Multiple competitors, large workloads, full data"
-    echo "  3. Distribution: GitHub Release, cross-platform, package managers"
-    echo "  4. E2E: Complete lifecycle tests for all cores"
-    echo "  5. Security: Audit log, enforcement verification, bypass testing"
+    echo "  1. Benchmarks: Multiple competitors, large workloads, full data"
+    echo "  2. Distribution: GitHub Release, cross-platform, package managers"
+    echo "  3. E2E: Complete lifecycle tests for all cores"
+    echo "  4. Security: Enforcement verification and adversarial bypass testing"
     exit 0
 else
     echo -e "${RED}✗ SOME TESTS FAILED${NC}"

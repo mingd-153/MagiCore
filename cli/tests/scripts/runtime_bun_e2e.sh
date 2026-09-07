@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Bun Runtime E2E Test — delegates to real implementation
-# Status: IMPLEMENTED (calls runtime_bun_e2e_impl.sh)
+# Bun optimizer environment test — delegates to implementation
+# Status: ENV GENERATION ONLY (calls runtime_bun_e2e_impl.sh)
 
 set -euo pipefail
 

@@ -1,7 +1,7 @@
 /// SQLite-backed database for installed packages and integrity metadata.
 use anyhow::Result;
 use mgc_types::{PackageId, Version};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 #[derive(Debug, Clone)]

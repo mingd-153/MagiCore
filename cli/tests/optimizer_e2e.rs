@@ -95,7 +95,9 @@ pub fn proof() -> i32 {
         combined
     );
 
-    println!("✅ PROCESS-LEVEL VERIFIED: RUSTFLAGS env var reaches cargo child → rustc invocation observable in cargo -vv");
+    println!(
+        "✅ PROCESS-LEVEL VERIFIED: RUSTFLAGS env var reaches cargo child → rustc invocation observable in cargo -vv"
+    );
 }
 
 #[test]
@@ -231,7 +233,9 @@ MGC_OPTIMIZER_MARKER = "INJECTED"
         bin_stdout.trim()
     );
 
-    println!("✅ INTEGRATION-LEVEL VERIFIED: mgc build → cargo → rustc compiled with optimizer RUSTFLAGS");
+    println!(
+        "✅ INTEGRATION-LEVEL VERIFIED: mgc build → cargo → rustc compiled with optimizer RUSTFLAGS"
+    );
     println!("   Proof: Compiled binary behavior reflects --cfg mgc_optimizer_marker");
 }
 

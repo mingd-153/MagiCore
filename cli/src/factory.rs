@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use mgc_plugin::Plugin;
-use mgc_types::adapter::PackageAdapter;
 use mgc_types::Ecosystem;
+use mgc_types::adapter::PackageAdapter;
 
 /// Available cores in this build (for init menu filtering)
 #[allow(clippy::vec_init_then_push)]
@@ -63,10 +63,11 @@ pub fn create_adapter_for(
     fallbacks: &[(String, Option<String>)],
 ) -> anyhow::Result<Arc<dyn PackageAdapter>> {
     let _ = root;
-    if let Some(plugin) = mgc_plugin::global().get(*ecosystem) {
-        if let Some(adapter) = plugin.as_adapter() {
-            return Ok(adapter);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(plugin) = mgc_plugin::global().get(*ecosystem)
+        && let Some(adapter) = plugin.as_adapter()
+    {
+        return Ok(adapter);
     }
 
     let adapter: Arc<dyn PackageAdapter> = match ecosystem {

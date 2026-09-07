@@ -13,8 +13,8 @@ pub use cache::RegistryCache;
 pub use graph::DependencyGraph;
 pub use patches::{apply_patch, get_patches_dir, verify_patch_integrity};
 pub use solver::{
-    check_dependency_confusion, DepInfo, DependencyError, DependencyProvider, Resolution,
-    ResolvedDep, Resolver, SolveError, SolveResult,
+    DepInfo, DependencyError, DependencyProvider, Resolution, ResolvedDep, Resolver, SolveError,
+    SolveResult, check_dependency_confusion,
 };
 pub use version::VersionSet;
 

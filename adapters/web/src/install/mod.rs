@@ -16,7 +16,7 @@ use mgc_types::{MgError, MgResult, PackageId};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
-use crate::cache::{prune_project_local_cache, SharedWebCache};
+use crate::cache::{SharedWebCache, prune_project_local_cache};
 use crate::install::bin::rebuild_bin_links;
 use crate::install::download::{pipeline_download_and_extract, prefetch_tarballs};
 use crate::install::materialize::{
@@ -195,6 +195,32 @@ pub async fn run_install(
     } else {
         graph.clone()
     };
+    // Offline gate: every fetchable package must already exist in local or shared
+    // cache BEFORE any download path — fail closed instead of hitting the network.
+    // Cổng offline: mọi package cần fetch phải có sẵn trong cache trước khi chạm
+    // network — thiếu là lỗi rõ ràng, tuyệt đối không âm thầm truy cập registry.
+    if opts.offline && !fetch_graph.is_empty() {
+        let missing: Vec<String> = fetch_graph
+            .packages
+            .iter()
+            .filter(|pkg| {
+                !cache.contains_tarball(&pkg.id)
+                    && shared_package_cache_for_install
+                        .as_ref()
+                        .map(|shared| !shared.contains_tarball(&pkg.id))
+                        .unwrap_or(true)
+            })
+            .map(|pkg| pkg.id.to_string())
+            .collect();
+        if !missing.is_empty() {
+            return Err(MgError::Other(format!(
+                "offline install: {} package(s) not in local cache and cannot be fetched \
+                 without network:\n  {}",
+                missing.len(),
+                missing.join("\n  ")
+            )));
+        }
+    }
     if !fetch_graph.is_empty() {
         write_web_lockfile_with_state(project_root, graph, "installing").inspect_err(|_e| {
             if let Some(root) = &staging_root {
@@ -202,24 +228,24 @@ pub async fn run_install(
             }
         })?;
     }
-    if opts.legacy_flat {
-        if let Some(handle) = prefetch_handle {
-            match handle.await {
-                Ok(Ok(bytes)) => {
-                    summary.bytes_from_cache += bytes;
+    if opts.legacy_flat
+        && let Some(handle) = prefetch_handle
+    {
+        match handle.await {
+            Ok(Ok(bytes)) => {
+                summary.bytes_from_cache += bytes;
+            }
+            Ok(Err(e)) => {
+                if let Some(root) = &staging_root {
+                    let _ = std::fs::remove_dir_all(root);
                 }
-                Ok(Err(e)) => {
-                    if let Some(root) = &staging_root {
-                        let _ = std::fs::remove_dir_all(root);
-                    }
-                    return Err(e);
+                return Err(e);
+            }
+            Err(e) => {
+                if let Some(root) = &staging_root {
+                    let _ = std::fs::remove_dir_all(root);
                 }
-                Err(e) => {
-                    if let Some(root) = &staging_root {
-                        let _ = std::fs::remove_dir_all(root);
-                    }
-                    return Err(MgError::Other(format!("prefetch panicked: {e}")));
-                }
+                return Err(MgError::Other(format!("prefetch panicked: {e}")));
             }
         }
     } else if let Some(handle) = prefetch_handle {
@@ -277,10 +303,11 @@ pub async fn run_install(
             ) {
                 Ok(root) => root,
                 Err(err) => {
-                    if let Some(staging_root) = staging_root.as_ref() {
-                        if staging_root.exists() {
-                            let _ = std::fs::remove_dir_all(staging_root);
-                        }
+                    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                    if let Some(staging_root) = staging_root.as_ref()
+                        && staging_root.exists()
+                    {
+                        let _ = std::fs::remove_dir_all(staging_root);
                     }
                     return Err(err);
                 }
@@ -293,16 +320,18 @@ pub async fn run_install(
             if materialized_dir.exists() {
                 std::fs::remove_dir_all(&materialized_dir)?;
             }
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
             if let Err(err) = hardlink_tree(package_root.as_path(), &materialized_dir) {
-                if let Some(staging_root) = staging_root.as_ref() {
-                    if staging_root.exists() {
-                        let _ = std::fs::remove_dir_all(staging_root);
-                    }
+                if let Some(staging_root) = staging_root.as_ref()
+                    && staging_root.exists()
+                {
+                    let _ = std::fs::remove_dir_all(staging_root);
                 }
                 return Err(err);
             }
-            if let Some(database) = database.as_ref() {
-                if let Err(err) = database
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(database) = database.as_ref()
+                && let Err(err) = database
                     .insert_package(
                         &pkg.id,
                         if pkg.integrity.is_empty() {
@@ -312,14 +341,13 @@ pub async fn run_install(
                         },
                     )
                     .map_err(|e| MgError::Store(e.to_string()))
+            {
+                if let Some(staging_root) = staging_root.as_ref()
+                    && staging_root.exists()
                 {
-                    if let Some(staging_root) = staging_root.as_ref() {
-                        if staging_root.exists() {
-                            let _ = std::fs::remove_dir_all(staging_root);
-                        }
-                    }
-                    return Err(err);
+                    let _ = std::fs::remove_dir_all(staging_root);
                 }
+                return Err(err);
             }
             if !opts.incremental || !already_materialized.contains(&pkg.id) {
                 summary.added.push(pkg.id.clone());
@@ -490,16 +518,17 @@ pub async fn run_install(
     }
     prune_root_install_dirs(&node_modules, &root_package_versions)?;
     profile.mark("prune_root_install_dirs", start);
-    if let Some(staging_root) = staging_root.as_ref() {
-        if staging_root.exists() {
-            std::fs::remove_dir_all(staging_root).map_err(|err| {
-                MgError::Other(format!(
-                    "failed to clean staging root '{}': {}",
-                    staging_root.display(),
-                    err
-                ))
-            })?;
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(staging_root) = staging_root.as_ref()
+        && staging_root.exists()
+    {
+        std::fs::remove_dir_all(staging_root).map_err(|err| {
+            MgError::Other(format!(
+                "failed to clean staging root '{}': {}",
+                staging_root.display(),
+                err
+            ))
+        })?;
     }
     if !node_modules.join(".bin").exists() && affected_root_bin_links.is_empty() {
         affected_root_bin_links = root_packages.to_vec();
@@ -528,47 +557,47 @@ pub async fn run_install(
         let mut scripted_packages = Vec::new();
         for pkg_dir in &packages_with_scripts {
             let package_json = pkg_dir.join("package.json");
-            if package_json.exists() {
-                if let Ok(contents) = std::fs::read_to_string(&package_json) {
-                    if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents) {
-                        let has_scripts = manifest
-                            .get("scripts")
-                            .and_then(|s| s.as_object())
-                            .map(|scripts| {
-                                scripts.contains_key("preinstall")
-                                    || scripts.contains_key("install")
-                                    || scripts.contains_key("postinstall")
-                            })
-                            .unwrap_or(false);
-                        if has_scripts {
-                            let name = manifest
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let version = manifest
-                                .get("version")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default();
-                            let policy = trust_map
-                                .get(&format!("{name}@{version}"))
-                                .or_else(|| trust_map.get(&name))
-                                .map(String::as_str);
-                            if !trust_allows_script(policy, blanket_scripts) {
-                                if policy == Some("denied") {
-                                    eprintln!(
-                                        "[magicore] DENIED lifecycle scripts for {name}@{version} (mgc trust deny)"
-                                    );
-                                } else {
-                                    eprintln!(
-                                        "[magicore] skipped lifecycle scripts for {name}@{version} — not approved. Approve with: mgc trust approve {name}"
-                                    );
-                                }
-                                continue;
-                            }
-                            scripted_packages.push(pkg_dir.clone());
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if package_json.exists()
+                && let Ok(contents) = std::fs::read_to_string(&package_json)
+                && let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents)
+            {
+                let has_scripts = manifest
+                    .get("scripts")
+                    .and_then(|s| s.as_object())
+                    .map(|scripts| {
+                        scripts.contains_key("preinstall")
+                            || scripts.contains_key("install")
+                            || scripts.contains_key("postinstall")
+                    })
+                    .unwrap_or(false);
+                if has_scripts {
+                    let name = manifest
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let version = manifest
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    let policy = trust_map
+                        .get(&format!("{name}@{version}"))
+                        .or_else(|| trust_map.get(&name))
+                        .map(String::as_str);
+                    if !trust_allows_script(policy, blanket_scripts) {
+                        if policy == Some("denied") {
+                            eprintln!(
+                                "[magicore] DENIED lifecycle scripts for {name}@{version} (mgc trust deny)"
+                            );
+                        } else {
+                            eprintln!(
+                                "[magicore] skipped lifecycle scripts for {name}@{version} — not approved. Approve with: mgc trust approve {name}"
+                            );
                         }
+                        continue;
                     }
+                    scripted_packages.push(pkg_dir.clone());
                 }
             }
         }

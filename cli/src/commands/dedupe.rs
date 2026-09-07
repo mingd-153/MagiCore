@@ -1,7 +1,7 @@
 //! Dedupe command — scan lockfile/layout, merge duplicate instances (02 §2-3)
 //! (Lệnh dedupe: gộp instance trùng lặp, verify build, rollback khi fail)
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 use mgc_config::project::ProjectConfig;
 use std::collections::HashMap;

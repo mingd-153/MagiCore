@@ -12,11 +12,11 @@
 //! Với Swift / ObjC (iOS-only): chỉ chạy trên macOS, báo lỗi rõ trên Linux/Win.
 //! Với Kotlin (Android-only): `./gradlew installDebug` + `adb shell am start`.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
 
 use crate::commands::core::install::app::{
-    find_xcode_project, language, project_root, InstallCommand,
+    InstallCommand, find_xcode_project, language, project_root,
 };
 
 // ─── OS detection ────────────────────────────────────────────────────────────

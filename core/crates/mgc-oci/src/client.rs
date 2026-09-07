@@ -2,8 +2,8 @@
 //! (OCI client: blob pull/push, manifest pull/push — OCI Distribution Spec subset)
 
 use crate::manifest::{OciDescriptor, OciManifest};
-use anyhow::{bail, Result};
-use mgc_http::{timeout::TimeoutConfig, HttpClient, TlsConfig};
+use anyhow::{Result, bail};
+use mgc_http::{HttpClient, TlsConfig, timeout::TimeoutConfig};
 use serde_json;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

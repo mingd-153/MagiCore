@@ -4,7 +4,7 @@
 // report a clear error instead of faking success.)
 
 use crate::framework::IotFramework;
-use mgc_exec::run::{run as mgc_run, ExecOptions};
+use mgc_exec::run::{ExecOptions, run as mgc_run};
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
 

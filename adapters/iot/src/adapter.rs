@@ -1,7 +1,7 @@
 //! PackageAdapter implementation for IoT cores.
 //! Điều phối Cargo/PlatformIO/Zephyr riêng khỏi detect và helper tooling.
 
-use crate::framework::{detect_framework, manifest_is_iot, target_from_manifest, IotFramework};
+use crate::framework::{IotFramework, detect_framework, manifest_is_iot, target_from_manifest};
 use crate::tooling::{cargo_dep_version, exec_tool, placeholder_id};
 use async_trait::async_trait;
 use mgc_types::adapter::{
@@ -205,14 +205,15 @@ impl IotAdapter {
     }
 
     pub fn board(&self, root: &Path) -> Option<String> {
-        if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-            if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-                return v
-                    .get("iot")
-                    .and_then(|i| i.get("board"))
-                    .and_then(|b| b.as_str())
-                    .map(str::to_string);
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+            && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        {
+            return v
+                .get("iot")
+                .and_then(|i| i.get("board"))
+                .and_then(|b| b.as_str())
+                .map(str::to_string);
         }
         None
     }

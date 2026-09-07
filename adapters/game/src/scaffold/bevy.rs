@@ -1,6 +1,6 @@
 //! Bevy project scaffolding.
 
-use super::{render_template, TemplateContext};
+use super::{TemplateContext, render_template};
 use mgc_types::MgResult;
 use std::path::Path;
 

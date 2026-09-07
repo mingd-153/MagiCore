@@ -8,7 +8,7 @@ use mgc_types::{PackageId, PackageName, Version, VersionRange};
 use std::sync::Arc;
 
 use crate::cache::{
-    load_metadata_with_fallback, metadata_concurrency_limit, MetadataCache, SharedWebCache,
+    MetadataCache, SharedWebCache, load_metadata_with_fallback, metadata_concurrency_limit,
 };
 use crate::native;
 

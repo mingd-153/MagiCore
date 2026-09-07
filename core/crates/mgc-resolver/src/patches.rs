@@ -1,7 +1,7 @@
 //! Patch apply engine — parse unified diff, apply to vstore (16 §5)
 //! (Apply engine nội bộ — KHÔNG gọi binary `patch`, cross-platform, chạy offline)
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use mgc_platform::paths::{GlobalPaths, ProjectPaths};
 use std::fs;
 use std::path::{Path, PathBuf};

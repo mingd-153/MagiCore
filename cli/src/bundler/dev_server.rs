@@ -35,14 +35,14 @@
 /// Nếu hit: serve ngay (~0ms). Nếu miss: esbuild transpile → lưu vào cache.
 /// Cache được dùng chung giữa tất cả project trên máy (global ~/.magicore store).
 use crate::bundler::deps_bundler::DepsCache;
-use crate::bundler::hmr::{hmr_ws_handler, HmrManager, HMR_CLIENT_SCRIPT};
+use crate::bundler::hmr::{HMR_CLIENT_SCRIPT, HmrManager, hmr_ws_handler};
 use axum::{
+    Router,
     body::Body,
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::get,
-    Router,
 };
 
 use std::path::PathBuf;
@@ -256,12 +256,14 @@ async fn serve_dep(Path(pkg): Path<String>, State(state): State<ServerState>) ->
         Some(dep) => {
             // Nếu CSS được tạo kèm, inject loader
             let mut js = dep.js.clone();
-            if let Some(css) = &dep.css {
-                if !css.is_empty() {
-                    // Inject CSS dưới dạng CSSStyleSheet API (modern browsers)
-                    let css_escaped = css.replace('`', "\\`");
-                    let css_injector = format!(
-                        r#"
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(css) = &dep.css
+                && !css.is_empty()
+            {
+                // Inject CSS dưới dạng CSSStyleSheet API (modern browsers)
+                let css_escaped = css.replace('`', "\\`");
+                let css_injector = format!(
+                    r#"
 // [MgDevServer] Injected CSS from {pkg}
 (function() {{
   const sheet = new CSSStyleSheet();
@@ -269,9 +271,8 @@ async fn serve_dep(Path(pkg): Path<String>, State(state): State<ServerState>) ->
   document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
 }})();
 "#
-                    );
-                    js.push_str(&css_injector);
-                }
+                );
+                js.push_str(&css_injector);
             }
 
             Response::builder()

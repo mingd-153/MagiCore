@@ -97,28 +97,28 @@ pub async fn get_tarball_bytes(
 
     // Try shared cache
     // Thử shared cache
-    if let Some(pc) = shared_package_cache {
-        if let Some(bytes) = pc
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(pc) = shared_package_cache
+        && let Some(bytes) = pc
             .get_tarball(&pkg.id)
             .map_err(|e| MgError::Store(e.to_string()))?
-        {
-            if verify_tarball_integrity(pkg, &bytes).is_ok() {
-                // Copy to local cache if needed
-                // Copy vào local cache nếu cần
-                if !prefer_shared_cache {
-                    let _ = cache.cache_tarball_from_path(&pkg.id, &pc.tarball_path(&pkg.id));
-                }
-                return Ok(TarballFetchResult {
-                    payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
-                    queue_wait_ms: 0,
-                    io_ms: 0,
-                    persist_to_shared_cache: false,
-                });
+    {
+        if verify_tarball_integrity(pkg, &bytes).is_ok() {
+            // Copy to local cache if needed
+            // Copy vào local cache nếu cần
+            if !prefer_shared_cache {
+                let _ = cache.cache_tarball_from_path(&pkg.id, &pc.tarball_path(&pkg.id));
             }
-            // Corrupted shared cache: remove
-            // Shared cache hỏng: xóa
-            let _ = std::fs::remove_file(pc.tarball_path(&pkg.id));
+            return Ok(TarballFetchResult {
+                payload: TarballPayload::Bytes(Arc::<[u8]>::from(bytes)),
+                queue_wait_ms: 0,
+                io_ms: 0,
+                persist_to_shared_cache: false,
+            });
         }
+        // Corrupted shared cache: remove
+        // Shared cache hỏng: xóa
+        let _ = std::fs::remove_file(pc.tarball_path(&pkg.id));
     }
 
     // Cache miss: download from registry

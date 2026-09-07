@@ -2,9 +2,9 @@
 //! (passthrough run: dry-run, audit log, không shell injection, fail → bail kèm log trích)
 
 use crate::allowlist::FORBIDDEN_TOOLS;
-use crate::audit::{append, now_ts, AuditEntry};
+use crate::audit::{AuditEntry, append, now_ts};
 use crate::sanitizer::redact_args;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -492,18 +492,19 @@ fn wait_with_timeout(
         if let Some(status) = child.try_wait()? {
             return finish_child(child, status, mode);
         }
-        if monitor_forbidden_children {
-            if let Some(found) = find_forbidden_descendant(child.id(), exempt) {
-                terminate_process_tree(child.id());
-                let _ = child.kill();
-                let out = finish_after_forced_exit(child, mode)?;
-                return Err(forbidden_child_error(
-                    &found,
-                    out.status,
-                    &out.stderr,
-                    &out.stdout,
-                ));
-            }
+        // Monitor + forbidden child in one guard — gộp điều kiện theo clippy 1.98.
+        if monitor_forbidden_children
+            && let Some(found) = find_forbidden_descendant(child.id(), exempt)
+        {
+            terminate_process_tree(child.id());
+            let _ = child.kill();
+            let out = finish_after_forced_exit(child, mode)?;
+            return Err(forbidden_child_error(
+                &found,
+                out.status,
+                &out.stderr,
+                &out.stdout,
+            ));
         }
         if timeout.is_some_and(|timeout| started.elapsed() >= timeout) {
             terminate_process_tree(child.id());
@@ -632,10 +633,11 @@ fn child_pids(ppid: u32) -> Vec<u32> {
         let Some(ppid_field) = fields.next().and_then(|f| f.parse::<i32>().ok()) else {
             continue;
         };
-        if ppid_field == ppid as i32 {
-            if let Ok(pid) = name.parse::<u32>() {
-                out.push(pid);
-            }
+        // Gộp let-chain theo clippy 1.98 — collapsed guard reads cleaner.
+        if ppid_field == ppid as i32
+            && let Ok(pid) = name.parse::<u32>()
+        {
+            out.push(pid);
         }
     }
     out

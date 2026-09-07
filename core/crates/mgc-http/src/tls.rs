@@ -1,12 +1,12 @@
 //! TLS configuration & security (12 §10)
 //! (HTTPS bắt buộc, cert validation, User-Agent, token security)
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use reqwest::ClientBuilder;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{
-    client::danger::{HandshakeSignatureValid, ServerCertVerified},
     ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme,
+    client::danger::{HandshakeSignatureValid, ServerCertVerified},
 };
 use std::sync::Arc;
 

@@ -3,8 +3,8 @@
 
 use mgc_crypto::keyring::KeyPair;
 use mgc_lockfile::{
-    load_and_verify_lockfile, sign_and_write_lockfile, verify_lockfile, write_lockfile, Lockfile,
-    Package, VerificationStatus,
+    Lockfile, Package, VerificationStatus, load_and_verify_lockfile, sign_and_write_lockfile,
+    verify_lockfile, write_lockfile,
 };
 use tempfile::tempdir;
 

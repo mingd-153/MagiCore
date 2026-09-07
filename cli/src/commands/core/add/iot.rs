@@ -1,8 +1,8 @@
 //! `mgc add iot` — tách từ core/iot.rs (Phase 7 v5).
 
 use anyhow::Result;
-use mgc_types::adapter::PackageAdapter;
 use mgc_types::Ecosystem;
+use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
 use std::sync::Arc;
 

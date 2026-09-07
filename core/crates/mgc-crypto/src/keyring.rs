@@ -108,12 +108,13 @@ impl Keyring {
             });
 
             // A2 FIX: Only allow writing to .magicore directory in production
-            if let Some(home) = dirs::home_dir() {
-                if !canonical.starts_with(&home) {
-                    return Err(CryptoError::KeyringFailed(
-                        "keyring path must be in home directory".to_string(),
-                    ));
-                }
+            // Gộp let-chain theo clippy 1.98 (edition 2024 let-chains).
+            if let Some(home) = dirs::home_dir()
+                && !canonical.starts_with(&home)
+            {
+                return Err(CryptoError::KeyringFailed(
+                    "keyring path must be in home directory".to_string(),
+                ));
             }
         }
 

@@ -29,7 +29,7 @@ We follow the [Contributor Covenant](https://www.contributor-covenant.org/). Be 
 
 | Tool | Version | Install |
 |---|---|---|
-| Rust | 1.85+ | [rustup.rs](https://rustup.rs/) |
+| Rust | 1.85+ (edition 2024) | [rustup.rs](https://rustup.rs/) |
 | Node.js | 18+ | For web adapter tests |
 | Git | 2.40+ | [git-scm.com](https://git-scm.com/) |
 | cargo-deny | latest | `cargo install cargo-deny` |

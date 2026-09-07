@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use mgc_config::project::{ProjectConfig, ProjectExecutionConfig};
-use mgc_types::adapter::PackageAdapter;
 use mgc_types::Ecosystem;
+use mgc_types::adapter::PackageAdapter;
 
 /// Project context: detects project, loads mgc.toml, provides right adapter.
 pub struct ProjectContext {

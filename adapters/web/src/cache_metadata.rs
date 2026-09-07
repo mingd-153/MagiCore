@@ -9,7 +9,7 @@ use mgc_resolver::DependencyError;
 use mgc_types::PackageName;
 use serde::{Deserialize, Serialize};
 
-use crate::cache::{current_unix_secs, SharedWebCache};
+use crate::cache::{SharedWebCache, current_unix_secs};
 use crate::native;
 
 const MAX_METADATA_CACHE_ENTRIES: usize = 2048;
@@ -238,20 +238,21 @@ pub async fn load_metadata_by_name_with_fallback(
             Ok(Arc::new(metadata))
         }
         Err(e) => {
-            if let Some(cached) = cached {
-                if metadata_record_is_usable_stale(&cached) {
-                    if let Some(shared_cache) = shared_cache {
-                        let _ = shared_cache.write_metadata_record(
-                            package,
-                            &cached.metadata,
-                            cached.etag.clone(),
-                            cached.fetched_at,
-                            Some(next_stale_retry_after()),
-                            &registry_url,
-                        );
-                    }
-                    return Ok(Arc::new(cached.metadata));
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(cached) = cached
+                && metadata_record_is_usable_stale(&cached)
+            {
+                if let Some(shared_cache) = shared_cache {
+                    let _ = shared_cache.write_metadata_record(
+                        package,
+                        &cached.metadata,
+                        cached.etag.clone(),
+                        cached.fetched_at,
+                        Some(next_stale_retry_after()),
+                        &registry_url,
+                    );
                 }
+                return Ok(Arc::new(cached.metadata));
             }
             Err(DependencyError(format!(
                 "failed to fetch metadata for '{}': {}",

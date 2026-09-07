@@ -145,18 +145,18 @@ fn parse_toml_file(path: &Path) -> Result<HashMap<String, String>> {
 
     // Extract [build] rustflags = [...]
     // Trích xuất [build] rustflags
-    if let Some(build) = toml.get("build") {
-        if let Some(rustflags_array) = build.get("rustflags").and_then(|v| v.as_array()) {
-            // Convert array to space-separated string
-            // Chuyển array thành string phân cách bằng space
-            let rustflags: Vec<String> = rustflags_array
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
+    if let Some(build) = toml.get("build")
+        && let Some(rustflags_array) = build.get("rustflags").and_then(|v| v.as_array())
+    {
+        // Convert array to space-separated string
+        // Chuyển array thành string phân cách bằng space
+        let rustflags: Vec<String> = rustflags_array
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
 
-            if !rustflags.is_empty() {
-                vars.insert("RUSTFLAGS".to_string(), rustflags.join(" "));
-            }
+        if !rustflags.is_empty() {
+            vars.insert("RUSTFLAGS".to_string(), rustflags.join(" "));
         }
     }
 

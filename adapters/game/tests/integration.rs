@@ -2,9 +2,9 @@
 //! Integration tests for mgc-game-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_engine (Bevy, Godot, Unity, Unreal), adapter_for, PackageAdapter trait.
 
-use mgc_game_adapter::{adapter_for, detect_engine, generate_sbom, GameEngine};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_game_adapter::{GameEngine, adapter_for, detect_engine, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

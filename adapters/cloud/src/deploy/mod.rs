@@ -1,7 +1,7 @@
 //! Cloud deployment via mgc-exec passthrough.
 
 use crate::cloud_type::CloudType;
-use mgc_exec::run::{run as mgc_run, ExecOptions};
+use mgc_exec::run::{ExecOptions, run as mgc_run};
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
 

@@ -1,7 +1,7 @@
 //! PackageAdapter implementation for AI cores.
 //! Điều phối fail-closed dependency flow riêng khỏi framework detection.
 
-use crate::framework::{detect_framework, AiFramework};
+use crate::framework::{AiFramework, detect_framework};
 use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,

@@ -2479,6 +2479,7 @@ dependencies = [
  "mgc-web-adapter",
  "mgc-workspace",
  "mime_guess",
+ "mockito",
  "notify",
  "regex",
  "reqwest 0.12.28",

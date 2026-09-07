@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Multi-registry search engine for MagiCore - search packages across npm, crates.io, pkg.go.dev, PyPI"
-rust-version = "1.75"
+rust-version = "1.85"
 
 [dependencies]
 # Async runtime

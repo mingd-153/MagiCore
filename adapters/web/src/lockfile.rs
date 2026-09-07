@@ -8,8 +8,8 @@ use chrono;
 use mgc_lockfile::{Lockfile, LockfileMetadata, Package};
 use mgc_store::{Layout, PackageCache};
 use mgc_types::{
-    adapter::ResolvedGraph, adapter::ResolvedPackage, Manifest, MgError, MgResult, PackageId,
-    PackageName, Version,
+    Manifest, MgError, MgResult, PackageId, PackageName, Version, adapter::ResolvedGraph,
+    adapter::ResolvedPackage,
 };
 use sha2::{Digest, Sha512};
 

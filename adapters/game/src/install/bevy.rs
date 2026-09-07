@@ -1,6 +1,6 @@
 //! Bevy dependency installation via cargo orchestrate.
 
-use mgc_exec::run::{run as mgc_run, ExecOptions};
+use mgc_exec::run::{ExecOptions, run as mgc_run};
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
 

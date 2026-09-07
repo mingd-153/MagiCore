@@ -3,6 +3,36 @@ use mgc_lockfile::{Lockfile, Package};
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
 
 #[test]
+fn generic_python_ai_detects_torch_from_pep621_dependencies() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\ndependencies = [\"torch>=2.8\", \"numpy\"]\n",
+    )
+    .expect("pyproject");
+
+    assert_eq!(
+        detect_ai_runtime(temp.path(), "python-agent"),
+        crate::commands::optimizer::runtime_detect::DetectedRuntime::PythonPyTorch
+    );
+}
+
+#[test]
+fn generic_python_ai_without_torch_remains_unknown() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\ndependencies = [\"tensorflow>=2\"]\n",
+    )
+    .expect("pyproject");
+
+    assert_eq!(
+        detect_ai_runtime(temp.path(), "python-agent"),
+        crate::commands::optimizer::runtime_detect::DetectedRuntime::Unknown
+    );
+}
+
+#[test]
 fn v2_lock_matches_manifest_when_locked_version_satisfies_range() {
     let mut manifest = Manifest::new("demo", Ecosystem::Web);
     manifest.add_dep(

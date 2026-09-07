@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -120,36 +120,37 @@ fn cache_entries(
 ) -> Result<Vec<CacheEntry>> {
     let mut entries = Vec::new();
 
-    if target.includes(CacheTarget::Shared) {
-        if let Some(root) = dirs::cache_dir() {
-            let shared = match core {
-                Some("web") => root.join("magicore").join("web"),
-                Some(core) => root.join("magicore").join(core),
-                None => root.join("magicore"),
-            };
-            entries.push(CacheEntry {
-                label: "shared",
-                path: shared,
-                removable: true,
-            });
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if target.includes(CacheTarget::Shared)
+        && let Some(root) = dirs::cache_dir()
+    {
+        let shared = match core {
+            Some("web") => root.join("magicore").join("web"),
+            Some(core) => root.join("magicore").join(core),
+            None => root.join("magicore"),
+        };
+        entries.push(CacheEntry {
+            label: "shared",
+            path: shared,
+            removable: true,
+        });
     }
 
-    if target.includes(CacheTarget::Project) {
-        if let Ok(cwd) = std::env::current_dir() {
-            if let Some(root) = crate::commands::core::shared::find_project_root(&cwd)? {
-                let project = match core {
-                    Some("web") => root.join(".magicore").join("cache").join("web"),
-                    Some(core) => root.join(".magicore").join("cache").join(core),
-                    None => root.join(".magicore").join("cache"),
-                };
-                entries.push(CacheEntry {
-                    label: "project",
-                    path: project,
-                    removable: true,
-                });
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if target.includes(CacheTarget::Project)
+        && let Ok(cwd) = std::env::current_dir()
+        && let Some(root) = crate::commands::core::shared::find_project_root(&cwd)?
+    {
+        let project = match core {
+            Some("web") => root.join(".magicore").join("cache").join("web"),
+            Some(core) => root.join(".magicore").join("cache").join(core),
+            None => root.join(".magicore").join("cache"),
+        };
+        entries.push(CacheEntry {
+            label: "project",
+            path: project,
+            removable: true,
+        });
     }
 
     if include_build {

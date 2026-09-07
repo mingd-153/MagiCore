@@ -36,19 +36,19 @@ pub async fn add(packages: Vec<String>) -> Result<()> {
         }
     }
     let has_materialized_pkg = packages.iter().any(|pkg| pkg != OPTIMIZER_PKG);
-    if has_materialized_pkg {
-        if let Ok(adapter) =
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if has_materialized_pkg
+        && let Ok(adapter) =
             crate::factory::create_adapter(&mgc_types::Ecosystem::Hardware, None, None)
-        {
-            shared::install_with_adapter(
-                &*adapter,
-                &root,
-                "mgc add-hardware",
-                false,
-                mgc_types::adapter::InstallOptions::default(),
-            )
-            .await?;
-        }
+    {
+        shared::install_with_adapter(
+            &*adapter,
+            &root,
+            "mgc add-hardware",
+            false,
+            mgc_types::adapter::InstallOptions::default(),
+        )
+        .await?;
     }
     Ok(())
 }

@@ -296,7 +296,11 @@ fn deploy_command(provider: mgc_cicd_adapter::CicdProvider) -> Result<DeployComm
         }),
         mgc_cicd_adapter::CicdProvider::Gcp => Ok(DeployCommand {
             tool: "gcloud",
-            args: vec!["app".to_string(), "deploy".to_string(), "--no-promote".to_string()],
+            args: vec![
+                "app".to_string(),
+                "deploy".to_string(),
+                "--no-promote".to_string(),
+            ],
         }),
         mgc_cicd_adapter::CicdProvider::GithubActions
         | mgc_cicd_adapter::CicdProvider::Gitlab

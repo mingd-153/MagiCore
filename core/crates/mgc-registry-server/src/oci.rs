@@ -3,14 +3,14 @@
 //! NOTE: repo names may contain slashes (e.g. `ai/mymodel`), so routes are
 //! matched via `/v2/*rest` and split manually — `:name` matches one segment only.
 
-use crate::{model::*, storage::RegistryStore, AppState};
+use crate::{AppState, model::*, storage::RegistryStore};
 use axum::{
+    Router,
     body::Bytes,
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::get,
-    Router,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -165,22 +165,22 @@ async fn blob_upload_start(
     query: &HashMap<String, String>,
 ) -> Result<Response, StatusCode> {
     // Cross-repo mount: POST /v2/{name}/blobs/uploads/?mount={digest}&from={repo}
-    if let (Some(digest), Some(from)) = (query.get("mount"), query.get("from")) {
-        if store
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let (Some(digest), Some(from)) = (query.get("mount"), query.get("from"))
+        && store
             .mount_oci_blob(from, digest, name)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            let mut resp = Response::new(axum::body::Body::from("{}"));
-            *resp.status_mut() = StatusCode::CREATED;
-            resp.headers_mut()
-                .insert("docker-content-digest", header_value(digest)?);
-            resp.headers_mut().insert(
-                axum::http::header::LOCATION,
-                header_value(&format!("/v2/{}/blobs/{}", name, digest))?,
-            );
-            return Ok(resp);
-        }
+    {
+        let mut resp = Response::new(axum::body::Body::from("{}"));
+        *resp.status_mut() = StatusCode::CREATED;
+        resp.headers_mut()
+            .insert("docker-content-digest", header_value(digest)?);
+        resp.headers_mut().insert(
+            axum::http::header::LOCATION,
+            header_value(&format!("/v2/{}/blobs/{}", name, digest))?,
+        );
+        return Ok(resp);
     }
 
     let uuid = uuid::Uuid::new_v4().to_string();
@@ -224,10 +224,11 @@ async fn blob_upload_chunk(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     // Chunk trước phải khớp offset hiện tại (resume-safe) — ponytail: bỏ qua nếu client lệch, client tự retry
-    if let Some(start) = start {
-        if start != offset - body.len() as i64 {
-            return Err(StatusCode::RANGE_NOT_SATISFIABLE);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(start) = start
+        && start != offset - body.len() as i64
+    {
+        return Err(StatusCode::RANGE_NOT_SATISFIABLE);
     }
 
     Ok(Json(OciBlobUploadResponse {

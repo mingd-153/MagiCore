@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use mgc_lockfile::{serialization, Lockfile, Package};
+use mgc_lockfile::{Lockfile, Package, serialization};
 
 #[test]
 fn v2_lockfile_roundtrips_package_edges() {

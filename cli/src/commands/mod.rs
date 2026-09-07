@@ -19,7 +19,6 @@ pub mod info;
 pub mod init;
 pub mod install;
 pub mod launcher_policy;
-pub mod list;
 pub mod login;
 pub mod mcp;
 pub mod model;

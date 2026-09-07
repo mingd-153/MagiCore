@@ -13,9 +13,9 @@ use crate::install::extract::{
     write_materialized_package_marker,
 };
 pub use crate::install::link_tree::{
-    backing_link_file, default_hardlink_threads, hardlink_pool, hardlink_thread_count,
-    hardlink_tree, hardlink_tree_with_profile, link_package_tree, link_package_tree_with_profile,
-    StrictTreeLinkMode,
+    StrictTreeLinkMode, backing_link_file, default_hardlink_threads, hardlink_pool,
+    hardlink_thread_count, hardlink_tree, hardlink_tree_with_profile, link_package_tree,
+    link_package_tree_with_profile,
 };
 use crate::lockfile::installed_package_matches;
 use crate::profile::MaterializationProfile;
@@ -471,10 +471,11 @@ pub fn materialization_package_root(
     extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
     pkg: &ResolvedPackage,
 ) -> MgResult<PathBuf> {
-    if let Some(root) = extracted_roots.get(&pkg.id) {
-        if root.join("package.json").exists() {
-            return Ok(root.clone());
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(root) = extracted_roots.get(&pkg.id)
+        && root.join("package.json").exists()
+    {
+        return Ok(root.clone());
     }
 
     let local_tarball = cache.tarball_path(&pkg.id);

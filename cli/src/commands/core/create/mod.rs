@@ -25,77 +25,10 @@ pub mod iot;
 pub mod library;
 pub mod web;
 
-pub async fn run(core: &str, framework: &str, project_name: &str) -> Result<()> {
-    // T5: Thử fetch starter kit `create-mgc-<core>` từ MagiCore registry trước.
-    // Nếu offline / không tìm thấy → fallback vào local template + wizard (hiện hành).
-    // Registry fetch endpoint not yet live → using fallback templates
-    // (Issue #5: Enable registry fetching when staging environment ready)
-    let result = match core {
-        "web" => {
-            // Forward tới web create với cờ mặc định
-            let flags = crate::commands::core::scaffold_flags::ScaffoldFlags::default();
-            web::run_create_with_options(framework, project_name, Some(flags)).await
-        }
-
-        #[cfg(feature = "app")]
-        "app" => app::run(framework, project_name).await,
-        #[cfg(not(feature = "app"))]
-        "app" => Err(crate::error::core_not_in_build("app")),
-        #[cfg(feature = "game")]
-        "game" => game::run(framework, project_name).await,
-        #[cfg(not(feature = "game"))]
-        "game" => Err(crate::error::core_not_in_build("game")),
-        #[cfg(feature = "ai")]
-        "ai" => ai::run(framework, project_name).await,
-        #[cfg(not(feature = "ai"))]
-        "ai" => Err(crate::error::core_not_in_build("ai")),
-        #[cfg(feature = "clo")]
-        "clo" => clo::run(framework, project_name).await,
-        #[cfg(not(feature = "clo"))]
-        "clo" => Err(crate::error::core_not_in_build("clo")),
-        #[cfg(feature = "iot")]
-        "iot" => iot::run(framework, project_name).await,
-        #[cfg(not(feature = "iot"))]
-        "iot" => Err(crate::error::core_not_in_build("iot")),
-        #[cfg(feature = "cicd")]
-        "cicd" => cicd::run(framework, project_name).await,
-        #[cfg(not(feature = "cicd"))]
-        "cicd" => Err(crate::error::core_not_in_build("cicd")),
-        #[cfg(feature = "lib")]
-        "lib" | "library" => library::run(framework, project_name).await,
-        #[cfg(not(feature = "lib"))]
-        "lib" | "library" => Err(crate::error::core_not_in_build("lib")),
-        #[cfg(feature = "hardware")]
-        "hardware" => hardware::run(framework, project_name).await,
-        #[cfg(not(feature = "hardware"))]
-        "hardware" => Err(crate::error::core_not_in_build("hardware")),
-        other => return Err(crate::error::unknown_core(other)),
-    };
-
-    // T9a: Ghi .mgc.core marker tại project_name/ folder sau scaffold thành công.
-    // Fail-soft: chỉ warn nếu không ghi được, không block luồng.
-    if result.is_ok() {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        // project_name có thể là tên thư mục hoặc "." (in-place)
-        let project_dir = if project_name.is_empty() || project_name == "." {
-            cwd.clone()
-        } else {
-            cwd.join(project_name)
-        };
-        if project_dir.is_dir() {
-            if let Err(e) =
-                mgc_config::project::ProjectConfig::write_core_marker_at(&project_dir, core)
-            {
-                mgc_ui::warning(&format!(
-                    "Could not write {} marker: {e}",
-                    mgc_config::project::ProjectConfig::CORE_MARKER_FILE
-                ));
-            }
-        }
-    }
-
-    result
-}
+// Router `run(core, ...)` đã bị loại: dispatch live (dispatch/core/create.rs) gọi
+// thẳng từng create::<core>::run và ghi .mgc.core marker qua init/wizard path —
+// router trung gian này trùng lắp 100% và không còn caller.
+// Removed legacy router: live dispatch calls each create subcommand directly.
 
 pub(crate) fn save_scaffold_metadata(
     project_dir: &Path,

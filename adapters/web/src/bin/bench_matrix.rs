@@ -1,6 +1,6 @@
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use flate2::write::GzEncoder;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use mgc_store::{Layout, PackageCache};
 use mgc_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
 use mgc_web_adapter::WebAdapter;
@@ -80,7 +80,13 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
-    std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
+    // SAFETY: process init before any thread is spawned (bench harness
+    // threads start later) — no concurrent env access can race this write.
+    // AN TOÀN: ghi env trước khi spawn thread — không có race đồng thời.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
+    }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut runs = 7usize;
@@ -1129,11 +1135,19 @@ fn is_stale_lock(lock_path: &Path) -> bool {
         .is_some_and(|age| age.as_secs() > 60)
 }
 
+/// Restore env var — edition 2024 requires unsafe for env mutation.
+/// Set/restore tuần tự trên main thread của bench (không thread khác đọc).
+#[allow(unsafe_code)]
 fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
-    if let Some(value) = previous {
-        std::env::set_var(key, value);
-    } else {
-        std::env::remove_var(key);
+    // SAFETY: bench_matrix keeps env mutation on the main thread; each scenario
+    // sets/restores sequentially — no other thread reads these keys meanwhile.
+    // AN TOÀN: set/restore tuần tự trên main thread — không thread khác đọc song song.
+    unsafe {
+        if let Some(value) = previous {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 }
 
@@ -1151,13 +1165,18 @@ where
     let previous_retry = std::env::var_os("MAGICORE_WEB_METADATA_STALE_RETRY_TTL_SECS");
     let previous_max_stale = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
 
-    std::env::set_var(
-        "MAGICORE_SHARED_CACHE_DIR",
-        shared_root.unwrap_or(isolated.path()),
-    );
-    std::env::set_var("MAGICORE_WEB_METADATA_TTL_SECS", "300");
-    std::env::set_var("MAGICORE_WEB_METADATA_STALE_RETRY_TTL_SECS", "30");
-    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800");
+    // SAFETY: sequential set/restore on the bench main thread (see restore_env).
+    // AN TOÀN: set/restore tuần tự trên main thread (xem restore_env).
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var(
+            "MAGICORE_SHARED_CACHE_DIR",
+            shared_root.unwrap_or(isolated.path()),
+        );
+        std::env::set_var("MAGICORE_WEB_METADATA_TTL_SECS", "300");
+        std::env::set_var("MAGICORE_WEB_METADATA_STALE_RETRY_TTL_SECS", "30");
+        std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800");
+    }
 
     let result = f();
 

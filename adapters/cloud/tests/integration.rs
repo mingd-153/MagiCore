@@ -3,9 +3,9 @@
 //! Kiểm thử: detect_type (4 types × 2 paths), adapter_for, cloud_type helper,
 //! CDK/Pulumi sử dụng WebAdapter delegate, Terraform fail-closed add/remove.
 
-use mgc_cloud_adapter::{adapter_for, detect_type, generate_sbom, CloudType};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_cloud_adapter::{CloudType, adapter_for, detect_type, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

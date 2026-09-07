@@ -997,86 +997,82 @@ pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
     let cwd = std::env::current_dir()?;
 
     // 0. Try core signature marker (.mgc.core) — T9a, ưu tiên cao nhất
-    if let Some(root) = mgc_config::project::ProjectConfig::find_project_root(&cwd) {
-        if let Ok(Some(core)) = mgc_config::project::ProjectConfig::read_core_marker(&root) {
-            return Ok(Some(core));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(root) = mgc_config::project::ProjectConfig::find_project_root(&cwd)
+        && let Ok(Some(core)) = mgc_config::project::ProjectConfig::read_core_marker(&root)
+    {
+        return Ok(Some(core));
     }
 
     // 1. Try mgc.toml
     let mgc_toml = cwd.join("mgc.toml");
-    if mgc_toml.exists() {
-        if let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&cwd) {
-            if !cfg.ecosystem.is_empty() {
-                return Ok(Some(cfg.ecosystem));
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if mgc_toml.exists()
+        && let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&cwd)
+        && !cfg.ecosystem.is_empty()
+    {
+        return Ok(Some(cfg.ecosystem));
     }
 
     // 2. Try mgc.lock
     let lock_path = cwd.join("mgc.lock");
-    if lock_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&lock_path) {
-            for line in content.lines() {
-                let line = line.trim();
-                if let Some(val) = line.strip_prefix("core = \"") {
-                    if let Some(eco) = val.strip_suffix('"') {
-                        if !eco.is_empty() {
-                            return Ok(Some(eco.to_string()));
-                        }
-                    }
-                }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if lock_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&lock_path)
+    {
+        for line in content.lines() {
+            let line = line.trim();
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(val) = line.strip_prefix("core = \"")
+                && let Some(eco) = val.strip_suffix('"')
+                && !eco.is_empty()
+            {
+                return Ok(Some(eco.to_string()));
             }
         }
     }
 
     // 3. Try Native Manifest Injection (package.json, Cargo.toml, pyproject.toml)
     let package_json_path = cwd.join("package.json");
-    if package_json_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&package_json_path) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(eco) = v
-                    .get("magicore")
-                    .and_then(|m| m.get("core"))
-                    .and_then(|c| c.as_str())
-                {
-                    return Ok(Some(eco.to_string()));
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if package_json_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&package_json_path)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(eco) = v
+            .get("magicore")
+            .and_then(|m| m.get("core"))
+            .and_then(|c| c.as_str())
+    {
+        return Ok(Some(eco.to_string()));
     }
 
     let cargo_toml_path = cwd.join("Cargo.toml");
-    if cargo_toml_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
-            if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-                if let Some(eco) = v
-                    .get("package")
-                    .and_then(|p| p.get("metadata"))
-                    .and_then(|m| m.get("magicore"))
-                    .and_then(|mgc| mgc.get("core"))
-                    .and_then(|c| c.as_str())
-                {
-                    return Ok(Some(eco.to_string()));
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if cargo_toml_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&cargo_toml_path)
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(eco) = v
+            .get("package")
+            .and_then(|p| p.get("metadata"))
+            .and_then(|m| m.get("magicore"))
+            .and_then(|mgc| mgc.get("core"))
+            .and_then(|c| c.as_str())
+    {
+        return Ok(Some(eco.to_string()));
     }
 
     let pyproject_toml_path = cwd.join("pyproject.toml");
-    if pyproject_toml_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&pyproject_toml_path) {
-            if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-                if let Some(eco) = v
-                    .get("tool")
-                    .and_then(|t| t.get("magicore"))
-                    .and_then(|mgc| mgc.get("core"))
-                    .and_then(|c| c.as_str())
-                {
-                    return Ok(Some(eco.to_string()));
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if pyproject_toml_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&pyproject_toml_path)
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(eco) = v
+            .get("tool")
+            .and_then(|t| t.get("magicore"))
+            .and_then(|mgc| mgc.get("core"))
+            .and_then(|c| c.as_str())
+    {
+        return Ok(Some(eco.to_string()));
     }
 
     // 4. Interactive prompt for missing ecosystem

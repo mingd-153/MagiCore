@@ -1,8 +1,8 @@
 //! `mgc add library` — tách từ core/library.rs (Phase 7 v5).
 
 use anyhow::Result;
-use mgc_types::adapter::PackageAdapter;
 use mgc_types::Ecosystem;
+use mgc_types::adapter::PackageAdapter;
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let root = shared::find_project_root(&cwd)?

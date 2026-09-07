@@ -2,7 +2,7 @@
 //! Thực thi policy trust cho CI/CD
 
 use anyhow::Result;
-use mgc_lockfile::{verify_lockfile, VerificationStatus};
+use mgc_lockfile::{VerificationStatus, verify_lockfile};
 use std::path::Path;
 
 /// Policy mode — Chế độ policy

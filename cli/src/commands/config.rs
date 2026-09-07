@@ -125,12 +125,13 @@ fn get(key: &str) -> Result<()> {
         return Ok(());
     }
     // 2. mgc.toml project
-    if let Some(toml_path) = find_mgc_toml() {
-        if let Some(value) = toml_value(&toml_path, key) {
-            mgc_ui::info(&format!("[mgc.toml] {key} = {value}"));
-            println!("{value}");
-            return Ok(());
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(toml_path) = find_mgc_toml()
+        && let Some(value) = toml_value(&toml_path, key)
+    {
+        mgc_ui::info(&format!("[mgc.toml] {key} = {value}"));
+        println!("{value}");
+        return Ok(());
     }
     // 3. .npmrc local (project CWD)
     let project_npmrc = std::env::current_dir()?.join(".npmrc");
@@ -224,10 +225,11 @@ fn delete_toml(key: &str) -> Result<()> {
     let parts: Vec<&str> = key.splitn(2, '.').collect();
     if parts.len() == 2 {
         let (table, field) = (parts[0], parts[1]);
-        if let Some(t) = doc.get_mut(table) {
-            if let Some(tbl) = t.as_table_like_mut() {
-                tbl.remove(field);
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(t) = doc.get_mut(table)
+            && let Some(tbl) = t.as_table_like_mut()
+        {
+            tbl.remove(field);
         }
     } else {
         doc.remove(key);
@@ -285,14 +287,13 @@ fn list(local_only: bool) -> Result<()> {
     }
 
     // 4. .npmrc user
-    if !local_only {
-        if let Some(home) = dirs::home_dir() {
-            let user_npmrc = home.join(".npmrc");
-            if user_npmrc.exists() {
-                println!("# [.npmrc user] {}", user_npmrc.display());
-                print_npmrc_file(&user_npmrc);
-                any = true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if !local_only && let Some(home) = dirs::home_dir() {
+        let user_npmrc = home.join(".npmrc");
+        if user_npmrc.exists() {
+            println!("# [.npmrc user] {}", user_npmrc.display());
+            print_npmrc_file(&user_npmrc);
+            any = true;
         }
     }
 

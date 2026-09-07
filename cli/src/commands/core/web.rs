@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 // use mgc_lockfile::{
 //     serialization, LockPackage, Lockfile, LockfileSigner, ResolutionMeta, WorkspaceLock,
 // };
@@ -265,10 +265,9 @@ pub async fn install(
 
     // Dedupe opt-in (02 §2.1): CLI flag OR mgc.toml [dedupe] prefer = true.
     let mut dedupe_enabled = prefer_dedupe;
-    if !dedupe_enabled {
-        if let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&root) {
-            dedupe_enabled = cfg.dedupe.prefer;
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if !dedupe_enabled && let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&root) {
+        dedupe_enabled = cfg.dedupe.prefer;
     }
     if dedupe_enabled {
         adapter.set_dedupe_pref(true);
@@ -821,8 +820,10 @@ fn dev_targets(
     host: Option<String>,
     port: Option<u16>,
 ) -> Result<Vec<DevTarget>> {
-    let fullstack_backend_port = Some(3415);
-    let monorepo_backend_port = Some(3415);
+    // Backend port từ bảng trung tâm dev_port (RULE §13/§12 — không hardcode).
+    // Backend port comes from the centralized dev_port table.
+    let fullstack_backend_port = Some(crate::commands::core::dev_port::PORT_WEB_BE);
+    let monorepo_backend_port = Some(crate::commands::core::dev_port::PORT_WEB_BE);
 
     match detect_project_mode(project_root)? {
         WebProjectMode::Standalone => Ok(vec![DevTarget {
@@ -906,17 +907,19 @@ fn append_dev_endpoint_args(
     host: Option<String>,
     port: Option<u16>,
 ) {
-    if let Some(host) = host {
-        if !has_arg(args, host_flag) {
-            args.push(OsString::from(host_flag));
-            args.push(OsString::from(host));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(host) = host
+        && !has_arg(args, host_flag)
+    {
+        args.push(OsString::from(host_flag));
+        args.push(OsString::from(host));
     }
-    if let Some(port) = port {
-        if !has_arg(args, port_flag) {
-            args.push(OsString::from(port_flag));
-            args.push(OsString::from(port.to_string()));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(port) = port
+        && !has_arg(args, port_flag)
+    {
+        args.push(OsString::from(port_flag));
+        args.push(OsString::from(port.to_string()));
     }
 }
 
@@ -1737,7 +1740,7 @@ pub async fn run_create_with_options(
     }
 
     // Phase 4: Parse scaffold spec sớm với typo detection
-    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+    use crate::scaffold::spec::{CoreKind, parse_scaffold_spec};
     let spec = parse_scaffold_spec(CoreKind::Web, framework)
         .map_err(|e| anyhow::anyhow!("Invalid framework specification '{}': {}", framework, e))?;
 
@@ -1870,10 +1873,11 @@ fn required_web_layers_for_config(
             rels.push("web/shared/partials/monorepo".to_string());
             rels.push("web/monorepo/base".to_string());
             rels.push(format!("web/monorepo/frontend/{primary}"));
-            if let Some(backend) = config.frameworks.get(1) {
-                if let Some(lang) = crate::scaffold::processor::infer_backend_language(backend) {
-                    rels.push(format!("web/monorepo/backend/{lang}/{backend}"));
-                }
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(backend) = config.frameworks.get(1)
+                && let Some(lang) = crate::scaffold::processor::infer_backend_language(backend)
+            {
+                rels.push(format!("web/monorepo/backend/{lang}/{backend}"));
             }
         }
         _ => rels.push(format!("web/frontend/{primary}")),
@@ -2073,7 +2077,9 @@ fn build_web_config(
                 }
             }
             None => {
-                info("--monorepo ignored: no backend framework specified (add --express, --fastify, etc.)");
+                info(
+                    "--monorepo ignored: no backend framework specified (add --express, --fastify, etc.)",
+                );
                 crate::scaffold::Scaffolder::infer_web_create_config(
                     &frontend.normalized,
                     project_name,

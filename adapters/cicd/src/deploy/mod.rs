@@ -2,7 +2,7 @@
 
 use mgc_types::MgResult;
 
-use mgc_exec::run::{run as mgc_run, ExecOptions};
+use mgc_exec::run::{ExecOptions, run as mgc_run};
 
 #[derive(Debug, Clone)]
 pub enum DeployTarget {

@@ -2,6 +2,7 @@
 //! PluginRegistry tests — RULE §5 (test/ ngoài src/).
 
 use mgc_plugin::Plugin;
+use mgc_types::Ecosystem;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     ResolvedGraph, UpdatedPackage,
@@ -10,7 +11,6 @@ use mgc_types::error::MgResult;
 use mgc_types::manifest::Manifest;
 use mgc_types::package::{PackageId, PackageName, VersionRange};
 use mgc_types::version::Version;
-use mgc_types::Ecosystem;
 use std::path::Path;
 use std::sync::Arc;
 

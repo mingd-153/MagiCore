@@ -396,11 +396,7 @@ impl ProjectConfig {
     /// Canonicalize a core name (trim, lowercase, alias mapping).
     fn canonical_core(name: &str) -> String {
         let n = name.trim().to_ascii_lowercase();
-        if n == "cloud" {
-            "clo".to_string()
-        } else {
-            n
-        }
+        if n == "cloud" { "clo".to_string() } else { n }
     }
 
     fn is_known_core(name: &str) -> bool {

@@ -25,10 +25,11 @@ pub fn parse_pubspec(project_root: &Path) -> MgResult<Manifest> {
                 continue; // Skip Flutter SDK dependency
             }
             let version = parse_pubspec_version(&value);
-            if let Ok(pkg_name) = PackageName::new(&name) {
-                if let Ok(range) = VersionRange::parse(&version) {
-                    manifest.add_dep(DependencySpec::new(pkg_name, range), false, false, false);
-                }
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Ok(pkg_name) = PackageName::new(&name)
+                && let Ok(range) = VersionRange::parse(&version)
+            {
+                manifest.add_dep(DependencySpec::new(pkg_name, range), false, false, false);
             }
         }
     }
@@ -37,10 +38,11 @@ pub fn parse_pubspec(project_root: &Path) -> MgResult<Manifest> {
     if let Some(dev_deps) = pubspec.dev_dependencies {
         for (name, value) in dev_deps {
             let version = parse_pubspec_version(&value);
-            if let Ok(pkg_name) = PackageName::new(&name) {
-                if let Ok(range) = VersionRange::parse(&version) {
-                    manifest.add_dep(DependencySpec::new(pkg_name, range), true, false, false);
-                }
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Ok(pkg_name) = PackageName::new(&name)
+                && let Ok(range) = VersionRange::parse(&version)
+            {
+                manifest.add_dep(DependencySpec::new(pkg_name, range), true, false, false);
             }
         }
     }

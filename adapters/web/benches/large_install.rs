@@ -1,7 +1,7 @@
 //! Large install benchmark — Benchmark cài đặt lớn
 //! Profiles install performance for 1000 packages
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 
 /// Benchmark install 10 packages (smoke test)

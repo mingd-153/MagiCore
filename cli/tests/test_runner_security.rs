@@ -93,7 +93,7 @@ fn test_npm_forbidden_in_install_scope() {
     // TEST: Package manager (npm) should be FORBIDDEN in Install scope
     // Simulated via direct allowlist check (Install scope used by scaffold)
 
-    use mgc_exec::allowlist::{check_tool_with_scope, ExecutionScope};
+    use mgc_exec::allowlist::{ExecutionScope, check_tool_with_scope};
 
     let result = check_tool_with_scope("npm", ExecutionScope::Install, None);
 
@@ -218,8 +218,8 @@ fn test_shell_injection_prevented() {
     // TEST: Shell metacharacters in tool names should be rejected
     // NEGATIVE TEST: Try to execute tool with shell injection → must FAIL
 
-    use mgc_exec::allowlist::check_tool_with_scope;
     use mgc_exec::allowlist::ExecutionScope;
+    use mgc_exec::allowlist::check_tool_with_scope;
 
     // ATTACK 1: Try to inject shell command via tool name
     let malicious_tools = vec![
@@ -254,7 +254,9 @@ fn test_shell_injection_prevented() {
     // This is verified by code inspection: mgc-exec/run.rs uses command.args(args)
     // No shell involvement means shell metacharacters are passed as literal strings, not interpreted
 
-    println!("✅ Shell injection prevented: mgc-exec uses Command::args(), malicious tool names rejected");
+    println!(
+        "✅ Shell injection prevented: mgc-exec uses Command::args(), malicious tool names rejected"
+    );
 }
 
 #[test]
@@ -352,7 +354,7 @@ fn test_path_traversal_in_args_rejected() {
     // TEST: Path traversal validator với ALLOWLISTED tool
     // Chứng minh validator chạy TRƯỚC allowlist check
 
-    use mgc_exec::prelude::{run, ExecOptions};
+    use mgc_exec::prelude::{ExecOptions, run};
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = temp_dir.path();
@@ -394,7 +396,7 @@ fn test_path_traversal_in_args_rejected() {
 fn test_validator_allows_legitimate_dotdot_in_non_paths() {
     // TEST: Validator KHÔNG block args hợp lệ chứa ".." (versions, filenames)
 
-    use mgc_exec::prelude::{run, ExecOptions};
+    use mgc_exec::prelude::{ExecOptions, run};
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = temp_dir.path();
@@ -432,7 +434,7 @@ fn test_validator_allows_legitimate_dotdot_in_non_paths() {
 fn test_validator_rejects_actual_path_traversal() {
     // TEST: Validator chặn THẬT SỰ path traversal (file tồn tại)
 
-    use mgc_exec::prelude::{run, ExecOptions};
+    use mgc_exec::prelude::{ExecOptions, run};
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = temp_dir.path();

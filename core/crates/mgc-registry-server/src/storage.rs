@@ -616,18 +616,18 @@ impl RegistryStore {
         }
 
         // Fallback: reference may be a content digest
-        if let Some(digest) = reference.strip_prefix("sha256:") {
-            if let Some(row) =
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(digest) = reference.strip_prefix("sha256:")
+            && let Some(row) =
                 sqlx::query("SELECT manifest FROM oci_manifests WHERE repo = ? AND digest = ?")
                     .bind(repo)
                     .bind(format!("sha256:{}", digest))
                     .fetch_optional(&self.db)
                     .await?
-            {
-                let manifest_json: String = row.get("manifest");
-                let manifest = serde_json::from_str(&manifest_json)?;
-                return Ok(Some(manifest));
-            }
+        {
+            let manifest_json: String = row.get("manifest");
+            let manifest = serde_json::from_str(&manifest_json)?;
+            return Ok(Some(manifest));
         }
         Ok(None)
     }

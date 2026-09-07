@@ -3,7 +3,7 @@
 
 use crate::{Lockfile, LockfileError, LockfileResult, SignatureFile};
 use mgc_crypto::blake3_signer::Blake3Hasher;
-use mgc_crypto::ed25519_signer::{verify_signature, Ed25519PublicKey, Ed25519Signature};
+use mgc_crypto::ed25519_signer::{Ed25519PublicKey, Ed25519Signature, verify_signature};
 use std::path::Path;
 
 /// Parse lockfile from TOML string — Parse lockfile từ chuỗi TOML

@@ -2,9 +2,9 @@
 //! Integration tests for mgc-cicd-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_provider (7 providers × 2 paths), adapter_for, PackageAdapter trait.
 
-use mgc_cicd_adapter::{adapter_for, detect_provider, generate_sbom, CicdAdapter, CicdProvider};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_cicd_adapter::{CicdAdapter, CicdProvider, adapter_for, detect_provider, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

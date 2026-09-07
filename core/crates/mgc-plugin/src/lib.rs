@@ -11,10 +11,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
+use mgc_types::Ecosystem;
 use mgc_types::adapter::{InstallOptions, InstallSummary, PackageAdapter, ResolvedGraph};
 use mgc_types::error::MgResult;
 use mgc_types::manifest::Manifest;
-use mgc_types::Ecosystem;
 
 pub mod backend;
 pub mod fetcher;

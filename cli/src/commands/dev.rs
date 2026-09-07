@@ -65,6 +65,9 @@ pub async fn run(
             if clear {
                 info("--clear is delegated to the selected web framework when supported.");
             }
+            // Port resolution qua bảng trung tâm dev_port (RULE §13 — hoán vị 4·3·1·5).
+            // Port resolution goes through the centralized dev_port table.
+            let port = crate::commands::core::dev_port::resolve_port("web", port);
             crate::commands::core::dev::web::dev_at_root(&root, Some(host), port).await
         }
         #[cfg(feature = "game")]

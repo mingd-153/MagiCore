@@ -21,10 +21,16 @@ pub async fn scaffold_project(
 }
 
 async fn scaffold_esp32(name: &str, board: &str, dir: &Path) -> MgResult<()> {
-    let cargo = format!("[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2021\"\n\n[dependencies]\nesp-hal=\"0.17\"\n", name);
+    let cargo = format!(
+        "[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2021\"\n\n[dependencies]\nesp-hal=\"0.17\"\n",
+        name
+    );
     std::fs::write(dir.join("Cargo.toml"), cargo)?;
 
-    let mgc = format!("name=\"{}\"\nversion=\"0.1.0\"\necosystem=\"iot\"\n\n[iot]\nframework=\"esp32-rust\"\nboard=\"{}\"\n", name, board);
+    let mgc = format!(
+        "name=\"{}\"\nversion=\"0.1.0\"\necosystem=\"iot\"\n\n[iot]\nframework=\"esp32-rust\"\nboard=\"{}\"\n",
+        name, board
+    );
     std::fs::write(dir.join("mgc.toml"), mgc)?;
 
     std::fs::create_dir_all(dir.join("src"))?;
@@ -42,7 +48,10 @@ async fn scaffold_platformio(name: &str, board: &str, dir: &Path) -> MgResult<()
     );
     std::fs::write(dir.join("platformio.ini"), ini)?;
 
-    let mgc = format!("name=\"{}\"\nversion=\"0.1.0\"\necosystem=\"iot\"\n\n[iot]\nframework=\"platformio\"\nboard=\"{}\"\n", name, board);
+    let mgc = format!(
+        "name=\"{}\"\nversion=\"0.1.0\"\necosystem=\"iot\"\n\n[iot]\nframework=\"platformio\"\nboard=\"{}\"\n",
+        name, board
+    );
     std::fs::write(dir.join("mgc.toml"), mgc)?;
 
     std::fs::create_dir_all(dir.join("src"))?;
@@ -58,7 +67,10 @@ async fn scaffold_zephyr(name: &str, board: &str, dir: &Path) -> MgResult<()> {
         .to_string();
     std::fs::write(dir.join("west.yml"), west)?;
 
-    let mgc = format!("name=\"{}\"\nversion=\"0.1.0\"\necosystem=\"iot\"\n\n[iot]\nframework=\"zephyr\"\nboard=\"{}\"\n", name, board);
+    let mgc = format!(
+        "name=\"{}\"\nversion=\"0.1.0\"\necosystem=\"iot\"\n\n[iot]\nframework=\"zephyr\"\nboard=\"{}\"\n",
+        name, board
+    );
     std::fs::write(dir.join("mgc.toml"), mgc)?;
     Ok(())
 }

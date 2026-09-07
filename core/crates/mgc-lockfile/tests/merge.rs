@@ -1,6 +1,6 @@
 //! Tests cho 3-way merge (v2 schema) — tách khỏi src theo RULE §5.
 
-use mgc_lockfile::{merge3, resolve_git_conflict_markers, serialize_lockfile, Lockfile, Package};
+use mgc_lockfile::{Lockfile, Package, merge3, resolve_git_conflict_markers, serialize_lockfile};
 
 fn pkg(name: &str, version: &str) -> Package {
     Package {

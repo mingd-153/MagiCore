@@ -18,10 +18,11 @@ pub use layout::Layout;
 /// Trả về đường dẫn global store: `~/.magicore/store/v3`
 /// (env `MAGICORE_STORE_ROOT` override — tests + custom setups)
 pub fn default_store_root() -> std::path::PathBuf {
-    if let Ok(override_dir) = std::env::var("MAGICORE_STORE_ROOT") {
-        if !override_dir.is_empty() {
-            return std::path::PathBuf::from(override_dir);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(override_dir) = std::env::var("MAGICORE_STORE_ROOT")
+        && !override_dir.is_empty()
+    {
+        return std::path::PathBuf::from(override_dir);
     }
     dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))

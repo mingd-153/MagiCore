@@ -1,6 +1,6 @@
 /// Auth resolution — .npmrc → mgc.toml → env (01 §3)
 /// Không bao giờ log token — chỉ registry host + username (01 §8)
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use base64::Engine;
 use mgc_config::npmrc::NpmRc;
 use mgc_config::registry::Registry;
@@ -47,21 +47,22 @@ pub fn resolve_auth(
         });
     }
 
-    if let Ok(t) = std::env::var("MGC_NPM_TOKEN") {
-        if !t.is_empty() {
-            return Ok(Auth {
-                token: Some(t),
-                ..Default::default()
-            });
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(t) = std::env::var("MGC_NPM_TOKEN")
+        && !t.is_empty()
+    {
+        return Ok(Auth {
+            token: Some(t),
+            ..Default::default()
+        });
     }
-    if let Ok(t) = std::env::var("NPM_TOKEN") {
-        if !t.is_empty() {
-            return Ok(Auth {
-                token: Some(t),
-                ..Default::default()
-            });
-        }
+    if let Ok(t) = std::env::var("NPM_TOKEN")
+        && !t.is_empty()
+    {
+        return Ok(Auth {
+            token: Some(t),
+            ..Default::default()
+        });
     }
 
     // host từ URL (bỏ scheme + path) — thử cả origin + dạng //host:port (npmrc
@@ -111,22 +112,19 @@ pub fn resolve_auth(
         // auth_type ràng buộc phương thức lấy từ mgc.toml: "basic" → không dùng token config
         let force_basic = reg.auth_type.as_deref() == Some("basic");
         let force_token = reg.auth_type.as_deref() == Some("token");
-        if !force_basic {
-            if let Some(token) = &reg.token {
-                return Ok(Auth {
-                    token: Some(token.clone()),
-                    ..Default::default()
-                });
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if !force_basic && let Some(token) = &reg.token {
+            return Ok(Auth {
+                token: Some(token.clone()),
+                ..Default::default()
+            });
         }
-        if !force_token {
-            if let (Some(user), Some(pass)) = (&reg.username, &reg.password) {
-                return Ok(Auth {
-                    username: Some(user.clone()),
-                    password: Some(pass.clone()),
-                    ..Default::default()
-                });
-            }
+        if !force_token && let (Some(user), Some(pass)) = (&reg.username, &reg.password) {
+            return Ok(Auth {
+                username: Some(user.clone()),
+                password: Some(pass.clone()),
+                ..Default::default()
+            });
         }
         if force_token && reg.token.is_none() {
             return Err(anyhow!(

@@ -20,12 +20,12 @@ pub fn preferred_registry_version(
         .max()
         .map(|v| v.to_string());
 
-    if let Some(latest) = metadata.dist_tags.get("latest") {
-        if let Ok(version) = Version::parse(latest) {
-            if version.pre.is_none() {
-                return Some(version.to_string());
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(latest) = metadata.dist_tags.get("latest")
+        && let Ok(version) = Version::parse(latest)
+        && version.pre.is_none()
+    {
+        return Some(version.to_string());
     }
 
     stable_max
@@ -77,10 +77,11 @@ pub async fn run_update(
         &mut manifest.optional_dependencies,
     ] {
         for dep in deps.iter_mut() {
-            if let Some(selected) = name {
-                if dep.name != *selected {
-                    continue;
-                }
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(selected) = name
+                && dep.name != *selected
+            {
+                continue;
             }
 
             let metadata = provider

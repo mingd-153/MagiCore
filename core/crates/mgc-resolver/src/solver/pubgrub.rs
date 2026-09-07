@@ -97,11 +97,13 @@ impl PubGrubSolver {
             let mut new_decisions = Vec::new();
 
             for inc in &self.incompatibilities {
-                if let Some(decision) = self.find_unit_propagation(inc) {
-                    if !propagated.contains(&decision) && !new_decisions.contains(&decision) {
-                        new_decisions.push(decision.clone());
-                        changed = true;
-                    }
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if let Some(decision) = self.find_unit_propagation(inc)
+                    && !propagated.contains(&decision)
+                    && !new_decisions.contains(&decision)
+                {
+                    new_decisions.push(decision.clone());
+                    changed = true;
                 }
             }
 
@@ -201,21 +203,22 @@ impl PubGrubSolver {
     #[allow(clippy::result_large_err)]
     fn choose_package(&self, wanted: &[(PackageName, VersionSet)]) -> Result<Decision, SolveError> {
         for (name, vs) in wanted {
-            if !self.decisions.contains_key(name) {
-                if let Some(version) = vs.satisfying_version() {
-                    return Ok(Decision::Assigned(name.clone(), version, vs.clone()));
-                }
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if !self.decisions.contains_key(name)
+                && let Some(version) = vs.satisfying_version()
+            {
+                return Ok(Decision::Assigned(name.clone(), version, vs.clone()));
             }
         }
 
         for inc in &self.incompatibilities {
             for term in &inc.terms {
-                if let Term::Positive(name, vs) = term {
-                    if !self.decisions.contains_key(name) {
-                        if let Some(version) = vs.satisfying_version() {
-                            return Ok(Decision::Assigned(name.clone(), version, vs.clone()));
-                        }
-                    }
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if let Term::Positive(name, vs) = term
+                    && !self.decisions.contains_key(name)
+                    && let Some(version) = vs.satisfying_version()
+                {
+                    return Ok(Decision::Assigned(name.clone(), version, vs.clone()));
                 }
             }
         }

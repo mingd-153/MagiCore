@@ -120,6 +120,7 @@ hardware = ["mgc-hardware-adapter"]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 reqwest = { workspace = true }
+mockito = { workspace = true }
 
 [lints]
 workspace = true

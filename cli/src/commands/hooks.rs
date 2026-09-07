@@ -2,7 +2,7 @@
 //! (Chạy script trước/sau command: pre-install, post-publish...
 //!  hook fail → command fail; hook ghi audit.)
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::Subcommand;
 use mgc_config::hooks;
 use std::path::Path;
@@ -60,9 +60,4 @@ pub fn run_event(root: &Path, event: &str) -> Result<()> {
         // fail-closed: hook fail → command fail (21 §9)
         crate::error::hook_failed(event, &e)
     })
-}
-
-#[allow(dead_code)]
-fn _unsupported(_c: HooksCmd) -> Result<()> {
-    bail!("not supported")
 }

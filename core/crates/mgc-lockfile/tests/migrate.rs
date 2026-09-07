@@ -2,8 +2,8 @@
 //! Tests cho module migrate
 
 use mgc_lockfile::migrate::{
-    auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2, parse_lockfile_v1,
-    LockfileV1, PackageV1,
+    LockfileV1, PackageV1, auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2,
+    parse_lockfile_v1,
 };
 
 #[test]

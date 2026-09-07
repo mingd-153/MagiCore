@@ -106,7 +106,13 @@ impl AppProcessor {
             ),
         )?;
         write_file(
-            &target.join("android").join("app").join("src").join("main").join("kotlin").join("Main.kt"),
+            &target
+                .join("android")
+                .join("app")
+                .join("src")
+                .join("main")
+                .join("kotlin")
+                .join("Main.kt"),
             "package {pkg}.android\n\nimport {pkg}.Shared\n\nfun main() {\n    println(Shared.hello())\n}\n",
         )?;
 

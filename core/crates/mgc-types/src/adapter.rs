@@ -43,6 +43,10 @@ pub struct InstallOptions {
     pub prefer_dedupe: bool,
     /// Re-link dangling symlinks in node_modules from the virtual store (02 §2.2).
     pub repair: bool,
+    /// Offline install: resolve from lockfile + local cache only; any required
+    /// network fetch fails closed instead of silently hitting the registry.
+    /// Cài offline: chỉ dùng lockfile + cache local; thiếu cache thì fail rõ.
+    pub offline: bool,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

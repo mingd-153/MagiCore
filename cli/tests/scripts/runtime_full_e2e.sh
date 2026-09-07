@@ -150,7 +150,8 @@ if [ -f ".mgc/exec.log" ]; then
     if grep -q "bun" .mgc/exec.log 2>/dev/null; then
         echo "✓ Audit log contains bun execution"
     else
-        echo "⚠️  WARNING: Audit log exists but no bun entry found"
+        echo "✗ FAIL: Audit log exists but contains no bun execution"
+        exit 1
     fi
 else
     echo "✗ FAIL: Audit log not created (.mgc/exec.log missing)"
@@ -262,7 +263,8 @@ if [ -f ".mgc/exec.log" ]; then
     if grep -q "deno" .mgc/exec.log 2>/dev/null; then
         echo "✓ Audit log contains deno execution"
     else
-        echo "⚠️  WARNING: Audit log exists but no deno entry found"
+        echo "✗ FAIL: Audit log exists but contains no deno execution"
+        exit 1
     fi
 else
     echo "✗ FAIL: Audit log not created (.mgc/exec.log missing)"

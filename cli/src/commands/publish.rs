@@ -1,7 +1,7 @@
 //! Publish command — 11 bước orchestration (01 §4, §5 CLI surface)
 //! (Lệnh publish: orchestrate 11 bước — git check, version bump, lifecycle, pack, registry select, PUT, 409, dist-tags, output)
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use clap::Args;
 use semver::Version;
 use std::fs;
@@ -142,18 +142,19 @@ fn visit_ws(
         return;
     }
     let pkg = ws.join("package.json");
-    if let Ok(raw) = fs::read_to_string(&pkg) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-            let mut deps: Vec<String> = vec![];
-            for key in ["dependencies", "devDependencies", "peerDependencies"] {
-                if let Some(map) = v.get(key).and_then(|d| d.as_object()) {
-                    deps.extend(map.keys().cloned());
-                }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(raw) = fs::read_to_string(&pkg)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw)
+    {
+        let mut deps: Vec<String> = vec![];
+        for key in ["dependencies", "devDependencies", "peerDependencies"] {
+            if let Some(map) = v.get(key).and_then(|d| d.as_object()) {
+                deps.extend(map.keys().cloned());
             }
-            for dep in deps {
-                if let Some(dep_ws) = names.get(&dep) {
-                    visit_ws(dep_ws, names, visited, order);
-                }
+        }
+        for dep in deps {
+            if let Some(dep_ws) = names.get(&dep) {
+                visit_ws(dep_ws, names, visited, order);
             }
         }
     }

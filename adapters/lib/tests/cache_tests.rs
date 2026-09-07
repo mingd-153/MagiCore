@@ -3,8 +3,8 @@
 
 //! Cache module integration tests.
 
-use mgc_lib_adapter::cache::metadata::{metadata_path, CacheEntry, CacheMetadata};
-use mgc_lib_adapter::cache::prune::{prune_cache, PruneStrategy};
+use mgc_lib_adapter::cache::metadata::{CacheEntry, CacheMetadata, metadata_path};
+use mgc_lib_adapter::cache::prune::{PruneStrategy, prune_cache};
 use mgc_lib_adapter::cache::{cache_dir, cache_size, clear_cache};
 use mgc_types::{PackageId, PackageName, Version};
 use std::path::PathBuf;

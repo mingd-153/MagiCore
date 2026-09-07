@@ -13,15 +13,15 @@ pub mod verifier;
 pub mod writer;
 
 pub use import::{
-    check_trust_downgrade_risk, detect_legacy_lockfiles, import_file, import_into_lockfile,
-    LegacyLockfile,
+    LegacyLockfile, check_trust_downgrade_risk, detect_legacy_lockfiles, import_file,
+    import_into_lockfile,
 };
-pub use merge::{merge3, resolve_git_conflict_markers, MergeConflict};
+pub use merge::{MergeConflict, merge3, resolve_git_conflict_markers};
 
 pub use migrate::{auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2};
 pub use parser::{load_and_verify_lockfile, load_lockfile, parse_lockfile};
 pub use schema::{Lockfile, LockfileMetadata, Package, SignatureFile, SignerInfo};
-pub use verifier::{verification_status_message, verify_lockfile, VerificationStatus};
+pub use verifier::{VerificationStatus, verification_status_message, verify_lockfile};
 pub use writer::{
     serialize_lockfile, sign_and_write_lockfile, sign_lockfile_with_default_key, write_lockfile,
 };

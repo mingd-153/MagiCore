@@ -19,11 +19,12 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
 
     // 1. Priority: mgc.toml [scripts] test — ưu tiên: mgc.toml [scripts] test
     let mgc_toml_path = project_root.join("mgc.toml");
-    if mgc_toml_path.exists() {
-        if let Some(cmd) = resolve_mgc_toml_script(&mgc_toml_path, "test")? {
-            info(&format!("Running test from mgc.toml: {}", cmd));
-            return crate::commands::run::run("test".to_string(), args, core).await;
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if mgc_toml_path.exists()
+        && let Some(cmd) = resolve_mgc_toml_script(&mgc_toml_path, "test")?
+    {
+        info(&format!("Running test from mgc.toml: {}", cmd));
+        return crate::commands::run::run("test".to_string(), args, core).await;
     }
 
     // 2. Auto-detect test runner based on project files — tự động phát hiện test runner
@@ -36,6 +37,15 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
 
         let mut full_args = runner_args;
         full_args.extend(args);
+
+        // Security gate: JS runtimes must pass launcher policy before exec
+        // (block --eval / --allow-all style injection through test args).
+        // Cổng bảo mật: runtime JS phải qua launcher policy trước khi exec
+        // (chặn --eval / --allow-all tiêm qua test args).
+        if let Some(policy) = test_runner_policy(&runner) {
+            let arg_refs: Vec<&str> = full_args.iter().map(|s| s.as_str()).collect();
+            policy.validate_args(&arg_refs)?;
+        }
 
         // Load optimizer env for test runtime
         // Tải env optimizer cho runtime test
@@ -68,6 +78,20 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
     Err(anyhow::anyhow!(
         "No test runner detected. Add 'test' script to mgc.toml or package.json"
     ))
+}
+
+/// Map runner name → launcher policy for JS runtimes (None for non-JS runners).
+/// Ánh xạ runner → launcher policy cho runtime JS (None với runner không phải JS).
+/// cargo/go/pytest/flutter là toolchain hệ thống — mgc-exec allowlist đã kiểm soát.
+fn test_runner_policy(runner: &str) -> Option<crate::commands::launcher_policy::LauncherPolicy> {
+    use crate::commands::launcher_policy::{LauncherPolicy, Runtime};
+    let runtime = match runner {
+        "bun" => Runtime::Bun,
+        "deno" => Runtime::Deno,
+        "node" => Runtime::Node,
+        _ => return None,
+    };
+    Some(LauncherPolicy::test_runner(runtime))
 }
 
 /// Detect test runner based on project manifest files — phát hiện test runner dựa trên file manifest
@@ -126,7 +150,7 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
 fn detect_test_runtime(
     project_root: &Path,
 ) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
-    use crate::commands::optimizer::runtime_detect::{detect_runtimes, DetectedRuntime};
+    use crate::commands::optimizer::runtime_detect::{DetectedRuntime, detect_runtimes};
 
     // Detect core type first
     let core = if project_root.join(".mgc.core").exists() {

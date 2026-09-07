@@ -3,8 +3,8 @@
 // into the store and claims each one under the project key.
 // (Test wiring claim refcount CAS (T1 slice 4-5): extract import blob vào
 //  store và claim từng blob dưới khóa project.)
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use mgc_fetcher::extract::extract_tarball_to_cas_and_link;
 use mgc_store::{ContentStore, Database};
 use tar::{Builder, Header};

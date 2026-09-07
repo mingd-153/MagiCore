@@ -1,7 +1,7 @@
 //! PackageAdapter implementation for cloud cores.
 //! Điều phối CDK/Pulumi delegate và Terraform passthrough riêng khỏi detect.
 
-use crate::cloud_type::{detect_type, manifest_is_cloud, CloudType};
+use crate::cloud_type::{CloudType, detect_type, manifest_is_cloud};
 use crate::tooling::exec_tool;
 use async_trait::async_trait;
 use mgc_types::adapter::{

@@ -1,6 +1,6 @@
-use crate::dispatch::bare;
-use crate::dispatch::types::{detect_ecosystem, CommonCommand, CoreCommand, DispatchCommand};
 use crate::Commands;
+use crate::dispatch::bare;
+use crate::dispatch::types::{CommonCommand, CoreCommand, DispatchCommand, detect_ecosystem};
 
 pub fn command_to_dispatch(
     command: Commands,

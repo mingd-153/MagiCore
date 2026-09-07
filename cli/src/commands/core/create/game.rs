@@ -4,7 +4,7 @@ use anyhow::Result;
 
 pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     // Phase 4: Parse scaffold spec sớm với typo detection
-    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+    use crate::scaffold::spec::{CoreKind, parse_scaffold_spec};
     if !framework.is_empty() {
         let _spec = parse_scaffold_spec(CoreKind::Game, framework).map_err(|e| {
             anyhow::anyhow!(

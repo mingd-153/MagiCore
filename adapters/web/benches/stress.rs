@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used)]
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use mgc_types::{
-    adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
-    ResolvedPackage, Version,
+    PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
+    adapter::InstallOptions,
 };
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -30,8 +30,8 @@ fn write_tar_entry(
 }
 
 fn make_tarball(dir: &Path, pkg: &PackageId, file_count: usize) {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     let store_root = dir.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
     let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
@@ -62,8 +62,8 @@ fn make_tarball(dir: &Path, pkg: &PackageId, file_count: usize) {
 }
 
 fn make_tarball_with_files(dir: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     let store_root = dir.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
     let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
@@ -178,18 +178,20 @@ fn bench_concurrent_install(c: &mut Criterion) {
                 });
                 h1.join().unwrap();
                 h2.join().unwrap();
-                assert!(d1
-                    .path()
-                    .join("node_modules")
-                    .join(pkg.name_str())
-                    .join("package.json")
-                    .exists());
-                assert!(d2
-                    .path()
-                    .join("node_modules")
-                    .join(pkg.name_str())
-                    .join("package.json")
-                    .exists());
+                assert!(
+                    d1.path()
+                        .join("node_modules")
+                        .join(pkg.name_str())
+                        .join("package.json")
+                        .exists()
+                );
+                assert!(
+                    d2.path()
+                        .join("node_modules")
+                        .join(pkg.name_str())
+                        .join("package.json")
+                        .exists()
+                );
             },
         )
     });
@@ -212,12 +214,13 @@ fn bench_corrupted_metadata(c: &mut Criterion) {
                 let result =
                     rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()));
                 assert!(result.is_ok(), "install should succeed: {:?}", result.err());
-                assert!(dir
-                    .path()
-                    .join("node_modules")
-                    .join("test-pkg")
-                    .join("package.json")
-                    .exists());
+                assert!(
+                    dir.path()
+                        .join("node_modules")
+                        .join("test-pkg")
+                        .join("package.json")
+                        .exists()
+                );
             },
         )
     });
@@ -243,12 +246,13 @@ fn bench_deep_chain(c: &mut Criterion) {
                 let adapter = mgc_web_adapter::WebAdapter::new();
                 install_all(&adapter, &graph, dir.path());
                 for pkg in &pkgs {
-                    assert!(dir
-                        .path()
-                        .join("node_modules")
-                        .join(pkg.name_str())
-                        .join("package.json")
-                        .exists());
+                    assert!(
+                        dir.path()
+                            .join("node_modules")
+                            .join(pkg.name_str())
+                            .join("package.json")
+                            .exists()
+                    );
                 }
                 let pkg_dir = dir.path().join("node_modules").join("base-a");
                 let files: Vec<_> = std::fs::read_dir(&pkg_dir)
@@ -337,12 +341,13 @@ fn bench_mixed_integrity(c: &mut Criterion) {
                     result.err()
                 );
                 for pkg in &pkgs {
-                    assert!(dir
-                        .path()
-                        .join("node_modules")
-                        .join(pkg.name_str())
-                        .join("package.json")
-                        .exists());
+                    assert!(
+                        dir.path()
+                            .join("node_modules")
+                            .join(pkg.name_str())
+                            .join("package.json")
+                            .exists()
+                    );
                 }
             },
         )
@@ -369,12 +374,13 @@ fn bench_clean_reinstall(c: &mut Criterion) {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();
-                assert!(dir
-                    .path()
-                    .join("node_modules")
-                    .join("clean-reinstall")
-                    .join("package.json")
-                    .exists());
+                assert!(
+                    dir.path()
+                        .join("node_modules")
+                        .join("clean-reinstall")
+                        .join("package.json")
+                        .exists()
+                );
             },
         )
     });

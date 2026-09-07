@@ -1,7 +1,7 @@
 //! (Lệnh template: publish/fetch kernel-làm registry — Bun/pnpm create thành mgc-create-*, Q13)
 //! publish: pack templates/{core}/{name} thành tarball mgc-create-<core>-<name>
 //! fetch: tải tarball → ~/.mgc/templates/{core}/{name} (cache; resolve sẽ thấy Disk)
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 use mgc_config::npmrc::NpmRc;
 use mgc_publish::auth::resolve_auth;
@@ -265,7 +265,7 @@ pub async fn ensure_layer(
 > {
     use crate::scaffold::embedded::EmbeddedKernel;
     use crate::scaffold::resolver::{ScaffoldResolveError, ScaffoldResolveStatus};
-    use crate::scaffold::spec::{parse_scaffold_spec, CoreKind};
+    use crate::scaffold::spec::{CoreKind, parse_scaffold_spec};
 
     // Parse layer path để lấy core/name (web/frontend/nextjs → core=web, name=nextjs)
     // Layer rel có thể là:
@@ -450,15 +450,17 @@ fn select_registry(flag: Option<&str>) -> Result<String> {
     if let Some(url) = flag {
         return Ok(url.to_string());
     }
-    if let Ok(url) = std::env::var("MGC_NPM_REGISTRY") {
-        if !url.is_empty() {
-            return Ok(url);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(url) = std::env::var("MGC_NPM_REGISTRY")
+        && !url.is_empty()
+    {
+        return Ok(url);
     }
-    if let Ok(npmrc) = NpmRc::load(Path::new(".")) {
-        if let Some(url) = npmrc.registry_for(None) {
-            return Ok(url);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(npmrc) = NpmRc::load(Path::new("."))
+        && let Some(url) = npmrc.registry_for(None)
+    {
+        return Ok(url);
     }
     Ok(DEFAULT_REGISTRY.to_string())
 }

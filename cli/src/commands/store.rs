@@ -1,7 +1,7 @@
 //! mgc store — manage the local package store (02 §2.2)
 //! (Quản lý store: prune package không còn project nào tham chiếu)
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use mgc_config::project::ProjectConfig;
 use std::path::{Path, PathBuf};

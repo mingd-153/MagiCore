@@ -3,8 +3,8 @@
 
 //! Manifest parsing tests for app adapter.
 
-use mgc_app_adapter::manifest::parse_manifest;
 use mgc_app_adapter::AppLanguage;
+use mgc_app_adapter::manifest::parse_manifest;
 
 fn tmp(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("mgc-app-manifest-{tag}-{}", std::process::id()));

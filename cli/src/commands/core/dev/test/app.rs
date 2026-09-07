@@ -2,7 +2,7 @@
 
 #[cfg(target_os = "macos")]
 use super::find_ios_simulator;
-use super::{detect_target_platform, TargetPlatform};
+use super::{TargetPlatform, detect_target_platform};
 
 #[test]
 fn detect_target_platform_returns_valid_variant() {
