@@ -70,10 +70,13 @@ pub async fn run_install(
     })?;
 
     let cache = PackageCache::new(layout.cache_dir()).map_err(|e| MgError::Store(e.to_string()))?;
+    eprintln!("[magicore:debug] install:cache_open=ok");
     let database =
         Some(Database::open(&layout.db_path()).map_err(|e| MgError::Store(e.to_string()))?);
+    eprintln!("[magicore:debug] install:db_open=ok");
     let default_store =
         ContentStore::new(layout.cas_dir()).map_err(|e| MgError::Store(e.to_string()))?;
+    eprintln!("[magicore:debug] install:cas_open=ok");
     let store = store_override.unwrap_or(&default_store);
     let node_modules = project_root.join("node_modules");
     std::fs::create_dir_all(&node_modules).map_err(|e| {

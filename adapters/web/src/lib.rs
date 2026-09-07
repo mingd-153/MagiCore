@@ -292,6 +292,11 @@ impl PackageAdapter for WebAdapter {
     }
 
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        // Phase tracing for CI diagnosability — điểm vào resolve (stderr).
+        eprintln!(
+            "[magicore:debug] resolve:packages={}",
+            manifest.all_dependencies().count()
+        );
         let started_at = std::time::Instant::now();
         let mut profile = ResolveProfile::from_env();
         let wanted: Vec<(PackageName, String)> = manifest
@@ -522,6 +527,12 @@ impl PackageAdapter for WebAdapter {
         project_root: &Path,
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
+        // Phase tracing for CI diagnosability — tường minh điểm vào install
+        // (stderr) khi một io error trần làm CI fail không rõ phase.
+        eprintln!(
+            "[magicore:debug] install:project_root={}",
+            project_root.display()
+        );
         let prefetch_handle = self.prefetch_handle_guard().take();
         run_install(
             &self.registry_url,
