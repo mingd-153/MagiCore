@@ -816,17 +816,17 @@ fn node_bin_args(project_root: &Path, bin_name: &str, args: &[&str]) -> Result<V
             let raw = std::fs::read_to_string(&entry_path).unwrap_or_default();
             let mut resolved: Option<PathBuf> = None;
             for line in raw.lines().rev() {
-                // npm shim target line:  "...path..." %*
+                // mgc/npm shim target line:  "...path..." %* — the quoted path
+                // may be extensionless (typescript's bin/tsc), so accept any
+                // quoted existing file on the last command line.
+                // Dòng đích shim: "...đường dẫn..." %* — đích có thể không
+                // đuôi file (bin/tsc), nhận mọi đường dẫn tồn tại trong nháy.
                 if let Some(q1) = line.find('"')
                     && let Some(q2) = line[q1 + 1..].find('"')
                 {
-                    let target_str = &line[q1 + 1..q1 + 1 + q2];
-                    if target_str.ends_with(".js")
-                        || target_str.ends_with(".cjs")
-                        || target_str.ends_with(".mjs")
-                        || target_str.ends_with(".ts")
-                    {
-                        resolved = Some(PathBuf::from(target_str));
+                    let candidate = PathBuf::from(&line[q1 + 1..q1 + 1 + q2]);
+                    if candidate.is_file() {
+                        resolved = Some(candidate);
                         break;
                     }
                 }

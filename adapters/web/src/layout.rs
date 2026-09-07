@@ -1,4 +1,4 @@
-use mgc_types::MgResult;
+use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
 #[cfg(unix)]
@@ -46,6 +46,55 @@ fn symlink_dir(original: &Path, link: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Clear the read-only attribute before deletion. npm tarballs store files
+/// as 0444; on Windows that maps to the read-only attribute and
+/// remove_dir_all/remove_file fail with ACCESS_DENIED (os error 5).
+/// Failure is best-effort — the remove below surfaces the real error.
+/// Xóa thuộc tính read-only trước khi delete: tarball npm lưu 0444, trên
+/// Windows thành read-only khiến remove_* bị ACCESS_DENIED. Best-effort —
+/// lệnh remove phía sau sẽ trả lỗi thật nếu vẫn fail.
+fn clear_readonly_recursively(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_real_dir = std::fs::symlink_metadata(&path)
+            .is_ok_and(|m| m.file_type().is_dir() && !m.file_type().is_symlink());
+        if is_real_dir {
+            clear_readonly_recursively(&path);
+        }
+        clear_readonly_file(&path);
+    }
+    clear_readonly_file(root);
+}
+
+fn clear_readonly_file(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mut mode = meta.permissions().mode();
+            if mode & 0o222 == 0 {
+                mode |= 0o200; // owner write
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mut perms = meta.permissions();
+            perms.set_readonly(false);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+    }
+}
+
 pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
     if let Ok(metadata) = link.symlink_metadata() {
         // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
@@ -56,13 +105,35 @@ pub fn create_symlink(target: &Path, link: &Path) -> MgResult<()> {
             return Ok(());
         }
         if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-            std::fs::remove_dir_all(link)?;
+            clear_readonly_recursively(link);
+            std::fs::remove_dir_all(link).map_err(|err| {
+                MgError::Other(format!(
+                    "failed to remove existing directory link '{}': {}",
+                    link.display(),
+                    err
+                ))
+            })?;
         } else {
-            std::fs::remove_file(link)?;
+            clear_readonly_file(link);
+            std::fs::remove_file(link).map_err(|err| {
+                MgError::Other(format!(
+                    "failed to remove existing link '{}' -> '{}': {}",
+                    link.display(),
+                    target.display(),
+                    err
+                ))
+            })?;
         }
     }
     if let Some(parent) = link.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).map_err(|err| {
+            MgError::Other(format!(
+                "failed to create parent dir '{}' for link '{}': {}",
+                parent.display(),
+                link.display(),
+                err
+            ))
+        })?;
     }
 
     // Attempt symlink, fallback to copy if failed (Windows fallback)
