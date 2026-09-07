@@ -41,7 +41,8 @@ if ($Version -eq "latest") {
         $ReleaseData = Invoke-RestMethod -Uri $ReleaseApiUrl -UseBasicParsing
         $Tag = $ReleaseData.tag_name
     } catch {
-        $Tag = "v0.2.0"
+        Write-Host "Warning: Could not fetch latest release, using fallback v1.1.0-rc.3"
+        $Tag = "v1.1.0-rc.3"
     }
 } else {
     $Tag = $Version

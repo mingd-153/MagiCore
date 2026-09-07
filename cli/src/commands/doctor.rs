@@ -227,7 +227,8 @@ pub fn handle(cmd: DoctorCmd) -> Result<()> {
         }
         DoctorCmd::Check { json: false, fix } => {
             println!(
-                "MagiCore Doctor (v0.3.0) — Environment Health: {}",
+                "MagiCore Doctor (v{}) — Environment Health: {}",
+                env!("CARGO_PKG_VERSION"),
                 rep.health_status
             );
             println!("─────────────────────────────────────────────────────────────");

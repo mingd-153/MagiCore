@@ -9,21 +9,21 @@ class MagicoreWeb < Formula
   # Binary releases from GitHub — update SHA256 on version bump
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/mingd-153/MagiCore/releases/download/v0.3.0/magicore-web-macOS-ARM64.tar.gz"
-      sha256 "UPDATE_ME"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-macOS-ARM64.tar.gz"
+      sha256 "PENDING_RELEASE"
     else
-      url "https://github.com/mingd-153/MagiCore/releases/download/v0.3.0/magicore-web-macOS-X64.tar.gz"
-      sha256 "UPDATE_ME"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-macOS-X64.tar.gz"
+      sha256 "PENDING_RELEASE"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/mingd-153/MagiCore/releases/download/v0.3.0/magicore-web-Linux-ARM64.tar.gz"
-      sha256 "UPDATE_ME"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-Linux-ARM64.tar.gz"
+      sha256 "PENDING_RELEASE"
     else
-      url "https://github.com/mingd-153/MagiCore/releases/download/v0.3.0/magicore-web-Linux-X64.tar.gz"
-      sha256 "UPDATE_ME"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-Linux-X64.tar.gz"
+      sha256 "PENDING_RELEASE"
     end
   end
 

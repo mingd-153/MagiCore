@@ -20,12 +20,22 @@ grep -q '"fix/\*\*"' "$ALL_CORE" || fail "all-core lifecycle must run on RC fix 
 grep -q '"fix/\*\*"' "$ROOT/.github/workflows/ci.yml" || fail "CI must run on RC fix branches"
 grep -q '".github/workflows/security.yml"' "$SECURITY" || fail "security workflow changes must retrigger security checks"
 grep -q '82a92a6e8fbeee089604da2575dc567ae9ddeaff' "$ROOT/.github/workflows/ci.yml" && fail "CI contains the invalid rust-cache SHA"
-grep -q '82a92a6e8fbeee089604da2575dc567ae9ddeaab' "$ROOT/.github/workflows/ci.yml" || fail "CI rust-cache pin must resolve to v2.7.5"
+grep -q '6323deb102c322ba6fcbdcafc7e3dddab59af2b6' "$ROOT/.github/workflows/ci.yml" || fail "CI rust-cache pin must resolve to v2.9.2 (latest, node24)"
 grep -q '7b1c307e0dcbda6122208f10795a713336a9b35a' "$ROOT/.github/workflows/ci.yml" && fail "CI contains the broken Rust toolchain pin"
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ROOT/.github/workflows/ci.yml" || fail "CI Rust toolchain pin must resolve to stable"
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ALL_CORE" || fail "all-core Rust toolchain pin must resolve to stable"
 
-setup_go_sha='924ae3a1cded613372ab5595356fb5720e22ba16'
+# Verify GitHub Actions SHA pins (real commit refs)
+checkout_sha='3d3c42e5aac5ba805825da76410c181273ba90b1' # v7.0.1 real
+setup_node_sha='820762786026740c76f36085b0efc47a31fe5020' # v7.0.0 real
+setup_python_sha='5fda3b95a4ea91299a34e894583c3862153e4b97' # v7.0.0 real
+setup_go_sha='b7ad1dad31e06c5925ef5d2fc7ad053ef454303e' # v7.0.0 real
+
+grep -q "actions/checkout@${checkout_sha}" "$ALL_CORE" || fail "all-core checkout SHA must be v7.0.1 real commit"
+grep -q "actions/setup-node@${setup_node_sha}" "$ALL_CORE" || fail "all-core setup-node SHA must be v7.0.0 real commit"
+grep -q "actions/setup-python@${setup_python_sha}" "$ALL_CORE" || fail "all-core setup-python SHA must be v7.0.0 real commit"
+grep -q "actions/setup-go@${setup_go_sha}" "$ALL_CORE" || fail "all-core setup-go SHA must be v7.0.0 real commit"
+
 setup_go_count="$(grep -c "actions/setup-go@${setup_go_sha}" "$ALL_CORE")"
 [[ "$setup_go_count" -eq 4 ]] || fail "all-core lifecycle must provision pinned Go for all four core jobs"
 go_version_count="$(grep -c 'go-version: "1.27.1"' "$ALL_CORE")"
