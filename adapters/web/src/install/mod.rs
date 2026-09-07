@@ -53,8 +53,21 @@ pub async fn run_install(
     );
     let store_root = project_cache_dir(project_root);
     let layout = Layout::new(store_root);
-    std::fs::create_dir_all(layout.root())?;
-    std::fs::create_dir_all(layout.temp_dir())?;
+    // Context-wrapped dir creation — bare io errors left CI failures
+    // undiagnosable ("os error 5" with no path).
+    // Bọc context — io error trần khiến CI fail không đoán được đường dẫn.
+    std::fs::create_dir_all(layout.root()).map_err(|e| {
+        MgError::Other(format!(
+            "failed to create layout root '{}': {e}",
+            layout.root().display()
+        ))
+    })?;
+    std::fs::create_dir_all(layout.temp_dir()).map_err(|e| {
+        MgError::Other(format!(
+            "failed to create temp dir '{}': {e}",
+            layout.temp_dir().display()
+        ))
+    })?;
 
     let cache = PackageCache::new(layout.cache_dir()).map_err(|e| MgError::Store(e.to_string()))?;
     let database =
@@ -63,7 +76,12 @@ pub async fn run_install(
         ContentStore::new(layout.cas_dir()).map_err(|e| MgError::Store(e.to_string()))?;
     let store = store_override.unwrap_or(&default_store);
     let node_modules = project_root.join("node_modules");
-    std::fs::create_dir_all(&node_modules)?;
+    std::fs::create_dir_all(&node_modules).map_err(|e| {
+        MgError::Other(format!(
+            "failed to create '{}': {e}",
+            node_modules.display()
+        ))
+    })?;
     let mut summary = InstallSummary::default();
 
     if let Some(database) = database.as_ref() {
@@ -89,7 +107,12 @@ pub async fn run_install(
                 .as_nanos(),
             thread_id_hash
         ));
-        std::fs::create_dir_all(root.join("node_modules"))?;
+        std::fs::create_dir_all(root.join("node_modules")).map_err(|e| {
+            MgError::Other(format!(
+                "failed to create staging node_modules '{}': {e}",
+                root.join("node_modules").display()
+            ))
+        })?;
         Some(root)
     } else {
         None
@@ -318,7 +341,12 @@ pub async fn run_install(
                 .join("node_modules")
                 .join(pkg.id.name().as_str());
             if materialized_dir.exists() {
-                std::fs::remove_dir_all(&materialized_dir)?;
+                std::fs::remove_dir_all(&materialized_dir).map_err(|e| {
+                    MgError::Other(format!(
+                        "failed to remove existing materialized dir '{}': {e}",
+                        materialized_dir.display()
+                    ))
+                })?;
             }
             // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
             if let Err(err) = hardlink_tree(package_root.as_path(), &materialized_dir) {
