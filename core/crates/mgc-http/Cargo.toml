@@ -28,7 +28,7 @@ serde_json = { workspace = true }
 hex = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
-rustls-native-certs = "0.7"
+rustls-native-certs = "0.6"
 
 [dev-dependencies]
 tempfile = { workspace = true }

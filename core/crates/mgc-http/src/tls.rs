@@ -62,7 +62,8 @@ impl TlsConfig {
 
         // Load system roots using rustls-native-certs
         for cert in rustls_native_certs::load_native_certs().context("load native certs")? {
-            root_store.add(cert)?;
+            // rustls-native-certs 0.6 returns Certificate, convert to CertificateDer
+            root_store.add(rustls::pki_types::CertificateDer::from(cert.0))?;
         }
 
         // Add custom CA if provided
