@@ -53,6 +53,45 @@ pub struct ExecReport {
     pub stderr_tail: String,
 }
 
+/// Resolve a bare command name to a Windows shim (.cmd/.bat) when the bare
+/// executable is not directly spawnable. Uses where.exe (PATH search) so the
+/// allowlist still governs WHICH tools can run — this only fixes HOW.
+/// Resolve tên lệnh sang shim Windows (.cmd/.bat) khi bare exe không spawn
+/// được — dùng where.exe (tìm theo PATH), allowlist vẫn kiểm soát CHỨNG TỪ.
+#[cfg(not(unix))]
+fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
+    use std::ffi::OsString;
+    use std::os::windows::process::CommandExt;
+
+    // Names that already carry an extension or path separators spawn as-is.
+    if cmd.contains('.') || cmd.contains('\\') || cmd.contains('/') {
+        return OsString::from(cmd);
+    }
+
+    let output = Command::new("where.exe")
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW — avoid console flash
+        .arg(cmd)
+        .output();
+    if let Ok(out) = output
+        && out.status.success()
+    {
+        // where.exe lists all matches in PATH order; prefer the first .cmd/.bat
+        // shim (npm-style) — mirrors how cmd.exe resolves commands.
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            let lower = line.trim().to_ascii_lowercase();
+            if lower.ends_with(".cmd") || lower.ends_with(".bat") {
+                return OsString::from(line.trim());
+            }
+        }
+        // Fall back to the first any-executable match if no shim exists.
+        if let Some(first) = text.lines().next() {
+            return OsString::from(first.trim());
+        }
+    }
+    OsString::from(cmd)
+}
+
 /// Chạy `cmd args` sau khi check allowlist. Không dùng shell — args là Vec riêng (§5.6).
 pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
     let scope = opts
@@ -288,7 +327,17 @@ fn execute_command(
     }
 
     let start = Instant::now();
-    let mut command = Command::new(cmd);
+    // Windows: rust std Command does NOT resolve .cmd/.bat shims through PATH
+    // (implicit extension execution was removed for security). npm-style tools
+    // (flutter.bat, tsc.cmd...) ship as shims, so resolve them explicitly via
+    // where.exe — keep it allowlist-safe: same bare name, resolved by PATH.
+    // Windows: std Command không tự chạy .cmd/.bat qua PATH (bảo mật) — tool
+    // kiểu npm/flutter là shim .bat, nên resolve tường minh qua where.exe.
+    #[cfg(not(unix))]
+    let resolved_cmd = resolve_windows_shim(cmd);
+    #[cfg(unix)]
+    let resolved_cmd: &str = cmd;
+    let mut command = Command::new(resolved_cmd);
     command.args(args).current_dir(&cwd);
     match mode {
         OutputMode::Capture => {

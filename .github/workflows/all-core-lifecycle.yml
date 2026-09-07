@@ -131,8 +131,19 @@ jobs:
         shell: bash
         run: |
           cd test-ai-app
-          python -m pip install build pytest
-          uv lock
+          # pypi.org intermittently rate-limits GitHub runner IPs — retry 3x
+          # to avoid false-red lifecycle gates (network flake, not code).
+          # pypi.org thỉnh thoảng rate-limit IP runner — retry 3 lần chống đỏ giả.
+          for i in 1 2 3; do
+            if python -m pip install build pytest; then break; fi
+            echo "pip install failed (attempt $i) — retrying in 20s"
+            sleep 20
+          done
+          for i in 1 2 3; do
+            if uv lock; then break; fi
+            echo "uv lock failed (attempt $i) — retrying in 20s"
+            sleep 20
+          done
           ../target/release/mgc install
 
       - name: Test and build AI project
@@ -304,17 +315,26 @@ jobs:
         if: matrix.lang == 'rust'
         shell: bash
         run: |
-          test -f test-rust-lib/target/release/libtest_rust_lib.rlib || \
-          test -f test-rust-lib/target/release/test_rust_lib.dll || \
-          test -f test-rust-lib/target/release/libtest_rust_lib.dylib || \
-          test -f test-rust-lib/target/release/libtest_rust_lib.so
+          # mgc build runs `cargo build` (debug profile) — artifacts land in
+          # target/debug, not target/release. Assert the debug artifact.
+          # mgc build chạy `cargo build` (debug) — artifact nằm ở target/debug.
+          test -f test-rust-lib/target/debug/libtest_rust_lib.rlib || \
+          test -f test-rust-lib/target/debug/test_rust_lib.dll || \
+          test -f test-rust-lib/target/debug/libtest_rust_lib.dylib || \
+          test -f test-rust-lib/target/debug/libtest_rust_lib.so || \
+          test -f test-rust-lib/target/debug/libtest_rust_lib.rmeta
 
       - name: Install and test (Python)
         if: matrix.lang == 'python'
         shell: bash
         run: |
           cd test-python-lib
-          python -m pip install build pytest
+          # pypi.org retry — chống rate-limit flake (không phải lỗi code).
+          for i in 1 2 3; do
+            if python -m pip install build pytest; then break; fi
+            echo "pip install failed (attempt $i) — retrying in 20s"
+            sleep 20
+          done
           ../target/release/mgc install
           ../target/release/mgc build
           python -m py_compile src/test_python_lib/__init__.py

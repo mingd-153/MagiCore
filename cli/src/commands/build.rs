@@ -222,7 +222,15 @@ async fn build_lib(root: &Path) -> Result<()> {
             .map_err(|e| crate::error::python_build_failed(&e));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
-    if tsc.exists() {
+    // Windows: tsc resolves via the tsc.cmd shim (npm-style .bin layout).
+    // Windows: tsc chạy qua shim tsc.cmd (bố cục .bin kiểu npm).
+    let tsc_available = tsc.exists()
+        || root
+            .join("node_modules")
+            .join(".bin")
+            .join("tsc.cmd")
+            .exists();
+    if tsc_available {
         let args = node_bin_args(root, "tsc", &["-p", "tsconfig.json"])?
             .into_iter()
             .map(|a| a.to_string_lossy().to_string())
@@ -764,27 +772,37 @@ fn node_runner() -> PathBuf {
 }
 
 fn node_bin_args(project_root: &Path, bin_name: &str, args: &[&str]) -> Result<Vec<OsString>> {
-    let bin = project_root
-        .join("node_modules")
-        .join(".bin")
-        .join(bin_name);
-    if !bin.exists() {
-        bail!(
-            "Missing local executable '{}'. Run 'mgc install-web' in '{}'.",
-            bin_name,
-            project_root.display()
-        );
-    }
+    let bin_dir = project_root.join("node_modules").join(".bin");
+    let bin = bin_dir.join(bin_name);
+    // Windows: npm-style .bin uses .cmd shims (create_bin_link writes them) —
+    // the extensionless entry may not exist. Accept the shim variants.
+    // Windows: .bin dùng shim .cmd — file gốc có thể không tồn tại, chấp nhận biến thể.
+    let entry_path = if bin.exists() {
+        bin.clone()
+    } else {
+        let shim = bin_dir.join(format!("{bin_name}.cmd"));
+        if shim.exists() {
+            shim
+        } else {
+            bail!(
+                "Missing local executable '{}'. Run 'mgc install-web' in '{}'.",
+                bin_name,
+                project_root.display()
+            );
+        }
+    };
 
-    let entry = std::fs::read_link(&bin)
+    // Resolve symlink target when the entry is a real symlink (unix); on
+    // Windows shims are plain files, so read_link failure falls back to itself.
+    let entry = std::fs::read_link(&entry_path)
         .map(|target| {
             if target.is_absolute() {
                 target
             } else {
-                bin.parent().unwrap_or(project_root).join(target)
+                entry_path.parent().unwrap_or(project_root).join(target)
             }
         })
-        .unwrap_or_else(|_| bin.clone());
+        .unwrap_or_else(|_| entry_path.clone());
 
     let mut result = vec![
         OsString::from("--preserve-symlinks"),
