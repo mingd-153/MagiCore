@@ -75,18 +75,25 @@ fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
     if let Ok(out) = output
         && out.status.success()
     {
-        // where.exe lists all matches in PATH order; prefer the first .cmd/.bat
-        // shim (npm-style) — mirrors how cmd.exe resolves commands.
+        // where.exe lists all matches in PATH order. Prefer a real executable
+        // (.exe / extensionless) — spawning .cmd shims through cmd wrappers
+        // breaks some tools on Windows runners (node CSPRNG crash when
+        // launched via shim). Use a .cmd/.bat shim ONLY when no direct
+        // executable exists in PATH (npm-style .bin entries).
+        // where.exe liệt kê theo thứ tự PATH: ưu tiên exe thật trước — chạy
+        // qua wrapper .cmd làm một số tool crash (node CSPRNG trên runner);
+        // chỉ dùng shim .cmd/.bat khi KHÔNG có exe trực tiếp.
         let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            let lower = line.trim().to_ascii_lowercase();
-            if lower.ends_with(".cmd") || lower.ends_with(".bat") {
-                return OsString::from(line.trim());
-            }
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let is_direct = |l: &str| {
+            let lower = l.to_ascii_lowercase();
+            !(lower.ends_with(".cmd") || lower.ends_with(".bat"))
+        };
+        if let Some(direct) = lines.iter().find(|l| is_direct(l)) {
+            return OsString::from(*direct);
         }
-        // Fall back to the first any-executable match if no shim exists.
-        if let Some(first) = text.lines().next() {
-            return OsString::from(first.trim());
+        if let Some(shim) = lines.iter().find(|l| !is_direct(l)) {
+            return OsString::from(*shim);
         }
     }
     OsString::from(cmd)
