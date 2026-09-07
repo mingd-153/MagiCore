@@ -61,6 +61,7 @@ pub struct ExecReport {
 #[cfg(not(unix))]
 fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
     use std::ffi::OsString;
+    use std::os::windows::process::CommandExt;
 
     // Names that already carry an extension or path separators spawn as-is.
     if cmd.contains('.') || cmd.contains('\\') || cmd.contains('/') {
@@ -358,8 +359,6 @@ fn execute_command(
     let resolved_cmd = resolve_windows_shim(cmd);
     #[cfg(unix)]
     let resolved_cmd: &str = cmd;
-    let mut command = Command::new(resolved_cmd);
-    command.args(args).current_dir(&cwd);
 
     // Windows: If resolved_cmd is .cmd/.bat, spawn via cmd.exe to avoid "not a valid Win32 application"
     #[cfg(not(unix))]
@@ -379,7 +378,7 @@ fn execute_command(
             cmd_exe.current_dir(&cwd);
             cmd_exe
         } else {
-            let mut cmd = Command::new(resolved_cmd);
+            let mut cmd = Command::new(&resolved_cmd); // Borrow instead of move
             cmd.args(args).current_dir(&cwd);
             cmd
         }
