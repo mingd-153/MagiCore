@@ -88,9 +88,9 @@ jobs:
           # Chẩn đoán (tạm): crash ghi process "npm" — cần thấy runner
           # resolve 'node' như nào trước khi fix tiếp. Chỉ chạy trên windows.
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            echo "--- where node ---"; where.exe node || true
-            echo "--- where node.cmd ---"; where.exe node.cmd || true
-            echo "--- node -p version ---"; node -p "process.version + ' / ' + process.execPath" || true
+            echo "--- where node ---"; where.exe node
+            echo "--- where node.cmd ---"; where.exe node.cmd
+            echo "--- node -p version ---"; node -p "process.version + ' / ' + process.execPath"
           fi
           ../target/release/mgc build
 
