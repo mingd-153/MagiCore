@@ -81,17 +81,18 @@ jobs:
         shell: bash
         run: |
           cd test-web-app
-          # node.exe on some GitHub Windows runners intermittently crashes at
-          # process init (ncrypto::CSPRNG assertion — runner/node flake, not
-          # project code). Retry up to 3x; a real build failure repeats.
-          # node.exe trên runner Windows đôi khi crash lúc init (assert
-          # CSPRNG — flake runner, không phải code). Retry 3 lần.
-          for i in 1 2 3; do
-            if ../target/release/mgc build; then exit 0; fi
-            echo "mgc build failed (attempt $i) — retrying in 15s"
-            sleep 15
-          done
-          exit 1
+          # Diagnostic (temporary): the mgc spawn of node reports an
+          # ncrypto::CSPRNG crash whose native frame names process "npm" —
+          # we need the runner-side view of what 'node' resolves to before
+          # any further fix. Runs only on windows.
+          # Chẩn đoán (tạm): crash ghi process "npm" — cần thấy runner
+          # resolve 'node' như nào trước khi fix tiếp. Chỉ chạy trên windows.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "--- where node ---"; where.exe node || true
+            echo "--- where node.cmd ---"; where.exe node.cmd || true
+            echo "--- node -p version ---"; node -p "process.version + ' / ' + process.execPath" || true
+          fi
+          ../target/release/mgc build
 
       - name: Verify build output
         shell: bash
