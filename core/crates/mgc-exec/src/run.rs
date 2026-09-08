@@ -376,7 +376,20 @@ fn execute_command(
             // backslash-escaped characters for cmd.exe.
             // Truyền path thô thành một arg. Command tự quote Windows; quote
             // trước ở đây biến quote thành ký tự literal cho cmd.exe.
-            cmd_exe.arg(&resolved_cmd);
+            // `canonicalize()` may yield an extended-length `\\?\C:\...` path.
+            // That path is valid for Win32 APIs but cmd.exe does not accept it.
+            // Keep canonical paths for validation, but normalize only the value
+            // handed to the command interpreter.
+            // `canonicalize()` có thể trả về `\\?\C:\...`; Win32 chấp nhận nhưng
+            // cmd.exe không chấp nhận. Chỉ normalize khi giao cho cmd.exe.
+            let cmd_path = if let Some(unc) = resolved_str.strip_prefix(r"\\?\UNC\") {
+                format!(r"\\{unc}")
+            } else if let Some(local) = resolved_str.strip_prefix(r"\\?\") {
+                local.to_string()
+            } else {
+                resolved_str.into_owned()
+            };
+            cmd_exe.arg(cmd_path);
             cmd_exe.args(args);
             cmd_exe.current_dir(&cwd);
             cmd_exe
