@@ -19,7 +19,7 @@ async fn test_install_bevy_stub() {
     std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
     std::fs::write(
         tmp.path().join("Cargo.toml"),
-        "[package]\nname=\"test\"\nversion=\"0.1.0\"\n\n[dependencies]\nbevy=\"0.14\"\n",
+        "[package]\nname=\"test\"\nversion=\"0.1.0\"\n\n[dependencies]\nbevy=\"0.19\"\n",
     )
     .unwrap();
 

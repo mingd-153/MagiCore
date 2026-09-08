@@ -44,7 +44,7 @@ impl GameProcessor {
                 write_file(
                     &target.join("Cargo.toml"),
                     &format!(
-                        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nbevy = \"0.14\"\n",
+                        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nbevy = \"0.19\"\n",
                         slugify(name)
                     ),
                 )?;

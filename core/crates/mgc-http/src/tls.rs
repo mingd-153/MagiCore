@@ -1,7 +1,7 @@
 //! TLS configuration & security (12 §10)
 //! (HTTPS bắt buộc, cert validation, User-Agent, token security)
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use reqwest::ClientBuilder;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{
@@ -61,20 +61,27 @@ impl TlsConfig {
         let mut root_store = RootCertStore::empty();
 
         // Load system roots using rustls-native-certs
-        for cert in rustls_native_certs::load_native_certs().context("load native certs")? {
-            // rustls-native-certs 0.6 returns Certificate, convert to CertificateDer
-            root_store.add(rustls::pki_types::CertificateDer::from(cert.0))?;
+        // 0.8: load_native_certs() returns CertificateResult — certs carry
+        // CertificateDer; any load error fails closed.
+        let native = rustls_native_certs::load_native_certs();
+        if let Some(err) = native.errors.first() {
+            return Err(anyhow::anyhow!("load native certs: {err}"));
+        }
+        for cert in native.certs {
+            root_store.add(cert)?;
         }
 
         // Add custom CA if provided
         if let Some(ca_path) = &self.ca_bundle {
             let ca_pem = std::fs::read_to_string(ca_path)
                 .map_err(|e| anyhow::anyhow!("read CA bundle: {}", e))?;
-            let certs = rustls_pemfile::certs(&mut ca_pem.as_bytes())
+            // rustls-pemfile 2.x: certs() is an iterator of Result items.
+            let certs: Vec<_> = rustls_pemfile::certs(&mut ca_pem.as_bytes())
+                .collect::<std::io::Result<Vec<_>>>()
                 .map_err(|e| anyhow::anyhow!("parse CA certs: {}", e))?;
             for cert in certs {
                 root_store
-                    .add(cert.into())
+                    .add(cert)
                     .map_err(|e| anyhow::anyhow!("add custom CA: {}", e))?;
             }
         }
@@ -196,10 +203,8 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let file = std::fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader)?
-        .into_iter()
-        .map(CertificateDer::from)
-        .collect();
+    // rustls-pemfile 2.x: certs() yields Result items; collect them.
+    let certs = rustls_pemfile::certs(&mut reader).collect::<std::io::Result<Vec<_>>>()?;
     Ok(certs)
 }
 
@@ -207,22 +212,12 @@ fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
 fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
     let file = std::fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
-    let keys = rustls_pemfile::pkcs8_private_keys(&mut reader)?;
-    let keys = if keys.is_empty() {
-        // Try RSA
-        let file = std::fs::File::open(path)?;
-        let mut reader = std::io::BufReader::new(file);
-        rustls_pemfile::rsa_private_keys(&mut reader)?
-    } else {
-        keys
-    };
-    let key = keys
-        .into_iter()
-        .next()
+    // rustls-pemfile 2.x: private_key() parses pkcs8/rsa/ec keys and
+    // returns PrivateKeyDer directly — one call replaces the pkcs8+rsa
+    // fallback chain from 1.x.
+    let key = rustls_pemfile::private_key(&mut reader)?
         .ok_or_else(|| anyhow::anyhow!("no private key found"))?;
-    // Convert Vec<u8> to PrivateKeyDer::Pkcs8
-    let pkcs8_key = rustls::pki_types::PrivatePkcs8KeyDer::from(key);
-    Ok(PrivateKeyDer::Pkcs8(pkcs8_key))
+    Ok(key)
 }
 
 /// Security headers & token handling (12 §10)

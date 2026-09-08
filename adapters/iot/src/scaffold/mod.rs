@@ -22,7 +22,7 @@ pub async fn scaffold_project(
 
 async fn scaffold_esp32(name: &str, board: &str, dir: &Path) -> MgResult<()> {
     let cargo = format!(
-        "[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2021\"\n\n[dependencies]\nesp-hal=\"0.17\"\n",
+        "[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2021\"\n\n[dependencies]\nesp-hal=\"1.2\"\n",
         name
     );
     std::fs::write(dir.join("Cargo.toml"), cargo)?;

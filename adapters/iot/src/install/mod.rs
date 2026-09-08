@@ -24,7 +24,7 @@ async fn install_esp32_rust(project_root: &Path) -> MgResult<Vec<String>> {
     }
 
     // Stub: cargo fetch
-    Ok(vec!["esp-hal@0.17.0".to_string()])
+    Ok(vec!["esp-hal@1.2.0".to_string()])
 }
 
 /// PlatformIO: pio pkg install

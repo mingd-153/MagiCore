@@ -32,7 +32,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = "0.14"
+bevy = "0.19"
 
 [profile.dev]
 opt-level = 1
