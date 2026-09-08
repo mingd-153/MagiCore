@@ -1,6 +1,6 @@
 //! Test multiplatform tool scenarios (Node, Flutter, Gradle, Swift, Kotlin)
 
-use mgc_exec::prelude::{ExecOptions, ExecReport};
+use mgc_exec::prelude::ExecOptions;
 use std::path::PathBuf;
 
 #[test]
@@ -140,7 +140,7 @@ fn test_swift_spawn() {
 fn test_exec_options_windows_env_preservation() {
     // Verify that ExecOptions preserves critical Windows vars
     
-    let opts = ExecOptions {
+    let _opts = ExecOptions {
         cwd: Some(PathBuf::from(".")),
         clean_env: true, // Even with clean_env, critical vars should be preserved
         ..Default::default()

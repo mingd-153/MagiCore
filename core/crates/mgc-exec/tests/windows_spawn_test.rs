@@ -141,7 +141,7 @@ fn test_priority_order_exe_over_bat() {
 }
 
 #[cfg(windows)]
-fn pick_by_priority(lines: &[&str]) -> &str {
+fn pick_by_priority<'a>(lines: &'a [&'a str]) -> &'a str {
     // Replicate resolve_windows_shim logic
     
     // Priority: .exe > .com > extensionless > .cmd > .bat

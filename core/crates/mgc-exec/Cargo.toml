@@ -12,6 +12,9 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [[test]]
 name = "test_allowlist"
 path = "tests/allowlist.rs"
