@@ -28,48 +28,67 @@ fn test_where_exe_resolves_node_to_exe() {
 #[cfg(windows)]
 #[test]
 fn test_flutter_bat_detection() {
+    use mgc_exec::prelude::{ExecOptions, run};
     use std::process::Command;
 
     // Check if flutter is .bat or .exe
-    let output = Command::new("where.exe").arg("flutter").output();
+    let output = Command::new("where.exe")
+        .arg("flutter")
+        .output()
+        .expect("where.exe should be available on Windows");
+    assert!(
+        output.status.success(),
+        "Flutter must be installed on the required Windows CI runner: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    if let Ok(out) = output {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let lines: Vec<&str> = stdout.lines().collect();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
 
-            println!("Flutter resolution:");
-            for line in &lines {
-                println!("  {}", line);
-            }
-
-            let has_bat = lines.iter().any(|l| {
-                let lower = l.to_lowercase();
-                lower.ends_with(".bat") || lower.ends_with(".cmd")
-            });
-
-            let has_exe = lines.iter().any(|l| l.to_lowercase().ends_with(".exe"));
-
-            println!("Has .bat/.cmd: {}", has_bat);
-            println!("Has .exe: {}", has_exe);
-
-            // Assert: if Flutter available, should be either .bat or .exe
-            assert!(
-                has_bat || has_exe,
-                "Flutter should be .bat or .exe, got: {:?}",
-                lines
-            );
-        } else {
-            println!("Flutter not installed on this system - test skipped");
-        }
+    println!("Flutter resolution:");
+    for line in &lines {
+        println!("  {}", line);
     }
+
+    let has_bat = lines.iter().any(|l| {
+        let lower = l.to_lowercase();
+        lower.ends_with(".bat") || lower.ends_with(".cmd")
+    });
+
+    let has_exe = lines.iter().any(|l| l.to_lowercase().ends_with(".exe"));
+
+    println!("Has .bat/.cmd: {}", has_bat);
+    println!("Has .exe: {}", has_exe);
+
+    // Assert: if Flutter available, should be either .bat or .exe
+    assert!(
+        has_bat || has_exe,
+        "Flutter should be .bat or .exe, got: {:?}",
+        lines
+    );
+
+    // This is the production path: bare `flutter` must pass the allowlist,
+    // resolve the PATH shim, and execute it. `where.exe` alone is insufficient.
+    // Đây là đường production: `flutter` phải qua allowlist, resolver PATH,
+    // rồi thực thi được shim; chỉ kiểm tra `where.exe` là chưa đủ.
+    let report = run(
+        "flutter",
+        &["--version".to_string()],
+        &ExecOptions::default(),
+    )
+    .expect("mgc-exec should run Flutter through its Windows resolver");
+    assert_eq!(
+        report.exit_code, 0,
+        "Flutter resolver execution failed: stdout={} stderr={}",
+        report.stdout_tail, report.stderr_tail
+    );
 }
 
 #[cfg(windows)]
 #[test]
-fn test_cmd_exe_spawn_bat_file() {
+fn test_project_bat_executes_through_mgc_exec() {
+    use mgc_exec::prelude::{ExecOptions, run_project_binary};
     use std::io::Write;
-    use std::process::Command;
 
     // Create a test .bat file
     // .bat extension is required: cmd /C dispatches by extension — a
@@ -89,24 +108,20 @@ fn test_cmd_exe_spawn_bat_file() {
     let (file, bat_path) = bat_file.keep().expect("persist temp file");
     drop(file); // Explicitly close file handle
 
-    // Try spawning directly (should fail with error 193)
-    let direct = Command::new(&bat_path).output();
-
-    println!("Direct spawn result: {:?}", direct);
-
-    // Spawn via cmd.exe (should work)
-    let via_cmd = Command::new("cmd.exe")
-        .arg("/D")
-        .arg("/S")
-        .arg("/C")
-        .arg(format!("\"{}\"", bat_path.display()))
-        .output()
-        .expect("cmd.exe spawn should work");
-
-    assert!(via_cmd.status.success(), "cmd.exe spawn should succeed");
-
-    let stdout = String::from_utf8_lossy(&via_cmd.stdout);
-    assert!(stdout.contains("SUCCESS"), "Should execute bat content");
+    // Run through the public production API, not a duplicated cmd.exe command.
+    // Chạy qua API production, không tự dựng lại lệnh cmd.exe trong test.
+    let report = run_project_binary(&bat_path, &[], &ExecOptions::default())
+        .expect("mgc-exec should execute a project .bat file");
+    assert_eq!(
+        report.exit_code, 0,
+        "bat execution failed: stdout={} stderr={}",
+        report.stdout_tail, report.stderr_tail
+    );
+    assert!(
+        report.stdout_tail.contains("SUCCESS"),
+        "Should execute bat content, got: {:?}",
+        report.stdout_tail
+    );
 
     // Clean up
     let _ = std::fs::remove_file(&bat_path);

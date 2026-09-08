@@ -140,16 +140,26 @@ jobs:
           # against pypi.org runner-side DNS flakes), then install.
           # mgc install AI fail-closed: cần uv.lock/requirements.lock — tạo
           # lock bằng uv (retry chống mất DNS pypi trên runner) rồi install.
+          pip_ok=false
           for i in 1 2 3 4 5; do
-            if python -m pip install build pytest; then break; fi
+            if python -m pip install build pytest; then pip_ok=true; break; fi
             echo "pip install failed (attempt $i) — retrying in 20s"
             sleep 20
           done
+          if [[ "$pip_ok" != true ]]; then
+            echo "pip install failed after 5 attempts" >&2
+            exit 1
+          fi
+          uv_ok=false
           for i in 1 2 3 4 5; do
-            if uv lock; then break; fi
+            if uv lock; then uv_ok=true; break; fi
             echo "uv lock failed (attempt $i) — retrying in 30s"
             sleep 30
           done
+          if [[ "$uv_ok" != true ]]; then
+            echo "uv lock failed after 5 attempts" >&2
+            exit 1
+          fi
           test -f uv.lock || test -f requirements.lock
           ../target/release/mgc install
 
@@ -341,11 +351,16 @@ jobs:
         run: |
           cd test-python-lib
           # pypi.org retry — chống rate-limit flake (không phải lỗi code).
+          pip_ok=false
           for i in 1 2 3; do
-            if python -m pip install build pytest; then break; fi
+            if python -m pip install build pytest; then pip_ok=true; break; fi
             echo "pip install failed (attempt $i) — retrying in 20s"
             sleep 20
           done
+          if [[ "$pip_ok" != true ]]; then
+            echo "pip install failed after 3 attempts" >&2
+            exit 1
+          fi
           ../target/release/mgc install
           ../target/release/mgc build
           python -m py_compile src/test_python_lib/__init__.py

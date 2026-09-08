@@ -48,9 +48,13 @@ verify_pin() {
     local actual
     # Annotated tags point at a tag object; peel to the commit with ^{}.
     # Tag annotated trỏ tới tag object; lột bằng ^{} để lấy commit thật.
-    actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}')"
+    # `set -e` also applies inside command substitutions. Preserve the intended
+    # offline-warning behavior instead of aborting before the empty-result check.
+    # `set -e` cũng áp dụng trong command substitution; giữ hành vi cảnh báo
+    # offline thay vì dừng trước khi kiểm tra kết quả rỗng.
+    actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}' || true)"
     if [ -z "$actual" ]; then
-        actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}" 2>/dev/null | awk '{print $1}')"
+        actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}" 2>/dev/null | awk '{print $1}' || true)"
     fi
     if [ -z "$actual" ]; then
         echo "WARN: cannot reach github.com to verify ${repo}@${tag} — skipping remote verification (offline?)" >&2

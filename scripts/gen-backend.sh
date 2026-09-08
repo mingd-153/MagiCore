@@ -158,9 +158,7 @@ target = "main.go"
 [[files]]
 source = "server.go"
 target = "server.go"
-TOML
-  rm -f "$dir/template.toml" 2>/dev/null
-  echo "$GO_TOML" > "$BASE/backend/go/$fw/template.toml"
+TOMLEOF
 }
 
 echo "Generating Node backends..."
