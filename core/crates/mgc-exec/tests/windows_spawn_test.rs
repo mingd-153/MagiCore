@@ -80,10 +80,12 @@ fn test_cmd_exe_spawn_bat_file() {
     writeln!(bat_file, "echo SUCCESS").unwrap();
     bat_file.flush().unwrap();
     
-    let bat_path = bat_file.path();
+    // Persist to disk and close handle (Windows requires file handle closed before spawn)
+    let (file, bat_path) = bat_file.keep().expect("persist temp file");
+    drop(file); // Explicitly close file handle
     
     // Try spawning directly (should fail with error 193)
-    let direct = Command::new(bat_path).output();
+    let direct = Command::new(&bat_path).output();
     
     println!("Direct spawn result: {:?}", direct);
     
@@ -100,6 +102,9 @@ fn test_cmd_exe_spawn_bat_file() {
     
     let stdout = String::from_utf8_lossy(&via_cmd.stdout);
     assert!(stdout.contains("SUCCESS"), "Should execute bat content");
+    
+    // Clean up
+    let _ = std::fs::remove_file(&bat_path);
 }
 
 #[cfg(windows)]

@@ -44,7 +44,7 @@ jobs:
           node-version: "24"
 
       - name: Setup Flutter (for .bat spawn tests)
-        uses: subosito/flutter-action@7814e4f6c70abd7a5641333f613efa098fe34381 # v2.14.0
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
         with:
           flutter-version: "3.47.2"
           channel: "stable"

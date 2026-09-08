@@ -36,6 +36,46 @@ grep -q "actions/setup-node@${setup_node_sha}" "$ALL_CORE" || fail "all-core set
 grep -q "actions/setup-python@${setup_python_sha}" "$ALL_CORE" || fail "all-core setup-python SHA must be v7.0.0 real commit"
 grep -q "actions/setup-go@${setup_go_sha}" "$ALL_CORE" || fail "all-core setup-go SHA must be v7.0.0 real commit"
 
+# Cross-check pinned SHAs against the REAL upstream tag refs via git
+# ls-remote — a self-fulfilling hardcoded SHA list proves nothing, so the
+# contract queries GitHub and fails closed on mismatch. Offline runs skip
+# with a loud warning instead of silently passing.
+# Đối chiếu SHA pin với tag THẬT trên GitHub qua git ls-remote — danh sách
+# hardcode tự trỏ vào chính nó không chứng minh gì; contract fail-closed
+# khi lệch. Môi trường offline bỏ qua với cảnh báo, không âm thầm pass.
+verify_pin() {
+    local repo="$1" tag="$2" expected="$3"
+    local actual
+    # Annotated tags point at a tag object; peel to the commit with ^{}.
+    # Tag annotated trỏ tới tag object; lột bằng ^{} để lấy commit thật.
+    actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}')"
+    if [ -z "$actual" ]; then
+        actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}" 2>/dev/null | awk '{print $1}')"
+    fi
+    if [ -z "$actual" ]; then
+        echo "WARN: cannot reach github.com to verify ${repo}@${tag} — skipping remote verification (offline?)" >&2
+        return 0
+    fi
+    if [ "$actual" != "$expected" ]; then
+        fail "${repo}@${tag} pin ${expected} does not match upstream commit ${actual}"
+    fi
+}
+if command -v git >/dev/null 2>&1; then
+    verify_pin actions/checkout v7.0.1 "$checkout_sha"
+    verify_pin actions/setup-node v7.0.0 "$setup_node_sha"
+    verify_pin actions/setup-python v7.0.0 "$setup_python_sha"
+    verify_pin actions/setup-go v7.0.0 "$setup_go_sha"
+    verify_pin Swatinem/rust-cache v2.9.2 '6323deb102c322ba6fcbdcafc7e3dddab59af2b6'
+    verify_pin actions/upload-artifact v7.0.1 '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
+    verify_pin actions/download-artifact v8.0.1 '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
+    verify_pin astral-sh/setup-uv v10.0.1 '20cfd1bf945f4377ade1205e4dbc17946fc9a30d'
+    verify_pin softprops/action-gh-release v3.0.3 'efb35369e0ad2afab669f228072c1b0d510eae64'
+    verify_pin actions/attest-build-provenance v4.2.2 '4d101475d8b20a2381f78447822ac1eab6504dd8'
+    verify_pin subosito/flutter-action v2.16.0 '44ac965b96f18d999802d4b807e3256d5a3f9fa1'
+else
+    echo "WARN: git not available — skipping remote SHA verification" >&2
+fi
+
 setup_go_count="$(grep -c "actions/setup-go@${setup_go_sha}" "$ALL_CORE")"
 [[ "$setup_go_count" -eq 4 ]] || fail "all-core lifecycle must provision pinned Go for all four core jobs"
 go_version_count="$(grep -c 'go-version: "1.27.1"' "$ALL_CORE")"
