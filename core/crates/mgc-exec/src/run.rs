@@ -371,9 +371,12 @@ fn execute_command(
             // Spawn via cmd.exe /D /S /C "script.bat" args...
             let mut cmd_exe = Command::new("cmd.exe");
             cmd_exe.arg("/D").arg("/S").arg("/C");
-            // Quote the script path to handle spaces
-            let script_quoted = format!("\"{}\"", resolved_str);
-            cmd_exe.arg(&script_quoted);
+            // Pass the raw path as one argument. Command performs the Windows
+            // argument quoting; pre-quoting here turns quotes into literal
+            // backslash-escaped characters for cmd.exe.
+            // Truyền path thô thành một arg. Command tự quote Windows; quote
+            // trước ở đây biến quote thành ký tự literal cho cmd.exe.
+            cmd_exe.arg(&resolved_cmd);
             cmd_exe.args(args);
             cmd_exe.current_dir(&cwd);
             cmd_exe
@@ -408,10 +411,20 @@ fn execute_command(
         configure_process_isolation(&mut command);
     }
 
-    // Windows: Preserve critical system variables even in clean_env mode
-    // to prevent Node CSPRNG and other runtime crashes
-    #[cfg(not(unix))]
-    if opts.clean_env {
+    let _shadow_path = if opts.clean_env {
+        let shadow_path = ShadowPath::create(scoped_exempt)?;
+        let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
+        command.env_clear();
+        for (key, value) in &opts.env {
+            if key != "PATH" {
+                command.env(key, value);
+            }
+        }
+        command.env("PATH", path_env);
+        // Windows: this must be after env_clear(), otherwise these values are
+        // removed and Node's CSPRNG initialization can abort.
+        // Windows: phải đặt sau env_clear(), nếu không Node CSPRNG sẽ crash.
+        #[cfg(not(unix))]
         for critical_var in [
             "SYSTEMROOT",
             "WINDIR",
@@ -426,18 +439,6 @@ fn execute_command(
                 command.env(critical_var, val);
             }
         }
-    }
-
-    let _shadow_path = if opts.clean_env {
-        let shadow_path = ShadowPath::create(scoped_exempt)?;
-        let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
-        command.env_clear();
-        for (key, value) in &opts.env {
-            if key != "PATH" {
-                command.env(key, value);
-            }
-        }
-        command.env("PATH", path_env);
         Some(shadow_path)
     } else {
         command.envs(opts.env.iter().map(|(key, value)| (key, value)));

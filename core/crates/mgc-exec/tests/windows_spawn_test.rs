@@ -129,6 +129,44 @@ fn test_project_bat_executes_through_mgc_exec() {
 
 #[cfg(windows)]
 #[test]
+fn test_clean_env_preserves_windows_runtime_variables() {
+    use mgc_exec::prelude::{ExecOptions, run_project_binary};
+    use std::path::PathBuf;
+
+    let comspec = std::env::var_os("COMSPEC").expect("Windows must expose COMSPEC");
+    let report = run_project_binary(
+        &PathBuf::from(comspec),
+        &[
+            "/D".to_string(),
+            "/S".to_string(),
+            "/C".to_string(),
+            "echo %SYSTEMROOT%".to_string(),
+        ],
+        &ExecOptions {
+            clean_env: true,
+            ..Default::default()
+        },
+    )
+    .expect("clean environment must still start cmd.exe");
+
+    assert_eq!(
+        report.exit_code, 0,
+        "cmd.exe failed: {}",
+        report.stderr_tail
+    );
+    assert!(
+        report
+            .stdout_tail
+            .trim()
+            .to_ascii_lowercase()
+            .contains("windows"),
+        "SYSTEMROOT was removed after env_clear: {:?}",
+        report.stdout_tail
+    );
+}
+
+#[cfg(windows)]
+#[test]
 fn test_priority_order_exe_over_bat() {
     // Priority: .exe > .com > .cmd/.bat > extensionless — extensionless PATH
     // entries are usually Git-bash sh scripts (flutter ships both `flutter`

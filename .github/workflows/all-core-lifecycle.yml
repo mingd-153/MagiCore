@@ -183,7 +183,16 @@ jobs:
             exit 1
           fi
           test -f uv.lock || test -f requirements.lock
-          "$MGC_PARENT_BIN" install
+          install_ok=false
+          for i in 1 2 3; do
+            if "$MGC_PARENT_BIN" install; then install_ok=true; break; fi
+            echo "mgc AI install failed (attempt $i) — retrying transient registry/DNS failure in 20s"
+            sleep 20
+          done
+          if [[ "$install_ok" != true ]]; then
+            echo "mgc AI install failed after 3 attempts" >&2
+            exit 1
+          fi
 
       - name: Test and build AI project
         shell: bash
