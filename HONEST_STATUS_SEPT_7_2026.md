@@ -215,6 +215,13 @@ warning: 3 allowed warnings found
 - 3 deps (Cargo.toml, Cargo.lock, mgc-http)
 - 2 config (WORKSPACE.bazel, benchmark)
 
+> **UPDATE 2026-09-08**: WORKSPACE.bazel + .bazelrc đã bị XÓA (commit sau status
+> này). Bằng chứng: cả 4 http_archive URL (rules_rust 0.17.0, rules_proto 6.2.0,
+> rules_grpc 2.0.0, rules_cargo 0.38.0) trả HTTP 404 — asset không tồn tại; SHA256
+> của chúng trùng nhau vì cùng là GitHub error page. .bazelrc chứa flag sai cú pháp.
+> Skeleton Bazel chết không được CI dùng — khi tái giới thiệu Bazel, dùng Bzlmod
+> (MODULE.bazel) với URL + SHA256 verify thật, kèm CI job build Bazel thật.
+
 ---
 
 ## 🎓 BÀI HỌC

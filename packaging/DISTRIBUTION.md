@@ -35,10 +35,10 @@ Each platform produces:
 
 Example:
 ```
-magicore-macOS-ARM64.tar.gz
-magicore-macOS-ARM64.tar.gz.sha256
-magicore-Windows-X64.zip
-magicore-Windows-X64.zip.sha256
+magicore-<version>-macos-arm64.tar.gz
+magicore-<version>-macos-arm64.tar.gz.sha256
+magicore-<version>-windows-x64.zip
+magicore-<version>-windows-x64.zip.sha256
 ```
 
 ### Hash Automation
@@ -56,13 +56,13 @@ Script: `scripts/update-release-hashes.sh`
 
 Example Homebrew:
 ```ruby
-url "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-macOS-ARM64.tar.gz"
+url "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-<version>-macos-arm64.tar.gz"
 sha256 "9f3b9e1e533d86ec77958b06434dcbaf4dabf5fbc17e5011cfaf973daf461413"
 ```
 
 Example Scoop:
 ```json
-"url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-X64.zip",
+"url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-<version>-windows-x64.zip",
 "hash": "a1b2c3d4e5f6..."
 ```
 
@@ -81,8 +81,8 @@ scoop install magicore
 ./scripts/smoke-test.sh
 
 # Linux (manual download)
-wget https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Linux-X64.tar.gz
-tar -xzf magicore-Linux-X64.tar.gz
+wget https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-<version>-linux-x64.tar.gz
+tar -xzf magicore-<version>-linux-x64.tar.gz
 ./scripts/smoke-test.sh --mgc-path ./mgc
 ```
 

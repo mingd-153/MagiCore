@@ -75,12 +75,12 @@ git push origin v1.1.0-rc.3
 **Timeline**: ~30-60 minutes for all builds
 
 **Artifacts**:
-- `magicore-Linux-X64.tar.gz` + `.sha256`
-- `magicore-Linux-ARM64.tar.gz` + `.sha256`
-- `magicore-macOS-X64.tar.gz` + `.sha256`
-- `magicore-macOS-ARM64.tar.gz` + `.sha256`
-- `magicore-Windows-X64.zip` + `.sha256`
-- `magicore-Windows-ARM64.zip` + `.sha256`
+- `magicore-<version>-linux-x64.tar.gz` + `.sha256`
+- `magicore-<version>-linux-arm64.tar.gz` + `.sha256`
+- `magicore-<version>-macos-x64.tar.gz` + `.sha256`
+- `magicore-<version>-macos-arm64.tar.gz` + `.sha256`
+- `magicore-<version>-windows-x64.zip` + `.sha256`
+- `magicore-<version>-windows-arm64.zip` + `.sha256`
 - Web-only variants for each platform
 
 ---
@@ -114,14 +114,14 @@ After GitHub Release is published:
 
 ```bash
 # Download artifact
-curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-macOS-ARM64.tar.gz
+curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-1.1.0-rc.3-macos-arm64.tar.gz
 
 # Verify checksum
-curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-macOS-ARM64.tar.gz.sha256
-shasum -a 256 -c magicore-macOS-ARM64.tar.gz.sha256
+curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-1.1.0-rc.3-macos-arm64.tar.gz.sha256
+shasum -a 256 -c magicore-1.1.0-rc.3-macos-arm64.tar.gz.sha256
 
 # Extract & test
-tar -xzf magicore-macOS-ARM64.tar.gz
+tar -xzf magicore-1.1.0-rc.3-macos-arm64.tar.gz
 ./mgc --version
 ```
 
@@ -143,7 +143,7 @@ brew uninstall magicore
 **Linux**:
 ```bash
 # Manual install test
-tar -xzf magicore-Linux-X64.tar.gz
+tar -xzf magicore-<version>-linux-x64.tar.gz
 sudo mv mgc /usr/local/bin/
 mgc --version
 sudo rm /usr/local/bin/mgc
