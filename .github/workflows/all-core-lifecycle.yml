@@ -55,10 +55,21 @@ jobs:
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features web --locked
 
+      - name: Resolve mgc executable path
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "MGC_BIN=./target/release/mgc.exe" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc.exe" >> "$GITHUB_ENV"
+          else
+            echo "MGC_BIN=./target/release/mgc" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc" >> "$GITHUB_ENV"
+          fi
+
       - name: Create web project
         shell: bash
         run: |
-          ./target/release/mgc create-web react test-web-app --yes
+          "$MGC_BIN" create-web react test-web-app --yes
 
       - name: Verify scaffold
         shell: bash
@@ -70,7 +81,7 @@ jobs:
         shell: bash
         run: |
           cd test-web-app
-          ../target/release/mgc install
+          "$MGC_PARENT_BIN" install
 
       - name: Verify node_modules
         shell: bash
@@ -81,7 +92,7 @@ jobs:
         shell: bash
         run: |
           cd test-web-app
-          ../target/release/mgc build
+          "$MGC_PARENT_BIN" build
 
       - name: Verify build output
         shell: bash
@@ -120,10 +131,21 @@ jobs:
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features ai --locked
 
+      - name: Resolve mgc executable path
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "MGC_BIN=./target/release/mgc.exe" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc.exe" >> "$GITHUB_ENV"
+          else
+            echo "MGC_BIN=./target/release/mgc" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc" >> "$GITHUB_ENV"
+          fi
+
       - name: Create AI project
         shell: bash
         run: |
-          ./target/release/mgc create-ai python-agent test-ai-app
+          "$MGC_BIN" create-ai python-agent test-ai-app
 
       - name: Verify scaffold
         shell: bash
@@ -161,7 +183,7 @@ jobs:
             exit 1
           fi
           test -f uv.lock || test -f requirements.lock
-          ../target/release/mgc install
+          "$MGC_PARENT_BIN" install
 
       - name: Test and build AI project
         shell: bash
@@ -170,8 +192,8 @@ jobs:
           python -m py_compile src/agent.py src/compression.py
           mkdir -p tests
           printf 'from agent import AIAgent\n\ndef test_agent():\n    assert AIAgent().run("CI")\n' > tests/test_agent.py
-          PYTHONPATH=src ../target/release/mgc test
-          ../target/release/mgc build
+          PYTHONPATH=src "$MGC_PARENT_BIN" test
+          "$MGC_PARENT_BIN" build
           test -d dist
 
   app-lifecycle:
@@ -208,10 +230,21 @@ jobs:
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features app --locked
 
+      - name: Resolve mgc executable path
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "MGC_BIN=./target/release/mgc.exe" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc.exe" >> "$GITHUB_ENV"
+          else
+            echo "MGC_BIN=./target/release/mgc" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc" >> "$GITHUB_ENV"
+          fi
+
       - name: Create app project
         shell: bash
         run: |
-          ./target/release/mgc create-app flutter test_app
+          "$MGC_BIN" create-app flutter test_app
 
       - name: Verify scaffold
         shell: bash
@@ -223,7 +256,7 @@ jobs:
         shell: bash
         run: |
           cd test_app
-          ../target/release/mgc install
+          "$MGC_PARENT_BIN" install
 
       - name: Verify lockfile
         shell: bash
@@ -234,13 +267,13 @@ jobs:
         shell: bash
         run: |
           cd test_app
-          ../target/release/mgc test
+          "$MGC_PARENT_BIN" test
 
       - name: Build app
         shell: bash
         run: |
           cd test_app
-          ../target/release/mgc build
+          "$MGC_PARENT_BIN" build
 
       - name: Verify build artifacts
         shell: bash
@@ -284,23 +317,34 @@ jobs:
       - name: Build mgc binary
         run: cargo build --release --bin mgc --no-default-features --features lib --locked
 
+      - name: Resolve mgc executable path
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "MGC_BIN=./target/release/mgc.exe" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc.exe" >> "$GITHUB_ENV"
+          else
+            echo "MGC_BIN=./target/release/mgc" >> "$GITHUB_ENV"
+            echo "MGC_PARENT_BIN=../target/release/mgc" >> "$GITHUB_ENV"
+          fi
+
       - name: Create lib project (Rust)
         if: matrix.lang == 'rust'
         shell: bash
         run: |
-          ./target/release/mgc create-lib rust test-rust-lib
+          "$MGC_BIN" create-lib rust test-rust-lib
 
       - name: Create lib project (Python)
         if: matrix.lang == 'python'
         shell: bash
         run: |
-          ./target/release/mgc create-lib python test-python-lib
+          "$MGC_BIN" create-lib python test-python-lib
 
       - name: Create lib project (TypeScript)
         if: matrix.lang == 'typescript'
         shell: bash
         run: |
-          ./target/release/mgc create-lib typescript test-ts-lib
+          "$MGC_BIN" create-lib typescript test-ts-lib
 
       - name: Verify scaffold (Rust)
         if: matrix.lang == 'rust'
@@ -328,9 +372,9 @@ jobs:
         shell: bash
         run: |
           cd test-rust-lib
-          ../target/release/mgc install
-          ../target/release/mgc build
-          ../target/release/mgc test
+          "$MGC_PARENT_BIN" install
+          "$MGC_PARENT_BIN" build
+          "$MGC_PARENT_BIN" test
 
       - name: Verify Rust artifacts
         if: matrix.lang == 'rust'
@@ -361,8 +405,8 @@ jobs:
             echo "pip install failed after 3 attempts" >&2
             exit 1
           fi
-          ../target/release/mgc install
-          ../target/release/mgc build
+          "$MGC_PARENT_BIN" install
+          "$MGC_PARENT_BIN" build
           python -m py_compile src/test_python_lib/__init__.py
 
       - name: Install and build (TypeScript)
@@ -370,8 +414,8 @@ jobs:
         shell: bash
         run: |
           cd test-ts-lib
-          ../target/release/mgc install
-          ../target/release/mgc build
+          "$MGC_PARENT_BIN" install
+          "$MGC_PARENT_BIN" build
           test -d dist || test -d lib || test -d build
 
   lifecycle-summary:

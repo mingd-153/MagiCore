@@ -103,14 +103,21 @@ grep -q 'version: "0.12.10"' "$ALL_CORE" || fail "uv lifecycle pin is stale or f
 app_matrix="$(sed -n '/^  app-lifecycle:/,/^  lib-lifecycle:/p' "$ALL_CORE")"
 grep -q 'windows-latest' <<<"$app_matrix" || fail "App lifecycle must cover Windows"
 
+web_section="$(sed -n '/^  web-lifecycle:/,/^  ai-lifecycle:/p' "$ALL_CORE")"
+ai_section="$(sed -n '/^  ai-lifecycle:/,/^  app-lifecycle:/p' "$ALL_CORE")"
+app_section="$(sed -n '/^  app-lifecycle:/,/^  lib-lifecycle:/p' "$ALL_CORE")"
 lib_section="$(sed -n '/^  lib-lifecycle:/,/^  lifecycle-summary:/p' "$ALL_CORE")"
 rust_setup="$(grep -A1 -- '- name: Setup Rust' <<<"$lib_section")"
 grep -q 'if:' <<<"$rust_setup" && fail "Rust setup cannot be conditional because every lib row builds mgc"
-grep -q '../target/release/mgc build' <<<"$lib_section" || fail "Lib lifecycle must build through mgc"
+grep -q '"\$MGC_PARENT_BIN" build' <<<"$lib_section" || fail "Lib lifecycle must build through the OS-correct mgc binary"
 
-ai_section="$(sed -n '/^  ai-lifecycle:/,/^  app-lifecycle:/p' "$ALL_CORE")"
-grep -q '../target/release/mgc test' <<<"$ai_section" || fail "AI lifecycle must test through mgc"
-grep -q '../target/release/mgc build' <<<"$ai_section" || fail "AI lifecycle must build through mgc"
+grep -q '"\$MGC_PARENT_BIN" test' <<<"$ai_section" || fail "AI lifecycle must test through the OS-correct mgc binary"
+grep -q '"\$MGC_PARENT_BIN" build' <<<"$ai_section" || fail "AI lifecycle must build through the OS-correct mgc binary"
+
+for section in "$web_section" "$ai_section" "$app_section" "$lib_section"; do
+  grep -q 'MGC_BIN=./target/release/mgc.exe' <<<"$section" \
+    || fail "every core lifecycle job must resolve mgc.exe on Windows"
+done
 
 if grep -Eq '\|\|[[:space:]]*(true|echo)|exit[[:space:]]+0[[:space:]]*#.*skip' "$ALL_CORE"; then
   fail "all-core lifecycle contains a pass-through bypass"
