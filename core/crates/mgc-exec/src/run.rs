@@ -85,30 +85,30 @@ fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
             .filter(|l| !l.is_empty())
             .collect();
 
-        // Priority: .exe > .com > extensionless > .cmd > .bat
-        if let Some(exe) = lines
-            .iter()
-            .find(|l| l.to_ascii_lowercase().ends_with(".exe"))
-        {
-            return OsString::from(*exe);
-        }
-        if let Some(com) = lines
-            .iter()
-            .find(|l| l.to_ascii_lowercase().ends_with(".com"))
-        {
-            return OsString::from(*com);
-        }
-        // Extensionless (rare on Windows but possible)
-        let is_script = |l: &str| {
+        // Priority: .exe > .com > .cmd/.bat > extensionless.
+        // Rationale: an extensionless PATH entry on Windows is often a
+        // Git-bash sh script (flutter's bin ships both `flutter` sh script
+        // and `flutter.bat`) — spawning it yields ERROR_BAD_FORMAT (193).
+        // .cmd/.bat must go through cmd.exe; extensionless is last resort.
+        // Ưu tiên: .exe > .com > .cmd/.bat > không đuôi. Entry không đuôi
+        // trên Windows thường là sh script của Git-bash (flutter bin có cả
+        // `flutter` lẫn `flutter.bat`) — spawn trực tiếp sẽ lỗi 193.
+        let is_pe = |l: &str| {
+            let lower = l.to_ascii_lowercase();
+            lower.ends_with(".exe") || lower.ends_with(".com")
+        };
+        let is_shim = |l: &str| {
             let lower = l.to_ascii_lowercase();
             lower.ends_with(".cmd") || lower.ends_with(".bat")
         };
-        if let Some(direct) = lines.iter().find(|l| !is_script(l)) {
-            return OsString::from(*direct);
+        if let Some(pe) = lines.iter().find(|l| is_pe(l)) {
+            return OsString::from(*pe);
         }
-        // Last resort: .cmd/.bat (will spawn via cmd.exe)
-        if let Some(shim) = lines.first() {
+        if let Some(shim) = lines.iter().find(|l| is_shim(l)) {
             return OsString::from(*shim);
+        }
+        if let Some(direct) = lines.first() {
+            return OsString::from(*direct);
         }
     }
     OsString::from(cmd)

@@ -70,10 +70,17 @@ fn test_flutter_bat_detection() {
 fn test_cmd_exe_spawn_bat_file() {
     use std::io::Write;
     use std::process::Command;
-    use tempfile::NamedTempFile;
 
     // Create a test .bat file
-    let mut bat_file = NamedTempFile::new().expect("create temp file");
+    // .bat extension is required: cmd /C dispatches by extension — a
+    // random temp name without .bat is treated as an executable and fails.
+    // Cần đuôi .bat: cmd /C phân phối theo đuôi file — tên temp không đuôi
+    // bị coi là executable và fail.
+    let mut bat_file = tempfile::Builder::new()
+        .suffix(".bat")
+        .rand_bytes(8)
+        .tempfile()
+        .expect("create temp .bat file");
     writeln!(bat_file, "@echo off").unwrap();
     writeln!(bat_file, "echo SUCCESS").unwrap();
     bat_file.flush().unwrap();
@@ -108,7 +115,11 @@ fn test_cmd_exe_spawn_bat_file() {
 #[cfg(windows)]
 #[test]
 fn test_priority_order_exe_over_bat() {
-    // Test priority logic: .exe > .com > extensionless > .cmd > .bat
+    // Priority: .exe > .com > .cmd/.bat > extensionless — extensionless PATH
+    // entries are usually Git-bash sh scripts (flutter ships both `flutter`
+    // sh script and `flutter.bat`); spawning them yields os error 193.
+    // Ưu tiên: .exe > .com > .cmd/.bat > không đuôi — file không đuôi trên
+    // Windows thường là sh script Git-bash, spawn trực tiếp lỗi 193.
     let test_cases = vec![
         (
             vec!["C:\\path\\node.exe", "C:\\path\\node.cmd"],
@@ -122,8 +133,8 @@ fn test_priority_order_exe_over_bat() {
         ),
         (
             vec!["C:\\path\\tool", "C:\\path\\tool.cmd"],
-            "C:\\path\\tool",
-            "extensionless should win over .cmd",
+            "C:\\path\\tool.cmd",
+            ".cmd should win over extensionless sh script",
         ),
         (
             vec!["C:\\path\\script.cmd", "C:\\path\\script.bat"],
@@ -147,30 +158,22 @@ fn test_priority_order_exe_over_bat() {
 fn pick_by_priority<'a>(lines: &'a [&'a str]) -> &'a str {
     // Replicate resolve_windows_shim logic
 
-    // Priority: .exe > .com > extensionless > .cmd > .bat
-    if let Some(exe) = lines
-        .iter()
-        .find(|l| l.to_ascii_lowercase().ends_with(".exe"))
-    {
-        return exe;
-    }
-    if let Some(com) = lines
-        .iter()
-        .find(|l| l.to_ascii_lowercase().ends_with(".com"))
-    {
-        return com;
-    }
-
-    let is_script = |l: &str| {
+    // Priority: .exe > .com > .cmd/.bat > extensionless
+    let is_pe = |l: &str| {
+        let lower = l.to_ascii_lowercase();
+        lower.ends_with(".exe") || lower.ends_with(".com")
+    };
+    let is_shim = |l: &str| {
         let lower = l.to_ascii_lowercase();
         lower.ends_with(".cmd") || lower.ends_with(".bat")
     };
 
-    if let Some(direct) = lines.iter().find(|l| !is_script(l)) {
-        return direct;
+    if let Some(pe) = lines.iter().find(|l| is_pe(l)) {
+        return pe;
     }
-
-    // Last resort: .cmd/.bat
+    if let Some(shim) = lines.iter().find(|l| is_shim(l)) {
+        return shim;
+    }
     lines.first().unwrap()
 }
 
