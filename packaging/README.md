@@ -4,7 +4,7 @@ This directory contains package manager manifests and release automation for dis
 
 ---
 
-## Current Status (v1.1.0-rc.1)
+## Current Status (v1.1.0-rc.3)
 
 ### ✅ Ready
 - **macOS ARM64**: Real binary + checksum, Homebrew formula updated
@@ -61,8 +61,8 @@ scoop install magicore
 **Trigger**: Push a version tag
 
 ```bash
-git tag v1.1.0-rc.1
-git push origin v1.1.0-rc.1
+git tag v1.1.0-rc.3
+git push origin v1.1.0-rc.3
 ```
 
 **GitHub Actions will**:
@@ -114,10 +114,10 @@ After GitHub Release is published:
 
 ```bash
 # Download artifact
-curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-macOS-ARM64.tar.gz
+curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-macOS-ARM64.tar.gz
 
 # Verify checksum
-curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-macOS-ARM64.tar.gz.sha256
+curl -LO https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-macOS-ARM64.tar.gz.sha256
 shasum -a 256 -c magicore-macOS-ARM64.tar.gz.sha256
 
 # Extract & test
@@ -171,7 +171,7 @@ git clone https://github.com/mingd-153/homebrew-magicore
 cp packaging/homebrew/magicore.rb homebrew-magicore/Formula/magicore.rb
 cd homebrew-magicore
 git add Formula/magicore.rb
-git commit -m "magicore 1.1.0-rc.1"
+git commit -m "magicore 1.1.0-rc.3"
 git push
 ```
 
@@ -186,7 +186,7 @@ git clone https://github.com/mingd-153/scoop-magicore
 cp packaging/scoop/magicore.json scoop-magicore/bucket/magicore.json
 cd scoop-magicore
 git add bucket/magicore.json
-git commit -m "magicore 1.1.0-rc.1"
+git commit -m "magicore 1.1.0-rc.3"
 git push
 ```
 
@@ -280,4 +280,4 @@ xattr -d com.apple.quarantine /usr/local/bin/mgc
 ---
 
 **Last Updated**: 2026-09-04
-**Version**: 1.1.0-rc.1
+**Version**: 1.1.0-rc.3

@@ -1,7 +1,7 @@
 class Magicore < Formula
   desc "Universal package manager with multi-core runtime"
   homepage "https://github.com/mingd-153/MagiCore"
-  version "1.1.0-rc.1"
+  version "1.1.0-rc.3"
   license "MIT"
   head "https://github.com/mingd-153/MagiCore.git", branch: "main"
 
@@ -19,20 +19,20 @@ class Magicore < Formula
   # Test: scripts/update-release-hashes.sh --artifacts <dir> (see packaging/README.md)
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-1.1.0-rc.1-macos-aarch64.tar.gz"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-macos-arm64.tar.gz"
       sha256 "9b7593fee3317aea2867075fe17082b427f70213fc135e88f7a0b35ccb8b6e93"
     else
-      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-macOS-X64.tar.gz"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-macos-x64.tar.gz"
       sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-Linux-ARM64.tar.gz"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-linux-arm64.tar.gz"
       sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"
     else
-      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-Linux-X64.tar.gz"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-linux-x64.tar.gz"
       sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"
     end
   end

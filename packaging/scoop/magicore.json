@@ -1,17 +1,17 @@
 {
-    "version": "1.1.0-rc.1",
+    "version": "1.1.0-rc.3",
     "description": "Universal package manager with multi-core runtime",
     "homepage": "https://github.com/mingd-153/MagiCore",
     "license": "MIT",
-    "notes": "⚠️  P0.5 FIX: PLACEHOLDER HASHES are EXPECTED until GitHub Release CI completes. Release workflow (.github/workflows/release.yml) builds artifacts → computes SHA256 → runs scripts/update-release-hashes.sh to replace ALL placeholders. Manual install NOT supported before release. Test: see packaging/README.md.",
+    "notes": "\u26a0\ufe0f  P0.5 FIX: PLACEHOLDER HASHES are EXPECTED until GitHub Release CI completes. Release workflow (.github/workflows/release.yml) builds artifacts \u2192 computes SHA256 \u2192 runs scripts/update-release-hashes.sh to replace ALL placeholders. Manual install NOT supported before release. Test: see packaging/README.md.",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-X64.zip",
+            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-1.1.0-rc.3-windows-x64.zip",
             "hash": "PLACEHOLDER_WILL_BE_REPLACED_BY_CI",
             "bin": "mgc.exe"
         },
         "arm64": {
-            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.1/magicore-Windows-ARM64.zip",
+            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-1.1.0-rc.3-windows-arm64.zip",
             "hash": "PLACEHOLDER_WILL_BE_REPLACED_BY_CI",
             "bin": "mgc.exe"
         }
@@ -20,10 +20,10 @@
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-Windows-X64.zip"
+                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-$version-windows-x64.zip"
             },
             "arm64": {
-                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-Windows-ARM64.zip"
+                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-$version-windows-arm64.zip"
             }
         }
     }

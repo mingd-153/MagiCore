@@ -56,7 +56,7 @@ brew tap magicore/tap
 brew install magicore
 
 # Verify
-mgc --version  # Should show 1.1.0-rc.1
+mgc --version  # Should show 1.1.0-rc.3
 mgc --help     # Should list commands
 which mgc      # Should show /usr/local/bin/mgc or /opt/homebrew/bin/mgc
 
@@ -80,7 +80,7 @@ which mgc      # Should show "mgc not found"
 **tar.gz Install**:
 ```bash
 # Download
-curl -L https://github.com/magicore/magicore/releases/download/v1.1.0-rc.1/magicore-linux-x64.tar.gz -o mgc.tar.gz
+curl -L https://github.com/magicore/magicore/releases/download/v1.1.0-rc.3/magicore-linux-x64.tar.gz -o mgc.tar.gz
 
 # Install
 tar -xzf mgc.tar.gz
@@ -158,7 +158,7 @@ Get-Command mgc  # Should fail
 **Manual zip Install**:
 ```powershell
 # Download
-Invoke-WebRequest -Uri "https://github.com/magicore/magicore/releases/download/v1.1.0-rc.1/magicore-win-x64.zip" -OutFile mgc.zip
+Invoke-WebRequest -Uri "https://github.com/magicore/magicore/releases/download/v1.1.0-rc.3/magicore-win-x64.zip" -OutFile mgc.zip
 
 # Extract
 Expand-Archive -Path mgc.zip -DestinationPath C:\mgc

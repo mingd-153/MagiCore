@@ -5,12 +5,12 @@
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-Windows-X64.zip",
+            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-1.1.0-rc.3-windows-x64.zip",
             "hash": "PENDING_RELEASE",
             "bin": "mgc.exe"
         },
         "arm64": {
-            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-Windows-ARM64.zip",
+            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-web-1.1.0-rc.3-windows-arm64.zip",
             "hash": "PENDING_RELEASE",
             "bin": "mgc.exe"
         }
@@ -19,10 +19,10 @@
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-web-Windows-X64.zip"
+                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-web-$version-windows-x64.zip"
             },
             "arm64": {
-                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-web-Windows-ARM64.zip"
+                "url": "https://github.com/mingd-153/MagiCore/releases/download/v$version/magicore-web-$version-windows-arm64.zip"
             }
         }
     }

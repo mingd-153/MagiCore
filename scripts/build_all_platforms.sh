@@ -10,7 +10,7 @@ echo "This script prepares for multi-platform release builds."
 echo "For actual cross-compilation, GitHub Actions workflow is recommended."
 echo ""
 
-VERSION="${1:-1.1.0-rc.1}"
+VERSION="${1:-1.1.0-rc.3}"
 
 echo "Target version: v${VERSION}"
 echo ""
