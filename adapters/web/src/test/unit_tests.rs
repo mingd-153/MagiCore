@@ -657,7 +657,6 @@ fn test_project_cas_prune_keeps_hardlinked_live_blobs() {
 
 #[test]
 fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
-    use std::os::unix::fs::MetadataExt;
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
@@ -668,10 +667,14 @@ fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
 
     assert!(target.exists());
     assert_eq!(std::fs::read(&target).unwrap(), b"payload-123");
+
+    // A write through the source must be visible from its hardlink — ghi qua
+    // source phải thấy được từ hardlink; portable unlike Unix `nlink()`.
+    std::fs::write(&source, b"updated-through-source").unwrap();
     assert_eq!(
-        std::fs::metadata(&source).unwrap().nlink(),
-        2,
-        "disabled reflink must produce a real hardlink (shared inode)"
+        std::fs::read(&target).unwrap(),
+        b"updated-through-source",
+        "disabled reflink must produce a real hardlink (shared contents)"
     );
 }
 
