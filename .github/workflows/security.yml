@@ -29,9 +29,15 @@ jobs:
             exit 1
           fi
       - name: Run audit
-        # Ignore known unmaintained transitive crates and unreachable SQLx metadata only.
-        # Chỉ bỏ qua crate gián tiếp không còn bảo trì và RSA không nằm trong graph biên dịch.
-        run: cargo audit --color never --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2025-0134
+        # Remaining ignores — each with an explicit, verifiable justification:
+        # - RUSTSEC-2023-0071 (rsa): lockfile-metadata only via sqlx-mysql
+        #   optional deps; the reachability guard above fails the job if rsa
+        #   ever enters the compiled graph. No fixed upgrade exists upstream.
+        # - RUSTSEC-2025-0134 (rustls-pemfile unmaintained): we are already on
+        #   the latest release (2.2.0) — no maintained replacement crate
+        #   exists; tracked for migration when one ships.
+        # Các ignore còn lại đều có lý do kiểm chứng được ở trên.
+        run: cargo audit --color never --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0134
       - name: Verify lockfile is reproducible
         run: cargo check --workspace --locked
 
