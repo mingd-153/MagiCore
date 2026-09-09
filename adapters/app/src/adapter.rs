@@ -111,12 +111,11 @@ impl PackageAdapter for AppAdapter {
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
-        let manifest = self.parse_manifest(project_root).await?;
-        // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(format!(
-            "No audit scanner available for App core ({} dependencies not scanned)",
-            manifest.all_dependencies().count()
-        )))
+        // Real scanner dispatch per language — Kotlin→OWASP dependency-check;
+        // Flutter/Swift honestly unavailable (no CVE scanner exists).
+        // Điều phối scanner thật theo ngôn ngữ — Kotlin→dependency-check;
+        // Flutter/Swift trung thực unavailable (không có scanner CVE).
+        crate::audit::run_audit(self.language, project_root).await
     }
 
     fn set_dedupe_pref(&self, _enabled: bool) {}

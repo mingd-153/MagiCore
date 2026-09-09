@@ -20,6 +20,7 @@ authors = ["MagiCore Contributors"]
 [workspace.dependencies]
 # Internal crates
 mgc-types = { path = "core/crates/mgc-types" }
+mgc-audit = { path = "core/crates/mgc-audit" }
 mgc-config = { path = "core/crates/mgc-config" }
 mgc-crypto = { path = "core/crates/mgc-crypto" }
 mgc-cache = { path = "core/crates/mgc-cache" }

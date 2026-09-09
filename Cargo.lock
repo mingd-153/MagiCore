@@ -2561,8 +2561,10 @@ dependencies = [
  "async-trait",
  "criterion",
  "dirs",
+ "futures-util",
  "hex",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -2581,6 +2583,15 @@ dependencies = [
  "tokio",
  "toml",
  "which",
+]
+
+[[package]]
+name = "mgc-audit"
+version = "1.1.0-rc.3"
+dependencies = [
+ "mgc-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
