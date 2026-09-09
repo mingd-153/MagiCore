@@ -110,13 +110,11 @@ pub async fn verify() -> Result<()> {
     for step in &chain {
         match step.as_str() {
             "audit" => {
-                if core == "web" {
-                    crate::commands::audit::run(None, false).await?;
-                } else {
-                    mgc_ui::warning(
-                        "audit for non-web cores is P2 (Q22) — skipping the audit step",
-                    );
-                }
+                // Real audit for every core — the shared pipeline prints an
+                // UNVERIFIED warning when the core's scanner is unavailable.
+                // Audit thật cho mọi core — pipeline chung tự in cảnh báo
+                // UNVERIFIED khi scanner của core chưa có.
+                crate::commands::audit::run(None, false).await?;
             }
             "test" => run_test_step(&root, &core).await?,
             "build" => {

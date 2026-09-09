@@ -1,4 +1,4 @@
-name: All-Core Full Lifecycle Verification
+name: Primary Four-Core Lifecycle Verification
 
 # Scope: Full lifecycle for all 4 cores
 # Web/AI/App/Lib: create → install → test → build
@@ -428,14 +428,16 @@ jobs:
           test -d dist || test -d lib || test -d build
 
   lifecycle-summary:
-    name: Full Lifecycle Summary
+    name: Primary Four-Core Lifecycle Summary
     needs: [web-lifecycle, ai-lifecycle, app-lifecycle, lib-lifecycle]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check all results
         run: |
-          echo "=== ALL-CORE FULL LIFECYCLE RESULTS ==="
+          echo "=== PRIMARY FOUR-CORE LIFECYCLE RESULTS (Web, AI, App, Lib) ==="
+          echo "Game/IoT/Hardware/Cloud/CI-CD are NOT covered by this workflow —"
+          echo "those cores are prototype/scaffold status and fail closed in adapters."
           echo ""
           echo "Web:  ${{ needs.web-lifecycle.result }}"
           echo "AI:   ${{ needs.ai-lifecycle.result }}"
@@ -472,7 +474,7 @@ jobs:
             exit 1
           fi
 
-          echo "✅ ALL CORES: Full lifecycle verified"
+          echo "✅ PRIMARY FOUR CORES (Web, AI, App, Lib): full lifecycle verified"
           echo ""
           echo "Verified:"
           echo "- Create (CLI commands work)"

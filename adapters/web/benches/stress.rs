@@ -4,7 +4,6 @@ use mgc_types::{
     PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
     adapter::InstallOptions,
 };
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -261,9 +260,21 @@ fn bench_deep_chain(c: &mut Criterion) {
                     .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
                     .collect();
                 if files.len() >= 2 {
-                    let m1 = std::fs::metadata(files[0].path()).unwrap();
-                    let m2 = std::fs::metadata(files[1].path()).unwrap();
-                    assert_ne!(m1.ino(), m2.ino(), "different files should not share inode");
+                    // Behavioral isolation probe (portable on every OS):
+                    // mutate the first file and prove the second one is a
+                    // distinct, independent file whose content did not
+                    // change — unlike a shared-inode comparison this also
+                    // catches wrong hardlinks between different files.
+                    // Thăm dò cô lập theo hành vi (portable mọi OS): sửa
+                    // file đầu và chứng minh file thứ hai là file độc lập
+                    // không đổi nội dung — thay so inode chỉ dùng được Unix.
+                    let probe_before = std::fs::read(files[1].path()).unwrap();
+                    std::fs::write(files[0].path(), b"// mutated by stress probe\n").unwrap();
+                    let probe_after = std::fs::read(files[1].path()).unwrap();
+                    assert_eq!(
+                        probe_before, probe_after,
+                        "mutating one materialized file must not affect another"
+                    );
                 }
             },
         )

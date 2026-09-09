@@ -13,13 +13,13 @@ use std::process::Command;
 use tempfile::TempDir;
 
 fn mgc_binary() -> PathBuf {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    PathBuf::from(manifest_dir)
-        .parent()
-        .unwrap()
-        .join("target")
-        .join("debug")
-        .join("mgc")
+    // Cargo-provided per-test binary: fresh for this run and portable across
+    // platforms (adds .exe suffix on Windows automatically).
+    // Binary do cargo cung cấp theo từng run test: tươi và portable mọi
+    // nền tảng (tự thêm đuôi .exe trên Windows).
+    std::env::var_os("CARGO_BIN_EXE_mgc")
+        .map(PathBuf::from)
+        .expect("CARGO_BIN_EXE_mgc unavailable — run via cargo test")
 }
 
 fn setup_hermetic_home() -> TempDir {
@@ -98,9 +98,14 @@ fn test_all_core_parity_embedded() {
         "app: .mgc.core marker not created"
     );
 
-    // 4. Lib rust (embedded kernel)
+    // 4. Lib rust (embedded kernel) — use the moving `latest` tag, not a
+    // pinned stale version: the scaffold emits edition 2024, which does
+    // not compile on rust 1.75; version policy stays centralized.
+    // Lib rust — dùng tag động `latest`, không pin version cũ: scaffold
+    // sinh edition 2024 không compile trên rust 1.75; policy version tập
+    // trung ở spec parser, không hardcode trong test.
     let lib_output = Command::new(mgc_binary())
-        .args(&["create-lib", "rust@1.75.0", "test-lib"])
+        .args(&["create-lib", "rust@latest", "test-lib"])
         .current_dir(workspace_path)
         .output()
         .expect("Failed to execute mgc create-lib");

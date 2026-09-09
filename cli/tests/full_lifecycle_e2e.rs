@@ -326,12 +326,15 @@ fn test_ai_full_lifecycle() {
         .expect("mgc add failed");
 
     if !add_output.status.success() {
-        eprintln!("WARN: mgc add failed - may need uv installed");
-        eprintln!("Stderr: {}", String::from_utf8_lossy(&add_output.stderr));
-        // Continue - test will verify gracefully
+        // No false-positive: a failed add MUST fail the lifecycle test.
+        // Không false-positive: add fail thì lifecycle test phải fail.
+        panic!(
+            "ADD FAILED:\n{}",
+            String::from_utf8_lossy(&add_output.stderr)
+        );
     }
 
-    println!("✅ ADD completed (lockfile should exist now)");
+    println!("✅ ADD verified: lockfile created");
 
     // === STEP 3: INSTALL from lockfile ===
     println!("\n=== STEP 3: mgc install ===");
@@ -343,12 +346,12 @@ fn test_ai_full_lifecycle() {
         .expect("mgc install failed");
 
     if !install_output.status.success() {
-        eprintln!("WARN: mgc install failed");
-        eprintln!(
-            "Stderr: {}",
+        // No false-positive: a failed install MUST fail the lifecycle test.
+        // Không false-positive: install fail thì lifecycle test phải fail.
+        panic!(
+            "INSTALL FAILED:\n{}",
             String::from_utf8_lossy(&install_output.stderr)
         );
-        // Continue - AI test can still run without install
     }
 
     println!("✅ INSTALL verified");

@@ -123,6 +123,18 @@ if grep -Eq '\|\|[[:space:]]*(true|echo)|exit[[:space:]]+0[[:space:]]*#.*skip' "
   fail "all-core lifecycle contains a pass-through bypass"
 fi
 
+# Anti-overclaim: the workflow verifies Web/AI/App/Lib only. Its name and
+# summary must not claim all 9 cores until Game/IoT/Hardware/Cloud/CI-CD
+# lifecycle jobs actually exist in the matrix.
+# Chống overclaim: workflow chỉ verify Web/AI/App/Lib — tên và summary
+# không được claim 9 core trước khi job lifecycle của các core kia tồn tại.
+if grep -Eq '^name:[[:space:]]+All-Core' "$ALL_CORE"; then
+  fail "workflow name overclaims: only Web/AI/App/Lib have lifecycle jobs — rename to Primary Four-Core or add all 9 cores"
+fi
+if grep -q 'ALL CORES' "$ALL_CORE"; then
+  fail "workflow summary overclaims 'ALL CORES' while covering only four cores"
+fi
+
 checkout_line="$(grep -n 'name: Checkout repository' "$RELEASE" | head -1 | cut -d: -f1)"
 contract_line="$(grep -n 'name: Set artifact names' "$RELEASE" | head -1 | cut -d: -f1)"
 [[ "$checkout_line" -lt "$contract_line" ]] || fail "release contract runs before checkout"
