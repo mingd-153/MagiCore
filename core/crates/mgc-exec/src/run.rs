@@ -13,6 +13,14 @@ use std::time::{Duration, Instant};
 const DEFAULT_EXEC_TIMEOUT_SECS: u64 = 1800;
 const EXEC_TIMEOUT_ENV: &str = "MGC_EXEC_TIMEOUT_SECS";
 const WAIT_POLL_INTERVAL_MS: u64 = 20;
+/// Max bytes kept per captured stream (stdout/stderr tails) — bounded memory,
+/// configurable values live in one place (RULE §12).
+/// Giới hạn byte cho mỗi stream captured — bộ nhớ bị chặn, giá trị đổi được
+/// tập trung một chỗ (RULE §12).
+const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+/// Max lines kept per captured stream — error-log excerpt size.
+/// Số dòng giữ tối đa cho mỗi stream — kích thước trích lỗi.
+const MAX_CAPTURE_LINES: usize = 40;
 
 /// Report whether process-tree monitoring is active on this platform.
 /// Báo rõ nền tảng hiện tại có guard process-tree thật hay không.
@@ -39,6 +47,13 @@ pub struct ExecOptions {
     /// Execution scope (TestRunner/BuildRunner/DevServer allow PM tools, Install forbids them).
     /// None defaults to Install scope (most restrictive).
     pub execution_scope: Option<crate::allowlist::ExecutionScope>,
+    /// Exit codes treated as success (escape hatch for scanner tools that
+    /// exit non-zero when they find findings — e.g. cargo-audit exits 1 on
+    /// vulnerabilities). Empty = any non-zero exit fails (default, fail-closed).
+    /// Exit code coi là thành công — scanner tool thường thoát khác 0 khi
+    /// tìm thấy finding (vd cargo-audit thoát 1). Rỗng = khác 0 là lỗi
+    /// (mặc định, fail-closed).
+    pub allowed_exit_codes: Vec<i32>,
 }
 
 /// Kết quả chạy — args trong report ĐÃ redact (không lộ secret).
@@ -484,8 +499,11 @@ fn execute_command(
         append(path, &entry_from(&report, &cwd))?;
     }
 
-    if exit_code != 0 {
-        // 00 §5.8: exit ≠ 0 → bail kèm log trích
+    if exit_code != 0 && !opts.allowed_exit_codes.contains(&exit_code) {
+        // 00 §5.8: exit ≠ 0 → bail kèm log trích (trừ exit code được khai
+        // báo trước trong allowed_exit_codes — escape hatch tường minh).
+        // 00 §5.8: exit ≠ 0 → bail kèm log excerpt (except exit codes
+        // declared upfront in allowed_exit_codes — explicit escape hatch).
         let err_tail = if report.stderr_tail.is_empty() {
             report.stdout_tail.clone()
         } else {
@@ -915,8 +933,17 @@ fn entry_from(report: &ExecReport, cwd: &Path) -> AuditEntry {
     }
 }
 
-/// 40 dòng cuối output (đủ để trích lỗi, không tràn log).
+/// Bounded tail of captured output — last MAX_CAPTURE_BYTES bytes, line order
+/// PRESERVED (reversing lines corrupted multi-line payloads like JSON).
+/// Tail có giới hạn byte — MAX_CAPTURE_BYTES cuối, giữ nguyên thứ tự dòng
+/// (đảo dòng làm hỏng payload nhiều dòng như JSON).
 fn tail(bytes: &[u8]) -> String {
-    let text = String::from_utf8_lossy(bytes);
-    text.lines().rev().take(40).collect::<Vec<_>>().join("\n")
+    let start = bytes.len().saturating_sub(MAX_CAPTURE_BYTES);
+    let slice = &bytes[start..];
+    let text = String::from_utf8_lossy(slice);
+    let mut lines: Vec<&str> = text.lines().collect();
+    if lines.len() > MAX_CAPTURE_LINES {
+        lines = lines.split_off(lines.len() - MAX_CAPTURE_LINES);
+    }
+    lines.join("\n")
 }

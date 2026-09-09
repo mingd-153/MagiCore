@@ -48,6 +48,98 @@ fn audit_report_not_clean_with_nonzero_count() {
     assert!(!report.is_clean());
 }
 
+/// The five-state contract (Tech Lead P0-1): is_clean() must be false for
+/// EVERY non-Available state — a report from a scanner that never ran is
+/// never "clean", even with zero findings.
+/// Hợp đồng 5 trạng thái: is_clean() phải sai với MỌI trạng thái khác
+/// Available — report từ scanner chưa chạy không bao giờ "sạch", dù 0 finding.
+#[test]
+fn audit_report_never_clean_when_scanner_not_available() {
+    let partial = AuditReport {
+        packages_audited: 3,
+        vulnerability_count: 0,
+        vulnerabilities: vec![],
+        scanner_status: ScannerStatus::Partial {
+            scanned: 3,
+            skipped: 2,
+            reasons: vec!["two deps unscreened".to_string()],
+        },
+    };
+    assert!(!partial.is_clean());
+
+    let tool_missing = AuditReport::tool_missing("cargo-audit", "cargo install cargo-audit");
+    assert!(!tool_missing.is_clean());
+
+    let unsupported = AuditReport::unsupported_ecosystem("flutter");
+    assert!(!unsupported.is_clean());
+
+    let failed = AuditReport::scanner_failed("pip-audit", "schema drift");
+    assert!(!failed.is_clean());
+
+    // Available + zero findings is the ONLY clean state.
+    // Available + 0 finding là trạng thái sạch DUY NHẤT.
+    assert!(AuditReport::clean(0).is_clean());
+}
+
+/// Deserialization must round-trip the tagged serde shape so external
+/// consumers (CI ingest, reports) keep a stable schema.
+/// Deserialize phải giữ đúng schema tagged để consumer ngoài (CI ingest,
+/// report) không vỡ hợp đồng.
+#[test]
+fn scanner_status_serde_roundtrip_all_states() {
+    let states = vec![
+        ScannerStatus::Available,
+        ScannerStatus::Partial {
+            scanned: 1,
+            skipped: 1,
+            reasons: vec!["r".to_string()],
+        },
+        ScannerStatus::ToolMissing {
+            tool: "gradle".to_string(),
+            remediation: "install gradle".to_string(),
+        },
+        ScannerStatus::UnsupportedEcosystem {
+            ecosystem: "flutter".to_string(),
+        },
+        ScannerStatus::Failed {
+            scanner: "osv".to_string(),
+            reason: "network".to_string(),
+        },
+    ];
+    for status in &states {
+        let json = serde_json::to_string(status).unwrap();
+        let back: ScannerStatus = serde_json::from_str(&json).unwrap();
+        match (status, &back) {
+            (ScannerStatus::Available, ScannerStatus::Available) => {}
+            (
+                ScannerStatus::Partial {
+                    scanned: s1,
+                    skipped: k1,
+                    ..
+                },
+                ScannerStatus::Partial {
+                    scanned: s2,
+                    skipped: k2,
+                    ..
+                },
+            ) => assert!((s1, k1) == (s2, k2), "partial mismatch for {json}"),
+            (
+                ScannerStatus::ToolMissing { tool: t1, .. },
+                ScannerStatus::ToolMissing { tool: t2, .. },
+            ) => assert_eq!(t1, t2, "tool_missing mismatch for {json}"),
+            (
+                ScannerStatus::UnsupportedEcosystem { ecosystem: e1 },
+                ScannerStatus::UnsupportedEcosystem { ecosystem: e2 },
+            ) => assert_eq!(e1, e2, "unsupported mismatch for {json}"),
+            (
+                ScannerStatus::Failed { scanner: s1, .. },
+                ScannerStatus::Failed { scanner: s2, .. },
+            ) => assert_eq!(s1, s2, "failed mismatch for {json}"),
+            (a, b) => panic!("roundtrip changed variant: {a:?} -> {b:?} for {json}"),
+        }
+    }
+}
+
 #[test]
 fn resolved_graph_empty_creates_empty() {
     let g = ResolvedGraph::empty();

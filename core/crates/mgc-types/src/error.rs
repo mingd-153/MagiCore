@@ -18,6 +18,19 @@ pub enum MgError {
     Network(String),
     #[error("store error: {0}")]
     Store(String),
+    /// A capability that is not implemented for this core must fail closed
+    /// with guidance — NEVER report success (Ok) for work not performed.
+    /// Capability chưa implement cho core này phải fail-closed kèm hướng
+    /// dẫn — TUYỆT ĐỐI không trả success (Ok) cho việc chưa làm.
+    #[error("{core} core does not support '{capability}' yet: {guidance}")]
+    Unsupported {
+        /// Ecosystem/core that lacks the capability.
+        core: &'static str,
+        /// Capability name (resolve, fetch, install, audit, ...).
+        capability: &'static str,
+        /// Actionable remediation for the user.
+        guidance: String,
+    },
     #[error("{0}")]
     Other(String),
     #[error(transparent)]

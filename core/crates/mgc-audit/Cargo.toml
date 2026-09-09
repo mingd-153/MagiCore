@@ -1,0 +1,24 @@
+# `mgc-audit` — Shared security-audit engine for ALL cores (Tech Lead
+# 2026-09-09 §11). Adapters detect manifests and build an AuditPlan;
+# this engine executes scanners, aggregates reports, and enforces one
+# policy/exit/output contract — no more copy-pasted per-adapter logic.
+# Engine audit chia sẻ cho mọi core: adapter detect manifest rồi dựng
+# AuditPlan; engine chạy scanner, tổng hợp report, giữ đúng một
+# policy/exit/output contract.
+
+[package]
+name = "mgc-audit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shared audit engine: plan execution, aggregation, policy, evidence"
+
+[dependencies]
+mgc-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

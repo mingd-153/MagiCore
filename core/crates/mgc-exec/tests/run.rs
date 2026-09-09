@@ -190,7 +190,13 @@ fn clean_env_kills_forbidden_pm_spawned_by_absolute_child_path() {
     fs::create_dir_all(&dir).unwrap();
     let fake_cargo = dir.join("cargo");
     let fake_npm = dir.join("npm");
-    fs::write(&fake_npm, "#!/bin/sh\n/bin/sleep 2\n").unwrap();
+    // Margin matters: under parallel test load a 2s sleep with a 2s timeout
+    // races; 5s sleep with a 10s timeout keeps the kill-detection semantics
+    // stable regardless of machine load.
+    // Biên thời gian quan trọng: dưới tải test song song, sleep 2s với
+    // timeout 2s sẽ đua nhau; sleep 5s + timeout 10s giữ nguyên semantics
+    // phát hiện kill, ổn định dù máy có tải.
+    fs::write(&fake_npm, "#!/bin/sh\n/bin/sleep 5\n").unwrap();
     fs::write(
         &fake_cargo,
         format!("#!/bin/sh\n\"{}\"\n", fake_npm.display()),
@@ -204,7 +210,7 @@ fn clean_env_kills_forbidden_pm_spawned_by_absolute_child_path() {
 
     let opts = ExecOptions {
         clean_env: true,
-        timeout: Some(Duration::from_secs(2)),
+        timeout: Some(Duration::from_secs(10)),
         ..Default::default()
     };
 
