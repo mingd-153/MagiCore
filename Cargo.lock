@@ -2537,8 +2537,10 @@ dependencies = [
  "async-trait",
  "criterion",
  "dirs",
+ "futures-util",
  "hex",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -2589,9 +2591,11 @@ dependencies = [
 name = "mgc-audit"
 version = "1.1.0-rc.3"
 dependencies = [
+ "mgc-exec",
  "mgc-types",
  "serde",
  "serde_json",
+ "which",
 ]
 
 [[package]]
@@ -2844,8 +2848,10 @@ dependencies = [
  "async-trait",
  "criterion",
  "dirs",
+ "futures-util",
  "hex",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -3122,6 +3128,7 @@ dependencies = [
  "hex",
  "lru",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",

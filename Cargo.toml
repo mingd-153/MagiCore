@@ -41,6 +41,7 @@ mgc-publish = { path = "core/crates/mgc-publish" }
 mgc-oci = { path = "core/crates/mgc-oci" }
 mgc-registry-server = { path = "core/crates/mgc-registry-server" }
 mgc-exec = { path = "core/crates/mgc-exec" }
+which = "6.0"
 
 # External deps (for mgc-http, mgc-oci, etc.)
 http = { version = "1.2", features = [] }

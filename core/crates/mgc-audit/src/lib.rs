@@ -8,6 +8,8 @@
 pub mod aggregate;
 pub mod contract;
 pub mod engine;
+pub mod output;
+pub mod scanners;
 
 pub use aggregate::aggregate_reports;
 pub use contract::ScanStep;

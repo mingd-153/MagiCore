@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Web ecosystem adapter for MagiCore"
 
 [dependencies]
+mgc-audit = { workspace = true }
 # Core crates
 mgc-types = { workspace = true }
 mgc-adapter-base = { workspace = true }

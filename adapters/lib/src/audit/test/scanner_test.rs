@@ -5,8 +5,9 @@
 
 #![allow(clippy::unwrap_used)]
 
-use super::{parse_cargo_audit_json, parse_pip_audit_json};
-use crate::audit::scanner::{find_pylock_file, find_requirements_file};
+use mgc_audit::scanners::{
+    find_pylock_file, find_requirements_file, parse_cargo_audit_json, parse_pip_audit_json,
+};
 
 /// Fixture captured verbatim from a real `cargo audit --json --no-fetch`
 /// run (cargo-audit 0.22.2) against this workspace — contains the genuine

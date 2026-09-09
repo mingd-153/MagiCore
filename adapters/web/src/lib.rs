@@ -18,7 +18,7 @@ use mgc_adapter_base::BaseAdapter;
 use mgc_resolver::Resolver as CoreResolver;
 use mgc_store::ContentStore;
 use mgc_types::{
-    DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
+    DependencySpec, Manifest, MgError, MgResult, PackageId, PackageName, Version, VersionRange,
     adapter::{
         AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
         ResolvedGraph, ResolvedPackage, UpdatedPackage,
@@ -607,7 +607,94 @@ impl PackageAdapter for WebAdapter {
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
-        run_audit(project_root, &self.registry_url).await
+        // Multi-language web aggregate (Tech Lead 2026-09-09 §2): the
+        // npm graph is the primary scan; Rust/Python side manifests in
+        // a web project (WASM crates, server scripts) join the same
+        // aggregate — never silently skipped.
+        // Aggregate đa ngôn ngữ cho web: graph npm là scan chính;
+        // manifest Rust/Python kèm theo (crate WASM, script server) vào
+        // cùng aggregate — không âm thầm bỏ qua.
+        let mut plan = mgc_audit::AuditPlan::new();
+
+        let root = project_root.to_path_buf();
+        let registry = self.registry_url.clone();
+        plan.add_step(mgc_audit::ScanStep {
+            ecosystem: "web/javascript",
+            scanner: "npm-bulk-advisory",
+            run: Box::new(move || {
+                match futures_util::future::FutureExt::now_or_never(Box::pin(run_audit(
+                    &root, &registry,
+                ))) {
+                    Some(result) => result,
+                    None => Err(MgError::Other(
+                        "web npm scanner requires async execution".to_string(),
+                    )),
+                }
+            }),
+        });
+
+        if project_root.join("Cargo.toml").is_file() {
+            let root = project_root.to_path_buf();
+            plan.add_step(mgc_audit::ScanStep {
+                ecosystem: "rust",
+                scanner: "cargo-audit",
+                run: Box::new(move || {
+                    match futures_util::future::FutureExt::now_or_never(Box::pin(
+                        mgc_audit::scanners::audit_rust(&root),
+                    )) {
+                        Some(result) => result,
+                        None => Err(MgError::Other(
+                            "web rust scanner requires async execution".to_string(),
+                        )),
+                    }
+                }),
+            });
+        }
+        if project_root.join("requirements.txt").is_file() {
+            let root = project_root.to_path_buf();
+            plan.add_step(mgc_audit::ScanStep {
+                ecosystem: "python",
+                scanner: "pip-audit",
+                run: Box::new(move || {
+                    match futures_util::future::FutureExt::now_or_never(Box::pin(
+                        mgc_audit::scanners::audit_python(&root),
+                    )) {
+                        Some(result) => result,
+                        None => Err(MgError::Other(
+                            "web python scanner requires async execution".to_string(),
+                        )),
+                    }
+                }),
+            });
+        }
+        for lang_file in ["go.mod", "build.gradle", "build.gradle.kts", "*.csproj"] {
+            let present = if lang_file.starts_with('*') {
+                std::fs::read_dir(project_root)
+                    .map(|it| {
+                        it.filter_map(|e| e.ok()).any(|e| {
+                            e.file_name()
+                                .to_str()
+                                .is_some_and(|n| n.ends_with(lang_file.trim_start_matches('*')))
+                        })
+                    })
+                    .unwrap_or(false)
+            } else {
+                project_root.join(lang_file).is_file()
+            };
+            if present {
+                plan.add_step(mgc_audit::ScanStep {
+                    ecosystem: "web-multi-pending",
+                    scanner: "not-implemented",
+                    run: Box::new(|| {
+                        Ok(mgc_types::adapter::AuditReport::unsupported_ecosystem(
+                            "web sidecar manifest (go/gradle/csproj) — scanner not implemented yet",
+                        ))
+                    }),
+                });
+            }
+        }
+
+        plan.execute().await
     }
 
     async fn audit_fix(&self, project_root: &Path, vulnerable: &[PackageId]) -> MgResult<usize> {

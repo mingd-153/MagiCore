@@ -104,6 +104,9 @@ fn findings_merge_across_ecosystems() {
             severity_level: mgc_types::adapter::VulnerabilitySeverity::High,
             patched_versions: Some("2.20.0".to_string()),
             url: None,
+            scanner: None,
+            ecosystem: None,
+            evidence_at: None,
         });
     let clean = AuditReport::clean(2);
     let out = aggregate_reports(vec![

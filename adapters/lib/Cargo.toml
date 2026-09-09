@@ -8,6 +8,8 @@ authors.workspace = true
 description = "Library ecosystem adapter for MagiCore (ts/rust/python)"
 
 [dependencies]
+mgc-audit = { workspace = true }
+futures-util = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { workspace = true }
 mgc-crypto = { workspace = true }

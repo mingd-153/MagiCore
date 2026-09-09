@@ -17,8 +17,10 @@ description = "Shared audit engine: plan execution, aggregation, policy, evidenc
 
 [dependencies]
 mgc-types = { workspace = true }
+mgc-exec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+which = { workspace = true }
 
 [lints]
 workspace = true

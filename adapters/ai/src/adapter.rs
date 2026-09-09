@@ -8,7 +8,8 @@ use mgc_types::adapter::{
     UpdatedPackage,
 };
 use mgc_types::{
-    Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
+    Ecosystem, Manifest, MgError, MgResult, PackageId, PackageName, ResolvedGraph, Version,
+    VersionRange,
 };
 use std::path::{Path, PathBuf};
 
@@ -115,15 +116,142 @@ impl PackageAdapter for AiAdapter {
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
-        let manifest = self.parse_manifest(project_root).await?;
-        // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unsupported_ecosystem(format!(
-            "ai ({} dependencies not scanned — no scanner implemented yet)",
-            manifest.all_dependencies().count()
-        )))
+        // AI two-layer aggregate (Tech Lead 2026-09-09 §3): dependency
+        // audit (python/rust manifests when present) + model artifact
+        // audit (pickle/safetensors/weights) — one merged report.
+        // Aggregate hai lớp AI: dependency (manifest python/rust nếu có)
+        // + model artifact (pickle/safetensors/weights) — một report gộp.
+        let mut plan = mgc_audit::AuditPlan::new();
+
+        let requirements = project_root.join("requirements.txt");
+        if requirements.is_file() {
+            let root = project_root.to_path_buf();
+            plan.add_step(mgc_audit::ScanStep {
+                ecosystem: "python",
+                scanner: "pip-audit",
+                run: Box::new(move || run_now(mgc_audit::scanners::audit_python(&root))),
+            });
+        }
+        if project_root.join("Cargo.toml").is_file() {
+            let root = project_root.to_path_buf();
+            plan.add_step(mgc_audit::ScanStep {
+                ecosystem: "rust",
+                scanner: "cargo-audit",
+                run: Box::new(move || run_now(mgc_audit::scanners::audit_rust(&root))),
+            });
+        }
+
+        // Model artifact layer: scan the AI model directory conventions.
+        // Lớp model artifact: scan theo thư mục model quen thuộc của AI.
+        for model_dir in ["models", "model", "artifacts", "checkpoints"] {
+            let dir = project_root.join(model_dir);
+            if dir.is_dir() {
+                let dir = dir.clone();
+                plan.add_step(mgc_audit::ScanStep {
+                    ecosystem: "model-artifact",
+                    scanner: "mgc-model-scanner",
+                    run: Box::new(move || model_artifact_report(&dir)),
+                });
+                break;
+            }
+        }
+
+        if plan.is_empty() {
+            let manifest = self.parse_manifest(project_root).await?;
+            return Ok(AuditReport::unsupported_ecosystem(format!(
+                "ai ({} dependencies not scanned — no scanner implemented yet)",
+                manifest.all_dependencies().count()
+            )));
+        }
+
+        plan.execute().await
     }
 
     fn set_dedupe_pref(&self, _enabled: bool) {}
 
     fn set_existing_versions(&self, _versions: std::collections::HashMap<String, String>) {}
+}
+
+/// Drive a scanner future to completion inside a sync engine step —
+/// the current scanners complete on first poll (subprocess work happens
+/// in mgc-exec during that poll).
+/// Chạy trọn future scanner trong bước engine sync — scanner hiện tại
+/// hoàn tất ngay poll đầu (subprocess chạy trong mgc-exec lúc đó).
+fn run_now<F>(fut: F) -> MgResult<AuditReport>
+where
+    F: std::future::Future<Output = MgResult<AuditReport>>,
+{
+    use futures_util::future::FutureExt;
+    match Box::pin(fut).now_or_never() {
+        Some(result) => result,
+        None => Err(mgc_types::MgError::Other(
+            "ai aggregate scanner requires async execution".to_string(),
+        )),
+    }
+}
+
+/// Convert the model-artifact audit (internal Finding format) into the
+/// unified AuditReport — every High/Critical model finding becomes a
+/// Vulnerability row so the aggregate and exit contract stay uniform.
+/// Chuyển audit model-artifact (Finding nội bộ) sang AuditReport thống
+/// nhất — mọi finding High/Critical của model thành dòng Vulnerability
+/// để aggregate và exit contract giữ một chuẩn.
+fn model_artifact_report(dir: &Path) -> MgResult<AuditReport> {
+    use mgc_types::adapter::{Vulnerability, VulnerabilitySeverity};
+
+    let model = futures_util_replay(dir)?;
+    let mut vulnerabilities = Vec::new();
+    for finding in &model.findings {
+        let severity_level = match finding.severity {
+            crate::audit::Severity::Critical => VulnerabilitySeverity::Critical,
+            crate::audit::Severity::High => VulnerabilitySeverity::High,
+            crate::audit::Severity::Medium => VulnerabilitySeverity::Medium,
+            crate::audit::Severity::Low => VulnerabilitySeverity::Low,
+            crate::audit::Severity::Info => VulnerabilitySeverity::Info,
+        };
+        let file = finding
+            .file_path
+            .clone()
+            .unwrap_or_else(|| dir.display().to_string());
+        vulnerabilities.push(
+            Vulnerability {
+                package: PackageId::new(
+                    PackageName::new(format!("model:{file}"))
+                        .map_err(|e| MgError::Other(format!("invalid model label: {e}")))?,
+                    Version::new(0, 0, 0),
+                ),
+                title: format!("{}: {}", finding.category, finding.message),
+                severity: format!("{:?}", finding.severity).to_lowercase(),
+                cve: format!("model-{}", finding.category),
+                severity_level,
+                patched_versions: None,
+                url: None,
+                scanner: None,
+                ecosystem: None,
+                evidence_at: None,
+            }
+            .with_evidence("mgc-model-scanner", "model-artifact"),
+        );
+    }
+
+    Ok(AuditReport {
+        packages_audited: model.scanned_files,
+        vulnerability_count: vulnerabilities.len(),
+        vulnerabilities,
+        scanner_status: mgc_types::adapter::ScannerStatus::Available,
+    })
+}
+
+/// Poll the async model audit once — same first-poll-complete contract
+/// as the dependency scanners.
+/// Poll audit model async đúng một lần — cùng hợp đồng poll-đầu-hoàn-
+/// tất như các scanner dependency.
+fn futures_util_replay(dir: &Path) -> MgResult<crate::audit::AuditReport> {
+    use futures_util::future::FutureExt;
+    match Box::pin(crate::audit::audit_model(dir)).now_or_never() {
+        Some(result) => result,
+        None => Err(mgc_types::MgError::Other(
+            "model scanner requires async execution".to_string(),
+        )),
+    }
 }
