@@ -39,15 +39,39 @@ impl PackageAdapter for HardwareAdapter {
     }
 
     async fn write_manifest(&self, _project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-        Ok(())
+        // Fail-closed: hardware projects are scaffold-owned, not registry
+        // manifests — writing a no-op success would fake capability.
+        // Fail-closed: project hardware do scaffold quản lý, không phải
+        // registry manifest — trả Ok giả là giả capability.
+        Err(mgc_types::MgError::Unsupported {
+            core: "hardware",
+            capability: "write_manifest",
+            guidance: "hardware projects do not use registry manifests; \
+                       regenerate via `mgc create-hardware` or edit optimizer/bench files directly"
+                .to_string(),
+        })
     }
 
     async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        Ok(ResolvedGraph::default())
+        // No dependency graph exists for hardware add-ons — fail closed.
+        // Hardware add-on không có dependency graph — fail-closed.
+        Err(mgc_types::MgError::Unsupported {
+            core: "hardware",
+            capability: "resolve",
+            guidance: "hardware add-ons have no registry dependency graph; \
+                       optimizer/bench templates are materialized by `mgc add-hardware <pkg>`"
+                .to_string(),
+        })
     }
 
     async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Ok(())
+        Err(mgc_types::MgError::Unsupported {
+            core: "hardware",
+            capability: "fetch",
+            guidance: "nothing to fetch — hardware add-ons are templates, \
+                       not registry packages"
+                .to_string(),
+        })
     }
 
     async fn install(
@@ -56,7 +80,13 @@ impl PackageAdapter for HardwareAdapter {
         _project_root: &Path,
         _opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        Ok(InstallSummary::default())
+        Err(mgc_types::MgError::Unsupported {
+            core: "hardware",
+            capability: "install",
+            guidance: "hardware add-ons are materialized by `mgc add-hardware <pkg>`; \
+                       there is no registry install for this core"
+                .to_string(),
+        })
     }
 
     async fn add(
@@ -83,7 +113,15 @@ impl PackageAdapter for HardwareAdapter {
         _project_root: &Path,
         _name: Option<&PackageName>,
     ) -> MgResult<Vec<UpdatedPackage>> {
-        Ok(vec![])
+        // Fail-closed: no update channel exists for template add-ons.
+        // Fail-closed: template add-on không có kênh update.
+        Err(mgc_types::MgError::Unsupported {
+            core: "hardware",
+            capability: "update",
+            guidance: "hardware add-ons have no update channel; \
+                       re-run `mgc add-hardware <pkg>` to refresh templates"
+                .to_string(),
+        })
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
@@ -104,8 +142,8 @@ impl PackageAdapter for HardwareAdapter {
 
     async fn audit(&self, _project_root: &Path) -> MgResult<AuditReport> {
         // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(
-            "No audit scanner available for Hardware core (template packages only)",
+        Ok(AuditReport::unsupported_ecosystem(
+            "hardware (template packages only — no scanner implemented yet)",
         ))
     }
 }

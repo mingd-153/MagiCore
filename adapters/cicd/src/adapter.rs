@@ -50,15 +50,34 @@ impl PackageAdapter for CicdAdapter {
     }
 
     async fn write_manifest(&self, _project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-        Ok(())
+        // Fail-closed: pipeline files are hand-owned — no-op success would
+        // fake a manifest write that never happened.
+        // Fail-closed: file pipeline do người quản lý — Ok no-op là giả.
+        Err(mgc_types::MgError::Unsupported {
+            core: "cicd",
+            capability: "write_manifest",
+            guidance: "CI/CD pipeline files are maintained by hand; \
+                       scaffold via `mgc create-cicd <provider>` instead"
+                .to_string(),
+        })
     }
 
     async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        Ok(ResolvedGraph::default())
+        // CI/CD providers have no registry dependency graph — fail closed.
+        // Provider CI/CD không có dependency graph registry — fail-closed.
+        Err(mgc_types::MgError::Unsupported {
+            core: "cicd",
+            capability: "resolve",
+            guidance: "CI/CD templates have no dependency graph to resolve".to_string(),
+        })
     }
 
     async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Ok(())
+        Err(mgc_types::MgError::Unsupported {
+            core: "cicd",
+            capability: "fetch",
+            guidance: "nothing to fetch — CI/CD templates carry no registry packages".to_string(),
+        })
     }
 
     async fn install(
@@ -67,7 +86,13 @@ impl PackageAdapter for CicdAdapter {
         _project_root: &Path,
         _opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        Ok(InstallSummary::default())
+        Err(mgc_types::MgError::Unsupported {
+            core: "cicd",
+            capability: "install",
+            guidance: "CI/CD has no package install; deploy through `mgc deploy` \
+                       (dry-run default)"
+                .to_string(),
+        })
     }
 
     async fn add(
@@ -116,8 +141,8 @@ impl PackageAdapter for CicdAdapter {
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
         let manifest = self.parse_manifest(project_root).await?;
         // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(format!(
-            "No audit scanner available for CICD core ({} dependencies not scanned)",
+        Ok(AuditReport::unsupported_ecosystem(format!(
+            "cicd ({} dependencies not scanned — no scanner implemented yet)",
             manifest.all_dependencies().count()
         )))
     }

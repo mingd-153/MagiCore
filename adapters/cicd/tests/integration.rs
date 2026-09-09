@@ -162,13 +162,33 @@ fn can_handle_returns_true_for_known_marker() {
 }
 
 #[tokio::test]
-async fn install_returns_ok_delegating_to_provider_tooling() {
-    let dir = tmp("install-ok");
+async fn install_fails_closed_because_no_package_semantics() {
+    // CI/CD templates carry no registry packages: resolve AND install must
+    // both fail closed with a typed Unsupported error — never Ok(default()).
+    // Template CI/CD không có package registry: resolve VÀ install đều phải
+    // fail-closed với error typed Unsupported — tuyệt đối không Ok(default()).
+    let dir = tmp("install-fail-closed");
     std::fs::write(dir.join("wrangler.toml"), "name = \"w\"\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let manifest = a.parse_manifest(&dir).await.unwrap();
-    let graph = a.resolve(&manifest).await.unwrap();
-    assert!(a.install(&graph, &dir, Default::default()).await.is_ok());
+
+    let resolve_err = a.resolve(&manifest).await.unwrap_err();
+    assert!(
+        matches!(resolve_err, mgc_types::MgError::Unsupported { core, capability, .. }
+            if core == "cicd" && capability == "resolve"),
+        "resolve must be typed-unsupported, got: {resolve_err}"
+    );
+
+    let graph = mgc_types::ResolvedGraph::default();
+    let install_err = a
+        .install(&graph, &dir, Default::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(install_err, mgc_types::MgError::Unsupported { core, capability, .. }
+            if core == "cicd" && capability == "install"),
+        "install must be typed-unsupported, got: {install_err}"
+    );
 }
 
 #[tokio::test]

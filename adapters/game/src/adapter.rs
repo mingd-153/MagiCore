@@ -56,11 +56,23 @@ impl PackageAdapter for GameAdapter {
     }
 
     async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        Ok(ResolvedGraph::default())
+        // No registry dependency graph for game engines — fail closed.
+        // Game engine không có dependency graph registry — fail-closed.
+        Err(mgc_types::MgError::Unsupported {
+            core: "game",
+            capability: "resolve",
+            guidance: "game dependencies are managed by the engine's own \
+                       toolchain (cargo/UPM/Epic); no registry graph is resolved"
+                .to_string(),
+        })
     }
 
     async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Ok(())
+        Err(mgc_types::MgError::Unsupported {
+            core: "game",
+            capability: "fetch",
+            guidance: "game dependency fetch is delegated to the engine toolchain".to_string(),
+        })
     }
 
     async fn install(
@@ -71,7 +83,24 @@ impl PackageAdapter for GameAdapter {
     ) -> MgResult<InstallSummary> {
         match self.engine {
             GameEngine::Bevy => exec_tool(project_root, "cargo", &["fetch".to_string()])?,
-            GameEngine::Godot | GameEngine::Unreal => {}
+            GameEngine::Godot | GameEngine::Unreal => {
+                // Fail closed: no real dependency fetch exists for these
+                // engines yet — a silent no-op would fake capability.
+                // Fail-closed: engine này chưa có fetch thật — no-op im
+                // lặng đồng nghĩa giả capability.
+                return Err(mgc_types::MgError::Unsupported {
+                    core: "game",
+                    capability: "install",
+                    guidance: match self.engine {
+                        GameEngine::Godot => "Godot projects have no dependency install step; \
+                                             open the project in the Godot editor"
+                            .to_string(),
+                        _ => "Unreal dependency install requires the Epic Launcher \
+                              (not automated); open the project in Unreal Editor"
+                            .to_string(),
+                    },
+                });
+            }
             GameEngine::Unity => {
                 return Err(mgc_types::MgError::Other(
                     "unity install via UPM CLI (Read-and-Verify) is P2 — awaiting spike (03 §7 Q1)"
@@ -179,8 +208,8 @@ impl PackageAdapter for GameAdapter {
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
         let manifest = self.parse_manifest(project_root).await?;
         // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(format!(
-            "No audit scanner available for Game core ({} dependencies not scanned)",
+        Ok(AuditReport::unsupported_ecosystem(format!(
+            "game ({} dependencies not scanned — no scanner implemented yet)",
             manifest.all_dependencies().count()
         )))
     }

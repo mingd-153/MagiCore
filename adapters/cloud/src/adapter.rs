@@ -71,11 +71,28 @@ impl PackageAdapter for CloudAdapter {
         if let Some(web) = &self.web {
             return web.resolve(manifest).await;
         }
-        Ok(ResolvedGraph::default())
+        // Terraform/CDK modules are not resolved through a registry graph.
+        // Module Terraform/CDK không resolve qua graph registry.
+        Err(mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "resolve",
+            guidance: "cloud dependencies are managed by terraform/CDK \
+                       (`terraform init` runs during install); no registry graph"
+                .to_string(),
+        })
     }
 
-    async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Ok(())
+    async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
+        if let Some(web) = &self.web {
+            return web.fetch(graph).await;
+        }
+        Err(mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "fetch",
+            guidance: "terraform modules are fetched by `terraform init` \
+                       during install; there is no separate fetch step"
+                .to_string(),
+        })
     }
 
     async fn install(
@@ -153,8 +170,8 @@ impl PackageAdapter for CloudAdapter {
         }
         let manifest = self.parse_manifest(project_root).await?;
         // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(format!(
-            "No audit scanner available for Cloud core ({} dependencies not scanned)",
+        Ok(AuditReport::unsupported_ecosystem(format!(
+            "cloud ({} dependencies not scanned — no scanner implemented yet)",
             manifest.all_dependencies().count()
         )))
     }

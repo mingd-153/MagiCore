@@ -56,11 +56,25 @@ impl PackageAdapter for IotAdapter {
     }
 
     async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        Ok(ResolvedGraph::default())
+        // No registry graph for IoT toolchains — fail closed with guidance.
+        // Toolchain IoT không có graph registry — fail-closed kèm hướng dẫn.
+        Err(mgc_types::MgError::Unsupported {
+            core: "iot",
+            capability: "resolve",
+            guidance: "IoT toolchains (esp32-rust/platformio/zephyr) manage \
+                       dependencies via their own tools; no registry graph is resolved"
+                .to_string(),
+        })
     }
 
     async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Ok(())
+        Err(mgc_types::MgError::Unsupported {
+            core: "iot",
+            capability: "fetch",
+            guidance: "IoT dependency fetch is delegated to the toolchain \
+                       (cargo/pio/west); run it directly"
+                .to_string(),
+        })
     }
 
     async fn install(
@@ -187,8 +201,8 @@ impl PackageAdapter for IotAdapter {
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
         let manifest = self.parse_manifest(project_root).await?;
         // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(format!(
-            "No audit scanner available for IoT core ({} dependencies not scanned)",
+        Ok(AuditReport::unsupported_ecosystem(format!(
+            "iot ({} dependencies not scanned — no scanner implemented yet)",
             manifest.all_dependencies().count()
         )))
     }

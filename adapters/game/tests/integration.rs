@@ -138,13 +138,32 @@ async fn parse_manifest_bevy_reads_cargo_toml_dependencies() {
 }
 
 #[tokio::test]
-async fn godot_install_returns_ok() {
+async fn godot_install_fails_closed_pointing_to_editor() {
+    // Godot projects have no dependency install step — install must fail
+    // closed with typed Unsupported instead of a silent Ok.
+    // Project Godot không có bước install dependency — install phải
+    // fail-closed typed Unsupported thay vì Ok im lặng.
     let dir = tmp("install-godot");
     std::fs::write(dir.join("project.godot"), "[application]\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let manifest = a.parse_manifest(&dir).await.unwrap();
-    let graph = a.resolve(&manifest).await.unwrap();
-    assert!(a.install(&graph, &dir, Default::default()).await.is_ok());
+
+    let resolve_err = a.resolve(&manifest).await.unwrap_err();
+    assert!(
+        matches!(resolve_err, mgc_types::MgError::Unsupported { core, .. } if core == "game"),
+        "resolve must be typed-unsupported, got: {resolve_err}"
+    );
+
+    let graph = mgc_types::ResolvedGraph::default();
+    let install_err = a
+        .install(&graph, &dir, Default::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(install_err, mgc_types::MgError::Unsupported { core, capability, .. }
+            if core == "game" && capability == "install"),
+        "install must be typed-unsupported, got: {install_err}"
+    );
 }
 
 #[tokio::test]

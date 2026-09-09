@@ -117,8 +117,8 @@ impl PackageAdapter for AiAdapter {
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
         let manifest = self.parse_manifest(project_root).await?;
         // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(format!(
-            "No audit scanner available for AI core ({} dependencies not scanned)",
+        Ok(AuditReport::unsupported_ecosystem(format!(
+            "ai ({} dependencies not scanned — no scanner implemented yet)",
             manifest.all_dependencies().count()
         )))
     }

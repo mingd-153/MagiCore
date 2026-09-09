@@ -184,8 +184,13 @@ async fn install_delegates_to_terraform_binary() {
     let dir = tmp("install-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
     let a = adapter_for(&dir).unwrap();
-    let manifest = a.parse_manifest(&dir).await.unwrap();
-    let graph = a.resolve(&manifest).await.unwrap();
+    let _manifest = a.parse_manifest(&dir).await.unwrap();
+    // Terraform branch has no registry graph — resolve fails closed, so the
+    // test drives install with an empty graph directly (install is the part
+    // that shells out to the real terraform binary).
+    // Nhánh Terraform không có graph registry — resolve fail-closed, test
+    // gọi install với graph rỗng trực tiếp (install là phần chạy terraform).
+    let graph = mgc_types::ResolvedGraph::default();
     let result = a.install(&graph, &dir, Default::default()).await;
     // Hoặc ok (nếu terraform được cài), hoặc err với message liên quan đến exec
     match &result {
