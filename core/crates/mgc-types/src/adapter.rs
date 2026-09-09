@@ -153,6 +153,62 @@ pub struct Vulnerability {
     pub patched_versions: Option<String>,
     /// Link to the advisory.
     pub url: Option<String>,
+    /// Scanner that produced this finding (e.g. "cargo-audit", "osv").
+    /// Scanner sinh ra finding này — giữ truy vết nguồn evidence.
+    #[serde(default)]
+    pub scanner: Option<String>,
+    /// Ecosystem of the affected package (e.g. "rust", "python").
+    /// Ecosystem của package dính finding.
+    #[serde(default)]
+    pub ecosystem: Option<String>,
+    /// Evidence timestamp (RFC 3339) — when the scanner observed it.
+    /// Thời điểm scanner quan sát finding (RFC 3339).
+    #[serde(default)]
+    pub evidence_at: Option<String>,
+}
+
+impl Vulnerability {
+    /// Stamp provenance on a finding: scanner, ecosystem, and the
+    /// observation time (UTC, RFC 3339) — evidence must travel WITH the
+    /// finding so CI ingest can verify freshness (Tech Lead 2026-09-09).
+    /// Gắn nguồn gốc cho finding: scanner, ecosystem, thời điểm quan sát
+    /// (UTC, RFC 3339) — evidence đi CÙNG finding để CI kiểm tra độ tươi.
+    pub fn with_evidence(
+        mut self,
+        scanner: impl Into<String>,
+        ecosystem: impl Into<String>,
+    ) -> Self {
+        self.scanner = Some(scanner.into());
+        self.ecosystem = Some(ecosystem.into());
+        self.evidence_at = Some(now_rfc3339());
+        self
+    }
+}
+
+/// Current UTC time, RFC 3339 — no chrono dependency (lockfile stays
+/// stable); std::time + manual formatting is enough for second precision.
+/// Thời điểm UTC hiện tại theo RFC 3339 — không thêm dependency chrono;
+/// std::time + format thủ công đủ cho độ chính xác giây.
+fn now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // Civil-from-days algorithm (Howard Hinnant) — exact for all dates.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoy = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoy + era * 400;
+    let doy = doe - (365 * yoy + yoy / 4 - yoy / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

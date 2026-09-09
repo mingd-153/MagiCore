@@ -31,6 +31,9 @@ fn audit_report_not_clean_with_vulnerabilities_vec() {
             severity_level: VulnerabilitySeverity::High,
             patched_versions: None,
             url: None,
+            scanner: None,
+            ecosystem: None,
+            evidence_at: None,
         }],
         scanner_status: ScannerStatus::Available,
     };
@@ -185,4 +188,33 @@ fn install_summary_default() {
     assert!(s.added.is_empty());
     assert_eq!(s.bytes_from_cache, 0);
     assert_eq!(s.duration_ms, 0);
+}
+
+/// Evidence provenance must round-trip through serde — CI ingest reads
+/// scanner/ecosystem/evidence_at from every finding (Tech Lead 2026-09-09).
+/// Provenance phải serialize/deserialize ổn định — CI đọc scanner/
+/// ecosystem/evidence_at từ mọi finding.
+#[test]
+fn vulnerability_evidence_fields_roundtrip() {
+    let vuln = Vulnerability {
+        package: PackageId::parse("lodash@4.17.12").unwrap(),
+        title: "Prototype pollution".to_string(),
+        severity: "high".to_string(),
+        cve: "1102260".to_string(),
+        severity_level: VulnerabilitySeverity::High,
+        patched_versions: None,
+        url: None,
+        scanner: None,
+        ecosystem: None,
+        evidence_at: None,
+    }
+    .with_evidence("npm-bulk-advisory", "web/javascript");
+
+    assert_eq!(vuln.scanner.as_deref(), Some("npm-bulk-advisory"));
+    assert_eq!(vuln.ecosystem.as_deref(), Some("web/javascript"));
+    let ts = vuln.evidence_at.expect("evidence_at stamped");
+    assert!(
+        ts.ends_with('Z') && ts.len() == 20 && ts.contains('T'),
+        "evidence_at must be RFC 3339 UTC, got {ts}"
+    );
 }

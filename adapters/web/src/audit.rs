@@ -275,23 +275,29 @@ fn build_findings_for_advisory(
         if !range.matches(&installed) {
             continue;
         }
-        findings.push(Vulnerability {
-            package: PackageId::new(
-                PackageName::new(pkg_name.to_string())
-                    .map_err(|e| format!("invalid package name: {e}"))?,
-                installed,
-            ),
-            title: record.title.clone(),
-            severity: record.severity.clone(),
-            // The registry numeric `id` is the advisory identifier (same
-            // thing npm audit prints); there is no CVE array on this API.
-            // `id` số của registry chính là định danh advisory (npm audit
-            // cũng in vậy); API này không có mảng CVE.
-            cve: record.id.to_string(),
-            severity_level: VulnerabilitySeverity::from_str(&record.severity),
-            patched_versions: Some(record.vulnerable_versions.clone()),
-            url: Some(record.url.clone()),
-        });
+        findings.push(
+            Vulnerability {
+                package: PackageId::new(
+                    PackageName::new(pkg_name.to_string())
+                        .map_err(|e| format!("invalid package name: {e}"))?,
+                    installed,
+                ),
+                title: record.title.clone(),
+                severity: record.severity.clone(),
+                // The registry numeric `id` is the advisory identifier (same
+                // thing npm audit prints); there is no CVE array on this API.
+                // `id` số của registry chính là định danh advisory (npm audit
+                // cũng in vậy); API này không có mảng CVE.
+                cve: record.id.to_string(),
+                severity_level: VulnerabilitySeverity::from_str(&record.severity),
+                patched_versions: Some(record.vulnerable_versions.clone()),
+                url: Some(record.url.clone()),
+                scanner: None,
+                ecosystem: None,
+                evidence_at: None,
+            }
+            .with_evidence("npm-bulk-advisory", "web/javascript"),
+        );
     }
     Ok(findings)
 }

@@ -322,21 +322,27 @@ pub(crate) fn parse_owasp_dependency_check_json(raw: &str) -> MgResult<AuditRepo
         for vuln in &dep.vulnerabilities {
             let severity_level = owasp_severity(vuln);
             let description = vuln.description.as_deref().unwrap_or("");
-            vulnerabilities.push(Vulnerability {
-                package: PackageId::new(
-                    pkg_name.clone(),
-                    pkg_version.clone().unwrap_or_else(|| Version::new(0, 0, 0)),
-                ),
-                title: format!("{}: {}", vuln.name, truncate_utf8(description, 200)),
-                severity: vuln
-                    .severity
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-                cve: vuln.name.clone(),
-                severity_level,
-                patched_versions: None,
-                url: None,
-            });
+            vulnerabilities.push(
+                Vulnerability {
+                    package: PackageId::new(
+                        pkg_name.clone(),
+                        pkg_version.clone().unwrap_or_else(|| Version::new(0, 0, 0)),
+                    ),
+                    title: format!("{}: {}", vuln.name, truncate_utf8(description, 200)),
+                    severity: vuln
+                        .severity
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    cve: vuln.name.clone(),
+                    severity_level,
+                    patched_versions: None,
+                    url: None,
+                    scanner: None,
+                    ecosystem: None,
+                    evidence_at: None,
+                }
+                .with_evidence("owasp-dependency-check", "kotlin/jvm"),
+            );
         }
     }
 
