@@ -60,6 +60,14 @@ async fn main() {
     // thao tác) khiến CI fail không đoán được nguyên nhân.
     if let Err(err) = dispatch::run(Cli::parse()).await {
         eprintln!("Error: {err:#}");
-        std::process::exit(1);
+        // Audit exit contract (Tech Lead §1): 1 = findings/policy, 2 =
+        // environment/tool failure (the audit could not run at all).
+        // Hợp đồng exit của audit: 1 = có finding/policy, 2 = lỗi
+        // môi trường/tool (audit không chạy được).
+        let exit_code = err
+            .downcast_ref::<crate::error::AuditExitError>()
+            .map(|e| e.exit_code)
+            .unwrap_or(1);
+        std::process::exit(exit_code);
     }
 }

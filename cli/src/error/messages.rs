@@ -518,12 +518,62 @@ pub fn llama_quantize_failed(code: Option<i32>) -> Error {
 
 // ===== audit =====
 
-pub fn audit_not_implemented(core: &str) -> Error {
-    anyhow!("{core} audit is not implemented yet; refusing to report a fake clean audit")
+/// Exit-code marker for audit environment/tool failures.
+/// `std::process::exit` contract (Tech Lead §1): 0 = clean, 1 = findings
+/// or policy violation, 2 = the audit could NOT run (tool missing,
+/// environment broken). Carried through anyhow via downcast in main.
+/// Marker exit-code cho lỗi môi trường/tool của audit: 0 = sạch, 1 = có
+/// finding/policy vi phạm, 2 = audit KHÔNG chạy được (thiếu tool, hỏng
+/// môi trường) — main downcast để lấy đúng mã.
+#[derive(Debug)]
+pub struct AuditExitError {
+    pub exit_code: i32,
+    pub message: String,
 }
+
+impl AuditExitError {
+    /// Environment failure — scanner unavailable in strict mode.
+    /// Lỗi môi trường — scanner unavailable ở strict mode.
+    pub fn environment(reason: &str) -> Self {
+        Self {
+            exit_code: 2,
+            message: format!(
+                "Audit failed: scanner unavailable in strict mode ({reason})\n\
+                 Set MGC_AUDIT_STRICT=0 to allow the unverified state locally (not recommended in CI)"
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for AuditExitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for AuditExitError {}
 
 pub fn audit_fix_web_only() -> Error {
     anyhow!("audit --fix is only supported for the web core")
+}
+
+pub fn audit_unknown_scanner_state(core: &str) -> anyhow::Error {
+    anyhow!(
+        "audit scanner status for '{core}' could not be classified — refusing to interpret the report"
+    )
+}
+
+/// Environment/tooling failure (scanner unavailable under strict mode).
+/// Distinct exit code 2 so CI can tell "vulnerabilities found" (1) from
+/// "the audit could not run" (2) — Tech Lead contract §1.
+/// Lỗi môi trường/tool (scanner unavailable ở strict mode). Exit code 2
+/// riêng để CI phân biệt "có lỗ hổng" (1) với "audit không chạy được" (2).
+pub fn audit_scanner_unavailable_strict(reason: &str) -> Error {
+    Error::msg(AuditExitError::environment(reason))
+}
+
+pub fn audit_found_vulnerabilities(count: usize, packages: usize) -> Error {
+    anyhow!("audit found {count} vulnerabilities across {packages} packages")
 }
 
 pub fn web_audit_needs_context() -> Error {
@@ -855,6 +905,37 @@ pub fn unsupported_web_framework(framework: &str) -> Error {
 
 pub fn dir_already_exists(target: &std::path::Path) -> Error {
     anyhow!("Directory '{}' already exists", target.display())
+}
+
+pub fn scaffold_staging_failed(target: &std::path::Path, cause: Error) -> Error {
+    anyhow!(
+        "Scaffolding '{}' failed atomically; no partial project was left \
+         behind. Cause: {cause}",
+        target.display()
+    )
+}
+
+pub fn create_claim_conflict(claim: &std::path::Path) -> Error {
+    anyhow!(
+        "Another create for this project name appears to be in progress \
+         (claim file '{}' exists). If no create is running, remove the claim \
+         file and retry.",
+        claim.display()
+    )
+}
+
+pub fn invalid_project_name_retries_exhausted(retries: u32) -> Error {
+    anyhow!(
+        "Project name rejected after {retries} attempts; wizard aborted \
+         without creating anything (no fallback name is invented)"
+    )
+}
+
+pub fn invalid_project_name(project_name: &str) -> Error {
+    anyhow!(
+        "Invalid project name '{project_name}': must be a single path segment without \
+         separators, '..', or absolute paths (path traversal rejected)"
+    )
 }
 
 pub fn unsupported_scaffold_core(core: &str) -> Error {

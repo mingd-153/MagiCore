@@ -1,3 +1,12 @@
-pub async fn audit() -> anyhow::Result<()> {
-    Err(crate::error::audit_not_implemented("library"))
+//! Lib core audit — dispatch to the adapter's real scanner via the shared
+//! pipeline (detect → adapter → scanner → typed report → exit contract).
+//! Audit core Lib — dispatch sang scanner thật của adapter qua pipeline
+//! chung; CLI không chứa business logic (Tech Lead §11).
+
+use super::{StrictMode, finish_and_print, run_adapter_audit};
+use crate::context::ProjectContext;
+
+pub async fn audit(ctx: &ProjectContext) -> anyhow::Result<()> {
+    let report = run_adapter_audit(ctx).await?;
+    finish_and_print("lib", &report, StrictMode::from_env()).await
 }

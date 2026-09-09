@@ -1,7 +1,8 @@
-use anyhow::{Result, bail};
-use colored::*;
-use mgc_types::adapter::AuditReport;
-use mgc_ui::{info, success, warning};
+//! Web core audit — adapter + lockfile audit with the shared finisher.
+//! Audit core Web — adapter + lockfile audit, dùng finisher chung cho exit
+//! contract (fix path vẫn riêng vì chỉ web có audit_fix).
+
+use anyhow::Result;
 use std::path::Path;
 
 pub async fn audit(
@@ -9,95 +10,24 @@ pub async fn audit(
     project_root: &Path,
     fix: bool,
 ) -> Result<()> {
-    if !mgc_ui::is_quiet() {
-        mgc_ui::blank_line();
-        println!("🛡️  {}", "MagiCore Security Audit (Web Core)".bold().cyan());
-    }
-
-    info("Auditing lockfile through the native web adapter...");
     let report = adapter.audit(project_root).await?;
+    super::finish_and_print("web", &report, super::StrictMode::from_env()).await?;
 
-    // Check scanner availability before reporting results
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if !report.scanner_available()
-        && let mgc_types::adapter::ScannerStatus::Unavailable(reason) = &report.scanner_status
-    {
-        let strict_mode = std::env::var("MGC_AUDIT_STRICT")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-
-        eprintln!("⚠ Audit scanner unavailable: {}", reason);
-        eprintln!("  Audit NOT performed - cannot verify security");
-
-        if strict_mode {
-            anyhow::bail!(
-                "Audit failed: scanner unavailable in strict mode\n\
-                 Set MGC_AUDIT_STRICT=0 to allow unverified state (not recommended in CI)"
-            );
-        } else {
-            eprintln!("  Status: UNVERIFIED (pass with warning)");
-            eprintln!(
-                "  Set MGC_AUDIT_STRICT=1 to fail on unavailable scanner (recommended for CI)"
-            );
-            return Ok(());
-        }
+    // The finisher enforces the exit contract; the fix path runs after a
+    // finding report and rewrites the lockfile (web-only capability).
+    // Finisher giữ exit contract; path fix chạy sau report có finding và
+    // viết lại lockfile (capability riêng của web).
+    if report.vulnerability_count > 0 && fix {
+        let ids: Vec<_> = report
+            .vulnerabilities
+            .iter()
+            .map(|v| v.package.clone())
+            .collect();
+        let fixed = adapter.audit_fix(project_root, &ids).await?;
+        mgc_ui::success(&format!(
+            "audit --fix bumped {} package(s); lockfile rewritten",
+            fixed
+        ));
     }
-
-    print_report(&report);
-
-    if report.vulnerability_count > 0 {
-        if fix {
-            info("Bumping vulnerable packages to latest (fail-closed)...");
-            let ids: Vec<_> = report
-                .vulnerabilities
-                .iter()
-                .map(|v| v.package.clone())
-                .collect();
-            let fixed = adapter.audit_fix(project_root, &ids).await?;
-            success(&format!(
-                "audit --fix bumped {} package(s); lockfile rewritten",
-                fixed
-            ));
-            return Ok(());
-        }
-        bail!(
-            "audit found {} vulnerabilities across {} packages",
-            report.vulnerability_count,
-            report.packages_audited
-        );
-    }
-
-    success("No vulnerabilities reported by the configured provider");
     Ok(())
-}
-
-fn print_report(report: &AuditReport) {
-    mgc_ui::blank_line();
-    println!("{}", "Audit Report".bold().underline());
-    println!("  Packages audited: {}", report.packages_audited);
-    println!("  Vulnerabilities: {}", report.vulnerability_count);
-
-    for vuln in &report.vulnerabilities {
-        let severity = match vuln.severity_level {
-            mgc_types::adapter::VulnerabilitySeverity::Critical
-            | mgc_types::adapter::VulnerabilitySeverity::High => vuln.severity.red().bold(),
-            mgc_types::adapter::VulnerabilitySeverity::Medium => vuln.severity.yellow().bold(),
-            _ => vuln.severity.normal(),
-        };
-        mgc_ui::blank_line();
-        println!("{} {} in {}", severity, vuln.title.bold(), vuln.package);
-        if !vuln.cve.is_empty() {
-            println!("  CVE: {}", vuln.cve);
-        }
-        if let Some(patched) = &vuln.patched_versions {
-            println!("  Patched versions: {}", patched);
-        }
-        if let Some(url) = &vuln.url {
-            println!("  Advisory: {}", url);
-        }
-    }
-
-    if report.vulnerability_count > 0 {
-        warning("Audit failed. Review the advisories above before shipping.");
-    }
 }
