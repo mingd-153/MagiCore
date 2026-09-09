@@ -11,7 +11,6 @@ use crate::language::LibLanguage;
 
 /// Run security audit for lib project.
 /// Chạy security audit cho lib project.
-#[allow(dead_code)] // P2: adapter.rs sẽ nối vào PackageAdapter::audit — wired in P2
 pub(crate) async fn run_audit(language: LibLanguage, project_root: &Path) -> MgResult<AuditReport> {
     match language {
         LibLanguage::Ts => {

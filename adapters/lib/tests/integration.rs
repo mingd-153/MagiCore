@@ -127,16 +127,33 @@ async fn rust_write_manifest_preserves_magicore_metadata() {
 }
 
 #[tokio::test]
-async fn audit_returns_clean_for_lib_project() {
+async fn audit_lib_project_reports_scanner_truthfully() {
     let dir = tmp("audit-lib");
     std::fs::write(
         dir.join("Cargo.toml"),
-        "[package]\nname = \"audit-lib\"\nversion = \"0.1.0\"\n\n[package.metadata.magicore]\ncore = \"lib\"\n\n[dependencies]\nserde = \"1\"\n",
+        "[package]\nname = \"audit-lib\"\nversion = \"0.1.0\"\n\n[package.metadata.magicore]\ncore = \"lib\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[dependencies]\nserde = \"1\"\n",
     )
     .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/lib.rs"), "// empty lib for audit test\n").unwrap();
     let a = adapter_for(&dir, None, None).unwrap();
     let report = a.audit(&dir).await.unwrap();
-    assert_eq!(report.vulnerabilities.len(), 0);
+    // The adapter now dispatches to the REAL scanner: available+clean when
+    // cargo-audit runs, honestly ToolMissing when it is not installed —
+    // either way it must never fabricate findings or hide them.
+    // Adapter giờ gọi scanner THẬT: available+sạch khi cargo-audit chạy,
+    // trung thực ToolMissing khi không cài — không được bịa finding hay
+    // giấu finding trong mọi trường hợp.
+    match report.scanner_status {
+        mgc_types::adapter::ScannerStatus::Available => {
+            assert_eq!(report.vulnerability_count, report.vulnerabilities.len());
+        }
+        mgc_types::adapter::ScannerStatus::ToolMissing { .. }
+        | mgc_types::adapter::ScannerStatus::Failed { .. } => {
+            assert_eq!(report.vulnerability_count, 0);
+        }
+        other => panic!("unexpected scanner status: {other:?}"),
+    }
 }
 
 #[tokio::test]

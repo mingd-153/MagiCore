@@ -4,6 +4,7 @@
 //! Audit module integration tests.
 
 use mgc_lib_adapter::audit::scanner::{audit_python, audit_rust};
+use mgc_types::adapter::ScannerStatus;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
@@ -13,8 +14,23 @@ fn tmp(tag: &str) -> PathBuf {
     dir
 }
 
+/// Hermetic guard: true when the scanner tool IS installed — tests that
+/// assert "unavailable without tool" must skip in that environment.
+/// Guard hermetic: true khi scanner ĐÃ cài — test assert "unavailable khi
+/// thiếu tool" phải bỏ qua trong môi trường đó.
+fn tool_installed(tool: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(tool)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[tokio::test]
-async fn audit_rust_without_cargo_audit_returns_empty_report() {
+async fn audit_rust_without_cargo_audit_is_unavailable_not_clean() {
+    if tool_installed("cargo-audit") {
+        return;
+    }
     let dir = tmp("rust-no-tool");
     std::fs::write(
         dir.join("Cargo.toml"),
@@ -24,13 +40,21 @@ async fn audit_rust_without_cargo_audit_returns_empty_report() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/lib.rs"), "// empty lib\n").unwrap();
 
-    // If cargo-audit not installed, should return empty report
+    // Missing scanner must be ToolMissing — never a fake clean report.
+    // Thiếu scanner phải ToolMissing — không bao giờ báo sạch giả.
     let report = audit_rust(&dir).await.unwrap();
     assert_eq!(report.vulnerability_count, 0);
+    assert!(matches!(
+        report.scanner_status,
+        ScannerStatus::ToolMissing { .. }
+    ));
 }
 
 #[tokio::test]
-async fn audit_python_without_pip_audit_returns_empty_report() {
+async fn audit_python_without_pip_audit_is_unavailable_not_clean() {
+    if tool_installed("pip-audit") {
+        return;
+    }
     let dir = tmp("py-no-tool");
     std::fs::write(
         dir.join("pyproject.toml"),
@@ -38,14 +62,21 @@ async fn audit_python_without_pip_audit_returns_empty_report() {
     )
     .unwrap();
 
-    // If pip-audit/safety not installed, should return empty report
+    // Missing scanner must be ToolMissing — never a fake clean report.
+    // Thiếu scanner phải ToolMissing — không bao giờ báo sạch giả.
     let report = audit_python(&dir).await.unwrap();
     assert_eq!(report.vulnerability_count, 0);
+    assert!(matches!(
+        report.scanner_status,
+        ScannerStatus::ToolMissing { .. }
+    ));
 }
 
-// NOTE: audit với cargo-audit/pip-audit cài thật là manual QA (cần tool hệ thống,
-// kết quả phụ thuộc advisory DB) — không đưa vào suite hermetic.
-// (Real-tool audits are manual QA: they need system tools + live advisory DBs.)
+// NOTE: audit với cargo-audit cài thật được cover bởi parser fixture test
+// (fixture captured từ `cargo audit --json` thật — RUSTSEC-2023-0071);
+// chạy tool thật vẫn là manual QA vì phụ thuộc advisory DB sống.
+// (Real-tool audits stay manual QA: they depend on live advisory DBs; the
+// parser itself is regression-tested with a captured real fixture.)
 
 #[test]
 fn audit_rust_with_invalid_project_dir() {

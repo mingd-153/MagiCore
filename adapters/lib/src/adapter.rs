@@ -270,13 +270,11 @@ impl PackageAdapter for LibAdapter {
         if let Some(web) = &self.web {
             return web.audit(project_root).await;
         }
-        let manifest = self.parse_manifest(project_root).await?;
-        let count = manifest.all_dependencies().count();
-        // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unavailable(format!(
-            "No audit scanner available for lib core ({} dependencies not scanned)",
-            count
-        )))
+        // Real scanner dispatch per language — Rust→cargo-audit,
+        // Python→pip-audit (fail-closed parsers, honest unavailable states).
+        // Điều phối scanner thật theo ngôn ngữ — Rust→cargo-audit,
+        // Python→pip-audit (parser fail-closed, unavailable trung thực).
+        crate::audit::run_audit(self.language, project_root).await
     }
 
     fn set_dedupe_pref(&self, enabled: bool) {
