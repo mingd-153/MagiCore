@@ -19,7 +19,30 @@ pub fn matches(command: &CoreCommand) -> bool {
     )
 }
 
+/// Extract the user-supplied project name from any create-* command.
+/// Lấy project name từ mọi create-* command để validate đồng nhất.
+fn create_project_name(command: &CoreCommand) -> Option<String> {
+    match command {
+        CoreCommand::CreateWeb { project_name, .. }
+        | CoreCommand::CreateGame { project_name, .. }
+        | CoreCommand::CreateAi { project_name, .. }
+        | CoreCommand::CreateClo { project_name, .. }
+        | CoreCommand::CreateCicd { project_name, .. }
+        | CoreCommand::CreateIot { project_name, .. }
+        | CoreCommand::CreateApp { project_name, .. }
+        | CoreCommand::CreateLib { project_name, .. }
+        | CoreCommand::CreateHardware { project_name, .. } => Some(project_name.clone()),
+        _ => None,
+    }
+}
+
 pub async fn dispatch(command: CoreCommand) -> Result<()> {
+    // Security gate first — validate before ANY filesystem access so no
+    // garbage directory is created for a rejected name.
+    // Chặn traversal/absolute ngay từ CLI boundary — trước mọi truy cập FS.
+    if let Some(project_name) = create_project_name(&command) {
+        commands::core::create::validate_project_name(&project_name)?;
+    }
     match command {
         CoreCommand::CreateWeb {
             framework,

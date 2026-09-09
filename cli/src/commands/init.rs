@@ -58,7 +58,7 @@ pub async fn run(template: Option<String>, signature: Option<String>) -> Result<
                 template_dir: std::path::PathBuf::new(),
             }
         };
-        config.project_name = ask_project_name();
+        config.project_name = ask_project_name()?;
         if t == "web" {
             let (features, show_multi) = ask_web_features(&config);
             if !features.is_empty() {
@@ -91,7 +91,7 @@ pub async fn run(template: Option<String>, signature: Option<String>) -> Result<
 
     section("Configure your project", 2, 4);
 
-    let (mut config, features, show_multi) = run_core_wizard(&core);
+    let (mut config, features, show_multi) = run_core_wizard(&core)?;
 
     section("Additional features", 3, 4);
     if !features.is_empty() {
@@ -191,57 +191,57 @@ fn pick_core() -> String {
         .unwrap_or_else(|| avail[0].0.to_string())
 }
 
-fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
+fn run_core_wizard(core: &str) -> Result<(ScaffoldConfig, Vec<Answer>, bool)> {
     match core {
         "web" => {
             let mut cfg = WebWizard::run();
-            cfg.project_name = ask_project_name();
+            cfg.project_name = ask_project_name()?;
             let (features, show_multi) = ask_web_features(&cfg);
-            (cfg, features, show_multi)
+            Ok((cfg, features, show_multi))
         }
         "hardware" => {
             let mut cfg = crate::wizard::hardware::HardwareWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         "lib" => {
             let mut cfg = crate::wizard::lib::LibWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         "game" => {
             let mut cfg = crate::wizard::game::GameWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         "iot" => {
             let mut cfg = crate::wizard::iot::IotWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         "clo" | "cloud" => {
             let mut cfg = crate::wizard::cloud::CloudWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         "cicd" => {
             let mut cfg = crate::wizard::cicd::CicdWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         "app" => {
             let mut cfg = crate::wizard::app::AppWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         "ai" => {
             let mut cfg = crate::wizard::ai::AiWizard::run();
-            cfg.project_name = ask_project_name();
-            (cfg, Vec::new(), false)
+            cfg.project_name = ask_project_name()?;
+            Ok((cfg, Vec::new(), false))
         }
         _ => {
-            let name = ask_project_name();
-            (
+            let name = ask_project_name()?;
+            Ok((
                 ScaffoldConfig {
                     core: core.to_string(),
                     project_name: name,
@@ -249,13 +249,36 @@ fn run_core_wizard(core: &str) -> (ScaffoldConfig, Vec<Answer>, bool) {
                 },
                 Vec::new(),
                 false,
-            )
+            ))
         }
     }
 }
 
-fn ask_project_name() -> String {
-    mgc_ui::prompt::input("Project name:").unwrap_or_else(|_| "my-project".to_string())
+fn ask_project_name() -> Result<String> {
+    // Interactive input is user-controlled too — same traversal gate. After
+    // MAX_NAME_RETRIES invalid attempts the wizard FAILS: we never invent a
+    // project name the user did not ask for (fail-closed).
+    // Input tương tác cũng từ user — cùng gate traversal. Hết số lần retry
+    // thì wizard FAIL — không bao giờ tự sinh tên project user không yêu
+    // cầu (fail-closed).
+    const MAX_NAME_RETRIES: u32 = 3;
+    for attempt in 1..=MAX_NAME_RETRIES {
+        let name = mgc_ui::prompt::input(&format!(
+            "Project name (attempt {attempt}/{}):",
+            MAX_NAME_RETRIES
+        ))
+        .unwrap_or_default();
+        if crate::commands::core::create::validate_project_name(&name).is_ok() {
+            return Ok(name);
+        }
+        mgc_ui::warning(
+            "Invalid project name: use a single path segment (no '/', '\\', '..', \
+             absolute paths). Try again.",
+        );
+    }
+    Err(crate::error::invalid_project_name_retries_exhausted(
+        MAX_NAME_RETRIES,
+    ))
 }
 
 async fn seed_web_deps(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
