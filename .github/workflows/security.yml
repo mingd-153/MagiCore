@@ -1,6 +1,7 @@
 name: Security
 
 # Task #7: cargo audit + OSV scan (18 §6) — chạy theo lịch + khi Cargo.lock đổi
+# Audit-e2e lane cũng chạy khi audit CODE đổi (Tech Lead P0-4 2026-09-09)
 on:
   schedule:
     - cron: "0 0 * * 1" # thứ 2 hằng tuần
@@ -10,6 +11,17 @@ on:
       - "**/Cargo.toml"
       - ".github/workflows/security.yml"
       - "osv-scanner.toml"
+      - "adapters/web/src/audit.rs"
+      - "adapters/web/src/test/**"
+      - "adapters/lib/src/audit/**"
+      - "adapters/lib/tests/**"
+      - "adapters/app/src/audit/**"
+      - "adapters/app/tests/**"
+      - "cli/src/commands/audit/**"
+      - "cli/src/error/**"
+      - "cli/tests/audit_cli_e2e.rs"
+      - "core/crates/mgc-types/src/adapter.rs"
+      - "core/crates/mgc-types/tests/adapter_test.rs"
   workflow_dispatch:
 
 jobs:
@@ -53,9 +65,36 @@ jobs:
           OSV_SHA="f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
 
           # Download specific version with checksum
+          # Tải phiên bản cố định kèm checksum
           curl -fsSL "$OSV_URL" -o /tmp/osv-scanner
           echo "${OSV_SHA}  /tmp/osv-scanner" | sha256sum --check
           sudo mv /tmp/osv-scanner /usr/local/bin/osv-scanner
           sudo chmod +x /usr/local/bin/osv-scanner
 
           osv-scanner scan source -r . --config osv-scanner.toml
+
+  audit-e2e:
+    # Audit exit-contract proof lane (Tech Lead P0-5 2026-09-09): the
+    # audit E2E suite must EXECUTE, never silently skip. Tools are
+    # provisioned here; MGC_E2E_AUDIT_TOOLS=required turns any missing
+    # tool into a hard failure.
+    # Lane chứng minh exit contract của audit: E2E phải CHẠY, không skip
+    # âm thầm. Tool được provision sẵn; thiếu tool là fail cứng.
+    name: audit E2E (strict contract)
+    runs-on: ubuntu-latest
+    env:
+      MGC_E2E_AUDIT_TOOLS: required
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Install pip-audit (pinned, single install path — P0-5)
+        run: |
+          python3 -m pip install --user 'pip-audit==2.9.0'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Verify scanner versions (fail fast on drift)
+        run: |
+          cargo-audit --version
+          pip-audit --version
+      - name: Run audit CLI E2E (tools required — no silent skips)
+        run: cargo test -p mgc --test audit_cli_e2e --locked -- --nocapture
