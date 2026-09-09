@@ -98,3 +98,10 @@ jobs:
           pip-audit --version
       - name: Run audit CLI E2E (tools required — no silent skips)
         run: cargo test -p mgc --test audit_cli_e2e --locked -- --nocapture
+      - name: Generate capability matrix from E2E evidence
+        run: python3 scripts/audit_capability_matrix.py
+      - name: Upload capability matrix artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b038357803cdc9eb # v4.6.2
+        with:
+          name: audit-capability-matrix
+          path: docs/specs/auditCapabilityMatrix.json
