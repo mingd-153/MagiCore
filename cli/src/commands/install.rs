@@ -272,7 +272,7 @@ async fn install_into_root(
 
     for (i, pb) in bars.iter().enumerate() {
         pb.set_position(100);
-        pb.finish_with_message(format!("{}", graph.packages[i].id.name_str()));
+        pb.finish_with_message(graph.packages[i].id.name_str().to_string());
     }
 
     let spinner = create_spinner("  Linking packages...");
