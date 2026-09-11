@@ -100,10 +100,19 @@ pub struct ExecReport {
 /// Resolve a bare command name to a Windows shim (.cmd/.bat) when the bare
 /// executable is not directly spawnable. Uses where.exe (PATH search) so the
 /// allowlist still governs WHICH tools can run — this only fixes HOW.
+/// The search PATH is the CALLER-PROVIDED one (opts.env PATH — which the
+/// task runner extends with node_modules/.bin), not the parent process env:
+/// resolving against the wrong PATH made every project-local shim
+/// (tsc.cmd, vite.cmd…) unspawnable (caught by the Windows E2E lane,
+/// 2026-09-12).
 /// Resolve tên lệnh sang shim Windows (.cmd/.bat) khi bare exe không spawn
 /// được — dùng where.exe (tìm theo PATH), allowlist vẫn kiểm soát CHỨNG TỪ.
+/// PATH tìm kiếm là PATH CỦA CALLER (opts.env PATH — task runner mở rộng
+/// bằng node_modules/.bin), không phải env của process cha: resolve theo
+/// PATH sai làm mọi shim local của project (tsc.cmd, vite.cmd…) không
+/// spawn được (bắt được bởi lane E2E Windows).
 #[cfg(not(unix))]
-fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
+fn resolve_windows_shim(cmd: &str, search_path: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
     use std::ffi::OsString;
     use std::os::windows::process::CommandExt;
 
@@ -112,10 +121,17 @@ fn resolve_windows_shim(cmd: &str) -> std::ffi::OsString {
         return OsString::from(cmd);
     }
 
-    let output = Command::new("where.exe")
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .arg(cmd)
-        .output();
+    let mut where_cmd = Command::new("where.exe");
+    where_cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    where_cmd.arg(cmd);
+    // Search the caller-provided PATH (node_modules/.bin etc.), falling
+    // back to the parent env only when no PATH was provided.
+    // Tìm theo PATH caller truyền (node_modules/.bin v.v.), chỉ fallback
+    // về env cha khi không có PATH.
+    if let Some(path) = search_path {
+        where_cmd.env("PATH", path);
+    }
+    let output = where_cmd.output();
     if let Ok(out) = output
         && out.status.success()
     {
@@ -430,8 +446,18 @@ fn execute_command(
     // where.exe — keep it allowlist-safe: same bare name, resolved by PATH.
     // Windows: std Command không tự chạy .cmd/.bat qua PATH (bảo mật) — tool
     // kiểu npm/flutter là shim .bat, nên resolve tường minh qua where.exe.
+    // Caller-provided PATH (opts.env PATH — extended with node_modules/.bin
+    // by the task runner) so project-local shims resolve too.
+    // PATH caller truyền (opts.env PATH — task runner mở rộng bằng
+    // node_modules/.bin) để shim local của project cũng resolve được.
     #[cfg(not(unix))]
-    let resolved_cmd = resolve_windows_shim(cmd);
+    let path_var: Option<std::ffi::OsString> = opts
+        .env
+        .iter()
+        .find(|(key, _)| key == "PATH")
+        .map(|(_, value)| std::ffi::OsString::from(value));
+    #[cfg(not(unix))]
+    let resolved_cmd = resolve_windows_shim(cmd, path_var.as_ref().map(|p| p.as_os_str()));
     #[cfg(unix)]
     let resolved_cmd: &str = cmd;
 
