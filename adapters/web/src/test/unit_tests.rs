@@ -2863,18 +2863,11 @@ fn test_installed_package_matches_version() {
 
 /// Minimal lockfile fixture with the requested packages.
 /// Lockfile tối thiểu với các package đã yêu cầu.
-fn audit_lockfile_fixture() -> Lockfile {
-    serde_json::from_str(
-        r#"{
-        "version": "2",
-        "metadata": {"generated_at": "2026-01-01T00:00:00Z", "generator": "mgc/test", "lockfile_hash": "test"},
-        "package": [
-            {"name": "lodash", "version": "4.17.12", "resolved": "https://example.com/lodash.tgz", "integrity": "sha1-x"},
-            {"name": "lodash", "version": "4.17.21", "resolved": "https://example.com/lodash.tgz", "integrity": "sha1-x"}
-        ]
-    }"#,
-    )
-    .unwrap()
+fn audit_lockfile_fixture() -> Vec<(String, String)> {
+    vec![
+        ("lodash".to_string(), "4.17.12".to_string()),
+        ("lodash".to_string(), "4.17.21".to_string()),
+    ]
 }
 
 /// Real npm bulk advisory shape (recorded response contract):

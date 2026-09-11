@@ -30,6 +30,12 @@ path = "tests/import.rs"
 # Crypto primitives (local crate)
 mgc-crypto = { path = "../mgc-crypto" }
 
+# Shared JSONC cleanup + common types (P1 dedup 2026-09-11: single
+# strip_jsonc for both the importer and the audit scanner).
+# JSONC dùng chung + types chung (dedup P1: một strip_jsonc cho cả
+# importer lẫn audit scanner).
+mgc-types = { path = "../mgc-types" }
+
 # TOML parsing/serialization
 toml = "0.8"
 toml_edit = { version = "0.22", features = ["serde"] }

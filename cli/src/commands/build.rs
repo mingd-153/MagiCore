@@ -10,7 +10,17 @@ use std::time::Instant;
 use crate::bundler::{Bundler, BundlerConfig};
 use crate::context::ProjectContext;
 
-pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
+pub async fn run(
+    core: Option<&str>,
+    target: Option<String>,
+    compat_runtime: Option<&str>,
+) -> Result<()> {
+    // Native-engine gate (2026-09-10): validate cờ compat sớm — build
+    // mặc định là engine native, sai giá trị cờ fail trước khi động fs.
+    // F-C fix (2026-09-10 audit): CompatMode được GIỮ và truyền xuống
+    // framework-build lane — script build program là runtime đối thủ
+    // phải qua gate (native từ chối, compat tường minh mới mở).
+    let compat = crate::commands::compat::CompatMode::from_flag(compat_runtime)?;
     let root = find_root()?;
 
     if !mgc_ui::is_quiet() {
@@ -36,7 +46,7 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
     let ctx = ProjectContext::load_with_core(core)?;
     info(&format!("Execution profile: {}", ctx.execution_summary()));
     match ctx.adapter().name() {
-        "web" => build_web(&root, ctx.execution(), target).await,
+        "web" => build_web(&root, ctx.execution(), target, &compat).await,
         #[cfg(feature = "app")]
         "app" => build_app(&root).await,
         #[cfg(not(feature = "app"))]
@@ -491,6 +501,7 @@ async fn build_web(
     root: &Path,
     execution: &ProjectExecutionConfig,
     target: Option<String>,
+    compat: &crate::commands::compat::CompatMode,
 ) -> Result<()> {
     let start_time = Instant::now();
 
@@ -517,7 +528,7 @@ async fn build_web(
         }
     }
 
-    if run_framework_build_if_supported(root)? {
+    if run_framework_build_if_supported(root, compat)? {
         let elapsed = start_time.elapsed();
         mgc_ui::blank_line();
         mgc_ui::success(&format!("Framework build completed in {:?}", elapsed));
@@ -628,7 +639,10 @@ fn resolve_web_build_target(
     }
 }
 
-fn run_framework_build_if_supported(root: &Path) -> Result<bool> {
+fn run_framework_build_if_supported(
+    root: &Path,
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<bool> {
     let package_json = root.join("package.json");
     if !package_json.exists() {
         return Ok(false);
@@ -646,7 +660,17 @@ fn run_framework_build_if_supported(root: &Path) -> Result<bool> {
 
     reject_external_package_manager_script(script, &package_json)?;
     let tokens: Vec<&str> = script.split_whitespace().collect();
+    // F-B fix (2026-09-10 audit): script build trỏ runtime đối thủ
+    // (bun/deno) phải qua cổng compat TƯỜNG MINH — native fail hướng
+    // migration thay vì bỏ qua âm thầm rồi báo build thành công.
+    if let Some(program) = tokens.first() {
+        crate::commands::compat::gate_runtime_spawn(compat, program)?;
+    }
     let Some((program, args, envs)) = map_framework_build_script(root, &tokens)? else {
+        // Script không map được (kể cả "deno task build") không còn bị
+        // bỏ qua im lặng: nếu program là runtime đối thủ đã bị gate ở
+        // trên (native fail / compat pass); chỉ script framework lạ mới
+        // rơi vào đây và nhường lane cho native bundler.
         return Ok(false);
     };
 
@@ -675,10 +699,16 @@ fn run_framework_build_if_supported(root: &Path) -> Result<bool> {
         .iter()
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>();
+    // P0-1: compat lane truyền runtime đã chọn (gate ở trên đã kiểm).
+    let compat_runtime = match compat {
+        crate::commands::compat::CompatMode::Native => None,
+        crate::commands::compat::CompatMode::Explicit(runtime) => Some(runtime.clone()),
+    };
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         env,
         clean_env: true,
+        compat_runtime,
         ..Default::default()
     };
     mgc_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
@@ -690,6 +720,25 @@ fn run_framework_build_if_supported(root: &Path) -> Result<bool> {
 type BuildLaunch = (PathBuf, Vec<OsString>, Vec<(OsString, OsString)>);
 
 fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<BuildLaunch>> {
+    // Compat lane (P0-1): bun/deno build scripts spawn the rival runtime
+    // DIRECTLY — only reachable when the compat gate above already passed
+    // (native mode fails earlier at gate_runtime_spawn). No bun.pm usage.
+    // Lane compat: script build bun/deno spawn runtime đối thủ TRỰC TIẾP —
+    // chỉ đến được đây khi cổng compat phía trên đã pass.
+    if let ["bun", rest @ ..] = tokens {
+        return Ok(Some((
+            PathBuf::from("bun"),
+            rest.iter().map(OsString::from).collect(),
+            vec![],
+        )));
+    }
+    if let ["deno", rest @ ..] = tokens {
+        return Ok(Some((
+            PathBuf::from("deno"),
+            rest.iter().map(OsString::from).collect(),
+            vec![],
+        )));
+    }
     let launch = match tokens {
         ["vite", "build"] => (
             node_runner(),
@@ -757,12 +806,23 @@ fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<Bui
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
     if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
-        bail!(
-            "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MagiCore or framework-local binaries, not through another package manager.",
-            script,
-            manifest_path.display(),
-            pm
+        // P0-1 (2026-09-10): "bun run x"/"deno run|task x" là runtime usage —
+        // gate_runtime_spawn phía caller đã xử lý bun/deno (native fail,
+        // compat mở đúng runtime). Chỉ từ chối khi token là PM THẬT
+        // (bun install/npm/pnpm/...).
+        let tokens: Vec<&str> = script.split_whitespace().collect();
+        let is_runtime_usage = matches!(
+            tokens.as_slice(),
+            ["bun", "run", ..] | ["deno", "run", ..] | ["deno", "task", ..]
         );
+        if !is_runtime_usage {
+            bail!(
+                "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MagiCore or framework-local binaries, not through another package manager.",
+                script,
+                manifest_path.display(),
+                pm
+            );
+        }
     }
     Ok(())
 }

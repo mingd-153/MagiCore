@@ -1,6 +1,30 @@
-//! `scanners/mod.rs` — cargo-audit + pip-audit scanners, shared across adapters.
-//! Uses cargo-audit for Rust, pip-audit for Python.
-//! Scanner audit Rust/Python — cargo-audit cho Rust, pip-audit cho Python.
+//! `scanners/mod.rs` — shared scanners across adapters: cargo-audit
+//! (Rust), pip-audit (Python), govulncheck (Go), Bun/Deno lockfile
+//! readers (JS runtime parity).
+//! Scanner dùng chung giữa các adapter: cargo-audit cho Rust, pip-audit
+//! cho Python, govulncheck cho Go, bộ đọc lockfile Bun/Deno (parity
+//! runtime JS).
+
+pub mod bun_deno;
+pub mod dart;
+pub mod dotnet;
+pub mod gh_actions;
+pub mod govulncheck;
+pub mod maven;
+pub mod osv;
+pub mod terraform;
+
+pub use bun_deno::{BunDenoRead, NpmPin, read_bun_lock, read_deno_lock, read_js_lockfiles};
+pub use dart::{audit_flutter_osv, read_pubspec_lock};
+pub use dotnet::{audit_dotnet, read_packages_lock};
+pub use gh_actions::{WorkflowFinding, audit_github_actions, scan_workflow_text};
+pub use govulncheck::{audit_go, parse_govulncheck_json};
+pub use maven::{audit_java, read_gradle_verification_metadata};
+pub use osv::{
+    OsvPin, audit_cocoapods_osv, audit_osv_pins, audit_swift_spam, read_podfile_lock,
+    read_swift_resolved,
+};
+pub use terraform::{audit_terraform_lock, parse_terraform_lock};
 
 use mgc_types::adapter::{AuditReport, Vulnerability, VulnerabilitySeverity};
 use mgc_types::{MgError, MgResult};
@@ -105,6 +129,14 @@ struct CargoPackage {
 pub struct CargoAuditParse {
     pub vulnerabilities: Vec<Vulnerability>,
     pub packages_audited: usize,
+}
+
+/// Public CVSS bridge for sibling scanner modules (govulncheck) — ONE
+/// CVSS implementation for every ecosystem (RULE: no copy-paste logic).
+/// Cầu CVSS public cho các module scanner anh em (govulncheck) — MỘT bản
+/// implement CVSS cho mọi ecosystem (RULE: không copy-paste logic).
+pub(crate) fn cvss_base_severity_for_go(vector: &str) -> Option<VulnerabilitySeverity> {
+    cvss_base_severity(vector)
 }
 
 /// Parse cargo-audit JSON output (real schema, fail-closed).
@@ -434,6 +466,9 @@ pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
         // cargo-audit exits 1 when findings exist — that is success.
         // cargo-audit thoát 1 khi có finding — đó là thành công.
         allowed_exit_codes: CARGO_AUDIT_OK_EXIT_CODES.to_vec(),
+        // Full capture: `--json` is one payload — findings must survive.
+        // Capture đầy đủ: `--json` là một payload — finding phải sống sót.
+        capture_full_stdout: true,
         ..Default::default()
     };
 
@@ -466,11 +501,13 @@ pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
         )));
     }
 
-    // Parse the real scanner output — compact `--json` payload survives the
-    // bounded byte capture. Fail closed on parse errors: never a fake clean.
-    // Parse output thật — payload `--json` compact sống sót qua capture giới
-    // hạn byte. Lỗi parse thì fail-closed — không bao giờ trả sạch giả.
-    let parsed = parse_cargo_audit_json(&result.stdout_tail)?;
+    // Parse the real scanner output from the FULL capture (fail closed on
+    // parse errors: never a fake clean). The compact `--json` payload is
+    // byte-bounded, not line-bounded, so findings anywhere in it survive.
+    // Parse output thật từ capture ĐẦY ĐỦ (lỗi parse thì fail-closed —
+    // không bao giờ trả sạch giả). Payload `--json` compact giới hạn
+    // byte chứ không giới hạn dòng nên finding ở đâu cũng sống sót.
+    let parsed = parse_cargo_audit_json(&result.stdout_full)?;
     Ok(AuditReport {
         packages_audited: parsed.packages_audited,
         vulnerability_count: parsed.vulnerabilities.len(),
@@ -599,6 +636,11 @@ pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
         // pip-audit exits 1 when vulnerabilities are found.
         // pip-audit thoát 1 khi tìm thấy lỗ hổng.
         allowed_exit_codes: PIP_AUDIT_OK_EXIT_CODES.to_vec(),
+        // Full capture: the JSON array is one payload — findings must
+        // survive regardless of length.
+        // Capture đầy đủ: mảng JSON là một payload — finding phải sống
+        // sót bất kể độ dài.
+        capture_full_stdout: true,
         ..Default::default()
     };
 
@@ -616,7 +658,7 @@ pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
         )));
     }
 
-    let parsed = parse_pip_audit_json(&result.stdout_tail)?;
+    let parsed = parse_pip_audit_json(&result.stdout_full)?;
     Ok(AuditReport {
         packages_audited: parsed.packages_audited,
         vulnerability_count: parsed.vulnerabilities.len(),

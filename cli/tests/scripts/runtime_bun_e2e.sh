@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Bun optimizer environment test — delegates to implementation
-# Status: ENV GENERATION ONLY (calls runtime_bun_e2e_impl.sh)
+# Bun optimizer COMPAT-PROFILE env generation test (P0-4 2026-09-10)
+# Status: CONFIG GENERATION ONLY (delegates to runtime_bun_e2e_impl.sh).
+# The Bun profile requires compat mode (MGC_COMPAT_RUNTIME=bun) — the
+# native lane never generates rival-runtime envs; bun binary never runs.
 
 set -euo pipefail
 

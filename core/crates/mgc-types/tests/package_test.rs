@@ -106,7 +106,40 @@ fn package_name_scoped_empty_pkg_rejected() {
 
 #[test]
 fn package_name_multiple_slashes_rejected() {
-    assert!(PackageName::new("a/b/c").is_err());
+    // Scoped names carry exactly one slash; bare multi-slash is the
+    // repo-path form (OSV SwiftURL) — accepted. But an @-scoped name
+    // with MORE than one slash stays invalid.
+    // Tên có scope mang đúng một slash; nhiều slash trần là dạng repo
+    // (OSV SwiftURL) — chấp nhận. Nhưng tên @-scope với nhiều hơn một
+    // slash vẫn vô hiệu.
+    assert!(PackageName::new("@org/pkg/extra").is_err());
+}
+
+#[test]
+fn package_name_maven_coordinate_accepted() {
+    // Maven coordinates group:artifact are legitimate ecosystem
+    // identifiers (OSV Maven, PURL pkg:maven/...). Colon is not a path
+    // or shell metacharacter; cache layers sanitize before path joins.
+    // Tọa độ Maven group:artifact là định danh ecosystem hợp lệ. Dấu
+    // hai chấm không phải ký tự path/shell; tầng cache sanitize trước
+    // khi ghép path.
+    let name = pn("org.apache.commons:commons-text");
+    assert_eq!(name.as_str(), "org.apache.commons:commons-text");
+}
+
+#[test]
+fn package_name_repo_path_accepted() {
+    // OSV SwiftURL names (github.com/owner/repo) — the repo-path form
+    // verified live 2026-09-10.
+    // Tên OSV SwiftURL (github.com/owner/repo) — dạng repo-path đã
+    // verify sống.
+    let name = pn("github.com/apple/swift-nio-http2");
+    assert_eq!(name.as_str(), "github.com/apple/swift-nio-http2");
+}
+
+#[test]
+fn package_name_trailing_slash_rejected() {
+    assert!(PackageName::new("github.com/owner/").is_err());
 }
 
 #[test]

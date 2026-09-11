@@ -1,9 +1,22 @@
-//! `test.rs` — MagiCore Test Command (Auto-detect Test Runner)
-//! `test.rs` — Lệnh Test của MagiCore (Tự động phát hiện test runner)
+//! `test.rs` — MagiCore Test Command (native orchestration).
+//! `test.rs` — Lệnh Test của MagiCore (điều phối native).
+//!
+//! Architecture ruling 2026-09-10: mgc test runs on the NATIVE engine —
+//! toolchain binaries only (cargo/go/pytest/flutter, allowlisted in
+//! mgc-exec). Bun/Deno never spawn silently; the legacy auto-detect
+//! forwarding to them (and to npm/pnpm/yarn) is REMOVED. An explicit
+//! --compat-runtime bun/deno opts into the temporary compatibility
+//! lane with a loud warning.
+//! mgc test chạy trên engine NATIVE — chỉ binary toolchain. Bun/Deno
+//! không bao giờ spawn âm thầm; auto-detect cũ chuyển tiếp sang chúng
+//! (và npm/pnpm/yarn) đã BỎ. Cờ --compat-runtime chọn lane compat
+//! tạm thời kèm cảnh báo lớn.
 
 use anyhow::Result;
 use mgc_ui::info;
 use std::path::Path;
+
+use crate::commands::compat::{CompatMode, gate_runtime_spawn};
 
 /// mgc test [args...] — Run tests in project (auto-detect test runner)
 /// Auto-detect test runner based on project type:
@@ -13,7 +26,12 @@ use std::path::Path;
 /// - go.mod → go test
 /// - pubspec.yaml → flutter test
 /// - mgc.toml [scripts] test → custom test command
-pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
+pub async fn test(
+    args: Vec<String>,
+    core: Option<&str>,
+    compat_runtime: Option<&str>,
+) -> Result<()> {
+    let compat = CompatMode::from_flag(compat_runtime)?;
     let ctx = crate::context::ProjectContext::load_with_core(core)?;
     let project_root = ctx.root();
 
@@ -24,11 +42,22 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
         && let Some(cmd) = resolve_mgc_toml_script(&mgc_toml_path, "test")?
     {
         info(&format!("Running test from mgc.toml: {}", cmd));
-        return crate::commands::run::run("test".to_string(), args, core).await;
+        return crate::commands::run::run("test".to_string(), args, core, None).await;
     }
 
     // 2. Auto-detect test runner based on project files — tự động phát hiện test runner
     if let Some((runner, runner_args)) = detect_test_runner(project_root)? {
+        // Project-defined test SCRIPT (package.json "test") routes
+        // through the native task runner — run.rs re-parses and gates
+        // rival runtimes/PMs exactly like `mgc run test`. Handled FIRST
+        // because it consumes `args` by value.
+        // Script test DO PROJECT ĐỊNH NGHĨA đi qua task runner native —
+        // run.rs parse + chặn runtime đối thủ/PM y như `mgc run test`.
+        // Xử lý TRƯỚC vì nó tiêu thụ `args` theo giá trị.
+        if runner == "mgc-internal-run-script" {
+            return crate::commands::run::run("test".to_string(), args, core, compat_runtime).await;
+        }
+
         info(&format!(
             "Auto-detected test runner: {} {}",
             runner,
@@ -38,6 +67,20 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
         let mut full_args = runner_args;
         full_args.extend(args);
 
+        // NATIVE-ENGINE GATE (2026-09-10): the runner itself must pass
+        // the compat gate — bun/deno only under an explicit
+        // --compat-runtime, external PMs never. This kills the silent
+        // auto-detect forwarding.
+        // CỔNG ENGINE NATIVE: runner phải qua cổng compat — bun/deno chỉ
+        // khi có --compat-runtime tường minh, PM ngoài không bao giờ.
+        // Đường auto-detect chuyển tiếp âm thầm đã chết ở đây.
+        gate_runtime_spawn(&compat, &runner)?;
+
+        // Project-defined test SCRIPT (package.json "test") routes
+        // through the native task runner — run.rs re-parses and gates
+        // rival runtimes/PMs exactly like `mgc run test`.
+        // Script test DO PROJECT ĐỊNH NGHĨA đi qua task runner native —
+        // run.rs parse + chặn runtime đối thủ/PM y như `mgc run test`.
         // Security gate: JS runtimes must pass launcher policy before exec
         // (block --eval / --allow-all style injection through test args).
         // Cổng bảo mật: runtime JS phải qua launcher policy trước khi exec
@@ -59,6 +102,12 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
                 .unwrap_or_default();
         let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
 
+        // P0-1: compat lane truyền runtime đã chọn (gate ở trên đã kiểm)
+        // xuống mgc-exec để exemption shadow-path áp đúng runtime.
+        let compat_runtime = match &compat {
+            CompatMode::Native => None,
+            CompatMode::Explicit(runtime) => Some(runtime.clone()),
+        };
         let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(project_root.to_path_buf()),
             timeout: Some(std::time::Duration::from_secs(600)), // 10min test timeout
@@ -66,6 +115,7 @@ pub async fn test(args: Vec<String>, core: Option<&str>) -> Result<()> {
             env,
             clean_env: false, // Preserve existing env
             log_path: Some(project_root.join(".magicore").join("exec.log")), // P0.7 FIX: Enable audit logging
+            compat_runtime,
             ..Default::default()
         };
 
@@ -125,20 +175,27 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
         return Ok(Some(("flutter".to_string(), vec!["test".to_string()])));
     }
 
-    // Check deno.json/deno.jsonc (Deno) — kiểm tra deno.json
-    if project_root.join("deno.json").exists() || project_root.join("deno.jsonc").exists() {
-        return Ok(Some(("deno".to_string(), vec!["test".to_string()])));
-    }
-
-    // Check package.json (Node.js/Web) — kiểm tra package.json
+    // Deno REMOVED from auto-detect (native-engine ruling 2026-09-10):
+    // a deno.json project gets the honest migration error, not a silent
+    // `deno test` spawn. Same for package.json scripts that used to be
+    // forwarded to npm/pnpm/yarn/bun — the native web test lane runs
+    // via project-local binaries (node_modules/.bin), never a PM.
+    // Deno BỎ khỏi auto-detect: project deno.json nhận lỗi migration
+    // trung thực, không spawn `deno test` âm thầm. Script package.json
+    // cũng vậy — lane test web native chạy qua binary local của project,
+    // không qua PM.
     let package_json_path = project_root.join("package.json");
-    if package_json_path.exists() {
-        // Check if "test" script exists in package.json — kiểm tra script "test"
-        if let Some(_test_script) = resolve_package_json_script(&package_json_path, "test")? {
-            // Detect package manager — phát hiện package manager
-            let pm = detect_package_manager(project_root);
-            return Ok(Some((pm, vec!["test".to_string()])));
-        }
+    if package_json_path.exists()
+        && let Some(test_script) = resolve_package_json_script(&package_json_path, "test")?
+    {
+        // Run the project's OWN test script through the native task
+        // runner (run.rs gates rival runtimes/PMs the same way).
+        // Chạy script test CỦA CHÍNH project qua task runner native
+        // (run.rs chặn runtime đối thủ/PM y hệt).
+        return Ok(Some((
+            "mgc-internal-run-script".to_string(),
+            vec![test_script],
+        )));
     }
 
     // No test runner detected — không phát hiện test runner
@@ -191,28 +248,6 @@ fn detect_test_runtime(
         .first()
         .cloned()
         .unwrap_or(DetectedRuntime::Unknown)
-}
-
-/// Detect package manager for Node.js projects — phát hiện package manager cho project Node.js
-fn detect_package_manager(project_root: &Path) -> String {
-    // Check for Deno first (deno.json/deno.jsonc)
-    // Kiểm tra Deno trước (deno.json/deno.jsonc)
-    if project_root.join("deno.json").exists() || project_root.join("deno.jsonc").exists() {
-        return "deno".to_string();
-    }
-
-    if project_root.join("pnpm-lock.yaml").exists() {
-        "pnpm".to_string()
-    } else if project_root.join("yarn.lock").exists() {
-        "yarn".to_string()
-    } else if project_root.join("bun.lockb").exists() {
-        "bun".to_string()
-    } else if project_root.join("package-lock.json").exists() {
-        "npm".to_string()
-    } else {
-        // Default to npm if no lockfile — mặc định npm nếu không có lockfile
-        "npm".to_string()
-    }
 }
 
 /// Resolve test script from mgc.toml — lấy test script từ mgc.toml

@@ -45,6 +45,16 @@ pub enum Commands {
             help = "Bump vulnerable packages and rewrite lockfile on success"
         )]
         fix: bool,
+        /// Machine-readable output format: table (default), json
+        /// (versioned envelope), sarif (2.1.0 for GitHub Security),
+        /// cyclonedx (1.5 Vulnerable BOM). Table renders the same data
+        /// for humans; the others print ONLY the machine payload.
+        /// Định dạng cho máy: table (mặc định), json (envelope có
+        /// version), sarif (2.1.0 cho GitHub Security), cyclonedx (1.5
+        /// Vulnerable BOM). Table hiển thị cho người; còn lại chỉ in
+        /// payload máy.
+        #[arg(long, help = "Output format: table|json|sarif|cyclonedx")]
+        format: Option<String>,
     },
     #[command(about = "Update MagiCore CLI to the latest version")]
     SelfUpdate,
@@ -180,6 +190,16 @@ pub enum Commands {
         port: Option<u16>,
         #[arg(long, help = "Clear terminal on each reload")]
         clear: bool,
+        /// Temporary rival-runtime compatibility lane (bun|deno) —
+        /// explicit, warned on every spawn; the default path is the
+        /// NATIVE MagiCore engine.
+        /// Lane compat runtime đối thủ tạm thời — tường minh, cảnh báo
+        /// mỗi lần spawn; đường mặc định là engine NATIVE MagiCore.
+        #[arg(
+            long,
+            help = "Compatibility runtime: bun|deno (native engine by default)"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Run a script defined in package.json")]
     Run {
@@ -187,11 +207,23 @@ pub enum Commands {
         script: String,
         #[arg(last = true)]
         args: Vec<String>,
+        /// Temporary rival-runtime compatibility lane (bun|deno).
+        #[arg(
+            long,
+            help = "Compatibility runtime: bun|deno (native engine by default)"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Run tests (auto-detect test runner: cargo/go/pytest/npm test)")]
     Test {
         #[arg(last = true, help = "Arguments passed to test runner")]
         args: Vec<String>,
+        /// Temporary rival-runtime compatibility lane (bun|deno).
+        #[arg(
+            long,
+            help = "Compatibility runtime: bun|deno (native engine by default)"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Optimize project for hardware (runtime detection + adapter pattern)")]
     Optimizer {
@@ -202,6 +234,12 @@ pub enum Commands {
     Build {
         #[arg(long, help = "Build target (e.g., native, browser, server)")]
         target: Option<String>,
+        /// Temporary rival-runtime compatibility lane (bun|deno).
+        #[arg(
+            long,
+            help = "Compatibility runtime: bun|deno (native engine by default)"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Flash firmware to a device (IoT esp32)")]
     Flash {

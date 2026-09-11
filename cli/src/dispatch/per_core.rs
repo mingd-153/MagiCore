@@ -17,7 +17,17 @@ pub fn command_to_dispatch(
             template,
             signature,
         }),
-        Commands::Dev { host, port, clear } => Some(CommonCommand::Dev { host, port, clear }),
+        Commands::Dev {
+            host,
+            port,
+            clear,
+            compat_runtime,
+        } => Some(CommonCommand::Dev {
+            host,
+            port,
+            clear,
+            compat_runtime,
+        }),
         Commands::Info { package, json } => Some(CommonCommand::Info { package, json }),
         Commands::Search {
             query,
@@ -31,7 +41,7 @@ pub fn command_to_dispatch(
             page,
         }),
         Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
-        Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
+        Commands::Audit { fix, format } => Some(CommonCommand::Audit { fix, format }),
         Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
         Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
         Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
@@ -49,10 +59,30 @@ pub fn command_to_dispatch(
             version,
             dir,
         }),
-        Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
-        Commands::Test { args } => Some(CommonCommand::Test { args }),
+        Commands::Run {
+            script,
+            args,
+            compat_runtime,
+        } => Some(CommonCommand::Run {
+            script,
+            args,
+            compat_runtime,
+        }),
+        Commands::Test {
+            args,
+            compat_runtime,
+        } => Some(CommonCommand::Test {
+            args,
+            compat_runtime,
+        }),
         Commands::Optimizer { force } => Some(CommonCommand::Optimizer { force }),
-        Commands::Build { target } => Some(CommonCommand::Build { target }),
+        Commands::Build {
+            target,
+            compat_runtime,
+        } => Some(CommonCommand::Build {
+            target,
+            compat_runtime,
+        }),
         Commands::Flash { board, skip_build } => Some(CommonCommand::Flash { board, skip_build }),
         Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),
         Commands::CiGenerate => Some(CommonCommand::CiGenerate),

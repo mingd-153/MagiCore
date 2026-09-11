@@ -108,6 +108,28 @@ fn run_mgc_audit(mgc: &str, cwd: &std::path::Path, strict: Option<bool>) -> (Opt
     (out.status.code(), text)
 }
 
+/// Run `mgc audit --format json` (machine payload) and return
+/// (exit_code, output).
+/// Chạy `mgc audit --format json` (payload máy), trả (exit_code, output).
+fn run_mgc_audit_json(
+    mgc: &str,
+    cwd: &std::path::Path,
+    strict: Option<bool>,
+) -> (Option<i32>, String) {
+    let mut cmd = Command::new(mgc);
+    cmd.args(["audit", "--format", "json"]).current_dir(cwd);
+    if let Some(strict) = strict {
+        cmd.env("MGC_AUDIT_STRICT", if strict { "1" } else { "0" });
+    }
+    let out = cmd.output().expect("failed to spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code(), text)
+}
+
 /// Truly hermetic runner (Tech Lead P0-3 2026-09-09): the child PATH
 /// contains ONLY a temp bin dir with the exact mgc binary — never the
 /// host PATH — so `which gradle` (and any other tool probe) fails
@@ -160,7 +182,6 @@ fn run_mgc_audit_no_gradle(
 #[test]
 fn audit_lib_rust_via_cli_reports_real_rustsec_finding_exit_1() {
     if !cargo_audit_installed() {
-        eprintln!("SKIP: cargo-audit not installed on this machine");
         return;
     }
     let mgc = find_mgc_binary();
@@ -194,7 +215,6 @@ fn audit_lib_rust_via_cli_reports_real_rustsec_finding_exit_1() {
 #[test]
 fn audit_lib_rust_via_cli_clean_fixture_exit_0() {
     if !cargo_audit_installed() {
-        eprintln!("SKIP: cargo-audit not installed on this machine");
         return;
     }
     let mgc = find_mgc_binary();
@@ -238,7 +258,19 @@ fn require_tools_or_fail(tool: &str) -> bool {
                 "MGC_E2E_AUDIT_TOOLS=required but '{tool}' is not installed — the CI lane must provision it before running this test"
             );
         }
-        eprintln!("SKIP (environment-unverified): {tool} not installed on this machine");
+        // Marker carries the libtest thread name (= test name) so the
+        // capability-matrix generator can downgrade THIS test's evidence
+        // to unverified — a silent guard skip must never count as PASS.
+        // Marker kèm tên thread libtest (= tên test) để bộ sinh
+        // capability-matrix hạ cấp evidence của CHÍNH test này — guard
+        // skip im lặng không bao giờ được tính là PASS.
+        let test_name = std::thread::current()
+            .name()
+            .unwrap_or("unknown-test")
+            .to_string();
+        eprintln!(
+            "SKIP (environment-unverified) test={test_name}: {tool} not installed on this machine"
+        );
     }
     installed
 }
@@ -281,7 +313,6 @@ fn audit_lib_python_via_cli_reports_real_vulnerability_exit_1() {
 #[test]
 fn audit_lib_python_via_cli_runs_real_pip_audit() {
     if !pip_audit_installed() {
-        eprintln!("SKIP: pip-audit not installed on this machine");
         return;
     }
     let mgc = find_mgc_binary();
@@ -335,7 +366,6 @@ fn audit_lib_python_via_cli_runs_real_pip_audit() {
 #[test]
 fn audit_lib_python_unresolved_pyproject_fails_closed_not_environment() {
     if !pip_audit_installed() {
-        eprintln!("SKIP: pip-audit not installed on this machine");
         return;
     }
     let mgc = find_mgc_binary();
@@ -461,5 +491,1044 @@ fn audit_unavailable_non_strict_exits_0_with_warning() {
     assert!(
         output.contains("UNVERIFIED"),
         "the unverified warning must be printed:\n{output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Go lane E2E (P1 matrix row "Lib Go govulncheck") — real binary, real
+// scanner, real vulnerable fixture.
+// Lane E2E Go — binary thật, scanner thật, fixture dính lỗi thật.
+// ---------------------------------------------------------------------------
+
+/// govulncheck installed? Same P0-5 guard contract as the other tools.
+/// Có govulncheck? Cùng hợp đồng guard P0-5 như các tool khác.
+fn govulncheck_installed() -> bool {
+    require_tools_or_fail("govulncheck")
+}
+
+/// Real vulnerable Go fixture: golang.org/x/text v0.3.2 is affected by
+/// GO-2020-0015 / CVE-2020-14040 (verified live 2026-09-09 with
+/// govulncheck v1.8.0).
+/// Fixture Go dính lỗi thật: golang.org/x/text v0.3.2 dính GO-2020-0015 /
+/// CVE-2020-14040 (đã chạy thật bằng govulncheck v1.8.0).
+fn vulnerable_go_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"go-vuln-fixture\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"go\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("go.mod"),
+        concat!(
+            "module go-vuln-fixture\n\n",
+            "go 1.26\n\n",
+            "require golang.org/x/text v0.3.2\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.go"),
+        concat!(
+            "package main\n\n",
+            "import (\n",
+            "\t\"fmt\"\n",
+            "\t\"golang.org/x/text/encoding/charmap\"\n",
+            ")\n\n",
+            "func main() {\n",
+            "\tfmt.Println(charmap.Windows1252.String())\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+    // govulncheck needs a resolved module graph: `go mod tidy` writes
+    // go.sum so the scan can verify module hashes (verified live
+    // 2026-09-09; without go.sum the tool errors before scanning).
+    // govulncheck cần đồ thị module đã resolve: `go mod tidy` ghi go.sum
+    // để scan kiểm chứng hash module (đã chạy thật; thiếu go.sum tool
+    // lỗi trước khi kịp quét).
+    Command::new("go")
+        .args(["mod", "tidy"])
+        .current_dir(dir)
+        .output()
+        .expect("go mod tidy failed");
+}
+
+#[test]
+fn audit_lib_go_via_cli_reports_real_osv_finding_exit_1() {
+    if !govulncheck_installed() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_go_project(sandbox.path());
+
+    // Resolve the module offline-able fixture first: govulncheck needs
+    // the module in the local cache; `go mod download` warms it.
+    // Resolve fixture trước: govulncheck cần module trong cache local;
+    // `go mod download` làm ấm.
+    let download = Command::new("go")
+        .args(["mod", "download"])
+        .current_dir(sandbox.path())
+        .output();
+    if let Ok(out) = &download
+        && !out.status.success()
+    {
+        eprintln!(
+            "SKIP (environment-unverified) test=audit_lib_go_via_cli_reports_real_osv_finding_exit_1: go mod download failed (offline?): {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return;
+    }
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(
+        code,
+        Some(1),
+        "vulnerable go fixture must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("GO-2020-0015") || output.contains("CVE-2020-14040"),
+        "the real advisory must appear in the report:\n{output}"
+    );
+    assert!(
+        output.contains("text"),
+        "the affected module must appear in the report:\n{output}"
+    );
+}
+
+#[test]
+fn audit_lib_go_via_cli_clean_fixture_exit_0() {
+    if !govulncheck_installed() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"go-clean-fixture\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"go\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("go.mod"),
+        "module go-clean-fixture\n\ngo 1.26\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("main.go"),
+        "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"ok\") }\n",
+    )
+    .unwrap();
+
+    // CLEAN means: no DEPENDENCY findings. The machine's own Go stdlib
+    // may carry live advisories (e.g. GO-2026-* for an unpatched local
+    // toolchain) — those are environment findings, not fixture findings,
+    // so the assertion checks the module level via the JSON payload.
+    // SẠCH nghĩa là: KHÔNG có finding DEPENDENCY. Stdlib Go của máy có
+    // thể mang advisory sống (toolchain local chưa patch) — đó là
+    // finding môi trường chứ không phải fixture, nên assert ở mức module
+    // qua payload JSON.
+    let (code, output) = run_mgc_audit_json(&mgc, sandbox.path(), None);
+    assert!(
+        output.contains("\"scanner_status\": \"available\""),
+        "govulncheck must complete (exit {code:?}):\n{output}"
+    );
+    assert!(
+        !output.contains("golang.org/x/text"),
+        "the clean fixture must not report the vulnerable module:\n{output}"
+    );
+    assert!(
+        !output.contains("UNVERIFIED"),
+        "govulncheck present means the audit is verified:\n{output}"
+    );
+    // Zero-dependency fixture: exit is driven ONLY by any stdlib
+    // advisories on this machine — either exit code proves the scan ran.
+    // Fixture không dependency: exit chỉ do advisory stdlib của máy —
+    // cả hai exit code đều chứng minh scan đã chạy.
+}
+
+#[test]
+fn audit_lib_go_without_govulncheck_reports_tool_missing() {
+    // Hermetic PATH (no govulncheck) + strict → ToolMissing exit 2.
+    // PATH hermetic (không govulncheck) + strict → ToolMissing exit 2.
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"go-no-tool\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"go\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("go.mod"),
+        "module go-no-tool\n\ngo 1.26\n",
+    )
+    .unwrap();
+
+    let (code, output) = run_mgc_audit_no_gradle(&mgc, sandbox.path(), Some(true));
+    assert_eq!(
+        code,
+        Some(2),
+        "strict + govulncheck missing must exit 2 (environment), got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("govulncheck") && output.contains("Remediation"),
+        "ToolMissing must name the tool and remediation:\n{output}"
+    );
+}
+
+#[test]
+fn audit_lib_rust_without_cargo_audit_reports_tool_missing() {
+    // Hermetic PATH (no cargo-audit) + strict → ToolMissing exit 2 with
+    // remediation. NOTE: the scanner probes `cargo-audit` via `which`,
+    // but cargo itself must be absent too — the hermetic dir contains
+    // ONLY the mgc binary, so both probes fail deterministically.
+    // PATH hermetic (không cargo-audit) + strict → ToolMissing exit 2 kèm
+    // remediation. Scanner dò `cargo-audit` bằng `which`; cargo cũng phải
+    // vắng mặt — thư mục hermetic chỉ chứa binary mgc, nên mọi probe fail
+    // tất định.
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"rust-no-tool\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"rust\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("Cargo.toml"),
+        "[package]\nname = \"rust-no-tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sandbox.path().join("src")).unwrap();
+    std::fs::write(sandbox.path().join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+
+    let (code, output) = run_mgc_audit_no_gradle(&mgc, sandbox.path(), Some(true));
+    assert_eq!(
+        code,
+        Some(2),
+        "strict + cargo-audit missing must exit 2 (environment), got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("cargo-audit") && output.contains("Remediation"),
+        "ToolMissing must name the tool and remediation:\n{output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// P2 2026-09-10 — Java/.NET (OSV Maven/NuGet) + Swift (OSV SwiftURL) +
+// Dart (OSV Pub) E2E lanes: real binary, REAL network advisories.
+// Fixtures verified live 2026-09-10: commons-text 1.9 → GHSA-599f
+// (Text4Shell); Newtonsoft.Json 12.0.2 → GHSA-5crp; http 0.13.0 (Pub)
+// → GHSA-4rgh; swift-nio-http2 1.40.0 → GHSA-q3g2 + GHSA-4px2 (with
+// the FIXED github.com/owner/repo naming — the old URL-git naming
+// queried EMPTY, a fake clean).
+// Lane E2E Java/.NET/Swift/Dart qua OSV thật. Fixture đã verify sống.
+// ---------------------------------------------------------------------------
+
+/// OSV reachable? These lanes hit the LIVE OSV API; without network the
+/// tests skip honestly (a network-less run proves nothing). In required
+/// CI environments (MGC_E2E_AUDIT_TOOLS=required) network is assumed.
+/// OSV có truy cập được không? Lane này gọi OSV sống; không có mạng thì
+/// skip trung thực. Môi trường CI bắt buộc coi network là có sẵn.
+fn osv_reachable() -> bool {
+    // Bounded connect (5s): an UNBOUNDED connect blocks the thread when
+    // DNS/network is slow — and under a busy test machine that made the
+    // OSV lanes skip spuriously. A short deadline keeps the guard honest
+    // without hanging the suite.
+    // Connect có giới hạn (5s): connect KHÔNG giới hạn sẽ treo thread khi
+    // DNS/mạng chậm — máy test bận từng khiến lane OSV skip giả. Deadline
+    // ngắn giữ guard trung thực mà không treo suite.
+    use std::net::ToSocketAddrs;
+    let addr: std::net::SocketAddr = match "api.osv.dev:443".to_socket_addrs() {
+        Ok(mut addrs) => addrs.next().expect("api.osv.dev resolves"),
+        Err(err) => panic!("api.osv.dev DNS resolution failed: {err}"),
+    };
+    match std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(5)) {
+        Ok(_) => true,
+        Err(err) => {
+            let required = std::env::var("MGC_E2E_AUDIT_TOOLS")
+                .map(|v| v == "required")
+                .unwrap_or(false);
+            if required {
+                panic!("MGC_E2E_AUDIT_TOOLS=required but api.osv.dev is unreachable: {err}");
+            }
+            let test_name = std::thread::current()
+                .name()
+                .unwrap_or("unknown-test")
+                .to_string();
+            eprintln!(
+                "SKIP (environment-unverified) test={test_name}: api.osv.dev unreachable (offline?)"
+            );
+            false
+        }
+    }
+}
+
+fn vulnerable_java_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"java-vuln-fixture\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"java\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("gradle")).unwrap();
+    std::fs::write(
+        dir.join("gradle").join("verification-metadata.xml"),
+        concat!(
+            "<components>\n",
+            "  <dependency group=\"org.apache.commons\" name=\"commons-text\" version=\"1.9\">\n",
+            "  </dependency>\n",
+            "</components>\n",
+        ),
+    )
+    .unwrap();
+}
+
+fn clean_java_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"java-clean-fixture\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"java\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("gradle")).unwrap();
+    std::fs::write(
+        dir.join("gradle").join("verification-metadata.xml"),
+        concat!(
+            "<components>\n",
+            "  <dependency group=\"com.google.guava\" name=\"guava\" version=\"32.0.0-jre\">\n",
+            "  </dependency>\n",
+            "</components>\n",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn audit_lib_java_via_cli_reports_real_osv_finding_exit_1() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_java_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(
+        code,
+        Some(1),
+        "vulnerable java fixture must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("GHSA-599f") || output.contains("CVE-2022-42889"),
+        "the Text4Shell advisory must appear:\n{output}"
+    );
+    assert!(
+        output.contains("commons-text"),
+        "the affected package must appear:\n{output}"
+    );
+}
+
+#[test]
+fn audit_lib_java_via_cli_clean_fixture_exit_0() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    clean_java_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(code, Some(0), "clean fixture must exit 0:\n{output}");
+    assert!(
+        output.contains("No vulnerabilities"),
+        "clean run must say so explicitly:\n{output}"
+    );
+}
+
+fn vulnerable_dotnet_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"dotnet-vuln-fixture\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"dotnet\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("packages.lock.json"),
+        concat!(
+            "{\n",
+            "  \"version\": 1,\n",
+            "  \"dependencies\": {\n",
+            "    \"net8.0\": {\n",
+            "      \"dependencies\": {\n",
+            "        \"Newtonsoft.Json\": {\"type\": \"Direct\", \"version\": \"12.0.2\"}\n",
+            "      }\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+}
+
+fn clean_dotnet_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"dotnet-clean-fixture\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"dotnet\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("packages.lock.json"),
+        concat!(
+            "{\n",
+            "  \"version\": 1,\n",
+            "  \"dependencies\": {\n",
+            "    \"net8.0\": {\n",
+            "      \"dependencies\": {\n",
+            "        \"Serilog\": {\"type\": \"Direct\", \"version\": \"3.1.1\"}\n",
+            "      }\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn audit_lib_dotnet_via_cli_reports_real_osv_finding_exit_1() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_dotnet_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(
+        code,
+        Some(1),
+        "vulnerable dotnet fixture must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("GHSA-5crp"),
+        "the real advisory must appear:\n{output}"
+    );
+    assert!(
+        output.contains("Newtonsoft.Json"),
+        "the affected package must appear:\n{output}"
+    );
+}
+
+#[test]
+fn audit_lib_dotnet_via_cli_clean_fixture_exit_0() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    clean_dotnet_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(code, Some(0), "clean fixture must exit 0:\n{output}");
+    assert!(
+        output.contains("No vulnerabilities"),
+        "clean run must say so explicitly:\n{output}"
+    );
+}
+
+fn vulnerable_swift_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"swift-vuln-fixture\"\necosystem = \"app\"\n\n[app]\nlanguage = \"swift\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Package.resolved"),
+        concat!(
+            "{\n",
+            "  \"pins\": [\n",
+            "    {\"identity\": \"swift-nio-http2\", \"location\": \"https://github.com/apple/swift-nio-http2.git\", \"state\": {\"version\": \"1.40.0\"}}\n",
+            "  ],\n",
+            "  \"version\": 2\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn audit_app_swift_via_cli_reports_real_osv_findings_exit_1() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_swift_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(
+        code,
+        Some(1),
+        "vulnerable swift fixture must exit 1, got {code:?}:\n{output}"
+    );
+    // The naming fix: github.com/apple/swift-nio-http2 (not the raw git
+    // URL) is what OSV matches — both advisories must surface.
+    // Sửa tên: github.com/apple/swift-nio-http2 (không phải URL git gốc)
+    // mới khớp OSV — cả hai advisory phải hiện.
+    assert!(
+        output.contains("GHSA-q3g2") || output.contains("GHSA-4px2"),
+        "a real swift advisory must appear:\n{output}"
+    );
+    assert!(
+        output.contains("swift-nio-http2"),
+        "the affected package must appear:\n{output}"
+    );
+}
+
+fn vulnerable_flutter_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"flutter-vuln-fixture\"\necosystem = \"app\"\n\n[app]\nlanguage = \"flutter\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("pubspec.lock"),
+        concat!(
+            "packages:\n",
+            "  http:\n",
+            "    version: \"0.13.0\"\n",
+            "    source: hosted\n",
+            "  args:\n",
+            "    version: \"2.4.0\"\n",
+            "    source: hosted\n",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn audit_app_flutter_via_cli_reports_real_osv_finding_exit_1() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_flutter_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(
+        code,
+        Some(1),
+        "vulnerable flutter fixture must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("GHSA-4rgh"),
+        "the real http advisory must appear:\n{output}"
+    );
+    assert!(
+        output.contains("http"),
+        "the affected package must appear:\n{output}"
+    );
+}
+
+fn clean_swift_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"swift-clean-fixture\"\necosystem = \"app\"\n\n[app]\nlanguage = \"swift\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Package.resolved"),
+        concat!(
+            "{\n",
+            "  \"pins\": [\n",
+            "    {\"identity\": \"swift-argument-parser\", \"location\": \"https://github.com/apple/swift-argument-parser.git\", \"state\": {\"version\": \"1.5.0\"}}\n",
+            "  ],\n",
+            "  \"version\": 2\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn audit_app_swift_via_cli_clean_fixture_exit_0() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    clean_swift_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(code, Some(0), "clean swift fixture must exit 0:\n{output}");
+    assert!(
+        output.contains("No vulnerabilities"),
+        "clean run must say so explicitly:\n{output}"
+    );
+}
+
+fn clean_flutter_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"flutter-clean-fixture\"\necosystem = \"app\"\n\n[app]\nlanguage = \"flutter\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("pubspec.lock"),
+        concat!(
+            "packages:\n",
+            "  args:\n",
+            "    version: \"2.4.0\"\n",
+            "    source: hosted\n",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn audit_app_flutter_via_cli_clean_fixture_exit_0() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    clean_flutter_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit(&mgc, sandbox.path(), None);
+    assert_eq!(
+        code,
+        Some(0),
+        "clean flutter fixture must exit 0:\n{output}"
+    );
+    assert!(
+        output.contains("No vulnerabilities"),
+        "clean run must say so explicitly:\n{output}"
+    );
+}
+
+/// Run `mgc audit` with a DEAD OSV endpoint (deterministic tool-failure
+/// lane): the scanner must fail honestly, and strict mode must turn it
+/// into exit 2 — never a fake clean.
+/// Chạy `mgc audit` với endpoint OSV CHẾT (lane tool-failure tất định):
+/// scanner phải fail trung thực, strict mode chuyển thành exit 2 — không
+/// bao giờ sạch giả.
+#[test]
+fn audit_osv_unreachable_strict_fails_with_environment_exit_2() {
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_flutter_project(sandbox.path());
+
+    let out = Command::new(&mgc)
+        .arg("audit")
+        .current_dir(sandbox.path())
+        .env("MGC_OSV_API_BASE", "http://127.0.0.1:1") // port 1: refused instantly
+        .env("MGC_AUDIT_STRICT", "1")
+        .output()
+        .expect("spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "strict + dead OSV must exit 2 (environment), got {:?}:\n{text}",
+        out.status.code()
+    );
+    assert!(
+        text.contains("UNVERIFIED") || text.contains("osv"),
+        "the failure must name the scanner state:\n{text}"
+    );
+}
+
+#[test]
+fn audit_osv_unreachable_non_strict_exits_0_with_warning() {
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_dotnet_project(sandbox.path());
+
+    let out = Command::new(&mgc)
+        .arg("audit")
+        .current_dir(sandbox.path())
+        .env("MGC_OSV_API_BASE", "http://127.0.0.1:1")
+        .env("MGC_AUDIT_STRICT", "0")
+        .output()
+        .expect("spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "non-strict + dead OSV is the escape hatch (exit 0 + warning):\n{text}"
+    );
+    assert!(
+        text.contains("UNVERIFIED"),
+        "the unverified state must be loud:\n{text}"
+    );
+}
+
+#[test]
+fn audit_osv_unreachable_java_strict_exit_2() {
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_java_project(sandbox.path());
+    let out = Command::new(&mgc)
+        .arg("audit")
+        .current_dir(sandbox.path())
+        .env("MGC_OSV_API_BASE", "http://127.0.0.1:1")
+        .env("MGC_AUDIT_STRICT", "1")
+        .output()
+        .expect("spawn mgc");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "strict + dead OSV (java) must exit 2:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn audit_osv_unreachable_swift_strict_exit_2() {
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_swift_project(sandbox.path());
+    let out = Command::new(&mgc)
+        .arg("audit")
+        .current_dir(sandbox.path())
+        .env("MGC_OSV_API_BASE", "http://127.0.0.1:1")
+        .env("MGC_AUDIT_STRICT", "1")
+        .output()
+        .expect("spawn mgc");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "strict + dead OSV (swift) must exit 2:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bun/Deno/npm lockfile binary E2E (P2 2026-09-10): the web advisory flow
+// runs against a LOCAL mock registry (loopback is an explicitly allowed
+// registry override) — deterministic, no internet, CI-provable.
+// E2E binary lockfile Bun/Deno/npm: đường advisory web chạy với mock
+// registry LOCAL (loopback được cho phép override) — tất định, không cần
+// internet, chạy được trong CI.
+// ---------------------------------------------------------------------------
+
+/// A one-shot mock npm registry serving the bulk advisory endpoint with
+/// ONE advisory: lodash <4.17.21 (GHSA-36p3-pj4w-937p XSS — the same
+/// advisory shape npmjs returns; verified against the typed schema).
+/// Mock registry một lần: endpoint bulk advisory trả MỘT advisory
+/// lodash <4.17.21 (đúng shape npm Bulk API).
+fn spawn_mock_npm_registry() -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+    let handle = std::thread::spawn(move || {
+        // Serve MULTIPLE sequential connections (a client may reconnect);
+        // the listener errors out once the test drops it — that ends the
+        // loop. One request per connection, Connection: close.
+        // Phục vụ NHIỀU connection tuần tự (client có thể reconnect);
+        // listener lỗi khi test drop nó — đó là điểm dừng. Mỗi connection
+        // một request, Connection: close.
+        while let Ok((stream, _)) = listener.accept() {
+            serve_bulk_advisory(stream);
+        }
+    });
+    (addr, handle)
+}
+
+fn serve_bulk_advisory(mut stream: std::net::TcpStream) {
+    use std::io::{Read, Write};
+    // Drain the request head (we don't need the body for the mock).
+    let mut buf = [0u8; 4096];
+    let _ = stream.read(&mut buf);
+    let body = concat!(
+        r#"{"lodash": [{"id": 1004279, "url": "https://github.com/advisories/GHSA-36p3-pj4w-937p","#,
+        r#""title": "Command injection in lodash", "severity": "high","#,
+        r#""vulnerable_versions": "<4.17.21"}]}"#
+    );
+    let _ = stream.write_all(
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .as_bytes(),
+    );
+}
+
+/// Run `mgc audit` with the mock registry override.
+/// Chạy `mgc audit` với override registry mock.
+fn run_mgc_audit_mock_registry(
+    mgc: &str,
+    cwd: &std::path::Path,
+    addr: &std::net::SocketAddr,
+) -> (Option<i32>, String) {
+    let out = Command::new(mgc)
+        .arg("audit")
+        .current_dir(cwd)
+        .env("MAGICORE_WEB_REGISTRY_URL", format!("http://{addr}"))
+        .output()
+        .expect("spawn mgc");
+    (
+        out.status.code(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+#[test]
+fn audit_web_bun_lock_via_cli_reports_mock_advisory_exit_1() {
+    // P0-3 CONTRACT (2026-09-10): bun.lock là INPUT MIGRATION — audit
+    // tiêu thụ mgc.lock. Flow E2E: bun.lock → `mgc import` → mgc.lock →
+    // audit exit 1 với vulnerable pin. Audit trực tiếp bun.lock (không
+    // import) phải bị từ chối (xem test fail-closed riêng).
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"bun-fixture\"\necosystem = \"web\"\n",
+    )
+    .unwrap();
+    // Real bun.lock writer shape (captured 2026-09-10): JSONC with
+    // trailing commas; lodash 4.17.20 < 4.17.21 is vulnerable.
+    std::fs::write(
+        sandbox.path().join("bun.lock"),
+        r#"{
+  "lockfileVersion": 1,
+  "packages": {
+    "lodash": ["lodash@4.17.20", "", {}, "sha512-Plhd"],
+  }
+}"#,
+    )
+    .unwrap();
+
+    // Migration step: bun.lock → mgc.lock (import phải thành công).
+    let import_out = Command::new(&mgc)
+        .arg("import")
+        .current_dir(sandbox.path())
+        .output()
+        .expect("spawn mgc import");
+    let import_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&import_out.stdout),
+        String::from_utf8_lossy(&import_out.stderr)
+    );
+    assert_eq!(
+        import_out.status.code(),
+        Some(0),
+        "mgc import bun.lock must succeed:\n{import_output}"
+    );
+    assert!(
+        sandbox.path().join("mgc.lock").exists(),
+        "mgc.lock must exist after import"
+    );
+
+    let (addr, _server) = spawn_mock_npm_registry();
+    let (code, output) = run_mgc_audit_mock_registry(&mgc, sandbox.path(), &addr);
+    assert_eq!(
+        code,
+        Some(1),
+        "migrated mgc.lock vulnerable pin must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("lodash"),
+        "the affected package must appear:\n{output}"
+    );
+    assert!(
+        output.contains("4.17.21"),
+        "the patched boundary must appear:\n{output}"
+    );
+}
+
+#[test]
+fn audit_web_rival_lockfile_without_mgc_lock_fails_closed_cli() {
+    // P0-3 fail-closed CLI evidence: audit trên project chỉ có bun.lock
+    // (chưa import) phải TỪ CHỐI với remediation `mgc import` — không
+    // âm thầm audit lockfile đối thủ.
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"rival-only\"\necosystem = \"web\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("bun.lock"),
+        r#"{
+  "lockfileVersion": 1,
+  "packages": {
+    "lodash": ["lodash@4.17.20", "", {}, "sha512-x"],
+  }
+}"#,
+    )
+    .unwrap();
+
+    let (addr, _server) = spawn_mock_npm_registry();
+    let (code, output) = run_mgc_audit_mock_registry(&mgc, sandbox.path(), &addr);
+    assert_ne!(
+        code,
+        Some(0),
+        "audit must refuse rival lockfile without mgc.lock:\n{output}"
+    );
+    assert!(
+        output.contains("mgc.lock is missing") && output.contains("mgc import"),
+        "remediation must point at mgc import:\n{output}"
+    );
+}
+
+#[test]
+fn audit_web_deno_lock_via_cli_reports_mock_advisory_exit_1() {
+    // P0-3: deno.lock → `mgc import` → mgc.lock → audit exit 1.
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"deno-fixture\"\necosystem = \"web\"\n",
+    )
+    .unwrap();
+    // Real deno.lock v5 npm section (captured 2026-09-10).
+    std::fs::write(
+        sandbox.path().join("deno.lock"),
+        r#"{
+  "version": "5",
+  "specifiers": {},
+  "npm": {
+    "lodash@4.17.20": "4.17.20"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let import_out = Command::new(&mgc)
+        .arg("import")
+        .current_dir(sandbox.path())
+        .output()
+        .expect("spawn mgc import");
+    let import_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&import_out.stdout),
+        String::from_utf8_lossy(&import_out.stderr)
+    );
+    assert_eq!(
+        import_out.status.code(),
+        Some(0),
+        "mgc import deno.lock must succeed:\n{import_output}"
+    );
+
+    let (addr, _server) = spawn_mock_npm_registry();
+    let (code, output) = run_mgc_audit_mock_registry(&mgc, sandbox.path(), &addr);
+    assert_eq!(
+        code,
+        Some(1),
+        "migrated deno mgc.lock vulnerable pin must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("lodash"),
+        "the affected package must appear:\n{output}"
+    );
+}
+
+#[test]
+fn audit_web_bun_lock_clean_pin_exit_0() {
+    // P0-3: bun.lock clean pin → import → mgc.lock → audit exit 0.
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"bun-clean\"\necosystem = \"web\"\n",
+    )
+    .unwrap();
+    // 4.17.21 is OUTSIDE <4.17.21 — the advisory does not apply.
+    std::fs::write(
+        sandbox.path().join("bun.lock"),
+        r#"{
+  "lockfileVersion": 1,
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-ok"],
+  }
+}"#,
+    )
+    .unwrap();
+
+    let import_out = Command::new(&mgc)
+        .arg("import")
+        .current_dir(sandbox.path())
+        .output()
+        .expect("spawn mgc import");
+    assert_eq!(import_out.status.code(), Some(0), "mgc import must succeed");
+
+    let (addr, _server) = spawn_mock_npm_registry();
+    let (code, output) = run_mgc_audit_mock_registry(&mgc, sandbox.path(), &addr);
+    assert_eq!(code, Some(0), "non-matching pin must exit 0:\n{output}");
+    assert!(
+        output.contains("No vulnerabilities"),
+        "clean run must say so:\n{output}"
+    );
+}
+
+#[test]
+fn audit_web_mock_registry_down_strict_exits_2() {
+    // Tool-failure evidence for the npm-bulk-advisory lane: a DEAD
+    // registry (port 1 — connection refused instantly) must surface as
+    // scanner failure; strict mode turns it into exit 2, never a fake
+    // clean. Deterministic — no live-network dependency.
+    // Evidence tool-failure cho lane npm-bulk-advisory: registry CHẾT
+    // (port 1 — refused tức thì) phải thành scanner failure; strict
+    // chuyển thành exit 2, không bao giờ sạch giả. Tất định.
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"bun-dead-registry\"\necosystem = \"web\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("bun.lock"),
+        r#"{
+  "lockfileVersion": 1,
+  "packages": {
+    "lodash": ["lodash@4.17.20", "", {}, "sha512-x"],
+  }
+}"#,
+    )
+    .unwrap();
+
+    // P0-3: migration trước khi audit (bun.lock → mgc.lock).
+    let import_out = Command::new(&mgc)
+        .arg("import")
+        .current_dir(sandbox.path())
+        .output()
+        .expect("spawn mgc import");
+    assert_eq!(import_out.status.code(), Some(0), "mgc import must succeed");
+
+    let out = Command::new(&mgc)
+        .arg("audit")
+        .current_dir(sandbox.path())
+        .env("MAGICORE_WEB_REGISTRY_URL", "http://127.0.0.1:1")
+        .env("MGC_AUDIT_STRICT", "1")
+        .output()
+        .expect("spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "strict + dead registry must exit 2 (environment), got {:?}:\n{text}",
+        out.status.code()
+    );
+    assert!(
+        text.contains("UNVERIFIED"),
+        "the unverified state must be loud:\n{text}"
     );
 }

@@ -15,6 +15,7 @@ pub enum CommonCommand {
         host: Option<String>,
         port: Option<u16>,
         clear: bool,
+        compat_runtime: Option<String>,
     },
     Info {
         package: String,
@@ -31,6 +32,7 @@ pub enum CommonCommand {
     },
     Audit {
         fix: bool,
+        format: Option<String>,
     },
     SelfUpdate,
     Config {
@@ -53,15 +55,18 @@ pub enum CommonCommand {
     Run {
         script: String,
         args: Vec<String>,
+        compat_runtime: Option<String>,
     },
     Test {
         args: Vec<String>,
+        compat_runtime: Option<String>,
     },
     Optimizer {
         force: bool,
     },
     Build {
         target: Option<String>,
+        compat_runtime: Option<String>,
     },
     Flash {
         board: Option<String>,
@@ -401,7 +406,17 @@ impl TryFrom<Commands> for DispatchCommand {
                 template,
                 signature,
             }),
-            Commands::Dev { host, port, clear } => Some(CommonCommand::Dev { host, port, clear }),
+            Commands::Dev {
+                host,
+                port,
+                clear,
+                compat_runtime,
+            } => Some(CommonCommand::Dev {
+                host,
+                port,
+                clear,
+                compat_runtime,
+            }),
             Commands::Info { package, json } => Some(CommonCommand::Info { package, json }),
             Commands::Search {
                 query,
@@ -431,7 +446,7 @@ impl TryFrom<Commands> for DispatchCommand {
                 dir,
             }),
             Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
-            Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
+            Commands::Audit { fix, format } => Some(CommonCommand::Audit { fix, format }),
             Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
             Commands::Publish {
                 tag,
@@ -501,10 +516,30 @@ impl TryFrom<Commands> for DispatchCommand {
             }),
             Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
             Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
-            Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
-            Commands::Test { args } => Some(CommonCommand::Test { args }),
+            Commands::Run {
+                script,
+                args,
+                compat_runtime,
+            } => Some(CommonCommand::Run {
+                script,
+                args,
+                compat_runtime,
+            }),
+            Commands::Test {
+                args,
+                compat_runtime,
+            } => Some(CommonCommand::Test {
+                args,
+                compat_runtime,
+            }),
             Commands::Optimizer { force } => Some(CommonCommand::Optimizer { force }),
-            Commands::Build { target } => Some(CommonCommand::Build { target }),
+            Commands::Build {
+                target,
+                compat_runtime,
+            } => Some(CommonCommand::Build {
+                target,
+                compat_runtime,
+            }),
             Commands::Flash { board, skip_build } => {
                 Some(CommonCommand::Flash { board, skip_build })
             }

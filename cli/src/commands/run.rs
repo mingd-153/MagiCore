@@ -10,7 +10,22 @@ const RUN_SCRIPT_TIMEOUT_ENV: &str = "MGC_RUN_SCRIPT_TIMEOUT_SECS";
 /// Priority:
 ///   1. mgc.toml [scripts] section
 ///   2. package.json scripts (Web core only)
-pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Result<()> {
+///
+/// Native-engine ruling 2026-09-10: a script whose PROGRAM is a rival
+/// JS runtime (bun/deno) or an external package manager (npm/npx/pnpm/
+/// yarn/bunx) is REJECTED on the native path — no silent forwarding.
+/// `--compat-runtime bun|deno` opts into the temporary compatibility
+/// lane explicitly, with a loud warning on the spawn.
+/// Script có PROGRAM là runtime đối thủ (bun/deno) hoặc PM ngoài bị TỪ
+/// CHỐI trên đường native — không chuyển tiếp âm thầm. Cờ
+/// --compat-runtime chọn lane compat tường minh kèm cảnh báo.
+pub async fn run(
+    script: String,
+    args: Vec<String>,
+    core: Option<&str>,
+    compat_runtime: Option<&str>,
+) -> Result<()> {
+    let compat = crate::commands::compat::CompatMode::from_flag(compat_runtime)?;
     let ctx = crate::context::ProjectContext::load_with_core(core)?;
     let project_root = ctx.root();
 
@@ -20,7 +35,8 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
     if mgc_toml_path.exists()
         && let Some(cmd) = resolve_mgc_toml_script(&mgc_toml_path, &script)?
     {
-        return execute_task_with_bin(&cmd, &args, project_root, &script, None);
+        gate_script_program(&compat, &cmd)?;
+        return execute_task_with_bin(&cmd, &args, project_root, &script, None, &compat);
     }
 
     // 2. Fall back to package.json (web ecosystem compatibility)
@@ -30,8 +46,9 @@ pub async fn run(script: String, args: Vec<String>, core: Option<&str>) -> Resul
         && let Some(cmd) = resolve_package_json_script(&package_json_path, &script)?
     {
         reject_external_package_manager_script(&cmd, &package_json_path)?;
+        gate_script_program(&compat, &cmd)?;
         let bin = project_root.join("node_modules").join(".bin");
-        return execute_task_with_bin(&cmd, &args, project_root, &script, Some(bin));
+        return execute_task_with_bin(&cmd, &args, project_root, &script, Some(bin), &compat);
     }
 
     Err(crate::error::script_not_found(&script))
@@ -65,12 +82,25 @@ fn resolve_package_json_script(path: &Path, script: &str) -> Result<Option<Strin
         .map(|s| s.to_string()))
 }
 
+/// Gate the script's PROGRAM against the native-engine contract: rival
+/// JS runtimes need an explicit compat opt-in; external PMs are never
+/// spawnable. The program token is inspected WITHOUT spawning anything.
+/// Chặn PROGRAM của script theo hợp đồng engine native: runtime đối thủ
+/// cần compat tường minh; PM ngoài không bao giờ spawn. Token program
+/// được soi KHÔNG spawn gì cả.
+fn gate_script_program(compat: &crate::commands::compat::CompatMode, cmd: &str) -> Result<()> {
+    let invocation = mgc_exec::allowlist::parse_script_invocation(cmd)
+        .map_err(|e| crate::error::unsupported_script("run", &e))?;
+    crate::commands::compat::gate_runtime_spawn(compat, &invocation.program)
+}
+
 fn execute_task_with_bin(
     cmd: &str,
     args: &[String],
     cwd: &Path,
     script_name: &str,
     bin_path: Option<PathBuf>,
+    compat: &crate::commands::compat::CompatMode,
 ) -> Result<()> {
     let invocation = mgc_exec::allowlist::parse_script_invocation(cmd)
         .map_err(|e| crate::error::unsupported_script(script_name, &e))?;
@@ -112,11 +142,19 @@ fn execute_task_with_bin(
         .unwrap_or_default();
     env.extend(optimizer_envs);
 
+    // P0-1: truyền runtime compat đã chọn (nếu có) xuống mgc-exec để
+    // exemption blocker shim + allowlist áp cho ĐÚNG runtime đã gate.
+    let compat_runtime = match compat {
+        crate::commands::compat::CompatMode::Native => None,
+        crate::commands::compat::CompatMode::Explicit(runtime) => Some(runtime.clone()),
+    };
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(cwd.to_path_buf()),
         timeout: Some(run_script_timeout()),
+        log_path: Some(cwd.join(".magicore").join("exec.log")),
         env,
         clean_env: true,
+        compat_runtime,
         ..Default::default()
     };
     mgc_exec::prelude::run_inherited(&program, &script_args, &opts)?;

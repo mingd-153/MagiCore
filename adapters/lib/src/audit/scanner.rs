@@ -7,7 +7,7 @@
 //! (mgc_audit::scanners) để mọi adapter chạy cùng logic; module này chỉ
 //! re-export và giữ chỗ cho test regression parser.
 
-pub use mgc_audit::scanners::{audit_python, audit_rust};
+pub use mgc_audit::scanners::{audit_go, audit_python, audit_rust};
 
 #[cfg(test)]
 #[path = "test/scanner_test.rs"]

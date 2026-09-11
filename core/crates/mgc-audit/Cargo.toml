@@ -21,6 +21,24 @@ mgc-exec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 which = { workspace = true }
+# First-poll completion driver for the polyglot engine steps.
+# Bộ chạy poll-đầu-hoàn-tất cho các bước engine polyglot.
+futures-util = { workspace = true }
+# OSV API client for ecosystem scanners without a native CLI scanner
+# (Swift/SPM, CocoaPods, Dart/pub) — one shared HTTP client.
+# Client OSV API cho ecosystem scanner không có CLI riêng (Swift/SPM,
+# CocoaPods, Dart/pub) — một HTTP client dùng chung.
+reqwest = { workspace = true }
+
+[dev-dependencies]
+# Tempdir for the 10-test/lane scanner suites (malformed output, large
+# payloads, offline, concurrency).
+# Tempdir cho bộ test/lane 10 mục (output malformed, payload lớn,
+# offline, đồng thời).
+tempfile = { workspace = true }
+# Async test runtime for the polyglot engine tests.
+# Runtime async cho test engine polyglot.
+tokio = { workspace = true }
 
 [lints]
 workspace = true

@@ -5,8 +5,7 @@
 
 pub mod scanner;
 
-pub use mgc_audit::scanners::{audit_python, audit_rust};
-
+pub use mgc_audit::scanners::{audit_go, audit_python, audit_rust};
 use mgc_types::adapter::AuditReport;
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
@@ -42,6 +41,40 @@ pub(crate) async fn run_audit(language: LibLanguage, project_root: &Path) -> MgR
                 scanner::audit_python(project_root).await
             }
         }
+        LibLanguage::Go => {
+            // Go lane (P1 matrix row "Lib Go govulncheck"): shared scanner
+            // through the engine; a go.mod + Cargo.toml polyglot
+            // aggregates BOTH.
+            // Lane Go (P1 matrix "Lib Go govulncheck"): scanner chung qua
+            // engine; polyglot go.mod + Cargo.toml gộp CẢ HAI.
+            if project_root.join("Cargo.toml").is_file() {
+                aggregate_go_rust(project_root).await
+            } else {
+                scanner::audit_go(project_root).await
+            }
+        }
+        // Java/Kotlin + .NET lanes (P2 2026-09-10 matrix rows "Lib
+        // Java/Kotlin Gradle/Maven Dependency Check" + "Lib .NET dotnet
+        // list package --vulnerable"): OSV-backed shared scanners —
+        // verification-metadata.xml / packages.lock.json pins, no heavy
+        // CLI needed. Polyglot roots (Cargo.toml kề) aggregate BOTH.
+        // Lane Java/Kotlin + .NET: scanner chung chạy OSV — ghim từ
+        // lockfile, không cần CLI nặng. Root polyglot (có Cargo.toml
+        // kề) gộp CẢ HAI.
+        LibLanguage::Java => {
+            if project_root.join("Cargo.toml").is_file() {
+                aggregate_java_rust(project_root).await
+            } else {
+                mgc_audit::scanners::audit_java(project_root).await
+            }
+        }
+        LibLanguage::DotNet => {
+            if project_root.join("Cargo.toml").is_file() {
+                aggregate_dotnet_rust(project_root).await
+            } else {
+                mgc_audit::scanners::audit_dotnet(project_root).await
+            }
+        }
     }
 }
 
@@ -64,8 +97,6 @@ fn pylock_variant_exists(project_root: &Path) -> bool {
 /// Aggregate python + rust scans through the shared engine.
 /// Tổng hợp scan python + rust qua engine chung.
 async fn aggregate_python_rust(project_root: &Path) -> MgResult<AuditReport> {
-    use futures_util::future::FutureExt;
-
     let root_py = project_root.to_path_buf();
     let root_rs = project_root.to_path_buf();
     let mut plan = mgc_audit::AuditPlan::new();
@@ -73,26 +104,105 @@ async fn aggregate_python_rust(project_root: &Path) -> MgResult<AuditReport> {
     plan.add_step(mgc_audit::ScanStep {
         ecosystem: "python",
         scanner: "pip-audit",
-        run: Box::new(
-            move || match Box::pin(scanner::audit_python(&root_py)).now_or_never() {
-                Some(result) => result,
-                None => Err(MgError::Other(
-                    "python scanner requires async execution".to_string(),
-                )),
-            },
-        ),
+        run: Box::new(move || {
+            let root = root_py.clone();
+            Box::pin(async move { scanner::audit_python(&root).await })
+        }),
     });
     plan.add_step(mgc_audit::ScanStep {
         ecosystem: "rust",
         scanner: "cargo-audit",
-        run: Box::new(
-            move || match Box::pin(scanner::audit_rust(&root_rs)).now_or_never() {
-                Some(result) => result,
-                None => Err(MgError::Other(
-                    "rust scanner requires async execution".to_string(),
-                )),
-            },
-        ),
+        run: Box::new(move || {
+            let root = root_rs.clone();
+            Box::pin(async move { scanner::audit_rust(&root).await })
+        }),
+    });
+
+    plan.execute().await
+}
+
+/// Aggregate go + rust scans through the shared engine (polyglot lib
+/// with go.mod AND Cargo.toml — never first-match).
+/// Tổng hợp scan go + rust qua engine chung (lib đa ngôn ngữ có go.mod
+/// VÀ Cargo.toml — không first-match).
+async fn aggregate_go_rust(project_root: &Path) -> MgResult<AuditReport> {
+    let root_go = project_root.to_path_buf();
+    let root_rs = project_root.to_path_buf();
+    let mut plan = mgc_audit::AuditPlan::new();
+
+    plan.add_step(mgc_audit::ScanStep {
+        ecosystem: "go",
+        scanner: "govulncheck",
+        run: Box::new(move || {
+            let root = root_go.clone();
+            Box::pin(async move { scanner::audit_go(&root).await })
+        }),
+    });
+    plan.add_step(mgc_audit::ScanStep {
+        ecosystem: "rust",
+        scanner: "cargo-audit",
+        run: Box::new(move || {
+            let root = root_rs.clone();
+            Box::pin(async move { scanner::audit_rust(&root).await })
+        }),
+    });
+
+    plan.execute().await
+}
+
+/// Aggregate java + rust scans (polyglot lib with gradle verification
+/// metadata AND Cargo.toml).
+/// Tổng hợp scan java + rust (lib đa ngôn ngữ có metadata verification
+/// gradle VÀ Cargo.toml).
+async fn aggregate_java_rust(project_root: &Path) -> MgResult<AuditReport> {
+    let root_java = project_root.to_path_buf();
+    let root_rs = project_root.to_path_buf();
+    let mut plan = mgc_audit::AuditPlan::new();
+
+    plan.add_step(mgc_audit::ScanStep {
+        ecosystem: "java",
+        scanner: "osv-maven",
+        run: Box::new(move || {
+            let root = root_java.clone();
+            Box::pin(async move { mgc_audit::scanners::audit_java(&root).await })
+        }),
+    });
+    plan.add_step(mgc_audit::ScanStep {
+        ecosystem: "rust",
+        scanner: "cargo-audit",
+        run: Box::new(move || {
+            let root = root_rs.clone();
+            Box::pin(async move { scanner::audit_rust(&root).await })
+        }),
+    });
+
+    plan.execute().await
+}
+
+/// Aggregate dotnet + rust scans (polyglot lib with packages.lock.json
+/// AND Cargo.toml).
+/// Tổng hợp scan dotnet + rust (lib đa ngôn ngữ có packages.lock.json
+/// VÀ Cargo.toml).
+async fn aggregate_dotnet_rust(project_root: &Path) -> MgResult<AuditReport> {
+    let root_net = project_root.to_path_buf();
+    let root_rs = project_root.to_path_buf();
+    let mut plan = mgc_audit::AuditPlan::new();
+
+    plan.add_step(mgc_audit::ScanStep {
+        ecosystem: "dotnet",
+        scanner: "osv-nuget",
+        run: Box::new(move || {
+            let root = root_net.clone();
+            Box::pin(async move { mgc_audit::scanners::audit_dotnet(&root).await })
+        }),
+    });
+    plan.add_step(mgc_audit::ScanStep {
+        ecosystem: "rust",
+        scanner: "cargo-audit",
+        run: Box::new(move || {
+            let root = root_rs.clone();
+            Box::pin(async move { scanner::audit_rust(&root).await })
+        }),
     });
 
     plan.execute().await

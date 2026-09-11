@@ -576,6 +576,14 @@ pub fn audit_found_vulnerabilities(count: usize, packages: usize) -> Error {
     anyhow!("audit found {count} vulnerabilities across {packages} packages")
 }
 
+/// Unknown `--format` value for `mgc audit` (P1-B): a hard usage error —
+/// never a silent fallback that would surprise CI ingest.
+/// Giá trị `--format` lạ cho `mgc audit`: lỗi usage cứng — không âm thầm
+/// rơi về mặc định khiến CI ingest bất ngờ.
+pub fn audit_unknown_format(value: &str) -> anyhow::Error {
+    anyhow!("invalid audit --format '{value}' — expected table, json, sarif, or cyclonedx")
+}
+
 pub fn web_audit_needs_context() -> Error {
     anyhow!("web audit requires project adapter context")
 }

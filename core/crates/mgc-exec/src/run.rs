@@ -54,6 +54,24 @@ pub struct ExecOptions {
     /// tìm thấy finding (vd cargo-audit thoát 1). Rỗng = khác 0 là lỗi
     /// (mặc định, fail-closed).
     pub allowed_exit_codes: Vec<i32>,
+    /// Capture FULL stdout into `stdout_full` (byte-bounded, not
+    /// line-bounded) — required by scanner parsers (govulncheck streams
+    /// findings throughout the payload). Default false keeps memory flat
+    /// for non-scanner callers.
+    /// Capture stdout ĐẦY ĐỦ vào `stdout_full` (giới hạn byte, không
+    /// giới hạn dòng) — parser scanner cần (govulncheck phát finding rải
+    /// khắp payload). Mặc định false giữ bộ nhớ phẳng cho caller thường.
+    pub capture_full_stdout: bool,
+    /// Rival JS runtime (bun|deno) exempted for THIS call because the CLI
+    /// compat gate (cli compat.rs) already validated the explicit
+    /// opt-in and printed the loud warning. None = no rival runtime may
+    /// spawn (fail-closed). The exempt only ever covers the NAMED
+    /// runtime — never other PMs.
+    /// Runtime đối thủ (bun|deno) được miễn cho LỜI GỌI này vì cổng
+    /// compat ở CLI đã validate opt-in tường minh + in cảnh báo. None =
+    /// không runtime đối thủ nào được spawn (fail-closed). Miễn chỉ áp
+    /// cho runtime ĐƯỢC NÊU TÊN — không bao giờ PM khác.
+    pub compat_runtime: Option<String>,
 }
 
 /// Kết quả chạy — args trong report ĐÃ redact (không lộ secret).
@@ -66,6 +84,17 @@ pub struct ExecReport {
     pub dry_run: bool,
     pub stdout_tail: String,
     pub stderr_tail: String,
+    /// FULL stdout (bounded by MAX_CAPTURE_BYTES, NOT line-count) for
+    /// scanner parsers that need the COMPLETE payload — streaming JSON
+    /// (govulncheck) and report files (cargo-audit/pip-audit) lose
+    /// findings when only the last 40 lines survive. Empty unless the
+    /// caller sets `capture_full_stdout` (memory stays bounded).
+    /// stdout ĐẦY ĐỦ (giới hạn MAX_CAPTURE_BYTES, KHÔNG giới hạn dòng)
+    /// cho parser scanner cần payload trọn vẹn — JSON stream
+    /// (govulncheck) và file report (cargo-audit/pip-audit) mất finding
+    /// khi chỉ sống sót 40 dòng cuối. Rỗng trừ khi caller bật
+    /// `capture_full_stdout` (bộ nhớ vẫn có giới hạn).
+    pub stdout_full: String,
 }
 
 /// Resolve a bare command name to a Windows shim (.cmd/.bat) when the bare
@@ -134,7 +163,12 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
     let scope = opts
         .execution_scope
         .unwrap_or(crate::allowlist::ExecutionScope::Install);
-    crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
+    crate::allowlist::check_tool_with_scope_compat(
+        cmd,
+        scope,
+        opts.cwd.as_deref(),
+        opts.compat_runtime.as_deref(),
+    )?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -147,7 +181,12 @@ pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<E
     let scope = opts
         .execution_scope
         .unwrap_or(crate::allowlist::ExecutionScope::Install);
-    crate::allowlist::check_tool_with_scope(cmd, scope, opts.cwd.as_deref())?;
+    crate::allowlist::check_tool_with_scope_compat(
+        cmd,
+        scope,
+        opts.cwd.as_deref(),
+        opts.compat_runtime.as_deref(),
+    )?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -339,11 +378,31 @@ fn execute_command(
     let scope = opts
         .execution_scope
         .unwrap_or(crate::allowlist::ExecutionScope::Install);
-    let scoped_exempt: &[&str] = if scope.allows_pm_tools() {
-        crate::allowlist::FORBIDDEN_TOOLS
+    // P0-1/F-A (2026-09-10): the CLI compat gate (already validated +
+    // warned by allowlist::check_tool_with_scope_compat above) names ONE
+    // rival runtime for THIS invocation. Only that runtime skips the
+    // shadow-path blocker shim; scope rules stay untouched — Install
+    // scope lifecycle scripts (no compat runtime) still get EVERY
+    // blocker shim.
+    // Cổng compat ở CLI đã validate + cảnh báo, nêu tên MỘT runtime cho
+    // lời gọi này — chỉ runtime đó bỏ qua blocker shim; luật scope giữ
+    // nguyên (lifecycle Install không compat vẫn đủ mọi shim).
+    let mut scoped_exempt: Vec<&str> = if scope.allows_pm_tools() {
+        crate::allowlist::FORBIDDEN_TOOLS.to_vec()
     } else {
-        &[]
+        Vec::new()
     };
+    if let Some(runtime) = opts.compat_runtime.as_deref()
+        && matches!(runtime, "bun" | "deno")
+        && !scoped_exempt.contains(&runtime)
+    {
+        scoped_exempt.push(match runtime {
+            "bun" => "bun",
+            "deno" => "deno",
+            other => other,
+        });
+    }
+    let scoped_exempt: &[&str] = &scoped_exempt;
 
     if opts.dry_run {
         // dry-run: in lệnh, không chạy, vẫn ghi audit với exit_code 0 + dry_run flag (§5.5)
@@ -356,6 +415,7 @@ fn execute_command(
             dry_run: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
+            stdout_full: String::new(),
         };
         if let Some(path) = &opts.log_path {
             append(path, &entry_from(&report, &cwd))?;
@@ -494,6 +554,11 @@ fn execute_command(
         dry_run: false,
         stdout_tail: tail(&outcome.stdout),
         stderr_tail: tail(&outcome.stderr),
+        stdout_full: if opts.capture_full_stdout {
+            full(&outcome.stdout)
+        } else {
+            String::new()
+        },
     };
     if let Some(path) = &opts.log_path {
         append(path, &entry_from(&report, &cwd))?;
@@ -641,9 +706,59 @@ fn wait_with_timeout(
 ) -> Result<ExecOutcome> {
     let started = Instant::now();
 
+    // DEADLOCK FIX (2026-09-09): a child writing MORE than the OS pipe
+    // buffer (~64 KB) blocks on write until the parent drains the pipe.
+    // Polling try_wait WITHOUT draining never sees the child exit — the
+    // govulncheck stream (multi-MB JSON) hung here. Drain stdout/stderr
+    // on reader threads so the child can always finish, then re-join
+    // the bytes when it exits.
+    // FIX DEADLOCK: child viết NHIỀU HƠN buffer pipe của OS (~64 KB) sẽ
+    // block chờ parent tiêu thụ. Poll try_wait mà không drain thì child
+    // không bao giờ thoát — stream govulncheck (JSON MB) từng treo tại
+    // đây. Drain stdout/stderr bằng thread đọc để child luôn chạy hết,
+    // rồi ghép bytes lại khi nó thoát.
+    let stdout_handle = child.stdout.take().map(|mut s| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+            buf
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|mut s| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+            buf
+        })
+    });
+    // Drain the reader threads and collect the final status. Inherit
+    // mode spawns no pipes (handles are None) — drain returns empty
+    // bytes there, matching the old finish_child contract.
+    // Ghép thread đọc và lấy trạng thái cuối. Inherit không có pipe
+    // (handle là None) — drain trả bytes rỗng, khớp hợp đồng finish_child cũ.
+    let drain = |child: &mut std::process::Child| -> ExecOutcome {
+        let stdout = stdout_handle
+            .map(|h| h.join().unwrap_or_default())
+            .unwrap_or_default();
+        let stderr = stderr_handle
+            .map(|h| h.join().unwrap_or_default())
+            .unwrap_or_default();
+        let status = child.wait().unwrap_or_default();
+        ExecOutcome {
+            status,
+            stdout,
+            stderr,
+        }
+    };
+    let _ = mode;
+
     loop {
-        if let Some(status) = child.try_wait()? {
-            return finish_child(child, status, mode);
+        if let Some(_status) = child.try_wait()? {
+            // Child exited — pipes may still hold buffered bytes; the
+            // reader threads hit EOF (child end closed) and return them.
+            // Child đã thoát — pipe có thể còn byte; thread đọc gặp EOF
+            // (đầu child đã đóng) và trả về chúng.
+            return Ok(drain(&mut child));
         }
         // Monitor + forbidden child in one guard — gộp điều kiện theo clippy 1.98.
         if monitor_forbidden_children
@@ -651,7 +766,7 @@ fn wait_with_timeout(
         {
             terminate_process_tree(child.id());
             let _ = child.kill();
-            let out = finish_after_forced_exit(child, mode)?;
+            let out = drain(&mut child);
             return Err(forbidden_child_error(
                 &found,
                 out.status,
@@ -662,7 +777,7 @@ fn wait_with_timeout(
         if timeout.is_some_and(|timeout| started.elapsed() >= timeout) {
             terminate_process_tree(child.id());
             let _ = child.kill();
-            let out = finish_after_forced_exit(child, mode)?;
+            let out = drain(&mut child);
             return Err(timeout_error(
                 timeout.expect("timeout checked above"),
                 out.status,
@@ -680,50 +795,6 @@ struct ExecOutcome {
     stderr: Vec<u8>,
 }
 
-fn finish_child(
-    child: std::process::Child,
-    status: ExitStatus,
-    mode: OutputMode,
-) -> Result<ExecOutcome> {
-    match mode {
-        OutputMode::Capture => {
-            let output = child.wait_with_output()?;
-            Ok(ExecOutcome {
-                status: output.status,
-                stdout: output.stdout,
-                stderr: output.stderr,
-            })
-        }
-        OutputMode::Inherit => Ok(ExecOutcome {
-            status,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }),
-    }
-}
-
-fn finish_after_forced_exit(child: std::process::Child, mode: OutputMode) -> Result<ExecOutcome> {
-    match mode {
-        OutputMode::Capture => {
-            let output = child.wait_with_output()?;
-            Ok(ExecOutcome {
-                status: output.status,
-                stdout: output.stdout,
-                stderr: output.stderr,
-            })
-        }
-        OutputMode::Inherit => {
-            let output = child.wait_with_output()?;
-            Ok(ExecOutcome {
-                status: output.status,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            })
-        }
-    }
-}
-
-#[cfg(unix)]
 fn configure_process_isolation(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
@@ -946,4 +1017,21 @@ fn tail(bytes: &[u8]) -> String {
         lines = lines.split_off(lines.len() - MAX_CAPTURE_LINES);
     }
     lines.join("\n")
+}
+
+/// Bounded FULL capture for scanner parsers — byte-capped (memory stays
+/// flat) but NOT line-capped, so streaming-JSON findings anywhere in the
+/// payload survive. A stream larger than the cap fails closed in the
+/// parsers (invalid JSON), never silently truncates findings.
+/// Capture ĐẦY ĐỦ có giới hạn byte cho parser scanner — giới hạn byte
+/// (bộ nhớ phẳng) nhưng KHÔNG giới hạn dòng, finding JSON stream ở bất
+/// kỳ đâu cũng sống sót. Stream lớn hơn giới hạn thì parser fail-closed
+/// (JSON lỗi), không cắt cụt finding âm thầm.
+fn full(bytes: &[u8]) -> String {
+    let slice = if bytes.len() > MAX_CAPTURE_BYTES {
+        &bytes[bytes.len() - MAX_CAPTURE_BYTES..]
+    } else {
+        bytes
+    };
+    String::from_utf8_lossy(slice).to_string()
 }

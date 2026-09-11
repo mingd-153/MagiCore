@@ -3,11 +3,12 @@
 
 use crate::language::{LibLanguage, detect_language, manifest_is_lib};
 use crate::manifest::{
-    parse_cargo_manifest, parse_pyproject_manifest, write_cargo_manifest, write_pyproject_manifest,
+    parse_cargo_manifest, parse_go_mod_manifest, parse_pyproject_manifest, write_cargo_manifest,
+    write_pyproject_manifest,
 };
 use crate::tooling::{
-    cargo_lock_versions, check_pip_allowed, dist_info_versions, exec_tool, placeholder_id,
-    version_from_manifest,
+    cargo_lock_versions, check_pip_allowed, dist_info_versions, exec_tool, go_module_path,
+    placeholder_id, version_from_manifest,
 };
 use async_trait::async_trait;
 use mgc_types::adapter::{
@@ -57,6 +58,9 @@ impl LibAdapter {
             LibLanguage::Ts => "ts",
             LibLanguage::Rust => "rust",
             LibLanguage::Python => "python",
+            LibLanguage::Go => "go",
+            LibLanguage::Java => "java",
+            LibLanguage::DotNet => "dotnet",
         }
     }
 }
@@ -82,6 +86,20 @@ impl PackageAdapter for LibAdapter {
         match self.language {
             LibLanguage::Rust => parse_cargo_manifest(project_root),
             LibLanguage::Python => parse_pyproject_manifest(project_root),
+            // Go has no mgc-written manifest — `go mod` owns go.mod
+            // (parse via the go list wrapper when needed).
+            // Go không có manifest do mgc viết — `go mod` sở hữu go.mod.
+            LibLanguage::Go => parse_go_mod_manifest(project_root),
+            // Java/.NET (P2 audit parity): the gradle verification
+            // metadata / packages.lock.json own the pin truth — audit
+            // reads them; lifecycle manifest parsing is not wired yet
+            // (honest empty until the lifecycle lane lands).
+            // Java/.NET: metadata verification gradle / packages.lock
+            // giữ truth ghim — audit đọc chúng; parse manifest
+            // lifecycle chưa nối (rỗng trung thực).
+            LibLanguage::Java | LibLanguage::DotNet => {
+                Ok(Manifest::new("java-dotnet-lib", Ecosystem::Lib))
+            }
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }
@@ -93,6 +111,12 @@ impl PackageAdapter for LibAdapter {
         match self.language {
             LibLanguage::Rust => write_cargo_manifest(project_root, manifest),
             LibLanguage::Python => write_pyproject_manifest(project_root, manifest),
+            // Never rewrite go.mod — the go toolchain is the sole owner.
+            // Không bao giờ viết lại go.mod — go toolchain là chủ duy nhất.
+            LibLanguage::Go => Ok(()),
+            // Gradle/NuGet own their lockfiles — never rewritten by mgc.
+            // Gradle/NuGet sở hữu lockfile của chúng — mgc không viết lại.
+            LibLanguage::Java | LibLanguage::DotNet => Ok(()),
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }
@@ -167,6 +191,35 @@ impl PackageAdapter for LibAdapter {
                         .unwrap_or_else(|| placeholder_id(name, range)),
                 )
             }
+            // Go: `go get module@version` — the go toolchain rewrites
+            // go.mod; mgc only delegates (never edits go.mod itself).
+            // Go: `go get module@version` — go toolchain viết lại go.mod;
+            // mgc chỉ ủy quyền (không tự sửa go.mod).
+            LibLanguage::Go => {
+                let target = match range.filter(|r| !r.is_star()) {
+                    Some(r) => format!(
+                        "{}@v{}",
+                        go_module_path(project_root, name),
+                        r.satisfying_version()
+                            .unwrap_or_else(|| Version::new(0, 0, 0))
+                    ),
+                    None => go_module_path(project_root, name),
+                };
+                exec_tool(project_root, "go", &["get".to_string(), target])?;
+                Ok(version_from_manifest(project_root, name, LibLanguage::Go)
+                    .map(|v| PackageId::new(name.clone(), v))
+                    .unwrap_or_else(|| placeholder_id(name, range)))
+            }
+            // Java/.NET lifecycle add is not wired (P2 audit parity
+            // scope) — the honest manual step, never a silent no-op.
+            // Add lifecycle Java/.NET chưa nối (scope parity audit P2)
+            // — bước thủ công trung thực, không no-op âm thầm.
+            LibLanguage::Java | LibLanguage::DotNet => {
+                return Err(mgc_types::MgError::Other(
+                    "java/.NET dependency add runs through gradle/dotnet directly (mgc audit reads the lockfile; lifecycle add lands with the java/.NET install lanes)"
+                        .to_string(),
+                ));
+            }
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }
@@ -194,6 +247,27 @@ impl PackageAdapter for LibAdapter {
                         name.as_str().to_string(),
                     ],
                 )?;
+            }
+            // Go: drop from go.mod via `go mod tidy` after removing the
+            // import — mgc cannot know the full module path from the
+            // display name, so surface the honest manual step.
+            // Go: rút khỏi go.mod bằng `go mod tidy` sau khi bỏ import —
+            // mgc không biết path module đầy đủ từ tên hiển thị, nên nêu
+            // bước thủ công trung thực.
+            LibLanguage::Go => {
+                return Err(mgc_types::MgError::Other(
+                    "go module removal requires the full module path — remove the import then run `go mod tidy`".to_string(),
+                ));
+            }
+            // Java/.NET lifecycle remove is not wired — honest manual
+            // step (gradle/dotnet own dependency edits).
+            // Remove lifecycle Java/.NET chưa nối — bước thủ công trung
+            // thực (gradle/dotnet sở hữu việc sửa dependency).
+            LibLanguage::Java | LibLanguage::DotNet => {
+                return Err(mgc_types::MgError::Other(
+                    "java/.NET dependency removal runs through gradle/dotnet directly (mgc audit reads the lockfile; lifecycle remove lands with the java/.NET install lanes)"
+                        .to_string(),
+                ));
             }
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
@@ -230,6 +304,34 @@ impl PackageAdapter for LibAdapter {
                 }
                 exec_tool(project_root, "pip", &args)?;
             }
+            // Go: `go get -u` upgrades the named module (update-all is
+            // refused — same honest constraint as pip).
+            // Go: `go get -u` nâng module được nêu (update-all bị từ
+            // chối — ràng buộc trung thực như pip).
+            LibLanguage::Go => {
+                let Some(n) = name else {
+                    return Err(mgc_types::MgError::Other(
+                        "go update-all is not allowed — name a module (go toolchain policy)"
+                            .to_string(),
+                    ));
+                };
+                let target = go_module_path(project_root, n);
+                exec_tool(
+                    project_root,
+                    "go",
+                    &["get".to_string(), "-u".to_string(), target],
+                )?;
+            }
+            // Java/.NET lifecycle update is not wired — honest manual
+            // step, same constraint as go/pip update-all.
+            // Update lifecycle Java/.NET chưa nối — bước thủ công trung
+            // thực, ràng buộc như update-all go/pip.
+            LibLanguage::Java | LibLanguage::DotNet => {
+                return Err(mgc_types::MgError::Other(
+                    "java/.NET dependency updates run through gradle/dotnet directly (mgc audit reads the lockfile; lifecycle update lands with the java/.NET install lanes)"
+                        .to_string(),
+                ));
+            }
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
         Ok(vec![])
@@ -243,6 +345,49 @@ impl PackageAdapter for LibAdapter {
         let installed: std::collections::HashMap<String, String> = match self.language {
             LibLanguage::Rust => cargo_lock_versions(project_root).into_iter().collect(),
             LibLanguage::Python => dist_info_versions(project_root).into_iter().collect(),
+            // go.mod already holds pinned versions — manifest versions ARE
+            // the installed set (no separate lock for Go).
+            // go.mod giữ version đã ghim — version trong manifest chính là
+            // tập đã cài (Go không có lock tách riêng).
+            LibLanguage::Go => manifest
+                .all_dependencies()
+                .map(|dep| {
+                    (
+                        dep.name.as_str().to_string(),
+                        dep.range
+                            .satisfying_version()
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect(),
+            // Java/.NET installed-set truth lives in the lockfiles —
+            // read the pins straight from the scanner's readers.
+            // Tập đã cài Java/.NET nằm trong lockfile — đọc ghim thẳng
+            // từ reader của scanner.
+            LibLanguage::Java => {
+                let raw = std::fs::read_to_string(
+                    project_root
+                        .join("gradle")
+                        .join("verification-metadata.xml"),
+                )
+                .unwrap_or_default();
+                mgc_audit::scanners::read_gradle_verification_metadata(&raw)
+                    .0
+                    .into_iter()
+                    .map(|pin| (pin.name, pin.version))
+                    .collect()
+            }
+            LibLanguage::DotNet => {
+                let raw = std::fs::read_to_string(project_root.join("packages.lock.json"))
+                    .unwrap_or_default();
+                let pins = mgc_audit::scanners::read_packages_lock(&raw)
+                    .map(|(pins, _)| pins)
+                    .unwrap_or_default();
+                pins.into_iter()
+                    .map(|pin| (pin.name, pin.version))
+                    .collect()
+            }
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         };
         Ok(manifest

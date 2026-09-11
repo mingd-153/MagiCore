@@ -76,7 +76,8 @@ impl ProxyConfig {
             self.http.as_ref()
         };
 
-        // Per-registry override優先
+        // Per-registry override takes precedence — ghi đè theo registry
+        // được ưu tiên trước proxy chung.
         for (reg, proxy) in &self.per_registry {
             if url.starts_with(reg) {
                 return Ok(Some(

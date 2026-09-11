@@ -9,8 +9,10 @@ pub mod aggregate;
 pub mod contract;
 pub mod engine;
 pub mod output;
+pub mod polyglot;
 pub mod scanners;
 
 pub use aggregate::aggregate_reports;
 pub use contract::ScanStep;
 pub use engine::AuditPlan;
+pub use polyglot::{audit_polyglot, plan_for_shared_manifests};

@@ -8,6 +8,7 @@ authors.workspace = true
 description = "IoT ecosystem adapter for MagiCore (esp32-rust/platformio/zephyr)"
 
 [dependencies]
+mgc-audit = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { workspace = true }
 mgc-crypto = { workspace = true }

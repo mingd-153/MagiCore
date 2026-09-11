@@ -739,70 +739,11 @@ fn load_locked_graph(
     _adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
+    // P0-3 (2026-09-10 audit): silent seeding từ legacy lockfile ĐÃ GỠ —
+    // mgc.lock là nguồn chân lý duy nhất; migration phải tường minh qua
+    // `mgc import`. Thiếu mgc.lock → resolver tự resolve (không có rival
+    // lockfile nào được đọc trên đường vận hành).
     let Some(lock) = read_checked_lockfile(project_root)? else {
-        // mgc.lock chưa có nhưng có lockfile của PM khác → import seed (spec lockfile-import-plan §2)
-        // (No mgc.lock yet but a legacy PM lockfile exists → seed via import)
-        if let Some(first) = mgc_lockfile::import::detect_legacy_lockfiles(project_root).first() {
-            match mgc_lockfile::import_file(&first.path) {
-                Ok((mut imported, report)) if lock_matches_manifest(&imported, manifest) => {
-                    for warning in &report.warnings {
-                        mgc_ui::warning(warning);
-                    }
-                    let lock_path = project_root.join("mgc.lock");
-                    // Ký được thì ký; mọi lỗi ghi/sign chỉ degrade về full-resolve, KHÔNG giết install
-                    // (Sign when possible; any persist error degrades to full resolution, never aborts)
-                    let signed = match mgc_lockfile::sign_lockfile_with_default_key(
-                        &mut imported,
-                        &lock_path,
-                    ) {
-                        Ok(()) => true,
-                        Err(sign_err) => {
-                            mgc_ui::warning(&format!(
-                                "writing UNSIGNED mgc.lock (signing unavailable: {sign_err}) — run `mgc trust sign`"
-                            ));
-                            match mgc_lockfile::write_lockfile(&imported, &lock_path) {
-                                Ok(()) => false,
-                                Err(write_err) => {
-                                    mgc_ui::warning(&format!(
-                                        "cannot persist imported mgc.lock: {write_err} — falling back to full resolution"
-                                    ));
-                                    return Ok(None);
-                                }
-                            }
-                        }
-                    };
-                    mgc_ui::info(&format!(
-                        "Imported {} packages from {} into mgc.lock{}",
-                        report.packages,
-                        report.source_file,
-                        if signed { " (signed)" } else { "" }
-                    ));
-                    // Dữ liệu import lỗi cấu trúc → fallback, không abort
-                    match graph_from_lockfile(&imported) {
-                        Ok(graph) => return Ok(Some(graph)),
-                        Err(e) => {
-                            mgc_ui::warning(&format!(
-                                "imported lockfile unusable ({e}) — falling back to full resolution"
-                            ));
-                            return Ok(None);
-                        }
-                    }
-                }
-                Ok((_, report)) => {
-                    mgc_ui::warning(&format!(
-                        "{} does not match the current manifest — ignoring it and resolving fresh",
-                        report.source_file
-                    ));
-                }
-                Err(e) => {
-                    // Fail-loud escape hatch: parse lỗi → bỏ import, resolve đầy đủ (vẫn an toàn)
-                    mgc_ui::warning(&format!(
-                        "cannot import {}: {e} — falling back to full resolution",
-                        first.file_name
-                    ));
-                }
-            }
-        }
         return Ok(None);
     };
     // Issue #4: Re-enable lock.core, lock.version, lock.resolution checks after lockfile v2 migration

@@ -1,0 +1,176 @@
+name: Nightly Audit Matrix
+
+# Full-matrix nightly lane (Tech Lead P2 2026-09-10): EVERY supported
+# language lane with the full scanner toolchain provisioned — the PR gate
+# (security.yml) runs the representative set; this lane proves the whole
+# matrix nightly so capability drift is caught within 24h. The generated
+# capability matrix is the ONLY status source (README never hand-claims).
+#
+# Lane matrix full hằng đêm: MỌI lane ngôn ngữ được hỗ trợ với đủ
+# toolchain scanner. PR gate (security.yml) chạy tập đại diện; lane này
+# chứng minh toàn matrix mỗi đêm để lệch năng lực bị bắt trong 24h.
+# Matrix sinh từ CI là nguồn trạng thái DUY NHẤT.
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MGC_E2E_AUDIT_TOOLS: required
+
+jobs:
+  full-matrix:
+    name: full matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # --- Scanner toolchain, ALL lanes, pinned (fail on drift) ---
+      # --- Toolchain scanner, MỌI lane, ghim phiên bản (drift là fail) ---
+      - name: Install cargo-audit (pinned)
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Install pip-audit (pinned)
+        shell: bash
+        run: |
+          # Windows runners name the interpreter `python`; unix `python3`.
+          # Runner Windows đặt tên interpreter là `python`; unix là `python3`.
+          PY=$(command -v python3 || command -v python)
+          "$PY" -m pip install --user 'pip-audit==2.9.0'
+          "$HOME/.local/bin" >> "$GITHUB_PATH" 2>/dev/null || true
+          echo "$APPDATA/Python/Scripts" >> "$GITHUB_PATH" 2>/dev/null || true
+
+      - name: Install Go + govulncheck (pinned)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+      - name: Install govulncheck (pinned)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Gradle (pinned — Kotlin OWASP lane)
+        run: |
+          GRADLE_VERSION="8.14.3"
+          cd /tmp && curl -sSLO "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            && unzip -q "gradle-${GRADLE_VERSION}-bin.zip" \
+            && echo "/tmp/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH" \
+            && gradle --version | head -5
+        # Gradle ships a platform JDK requirement — provision a JRE only
+        # for the dependency-check lane (no Java project is built).
+        # Gradle cần JRE — provision chỉ cho lane dependency-check
+        # (không build project Java nào).
+        if: runner.os != 'Windows'
+
+      - name: Verify scanner versions (fail fast on drift)
+        shell: bash
+        run: |
+          cargo-audit --version
+          pip-audit --version
+          govulncheck -version 2>/dev/null | head -1 || true
+          gradle --version 2>/dev/null | rg -i 'gradle' | head -2 || echo "gradle skipped on this OS"
+
+      # --- Lane suites (single-thread: advisory-DB locks serialize) ---
+      - name: Parser lanes (10-test per language)
+        run: cargo test -p mgc-audit --locked -- --nocapture
+
+      - name: App adapter lanes (OWASP 10-test + kotlin gradle E2E)
+        run: cargo test -p mgc-app-adapter --locked -- --nocapture
+
+      - name: Binary E2E lanes (CLI, real scanners + OSV network)
+        shell: bash
+        run: cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --nocapture
+
+      - name: Process-spawn audit (native engine)
+        run: cargo test -p mgc --test native_engine_spawn_audit --locked -- --nocapture
+
+      - name: Test-runner security
+        run: cargo test -p mgc --test test_runner_security --locked -- --nocapture
+
+      # --- Evidence artifacts per OS ---
+      - name: Generate capability matrix (this OS evidence)
+        shell: bash
+        run: |
+          PY=$(command -v python3 || command -v python)
+          "$PY" scripts/audit_capability_matrix.py
+        env:
+          MGC_AUDIT_MATRIX_OUT: docs/specs/auditCapabilityMatrix-${{ runner.os }}.json
+
+      - name: Upload matrix artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b038357803cdc9eb # v4.6.2
+        with:
+          name: audit-capability-matrix-${{ runner.os }}
+          path: docs/specs/auditCapabilityMatrix-${{ runner.os }}.json
+
+  matrix-report:
+    # Aggregate the per-OS matrices into ONE verdict: every supported
+    # lane must be green on EVERY OS (Tech Lead release gate: "Windows/
+    # macOS/Linux cùng SHA đều xanh").
+    # Gộp matrix từng OS thành MỘT phán quyết: lane supported phải xanh
+    # trên MỌI OS (release gate: "cùng SHA đều xanh").
+    name: Matrix verdict (all OS green)
+    needs: full-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download all per-OS matrices
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (latest, node24)
+        with:
+          path: matrices
+          pattern: audit-capability-matrix-*
+          merge-multiple: false
+      - name: Verify every expected lane is green on every OS
+        # P0-1 (2026-09-11): same expected-manifest contract as the
+        # release gate — every lane in expected_lanes must be
+        # "supported" on EVERY OS matrix; a lane absent from a matrix
+        # fails that OS (results never shrink the required scope).
+        # Cùng hợp đồng manifest kỳ vọng như release gate: mọi lane
+        # trong expected_lanes phải "supported" trên MỌI OS; lane
+        # thiếu khỏi matrix nào thì OS đó fail (kết quả test không tự
+        # thu hẹp scope bắt buộc).
+        shell: python3
+        run: |
+          import glob, json, sys
+
+          files = glob.glob("matrices/*/auditCapabilityMatrix-*.json")
+          if not files:
+              sys.exit("no capability matrices downloaded")
+          failures = []
+          for path in files:
+              data = json.load(open(path))
+              # Format contract: a matrix without the expected manifest
+              # (old schema / hand-made) cannot be evaluated — reject.
+              # Hợp đồng format: matrix thiếu manifest kỳ vọng → chặn.
+              if not data.get("expected_lanes"):
+                  failures.append(f"{path}: matrix has no expected_lanes manifest — regenerate via scripts/audit_capability_matrix.py")
+                  continue
+              by_lane = {(l["core"], l["language"], l["scanner"]): l for l in data.get("capability", [])}
+              for lane in data.get("expected_lanes", []):
+                  key = (lane["core"], lane["language"], lane["scanner"])
+                  label = f"{path}: {key[0]}/{key[1]} ({key[2]})"
+                  if key not in by_lane:
+                      failures.append(f"{label} = MISSING — required lane absent")
+                  elif by_lane[key]["status"] != "supported":
+                      failures.append(f"{label} = {by_lane[key]['status']}")
+          if failures:
+              print("EXPECTED LANES NOT GREEN ON EVERY OS:")
+              print("\n".join(failures))
+              sys.exit(1)
+          print(f"OK: every expected lane green on {len(files)} OS matrices")

@@ -61,7 +61,7 @@ async fn verify_with_build(_project_root: &Path, dry_run: bool) -> Result<()> {
     if dry_run {
         return Ok(());
     }
-    crate::commands::build::run(None, None)
+    crate::commands::build::run(None, None, None)
         .await
         .with_context(|| "build verification failed after dedupe")
 }

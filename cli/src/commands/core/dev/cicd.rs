@@ -114,7 +114,7 @@ pub async fn verify() -> Result<()> {
                 // UNVERIFIED warning when the core's scanner is unavailable.
                 // Audit thật cho mọi core — pipeline chung tự in cảnh báo
                 // UNVERIFIED khi scanner của core chưa có.
-                crate::commands::audit::run(None, false).await?;
+                crate::commands::audit::run(None, false, None).await?;
             }
             "test" => run_test_step(&root, &core).await?,
             "build" => {
@@ -123,7 +123,7 @@ pub async fn verify() -> Result<()> {
                         "cicd core has no build (07 §4) — pipelines run via `mgc ci generate`",
                     );
                 } else {
-                    crate::commands::build::run(None, None).await?;
+                    crate::commands::build::run(None, None, None).await?;
                 }
             }
             other => mgc_ui::warning(&format!("unknown verify step: '{other}' — skipping")),
@@ -164,7 +164,7 @@ async fn run_test_step(root: &std::path::Path, core: &str) -> Result<()> {
         if !has_test {
             return Err(crate::error::package_json_missing_test_script());
         }
-        crate::commands::run::run("test".to_string(), vec![], Some("web")).await?;
+        crate::commands::run::run("test".to_string(), vec![], Some("web"), None).await?;
     } else if core == "lib" {
         if root.join("Cargo.toml").exists() {
             let opts = mgc_exec::prelude::ExecOptions {

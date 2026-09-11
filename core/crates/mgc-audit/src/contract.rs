@@ -19,9 +19,15 @@ pub struct ScanStep<'a> {
     /// Scanner name recorded on findings (e.g. "cargo-audit", "osv").
     /// Tên scanner ghi vào finding (vd "cargo-audit", "osv").
     pub scanner: &'static str,
-    /// Execute this step — returns Err ONLY on infrastructure failure;
-    /// scanner-internal states travel inside the AuditReport.
-    /// Chạy bước này — chỉ trả Err khi lỗi hạ tầng; trạng thái scanner
-    /// nằm bên trong AuditReport.
-    pub run: Box<dyn FnOnce() -> MgResult<AuditReport> + Send + 'a>,
+    /// Execute this step — a boxed FUTURE (P2 2026-09-10: scanners do
+    /// real network I/O — npm bulk advisory, OSV API — so steps must be
+    /// awaitable, not first-poll closures). Returns Err ONLY on
+    /// infrastructure failure; scanner-internal states travel inside
+    /// the AuditReport.
+    /// Chạy bước này — future đóng hộp (scanner làm I/O mạng thật —
+    /// npm bulk advisory, OSV API — nên bước phải await được, không
+    /// phải closure poll-một-lần). Chỉ trả Err khi lỗi hạ tầng; trạng
+    /// thái scanner nằm bên trong AuditReport.
+    pub run:
+        Box<dyn FnOnce() -> futures_util::future::BoxFuture<'a, MgResult<AuditReport>> + Send + 'a>,
 }

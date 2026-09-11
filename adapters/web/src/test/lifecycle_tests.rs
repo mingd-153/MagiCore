@@ -126,3 +126,28 @@ fn lifecycle_timeout_kills_hung_process() {
     unsafe { std::env::remove_var("MGC_LIFECYCLE_TIMEOUT_SECS") };
     assert!(err.to_string().contains("timed out"));
 }
+
+#[test]
+fn lifecycle_rejects_rival_runtime_supply_chain_spawn_f_a() {
+    // F-A (2026-09-10 supply-chain audit): a dependency package's
+    // postinstall MUST NOT be able to spawn deno (previously deno sat on
+    // ALLOWED_TOOLS → arbitrary code exec during install). bun was already
+    // blocked as a PM; deno is the newly closed hole.
+    // Postinstall của dependency KHÔNG được spawn deno (trước đây deno
+    // nằm trong ALLOWED_TOOLS → thực thi code tùy ý lúc install).
+    for script in ["deno run evil.ts", "bun run evil.ts"] {
+        let project = tempfile::tempdir().unwrap();
+        let package = tempfile::tempdir().unwrap();
+        write_package_script(package.path(), script);
+
+        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("forbidden")
+                || msg.contains("supply-chain guard")
+                || msg.contains("permanently forbidden")
+                || msg.contains("refuses package-manager wrappers"),
+            "lifecycle must refuse rival runtime spawn '{script}': {msg}"
+        );
+    }
+}

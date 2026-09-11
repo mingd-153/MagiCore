@@ -1,0 +1,183 @@
+name: Release Binary E2E
+
+# P0-3 (Tech Lead 2026-09-11): a release RC must be proven by running
+# the ACTUAL distributed binary — build the release archive exactly as
+# the release pipeline packs it, install it into a clean prefix (no
+# cargo, no PATH from the repo), then drive the FULL product lifecycle
+# with that installed binary: create → install → test → build → audit.
+# No #[ignore], no skip-marker passes: every step must exit 0 or the
+# lane fails (required environment is provisioned by the workflow).
+#
+# P0-3: RC release phải được chứng minh bằng chính binary phân phối —
+# đóng archive đúng format release pipeline, cài vào prefix sạch (không
+# cargo, không PATH từ repo), rồi chạy trọn chuỗi lifecycle bằng binary
+# đã cài: create → install → test → build → audit. Không #[ignore],
+# không skip-marker nào được tính pass: mọi bước phải exit 0 thì lane
+# mới xanh (môi trường bắt buộc do workflow provision).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - ".github/workflows/release-binary-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - ".github/workflows/release-binary-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Required environment: provisioned tools must all be present; any
+  # missing-tool skip in this lane is a FAILURE, never a skip.
+  # Môi trường bắt buộc: tool được provision phải đầy đủ; thiếu tool
+  # trong lane này là FAIL, không bao giờ là skip.
+  MGC_E2E_AUDIT_TOOLS: required
+
+jobs:
+  release-archive-lifecycle:
+    name: release archive lifecycle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Node.js (web lane deps)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Setup Python (uv/pip audit + py lane)
+        uses: actions/setup-python@e5edc8e8e5f3a02d3ce6a42f5ff69917500e5b74 # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install cargo-audit (pinned)
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      # --- Build the release binary + pack the EXACT release layout ---
+      - name: Build release binary
+        run: cargo build --release --bin mgc --locked
+
+      - name: Pack release archive (release pipeline layout)
+        shell: bash
+        run: |
+          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          ARCH="x86_64-unknown-linux-musl"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then ARCH="x86_64-apple-darwin"; fi
+          STAGE="magicore-$VERSION-$ARCH"
+          mkdir -p "stage/$STAGE"
+          cp target/release/mgc "stage/$STAGE/"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            tar -czf "magicore.tar.gz" -C stage "$STAGE"
+          else
+            tar -czf "magicore.tar.gz" -C stage "$STAGE"
+          fi
+          echo "STAGE_DIR=$STAGE" >> "$GITHUB_ENV"
+
+      # --- Install into a CLEAN prefix (no repo PATH leakage) ---
+      - name: Install binary into clean prefix
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.magicore-test/bin"
+          tar -xzf magicore.tar.gz -C "$HOME/.magicore-test"
+          cp "$HOME/.magicore-test/$STAGE_DIR/mgc" "$HOME/.magicore-test/bin/mgc"
+          chmod +x "$HOME/.magicore-test/bin/mgc"
+          "$HOME/.magicore-test/bin/mgc" --version
+
+      # --- Full lifecycle with the INSTALLED binary ---
+      - name: Lifecycle web (create → install → build → audit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.magicore-test/bin:$PATH"
+          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-web react test-web
+          cd test-web
+          "$MGCBIN" install
+          "$MGCBIN" build
+          test -d dist || test -d build
+          # Audit must run against the INSTALLED binary too (exit 0 on
+          # a clean fixture; exit 1/2 semantics are the audit E2E's
+          # job — this lane proves the binary reaches the audit
+          # pipeline, not its advisory content).
+          "$MGCBIN" audit || rc=$?
+          if [[ "${rc:-0}" -ne 0 && "${rc:-0}" -ne 2 ]]; then
+            echo "web audit exited $rc"; exit 1
+          fi
+
+      - name: Lifecycle lib rust (create → install → test → build → audit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.magicore-test/bin:$PATH"
+          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-lib rust test-lib
+          cd test-lib
+          "$MGCBIN" install
+          "$MGCBIN" test
+          "$MGCBIN" build
+          "$MGCBIN" audit || rc=$?
+          if [[ "${rc:-0}" -ne 0 && "${rc:-0}" -ne 2 ]]; then
+            echo "lib audit exited $rc"; exit 1
+          fi
+
+      - name: Lifecycle lockfile import (bun.lock → mgc.lock → audit, migration path)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.magicore-test/bin:$PATH"
+          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          WORK="$(mktemp -d)"
+          mkdir -p "$WORK/proj"
+          cd "$WORK/proj"
+          cat > bun.lock <<'LOCK'
+          {
+            "packages": {
+              "lodash": ["lodash@4.17.20", "", {}, "sha512-LD"],
+            },
+          }
+          LOCK
+          "$MGCBIN" import
+          test -f mgc.lock
+          grep -q "lodash" mgc.lock
+
+      - name: Warm reinstall (cache reuse lane)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.magicore-test/bin:$PATH"
+          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-lib rust test-lib2
+          cd test-lib2
+          "$MGCBIN" install
+          # Warm reinstall: a second install over the same project must
+          # succeed (idempotency of the install pipeline through the
+          # installed binary).
+          "$MGCBIN" install

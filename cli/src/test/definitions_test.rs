@@ -441,9 +441,11 @@ fn test_dev_command_accepts_host_and_port() {
             host,
             port,
             clear: _,
+            compat_runtime,
         } => {
             assert_eq!(host.as_deref(), Some("127.0.0.1"));
             assert_eq!(port, Some(4315));
+            assert!(compat_runtime.is_none());
         }
         _ => panic!("expected dev command"),
     }

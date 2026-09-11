@@ -24,7 +24,7 @@ fn create_node_project(dir: &TempDir) -> PathBuf {
   "name": "test-project",
   "version": "1.0.0",
   "scripts": {
-    "test": "echo 'Test passed' && exit 0"
+    "test": "echo \"Test passed\""
   }
 }"#,
     )
@@ -79,11 +79,17 @@ fn test_npm_allowed_in_test_runner_scope() {
         stderr
     );
 
-    // ASSERT: Should detect npm test
+    // ASSERT: Should detect the project test script and run it natively.
+    // Native-engine contract (2026-09-10): package.json "test" routes
+    // through the native task runner (echo is allowlisted) — the legacy
+    // npm-forwarding lane is gone, so assert the native echo output.
+    // ASSERT: nhận diện script test của project và chạy native. Hợp đồng
+    // engine native: "test" package.json đi qua task runner native (echo
+    // nằm trong allowlist) — lane forward npm cũ đã chết.
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Auto-detected test runner") || stdout.contains("npm"),
-        "Should detect npm test runner, got: {}",
+        stdout.contains("Test passed"),
+        "Should run the project test script natively, got: {}",
         stdout
     );
 }

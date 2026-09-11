@@ -19,6 +19,13 @@ pub async fn run(project_dir: Option<PathBuf>) -> Result<()> {
     for warning in &report.warnings {
         mgc_ui::warning(warning);
     }
+    // P0-5 (2026-09-11): every refused record is surfaced — a skipped
+    // entry must NEVER be silent (lossless = imported or loudly listed).
+    // P0-5: mọi record bị từ chối đều được hiển thị — entry bị skip
+    // KHÔNG BAO GIỜ im lặng (lossless = được import hoặc được liệt kê).
+    for skipped in &report.skipped {
+        mgc_ui::warning(&format!("skipped '{}': {}", skipped.key, skipped.reason));
+    }
     let lock_path = root.join("mgc.lock");
 
     let signed = match mgc_lockfile::sign_lockfile_with_default_key(&mut lockfile, &lock_path) {

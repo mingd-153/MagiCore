@@ -8,6 +8,9 @@ pub(crate) enum LibLanguage {
     Ts,
     Rust,
     Python,
+    Go,
+    Java,
+    DotNet,
 }
 
 type ManifestProbe = fn(&Path) -> Option<String>;
@@ -34,6 +37,9 @@ pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
                 "ts" | "typescript" => Some(LibLanguage::Ts),
                 "rust" => Some(LibLanguage::Rust),
                 "python" => Some(LibLanguage::Python),
+                "go" => Some(LibLanguage::Go),
+                "java" | "kotlin" => Some(LibLanguage::Java),
+                "dotnet" | "csharp" | "cs" => Some(LibLanguage::DotNet),
                 _ => None,
             };
         }
@@ -43,6 +49,27 @@ pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
     }
     if root.join("Cargo.toml").exists() {
         return Some(LibLanguage::Rust);
+    }
+    if root.join("go.mod").exists() {
+        return Some(LibLanguage::Go);
+    }
+    // Java/Kotlin: the gradle verification metadata (lockfile) is the
+    // audit source — prefer it over the plain build file.
+    // Java/Kotlin: metadata verification gradle (lockfile) là nguồn
+    // audit — ưu tiên trước build file thường.
+    if root
+        .join("gradle")
+        .join("verification-metadata.xml")
+        .is_file()
+        || root.join("build.gradle").is_file()
+        || root.join("build.gradle.kts").is_file()
+    {
+        return Some(LibLanguage::Java);
+    }
+    // .NET: packages.lock.json is the lockfile the audit reads.
+    // .NET: packages.lock.json là lockfile audit đọc.
+    if root.join("packages.lock.json").is_file() {
+        return Some(LibLanguage::DotNet);
     }
     if root.join("pyproject.toml").exists() {
         return Some(LibLanguage::Python);

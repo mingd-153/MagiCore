@@ -10,6 +10,11 @@ description = "Mobile app ecosystem adapter for MagiCore"
 [dependencies]
 mgc-audit = { workspace = true }
 futures-util = { workspace = true }
+# Web delegate for the RN aggregate's JS lane (npm bulk advisory — the
+# same pipeline as the web core; no cycle: web does not depend on app).
+# Ủy quyền web cho lane JS của aggregate RN (npm bulk advisory — cùng
+# pipeline với core web; không vòng: web không phụ thuộc app).
+mgc-web-adapter = { path = "../web" }
 # Core crates (W1-W6 support)
 mgc-types = { path = "../../core/crates/mgc-types" }
 mgc-crypto = { workspace = true }

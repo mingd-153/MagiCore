@@ -51,7 +51,14 @@ pub async fn run(
     host: Option<String>,
     port: Option<u16>,
     clear: bool,
+    compat_runtime: Option<&str>,
 ) -> anyhow::Result<()> {
+    // Native-engine gate (2026-09-10): --compat-runtime chỉ chọn lane
+    // compat tường minh; validate giá trị sớm để fail trước khi load ctx.
+    // P0-1 fix (2026-09-10 audit): CompatMode phải TRUYỀN XUống call chain —
+    // không còn parse rồi bỏ đi. Native mode = không runtime đối thủ nào
+    // được spawn; web.rs dùng mode này để gate từng DevLaunch.
+    let compat = crate::commands::compat::CompatMode::from_flag(compat_runtime)?;
     let ctx = ProjectContext::load_with_core(core)?;
     let host = host.unwrap_or_else(|| "localhost".to_string());
     let root = ctx.root().to_path_buf();
@@ -68,7 +75,7 @@ pub async fn run(
             // Port resolution qua bảng trung tâm dev_port (RULE §13 — hoán vị 4·3·1·5).
             // Port resolution goes through the centralized dev_port table.
             let port = crate::commands::core::dev_port::resolve_port("web", port);
-            crate::commands::core::dev::web::dev_at_root(&root, Some(host), port).await
+            crate::commands::core::dev::web::dev_at_root(&root, Some(host), port, &compat).await
         }
         #[cfg(feature = "game")]
         "game" => {

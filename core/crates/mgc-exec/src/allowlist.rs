@@ -141,6 +141,14 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "upm",
     "xcodebuild",
     "echo", // Test tool: prove validator runs before allowlist check
+    // Security scanners (audit framework, Tech Lead P1 2026-09-09):
+    // official ecosystem scanners — read-only advisory lookups, no
+    // package mutation, pinned versions in CI (security.yml).
+    // Scanner bảo mật (audit framework): scanner chính thức của từng
+    // ecosystem — chỉ tra advisory đọc-đọc, không đổi package, CI ghim
+    // version (security.yml).
+    "pip-audit",   // Official PyPA Python vulnerability scanner
+    "govulncheck", // Official Go vulnerability scanner (golang.org/x/vuln)
 ];
 
 /// Tools with mgc resolver coverage — PM tools forbidden in Install scope, allowed in Test/Build/Dev scopes.
@@ -160,6 +168,25 @@ pub fn check_tool_with_scope(
     scope: ExecutionScope,
     project_root: Option<&Path>,
 ) -> Result<()> {
+    check_tool_with_scope_compat(name, scope, project_root, None)
+}
+
+/// P0-1/F-A (2026-09-10): scope check + rival-runtime compat lane. The
+/// CLI compat gate (cli compat.rs) validates `--compat-runtime` and
+/// prints the loud warning BEFORE calling exec; this variant accepts the
+/// NAMED runtime as the only exemption. Everything else follows the same
+/// scope rules (PM tools still forbidden in Install, bun/deno still
+/// blocked in Install for lifecycle scripts — the compat exemption only
+/// applies to the caller-supplied project lane, never dependency
+/// lifecycle scripts which pass no compat runtime).
+/// Scope check + lane compat: cổng compat ở CLI đã validate + cảnh báo;
+/// biến thể này chấp nhận ĐÚNG runtime được nêu tên là ngoại lệ duy nhất.
+pub fn check_tool_with_scope_compat(
+    name: &str,
+    scope: ExecutionScope,
+    project_root: Option<&Path>,
+    compat_runtime: Option<&str>,
+) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
         bail!("tool name is empty");
@@ -167,7 +194,33 @@ pub fn check_tool_with_scope(
 
     let normalized = normalize_script_token(name).unwrap_or_else(|| name.to_ascii_lowercase());
 
-    // PM tools: forbidden in Install scope, allowed in others
+    // Compat lane (P0-1): runtime ĐỐI THỦ được nêu tên trong
+    // --compat-runtime đã qua cổng CLI (validate + cảnh báo) — chỉ runtime
+    // ĐÓ được phép; mọi runtime khác vẫn theo luật scope thường.
+    let compat_named = compat_runtime
+        .map(|r| r.to_ascii_lowercase())
+        .filter(|r| matches!(r.as_str(), "bun" | "deno"));
+    let is_compat_named_rival = compat_named
+        .as_deref()
+        .is_some_and(|r| r == normalized.as_str());
+
+    // Compat lane valid: đúng runtime được chọn + caller gắn project cwd.
+    // Chỉ ĐÚNG runtime được nêu tên qua cổng mới đi tiếp — dependency
+    // lifecycle scripts không bao giờ mang compat runtime nên fail-closed.
+    // (Valid compat lane: the named runtime via the CLI gate + a
+    // project-bound caller; lifecycle scripts never carry one.)
+    if is_compat_named_rival {
+        if project_root.is_none() {
+            bail!(
+                "rival runtime '{name}' in compat mode requires a project root (cwd) — refusing context-free spawn"
+            );
+        }
+        return Ok(());
+    }
+
+    // PM tools: forbidden in Install scope, allowed in others. The compat
+    // lane NEVER exempts PM usage of bun — `bun install` stays forbidden;
+    // only the CLI gate may grant `bun run <script>` as a RUNTIME.
     let is_pm_tool = FORBIDDEN_TOOLS.contains(&normalized.as_str());
     if is_pm_tool {
         if scope.allows_pm_tools() {
@@ -201,6 +254,17 @@ pub fn check_tool_with_scope(
     if !ALLOWED_TOOLS.contains(&normalized.as_str()) {
         bail!(
             "tool '{name}' is not on the allowlist (00-index §5.1) — add it there only after review"
+        );
+    }
+
+    // F-A fix (2026-09-10 supply-chain audit): rival JS runtimes (bun/deno)
+    // must NEVER execute in Install scope — lifecycle scripts of untrusted
+    // dependencies ("postinstall": "deno run evil.ts") are a supply-chain
+    // spawn vector. Rival runtimes only run behind the explicit compat
+    // gate (handled above), never during install.
+    if scope == ExecutionScope::Install && matches!(normalized.as_str(), "bun" | "deno") {
+        bail!(
+            "rival JS runtime '{name}' is forbidden in Install scope (dependency lifecycle scripts are untrusted — supply-chain guard). Rival runtimes only run in compatibility mode (`--compat-runtime`) in dev/test/build lanes, or migrate with `mgc import`"
         );
     }
 

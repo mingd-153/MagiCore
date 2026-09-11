@@ -2,7 +2,7 @@
 //! Gom phần gọi tool native và đọc version để adapter chính không phình to.
 
 use crate::language::LibLanguage;
-use crate::manifest::{parse_cargo_manifest, parse_pyproject_manifest};
+use crate::manifest::{parse_cargo_manifest, parse_go_mod_manifest, parse_pyproject_manifest};
 use mgc_types::{MgResult, PackageId, PackageName, Version, VersionRange};
 use std::path::{Path, PathBuf};
 
@@ -133,6 +133,37 @@ pub(crate) fn placeholder_id(name: &PackageName, range: Option<&VersionRange>) -
     PackageId::new(name.clone(), version)
 }
 
+/// Resolve the FULL Go module path for a display name by scanning go.mod
+/// — display names are the last path segment, but `go get` needs the
+/// whole path ("text" → "golang.org/x/text"). Falls back to the bare
+/// name when go.mod does not mention it (the go toolchain will error
+/// honestly on an unknown path).
+/// Tra path module Go ĐẦY ĐỦ cho một tên hiển thị bằng cách quét
+/// go.mod — tên hiển thị là đoạn cuối path, nhưng `go get` cần cả path
+/// ("text" → "golang.org/x/text"). Rơi về tên trần khi go.mod không nhắc
+/// (go toolchain sẽ lỗi trung thực với path lạ).
+pub(crate) fn go_module_path(project_root: &Path, name: &PackageName) -> String {
+    let Ok(content) = std::fs::read_to_string(project_root.join("go.mod")) else {
+        return name.as_str().to_string();
+    };
+    for line in content.lines() {
+        let no_comment = line.split("//").next().unwrap_or("").trim();
+        let candidate = no_comment
+            .strip_prefix("require ")
+            .map(|rest| rest.trim())
+            .unwrap_or_else(|| no_comment)
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .trim();
+        if let Some((path, _version)) = candidate.split_once(' ')
+            && path.rsplit('/').next() == Some(name.as_str())
+        {
+            return path.to_string();
+        }
+    }
+    name.as_str().to_string()
+}
+
 pub(crate) fn version_from_manifest(
     root: &Path,
     name: &PackageName,
@@ -141,6 +172,16 @@ pub(crate) fn version_from_manifest(
     let manifest = match language {
         LibLanguage::Rust => parse_cargo_manifest(root).ok()?,
         LibLanguage::Python => parse_pyproject_manifest(root).ok()?,
+        // Go manifest versions come from go.mod directly (same parser as
+        // the audit path — one source of truth).
+        // Version manifest Go đọc thẳng từ go.mod (cùng parser với đường
+        // audit — một nguồn chân lý).
+        LibLanguage::Go => parse_go_mod_manifest(root).ok()?,
+        // Java/.NET lifecycle add/remove is not wired (P2 audit parity
+        // scope) — no manifest version to resolve yet.
+        // Add/remove lifecycle Java/.NET chưa nối (scope parity audit
+        // P2) — chưa có version manifest để resolve.
+        LibLanguage::Java | LibLanguage::DotNet => return None,
         LibLanguage::Ts => return None,
     };
     manifest

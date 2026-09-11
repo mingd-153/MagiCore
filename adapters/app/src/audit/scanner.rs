@@ -177,10 +177,14 @@ pub async fn dependency_health_flutter(project_root: &Path) -> MgResult<Dependen
 /// tra độ tươi, không phải scanner CVE; chưa có scanner CVE Flutter nào
 /// được hiện thực. Ép package cũ vào đây sẽ gán nhầm lệch version thành
 /// finding bảo mật.
-pub async fn audit_flutter(_project_root: &Path) -> MgResult<AuditReport> {
-    Ok(AuditReport::unsupported_ecosystem(
-        "flutter/dart (no CVE scanner implemented; pub outdated is freshness only)",
-    ))
+pub async fn audit_flutter(project_root: &Path) -> MgResult<AuditReport> {
+    // P2 2026-09-10: pubspec.lock pins → OSV.dev `pub` ecosystem — a
+    // REAL CVE scan; without the lockfile the honest unsupported state
+    // stays (pub outdated is freshness, not security).
+    // pubspec.lock ghim → OSV.dev ecosystem `pub` — scan CVE THẬT; thiếu
+    // lockfile giữ trạng thái unsupported trung thực (pub outdated chỉ
+    // là độ tươi, không phải bảo mật).
+    mgc_audit::scanners::audit_flutter_osv(project_root).await
 }
 
 pub async fn audit_kotlin(project_root: &Path) -> MgResult<AuditReport> {
@@ -411,18 +415,18 @@ fn truncate_utf8(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
-pub async fn audit_swift(_project_root: &Path) -> MgResult<AuditReport> {
-    // Swift Package Manager doesn't have built-in audit yet
-    Ok(AuditReport::unsupported_ecosystem(
-        "swift/swiftpm (no CVE scanner implemented)",
-    ))
+pub async fn audit_swift(project_root: &Path) -> MgResult<AuditReport> {
+    // P2 2026-09-10: Package.resolved pins → OSV.dev `swift` ecosystem
+    // — a REAL CVE scan via the shared OSV client.
+    // Package.resolved ghim → OSV.dev ecosystem `swift` — scan CVE THẬT
+    // qua OSV client dùng chung.
+    mgc_audit::scanners::audit_swift_spam(project_root).await
 }
 
-pub async fn audit_cocoapods(_project_root: &Path) -> MgResult<AuditReport> {
-    // CocoaPods doesn't have built-in audit
-    Ok(AuditReport::unsupported_ecosystem(
-        "objc/cocoapods (no CVE scanner implemented)",
-    ))
+pub async fn audit_cocoapods(project_root: &Path) -> MgResult<AuditReport> {
+    // P2 2026-09-10: Podfile.lock pins → OSV.dev `pods` ecosystem.
+    // Podfile.lock ghim → OSV.dev ecosystem `pods`.
+    mgc_audit::scanners::audit_cocoapods_osv(project_root).await
 }
 
 pub async fn audit_multi(project_root: &Path) -> MgResult<AuditReport> {
@@ -438,7 +442,33 @@ pub async fn audit_multi(project_root: &Path) -> MgResult<AuditReport> {
         plan.add_step(mgc_audit::ScanStep {
             ecosystem: "flutter",
             scanner: "pub-osv",
-            run: Box::new(move || run_scanner_now(audit_flutter(&root))),
+            run: Box::new(move || {
+                let root = root.clone();
+                Box::pin(async move { audit_flutter(&root).await })
+            }),
+        });
+    }
+
+    // JS lane (P2 React Native aggregate 2026-09-10): mgc.lock /
+    // bun.lock / deno.lock pins ride the npm Bulk Advisory flow — the
+    // SAME pipeline as the web core. Without a JS lockfile the step is
+    // absent (an un-manifested lane never fakes a clean step).
+    // Lane JS (aggregate React Native): ghim mgc.lock / bun.lock /
+    // deno.lock đi qua npm Bulk Advisory — CÙNG pipeline với core web.
+    // Thiếu lockfile JS thì bỏ hẳn step (lane không manifest không bịa
+    // step sạch).
+    let js_locks_exist = project_root.join("mgc.lock").is_file()
+        || project_root.join("bun.lock").is_file()
+        || project_root.join("deno.lock").is_file();
+    if js_locks_exist {
+        let root = project_root.to_path_buf();
+        plan.add_step(mgc_audit::ScanStep {
+            ecosystem: "web/javascript",
+            scanner: "npm-bulk-advisory",
+            run: Box::new(move || {
+                let root = root.clone();
+                Box::pin(async move { audit_app_js_deps(&root).await })
+            }),
         });
     }
 
@@ -449,7 +479,37 @@ pub async fn audit_multi(project_root: &Path) -> MgResult<AuditReport> {
         plan.add_step(mgc_audit::ScanStep {
             ecosystem: "kotlin",
             scanner: "owasp-dependency-check",
-            run: Box::new(move || run_scanner_now(audit_kotlin(&root))),
+            run: Box::new(move || {
+                let root = root.clone();
+                Box::pin(async move { audit_kotlin(&root).await })
+            }),
+        });
+    }
+
+    // iOS lanes (P2 2026-09-10): SPM + CocoaPods — a React Native app
+    // with Pods merges iOS findings into the same aggregate.
+    // Lane iOS: SPM + CocoaPods — app React Native có Pods gộp finding
+    // iOS vào cùng aggregate.
+    if find_swift_resolved(project_root).is_some() {
+        let root = project_root.to_path_buf();
+        plan.add_step(mgc_audit::ScanStep {
+            ecosystem: "swift",
+            scanner: "osv-dev-api",
+            run: Box::new(move || {
+                let root = root.clone();
+                Box::pin(async move { audit_swift(&root).await })
+            }),
+        });
+    }
+    if project_root.join("Podfile.lock").is_file() {
+        let root = project_root.to_path_buf();
+        plan.add_step(mgc_audit::ScanStep {
+            ecosystem: "objc/cocoapods",
+            scanner: "osv-dev-api",
+            run: Box::new(move || {
+                let root = root.clone();
+                Box::pin(async move { audit_cocoapods(&root).await })
+            }),
         });
     }
 
@@ -462,28 +522,34 @@ pub async fn audit_multi(project_root: &Path) -> MgResult<AuditReport> {
     plan.execute().await
 }
 
-/// Drive one adapter scanner future to completion immediately. The
-/// current scanners perform their subprocess work during the first
-/// poll (mgc-exec blocks internally), so a now-or-never poll completes
-/// them; a future scanner that genuinely awaits will surface the clear
-/// "requires async execution" error instead of hanging silently.
-/// Chạy trọn một future scanner của adapter ngay lập tức. Scanner hiện
-/// tại làm phần subprocess trong poll đầu (mgc-exec block bên trong),
-/// nên poll now-or-never là đủ; scanner nào thực sự await sau này sẽ
-/// trả lỗi "requires async execution" rõ ràng thay vì treo âm thầm.
-fn run_scanner_now<F>(fut: F) -> MgResult<AuditReport>
-where
-    F: std::future::Future<Output = MgResult<AuditReport>>,
-{
-    use futures_util::future::FutureExt;
-    match Box::pin(fut).now_or_never() {
-        Some(result) => result,
-        None => Err(MgError::Other(
-            "multi scanner requires async execution — run via the async adapter path".to_string(),
-        )),
-    }
+fn find_swift_resolved(project_root: &Path) -> Option<std::path::PathBuf> {
+    let candidates = [
+        "Package.resolved".to_string(),
+        "ios/Package.resolved".to_string(),
+    ];
+    candidates
+        .iter()
+        .map(|c| project_root.join(c))
+        .find(|p| p.is_file())
 }
 
+/// JS dependencies of an RN/multi app via the npm Bulk Advisory flow
+/// (shared readers + the registry endpoint default). Runs the same
+/// network path as the web core audit.
+/// Dependency JS của app RN/multi qua npm Bulk Advisory (bộ đọc dùng
+/// chung + endpoint registry mặc định) — cùng đường mạng với audit core
+/// web.
+async fn audit_app_js_deps(project_root: &Path) -> MgResult<AuditReport> {
+    mgc_web_adapter::audit::run_audit(project_root, mgc_web_adapter::DEFAULT_NPM_REGISTRY).await
+}
+
+// SILENT-SKIP FIX (REVIEW 2026-09-10): this test module existed as an
+// ORPHAN file (src/audit/test/scanner_test.rs was never declared) — the
+// parser regression tests NEVER ran. Wiring it in makes the whole
+// Kotlin OWASP + flutter-health lane enforceable in CI.
+// FIX SKIP ÂM THẦM: module test này từng là file MỒ CÔI (chưa từng được
+// khai báo) — regression test của parser chưa bao giờ chạy. Nối vào để
+// lane Kotlin OWASP + flutter-health thực thi được trong CI.
 #[cfg(test)]
 #[path = "test/scanner_test.rs"]
-mod tests;
+mod scanner_test;

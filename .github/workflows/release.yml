@@ -625,9 +625,122 @@ jobs:
           echo "✅ 6/6 SBOMs validated"
           echo "Safe to publish."
 
+  audit-capability-gate:
+    # Release gate (Tech Lead 2026-09-10): a release RC may only be
+    # published when the audit capability matrix — regenerated at THIS
+    # commit — has every SUPPORTED lane green with the required evidence
+    # (clean + vulnerable + tool-failure). The matrix is generated, never
+    # hand-written; this job is the machine enforcement of the honesty
+    # contract (README never claims beyond the matrix).
+    # Release gate: RC chỉ được duyệt khi matrix năng lực audit — sinh
+    # lại TẠI commit này — có mọi lane SUPPORTED xanh với đủ evidence
+    # (clean + vulnerable + tool-failure). Matrix sinh tự động, không
+    # viết tay; job này là sự thực thi máy móc của hợp đồng trung thực.
+    name: Audit Capability Gate (matrix honest)
+    needs: [resolve-version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MGC_E2E_AUDIT_TOOLS: required
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install scanner toolchain (pinned — required lanes)
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          python3 -m pip install --user 'pip-audit==2.9.0'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          curl -fsSL "https://go.dev/dl/go1.26.0.linux-amd64.tar.gz" -o /tmp/go.tgz
+          sudo tar -C /usr/local -xzf /tmp/go.tgz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Regenerate capability matrix at this commit
+        run: |
+          cargo build -p mgc --locked
+          python3 scripts/audit_capability_matrix.py
+
+      - name: "Enforce release gate (expected manifest: every lane supported, fresh)"
+        # P0-1 (2026-09-11): the REQUIRED scope comes from the matrix's
+        # expected_lanes manifest (a code constant, independent from test
+        # results — tests never shrink the scope). Gate order:
+        #   1. format contract: expected_lanes manifest must exist
+        #   2. stale check: matrix commit must equal GITHUB_SHA
+        #   3. every expected lane must EXIST and be "supported"
+        #   4. missing_lanes must be empty
+        # A lane absent from the matrix can no longer dodge the gate.
+        # P0-1: scope bắt buộc đến từ manifest expected_lanes (hằng số
+        # code, độc lập kết quả test). Lane thiếu khỏi matrix không còn
+        # lọt được gate; matrix cũ/stale bị chặn.
+        shell: python3
+        run: |
+          import json, os, sys
+
+          data = json.load(open("docs/specs/auditCapabilityMatrix.json"))
+          failures = []
+          required_kinds = {"clean_fixture", "vulnerable_fixture", "tool_failure"}
+
+          # 1. Format contract: a matrix without the expected manifest
+          #    (old schema / hand-made) cannot be evaluated — reject.
+          #    Hợp đồng format: matrix thiếu manifest kỳ vọng → chặn.
+          expected = data.get("expected_lanes")
+          if not expected:
+              failures.append("matrix has no expected_lanes manifest — regenerate via scripts/audit_capability_matrix.py")
+
+          # 2. Stale check: the matrix must be evidence at THIS commit.
+          #    Kiểm tra stale: matrix phải là bằng chứng tại commit này.
+          sha = os.environ.get("GITHUB_SHA", "")
+          if sha and data.get("commit") != sha:
+              failures.append(f"matrix stale: commit {data.get('commit')} != GITHUB_SHA {sha}")
+
+          # 3. Every expected lane must exist AND be supported with the
+          #    full evidence set — partial/experimental/missing all block.
+          #    Mọi lane kỳ vọng phải tồn tại VÀ supported đủ evidence —
+          #    partial/experimental/thiếu đều bị chặn.
+          by_lane = {(l["core"], l["language"], l["scanner"]): l for l in data.get("capability", [])}
+          if expected:
+              for lane in expected:
+                  core, lang, scanner = lane["core"], lane["language"], lane["scanner"]
+                  key = (core, lang, scanner)
+                  if key not in by_lane:
+                      failures.append(f"{core}/{lang} ({scanner}) = MISSING — required lane absent from matrix")
+                      continue
+                  l = by_lane[key]
+                  if l["status"] != "supported":
+                      failures.append(f"{core}/{lang} ({scanner}) = {l['status']} — release lanes must be supported with full evidence")
+                  elif not required_kinds <= set(l.get("evidence_kinds", [])):
+                      failures.append(f"{core}/{lang} ({scanner}) = supported without full evidence kinds")
+
+          # 4. Explicit missing-lane records (redundant with #3, but the
+          #    script names them — surface every reason).
+          #    Bản ghi lane thiếu được script nêu đích danh — hiển thị đủ.
+          for m in data.get("missing_lanes", []):
+              failures.append(f"{m['core']}/{m['language']} ({m['scanner']}) = MISSING lane: {m.get('reason', '')}")
+
+          if failures:
+              print("RELEASE GATE BLOCKED — audit capability not green:")
+              print("\n".join(failures))
+              sys.exit(1)
+          print(f"OK: {len(data.get('capability', []))} lanes — every expected release lane supported with full evidence at {sha[:12]}")
+
+      - name: Upload gate matrix (audit trail)
+        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b038357803cdc9eb # v4.6.2
+        with:
+          name: release-audit-capability-matrix
+          path: docs/specs/auditCapabilityMatrix.json
+
   publish-github-release:
     name: Create GitHub Release
-    needs: [resolve-version, pre-publish-verification]
+    needs: [resolve-version, pre-publish-verification, audit-capability-gate]
     if: ${{ needs.resolve-version.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     permissions:

@@ -370,13 +370,14 @@ pub async fn dev_at_root(
     project_root: &Path,
     host: Option<String>,
     port: Option<u16>,
+    compat: &crate::commands::compat::CompatMode,
 ) -> Result<()> {
     let targets = dev_targets(project_root, host, port)?;
     if targets.len() == 1 {
-        return run_single_dev_target(&targets[0]).await;
+        return run_single_dev_target(&targets[0], compat).await;
     }
 
-    run_multi_dev_targets(&targets).await
+    run_multi_dev_targets(&targets, compat).await
 }
 
 #[derive(Debug)]
@@ -970,6 +971,7 @@ fn build_dev_launch(
     script_name: &str,
     host: Option<String>,
     port: Option<u16>,
+    compat: &crate::commands::compat::CompatMode,
 ) -> Result<DevLaunch> {
     let script = match read_script(project_root, script_name)? {
         Some(script) => script,
@@ -981,6 +983,14 @@ fn build_dev_launch(
     let tokens: Vec<&str> = script.split_whitespace().collect();
     if tokens.is_empty() {
         return Err(crate::error::web_empty_dev_script(project_root));
+    }
+
+    // NATIVE-ENGINE GATE (P0-1 fix 2026-09-10): nếu PROGRAM của script là
+    // runtime đối thủ (bun/deno) thì phải qua cổng compat TRƯỚC khi dựng
+    // DevLaunch — native mode fail trước process spawn, compat mode chỉ mở
+    // đúng runtime đã chọn + cảnh báo lớn.
+    if let Some(program) = tokens.first() {
+        crate::commands::compat::gate_runtime_spawn(compat, program)?;
     }
 
     // Detect runtime from script to load correct optimizer config
@@ -1212,18 +1222,22 @@ fn build_dev_launch(
 }
 
 fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
-    // Allow bun/deno when used as runtime (not package manager)
-    // Cho phép bun/deno khi dùng như runtime (không phải package manager)
-    let script_lower = script.to_lowercase();
-    if script_lower.starts_with("bun run ")
-        || script_lower.starts_with("deno run ")
-        || script_lower.starts_with("deno task ")
-    {
-        return Ok(()); // Runtime usage allowed in DevServer scope
-    }
-
+    // P0-1 fix (2026-09-10 audit): carve-out "bun run/deno run/deno task"
+    // vô điều kiện đã BỎ — runtime đối thủ giờ qua gate_runtime_spawn với
+    // CompatMode thật (native từ chối, compat tường minh mới mở). Ở đây
+    // chỉ chặn PM ngoài (npm/npx/pnpm/yarn/bunx) như trước.
+    // Chặn PM ngoài trong script (install là việc của resolver mgc).
     if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
-        return Err(crate::error::web_forbidden_pm(script, manifest_path, pm));
+        // "bun run x" ở đây là runtime usage — gate_runtime_spawn đã xử lý
+        // bun ở trên; chỉ từ chối nếu token bun là PM thật (bun install).
+        let tokens: Vec<&str> = script.split_whitespace().collect();
+        let is_runtime_usage = matches!(
+            tokens.as_slice(),
+            ["bun", "run", ..] | ["deno", "run", ..] | ["deno", "task", ..]
+        );
+        if !is_runtime_usage {
+            return Err(crate::error::web_forbidden_pm(script, manifest_path, pm));
+        }
     }
     Ok(())
 }
@@ -1523,12 +1537,16 @@ fn native_install_env(project_root: &Path, program: &str) -> Result<Vec<(String,
     Ok(env)
 }
 
-async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
+async fn run_single_dev_target(
+    target: &DevTarget,
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<()> {
     let launch = build_dev_launch(
         &target.dir,
         target.script_name,
         target.host.clone(),
         target.port,
+        compat,
     )?;
 
     if launch.program.to_string_lossy().ends_with("vite") {
@@ -1564,10 +1582,13 @@ async fn run_single_dev_target(target: &DevTarget) -> Result<()> {
         target.dir.display()
     ));
     info(&format!("  {}", launch.describe()));
-    run_dev_launch_with_guard(target, &launch)
+    run_dev_launch_with_guard(target, &launch, compat)
 }
 
-async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
+async fn run_multi_dev_targets(
+    targets: &[DevTarget],
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<()> {
     let mut children = Vec::new();
 
     for target in targets {
@@ -1576,6 +1597,7 @@ async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
             target.script_name,
             target.host.clone(),
             target.port,
+            compat,
         )?;
         if launch.program.to_string_lossy().ends_with("vite") {
             info(&format!(
@@ -1619,7 +1641,8 @@ async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
         info(&format!("  {}", launch.describe()));
         children.push(tokio::spawn({
             let target = target.clone();
-            async move { run_dev_launch_with_guard(&target, &launch) }
+            let compat = compat.clone();
+            async move { run_dev_launch_with_guard(&target, &launch, &compat) }
         }));
     }
 
@@ -1629,7 +1652,11 @@ async fn run_multi_dev_targets(targets: &[DevTarget]) -> Result<()> {
     Ok(())
 }
 
-fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<()> {
+fn run_dev_launch_with_guard(
+    target: &DevTarget,
+    launch: &DevLaunch,
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<()> {
     let local_bin = target.dir.join("node_modules").join(".bin");
     let mut env = vec![(
         "PATH".to_string(),
@@ -1659,6 +1686,12 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
         std::fs::create_dir_all(parent)?;
     }
 
+    // P0-1: compat lane truyền runtime đã chọn xuống mgc-exec để
+    // exemption áp ĐÚNG runtime đã qua cổng (bun/deno compat spawn).
+    let compat_runtime = match compat {
+        crate::commands::compat::CompatMode::Native => None,
+        crate::commands::compat::CompatMode::Explicit(runtime) => Some(runtime.clone()),
+    };
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(target.dir.clone()),
         env,
@@ -1666,6 +1699,7 @@ fn run_dev_launch_with_guard(target: &DevTarget, launch: &DevLaunch) -> Result<(
         disable_timeout: true,
         execution_scope: Some(mgc_exec::prelude::ExecutionScope::DevServer),
         log_path: Some(audit_log),
+        compat_runtime,
         ..Default::default()
     };
 

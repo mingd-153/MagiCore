@@ -4,10 +4,10 @@
 //! Audit core CI/CD — dispatch sang scanner thật của adapter qua pipeline
 //! chung; CLI không chứa business logic (Tech Lead §11).
 
-use super::{StrictMode, finish_and_print, run_adapter_audit};
+use super::{OutputFormat, StrictMode, finish_and_print, run_adapter_audit};
 use crate::context::ProjectContext;
 
-pub async fn audit(ctx: &ProjectContext) -> anyhow::Result<()> {
+pub(crate) async fn audit(ctx: &ProjectContext, fmt: OutputFormat) -> anyhow::Result<()> {
     let report = run_adapter_audit(ctx).await?;
-    finish_and_print("cicd", &report, StrictMode::from_env()).await
+    finish_and_print("cicd", &report, StrictMode::from_env(), fmt).await
 }

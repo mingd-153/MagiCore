@@ -1,5 +1,5 @@
 use crate::context::ProjectContext;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use mgc_cache::PackageCache;
 use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, PreparedAdd};
@@ -408,6 +408,10 @@ fn load_locked_graph(
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     let Some(lock) = read_checked_lockfile(project_root)? else {
+        // P0-3 (2026-09-10 audit): rival lockfile mà thiếu mgc.lock →
+        // FAIL-CLOSED kèm remediation `mgc import`, không còn warning
+        // rồi resolve fresh âm thầm (nền tảng độc lập: mgc.lock là nguồn
+        // chân lý duy nhất sau migration).
         let legacy = mgc_lockfile::import::detect_legacy_lockfiles(project_root);
         if !legacy.is_empty() {
             let names = legacy
@@ -415,9 +419,14 @@ fn load_locked_graph(
                 .map(|lock| lock.file_name)
                 .collect::<Vec<_>>()
                 .join(", ");
-            mgc_ui::warning(&format!(
-                "Ignoring legacy lockfile(s): {names}. Run an explicit MagiCore lock migration before install if you want to seed mgc.lock from them."
-            ));
+            bail!(
+                "Error: rival lockfile(s) detected [{names}] but mgc.lock is missing.\nRun `mgc import {}` to migrate this project before install.",
+                if names.contains("deno.lock") {
+                    "deno"
+                } else {
+                    "bun"
+                }
+            );
         }
         return Ok(None);
     };

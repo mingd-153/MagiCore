@@ -218,8 +218,11 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         .and_then(|f| f.as_bool())
                         .unwrap_or(false);
 
-                    // Call REAL audit command
-                    match crate::commands::audit::run(None, fix).await {
+                    // Call REAL audit command (table output — MCP callers
+                    // read the rendered text).
+                    // Gọi lệnh audit THẬT (output table — caller MCP đọc
+                    // text đã render).
+                    match crate::commands::audit::run(None, fix, None).await {
                         Ok(()) => json!({
                             "content": [{
                                 "type": "text",

@@ -33,7 +33,13 @@ fn audit_strict_rejects_materializing_install_commands() {
 
 #[test]
 fn audit_strict_allows_audit_and_manifest_only_mutation() {
-    assert!(reject_unsupported_audit_strict(&Commands::Audit { fix: false }).is_ok());
+    assert!(
+        reject_unsupported_audit_strict(&Commands::Audit {
+            fix: false,
+            format: None
+        })
+        .is_ok()
+    );
 
     let add = Commands::AddWeb {
         packages: vec!["zod".into()],
@@ -66,13 +72,20 @@ fn recursive_is_rejected_for_unsupported_commands() {
 #[test]
 fn recursive_supported_includes_build_run_audit_outdated_dev() {
     // T4: xác nhận các lệnh mới được mở rộng recursive support
-    assert!(recursive_supported(&Commands::Build { target: None }));
-    assert!(recursive_supported(&Commands::Audit { fix: false }));
+    assert!(recursive_supported(&Commands::Build {
+        target: None,
+        compat_runtime: None,
+    }));
+    assert!(recursive_supported(&Commands::Audit {
+        fix: false,
+        format: None
+    }));
     assert!(recursive_supported(&Commands::Outdated { json: false }));
     assert!(recursive_supported(&Commands::Dev {
         host: None,
         port: None,
         clear: false,
+        compat_runtime: None,
     }));
 }
 

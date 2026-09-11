@@ -199,12 +199,21 @@ impl PackageAdapter for IotAdapter {
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
+        // Shared-engine polyglot dispatch (P2): Rust/Python/Go manifests
+        // in IoT projects get real scans; pure-embedded manifests stay
+        // honestly unsupported.
+        // Dispatch polyglot qua engine chung: manifest Rust/Python/Go
+        // trong project IoT được quét thật; manifest thuần embedded giữ
+        // trung thực unsupported.
         let manifest = self.parse_manifest(project_root).await?;
-        // P0.6 FIX: Return unavailable instead of fake clean
-        Ok(AuditReport::unsupported_ecosystem(format!(
-            "iot ({} dependencies not scanned — no scanner implemented yet)",
-            manifest.all_dependencies().count()
-        )))
+        mgc_audit::audit_polyglot(
+            project_root,
+            format!(
+                "iot ({} dependencies not scanned — no scanner implemented yet)",
+                manifest.all_dependencies().count()
+            ),
+        )
+        .await
     }
 }
 

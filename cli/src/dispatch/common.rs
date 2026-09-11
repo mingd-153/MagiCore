@@ -27,10 +27,16 @@ pub async fn dispatch_common(
             version,
             dir,
         } => commands::sbom::run(format, output, name, version, dir).await,
-        CommonCommand::Dev { host, port, clear } => {
-            commands::dev::run(core, host, port, clear).await
-        }
-        CommonCommand::Build { target } => commands::build::run(core, target).await,
+        CommonCommand::Dev {
+            host,
+            port,
+            clear,
+            compat_runtime,
+        } => commands::dev::run(core, host, port, clear, compat_runtime.as_deref()).await,
+        CommonCommand::Build {
+            target,
+            compat_runtime,
+        } => commands::build::run(core, target, compat_runtime.as_deref()).await,
         #[cfg(feature = "iot")]
         CommonCommand::Flash { board, skip_build } => {
             commands::core::dev::iot::flash(board.as_deref(), skip_build).await
@@ -68,10 +74,19 @@ pub async fn dispatch_common(
             page,
         } => commands::search::run(query, json, exact, page).await,
         CommonCommand::Outdated { json } => commands::outdated::run(core, json).await,
-        CommonCommand::Audit { fix } => commands::audit::run(core, fix).await,
+        CommonCommand::Audit { fix, format } => {
+            commands::audit::run(core, fix, format.as_deref()).await
+        }
         CommonCommand::SelfUpdate => commands::self_update::run().await,
-        CommonCommand::Run { script, args } => commands::run::run(script, args, core).await,
-        CommonCommand::Test { args } => commands::test::test(args, core).await,
+        CommonCommand::Run {
+            script,
+            args,
+            compat_runtime,
+        } => commands::run::run(script, args, core, compat_runtime.as_deref()).await,
+        CommonCommand::Test {
+            args,
+            compat_runtime,
+        } => commands::test::test(args, core, compat_runtime.as_deref()).await,
         CommonCommand::Optimizer { force } => commands::optimizer::run(core, force).await,
         CommonCommand::Dlx { package, args } => commands::dlx::run(package, args).await,
         CommonCommand::Cache {

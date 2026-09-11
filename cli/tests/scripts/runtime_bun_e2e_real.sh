@@ -1,111 +1,91 @@
 #!/usr/bin/env bash
-# Bun Runtime E2E Test — REAL implementation with mgc dev
-# Tests: optimizer → mgc dev → env loaded → process verification
+# Bun COMPATIBILITY + lockfile-import E2E (P0-1 rewrite 2026-09-10)
+# Tests the migration contract only:
+#   1. optimizer env generation for a Bun project is COMPAT-GATED
+#   2. `mgc dev` with a bun script is REFUSED on the native lane
+#      (`--compat-runtime bun` is the only explicit gate)
+#   3. bun.lock migrates to mgc.lock via `mgc import`
+# Bun binary is a migration/fixture tool — NEVER the default engine.
 
 set -euo pipefail
 
-echo "=== Bun Runtime E2E Test (REAL) ==="
+echo "=== Bun Compatibility + Migration E2E ==="
 
-# Check if bun is available
-if ! command -v bun &>/dev/null; then
-    echo "⚠️  SKIP: bun not installed"
-    exit 77
-fi
-
-# Find mgc binary
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 if [ -f "$PROJECT_ROOT/target/release/mgc" ]; then
     MGC_BIN="$PROJECT_ROOT/target/release/mgc"
 elif [ -f "$PROJECT_ROOT/target/debug/mgc" ]; then
     MGC_BIN="$PROJECT_ROOT/target/debug/mgc"
+elif [ -f "$PROJECT_ROOT/target/debug/deps/mgc" ]; then
+    MGC_BIN="$PROJECT_ROOT/target/debug/deps/mgc"
 else
-    echo "⚠️  SKIP: mgc binary not found in target/"
+    echo "⚠️  SKIP: mgc binary not found"
     exit 77
 fi
 
 echo "Using mgc: $MGC_BIN"
 
-# Create temp project
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
-
 cd "$TEMP_DIR"
 
-# Create minimal Bun web project
+# --- Bun project fixture (bun.lock, no mgc.lock) ---
 cat >package.json <<EOF
 {
-  "name": "test-bun",
+  "name": "test-bun-migration",
   "version": "1.0.0",
   "scripts": {
     "dev": "bun run index.ts"
+  },
+  "dependencies": {}
+}
+EOF
+
+cat >bun.lock <<'EOF'
+{
+  "lockfileVersion": 1,
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-ok"],
   }
 }
 EOF
 
-cat >index.ts <<EOF
-console.log("Bun dev test");
-console.log("ENV CHECK:", {
-  BUN_RUNTIME_TRANSPILER_CACHE_PATH: process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH || "not set",
-  BUN_JSC_maxHeapSize: process.env.BUN_JSC_maxHeapSize || "not set"
-});
-// Exit after logging
-process.exit(0);
-EOF
-
-# Create bunfig.toml to trigger Bun detection
 touch bunfig.toml
-
-# Mark as web core
 echo "web" > .mgc.core
 
-# Run mgc optimizer
-echo "Running mgc optimizer..."
-if ! "$MGC_BIN" optimizer >/dev/null 2>&1; then
-    echo "✗ FAIL: mgc optimizer failed"
+# --- 1. mgc import: bun.lock → mgc.lock (migration works) ---
+echo "Running mgc import..."
+if ! "$MGC_BIN" import 2>&1; then
+    echo "✗ FAIL: mgc import failed on bun.lock"
     exit 1
 fi
-
-# Verify env file created
-if [ ! -f ".mgc-optimizer/bun_env.env" ]; then
-    echo "✗ FAIL: bun_env.env not created"
+if [ ! -f "mgc.lock" ]; then
+    echo "✗ FAIL: mgc.lock not created by import"
     exit 1
 fi
+echo "✓ PASS: bun.lock → mgc.lock migration"
 
-echo "✓ PASS: bun_env.env created"
+# --- 2. Native lane: mgc dev with bun script must REFUSE ---
+DEV_EXIT=0
+"$MGC_BIN" dev >/dev/null 2>&1 || DEV_EXIT=$?
+if [ "$DEV_EXIT" -eq 0 ]; then
+    echo "✗ FAIL: native 'mgc dev' accepted a bun script (must refuse — use --compat-runtime)"
+    exit 1
+fi
+echo "✓ PASS: native 'mgc dev' refuses bun script (gate_runtime_spawn)"
 
-# TEST: Run mgc dev (should load env and execute)
-echo "Running mgc dev with Bun..."
-# Note: mgc dev will run bun, but we need to capture output to verify env loading
-# For now, test that mgc dev accepts the bun script (doesn't reject it)
-
-# Create a test that verifies script parsing
-if "$MGC_BIN" --help | grep -q "dev"; then
-    echo "✓ PASS: mgc dev command exists"
+# --- 3. Explicit compat lane opens ONLY bun (loud warning) ---
+COMPAT_OUT=$("$MGC_BIN" dev --compat-runtime bun 2>&1 || true)
+if echo "$COMPAT_OUT" | grep -q "COMPATIBILITY MODE"; then
+    echo "✓ PASS: --compat-runtime bun prints the loud warning"
 else
-    echo "✗ FAIL: mgc dev command not available"
+    echo "✗ FAIL: compat lane must warn loudly, got: $COMPAT_OUT"
     exit 1
 fi
 
-# Verification: Check that bun run is allowed (not rejected as PM)
-# This is indirect - we check build_dev_launch accepts bun run
-# Full E2E would require running dev server and checking process env
-
-echo "✓ PASS: Bun runtime E2E basic flow complete"
 echo ""
-echo "Verified:"
-echo "  ✓ Optimizer detects Bun"
-echo "  ✓ bun_env.env generated"
-echo "  ✓ mgc dev command available"
-echo ""
-echo "Limitations (partial E2E):"
-echo "  • Didn't start actual dev server (requires interactive/background)"
-echo "  • Didn't verify env vars loaded in runtime process"
-echo "  • Didn't check audit log entry"
-echo ""
-echo "For full E2E, need:"
-echo "  - Start mgc dev in background"
-echo "  - Query process environment"
-echo "  - Verify BUN_RUNTIME_TRANSPILER_CACHE_PATH set"
-echo "  - Check audit.log for bun execution"
-
+echo "Bun compatibility + migration E2E complete:"
+echo "  ✓ bun.lock imports to mgc.lock"
+echo "  ✓ native dev refuses rival runtime"
+echo "  ✓ explicit compat gate warns"
 exit 0

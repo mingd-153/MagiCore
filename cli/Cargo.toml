@@ -19,6 +19,7 @@ path = "src/main.rs"
 # Core crates
 mgc-types = { workspace = true }
 mgc-adapter-base = { workspace = true }
+mgc-audit = { workspace = true }
 mgc-config = { workspace = true }
 mgc-resolver = { workspace = true }
 mgc-store = { workspace = true }

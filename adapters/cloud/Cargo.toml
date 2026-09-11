@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Cloud ecosystem adapter for MagiCore (cdk/pulumi/terraform)"
 
 [dependencies]
+mgc-audit = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { workspace = true }
 mgc-crypto = { workspace = true }

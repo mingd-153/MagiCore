@@ -14,16 +14,30 @@ impl PackageCache {
         Ok(Self { root })
     }
 
+    /// Flatten an ecosystem identifier into ONE safe path segment.
+    /// Multi-language names (Maven `group:artifact`, OSV SwiftURL
+    /// `github.com/owner/repo`) carry separators that would nest or
+    /// reshape the cache tree — collapse them to `_` so every package
+    /// lives at depth 1 (no traversal, no aliasing via nesting).
+    /// Sanitize định danh ecosystem thành MỘT segment path an toàn:
+    /// tên đa ngôn ngữ (Maven, SwiftURL) mang dấu phân cách sẽ làm
+    /// tổ láp cây cache — ép thành `_` để mọi package nằm ở độ sâu 1.
+    fn safe_segment(name: &str) -> String {
+        name.replace(['/', '\\', ':'], "_")
+    }
+
     /// Path to cached tarball for a given package version
     pub fn tarball_path(&self, id: &PackageId) -> PathBuf {
         self.root
-            .join(id.name_str())
+            .join(Self::safe_segment(id.name_str()))
             .join(format!("{}.tgz", id.version()))
     }
 
     /// Path to cached metadata JSON for a package
     pub fn metadata_path(&self, name: &str) -> PathBuf {
-        self.root.join(name).join("metadata.json")
+        self.root
+            .join(Self::safe_segment(name))
+            .join("metadata.json")
     }
 
     /// Check if a package version is cached

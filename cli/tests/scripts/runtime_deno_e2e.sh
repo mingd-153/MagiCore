@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Deno optimizer environment test — delegates to implementation
-# Status: ENV GENERATION ONLY (calls runtime_deno_e2e_impl.sh)
+# Deno optimizer COMPAT-PROFILE env generation test (P0-4 2026-09-10)
+# Status: CONFIG GENERATION ONLY (delegates to runtime_deno_e2e_impl.sh).
+# The Deno profile requires compat mode (MGC_COMPAT_RUNTIME=deno) — the
+# native lane never generates rival-runtime envs; deno binary never runs.
 
 set -euo pipefail
 

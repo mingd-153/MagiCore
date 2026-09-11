@@ -51,7 +51,13 @@ impl<'a> AuditPlan<'a> {
     pub async fn execute(self) -> MgResult<AuditReport> {
         let mut labeled: Vec<(String, AuditReport)> = Vec::new();
         for step in self.steps {
-            let report = (step.run)()?;
+            // Steps are boxed FUTURES (P2 2026-09-10): network scanners
+            // (npm bulk advisory, OSV) await real I/O — the engine
+            // awaits each step instead of first-poll forcing it.
+            // Bước là future đóng hộp: scanner mạng (npm bulk, OSV)
+            // await I/O thật — engine await từng bước thay vì ép poll
+            // một lần.
+            let report = (step.run)().await?;
             labeled.push((format!("{}:{}", step.ecosystem, step.scanner), report));
         }
         Ok(aggregate_reports(labeled))

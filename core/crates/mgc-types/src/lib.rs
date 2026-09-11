@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod ecosystem;
 pub mod error;
+pub mod jsonc;
 pub mod manifest;
 pub mod package;
 pub mod patch;
@@ -12,6 +13,7 @@ pub mod version;
 pub use adapter::*;
 pub use ecosystem::Ecosystem;
 pub use error::{MgError, MgResult};
+pub use jsonc::strip_jsonc;
 pub use manifest::Manifest;
 pub use package::{DependencySpec, PackageId, PackageName, VersionRange};
 pub use patch::{LockPatch, PatchKind, PatchSpec};

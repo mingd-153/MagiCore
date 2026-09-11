@@ -18,10 +18,16 @@ on:
       - "adapters/app/src/audit/**"
       - "adapters/app/tests/**"
       - "cli/src/commands/audit/**"
+      - "cli/src/commands/compat.rs"
       - "cli/src/error/**"
       - "cli/tests/audit_cli_e2e.rs"
+      - "cli/tests/native_engine_spawn_audit.rs"
+      - "cli/tests/test_runner_security.rs"
       - "core/crates/mgc-types/src/adapter.rs"
       - "core/crates/mgc-types/tests/adapter_test.rs"
+      - "core/crates/mgc-audit/**"
+      - "core/crates/mgc-exec/src/run.rs"
+      - "core/crates/mgc-exec/src/allowlist.rs"
   workflow_dispatch:
 
 jobs:
@@ -92,12 +98,35 @@ jobs:
         run: |
           python3 -m pip install --user 'pip-audit==2.9.0'
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install govulncheck (pinned — P1 Go lane)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install Gradle (pinned — Kotlin success E2E, P2 2026-09-10)
+        run: |
+          GRADLE_VERSION="8.14.3"
+          cd /tmp && curl -sSLO "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            && unzip -q "gradle-${GRADLE_VERSION}-bin.zip" \
+            && echo "/tmp/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH" \
+            && gradle --version | head -5
       - name: Verify scanner versions (fail fast on drift)
         run: |
           cargo-audit --version
           pip-audit --version
+          govulncheck -version 2>/dev/null | head -1 || true
+          gradle --version | rg -i 'gradle' | head -2
       - name: Run audit CLI E2E (tools required — no silent skips)
-        run: cargo test -p mgc --test audit_cli_e2e --locked -- --nocapture
+        run: cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --nocapture
+      - name: Run app-adapter audit tests (Kotlin success E2E via real gradle)
+        run: cargo test -p mgc-app-adapter --test audit_tests audit_kotlin --locked -- --nocapture
+      - name: Process-spawn audit (native engine — no rival runtime spawns)
+        # Tech Lead #7 2026-09-10: CI proves mgc test/run/build/dev never
+        # spawn bun/deno/npm outside the explicit compat gate.
+        # CI chứng minh mgc test/run/build/dev không bao giờ spawn
+        # bun/deno/npm ngoài cổng compat tường minh.
+        run: cargo test -p mgc --test native_engine_spawn_audit --locked -- --nocapture
+      - name: Test-runner security (scope enforcement + audit log)
+        run: cargo test -p mgc --test test_runner_security --locked -- --nocapture
       - name: Generate capability matrix from E2E evidence
         run: python3 scripts/audit_capability_matrix.py
       - name: Upload capability matrix artifact
@@ -105,3 +134,47 @@ jobs:
         with:
           name: audit-capability-matrix
           path: docs/specs/auditCapabilityMatrix.json
+
+  audit-e2e-cross-platform:
+    # Cross-platform audit E2E (P2 2026-09-10, Tech Lead: "Windows/macOS/
+    # Linux cùng SHA đều xanh"). Parser lanes are OS-independent by
+    # design; this lane proves the EXEC layer (drain, hermetic PATH,
+    # exit codes) on every runner. macOS/Windows carry no scanner
+    # toolchain assumptions: their E2E asserts the honest
+    # ToolMissing/exit-2 contract with MGC_E2E_AUDIT_TOOLS unset.
+    # E2E audit đa nền tảng: lane parser bất độc lập OS; lane này chứng
+    # minh tầng EXEC (drain, PATH hermetic, exit code) trên mọi runner.
+    # macOS/Windows không cài scanner: E2E khẳng định hợp đồng
+    # ToolMissing/exit-2 trung thực.
+    name: audit E2E cross-platform (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Parser lanes (OS-independent)
+        run: cargo test -p mgc-audit --locked -- --nocapture
+      - name: OSV-backed lane E2E (Java/.NET/Swift/Dart — network, no toolchain)
+        # These lanes hit the LIVE OSV API only — no gradle/dotnet/swift/
+        # flutter toolchain needed. The runner proves lockfile parsing +
+        # advisory mapping + exit codes on every OS.
+        # Lane OSV chỉ cần MẠNG — không cần toolchain gradle/dotnet/
+        # swift/flutter. Runner chứng minh parse lockfile + mapping
+        # advisory + exit code trên mọi OS.
+        run: cargo test -p mgc --test audit_cli_e2e --locked audit_lib_java audit_lib_dotnet audit_app_swift audit_app_flutter -- --test-threads=1 --nocapture
+        env:
+          MGC_E2E_AUDIT_TOOLS: required
+      - name: Exec-layer E2E (hermetic contract)
+        shell: bash
+        run: cargo test -p mgc --test audit_cli_e2e --locked audit_lib_go_without -- --nocapture
+      - name: Binary exit-contract E2E (unavailable → exit 2 strict)
+        shell: bash
+        run: cargo test -p mgc --test audit_cli_e2e --locked audit_unavailable -- --nocapture
+      - name: Process-spawn audit (native engine contract on this OS)
+        # The spawn-audit suite asserts refusals + canary silence — it
+        # runs identically on every runner (no toolchain assumptions).
+        # Suite spawn-audit khẳng định lời từ chối + canary im lặng —
+        # chạy y hệt trên mọi runner (không cần toolchain).
+        run: cargo test -p mgc --test native_engine_spawn_audit --locked -- --nocapture

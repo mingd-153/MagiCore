@@ -82,20 +82,88 @@ pub fn registry_advisory_bulk_endpoint(registry_url: &str) -> MgResult<url::Url>
 }
 
 pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<AuditReport> {
-    let lockfile = match read_web_lockfile_checked(project_root)? {
-        Some(lock) => lock,
-        None => return Ok(AuditReport::clean(0)),
-    };
-
-    if lockfile.packages.is_empty() {
+    // ARCHITECTURE CONTRACT (2026-09-10 P0-3 audit): mgc.lock là NGUỒN
+    // CHÂN LÝ DUY NHẤT cho audit web. bun.lock / deno.lock là INPUT
+    // MIGRATION, không phải nguồn audit vận hành — không fallback âm
+    // thầm. Phát hiện rival lockfile mà thiếu mgc.lock → fail-closed kèm
+    // remediation `mgc import`, không tự audit lockfile đối thủ.
+    // (mgc.lock is the ONLY operational audit source. Rival lockfiles
+    // are migration inputs: detected without mgc.lock → fail with the
+    // explicit `mgc import` remediation, never a silent fallback.)
+    let lockfile = read_web_lockfile_checked(project_root)?;
+    if lockfile.is_none() {
+        let rival = detect_rival_lockfiles(project_root);
+        if !rival.is_empty() {
+            return Err(MgError::Other(format!(
+                "rival lockfile(s) detected [{}] but mgc.lock is missing — mgc audit consumes mgc.lock ONLY. Run `mgc import {}` to migrate this project first.",
+                rival.join(", "),
+                if rival.iter().any(|r| r.contains("deno")) {
+                    "deno"
+                } else {
+                    "bun"
+                }
+            )));
+        }
         return Ok(AuditReport::clean(0));
     }
 
+    // Tách 2 tập pin: npm-auditable và JSR (tiền tố "jsr:" import từ
+    // deno.lock migration). JSR không có advisory DB npm — gửi tên "jsr:"
+    // vào npm bulk API sẽ 400/fake-failure; chúng chỉ được báo Partial
+    // skipped trung thực, KHÔNG vào body request.
+    // (Split pins: npm-auditable vs JSR-prefixed. JSR names never enter
+    // the npm bulk body — they ride the honest Partial-skip lane.)
+    let mut pins: Vec<(String, String)> = lockfile
+        .as_ref()
+        .map(|l| {
+            l.packages
+                .iter()
+                .filter(|p| !p.name.as_str().starts_with("jsr:"))
+                .map(|p| (p.name.to_string(), p.version.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let jsr_pins: Vec<String> = lockfile
+        .as_ref()
+        .map(|l| {
+            l.packages
+                .iter()
+                .filter(|p| p.name.as_str().starts_with("jsr:"))
+                .map(|p| p.name.as_str().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    pins.sort();
+    pins.dedup();
+
+    if pins.is_empty() && jsr_pins.is_empty() {
+        return Ok(AuditReport::clean(0));
+    }
+    if pins.is_empty() {
+        // JSR-only graph (migrated from deno.lock): honest Partial —
+        // nothing silently clean when the graph exists but the advisory
+        // lane cannot see it.
+        // Đồ thị chỉ JSR (migrate từ deno.lock): Partial trung thực.
+        return Ok(AuditReport {
+            packages_audited: 0,
+            vulnerability_count: 0,
+            vulnerabilities: vec![],
+            scanner_status: mgc_types::adapter::ScannerStatus::Partial {
+                scanned: 0,
+                skipped: jsr_pins.len(),
+                reasons: jsr_pins
+                    .iter()
+                    .map(|j| format!("jsr package '{j}' has no npm advisory mapping yet"))
+                    .collect(),
+            },
+        });
+    }
+
     let mut body = serde_json::Map::new();
-    for pkg in &lockfile.packages {
-        let key = pkg.name.to_string();
-        let version_entry = serde_json::json!([pkg.version.clone()]);
-        body.insert(key, version_entry);
+    for (name, version) in &pins {
+        let version_entry = serde_json::json!([version.clone()]);
+        body.insert(name.clone(), version_entry);
     }
 
     let client = reqwest::Client::builder()
@@ -105,18 +173,30 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
         .map_err(|e| MgError::Network(format!("audit client error: {e}")))?;
 
     let advisory_endpoint = registry_advisory_bulk_endpoint(registry_url)?;
-    let response = client
-        .post(advisory_endpoint)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| MgError::Network(format!("audit request failed: {e}")))?;
+    let response = match client.post(advisory_endpoint).json(&body).send().await {
+        Ok(response) => response,
+        Err(e) => {
+            // SCANNER FAILURE, not a hard error (same contract fix as the
+            // OSV lane 2026-09-10): a dead/unreachable registry is an
+            // ENVIRONMENT state — the finisher turns Failed into the
+            // honest UNVERIFIED lane (exit 2 strict), never exit 1
+            // (findings) and never a fake clean.
+            // SCANNER FAILED, không phải hard error (cùng hợp đồng fix
+            // như lane OSV): registry chết là trạng thái MÔI TRƯỜNG —
+            // finisher chuyển Failed thành lane UNVERIFIED trung thực
+            // (strict exit 2), không bao giờ exit 1 (findings) hay sạch giả.
+            return Ok(AuditReport::scanner_failed(
+                "npm-bulk-advisory",
+                format!("audit request failed: {e}"),
+            ));
+        }
+    };
 
     if !response.status().is_success() {
-        return Err(MgError::Network(format!(
-            "audit API returned {}",
-            response.status()
-        )));
+        return Ok(AuditReport::scanner_failed(
+            "npm-bulk-advisory",
+            format!("audit API returned {}", response.status()),
+        ));
     }
 
     let advisories: serde_json::Value = response
@@ -124,17 +204,45 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
         .await
         .map_err(|e| MgError::Other(format!("audit response parse error: {e}")))?;
 
-    let vulnerabilities = parse_advisory_bulk_response(&advisories, &lockfile)?;
+    let vulnerabilities = parse_advisory_bulk_response(&advisories, &pins)?;
     let vuln_count = vulnerabilities.len();
+
+    // JSR pins imported INTO mgc.lock from a deno.lock migration cannot
+    // ride the npm advisory pipeline — surface them as Partial reasons
+    // (loud, never silently dropped). Detection here reads mgc.lock only
+    // (P0-3: no operational rival-lockfile reads).
+    // Ghim JSR import VÀO mgc.lock từ migration deno.lock không đi được
+    // đường advisory npm — đưa ra thành lý do Partial (rõ ràng, không bỏ
+    // âm thầm). Detection chỉ đọc mgc.lock (P0-3: không đọc lockfile đối
+    // thủ trên đường vận hành).
+    // JSR pins (migrated from deno.lock) cannot ride the npm advisory
+    // pipeline — surface them as Partial reasons (loud, never silently
+    // dropped). They were already excluded from the request body above.
+    // Ghim JSR (migrate từ deno.lock) không đi được đường advisory npm —
+    // đưa ra thành lý do Partial (rõ ràng, không bỏ âm thầm); đã loại
+    // khỏi body request phía trên.
+    let scanner_status = if jsr_pins.is_empty() {
+        mgc_types::adapter::ScannerStatus::Available
+    } else {
+        mgc_types::adapter::ScannerStatus::Partial {
+            scanned: pins.len(),
+            skipped: jsr_pins.len(),
+            reasons: jsr_pins
+                .iter()
+                .map(|j| format!("jsr package '{j}' has no npm advisory mapping yet"))
+                .collect(),
+        }
+    };
+
     Ok(AuditReport {
-        packages_audited: lockfile.packages.len(),
+        packages_audited: pins.len(),
         vulnerability_count: vuln_count,
         vulnerabilities,
         // Real network scanner executed — typed parse is fail-closed, so
         // reaching this line means the payload matched the contract.
         // Scanner mạng thật đã chạy — parse typed fail-closed, tới đây
         // nghĩa là payload khớp hợp đồng.
-        scanner_status: mgc_types::adapter::ScannerStatus::Available,
+        scanner_status,
     })
 }
 
@@ -183,7 +291,7 @@ struct AdvisoryRecord {
 /// (registry không biết tree của ta — pnpm cũng làm vậy).
 pub(crate) fn parse_advisory_bulk_response(
     advisories: &serde_json::Value,
-    lockfile: &mgc_lockfile::schema::Lockfile,
+    pins: &[(String, String)],
 ) -> MgResult<Vec<Vulnerability>> {
     let Some(map) = advisories.as_object() else {
         return Err(MgError::Other(format!(
@@ -196,8 +304,7 @@ pub(crate) fn parse_advisory_bulk_response(
     // we actually asked for; anything else is a contract violation.
     // Tên package đã yêu cầu — response chỉ được nói về package ta hỏi;
     // ngoài tập này là vi phạm hợp đồng.
-    let requested: std::collections::HashSet<&str> =
-        lockfile.packages.iter().map(|p| p.name.as_str()).collect();
+    let requested: std::collections::HashSet<&str> = pins.iter().map(|(n, _)| n.as_str()).collect();
 
     let mut vulnerabilities = Vec::new();
     let mut rejected: Vec<String> = Vec::new();
@@ -215,7 +322,7 @@ pub(crate) fn parse_advisory_bulk_response(
             )));
         };
         for advisory_value in advisories_arr {
-            match build_findings_for_advisory(pkg_name, advisory_value, lockfile) {
+            match build_findings_for_advisory(pkg_name, advisory_value, pins) {
                 Ok(mut found) => vulnerabilities.append(&mut found),
                 Err(reason) => rejected.push(format!("{pkg_name}: {reason}")),
             }
@@ -249,7 +356,7 @@ pub(crate) fn parse_advisory_bulk_response(
 fn build_findings_for_advisory(
     pkg_name: &str,
     advisory: &serde_json::Value,
-    lockfile: &mgc_lockfile::schema::Lockfile,
+    pins: &[(String, String)],
 ) -> Result<Vec<Vulnerability>, String> {
     let record: AdvisoryRecord =
         serde::Deserialize::deserialize(advisory).map_err(|e| format!("schema mismatch: {e}"))?;
@@ -269,9 +376,9 @@ fn build_findings_for_advisory(
     validate_semver_range(&record.vulnerable_versions)?;
 
     let mut findings = Vec::new();
-    for pkg in lockfile.packages.iter().filter(|p| p.name == pkg_name) {
-        let installed = Version::parse(&pkg.version)
-            .map_err(|e| format!("invalid installed version '{}': {e}", pkg.version))?;
+    for (_pin_name, pin_version) in pins.iter().filter(|(n, _)| n == pkg_name) {
+        let installed = Version::parse(pin_version)
+            .map_err(|e| format!("invalid installed version '{pin_version}': {e}"))?;
         if !range.matches(&installed) {
             continue;
         }
@@ -362,6 +469,19 @@ fn validate_semver_range(range: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Detect rival JS-runtime lockfiles (migration inputs) in the project
+/// root — read-only existence check, used ONLY for the fail-closed
+/// remediation error when mgc.lock is missing (P0-3 2026-09-10).
+/// Phát hiện lockfile runtime đối thủ (input migration) — chỉ check sự
+/// tồn tại, dùng riêng cho lỗi remediation fail-closed khi thiếu mgc.lock.
+fn detect_rival_lockfiles(project_root: &Path) -> Vec<String> {
+    ["bun.lock", "deno.lock", "bun.lockb"]
+        .iter()
+        .filter(|name| project_root.join(name).is_file())
+        .map(|name| name.to_string())
+        .collect()
 }
 
 pub async fn run_audit_fix<F, Fut>(

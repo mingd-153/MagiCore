@@ -5,7 +5,7 @@ pub mod fetch;
 pub mod verify;
 
 use mgc_store::ContentStore;
-use mgc_types::adapter::{InstallOptions, InstallSummary};
+use mgc_types::adapter::{InstallCacheMode, InstallOptions, InstallSummary};
 use mgc_types::{MgError, MgResult, ResolvedGraph};
 use std::path::Path;
 
@@ -70,6 +70,9 @@ async fn install_flutter(project_root: &Path, opts: InstallOptions) -> MgResult<
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,
+        // P0-6: native toolchain cache owns the bytes (delegation).
+        // P0-6: cache toolchain gốc giữ byte (ủy quyền).
+        cache_mode: InstallCacheMode::Delegated,
         duration_ms: result.duration_ms,
     })
 }
@@ -108,6 +111,9 @@ async fn install_kotlin(project_root: &Path, opts: InstallOptions) -> MgResult<I
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,
+        // P0-6: native toolchain cache owns the bytes (delegation).
+        // P0-6: cache toolchain gốc giữ byte (ủy quyền).
+        cache_mode: InstallCacheMode::Delegated,
         duration_ms: result.duration_ms,
     })
 }
@@ -135,6 +141,9 @@ async fn install_swift(project_root: &Path, _opts: InstallOptions) -> MgResult<I
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,
+        // P0-6: native toolchain cache owns the bytes (delegation).
+        // P0-6: cache toolchain gốc giữ byte (ủy quyền).
+        cache_mode: InstallCacheMode::Delegated,
         duration_ms: result.duration_ms,
     })
 }
@@ -167,6 +176,9 @@ async fn install_objc(project_root: &Path, opts: InstallOptions) -> MgResult<Ins
     Ok(InstallSummary {
         added: vec![],
         bytes_from_cache: 0,
+        // P0-6: native toolchain cache owns the bytes (delegation).
+        // P0-6: cache toolchain gốc giữ byte (ủy quyền).
+        cache_mode: InstallCacheMode::Delegated,
         duration_ms: result.duration_ms,
     })
 }

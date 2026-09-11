@@ -129,7 +129,10 @@ impl PackageAdapter for AiAdapter {
             plan.add_step(mgc_audit::ScanStep {
                 ecosystem: "python",
                 scanner: "pip-audit",
-                run: Box::new(move || run_now(mgc_audit::scanners::audit_python(&root))),
+                run: Box::new(move || {
+                    let root = root.clone();
+                    Box::pin(async move { mgc_audit::scanners::audit_python(&root).await })
+                }),
             });
         }
         if project_root.join("Cargo.toml").is_file() {
@@ -137,7 +140,25 @@ impl PackageAdapter for AiAdapter {
             plan.add_step(mgc_audit::ScanStep {
                 ecosystem: "rust",
                 scanner: "cargo-audit",
-                run: Box::new(move || run_now(mgc_audit::scanners::audit_rust(&root))),
+                run: Box::new(move || {
+                    let root = root.clone();
+                    Box::pin(async move { mgc_audit::scanners::audit_rust(&root).await })
+                }),
+            });
+        }
+        // Go dependency layer (P1 matrix row "AI Go govulncheck") — Go
+        // AI services join the same aggregate.
+        // Lớp dependency Go (P1 matrix "AI Go govulncheck") — service AI
+        // viết Go vào cùng aggregate.
+        if project_root.join("go.mod").is_file() {
+            let root = project_root.to_path_buf();
+            plan.add_step(mgc_audit::ScanStep {
+                ecosystem: "go",
+                scanner: "govulncheck",
+                run: Box::new(move || {
+                    let root = root.clone();
+                    Box::pin(async move { mgc_audit::scanners::audit_go(&root).await })
+                }),
             });
         }
 
@@ -150,7 +171,10 @@ impl PackageAdapter for AiAdapter {
                 plan.add_step(mgc_audit::ScanStep {
                     ecosystem: "model-artifact",
                     scanner: "mgc-model-scanner",
-                    run: Box::new(move || model_artifact_report(&dir)),
+                    run: Box::new(move || {
+                        let dir = dir.clone();
+                        Box::pin(async move { model_artifact_report(&dir) })
+                    }),
                 });
                 break;
             }
@@ -171,25 +195,6 @@ impl PackageAdapter for AiAdapter {
 
     fn set_existing_versions(&self, _versions: std::collections::HashMap<String, String>) {}
 }
-
-/// Drive a scanner future to completion inside a sync engine step —
-/// the current scanners complete on first poll (subprocess work happens
-/// in mgc-exec during that poll).
-/// Chạy trọn future scanner trong bước engine sync — scanner hiện tại
-/// hoàn tất ngay poll đầu (subprocess chạy trong mgc-exec lúc đó).
-fn run_now<F>(fut: F) -> MgResult<AuditReport>
-where
-    F: std::future::Future<Output = MgResult<AuditReport>>,
-{
-    use futures_util::future::FutureExt;
-    match Box::pin(fut).now_or_never() {
-        Some(result) => result,
-        None => Err(mgc_types::MgError::Other(
-            "ai aggregate scanner requires async execution".to_string(),
-        )),
-    }
-}
-
 /// Convert the model-artifact audit (internal Finding format) into the
 /// unified AuditReport — every High/Critical model finding becomes a
 /// Vulnerability row so the aggregate and exit contract stay uniform.

@@ -1,0 +1,109 @@
+name: Lifecycle Capability Matrix
+
+# P0-2 (Tech Lead 2026-09-11): the AUDIT capability matrix can never
+# justify product "supported" claims — lifecycle is a SEPARATE
+# dimension (create → install → test → build → dev → cache → offline)
+# with its own binary-driven evidence. This lane generates the
+# lifecycle matrix on every PR touching product code and refuses to
+# let lifecycle support regress silently. Java/.NET/Go scaffolds that
+# fall back to another language are FAILED creates here (honest).
+#
+# P0-2: matrix audit KHÔNG BAO GIỜ suy ra năng lực product — lifecycle
+# là dimension RIÊNG với evidence binary riêng. Lane sinh matrix này
+# mỗi PR chạm code product; scaffold java/.net/go rơi fallback ngôn ngữ
+# khác sẽ là create FAILED (trung thực, không độn sự thật).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - "scripts/lifecycle_capability_matrix.py"
+      - ".github/workflows/lifecycle-matrix.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - "scripts/lifecycle_capability_matrix.py"
+      - ".github/workflows/lifecycle-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lifecycle-matrix:
+    name: lifecycle matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Python (uv/pip fallback for lib lanes)
+        uses: actions/setup-python@e5edc8e8e5f3a02d3ce6a42f5ff69917500e5b74 # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js (web lane)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Build mgc binary
+        run: cargo build --bin mgc --locked
+
+      - name: Generate lifecycle matrix (real binary, real steps)
+        run: python3 scripts/lifecycle_capability_matrix.py
+        env:
+          MGC_LIFECYCLE_BIN: ./target/debug/mgc
+          MGC_LIFECYCLE_MATRIX_OUT: docs/specs/lifecycleCapabilityMatrix.json
+
+      - name: Upload lifecycle matrix
+        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b033357803cdc9eb # v4.6.2
+        with:
+          name: lifecycle-capability-matrix-${{ runner.os }}
+          path: docs/specs/lifecycleCapabilityMatrix.json
+
+      - name: Enforce non-regression (rust lane must stay lifecycle-supported)
+        # Guard: the lib/rust lane is the reference lane — it must stay
+        # lifecycle-supported on every OS. Other lanes are recorded
+        # honestly (partial/unsupported) but not yet gated (gates
+        # tighten per released scope, never per chance).
+        # Guard: lane lib/rust là lane tham chiếu — phải giữ trạng thái
+        # lifecycle-supported trên mọi OS. Lane khác ghi trung thực
+        # (partial/unsupported), chưa bị gate (gate siết theo scope
+        # release, không siết theo may rủi).
+        shell: python3
+        run: |
+          import json, sys
+
+          data = json.load(open("docs/specs/lifecycleCapabilityMatrix.json"))
+          failures = []
+          for lane in data["lanes"]:
+              if (lane["core"], lane["language"]) == ("lib", "rust"):
+                  if lane["verdict"] != "lifecycle-supported":
+                      failures.append(
+                          f"lib/rust lifecycle verdict = {lane['verdict']} "
+                          f"(expected lifecycle-supported) — dimensions: {lane['dimensions']}"
+                      )
+          if failures:
+              print("LIFECYCLE NON-REGRESSION BLOCKED:")
+              print("\n".join(failures))
+              sys.exit(1)
+          print("OK: lib/rust reference lane lifecycle-supported")

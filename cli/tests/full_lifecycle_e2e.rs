@@ -98,13 +98,19 @@ fn test_web_full_lifecycle() {
     }
 
     // Create package.json with real dependencies
+    // Native-engine contract (2026-09-10): project scripts run through the
+    // native task runner WITHOUT a shell — chaining tokens like `&&` are
+    // rejected fail-closed. A single program is the honest fixture.
+    // Hợp đồng engine native: script project chạy qua task runner native
+    // KHÔNG shell — token nối `&&` bị từ chối fail-closed. Một lệnh đơn là
+    // fixture trung thực.
     std::fs::write(
         project_path.join("package.json"),
         r#"{
                 "name": "test-web-full",
                 "version": "1.0.0",
                 "scripts": {
-                    "test": "echo \"Test passed\" && exit 0"
+                    "test": "echo \"Test passed\""
                 },
                 "dependencies": {
                     "lodash": "^4.17.21"

@@ -209,3 +209,114 @@ fn owasp_stale_report_delete_semantics() {
     let err = std::fs::remove_file(&report).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }
+
+// ===== Kotlin OWASP lane — completing the 10-test contract (P2 2026-09-10).
+// 7-10 below + the six above cover: clean, vulnerable, missing-schema,
+// malformed, partial/purl-fallback, unicode truncation, stale guard,
+// hostile purl, large payload, concurrency.
+// Lane Kotlin OWASP đủ hợp đồng 10 test như các lane khác.
+
+#[test]
+fn owasp_report_malformed_dependency_shape_fails_closed() {
+    // "dependencies" là array các OBJECT — array string/rỗng sai shape
+    // là lỗi, không đếm 0 rồi báo sạch.
+    for bad in [
+        r#"{"dependencies": []}"#,
+        r#"{"dependencies": "nope"}"#,
+        r#"{"dependencies": [{"packages": "not-array"}]}"#,
+    ] {
+        let result = parse_owasp_dependency_check_json(bad);
+        let must_fail = bad != r#"{"dependencies": []}"#;
+        if must_fail {
+            assert!(result.is_err(), "malformed shape must fail: {bad}");
+        } else {
+            // Empty dependency list is a valid CLEAN report (0 audited).
+            // Danh sách rỗng là report CLEAN hợp lệ (0 audited).
+            let report = result.unwrap();
+            assert_eq!(report.vulnerability_count, 0);
+        }
+    }
+}
+
+#[test]
+fn owasp_report_hostile_purl_name_is_sanitized_to_artifact_fallback() {
+    // A purl whose artifact tail cannot be a package name (traversal
+    // dots, empty after qualifier strip) falls back to the SAFE
+    // "artifact" name — the raw hostile string never reaches the
+    // finding. A merely ODD but valid tail ("evil") passes through as a
+    // display identifier (paths/spawns never derive from it).
+    // Purl có đuôi artifact không thể là tên package (dấu chấm traversal,
+    // rỗng sau khi lọc qualifier) thì rơi về tên an toàn "artifact" —
+    // chuỗi hostile thô không bao giờ vào finding. Đuôi LẠ nhưng hợp lệ
+    // ("evil") vẫn qua như định danh hiển thị (path/spawn không phái sinh
+    // từ nó).
+    let raw = r#"{
+  "dependencies": [
+    {
+      "packages": [{"package": {"id": "pkg:maven/com.example/..@1.0.0"}}],
+      "vulnerabilities": [{"name": "CVE-2024-0004", "severity": "Medium"}]
+    }
+  ]
+}"#;
+    let report = parse_owasp_dependency_check_json(raw).unwrap();
+    assert_eq!(report.vulnerability_count, 1);
+    let v = &report.vulnerabilities[0];
+    assert_eq!(
+        v.package.name_str(),
+        "artifact",
+        "traversal-dot purl must fall back to the safe artifact name"
+    );
+    assert_eq!(v.package.version().to_string(), "1.0.0");
+}
+
+#[test]
+fn owasp_report_large_payload_over_1mb_parses_all_findings() {
+    // >1 MB report (nhiều dependency + finding) — parser tuyến tính,
+    // không mất finding nào.
+    // A >1 MB report — the parser is linear and loses no findings.
+    let total = 6_500;
+    let mut deps = String::new();
+    for i in 0..total {
+        let idx = format!("{i:04}");
+        deps.push_str(&format!(
+            r#"{{"packages": [{{"package": {{"id": "pkg:maven/g{idx}/a{idx}@1.0.{idx}"}}}}], "vulnerabilities": [{{"name": "CVE-2026-{idx}", "severity": "Low", "description": "d{idx}"}}]}},"#
+        ));
+    }
+    deps.pop(); // drop the trailing comma
+    let raw = format!(r#"{{"dependencies": [{deps}]}}"#);
+    assert!(raw.len() > 1_000_000, "fixture must exceed 1 MB");
+    let report = parse_owasp_dependency_check_json(&raw).unwrap();
+    assert_eq!(report.vulnerability_count, total);
+    assert_eq!(report.packages_audited, total);
+}
+
+#[test]
+fn owasp_report_concurrent_parses_stay_independent() {
+    // Parse song song payload sạch/nhiễu — không ghi chéo finding.
+    // Concurrent parses of mixed payloads — no cross-contamination.
+    let vulnerable = r#"{
+  "dependencies": [
+    {"packages": [{"package": {"id": "pkg:maven/a/b@1.0"}}],
+     "vulnerabilities": [{"name": "CVE-2024-0001", "severity": "High"}]}
+  ]
+}"#;
+    let clean = r#"{"dependencies": [{"packages": [], "vulnerabilities": []}]}"#;
+    let payloads = [vulnerable, clean, vulnerable, clean, vulnerable];
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = payloads
+            .iter()
+            .map(|p| {
+                let payload = p.to_string();
+                scope.spawn(move || parse_owasp_dependency_check_json(&payload).unwrap())
+            })
+            .collect();
+        for (i, h) in handles.into_iter().enumerate() {
+            let parsed = h.join().unwrap();
+            let expected = if i % 2 == 0 { 1 } else { 0 };
+            assert_eq!(
+                parsed.vulnerability_count, expected,
+                "concurrent parse {i} cross-contaminated"
+            );
+        }
+    });
+}
