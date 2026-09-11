@@ -312,7 +312,13 @@ async fn build_app(root: &Path) -> Result<()> {
     let (tool, args): (&str, &[&str]) = match language {
         "kotlin" => ("gradle", &["build"]),
         "swift" => ("swift", &["build"]),
-        _ => ("flutter", &["build", "bundle"]),
+        // `flutter build web` is the universal CI target — no Android
+        // SDK, no Xcode, runs on all three runners. `bundle` (the old
+        // default) only produces asset dirs for mobile toolchains.
+        // `flutter build web` là target CI phổ quát — không cần Android
+        // SDK, không cần Xcode, chạy được cả ba runner. `bundle` (mặc
+        // định cũ) chỉ sinh asset dir cho toolchain mobile.
+        _ => ("flutter", &["build", "web"]),
     };
     if tool_unavailable(tool) {
         return Err(crate::error::build_toolchain_missing(tool));

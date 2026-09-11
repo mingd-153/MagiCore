@@ -162,13 +162,15 @@ jobs:
             cp target/release/mgc "stage/$STAGE/"
           fi
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            # Match the release pipeline: windows artifacts are .zip
-            # (Compress-Archive layout, binary at archive root).
-            # Đúng format release pipeline: artifact Windows là .zip
-            # (binary nằm ở root archive).
-            cd stage
-            powershell.exe -NoProfile -Command "Compress-Archive -Path '$STAGE/mgc.exe' -DestinationPath '../magicore.zip' -Force"
-            cd ..
+            # Windows archive: zip with the binary at the archive root
+            # (Compress-Archive keeps the entry as the bare file name —
+            # no parent dir; verified flat layout, extracted flat).
+            # Archive Windows: zip với binary ở root (Compress-Archive
+            # giữ entry chỉ tên file — không thư mục cha; layout phẳng,
+            # giải nén phẳng).
+            cd "stage/$STAGE"
+            powershell.exe -NoProfile -Command "Compress-Archive -Path mgc.exe -DestinationPath '../../magicore.zip' -Force"
+            cd ../..
           else
             tar -czf "magicore.tar.gz" -C stage "$STAGE"
           fi
@@ -181,12 +183,10 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/.magicore-test/bin"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            # PowerShell cannot read Git-Bash drive paths (/c/...) — bsdtar
-            # (tar.exe on windows runners) reads zip natively from bash.
-            # PowerShell không đọc được path ổ đĩa Git-Bash (/c/...) —
-            # bsdtar (tar.exe trên windows runner) đọc zip trực tiếp từ bash.
+            # Flat zip: extract yields mgc.exe directly (no parent dir).
+            # Zip phẳng: giải nén ra thẳng mgc.exe (không thư mục cha).
             tar -xf magicore.zip -C "$HOME/.magicore-test"
-            cp "$HOME/.magicore-test/$STAGE_DIR/mgc.exe" "$HOME/.magicore-test/bin/mgc.exe"
+            cp "$HOME/.magicore-test/mgc.exe" "$HOME/.magicore-test/bin/mgc.exe"
             chmod +x "$HOME/.magicore-test/bin/mgc.exe" || true
             "$HOME/.magicore-test/bin/mgc.exe" --version
           else
