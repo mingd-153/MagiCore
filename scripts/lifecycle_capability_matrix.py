@@ -328,6 +328,11 @@ def main() -> int:
     }
 
     target = os.environ.get("MGC_LIFECYCLE_MATRIX_OUT", "docs/specs/lifecycleCapabilityMatrix.json")
+    # CI checkouts do not carry the gitignored docs/specs tree — create
+    # the parent directory before writing.
+    # Checkout CI không có cây docs/specs (bị gitignored) — tạo thư mục
+    # cha trước khi ghi.
+    os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
     with open(target, "w") as f:
         json.dump(out, f, indent=2)
         f.write("\n")

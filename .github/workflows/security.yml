@@ -154,6 +154,17 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Go toolchain (CI fix 2026-09-11): esbuild-rs 0.13.8's build
+      # script compiles a Go library at BUILD time — without Go the mgc
+      # crate cannot compile on macOS/Windows runners (ubuntu ships Go
+      # preinstalled, which is why only those lanes passed).
+      # Go toolchain: build script của esbuild-rs 0.13.8 compile thư
+      # viện Go ngay lúc BUILD — thiếu Go thì crate mgc không compile
+      # được trên runner macOS/Windows (ubuntu có sẵn Go nên chỉ lane
+      # đó pass).
+      - uses: actions/setup-go@v6.0.0
+        with:
+          go-version: "1.24"
       - name: Parser lanes (OS-independent)
         run: cargo test -p mgc-audit --locked -- --nocapture
       - name: OSV-backed lane E2E (Java/.NET/Swift/Dart — network, no toolchain)
