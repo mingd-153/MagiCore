@@ -140,7 +140,7 @@ jobs:
         # supported). Lane NGOÀI release scope (lib/go, lib/java,
         # lib/dotnet) ghi trung thực nhưng không gate — chúng không
         # thuộc lời hứa RC.
-        shell: python3
+        shell: python3 {0}
         run: |
           import json, sys
 
