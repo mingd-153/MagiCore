@@ -57,18 +57,18 @@ case $choice in
     
     # Check prerequisites
     if ! command -v cross &> /dev/null; then
-      echo "❌ 'cross' tool not found"
+      echo "'cross' tool not found"
       echo "Install: cargo install cross --git https://github.com/cross-rs/cross"
       exit 1
     fi
     
     if ! command -v docker &> /dev/null; then
-      echo "❌ Docker not found"
+      echo "Docker not found"
       echo "Install Docker Desktop: https://www.docker.com/products/docker-desktop"
       exit 1
     fi
     
-    echo "✅ Prerequisites OK"
+    echo "Prerequisites OK"
     echo ""
     echo "Building for multiple targets (this will take 30-60 minutes)..."
     echo ""
@@ -87,17 +87,17 @@ case $choice in
       echo "Building for ${target}..."
       
       if [[ "$target" == *"darwin"* ]] && [[ "$(uname)" != "Darwin" ]]; then
-        echo "⚠️  Skipping $target (macOS targets require macOS host)"
+        echo "WARN: Skipping $target (macOS targets require macOS host)"
         continue
       fi
       
       if [[ "$target" == *"windows"* ]] && [[ "$(uname)" == "Darwin" ]]; then
-        echo "⚠️  Skipping $target (Windows targets difficult from macOS)"
+        echo "WARN: Skipping $target (Windows targets difficult from macOS)"
         continue
       fi
       
       cross build --release --target "$target" --bin mgc || {
-        echo "❌ Build failed for $target"
+        echo "Build failed for $target"
         continue
       }
       
@@ -107,7 +107,7 @@ case $choice in
       cp "target/${target}/release/${binary_name}" "dist/cross-builds/mgc-${target}${binary_name##mgc}"
       shasum -a 256 "dist/cross-builds/mgc-${target}${binary_name##mgc}" > "dist/cross-builds/mgc-${target}.sha256"
       
-      echo "✅ $target complete"
+      echo "$target complete"
     done
     
     echo ""
@@ -140,7 +140,7 @@ case $choice in
       cd ..
       
       echo ""
-      echo "✅ Build complete:"
+      echo "Build complete:"
       echo "   Binary: dist/magicore-${VERSION}-${PLATFORM}-${ARCH}/mgc"
       echo "   Archive: dist/magicore-${VERSION}-${PLATFORM}-${ARCH}.tar.gz"
       echo "   Checksum: dist/magicore-${VERSION}-${PLATFORM}-${ARCH}.tar.gz.sha256"
@@ -157,12 +157,12 @@ case $choice in
       cd ..
       
       echo ""
-      echo "✅ Build complete:"
+      echo "Build complete:"
       echo "   Archive: dist/magicore-${VERSION}-${PLATFORM}-${ARCH}.tar.gz"
       cat "dist/magicore-${VERSION}-${PLATFORM}-${ARCH}.tar.gz.sha256"
       
     else
-      echo "❌ Platform not supported: ${PLATFORM}"
+      echo "Platform not supported: ${PLATFORM}"
       exit 1
     fi
     ;;

@@ -126,7 +126,7 @@ fn test_10_concurrent_installs() {
     );
 
     println!(
-        "✅ 10 concurrent installs: {}% success rate ({}/ 10)",
+        "10 concurrent installs: {}% success rate ({}/ 10)",
         (successful * 100) / 10,
         successful
     );
@@ -159,7 +159,7 @@ fn test_corrupted_cas_detection() {
         String::from_utf8_lossy(&output1.stderr)
     );
 
-    println!("✅ Initial install successful");
+    println!("Initial install successful");
 
     // Step 2: Corrupt CAS (find and corrupt a file in store)
     let store_dir = dirs::home_dir()
@@ -169,7 +169,7 @@ fn test_corrupted_cas_detection() {
         .join("v3");
 
     if !store_dir.exists() {
-        println!("⚠️  SKIPPED: Store dir not found (may use different cache location)");
+        println!("WARN: SKIPPED: Store dir not found (may use different cache location)");
         return;
     }
 
@@ -190,7 +190,7 @@ fn test_corrupted_cas_detection() {
     }
 
     if !corrupted {
-        println!("⚠️  SKIPPED: No CAS files found to corrupt");
+        println!("WARN: SKIPPED: No CAS files found to corrupt");
         return;
     }
 
@@ -203,7 +203,7 @@ fn test_corrupted_cas_detection() {
 
     // Should either: detect corruption and re-fetch OR fail with clear error
     if output2.status.success() {
-        println!("✅ Recovered from corrupted CAS (re-fetched)");
+        println!("Recovered from corrupted CAS (re-fetched)");
     } else {
         let stderr = String::from_utf8_lossy(&output2.stderr);
         // Should mention integrity or corruption
@@ -214,7 +214,7 @@ fn test_corrupted_cas_detection() {
             "Error message doesn't mention integrity issue:\n{}",
             stderr
         );
-        println!("✅ Detected corrupted CAS with clear error");
+        println!("Detected corrupted CAS with clear error");
     }
 }
 
@@ -248,7 +248,7 @@ fn test_lockfile_tamper_detection() {
     let lockfile = project.join("mgc.lock");
     assert!(lockfile.exists(), "Lockfile not created");
 
-    println!("✅ Initial install + lockfile created");
+    println!("Initial install + lockfile created");
 
     // Step 2: Tamper lockfile (inject fake package)
     let lock_content = fs::read_to_string(&lockfile).unwrap();
@@ -285,7 +285,7 @@ fn test_lockfile_tamper_detection() {
             stderr
         );
         println!(
-            "✅ Lockfile tamper detected (via: {})",
+            "Lockfile tamper detected (via: {})",
             if stderr.contains("404") || stderr.contains("download") {
                 "download failure"
             } else {
@@ -299,7 +299,7 @@ fn test_lockfile_tamper_detection() {
             new_content, tampered,
             "Lockfile not regenerated after tamper"
         );
-        println!("✅ Lockfile tamper handled by regeneration");
+        println!("Lockfile tamper handled by regeneration");
     }
 }
 
@@ -326,7 +326,7 @@ fn test_race_condition_add_remove() {
 
     assert!(output.status.success(), "Initial install failed");
 
-    println!("✅ Initial install successful");
+    println!("Initial install successful");
 
     // Spawn 2 threads: one adds axios, one removes lodash
     let mgc1 = mgc.clone();
@@ -387,14 +387,14 @@ fn test_race_condition_add_remove() {
             "No expected race/lock error mentioned:\n{}",
             stderr_combined
         );
-        println!("✅ Race condition handled with error (lock or file system race)");
+        println!("Race condition handled with error (lock or file system race)");
     } else {
         // Verify package.json not corrupted
         let pkg_json = fs::read_to_string(project.join("package.json")).unwrap();
         serde_json::from_str::<serde_json::Value>(&pkg_json)
             .expect("package.json corrupted by race condition");
 
-        println!("✅ Race condition handled - manifest not corrupted");
+        println!("Race condition handled - manifest not corrupted");
     }
 }
 
@@ -413,7 +413,7 @@ fn test_disk_full_graceful_error() {
     // 4. Run test
     // 5. Unmount: hdiutil detach /Volumes/TestDisk
 
-    println!("⚠️  MANUAL TEST - requires disk quota/small volume");
+    println!("WARN: MANUAL TEST - requires disk quota/small volume");
     println!("See test source for setup instructions");
 }
 
@@ -439,7 +439,7 @@ fn test_network_timeout_offline_mode() {
         .expect("Failed to run mgc install");
 
     assert!(output1.status.success(), "Initial install failed");
-    println!("✅ Initial online install successful");
+    println!("Initial online install successful");
 
     // Step 2: Offline install with existing lockfile
     let output2 = Command::new(&mgc)
@@ -450,7 +450,7 @@ fn test_network_timeout_offline_mode() {
         .expect("Failed to run mgc install --offline");
 
     if output2.status.success() {
-        println!("✅ Offline install successful with cached data");
+        println!("Offline install successful with cached data");
     } else {
         let stderr = String::from_utf8_lossy(&output2.stderr);
         // Should mention network/offline/cache
@@ -459,7 +459,7 @@ fn test_network_timeout_offline_mode() {
             "Error doesn't explain offline failure:\n{}",
             stderr
         );
-        println!("✅ Offline mode error is clear");
+        println!("Offline mode error is clear");
     }
 }
 
@@ -512,9 +512,9 @@ fn test_process_kill_recovery() {
     // Verify: no lockfile lock remains
     let lockfile_lock = project.join("mgc.lock.lock");
     if lockfile_lock.exists() {
-        println!("⚠️  Lock file still exists (should be cleaned by signal handler)");
+        println!("WARN: Lock file still exists (should be cleaned by signal handler)");
     } else {
-        println!("✅ Lock file cleaned up");
+        println!("Lock file cleaned up");
     }
 
     // Try install again - should succeed
@@ -530,7 +530,7 @@ fn test_process_kill_recovery() {
         String::from_utf8_lossy(&output2.stderr)
     );
 
-    println!("✅ Recovery after process kill successful");
+    println!("Recovery after process kill successful");
 }
 
 #[test]
@@ -618,5 +618,5 @@ fn test_frozen_mode_blocks_lockfile_mutation() {
         "Error should mention frozen mode or lockfile mismatch"
     );
 
-    println!("✅ Frozen mode correctly blocked lockfile mutation");
+    println!("Frozen mode correctly blocked lockfile mutation");
 }

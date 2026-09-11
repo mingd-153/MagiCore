@@ -130,7 +130,7 @@ impl Keyring {
             let backup = path.with_extension("json.bak");
             if let Err(e) = fs::copy(path, &backup) {
                 // Log warning but don't fail (backup is best-effort)
-                eprintln!("⚠ Failed to create keyring backup: {}", e);
+                eprintln!("WARN: failed to create keyring backup: {}", e);
             }
         }
 

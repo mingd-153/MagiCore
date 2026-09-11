@@ -21,7 +21,7 @@ def load_results(results_dir: Path, pm_name: str) -> List[Dict]:
                 data = json.load(f)
                 results.append(data)
         except Exception as e:
-            print(f"⚠️  Failed to load {json_file}: {e}", file=sys.stderr)
+            print(f"WARN: Failed to load {json_file}: {e}", file=sys.stderr)
 
     return results
 
@@ -130,7 +130,7 @@ def save_analysis(pm_name: str, metrics: Dict[str, List[float]], output_file: Pa
     with open(output_file, 'w') as f:
         json.dump(analysis, f, indent=2)
 
-    print(f"✅ Analysis saved: {output_file}")
+    print(f"Analysis saved: {output_file}")
 
 def main():
     if len(sys.argv) < 2:
@@ -142,17 +142,17 @@ def main():
     results_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).parent.parent / 'results' / 'p1_suite'
 
     if not results_dir.exists():
-        print(f"❌ Results directory not found: {results_dir}")
+        print(f"Results directory not found: {results_dir}")
         sys.exit(1)
 
     print(f"Loading results for {pm_name} from {results_dir}...")
     results = load_results(results_dir, pm_name)
 
     if not results:
-        print(f"❌ No results found for {pm_name}")
+        print(f"No results found for {pm_name}")
         sys.exit(1)
 
-    print(f"✅ Loaded {len(results)} results")
+    print(f"Loaded {len(results)} results")
 
     metrics = extract_metrics(results)
     print_summary(pm_name, metrics)

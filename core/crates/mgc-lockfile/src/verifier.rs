@@ -47,7 +47,9 @@ pub fn is_lockfile_tampered(lockfile_path: &Path) -> LockfileResult<bool> {
 pub fn verification_status_message(status: &VerificationStatus) -> String {
     match status {
         VerificationStatus::Valid => "✓ Lockfile signature valid".to_string(),
-        VerificationStatus::Unsigned => "⚠ Lockfile not signed — run 'mgc trust sign'".to_string(),
+        VerificationStatus::Unsigned => {
+            "WARN: Lockfile not signed — run 'mgc trust sign'".to_string()
+        }
         VerificationStatus::Tampered(msg) => format!("✗ Lockfile tampered: {}", msg),
         VerificationStatus::InvalidSignature(msg) => format!("✗ Invalid signature: {}", msg),
     }

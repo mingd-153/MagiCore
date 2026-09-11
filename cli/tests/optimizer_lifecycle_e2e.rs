@@ -128,7 +128,7 @@ process.exit(marker === 'NODE_OPTIMIZED' ? 0 : 1);
         combined
     );
 
-    println!("✅ Web (Node) mgc test → npm → node optimizer env verified");
+    println!("Web (Node) mgc test → npm → node optimizer env verified");
 }
 
 #[test]
@@ -230,7 +230,7 @@ rustflags = ["-C", "opt-level=2", "--cfg", "mgc_lib_optimized"]
         bin_stdout
     );
 
-    println!("✅ Lib (Rust) mgc build → cargo → rustc optimizer verified");
+    println!("Lib (Rust) mgc build → cargo → rustc optimizer verified");
 }
 
 #[test]
@@ -340,7 +340,7 @@ if __name__ == '__main__':
     // 3. Optimizer env reached child process (OPTIMIZER_STATUS in output)
 
     if !output.status.success() {
-        eprintln!("❌ INTEGRATION FAILED: mgc test exited with error");
+        eprintln!("INTEGRATION FAILED: mgc test exited with error");
         eprintln!("   Exit code: {:?}", output.status.code());
         eprintln!("   Output: {}", combined);
         panic!("mgc test failed - see output above");
@@ -354,20 +354,20 @@ if __name__ == '__main__':
     println!("env_marker_present: {}", env_marker_present);
 
     if !test_passed {
-        eprintln!("❌ INTEGRATION FAILED: pytest test did not pass");
+        eprintln!("INTEGRATION FAILED: pytest test did not pass");
         eprintln!("   Expected: '1 passed' in output");
         eprintln!("   Got: {}", combined);
         panic!("pytest test failed");
     }
 
     if !env_marker_present {
-        eprintln!("❌ INTEGRATION FAILED: Optimizer env marker not found");
+        eprintln!("INTEGRATION FAILED: Optimizer env marker not found");
         eprintln!("   Expected: 'OPTIMIZER_STATUS: PYTHON_OPTIMIZED'");
         eprintln!("   Got: {}", combined);
         panic!("Optimizer env not passed to pytest");
     }
 
-    println!("✅ AI (Python) mgc test → pytest optimizer env verified");
+    println!("AI (Python) mgc test → pytest optimizer env verified");
 }
 
 #[test]
@@ -468,7 +468,7 @@ void main() {
     println!("Exit success: {}", output.status.success());
 
     if !output.status.success() {
-        eprintln!("❌ INTEGRATION FAILED: mgc test (Flutter) exited with error");
+        eprintln!("INTEGRATION FAILED: mgc test (Flutter) exited with error");
         eprintln!("   Exit code: {:?}", output.status.code());
         eprintln!("   Output: {}", combined);
         panic!("mgc test (Flutter) failed");
@@ -479,12 +479,12 @@ void main() {
     println!("env_marker_present: {}", env_marker_present);
 
     if !env_marker_present {
-        eprintln!("❌ INTEGRATION FAILED: Optimizer env marker not found in Flutter test");
+        eprintln!("INTEGRATION FAILED: Optimizer env marker not found in Flutter test");
         eprintln!("   Expected: 'OPTIMIZER_STATUS: FLUTTER_OPTIMIZED'");
         eprintln!("   This means env did not propagate to Flutter test process");
         eprintln!("   Output: {}", combined);
         panic!("Optimizer env not passed to Flutter test");
     }
 
-    println!("✅ App (Flutter) mgc test → flutter test: optimizer env VERIFIED");
+    println!("App (Flutter) mgc test → flutter test: optimizer env VERIFIED");
 }

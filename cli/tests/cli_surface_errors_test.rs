@@ -53,7 +53,7 @@ fn test_cli_aliases_work() {
             String::from_utf8_lossy(&output.stderr)
         );
 
-        println!("✅ {} works", alias);
+        println!("{} works", alias);
     }
 }
 
@@ -102,7 +102,7 @@ fn test_typo_in_framework_name() {
         combined
     );
 
-    println!("✅ Typo error is clear and English-only");
+    println!("Typo error is clear and English-only");
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn test_directory_already_exists() {
             project_path.join("README.md").exists(),
             "Existing files should not be deleted"
         );
-        println!("⚠️  Succeeded despite existing dir (acceptable if files preserved)");
+        println!("WARN: Succeeded despite existing dir (acceptable if files preserved)");
     } else {
         // If it fails, error should mention "exists" or "already"
         assert!(
@@ -148,7 +148,7 @@ fn test_directory_already_exists() {
             "Error should mention directory exists:\n{}",
             combined
         );
-        println!("✅ Failed gracefully with clear error");
+        println!("Failed gracefully with clear error");
     }
 }
 
@@ -201,7 +201,7 @@ fn test_offline_mode_behavior() {
         combined
     );
 
-    println!("✅ Network/registry error is clear");
+    println!("Network/registry error is clear");
 }
 
 #[test]
@@ -241,7 +241,7 @@ fn test_invalid_command() {
         combined
     );
 
-    println!("✅ Invalid command error is helpful");
+    println!("Invalid command error is helpful");
 }
 
 #[test]
@@ -278,7 +278,7 @@ fn test_missing_required_argument() {
         combined
     );
 
-    println!("✅ Missing argument error shows usage");
+    println!("Missing argument error shows usage");
 }
 
 #[test]
@@ -333,5 +333,5 @@ fn test_error_message_format() {
         combined
     );
 
-    println!("✅ Error format is focused and English-only");
+    println!("Error format is focused and English-only");
 }

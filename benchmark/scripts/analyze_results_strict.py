@@ -311,7 +311,7 @@ def print_summary(pm_name: str, metrics: Dict[str, List[float]], rejections: Lis
     print(f"\n=== {pm_name.upper()} Strict Analysis ===\n")
 
     if rejections:
-        print(f"⚠️  REJECTED {len(rejections)} samples:")
+        print(f"WARN: REJECTED {len(rejections)} samples:")
         for reason in rejections[:10]:  # Show first 10
             print(f"  - {reason}")
         if len(rejections) > 10:
@@ -319,7 +319,7 @@ def print_summary(pm_name: str, metrics: Dict[str, List[float]], rejections: Lis
         print()
 
     total_valid = len(metrics['cold_time'])
-    print(f"✅ VALID samples: {total_valid}\n")
+    print(f"VALID samples: {total_valid}\n")
 
     for metric_name, values in metrics.items():
         if not values:
@@ -358,7 +358,7 @@ def save_analysis(pm_name: str, metrics: Dict[str, List[float]], rejections: Lis
     with open(output_file, 'w') as f:
         json.dump(analysis, f, indent=2)
 
-    print(f"✅ Analysis saved: {output_file}")
+    print(f"Analysis saved: {output_file}")
 
 def main():
     if len(sys.argv) < 2:
@@ -379,7 +379,7 @@ def main():
             break
 
     if not results_dir.exists():
-        print(f"❌ Results directory not found: {results_dir}")
+        print(f"Results directory not found: {results_dir}")
         sys.exit(1)
 
     print(f"Loading results for {pm_name} from {results_dir}...")
@@ -391,7 +391,7 @@ def main():
     results, rejections = load_results_strict(results_dir, pm_name, expected_packages, publish_mode)
 
     if not results:
-        print(f"\n❌ No valid results found for {pm_name}")
+        print(f"\nNo valid results found for {pm_name}")
         if rejections:
             print("\nRejection reasons:")
             for r in rejections:

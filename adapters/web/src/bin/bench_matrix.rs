@@ -164,7 +164,7 @@ fn run() -> anyhow::Result<()> {
         release_baseline_lock(&name)?;
         let has_regression = print_comparison(&baseline.scenarios, &scenarios);
         if has_regression {
-            eprintln!("⚠️  REGRESSION DETECTED: some scenarios degraded >10% vs baseline");
+            eprintln!("WARN: REGRESSION DETECTED: some scenarios degraded >10% vs baseline");
         }
     }
 
@@ -1063,7 +1063,7 @@ fn print_comparison(previous: &[ScenarioMeasurement], current: &[ScenarioMeasure
         if delta_pct > 10.0 {
             has_regression = true;
         }
-        let flag = if delta_pct > 10.0 { " ⚠️" } else { "" };
+        let flag = if delta_pct > 10.0 { " WARN:" } else { "" };
         println!(
             "{:<24} {:>8.2}ms {:>8.2}ms {:>10.2}%{:>4} {:>8.2}ms {:>8.2}ms",
             current_scenario.name,

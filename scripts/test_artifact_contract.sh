@@ -29,7 +29,7 @@ test_case() {
     sbom=$(echo "$output" | grep "^SBOM=" | cut -d= -f2)
 
     if [[ "$archive" != "$expected_archive" ]]; then
-        echo "  ❌ FAIL: Archive name mismatch"
+        echo "  FAIL: Archive name mismatch"
         echo "     Expected: $expected_archive"
         echo "     Got:      $archive"
         FAILED=$((FAILED + 1))
@@ -37,7 +37,7 @@ test_case() {
     fi
 
     if [[ "$checksum" != "$expected_checksum" ]]; then
-        echo "  ❌ FAIL: Checksum name mismatch"
+        echo "  FAIL: Checksum name mismatch"
         echo "     Expected: $expected_checksum"
         echo "     Got:      $checksum"
         FAILED=$((FAILED + 1))
@@ -45,14 +45,14 @@ test_case() {
     fi
 
     if [[ "$sbom" != "$expected_sbom" ]]; then
-        echo "  ❌ FAIL: SBOM name mismatch"
+        echo "  FAIL: SBOM name mismatch"
         echo "     Expected: $expected_sbom"
         echo "     Got:      $sbom"
         FAILED=$((FAILED + 1))
         return 1
     fi
 
-    echo "  ✅ PASS"
+    echo "  PASS"
     PASSED=$((PASSED + 1))
     return 0
 }
@@ -108,19 +108,19 @@ test_case "RC version" \
 # Test invalid inputs
 echo "Testing: Invalid OS"
 if "$CONTRACT" "1.1.0" "invalid" "x64" "all" 2>/dev/null; then
-    echo "  ❌ FAIL: Should reject invalid OS"
+    echo "  FAIL: Should reject invalid OS"
     FAILED=$((FAILED + 1))
 else
-    echo "  ✅ PASS: Rejected invalid OS"
+    echo "  PASS: Rejected invalid OS"
     PASSED=$((PASSED + 1))
 fi
 
 echo "Testing: Invalid variant"
 if "$CONTRACT" "1.1.0" "linux" "x64" "invalid" 2>/dev/null; then
-    echo "  ❌ FAIL: Should reject invalid variant"
+    echo "  FAIL: Should reject invalid variant"
     FAILED=$((FAILED + 1))
 else
-    echo "  ✅ PASS: Rejected invalid variant"
+    echo "  PASS: Rejected invalid variant"
     PASSED=$((PASSED + 1))
 fi
 
@@ -133,5 +133,5 @@ if [[ $FAILED -gt 0 ]]; then
     exit 1
 fi
 
-echo "✅ All contract tests PASSED"
+echo "All contract tests PASSED"
 exit 0

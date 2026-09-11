@@ -415,9 +415,9 @@ pub async fn install_with_adapter(
 
     let resolve_bar = create_progress_bar(graph.len() as u64, "Resolving...");
     if used_lockfile {
-        resolve_bar.finish_with_message(format!("✅  Loaded {} locked packages", graph.len()));
+        resolve_bar.finish_with_message(format!(" Loaded {} locked packages", graph.len()));
     } else {
-        resolve_bar.finish_with_message(format!("✅  Resolved {} packages", graph.len()));
+        resolve_bar.finish_with_message(format!(" Resolved {} packages", graph.len()));
     }
 
     let multi = create_multi_progress();
@@ -432,7 +432,7 @@ pub async fn install_with_adapter(
     }
     for (i, pb) in bars.iter().enumerate() {
         pb.set_position(100);
-        pb.finish_with_message(format!("✅ {}", graph.packages[i].id.name_str()));
+        pb.finish_with_message(format!("{}", graph.packages[i].id.name_str()));
     }
 
     let spinner = create_spinner("  Linking packages...");

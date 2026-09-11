@@ -28,7 +28,7 @@ pub fn execute(lockfile_path: &str) -> anyhow::Result<()> {
             Ok(())
         }
         VerificationStatus::Unsigned => {
-            println!("\n⚠ Lockfile is not signed");
+            println!("\nWARN: Lockfile is not signed");
             println!("  Run 'mgc trust sign' to sign it");
             Ok(())
         }

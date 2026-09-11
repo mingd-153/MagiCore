@@ -9,7 +9,7 @@ pub fn execute() -> anyhow::Result<()> {
 
     // Check if keyring exists
     if !keyring_path.exists() {
-        println!("⚠ No keyring found");
+        println!("WARN: No keyring found");
         println!("  Run 'mgc trust init' to create one");
         return Ok(());
     }
@@ -18,7 +18,7 @@ pub fn execute() -> anyhow::Result<()> {
     let keyring = Keyring::load(&keyring_path)?;
 
     if keyring.keys.is_empty() {
-        println!("⚠ Keyring is empty");
+        println!("WARN: Keyring is empty");
         return Ok(());
     }
 

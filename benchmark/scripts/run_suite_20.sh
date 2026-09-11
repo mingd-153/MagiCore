@@ -23,9 +23,9 @@ for i in $(seq 1 $TOTAL_RUNS); do
 
     # Call existing benchmark script
     if bash "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" 2>&1 | tee "$RESULTS_DIR/${PM_NAME}_run${i}.log"; then
-        echo "✅ Run $i completed"
+        echo "Run $i completed"
     else
-        echo "⚠️  Run $i failed (exit code $?)"
+        echo "WARN: Run $i failed (exit code $?)"
     fi
 
     # Sleep between runs to let system stabilize

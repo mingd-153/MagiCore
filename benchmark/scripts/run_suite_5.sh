@@ -15,10 +15,10 @@ for i in {1..5}; do
   # Run benchmark with specific workload
   PACKAGE_JSON="$SCRIPT_DIR/../env/$WORKLOAD" \
     "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" || {
-    echo "⚠️  Run $i failed (exit code $?)"
+    echo "WARN: Run $i failed (exit code $?)"
   }
   
-  echo "✅ Run $i completed"
+  echo "Run $i completed"
   
   # Short sleep between runs
   if [ $i -lt 5 ]; then

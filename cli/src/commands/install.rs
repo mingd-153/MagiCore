@@ -153,7 +153,7 @@ async fn install_into_root(
         match status {
             mgc_lockfile::VerificationStatus::Tampered(msg) => {
                 // T4.5: Invalidate cache on tamper detection
-                info("⚠ Lockfile tampered — invalidating cache");
+                info("WARN: Lockfile tampered — invalidating cache");
                 let cache = PackageCache::new()?;
                 // Invalidate all packages in lockfile
                 let lockfile = mgc_lockfile::load_lockfile(&lockfile_path)?;
@@ -168,7 +168,7 @@ async fn install_into_root(
                 );
             }
             mgc_lockfile::VerificationStatus::Unsigned => {
-                info("⚠ Lockfile not signed — run 'mgc trust sign' for tamper detection");
+                info("WARN: Lockfile not signed — run 'mgc trust sign' for tamper detection");
             }
             mgc_lockfile::VerificationStatus::Valid => {
                 info("✓ Lockfile signature valid");
@@ -254,9 +254,9 @@ async fn install_into_root(
 
     let resolve_bar = create_progress_bar(graph.len() as u64, "Resolving...");
     if used_lockfile {
-        resolve_bar.finish_with_message(format!("✅  Loaded {} locked packages", graph.len()));
+        resolve_bar.finish_with_message(format!(" Loaded {} locked packages", graph.len()));
     } else {
-        resolve_bar.finish_with_message(format!("✅  Resolved {} packages", graph.len()));
+        resolve_bar.finish_with_message(format!(" Resolved {} packages", graph.len()));
     }
 
     let multi = create_multi_progress();
@@ -272,7 +272,7 @@ async fn install_into_root(
 
     for (i, pb) in bars.iter().enumerate() {
         pb.set_position(100);
-        pb.finish_with_message(format!("✅ {}", graph.packages[i].id.name_str()));
+        pb.finish_with_message(format!("{}", graph.packages[i].id.name_str()));
     }
 
     let spinner = create_spinner("  Linking packages...");
@@ -505,7 +505,7 @@ fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
             mgc_ui::success("✓ Lockfile signature valid");
         }
         mgc_lockfile::VerificationStatus::Unsigned => {
-            mgc_ui::warning("⚠ Lockfile not signed — run 'mgc trust sign' to sign it");
+            mgc_ui::warning("WARN: Lockfile not signed — run 'mgc trust sign' to sign it");
         }
         mgc_lockfile::VerificationStatus::Tampered(msg) => {
             return Err(anyhow::anyhow!("Lockfile tampered: {}", msg));

@@ -17,7 +17,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
 
     if !mgc_ui::is_quiet() {
         mgc_ui::blank_line();
-        println!("🚀 {}", "MagiCore Production Server".bold().magenta());
+        println!("{}", "MagiCore Production Server".bold().magenta());
     }
     info(&format!("Project root: {}", root.display()));
     info(&format!("Execution profile: {}", ctx.execution_summary()));

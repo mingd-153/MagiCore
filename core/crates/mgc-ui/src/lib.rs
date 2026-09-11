@@ -31,7 +31,7 @@ pub fn print_banner() {
     let banner = style(
         r#"
     ╔══════════════════════════════════════════╗
-    ║           🚀  MagiCore  🚀              ║
+    ║            MagiCore               ║
     ║      Universal Package Manager           ║
     ╚══════════════════════════════════════════╝
     "#,
@@ -127,7 +127,7 @@ pub fn warning(msg: &str) {
     if is_quiet() {
         return;
     }
-    println!("  {} {}", style("⚠").yellow().bold(), msg);
+    println!("  {} {}", style("WARN:").yellow().bold(), msg);
 }
 
 /// Print an info message
@@ -170,7 +170,7 @@ pub fn print_next_steps(project_name: &str) {
     );
     println!(
         "  {}",
-        style("┃           ✅  All done!                   ┃")
+        style("┃            All done!                   ┃")
             .green()
             .bold()
     );

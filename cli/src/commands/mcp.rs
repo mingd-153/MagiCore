@@ -193,7 +193,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                                 "content": [{
                                     "type": "text",
                                     "text": format!(
-                                        "✅ MagiCore install completed{}\nPackages: {}",
+                                        "MagiCore install completed{}\nPackages: {}",
                                         if frozen { " (frozen mode)" } else { "" },
                                         pkg_list
                                     )
@@ -203,7 +203,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         Err(e) => json!({
                             "content": [{
                                 "type": "text",
-                                "text": format!("❌ Install failed: {}", e)
+                                "text": format!("Install failed: {}", e)
                             }],
                             "isError": true
                         }),
@@ -227,7 +227,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                             "content": [{
                                 "type": "text",
                                 "text": format!(
-                                    "✅ Security audit completed{}",
+                                    "Security audit completed{}",
                                     if fix { " (auto-fix applied)" } else { "" }
                                 )
                             }]
@@ -235,7 +235,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         Err(e) => json!({
                             "content": [{
                                 "type": "text",
-                                "text": format!("❌ Audit failed: {}", e)
+                                "text": format!("Audit failed: {}", e)
                             }],
                             "isError": true
                         }),
@@ -253,13 +253,13 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         Ok(()) => json!({
                             "content": [{
                                 "type": "text",
-                                "text": "✅ Workspace info retrieved (see output above)"
+                                "text": "Workspace info retrieved (see output above)"
                             }]
                         }),
                         Err(e) => json!({
                             "content": [{
                                 "type": "text",
-                                "text": format!("❌ Workspace query failed: {}", e)
+                                "text": format!("Workspace query failed: {}", e)
                             }],
                             "isError": true
                         }),
@@ -292,7 +292,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         json!({
                             "content": [{
                                 "type": "text",
-                                "text": "❌ mgc_add requires at least one package"
+                                "text": "mgc_add requires at least one package"
                             }],
                             "isError": true
                         })
@@ -315,7 +315,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                                 "content": [{
                                     "type": "text",
                                     "text": format!(
-                                        "✅ Added {} package(s){}",
+                                        "Added {} package(s){}",
                                         packages.len(),
                                         if dev { " (dev)" } else { "" }
                                     )
@@ -324,7 +324,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                             Err(e) => json!({
                                 "content": [{
                                     "type": "text",
-                                    "text": format!("❌ Add failed: {}", e)
+                                    "text": format!("Add failed: {}", e)
                                 }],
                                 "isError": true
                             }),

@@ -16,7 +16,7 @@ cargo build --release --bin mgc --no-default-features --features all --locked
 MGC="$WORKSPACE_ROOT/target/release/mgc"
 
 if [[ ! -x "$MGC" ]]; then
-    echo "❌ FAIL: mgc binary not built"
+    echo "FAIL: mgc binary not built"
     exit 1
 fi
 
@@ -38,9 +38,9 @@ if "$MGC" create-web react test-web --yes && \
    "$MGC" build && \
    { test -d dist || test -d build; } && \
    cd ..; then
-    echo "✅ Web: PASS"
+    echo "Web: PASS"
 else
-    echo "❌ Web: FAIL"
+    echo "Web: FAIL"
     FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
@@ -61,9 +61,9 @@ if command -v python3 >/dev/null 2>&1 && \
    "$MGC" build && \
    test -d dist && \
    cd ..; then
-    echo "✅ AI: PASS"
+    echo "AI: PASS"
 else
-    echo "❌ AI: FAIL"
+    echo "AI: FAIL"
     FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
@@ -80,9 +80,9 @@ if command -v flutter >/dev/null 2>&1 && \
    "$MGC" build && \
    test -d build/flutter_assets && \
    cd ..; then
-    echo "✅ App: PASS"
+    echo "App: PASS"
 else
-    echo "❌ App: FAIL (Flutter is required for all-core verification)"
+    echo "App: FAIL (Flutter is required for all-core verification)"
     FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
@@ -96,9 +96,9 @@ if "$MGC" create-lib rust test-lib && \
    "$MGC" build && \
    "$MGC" test && \
    cd ..; then
-    echo "✅ Lib: PASS"
+    echo "Lib: PASS"
 else
-    echo "❌ Lib: FAIL"
+    echo "Lib: FAIL"
     FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
@@ -109,9 +109,9 @@ echo "FAIL: $FAIL_COUNT"
 echo ""
 
 if [[ $FAIL_COUNT -eq 0 ]]; then
-    echo "✅ ALL CORES LIFECYCLE VERIFIED"
+    echo "ALL CORES LIFECYCLE VERIFIED"
     exit 0
 else
-    echo "❌ FAIL: $FAIL_COUNT cores failed"
+    echo "FAIL: $FAIL_COUNT cores failed"
     exit 1
 fi

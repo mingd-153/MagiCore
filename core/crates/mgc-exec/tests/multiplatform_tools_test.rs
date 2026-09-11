@@ -64,7 +64,7 @@ fn test_flutter_spawn_windows_bat() {
                 let is_cmd = first_match.to_lowercase().ends_with(".cmd");
 
                 if is_bat || is_cmd {
-                    println!("✅ Flutter is batch script - will spawn via cmd.exe");
+                    println!("Flutter is batch script - will spawn via cmd.exe");
                 } else {
                     println!("ℹ️  Flutter is PE executable - direct spawn OK");
                 }
@@ -166,7 +166,7 @@ fn test_exec_options_windows_env_preservation() {
             }
         }
 
-        println!("✅ Critical Windows vars verified present");
+        println!("Critical Windows vars verified present");
     }
 }
 
@@ -193,13 +193,13 @@ fn test_error_193_scenario() {
 
         match direct {
             Err(e) => {
-                println!("✅ Direct .bat spawn failed as expected: {}", e);
+                println!("Direct .bat spawn failed as expected: {}", e);
                 // Error 193 or similar Windows spawn error
             }
             Ok(output) => {
                 // Some Windows versions may allow this, but generally fails
                 println!(
-                    "⚠️  Direct .bat spawn succeeded (unusual): {:?}",
+                    "WARN: Direct .bat spawn succeeded (unusual): {:?}",
                     output.status
                 );
             }
@@ -210,7 +210,7 @@ fn test_error_193_scenario() {
 
         match via_cmd {
             Ok(output) => {
-                println!("✅ cmd.exe wrapper spawn succeeded");
+                println!("cmd.exe wrapper spawn succeeded");
                 assert!(output.status.success() || output.status.code() == Some(0));
             }
             Err(e) => {

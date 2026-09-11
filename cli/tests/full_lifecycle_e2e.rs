@@ -87,7 +87,7 @@ fn test_web_full_lifecycle() {
     let core_content = std::fs::read_to_string(project_path.join(".mgc.core")).unwrap();
     assert_eq!(core_content.trim(), "web");
 
-    println!("✅ CREATE verified: scaffold created project");
+    println!("CREATE verified: scaffold created project");
 
     // === STEP 2: INSTALL ===
     println!("\n=== STEP 2: mgc install ===");
@@ -144,7 +144,7 @@ fn test_web_full_lifecycle() {
         "mgc.lock not created"
     );
 
-    println!("✅ INSTALL verified: dependencies installed + lockfile created");
+    println!("INSTALL verified: dependencies installed + lockfile created");
 
     // === STEP 3: TEST ===
     println!("\n=== STEP 3: mgc test ===");
@@ -168,9 +168,9 @@ fn test_web_full_lifecycle() {
         "Test did not produce expected output"
     );
 
-    println!("✅ TEST verified: test command executed successfully");
+    println!("TEST verified: test command executed successfully");
 
-    println!("✅ Web FULL LIFECYCLE VERIFIED: create → install → test");
+    println!("Web FULL LIFECYCLE VERIFIED: create → install → test");
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn test_lib_full_lifecycle() {
         test_combined
     );
 
-    println!("✅ Lib full lifecycle VERIFIED: create → build → test");
+    println!("Lib full lifecycle VERIFIED: create → build → test");
 }
 
 #[test]
@@ -317,7 +317,7 @@ fn test_ai_full_lifecycle() {
     let core_content = std::fs::read_to_string(project_path.join(".mgc.core")).unwrap();
     assert_eq!(core_content.trim(), "ai");
 
-    println!("✅ CREATE verified: scaffold created project");
+    println!("CREATE verified: scaffold created project");
 
     // === STEP 2: Add dependency to create lockfile ===
     println!("\n=== STEP 2: mgc add (create lockfile) ===");
@@ -340,7 +340,7 @@ fn test_ai_full_lifecycle() {
         );
     }
 
-    println!("✅ ADD verified: lockfile created");
+    println!("ADD verified: lockfile created");
 
     // === STEP 3: INSTALL from lockfile ===
     println!("\n=== STEP 3: mgc install ===");
@@ -360,7 +360,7 @@ fn test_ai_full_lifecycle() {
         );
     }
 
-    println!("✅ INSTALL verified");
+    println!("INSTALL verified");
 
     // === STEP 4: TEST - Run pytest ===
     println!("\n=== STEP 4: mgc test ===");
@@ -392,8 +392,8 @@ fn test_ai_full_lifecycle() {
         test_combined
     );
 
-    println!("✅ TEST verified: pytest ran");
-    println!("✅ AI FULL LIFECYCLE VERIFIED: create → install → test");
+    println!("TEST verified: pytest ran");
+    println!("AI FULL LIFECYCLE VERIFIED: create → install → test");
 }
 
 #[test]
@@ -440,6 +440,6 @@ fn test_app_full_lifecycle_limited() {
     let core_content = std::fs::read_to_string(project_path.join(".mgc.core")).unwrap();
     assert_eq!(core_content.trim(), "app", ".mgc.core should contain 'app'");
 
-    println!("✅ App lifecycle PARTIAL: create verified");
+    println!("App lifecycle PARTIAL: create verified");
     println!("   Full lifecycle (build → test) requires Flutter - see optimizer tests");
 }

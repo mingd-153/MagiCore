@@ -26,16 +26,16 @@ impl PolicyMode {
     pub fn from_env() -> Self {
         // R5.1 FIX (AUDIT VÒNG 2): Default to strict in CI, warn in dev
         let default_mode = if is_ci_environment() {
-            Self::Strict // ✅ Stricter default in CI (require signed)
+            Self::Strict // Stricter default in CI (require signed)
         } else {
-            Self::Warn // ✅ Relaxed default in dev (allow unsigned)
+            Self::Warn // Relaxed default in dev (allow unsigned)
         };
 
         match std::env::var("MGC_TRUST_POLICY").as_deref() {
             Ok("strict") => Self::Strict,
             Ok("warn") => Self::Warn,
             Ok("audit") => Self::Audit,
-            _ => default_mode, // ✅ CI-aware default
+            _ => default_mode, // CI-aware default
         }
     }
 }
@@ -67,7 +67,7 @@ pub fn enforce_policy(lockfile_path: &Path, mode: PolicyMode) -> Result<()> {
 
         // Warn mode: warn on unsigned, fail on tampered
         (PolicyMode::Warn, VerificationStatus::Unsigned) => {
-            eprintln!("⚠ Trust policy: Lockfile not signed (warn mode)");
+            eprintln!("WARN: Trust policy: Lockfile not signed (warn mode)");
         }
         (PolicyMode::Warn, VerificationStatus::Tampered(msg)) => {
             anyhow::bail!("POLICY VIOLATION (warn): Lockfile tampered: {}", msg);

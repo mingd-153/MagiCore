@@ -127,27 +127,27 @@ if [[ "$verify_only" -eq 1 ]]; then
   
   # Check Homebrew magicore.rb
   if ! grep -q "$hash_macos_x64" "$homebrew_dir/magicore.rb"; then
-    echo "❌ magicore.rb: macOS x64 hash mismatch" >&2
+    echo "magicore.rb: macOS x64 hash mismatch" >&2
     exit 1
   fi
   if ! grep -q "$hash_linux_x64" "$homebrew_dir/magicore.rb"; then
-    echo "❌ magicore.rb: Linux x64 hash mismatch" >&2
+    echo "magicore.rb: Linux x64 hash mismatch" >&2
     exit 1
   fi
   
   # Check Scoop magicore.json
   if ! grep -q "$hash_windows_x64" "$scoop_dir/magicore.json"; then
-    echo "❌ magicore.json: Windows x64 hash mismatch" >&2
+    echo "magicore.json: Windows x64 hash mismatch" >&2
     exit 1
   fi
   
   # Check for placeholders
   if grep -R "PLACEHOLDER_WILL_BE_REPLACED_BY_CI\|UPDATE_ME" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
-    echo "❌ Found PLACEHOLDER or UPDATE_ME in manifests" >&2
+    echo "Found PLACEHOLDER or UPDATE_ME in manifests" >&2
     exit 1
   fi
   
-  echo "✅ All manifests verified"
+  echo "All manifests verified"
   exit 0
 fi
 
@@ -296,7 +296,7 @@ EOF
 echo "✓ Updated magicore-web.json"
 
 echo ""
-echo "✅ All manifests updated for version $version"
+echo "All manifests updated for version $version"
 echo "   - Homebrew: x64 only, ARM64 shows error message"
 echo "   - Scoop: x64 only"
 echo "   - All hashes verified"

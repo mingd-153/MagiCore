@@ -211,7 +211,7 @@ fn test_cwd_lock_sets_working_directory() {
         );
 
         println!(
-            "✅ CWD correctly set to project root: {}",
+            "CWD correctly set to project root: {}",
             logged_path.display()
         );
     } else {
@@ -250,10 +250,7 @@ fn test_shell_injection_prevented() {
         );
 
         let err_msg = result.unwrap_err().to_string();
-        println!(
-            "✅ Blocked shell injection attempt: '{}' → {}",
-            tool, err_msg
-        );
+        println!("Blocked shell injection attempt: '{}' → {}", tool, err_msg);
     }
 
     // ATTACK 2: Verify mgc-exec uses Command::args() not shell
@@ -261,7 +258,7 @@ fn test_shell_injection_prevented() {
     // No shell involvement means shell metacharacters are passed as literal strings, not interpreted
 
     println!(
-        "✅ Shell injection prevented: mgc-exec uses Command::args(), malicious tool names rejected"
+        "Shell injection prevented: mgc-exec uses Command::args(), malicious tool names rejected"
     );
 }
 
@@ -348,7 +345,7 @@ fn test_audit_log_records_execution() {
 
     assert!(found_entry, "Audit log is empty - no executions recorded");
 
-    println!("✅ Audit log verification passed:");
+    println!("Audit log verification passed:");
     println!("   - Log file exists at {:?}", audit_log);
     println!("   - Contains valid JSON entries");
     println!("   - Required fields present: cmd, args, exit_code, ts, duration_ms");
@@ -395,7 +392,7 @@ fn test_path_traversal_in_args_rejected() {
         err
     );
 
-    println!("✅ Path traversal rejected by validator (not allowlist)");
+    println!("Path traversal rejected by validator (not allowlist)");
 }
 
 #[test]
@@ -432,7 +429,7 @@ fn test_validator_allows_legitimate_dotdot_in_non_paths() {
             arg
         );
 
-        println!("✅ Legitimate arg allowed: '{}'", arg);
+        println!("Legitimate arg allowed: '{}'", arg);
     }
 }
 
@@ -482,5 +479,5 @@ fn test_validator_rejects_actual_path_traversal() {
     );
     assert!(result.is_err(), "Path traversal escape không bị chặn");
 
-    println!("✅ Validator correctly allows internal paths, blocks escapes");
+    println!("Validator correctly allows internal paths, blocks escapes");
 }

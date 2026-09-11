@@ -27,8 +27,8 @@ fn test_homebrew_tap_install() {
 
     // This test requires REAL tap repository
     // For now, verify brew commands work and structure is correct
-    println!("⚠️  Full brew install requires published tap");
-    println!("✅ STRUCTURE VERIFIED: brew commands available");
+    println!("WARN: Full brew install requires published tap");
+    println!("STRUCTURE VERIFIED: brew commands available");
 
     // TODO: When tap is public:
     // 1. brew tap mingd-153/magicore
@@ -55,8 +55,8 @@ fn test_scoop_install() {
         );
     }
 
-    println!("⚠️  Full scoop install requires published bucket");
-    println!("✅ STRUCTURE VERIFIED: scoop commands available");
+    println!("WARN: Full scoop install requires published bucket");
+    println!("STRUCTURE VERIFIED: scoop commands available");
 
     // TODO: When bucket is public:
     // 1. scoop bucket add magicore <url>
@@ -95,7 +95,7 @@ fn test_archive_download_and_extract() {
         );
     };
 
-    println!("✅ Found binary: {:?}", binary_path);
+    println!("Found binary: {:?}", binary_path);
 
     // Create distribution archive structure
     let temp = TempDir::new().unwrap();
@@ -121,12 +121,12 @@ fn test_archive_download_and_extract() {
 
     if readme_src.exists() {
         fs::copy(&readme_src, archive_root.join("README.md")).unwrap();
-        println!("✅ Copied README.md");
+        println!("Copied README.md");
     }
 
     if license_src.exists() {
         fs::copy(&license_src, archive_root.join("LICENSE")).unwrap();
-        println!("✅ Copied LICENSE");
+        println!("Copied LICENSE");
     }
 
     // Verify distribution structure
@@ -154,7 +154,7 @@ fn test_archive_download_and_extract() {
         version_str
     );
 
-    println!("✅ Distribution binary verified: {}", version_str.trim());
+    println!("Distribution binary verified: {}", version_str.trim());
 
     // Test help command
     let help_output = Command::new(&dist_binary)
@@ -163,9 +163,9 @@ fn test_archive_download_and_extract() {
         .expect("Failed to run mgc --help from distribution");
 
     assert!(help_output.status.success(), "Help command failed");
-    println!("✅ Help command works from distribution");
+    println!("Help command works from distribution");
 
-    println!("\n✅ REAL SMOKE TEST PASSED: Distribution archive structure verified");
+    println!("\nREAL SMOKE TEST PASSED: Distribution archive structure verified");
     println!("   - Binary executable: ✓");
     println!("   - Version command: ✓");
     println!("   - Help command: ✓");
@@ -209,7 +209,7 @@ fn test_binary_version_and_help() {
         version_str
     );
 
-    println!("✅ Version: {}", version_str.trim());
+    println!("Version: {}", version_str.trim());
 
     // Test --help
     let help_output = Command::new(&binary_path)
@@ -225,7 +225,7 @@ fn test_binary_version_and_help() {
         "Help output missing usage info"
     );
 
-    println!("✅ Help output verified");
+    println!("Help output verified");
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn test_binary_basic_commands() {
         "mgc doctor crashed or produced no output"
     );
 
-    println!("✅ Core commands verified");
+    println!("Core commands verified");
 }
 
 #[test]
@@ -304,7 +304,7 @@ fn test_sha256_checksum_verification() {
     let hash_result = hasher.finalize();
     let checksum = format!("{:x}", hash_result);
 
-    println!("✅ SHA256 calculated: {}", checksum);
+    println!("SHA256 calculated: {}", checksum);
     println!("   Binary size: {} bytes", binary_data.len());
 
     // Verify checksum format (64 hex chars)
@@ -328,8 +328,8 @@ fn test_sha256_checksum_verification() {
         "SHA256 calculation must be deterministic"
     );
 
-    println!("✅ Checksum mechanism verified");
-    println!("✅ Reproducible: second calculation matches");
-    println!("\n✅ REAL SMOKE TEST PASSED: SHA256 checksum verification works");
+    println!("Checksum mechanism verified");
+    println!("Reproducible: second calculation matches");
+    println!("\nREAL SMOKE TEST PASSED: SHA256 checksum verification works");
     println!("   Ready for: packaging/scripts/update-release-hashes.sh");
 }

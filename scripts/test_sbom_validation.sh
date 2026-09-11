@@ -41,43 +41,43 @@ sbom="/tmp/test-sbom-valid.json"
 
 # Run validation logic (same as workflow)
 if ! jq -e '.bomFormat == "CycloneDX"' "$sbom" > /dev/null; then
-  echo "  ❌ FAIL: Invalid bomFormat"
+  echo "  FAIL: Invalid bomFormat"
   exit 1
 fi
 
 if ! jq -e '.specVersion' "$sbom" > /dev/null; then
-  echo "  ❌ FAIL: Missing specVersion"
+  echo "  FAIL: Missing specVersion"
   exit 1
 fi
 
 if ! jq -e '.metadata.component' "$sbom" > /dev/null; then
-  echo "  ❌ FAIL: Missing metadata.component"
+  echo "  FAIL: Missing metadata.component"
   exit 1
 fi
 
 if ! jq -e '.components' "$sbom" > /dev/null; then
-  echo "  ❌ FAIL: Missing components"
+  echo "  FAIL: Missing components"
   exit 1
 fi
 
 component_count=$(jq -r '.components | length' "$sbom")
 if [[ $component_count -lt 10 ]]; then
-  echo "  ❌ FAIL: Too few components ($component_count)"
+  echo "  FAIL: Too few components ($component_count)"
   exit 1
 fi
 
 sbom_version=$(jq -r '.metadata.component.version // empty' "$sbom")
 if [[ -z "$sbom_version" ]]; then
-  echo "  ❌ FAIL: Missing metadata.component.version"
+  echo "  FAIL: Missing metadata.component.version"
   exit 1
 fi
 
 if [[ "$sbom_version" != "$VERSION" ]]; then
-  echo "  ❌ FAIL: SBOM version mismatch: expected $VERSION, got $sbom_version"
+  echo "  FAIL: SBOM version mismatch: expected $VERSION, got $sbom_version"
   exit 1
 fi
 
-echo "  ✅ PASS: Valid SBOM accepted"
+echo "  PASS: Valid SBOM accepted"
 
 # Test 2: SBOM with version mismatch (should fail)
 echo ""
@@ -111,9 +111,9 @@ sbom="/tmp/test-sbom-mismatch.json"
 sbom_version=$(jq -r '.metadata.component.version // empty' "$sbom")
 
 if [[ "$sbom_version" != "$VERSION" ]]; then
-  echo "  ✅ PASS: Version mismatch correctly rejected (expected $VERSION, got $sbom_version)"
+  echo "  PASS: Version mismatch correctly rejected (expected $VERSION, got $sbom_version)"
 else
-  echo "  ❌ FAIL: Should reject version mismatch"
+  echo "  FAIL: Should reject version mismatch"
   exit 1
 fi
 
@@ -148,9 +148,9 @@ sbom="/tmp/test-sbom-no-version.json"
 sbom_version=$(jq -r '.metadata.component.version // empty' "$sbom")
 
 if [[ -z "$sbom_version" ]]; then
-  echo "  ✅ PASS: Missing version correctly rejected"
+  echo "  PASS: Missing version correctly rejected"
 else
-  echo "  ❌ FAIL: Should reject missing version"
+  echo "  FAIL: Should reject missing version"
   exit 1
 fi
 
@@ -161,8 +161,8 @@ echo ""
 echo "=== All SBOM Validation Tests PASSED ==="
 echo ""
 echo "Validation logic proven:"
-echo "  ✅ Accepts valid SBOM with matching version"
-echo "  ✅ Rejects SBOM with version mismatch"
-echo "  ✅ Rejects SBOM with missing version"
+echo "  Accepts valid SBOM with matching version"
+echo "  Rejects SBOM with version mismatch"
+echo "  Rejects SBOM with missing version"
 echo ""
 echo "Ready for production workflow."

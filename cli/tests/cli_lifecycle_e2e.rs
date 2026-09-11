@@ -75,7 +75,7 @@ fn test_web_lifecycle_create_only() {
     let core_content = std::fs::read_to_string(&mgc_core).unwrap();
     assert_eq!(core_content.trim(), "web", ".mgc.core should contain 'web'");
 
-    println!("✅ Web lifecycle: mgc create-web verified");
+    println!("Web lifecycle: mgc create-web verified");
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn test_lib_rust_lifecycle_create_build() {
         build_combined
     );
 
-    println!("✅ Lib (Rust) lifecycle: create + build (exit success) verified");
+    println!("Lib (Rust) lifecycle: create + build (exit success) verified");
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn test_ai_lifecycle_create_only() {
     let core_content = std::fs::read_to_string(project_path.join(".mgc.core")).unwrap();
     assert_eq!(core_content.trim(), "ai");
 
-    println!("✅ AI lifecycle: mgc create-ai verified");
+    println!("AI lifecycle: mgc create-ai verified");
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn test_app_lifecycle_create_only() {
     // Check if flutter available
     // Check flutter - skip if missing
     if Command::new("flutter").arg("--version").output().is_err() {
-        eprintln!("⚠️  SKIPPED: flutter not available");
+        eprintln!("WARN: SKIPPED: flutter not available");
         eprintln!("   This test requires Flutter SDK to verify App lifecycle.");
         eprintln!("   Status: SKIPPED");
         return;
@@ -243,5 +243,5 @@ fn test_app_lifecycle_create_only() {
     let core_content = std::fs::read_to_string(project_path.join(".mgc.core")).unwrap();
     assert_eq!(core_content.trim(), "app");
 
-    println!("✅ App lifecycle: mgc create-app verified");
+    println!("App lifecycle: mgc create-app verified");
 }

@@ -247,12 +247,12 @@ fn test_cache_cold_vs_warm() {
     if warm_duration < cold_duration {
         let speedup = cold_duration.as_secs_f64() / warm_duration.as_secs_f64();
         println!("Speedup: {:.2}x", speedup);
-        println!("✅ Cache improved performance");
+        println!("Cache improved performance");
     } else {
-        println!("⚠️  Warm cache not faster (cache may not be effective)");
+        println!("WARN: Warm cache not faster (cache may not be effective)");
     }
 
-    println!("✅ Cache performance: cold → warm verified");
+    println!("Cache performance: cold → warm verified");
 }
 
 #[test]
@@ -346,7 +346,7 @@ fn test_corrupted_cache_recovery() {
         );
     }
 
-    println!("✅ Recovered from corrupted cache");
+    println!("Recovered from corrupted cache");
 }
 
 #[test]
@@ -410,21 +410,21 @@ fn test_concurrent_install_safety() {
     println!(
         "Install 1: {}",
         if success1 {
-            "✅ SUCCESS"
+            "SUCCESS"
         } else if is_retry_error(&stderr1) {
-            "⚠️  RETRY-ABLE"
+            "WARN: RETRY-ABLE"
         } else {
-            "❌ FAILED"
+            "FAILED"
         }
     );
     println!(
         "Install 2: {}",
         if success2 {
-            "✅ SUCCESS"
+            "SUCCESS"
         } else if is_retry_error(&stderr2) {
-            "⚠️  RETRY-ABLE"
+            "WARN: RETRY-ABLE"
         } else {
-            "❌ FAILED"
+            "FAILED"
         }
     );
 
@@ -447,7 +447,7 @@ fn test_concurrent_install_safety() {
         stderr2
     );
 
-    println!("✅ Concurrent installs completed - cache concurrency verified");
+    println!("Concurrent installs completed - cache concurrency verified");
 
     // Verify node_modules in at least one project (the one that succeeded)
     let has_modules1 = project1.join("node_modules").exists();
@@ -458,7 +458,7 @@ fn test_concurrent_install_safety() {
         "At least one project must have node_modules installed"
     );
 
-    println!("✅ Cache integrity verified");
+    println!("Cache integrity verified");
 }
 
 #[test]
@@ -507,7 +507,7 @@ fn test_cache_version_invalidation() {
         String::from_utf8_lossy(&output1.stderr)
     );
 
-    println!("✅ lodash@4.17.20 installed");
+    println!("lodash@4.17.20 installed");
 
     // Step 2: Change to lodash@4.17.21
     println!("\n=== Update to lodash@4.17.21 ===");
@@ -540,7 +540,7 @@ fn test_cache_version_invalidation() {
         "lodash package.json not found after install"
     );
 
-    println!("✅ lodash@4.17.21 installed");
+    println!("lodash@4.17.21 installed");
 
     // Verify version updated (check node_modules)
     let pkg_json_path = project.join("node_modules/lodash/package.json");
@@ -556,7 +556,7 @@ fn test_cache_version_invalidation() {
         pkg_json
     );
 
-    println!("✅ Cache version invalidation verified");
+    println!("Cache version invalidation verified");
 }
 
 #[test]
@@ -589,7 +589,7 @@ fn test_cross_core_cache_isolation() {
         "Web install failed:\n{}",
         String::from_utf8_lossy(&output1.stderr)
     );
-    println!("✅ Web project installed");
+    println!("Web project installed");
 
     // Step 2: Install Lib project with serde
     println!("\n=== Install Lib project (serde) ===");
@@ -606,7 +606,7 @@ fn test_cross_core_cache_isolation() {
         "Lib install failed:\n{}",
         String::from_utf8_lossy(&output2.stderr)
     );
-    println!("✅ Lib project installed");
+    println!("Lib project installed");
 
     // Verify cache isolation: Web deps not in Lib
     assert!(
@@ -622,5 +622,5 @@ fn test_cross_core_cache_isolation() {
         "Lib install did not create Cargo artifacts"
     );
 
-    println!("✅ Cross-core cache isolation verified");
+    println!("Cross-core cache isolation verified");
 }

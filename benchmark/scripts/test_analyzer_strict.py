@@ -15,20 +15,20 @@ def test_case(name: str, data: dict, should_fail: bool = True):
     try:
         validate_result(data, "test.json")
         if should_fail:
-            print(f"❌ FAIL: {name} - Expected rejection but passed")
+            print(f"FAIL: {name} - Expected rejection but passed")
             return False
         else:
-            print(f"✅ PASS: {name}")
+            print(f"PASS: {name}")
             return True
     except ValidationError as e:
         if should_fail:
-            print(f"✅ PASS: {name} - Rejected as expected: {e}")
+            print(f"PASS: {name} - Rejected as expected: {e}")
             return True
         else:
-            print(f"❌ FAIL: {name} - Unexpected rejection: {e}")
+            print(f"FAIL: {name} - Unexpected rejection: {e}")
             return False
     except Exception as e:
-        print(f"❌ FAIL: {name} - Unexpected error: {e}")
+        print(f"FAIL: {name} - Unexpected error: {e}")
         return False
 
 def valid_sample():
@@ -162,10 +162,10 @@ def main():
     print(f"Results: {tests_passed}/{tests_total} tests passed")
 
     if tests_passed == tests_total:
-        print("✅ All regression tests passed!")
+        print("All regression tests passed!")
         return 0
     else:
-        print(f"❌ {tests_total - tests_passed} test(s) failed")
+        print(f"{tests_total - tests_passed} test(s) failed")
         return 1
 
 
@@ -251,13 +251,13 @@ def test_new_validations():
     sample = valid_sample()
     try:
         validate_result(sample, "test.json", publish_mode=True)
-        print(f"❌ FAIL: Publish mode without provenance - Should have been rejected")
+        print(f"FAIL: Publish mode without provenance - Should have been rejected")
     except ValidationError as e:
         if "provenance" in str(e).lower():
-            print(f"✅ PASS: Publish mode without provenance - Rejected as expected")
+            print(f"PASS: Publish mode without provenance - Rejected as expected")
             tests_passed += 1
         else:
-            print(f"❌ FAIL: Publish mode - Wrong error: {e}")
+            print(f"FAIL: Publish mode - Wrong error: {e}")
 
     # Test 26: Publish mode accepts complete provenance
     tests_total += 1
@@ -269,10 +269,10 @@ def test_new_validations():
     sample['lockfile_hash'] = "d" * 64  # Valid 64-char hex
     try:
         validate_result(sample, "test.json", publish_mode=True)
-        print(f"✅ PASS: Publish mode with provenance - Accepted")
+        print(f"PASS: Publish mode with provenance - Accepted")
         tests_passed += 1
     except ValidationError as e:
-        print(f"❌ FAIL: Publish mode with provenance - Unexpected rejection: {e}")
+        print(f"FAIL: Publish mode with provenance - Unexpected rejection: {e}")
 
     # Test 27: Non-integer run type
     tests_total += 1
@@ -395,8 +395,8 @@ if __name__ == '__main__':
     print(f"  TOTAL: {15 + new_passed + adv_passed}/{15 + new_total + adv_total} tests")
 
     if original_result == 0 and new_passed == new_total and adv_passed == adv_total:
-        print("\n✅ ALL TESTS PASSED")
+        print("\nALL TESTS PASSED")
         exit(0)
     else:
-        print(f"\n❌ SOME TESTS FAILED")
+        print(f"\nSOME TESTS FAILED")
         exit(1)

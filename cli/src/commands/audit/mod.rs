@@ -179,7 +179,7 @@ async fn finish_and_print(
                 return Err(crate::error::audit_unknown_scanner_state(core));
             }
         };
-        eprintln!("⚠ {headline}");
+        eprintln!("WARN: {headline}");
         eprintln!("{detail}");
         eprintln!("  Audit NOT performed/complete — this run is UNVERIFIED, not clean.");
         if strict.enabled() {

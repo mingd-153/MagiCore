@@ -76,7 +76,7 @@ fn warn_once_if_untrusted(allow_untrusted: bool) {
     static WARNED: OnceLock<()> = OnceLock::new();
     WARNED.get_or_init(|| {
         eprintln!(
-            "⚠️  [magicore] WARNING: MAGICORE_ALLOW_UNTRUSTED=1 — supply-chain guards\n   \
+            "WARN: [magicore] WARNING: MAGICORE_ALLOW_UNTRUSTED=1 — supply-chain guards\n   \
              (24h quarantine + no-downgrade) are BYPASSED for this process."
         );
     });

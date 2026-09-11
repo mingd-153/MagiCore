@@ -1448,7 +1448,7 @@ async fn run_single_dev_target(
 
     if launch.program.to_string_lossy().ends_with("vite") {
         info(&format!(
-            "🚀 Starting MgDevServer (Native Rust) in {}",
+            "Starting MgDevServer (Native Rust) in {}",
             target.dir.display()
         ));
 
@@ -1498,7 +1498,7 @@ async fn run_multi_dev_targets(
         )?;
         if launch.program.to_string_lossy().ends_with("vite") {
             info(&format!(
-                "🚀 Starting MgDevServer (Native Rust) for {} in {}",
+                "Starting MgDevServer (Native Rust) for {} in {}",
                 target.role,
                 target.dir.display()
             ));

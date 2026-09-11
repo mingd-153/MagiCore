@@ -92,7 +92,7 @@ impl From<String> for SolveError {
 
 /// Dependency provider trait — each ecosystem must implement this.
 ///
-/// ⚠ Both methods return `Result`. On network failure, error propagates.
+/// WARN: Both methods return `Result`. On network failure, error propagates.
 ///    Empty vec is valid (package exists with no versions / no deps).
 #[async_trait]
 pub trait DependencyProvider: Send + Sync {
