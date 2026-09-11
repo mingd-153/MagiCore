@@ -588,21 +588,29 @@ def main() -> int:
 
     # Aggregate verdict (P0 finding #1 fix, 2026-09-12): a lane is
     # "lifecycle-supported" only when EVERY dimension the lane declares
-    # as required is passed (delegated ≠ passed; absent ≠ passed). The
-    # previous global 4-dim check let a lane missing run/dev/cache/
+    # as required is satisfied — `passed` (mgc owns it) OR `delegated`
+    # (the native toolchain owns it BY DESIGN, e.g. flutter pub cache
+    # / go modules — the step genuinely RAN, only the cache claim
+    # differs). `absent` and `failed` never satisfy a requirement.
+    # The previous global 4-dim check let a lane missing run/dev/cache/
     # offline still be called supported — a semantic lie. Per-lane
     # contracts, never a global subset.
     # Verdict tổng hợp (P0 finding #1): lane "lifecycle-supported" chỉ
-    # khi MỌI dimension lane tuyên bố bắt buộc đều passed (delegated ≠
-    # passed; absent ≠ passed). Kiểm 4-dim toàn cục cũ cho phép lane
-    # thiếu run/dev/cache/offline vẫn được gọi supported — sai semantics.
-    # Hợp đồng theo từng lane, không bao giờ theo tập con toàn cục.
+    # khi MỌI dimension lane tuyên bố bắt buộc đều đạt — `passed` (mgc
+    # giữ) HOẶC `delegated` (toolchain gốc giữ THEO THIẾT KẾ, vd pub
+    # cache của flutter / go modules — bước CHẠY THẬT, chỉ khác claim
+    # về cache). `absent` và `failed` không bao giờ thỏa yêu cầu.
+    # Kiểm 4-dim toàn cục cũ cho phép lane thiếu run/dev/cache/offline
+    # vẫn được gọi supported — sai semantics. Hợp đồng theo từng lane.
+    def _satisfied(status):
+        return status in ("passed", "delegated")
+
     for r in results:
         dims = r["dimensions"]
         required = r.pop("required_dimensions")
         r["verdict"] = (
             "lifecycle-supported"
-            if required and all(dims[d] == "passed" for d in required)
+            if required and all(_satisfied(dims[d]) for d in required)
             else "partial" if any(dims[d] == "passed" for d in required)
             else "unsupported"
         )
