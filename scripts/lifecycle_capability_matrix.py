@@ -577,6 +577,16 @@ def main() -> int:
     results = []
     for lane in LANES:
         r = run_lane(mgc_bin, lane)
+        # Failed-dimension output is PRINTED (CI log must show WHY a
+        # lane failed) and stored in the artifact (the JSON keeps the
+        # evidence next to the verdict).
+        # Output của dimension fail được IN ra (log CI phải cho thấy vì
+        # sao lane fail) và lưu vào artifact (JSON giữ bằng chứng cạnh
+        # verdict).
+        for key, out in r["detail"].items():
+            if key.endswith("_output"):
+                print(f"--- {lane['core']}/{lane['language']} {key} ---", file=sys.stderr)
+                print(out, file=sys.stderr)
         results.append({
             "core": lane["core"],
             "language": lane["language"],
@@ -584,6 +594,9 @@ def main() -> int:
             "required_dimensions": lane["required_dims"],
             "commit": commit,
             "verified_at": now,
+            "detail": {
+                k: v for k, v in r["detail"].items() if k.endswith("_output")
+            },
         })
 
     # Aggregate verdict (P0 finding #1 fix, 2026-09-12): a lane is

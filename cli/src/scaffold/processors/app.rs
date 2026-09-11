@@ -55,6 +55,29 @@ impl AppProcessor {
                     &target.join("test").join("widget_test.dart"),
                     "import 'package:flutter_test/flutter_test.dart';\n\nimport '../lib/main.dart';\n\nvoid main() {\n  testWidgets('renders the MagiCore app', (tester) async {\n    await tester.pumpWidget(const MagiCoreApp());\n    expect(find.text('MagiCore Flutter app'), findsOneWidget);\n  });\n}\n",
                 )?;
+                // Flutter web platform dir (P0 finding, 2026-09-12):
+                // `flutter build web` requires web/ to exist — without
+                // it the build exits 2 ("does not have a web platform
+                // directory"). The scaffold ships the minimal standard
+                // web entry so create→install→test→build(web) runs on
+                // plain CI runners (no Android SDK / Xcode needed).
+                // Thư mục nền tảng web Flutter (P0 finding): `flutter
+                // build web` yêu cầu web/ tồn tại — thiếu nó build exit
+                // 2. Scaffold mang web entry chuẩn tối thiểu để
+                // create→install→test→build(web) chạy trên runner CI
+                // thường (không cần Android SDK / Xcode).
+                write_file(
+                    &target.join("web").join("index.html"),
+                    &format!(
+                        "<!DOCTYPE html>\n<html>\n<head>\n  <base href=\"$APP_HREF\">\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>{name}</title>\n</head>\n<body>\n  <script src=\"flutter_bootstrap.js\" async></script>\n</body>\n</html>\n"
+                    ),
+                )?;
+                write_file(
+                    &target.join("web").join("manifest.json"),
+                    &format!(
+                        "{{\n  \"name\": \"{name}\",\n  \"short_name\": \"{name}\",\n  \"start_url\": \"/\",\n  \"display\": \"standalone\",\n  \"background_color\": \"#ffffff\",\n  \"theme_color\": \"#ffffff\",\n  \"description\": \"A MagiCore Flutter app\"\n}}\n"
+                    ),
+                )?;
             }
         }
 
