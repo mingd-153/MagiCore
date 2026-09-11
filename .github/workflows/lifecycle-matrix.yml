@@ -70,7 +70,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup Python (ai/py + lib/py lanes; uv/pip fallback)
-        uses: actions/setup-python@e5edc8e8e5f3a02d3ce6a42f5ff69917500e5b74 # v6.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -118,7 +118,7 @@ jobs:
           MGC_LIFECYCLE_MATRIX_OUT: docs/specs/lifecycleCapabilityMatrix.json
 
       - name: Upload lifecycle matrix
-        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b033357803cdc9eb # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: lifecycle-capability-matrix-${{ runner.os }}
           path: docs/specs/lifecycleCapabilityMatrix.json
