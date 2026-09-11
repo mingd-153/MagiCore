@@ -92,6 +92,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      # esbuild-rs build script compiles a Go library — Go is required
+      # on every OS (CI workflow already does this; P0-8 lesson).
+      # Build script của esbuild-rs compile thư viện Go — Go bắt buộc
+      # trên mọi OS (workflow CI đã làm; bài học P0-8).
+      - name: Setup Go (esbuild-rs build dep)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
       - name: Setup uv (ai lane locking)
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1 (latest, node24)
         with:
@@ -171,7 +181,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/.magicore-test/bin"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            powershell.exe -NoProfile -Command "Expand-Archive -Path magicore.zip -DestinationPath '$HOME/.magicore-test' -Force"
+            # PowerShell cannot read Git-Bash drive paths (/c/...) — bsdtar
+            # (tar.exe on windows runners) reads zip natively from bash.
+            # PowerShell không đọc được path ổ đĩa Git-Bash (/c/...) —
+            # bsdtar (tar.exe trên windows runner) đọc zip trực tiếp từ bash.
+            tar -xf magicore.zip -C "$HOME/.magicore-test"
             cp "$HOME/.magicore-test/$STAGE_DIR/mgc.exe" "$HOME/.magicore-test/bin/mgc.exe"
             chmod +x "$HOME/.magicore-test/bin/mgc.exe" || true
             "$HOME/.magicore-test/bin/mgc.exe" --version
@@ -299,10 +313,41 @@ jobs:
 
           # run: the scaffold's own start/preview script through the
           # native task runner (P0 finding #6 — run was never executed).
-          # run: script start/preview của template qua task runner
-          # native (P0 finding #6 — run chưa bao giờ được chạy).
+          # The server is long-lived: spawn it in the background, probe
+          # for a REAL HTTP roundtrip, then kill the tree — a foreground
+          # run would hit the 300s exec timeout and die as 143 (bug
+          # caught on the first E2E run, 2026-09-12).
+          # run: script start/preview của template qua task runner native
+          # (P0 finding #6 — run chưa bao giờ được chạy). Server dài hạn:
+          # spawn nền, chờ HTTP roundtrip THẬT, rồi giết cây — chạy
+          # foreground sẽ dính timeout 300s của exec và chết 143 (bug
+          # bắt được ở lần E2E đầu tiên).
           if grep -q '"start"' package.json; then
-            "$MGCBIN" run start
+            "$MGCBIN" run start > run.log 2>&1 &
+            RUN_PID=$!
+            run_ok=false
+            for i in $(seq 1 60); do
+              if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then run_ok=true; break; fi
+              if ! kill -0 $RUN_PID 2>/dev/null; then break; fi
+              sleep 2
+            done
+            if [[ "$run_ok" != true ]]; then
+              echo "run start did not answer HTTP on port 4315" >&2
+              cat run.log >&2 || true
+              kill $RUN_PID 2>/dev/null || true
+              pkill -f "vite.*4315" 2>/dev/null || true
+              exit 1
+            fi
+            kill $RUN_PID 2>/dev/null || true
+            pkill -f "vite.*4315" 2>/dev/null || true
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              taskkill //F //IM node.exe //T > /dev/null 2>&1 || true
+            fi
+            sleep 1
+            if curl -sf -o /dev/null "http://localhost:4315/" 2>/dev/null; then
+              echo "port 4315 still serving after run shutdown — leak" >&2
+              exit 1
+            fi
           elif grep -q '"preview"' package.json; then
             echo "NOTE: no start script — preview is the closest run analog (honest)" >&2
           fi
