@@ -795,6 +795,12 @@ struct ExecOutcome {
     stderr: Vec<u8>,
 }
 
+// Process-group isolation is unix-only; the no-op below covers Windows
+// (CI Windows compile fix 2026-09-11 — the unix variant lacked its
+// cfg gate and collided with the no-op on non-unix targets).
+// Cô lập process-group chỉ unix; no-op dưới đây phủ Windows (fix
+// compile CI Windows — bản unix thiếu cfg gate nên đụng no-op).
+#[cfg(unix)]
 fn configure_process_isolation(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 

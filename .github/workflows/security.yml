@@ -130,7 +130,7 @@ jobs:
       - name: Generate capability matrix from E2E evidence
         run: python3 scripts/audit_capability_matrix.py
       - name: Upload capability matrix artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b038357803cdc9eb # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: audit-capability-matrix
           path: docs/specs/auditCapabilityMatrix.json
@@ -163,7 +163,7 @@ jobs:
         # Lane OSV chỉ cần MẠNG — không cần toolchain gradle/dotnet/
         # swift/flutter. Runner chứng minh parse lockfile + mapping
         # advisory + exit code trên mọi OS.
-        run: cargo test -p mgc --test audit_cli_e2e --locked audit_lib_java audit_lib_dotnet audit_app_swift audit_app_flutter -- --test-threads=1 --nocapture
+        run: cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --nocapture audit_
         env:
           MGC_E2E_AUDIT_TOOLS: required
       - name: Exec-layer E2E (hermetic contract)
