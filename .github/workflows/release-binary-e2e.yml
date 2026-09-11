@@ -184,8 +184,16 @@ jobs:
           mkdir -p "$HOME/.magicore-test/bin"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             # Flat zip: extract yields mgc.exe directly (no parent dir).
+            # PowerShell handles native Windows paths reliably; bash
+            # 'tar' on windows runners resolves to GNU tar which cannot
+            # read zip (bsdtar lives at /c/Windows/System32/tar.exe but
+            # Git's GNU tar shadows it in PATH).
             # Zip phẳng: giải nén ra thẳng mgc.exe (không thư mục cha).
-            tar -xf magicore.zip -C "$HOME/.magicore-test"
+            # PowerShell xử lý path Windows native chắc chắn; 'tar' của
+            # bash trên windows runner trỏ GNU tar không đọc zip được
+            # (bsdtar ở /c/Windows/System32/tar.exe nhưng GNU tar của
+            # Git che mất trong PATH).
+            powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path (Get-Location) 'magicore.zip') -DestinationPath (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.magicore-test') -Force"
             cp "$HOME/.magicore-test/mgc.exe" "$HOME/.magicore-test/bin/mgc.exe"
             chmod +x "$HOME/.magicore-test/bin/mgc.exe" || true
             "$HOME/.magicore-test/bin/mgc.exe" --version

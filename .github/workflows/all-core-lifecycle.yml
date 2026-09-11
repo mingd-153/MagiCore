@@ -287,7 +287,11 @@ jobs:
       - name: Verify build artifacts
         shell: bash
         run: |
-          test -d test_app/build/flutter_assets
+          # app build target is `web` (universal CI target, dcdbff79):
+          # no Android SDK / Xcode — assets land in build/web.
+          # Target build của app là `web` (target CI phổ quát): không
+          # cần Android SDK / Xcode — artifact nằm trong build/web.
+          test -d test_app/build/web
 
   lib-lifecycle:
     name: Lib Full (${{ matrix.lang }}, ${{ matrix.os }})
