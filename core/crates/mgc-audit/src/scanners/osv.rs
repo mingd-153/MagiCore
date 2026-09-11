@@ -101,15 +101,25 @@ struct OsvReference {
 /// Truy vấn OSV cho MỘT ghim: POST /v1/query → ids, rồi GET
 /// /v1/vulns/{id} từng id lấy bản ghi đầy đủ. Non-2xx hoặc payload
 /// không đúng shape là lỗi cứng (fail-closed).
-async fn query_pin(client: &reqwest::Client, pin: &OsvPin) -> MgResult<Vec<Vulnerability>> {
+async fn query_pin(client: &mgc_http::HttpClient, pin: &OsvPin) -> MgResult<Vec<Vulnerability>> {
     let body = serde_json::json!({
         "package": {"ecosystem": pin.ecosystem, "name": pin.name},
         "version": pin.version,
     });
+    // The shared HttpClient owns transport (RULE §8 no direct reqwest):
+    // serialize the JSON body to bytes; the client is preconfigured
+    // with the JSON content type by the caller.
+    // HttpClient dùng chung giữ transport (RULE §8 không reqwest trực
+    // tiếp): serialize body JSON ra bytes; client đã được caller cấu
+    // hình sẵn content-type JSON.
+    let body_bytes = serde_json::to_vec(&body).map_err(|e| {
+        MgError::Other(format!(
+            "osv query body for '{}' unserializable: {e}",
+            pin.name
+        ))
+    })?;
     let response = client
-        .post(format!("{}/query", osv_api_base()))
-        .json(&body)
-        .send()
+        .post(format!("{}/query", osv_api_base()).as_str(), body_bytes)
         .await
         .map_err(|e| MgError::Network(format!("osv query '{}' failed: {e}", pin.name)))?;
     if !response.status().is_success() {
@@ -132,8 +142,7 @@ async fn query_pin(client: &reqwest::Client, pin: &OsvPin) -> MgResult<Vec<Vulne
     let mut findings = Vec::new();
     for id in &ids.vulns {
         let detail = client
-            .get(format!("{}/vulns/{}", osv_api_base(), id.id))
-            .send()
+            .get(format!("{}/vulns/{}", osv_api_base(), id.id).as_str())
             .await
             .map_err(|e| MgError::Network(format!("osv vuln '{}' fetch failed: {e}", id.id)))?;
         if !detail.status().is_success() {
@@ -245,11 +254,17 @@ pub async fn audit_osv_pins(pins: &[OsvPin]) -> MgResult<AuditReport> {
     if pins.is_empty() {
         return Ok(AuditReport::clean(0));
     }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent(format!("magicore/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| MgError::Network(format!("osv client error: {e}")))?;
+    // L1-hardcode (RULE §8): core crates never touch reqwest directly —
+    // the shared mgc_http::HttpClient owns transport. Preconfigured with
+    // the JSON content type for OSV query posts. CI hygiene gate
+    // rejects direct reqwest in mgc-audit.
+    // L1-hardcode (RULE §8): crate core không chạm reqwest trực tiếp —
+    // mgc_http::HttpClient dùng chung giữ transport; cấu hình sẵn
+    // content-type JSON cho POST query OSV. Hygiene gate CI từ chối
+    // reqwest trực tiếp trong mgc-audit.
+    let client = mgc_http::HttpClient::new()
+        .map_err(|e| MgError::Network(format!("osv client error: {e}")))?
+        .with_auth("Content-Type", "application/json");
 
     let mut all = Vec::new();
     for pin in pins {
