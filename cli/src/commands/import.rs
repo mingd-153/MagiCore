@@ -19,12 +19,24 @@ pub async fn run(project_dir: Option<PathBuf>) -> Result<()> {
     for warning in &report.warnings {
         mgc_ui::warning(warning);
     }
-    // P0-5 (2026-09-11): every refused record is surfaced — a skipped
-    // entry must NEVER be silent (lossless = imported or loudly listed).
-    // P0-5: mọi record bị từ chối đều được hiển thị — entry bị skip
-    // KHÔNG BAO GIỜ im lặng (lossless = được import hoặc được liệt kê).
+    // P0 finding #8 (2026-09-12): migration is BEST-EFFORT — every
+    // refused record is surfaced; a skipped entry must NEVER be silent
+    // (the report IS the loss ledger; "lossless" is never claimed).
+    // P0 finding #8: migration là BEST-EFFORT — mọi record bị từ chối
+    // đều hiển thị; entry bị skip KHÔNG BAO GIỜ im lặng (báo cáo chính
+    // là sổ mất mát; không claim "lossless").
     for skipped in &report.skipped {
         mgc_ui::warning(&format!("skipped '{}': {}", skipped.key, skipped.reason));
+    }
+    // P0 finding #6: surface the reconstructed ROOT GRAPH so users can
+    // see the root → dependency edges the import preserved.
+    // P0 finding #6: hiển thị graph ROOT được dựng lại để user thấy các
+    // cạnh root → dependency mà import giữ được.
+    if !lockfile.root_dependencies.is_empty() {
+        mgc_ui::info(&format!(
+            "root dependencies preserved: {}",
+            lockfile.root_dependencies.join(", ")
+        ));
     }
     let lock_path = root.join("mgc.lock");
 

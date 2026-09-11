@@ -15,7 +15,7 @@ impl LibProcessor {
                 write_file(
                     &target.join("package.json"),
                     &format!(
-                        "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": {{\"typescript\": \"^5\"}}\n}}\n",
+                        "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {{\n    \"test\": \"tsc --noEmit\"\n  }},\n  \"devDependencies\": {{\"typescript\": \"^5\"}}\n}}\n",
                         slugify(name)
                     ),
                 )?;
@@ -41,6 +41,23 @@ impl LibProcessor {
                     &target.join("src").join(&package).join("__init__.py"),
                     "__all__ = []\n",
                 )?;
+                // The scaffold ships its OWN test (P0 finding,
+                // 2026-09-12): `mgc test` auto-detects pytest via
+                // pyproject.toml — without a test the honest lifecycle
+                // fails with pytest exit 5. The test imports the
+                // package through the installed name (pip install -e
+                // makes it importable); no PYTHONPATH hacks.
+                // Template TỰ mang test (P0 finding, 2026-09-12):
+                // `mgc test` auto-detect pytest qua pyproject.toml —
+                // thiếu test thì lifecycle trung thực fail với pytest
+                // exit 5. Test import package qua TÊN đã cài (pip
+                // install -e cho import được); không cần PYTHONPATH.
+                write_file(
+                    &target.join("tests").join("test_package.py"),
+                    &format!(
+                        "\"\"\"Scaffold smoke test: the package imports.\"\"\"\n\nimport importlib\n\n\ndef test_package_imports() -> None:\n    module = importlib.import_module(\"{package}\")\n    assert module.__all__ == []\n"
+                    ),
+                )?;
             }
             _ => {
                 write_file(
@@ -50,9 +67,17 @@ impl LibProcessor {
                         slugify(name)
                     ),
                 )?;
+                // cargo test with zero #[test]s exits 0 with "0 tests
+                // run" — a pass with zero evidence. Ship a real
+                // assertion so `mgc test` (cargo test) proves the
+                // scaffold compiles AND behaves.
+                // cargo test với 0 #[test] exit 0 với "0 tests run" —
+                // pass không bằng chứng. Mang assertion thật để `mgc
+                // test` (cargo test) chứng minh template vừa compile
+                // vừa chạy đúng.
                 write_file(
                     &target.join("src").join("lib.rs"),
-                    "pub fn hello() -> &'static str {\n    \"hello from MagiCore\"\n}\n",
+                    "pub fn hello() -> &'static str {\n    \"hello from MagiCore\"\n}\n\n#[cfg(test)]\nmod scaffold_tests {\n    #[test]\n    fn hello_returns_scaffold_greeting() {\n        assert_eq!(super::hello(), \"hello from MagiCore\");\n    }\n}\n",
                 )?;
             }
         }

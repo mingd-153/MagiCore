@@ -27,7 +27,9 @@ pub fn get_embedded_template(core: &str, framework: &str) -> Option<Vec<Embedded
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --port 4315 --strictPort",
+    "start": "vite preview --port 4315 --strictPort",
+    "test": "tsc --noEmit"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -123,7 +125,9 @@ export default defineConfig({
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --port 4315 --strictPort",
+    "start": "vite preview --port 4315 --strictPort",
+    "test": "vue-tsc --noEmit"
   },
   "dependencies": {
     "vue": "^3.5.0"

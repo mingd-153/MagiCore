@@ -16,9 +16,9 @@
 
 **MagiCore** (`mgc`) is a **multi-language package orchestrator** with **web (npm/yarn) beta testing ready** — written in Rust for speed and security.
 
-**Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
+**Core strength:** Web package management (npm/pnpm-compatible workflow, see status labels below) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 
-> **🚧 Beta Release:** `v1.1.0-RC` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) have partial support. **Native package managers** (Maven, CocoaPods, pub.dev) are P2 features. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
+> **🚧 Beta Release:** `v1.1.0-RC` is a **Public Alpha / Technology Preview** — NOT yet a drop-in pnpm/Bun/Deno replacement (see the honest [status labels](#-known-limitations-v110-rc-roadmap) and [Benchmark status](benchmark/BENCHMARK_STATUS.md) before comparing). Multi-language cores (ai/app/lib) have partial support. **Native package managers** (Maven, CocoaPods, pub.dev) are P2 features. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
 
 ---
 
@@ -126,12 +126,9 @@ mgc doctor
 
 ## ⚡ Performance
 
-**Benchmarks under review.** Previous data withdrawn due to validation gaps (RC-2.1 audit findings):
-- Analyzer accepted negative metrics, NaN, failed exit codes
-- Run counts inconsistent, high coefficient of variation (>100%)
-- Workload normalization incomplete
+**Benchmarks: NO VALIDATED DATA.** All prior performance claims (v1.0.x, RC-1, RC-2) are **INVALIDATED** — withdrawn after the RC-2.1 audit found the analyzer accepted negative metrics, NaN, failed exit codes, inconsistent run counts, and >100% coefficient of variation. Until a new suite with strict validation publishes VALIDATED results, MagiCore claims **no speed advantage** over pnpm/Bun/Deno/npm. See [`benchmark/BENCHMARK_STATUS.md`](benchmark/BENCHMARK_STATUS.md) for the rerun plan.
 
-New benchmark suite in development with strict validation, multi-platform coverage, and reproducible methodology. See [`benchmark/BENCHMARK_STATUS.md`](benchmark/BENCHMARK_STATUS.md) for progress.
+**Benchmark evidence labels (single source of truth):** every performance number in this repo carries one of `VALIDATED` / `EXPERIMENTAL` / `UNVERIFIED` / `INVALIDATED`. No number without a label may be cited.
 
 ---
 ### Security & Trust (NEW!)
@@ -315,8 +312,8 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 - ❌ Windows ARM64 - Not yet supported
 - ℹ️ ARM64 support planned for future release
 
-**Core Runtime Status**:
-- ✅ **Web** (npm/yarn/pnpm replacement) - Beta/RC (install verified in CI; full lifecycle untested)
+**Core Runtime Status** (labels: VALIDATED = CI-proven on the release binary; EXPERIMENTAL = works in source-build CI lanes; UNVERIFIED = no CI evidence; INVALIDATED = evidence withdrawn):
+- ⚠️ **Web** (npm/yarn/pnpm-compatible workflow) - Public Alpha: install/test/build verified in CI; dev/run/audit proven only on source builds, not yet on the distributed release archive; NOT a pnpm replacement until parity data exists
 - ⚠️ **AI** (Python) - Experimental (create + install verified, test/build/run untested in CI)
 - ⚠️ **App** (Flutter/React Native) - Experimental (requires Flutter SDK)
 - ⚠️ **Lib** (Rust/Go) - Experimental (basic support)

@@ -1,5 +1,14 @@
 # Benchmark Status — INVALIDATED (RC-3 Audit)
 
+> **📌 SINGLE SOURCE OF TRUTH (2026-09-12)**: This file is the ONLY
+> authoritative benchmark status. Every performance number anywhere in
+> this repository must carry one of four labels — **VALIDATED**
+> (reproduced under the strict analyzer), **EXPERIMENTAL** (run but not
+> validated), **UNVERIFIED** (no acceptable evidence), **INVALIDATED**
+> (withdrawn). As of this writing there are **ZERO VALIDATED numbers**;
+> any older file quoting speeds (BENCHMARK_SUMMARY_*, results/*.md,
+> README claims predating this banner) is superseded here.
+
 > **⚠️ NOTICE (2026-09-05)**: All performance claims from prior releases (v1.0.x, RC-1, RC-2) have been **WITHDRAWN** due to validation gaps found in RC-2.1 audit. Data marked **INVALIDATED** pending rerun with strict analyzer.
 
 ## Current Status: DATA VALIDATION IN PROGRESS

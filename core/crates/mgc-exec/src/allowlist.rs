@@ -108,6 +108,36 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "pip3", // pip3 fallback on systems without pip alias
     "python3",
     "pytest", // AI test runner
+    // TypeScript compiler (lib/ts + web test lanes, P0 finding
+    // 2026-09-12): `tsc --noEmit` is the scaffold's own typecheck test
+    // script; read-only (no artifact mutation), same family as
+    // cargo/pytest. web dev/build lanes already run vite/next via
+    // node_modules/.bin; tsc enters the allowlist so the lib/ts
+    // scaffold test lane can run honestly.
+    // TypeScript compiler (lane test lib/ts + web, P0 finding
+    // 2026-09-12): `tsc --noEmit` là script test typecheck của scaffold;
+    // chỉ đọc (không đổi artifact), cùng họ với cargo/pytest. Lane
+    // web đã chạy vite/next qua node_modules/.bin; tsc vào allowlist
+    // để lane test scaffold lib/ts chạy trung thực được.
+    "tsc",
+    // vue-tsc: the vue scaffold's typecheck test script (same read-only
+    // family as tsc — P0 finding 2026-09-12).
+    // vue-tsc: script test typecheck của scaffold vue (cùng họ chỉ-đọc
+    // với tsc — P0 finding 2026-09-12).
+    "vue-tsc",
+    // vite: the web scaffold's dev/build/preview entry (P0 finding #6,
+    // 2026-09-12). Project scripts run under the user's permission per
+    // the threat model (Test/Build/Dev scope: project-local scripts
+    // allowed); `run`/`dev` resolve vite from node_modules/.bin FIRST
+    // (the run.rs PATH insert), so the spawned program is the
+    // project's own dependency, not a PATH implant.
+    // vite: entry dev/build/preview của scaffold web (P0 finding #6).
+    // Theo threat model, script project chạy dưới quyền user (scope
+    // Test/Build/Dev: script local được phép); `run`/`dev` resolve vite
+    // từ node_modules/.bin TRƯỚC (run.rs chèn đầu PATH), nên program
+    // được spawn là dependency của chính project, không phải file lạ
+    // xâm nhập từ PATH.
+    "vite",
     "uv",
     "go",
     "pub",

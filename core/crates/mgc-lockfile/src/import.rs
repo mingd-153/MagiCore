@@ -70,11 +70,16 @@ pub fn check_trust_downgrade_risk(project_root: &Path) -> Option<Vec<&'static st
 
 /// Kết quả import — báo cáo nguồn + số package đã chuyển đổi + cảnh báo phiên bản.
 /// Skipped records (P0-5 2026-09-11): mọi entry bị bỏ qua phải được ghi
-/// đích danh kèm lý do — KHÔNG có skip âm thầm; import không-fail chỉ
-/// hợp lệ khi mọi record đều được import hoặc được liệt kê ở đây.
+/// đích danh kèm lý do — KHÔNG có skip âm thầm. Đổi tên 2026-09-12 (P0
+/// finding #8): migration là BEST-EFFORT kèm loss report tường minh,
+/// KHÔNG phải lossless — bun/deno lưu RANGES/prefixes mà mgc.lock chỉ
+/// giữ pin; mọi thông tin không giữ được phải xuất hiện ở đây.
 // (Import outcome — source file, converted package count, version advisories.
-// Skipped records (P0-5): every skipped entry must be named with a reason —
-// silent skips are gone; a non-failing import must account for every record.)
+// Skipped records: every skipped entry must be named with a reason —
+// silent skips are gone. Rename 2026-09-12 (P0 finding #8): migration is
+// BEST-EFFORT with an explicit loss report, NOT lossless — bun/deno store
+// RANGES/prefixes while mgc.lock keeps pins; anything not preserved must
+// appear in this report.)
 #[derive(Debug, Clone)]
 pub struct ImportReport {
     pub source_file: String,
@@ -83,11 +88,13 @@ pub struct ImportReport {
     // (Warnings for format versions newer than tested — imported by structure.)
     pub warnings: Vec<String>,
     /// Records the importer refused or could not map — recorded
-    /// EXPLICITLY so `mgc import` can surface them (P0-5 lossless:
-    /// lossless = every input record is either imported or listed).
+    /// EXPLICITLY so `mgc import` can surface them (P0-5: best-effort
+    /// migration — every input record is either imported or listed;
+    /// the report IS the loss ledger, so "lossless" is never claimed).
     /// Record importer từ chối hoặc không ánh xạ được — liệt kê
-    /// TƯỜNG MINH để `mgc import` hiển thị (P0-5 lossless: mọi record
-    /// input hoặc được import hoặc được liệt kê, không record biến mất).
+    /// TƯỜNG MINH để `mgc import` hiển thị (P0-5: migration best-effort
+    /// — mọi record input hoặc được import hoặc được liệt kê; báo cáo
+    /// chính là sổ ghi mất mát, không bao giờ claim "lossless").
     pub skipped: Vec<SkippedRecord>,
 }
 
@@ -130,12 +137,17 @@ pub fn import_file(path: &Path) -> Result<(crate::Lockfile, ImportReport)> {
 
     let mut warnings: Vec<String> = Vec::new();
     let mut skipped: Vec<SkippedRecord> = Vec::new();
+    // Root direct-dep pins (P0 finding #6) — attached to the Lockfile
+    // as the root graph, never as package self-edges.
+    // Pin direct-dep gốc (P0 finding #6) — gắn vào Lockfile như graph
+    // root, không bao giờ là self-edge của package.
+    let mut root_deps: Vec<String> = Vec::new();
     let mut packages = match file_name {
         NPM_LOCKFILE => parse_npm(&content, &mut warnings)?,
         PNPM_LOCKFILE => parse_pnpm(&content, &mut warnings)?,
         YARN_LOCKFILE => parse_yarn(&content)?,
         BUN_LOCKFILE => parse_bun(&content, &mut skipped)?,
-        DENO_LOCKFILE => parse_deno(&content, &mut skipped)?,
+        DENO_LOCKFILE => parse_deno(&content, &mut skipped, &mut root_deps)?,
         other => bail!("unsupported lockfile '{other}'"),
     };
 
@@ -151,6 +163,13 @@ pub fn import_file(path: &Path) -> Result<(crate::Lockfile, ImportReport)> {
     let count = packages.len();
     let mut lockfile = crate::Lockfile::new();
     lockfile.packages = packages;
+    // Root graph (P0 finding #6): the source root pin set becomes the
+    // lockfile root_dependencies — the honest representation of
+    // "workspace root → dependency" edges.
+    // Graph root (P0 finding #6): tập pin gốc của lockfile nguồn thành
+    // root_dependencies — biểu diễn trung thực cạnh "workspace root →
+    // dependency".
+    lockfile.root_dependencies = root_deps;
 
     Ok((
         lockfile,
@@ -457,14 +476,22 @@ fn parse_yarn(content: &str) -> Result<Vec<Package>> {
 // ---------------------------------------------------------------------------
 // deno — deno.lock v5 (JSON): npm map "name@version" → integrity; jsr map
 // giữ nguyên tiền tố "jsr:" để audit báo skipped trung thực (P0-3 2026-09-10).
-// P0-5 (2026-09-11) lossless: dependency graph edges from the top-level
-// `workspace.dependencies` (v5 carries the root pin list there); every
-// refused record is EXPLICITLY appended to `skipped` — silent `continue`
-// is gone. JSR pins keep their `jsr:` prefix and are always recorded in
-// `skipped` with the no-npm-advisory reason (never silently dropped).
+// P0 finding #6 (2026-09-12): root pins từ workspace.dependencies là
+// GRAPH ROOT — ghi vào lockfile.root_dependencies, KHÔNG self-edge vào
+// package. P0 finding #8: import là BEST-EFFORT kèm loss report — mọi
+// record bị từ chối liệt kê tường minh trong `skipped`; JSR pin giữ
+// tiền tố "jsr:" và luôn có lý do no-npm-advisory đi kèm.
+// (deno.lock v5: npm map name@version → integrity; jsr keeps the jsr:
+// prefix so audit reports honestly. Root pins are the ROOT GRAPH —
+// lockfile.root_dependencies, never a package self-edge. Best-effort
+// migration: every refused record is explicitly listed in `skipped`.)
 // ---------------------------------------------------------------------------
 
-fn parse_deno(content: &str, skipped: &mut Vec<SkippedRecord>) -> Result<Vec<Package>> {
+fn parse_deno(
+    content: &str,
+    skipped: &mut Vec<SkippedRecord>,
+    root_deps: &mut Vec<String>,
+) -> Result<Vec<Package>> {
     let json: serde_json::Value = serde_json::from_str(content)
         .map_err(|e| anyhow::anyhow!("deno.lock is not valid JSON: {e}"))?;
 
@@ -536,30 +563,32 @@ fn parse_deno(content: &str, skipped: &mut Vec<SkippedRecord>) -> Result<Vec<Pac
             }
         };
 
-        // Root direct dependencies: the pins listed under
-        // workspace.dependencies that this npm map also resolves. v5
-        // pins carry runtime prefixes ("npm:", "jsr:") — strip the
-        // npm: prefix before name-matching the resolved map keys.
-        // Direct-deps gốc: các pin nằm trong workspace.dependencies mà
-        // bản đồ npm này resolve được. Pin v5 mang tiền tố runtime
-        // ("npm:", "jsr:") — bỏ tiền tố npm: trước khi so khớp tên.
-        let dependencies: Vec<String> = root_pins
-            .iter()
-            .filter(|p| {
-                let bare = p.strip_prefix("npm:").unwrap_or(p.as_str());
-                split_name_version(bare)
-                    .map(|(n, _)| n == name)
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+        // Root direct dependencies: pins listed under
+        // workspace.dependencies are the ROOT GRAPH (root → dep), NOT a
+        // self-edge of the resolved package. They land in
+        // lockfile.root_dependencies via the `root_deps` out-parameter
+        // (P0 finding #6, 2026-09-12): the previous code pushed them
+        // into the package's own `dependencies`, turning "workspace
+        // root depends on lodash" into the lie "lodash depends on
+        // npm:lodash@4.17.20". v5 pins carry runtime prefixes
+        // ("npm:", "jsr:") — the pin is kept VERBATIM (prefix intact)
+        // so no source information is lost.
+        // Direct-dep gốc: pin trong workspace.dependencies là GRAPH
+        // ROOT (root → dep), KHÔNG phải self-edge của package được
+        // resolve. Chúng ghi vào lockfile.root_dependencies qua tham
+        // số ra `root_deps` (P0 finding #6): code cũ đẩy vào
+        // `dependencies` của chính package, biến "workspace root phụ
+        // thuộc lodash" thành câu sai "lodash phụ thuộc
+        // npm:lodash@4.17.20". Pin v5 mang tiền tố runtime — giữ
+        // NGUYÊN pin, không mất thông tin nguồn.
+        root_deps.extend(root_pins.iter().cloned());
 
         out.push(Package {
             name,
             version,
             resolved: String::new(),
             integrity,
-            dependencies,
+            dependencies: vec![],
         });
     }
 
@@ -601,12 +630,15 @@ fn parse_deno(content: &str, skipped: &mut Vec<SkippedRecord>) -> Result<Vec<Pac
 
 // ---------------------------------------------------------------------------
 // bun — bun.lock JSON (text; .lockb binary ngoài phạm vi)
-// P0-5 (2026-09-11) lossless: bun entries carry the dependency map as
-// the third array element {"dep": "dep@range"} — those edges are now
-// imported (names only; bun stores RANGES, mgc.lock stores pins, so
-// the edge keeps the dep name and the recorded reason). Every refused
-// entry is EXPLICITLY appended to `skipped` — silent `continue` is
-// gone. Entry shapes: ["name@version", "url?", {deps}, "integrity?"].
+// P0 finding #8 (2026-09-12): BEST-EFFORT, not lossless — bun stores
+// RANGES in the dep map while mgc.lock pins; the edge keeps the dep NAME
+// and the range is recorded as a loss (the source file remains the
+// range source of truth). Every refused entry is EXPLICITLY appended to
+// `skipped` — silent `continue` is gone. Entry shapes:
+// ["name@version", "url?", {deps}, "integrity?"].
+// (bun.lock text JSON — .lockb binary out of scope. Best-effort: bun
+// keeps RANGES, mgc.lock pins — dep NAME survives as the edge, the
+// range is a recorded loss; every refused entry lands in `skipped`.)
 // ---------------------------------------------------------------------------
 
 fn parse_bun(content: &str, skipped: &mut Vec<SkippedRecord>) -> Result<Vec<Package>> {
@@ -676,9 +708,11 @@ fn parse_bun(content: &str, skipped: &mut Vec<SkippedRecord>) -> Result<Vec<Pack
             } else if let Some(deps) = item.as_object() {
                 // Dependency map element: {"left-pad": "left-pad@^4.0.0"}.
                 // bun stores RANGES; mgc.lock pins — keep the dep NAME
-                // as the edge, ranges live in the source lockfile.
+                // as the edge; the RANGE is a recorded loss (P0 finding
+                // #8: best-effort, the source lockfile keeps ranges).
                 // Phần tử map dependency: bun lưu RANGE; mgc.lock lưu
-                // pin — giữ TÊN dep làm cạnh, range nằm ở lockfile gốc.
+                // pin — giữ TÊN dep làm cạnh; RANGE là mất mát được ghi
+                // nhận (best-effort, lockfile nguồn giữ range).
                 for dep_name in deps.keys() {
                     dependencies.push(dep_name.clone());
                 }

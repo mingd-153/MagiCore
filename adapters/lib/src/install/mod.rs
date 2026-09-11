@@ -112,16 +112,41 @@ async fn install_rust(project_root: &Path, opts: InstallOptions) -> MgResult<Ins
         cache_mode: InstallCacheMode::Delegated,
     })
 }
-
 async fn install_python(project_root: &Path, _opts: InstallOptions) -> MgResult<InstallSummary> {
-    // Prefer uv over pip if available
-    let tool = if which::which("uv").is_ok() {
-        "uv"
+    // Python install contract (aligned with the ai core lane, P0 fix
+    // 2026-09-12): uv has NO `uv install` subcommand. With a uv.lock
+    // the honest sync is `uv sync` (toolchain-native, same as the ai
+    // core); WITHOUT a lock the fallback is `uv pip install --system
+    // -e .` (uv needs a target env — --system is explicit, never a
+    // silent venv guess). pip-only environments keep the classic
+    // `pip install -e .`.
+    // Hợp đồng install Python (canh theo lane core ai, P0 fix): uv
+    // KHÔNG có subcommand `uv install`. Có uv.lock thì sync trung thực
+    // là `uv sync` (toolchain-native, như core ai); KHÔNG có lock thì
+    // fallback `uv pip install --system -e .` (uv cần env đích —
+    // --system tường minh, không đoán venv âm thầm). Môi trường chỉ
+    // pip giữ `pip install -e .` cổ điển.
+    let has_uv = which::which("uv").is_ok();
+    let (tool, args): (&str, Vec<String>) = if has_uv && project_root.join("uv.lock").is_file() {
+        ("uv", vec!["sync".to_string()])
+    } else if has_uv {
+        (
+            "uv",
+            vec![
+                "pip".to_string(),
+                "install".to_string(),
+                "--system".to_string(),
+                "-e".to_string(),
+                ".".to_string(),
+            ],
+        )
     } else {
-        "pip"
+        (
+            "pip",
+            vec!["install".to_string(), "-e".to_string(), ".".to_string()],
+        )
     };
 
-    let args = vec!["install".to_string(), "-e".to_string(), ".".to_string()];
     let started = Instant::now();
 
     let exec_opts = mgc_exec::run::ExecOptions {

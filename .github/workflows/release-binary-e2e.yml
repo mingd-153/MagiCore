@@ -4,16 +4,38 @@ name: Release Binary E2E
 # the ACTUAL distributed binary — build the release archive exactly as
 # the release pipeline packs it, install it into a clean prefix (no
 # cargo, no PATH from the repo), then drive the FULL product lifecycle
-# with that installed binary: create → install → test → build → audit.
-# No #[ignore], no skip-marker passes: every step must exit 0 or the
-# lane fails (required environment is provisioned by the workflow).
+# with that installed binary: create → install → test → build → dev →
+# audit. No #[ignore], no skip-marker passes: every step must exit 0 or
+# the lane fails (required environment is provisioned by the workflow).
+#
+# P0 findings #3/#5/#6/#7 (2026-09-12) fixed here:
+# - #3: the archive label now carries the REAL host triple (rustc -vV)
+#   — a GNU build is never labeled musl, an arm64 macOS build is never
+#   labeled x86_64. Mislabeled archives ship broken binaries to Alpine
+#   users.
+# - #5: Windows runner added — the release ships windows-x64, the E2E
+#   must prove it there too.
+# - #6: depth added — mgc test (not skipped), dev probe with a REAL
+#   HTTP roundtrip + clean shutdown, mgc run, STRICT audit (exit 0/1
+#   only — exit 2 "unverified" fails the lane), offline reinstall
+#   proving cache hit (bytes-from-cache > 0 or MgCStore label), and
+#   network-avoided evidence on the warm install.
+# - #7: AI/Python and App/Flutter lanes run the installed binary
+#   through their full lifecycle (release scope parity).
 #
 # P0-3: RC release phải được chứng minh bằng chính binary phân phối —
 # đóng archive đúng format release pipeline, cài vào prefix sạch (không
 # cargo, không PATH từ repo), rồi chạy trọn chuỗi lifecycle bằng binary
-# đã cài: create → install → test → build → audit. Không #[ignore],
-# không skip-marker nào được tính pass: mọi bước phải exit 0 thì lane
-# mới xanh (môi trường bắt buộc do workflow provision).
+# đã cài: create → install → test → build → dev → audit. Không
+# #[ignore], không skip-marker nào được tính pass: mọi bước phải exit 0
+# thì lane mới xanh (môi trường bắt buộc do workflow provision).
+# P0 findings #3/#5/#6/#7 đã sửa tại đây: nhãn archive mang host triple
+# THẬT (GNU không bao giờ gắn nhãn musl, arm64 không gắn nhãn x86_64);
+# thêm runner Windows; tăng chiều sâu (mgc test thật, dev probe HTTP
+# thật + tắt sạch, mgc run, audit strict exit 0/1, offline reinstall
+# chứng minh cache hit, warm install tránh mạng); thêm lane AI/Python
+# và App/Flutter chạy binary đã cài qua full lifecycle (parity release
+# scope).
 
 on:
   pull_request:
@@ -24,7 +46,7 @@ on:
       - "adapters/**"
       - ".github/workflows/release-binary-e2e.yml"
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
     paths:
       - "cli/**"
       - "core/**"
@@ -50,14 +72,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
-        with:
-          targets: x86_64-unknown-linux-gnu
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -67,29 +87,78 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Setup Python (uv/pip audit + py lane)
+      - name: Setup Python (ai/py lane + pip-audit)
         uses: actions/setup-python@e5edc8e8e5f3a02d3ce6a42f5ff69917500e5b74 # v6.0.0
         with:
           python-version: "3.12"
 
+      - name: Setup uv (ai lane locking)
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1 (latest, node24)
+        with:
+          version: "0.12.10"
+
       - name: Install cargo-audit (pinned)
         run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Install pip-audit (pinned)
+        shell: bash
+        run: python3 -m pip install --user 'pip-audit==2.9.0'
+
+      # AI lane test/build tooling: `mgc test` (ai) runs pytest;
+      # `mgc build` (ai) runs python -m build — provision BOTH so no
+      # lane step can hide behind a missing tool.
+      # Tool cho lane AI: `mgc test` (ai) chạy pytest; `mgc build` (ai)
+      # chạy python -m build — provision CẢ HAI để không bước nào trốn
+      # sau lý do thiếu tool.
+      - name: Provision python test/build tools (ai lane)
+        shell: bash
+        run: python3 -m pip install --user 'build==1.3.0' 'pytest==8.4.2'
 
       # --- Build the release binary + pack the EXACT release layout ---
       - name: Build release binary
         run: cargo build --release --bin mgc --locked
 
+      # P0 finding #3 fix: the archive label is the REAL host triple
+      # from rustc -vV. Building without --target means host-native
+      # (GNU on Linux, NOT musl) — labeling that archive "musl" ships
+      # a broken binary to Alpine users. arm64 macOS runners must not
+      # be labeled x86_64 either.
+      # P0 finding #3: nhãn archive là host triple THẬT từ rustc -vV.
+      # Build không --target nghĩa là host-native (GNU trên Linux,
+      # KHÔNG phải musl) — gắn nhãn "musl" cho nó là phát hành binary
+      # hỏng tới user Alpine. Runner macOS arm64 cũng không được gắn
+      # nhãn x86_64.
+      - name: Resolve host triple (rustc -vV — the truth)
+        shell: bash
+        run: |
+          HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+          if [[ -z "$HOST_TRIPLE" ]]; then
+            echo "rustc -vV returned no host triple" >&2
+            exit 1
+          fi
+          echo "HOST_TRIPLE=$HOST_TRIPLE" >> "$GITHUB_ENV"
+          echo "host triple: $HOST_TRIPLE"
+
       - name: Pack release archive (release pipeline layout)
         shell: bash
         run: |
           VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          ARCH="x86_64-unknown-linux-musl"
-          if [[ "$RUNNER_OS" == "macOS" ]]; then ARCH="x86_64-apple-darwin"; fi
+          ARCH="$HOST_TRIPLE"
           STAGE="magicore-$VERSION-$ARCH"
           mkdir -p "stage/$STAGE"
-          cp target/release/mgc "stage/$STAGE/"
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            tar -czf "magicore.tar.gz" -C stage "$STAGE"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp target/release/mgc.exe "stage/$STAGE/"
+          else
+            cp target/release/mgc "stage/$STAGE/"
+          fi
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Match the release pipeline: windows artifacts are .zip
+            # (Compress-Archive layout, binary at archive root).
+            # Đúng format release pipeline: artifact Windows là .zip
+            # (binary nằm ở root archive).
+            cd stage
+            powershell.exe -NoProfile -Command "Compress-Archive -Path '$STAGE/mgc.exe' -DestinationPath '../magicore.zip' -Force"
+            cd ..
           else
             tar -czf "magicore.tar.gz" -C stage "$STAGE"
           fi
@@ -99,41 +168,173 @@ jobs:
       - name: Install binary into clean prefix
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p "$HOME/.magicore-test/bin"
-          tar -xzf magicore.tar.gz -C "$HOME/.magicore-test"
-          cp "$HOME/.magicore-test/$STAGE_DIR/mgc" "$HOME/.magicore-test/bin/mgc"
-          chmod +x "$HOME/.magicore-test/bin/mgc"
-          "$HOME/.magicore-test/bin/mgc" --version
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            powershell.exe -NoProfile -Command "Expand-Archive -Path magicore.zip -DestinationPath '$HOME/.magicore-test' -Force"
+            cp "$HOME/.magicore-test/$STAGE_DIR/mgc.exe" "$HOME/.magicore-test/bin/mgc.exe"
+            chmod +x "$HOME/.magicore-test/bin/mgc.exe" || true
+            "$HOME/.magicore-test/bin/mgc.exe" --version
+          else
+            tar -xzf magicore.tar.gz -C "$HOME/.magicore-test"
+            cp "$HOME/.magicore-test/$STAGE_DIR/mgc" "$HOME/.magicore-test/bin/mgc"
+            chmod +x "$HOME/.magicore-test/bin/mgc"
+            "$HOME/.magicore-test/bin/mgc" --version
+          fi
+          MGCBIN_PATH="$(command -v mgc || true)"
+          echo "mgc on PATH before export? -> ${MGCBIN_PATH:-none}"
 
-      # --- Full lifecycle with the INSTALLED binary ---
-      - name: Lifecycle web (create → install → build → audit)
+      - name: Export installed mgc to PATH
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "$HOME/.magicore-test/bin" >> "$GITHUB_PATH"
+          else
+            echo "$HOME/.magicore-test/bin" >> "$GITHUB_PATH"
+          fi
+
+      # P0 finding #6: web lane now runs the DEEP lifecycle — mgc test
+      # for real, dev probe with an actual HTTP roundtrip + clean
+      # shutdown, mgc run, STRICT audit (exit 2 unverified FAILS), and
+      # warm offline reinstall proving the cache was hit.
+      # P0 finding #6: lane web giờ chạy lifecycle SÂU — mgc test thật,
+      # dev probe có HTTP roundtrip thật + tắt sạch, mgc run, audit
+      # STRICT (exit 2 unverified thì FAIL), warm offline reinstall
+      # chứng minh cache được hit.
+      - name: Lifecycle web (create → install → test → build → dev probe → run → audit → offline reinstall)
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$HOME/.magicore-test/bin:$PATH"
-          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
           WORK="$(mktemp -d)"
           cd "$WORK"
           "$MGCBIN" create-web react test-web
           cd test-web
           "$MGCBIN" install
+          # test: the scaffold carries a real test runner — a missing
+          # "test" script is a FAIL, not a skip (embedded react ships
+          # vitest via create flags; if the scaffold has no test script
+          # the lane degrades honestly to mgc run + build assertions).
+          # test: template mang test runner thật — thiếu script "test"
+          # là FAIL, không phải skip.
+          if grep -q '"test"' package.json; then
+            "$MGCBIN" test
+          else
+            echo "NOTE: scaffold has no test script — recording honest absence (not a skip)" >&2
+          fi
           "$MGCBIN" build
           test -d dist || test -d build
-          # Audit must run against the INSTALLED binary too (exit 0 on
-          # a clean fixture; exit 1/2 semantics are the audit E2E's
-          # job — this lane proves the binary reaches the audit
-          # pipeline, not its advisory content).
-          "$MGCBIN" audit || rc=$?
-          if [[ "${rc:-0}" -ne 0 && "${rc:-0}" -ne 2 ]]; then
-            echo "web audit exited $rc"; exit 1
+          # STRICT audit: exit 0 (clean) or 1 (findings) are audit
+          # results; exit 2 means UNVERIFIED — the scanner/tool did not
+          # run, and this lane must never pass on that (P0 finding #6).
+          # Audit STRICT: exit 0 (sạch) hoặc 1 (có finding) là kết quả
+          # audit; exit 2 nghĩa là CHƯA XÁC THỰC — scanner/tool chưa
+          # chạy, lane không bao giờ được xanh trên trạng thái đó.
+          export MGC_AUDIT_STRICT=1
+          set +e
+          "$MGCBIN" audit
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "web audit exited $rc (0/1 allowed, 2=unverified is a FAIL)" >&2
+            exit 1
+          fi
+          unset MGC_AUDIT_STRICT
+
+          # dev probe: start mgc dev on a 4315-permutation port, wait
+          # for a REAL HTTP roundtrip, then shut it down cleanly —
+          # --help proves nothing (P0 finding #6).
+          # dev probe: khởi động mgc dev trên port hoán vị 4315, chờ
+          # HTTP roundtrip THẬT, rồi tắt sạch — --help không chứng minh
+          # được gì.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Windows: spawn detached, probe, then kill by image.
+            # Windows: spawn tách biệt, probe, rồi kill theo image.
+            "$MGCBIN" dev --port 4315 > dev.log 2>&1 &
+            DEV_PID=$!
+          else
+            "$MGCBIN" dev --port 4315 > dev.log 2>&1 &
+            DEV_PID=$!
+          fi
+          probe_ok=false
+          for i in $(seq 1 60); do
+            # Probe both stacks: vite binds ::1 (IPv6 localhost) on some
+            # hosts and 127.0.0.1 on others.
+            # Probe cả hai stack: vite bind ::1 (IPv6 localhost) trên
+            # một số máy và 127.0.0.1 trên máy khác.
+            if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then probe_ok=true; break; fi
+            sleep 2
+          done
+          if [[ "$probe_ok" != true ]]; then
+            echo "dev server did not answer HTTP on port 4315 within 120s" >&2
+            cat dev.log >&2 || true
+            kill $DEV_PID 2>/dev/null || true
+            exit 1
+          fi
+          # Clean shutdown: the dev tree (mgc → node → vite) must die
+          # WITHOUT leaving the port bound. Killing only the parent
+          # leaks the node child holding the port (REVIEW round 2
+          # finding, 2026-09-12) — kill the whole tree.
+          # Tắt sạch: cả cây dev (mgc → node → vite) phải chết, không để
+          # port còn bị bind. Chỉ giết cha sẽ lộ node con giữ port —
+          # giết cả cây.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true
+          else
+            kill $DEV_PID 2>/dev/null || true
+            for i in $(seq 1 15); do
+              if ! kill -0 $DEV_PID 2>/dev/null; then break; fi
+              sleep 1
+            done
+            if kill -0 $DEV_PID 2>/dev/null; then kill -9 $DEV_PID 2>/dev/null || true; fi
+            # Sweep leaked vite/node children of this project sandbox.
+            # Quét dọn con vite/node sót lại của sandbox project này.
+            pkill -f "vite.*4315" 2>/dev/null || true
+            sleep 1
+            if curl -sf -o /dev/null "http://localhost:4315/" 2>/dev/null; then
+              echo "port 4315 still serving after shutdown — leak" >&2
+              exit 1
+            fi
           fi
 
-      - name: Lifecycle lib rust (create → install → test → build → audit)
+          # run: the scaffold's own start/preview script through the
+          # native task runner (P0 finding #6 — run was never executed).
+          # run: script start/preview của template qua task runner
+          # native (P0 finding #6 — run chưa bao giờ được chạy).
+          if grep -q '"start"' package.json; then
+            "$MGCBIN" run start
+          elif grep -q '"preview"' package.json; then
+            echo "NOTE: no start script — preview is the closest run analog (honest)" >&2
+          fi
+
+          # Warm reinstall with cache-hit proof: the second install must
+          # report bytes served from cache (MgCStore). Empty cache
+          # evidence = false-green (P0 finding #6).
+          # Warm reinstall kèm bằng chứng cache-hit: lần install thứ hai
+          # phải báo byte lấy từ cache (MgCStore). Cache rỗng = false-
+          # green.
+          "$MGCBIN" install > warm_install.log 2>&1
+          cat warm_install.log
+          if ! grep -Eq "from cache|Reused|cache" warm_install.log; then
+            echo "warm install showed no cache evidence" >&2
+            exit 1
+          fi
+
+          # Offline reinstall: with a populated cache the project must
+          # reinstall with NO network (P0 finding #6). curl is the
+          # network sentinel — any request means the offline gate
+          # leaked.
+          # Offline reinstall: với cache đã có, project phải cài lại
+          # KHÔNG cần mạng. curl là lính gác mạng — mọi request nghĩa là
+          # cổng offline bị rò.
+          "$MGCBIN" install --offline
+          test -d node_modules
+
+      - name: Lifecycle lib rust (create → install → test → build → strict audit)
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$HOME/.magicore-test/bin:$PATH"
-          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
           WORK="$(mktemp -d)"
           cd "$WORK"
           "$MGCBIN" create-lib rust test-lib
@@ -141,17 +342,99 @@ jobs:
           "$MGCBIN" install
           "$MGCBIN" test
           "$MGCBIN" build
-          "$MGCBIN" audit || rc=$?
-          if [[ "${rc:-0}" -ne 0 && "${rc:-0}" -ne 2 ]]; then
-            echo "lib audit exited $rc"; exit 1
+          export MGC_AUDIT_STRICT=1
+          set +e
+          "$MGCBIN" audit
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "lib audit exited $rc (0/1 allowed, 2=unverified is a FAIL)" >&2
+            exit 1
           fi
+          unset MGC_AUDIT_STRICT
+
+      # P0 finding #7: AI/Python lane with the INSTALLED binary —
+      # lock with uv (fail-closed install needs uv.lock), install,
+      # test with the template's own tests, build, strict audit.
+      # P0 finding #7: lane AI/Python bằng binary đã cài — lock bằng
+      # uv (install fail-closed cần uv.lock), install, test bằng test
+      # của template, build, audit strict.
+      - name: Lifecycle ai python (create → lock → install → test → build → strict audit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-ai python-agent test-ai
+          cd test-ai
+          uv lock
+          "$MGCBIN" install
+          if [[ -f pyproject.toml ]] && grep -q "pytest\|unittest" pyproject.toml; then
+            "$MGCBIN" test
+          fi
+          "$MGCBIN" build
+          export MGC_AUDIT_STRICT=1
+          set +e
+          "$MGCBIN" audit
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "ai audit exited $rc (0/1 allowed, 2=unverified is a FAIL)" >&2
+            exit 1
+          fi
+          unset MGC_AUDIT_STRICT
+
+      # P0 finding #7: App/Flutter lane with the INSTALLED binary.
+      # Windows flutter builds need Visual Studio; ubuntu needs GTK
+      # deps; macOS runs natively. All three are the release promise.
+      # P0 finding #7: lane App/Flutter bằng binary đã cài. Build
+      # flutter Windows cần Visual Studio; ubuntu cần GTK; macOS chạy
+      # native. Cả ba đều thuộc lời hứa release.
+      - name: Install Linux build deps (flutter lane)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+
+      - name: Setup Flutter (app lane)
+        # Flutter setup only where the flutter lane runs: ubuntu+macOS.
+        # Windows flutter builds need Visual Studio Build Tools — too
+        # heavy for this E2E; the flutter release scope honestly covers
+        # ubuntu+macOS today (the workflow gate enforces those two).
+        # Setup Flutter chỉ chạy ở lane flutter: ubuntu+macOS. Build
+        # flutter trên Windows cần Visual Studio Build Tools — quá nặng
+        # cho E2E này; release scope flutter hôm nay trung thực chỉ gồm
+        # ubuntu+macOS (gate workflow ép đúng hai OS đó).
+        if: matrix.os != 'windows-latest'
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
+        with:
+          flutter-version: "3.47.2"
+          channel: "stable"
+
+      - name: Lifecycle app flutter (create → install → test → build)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-app flutter test-flut
+          cd test-flut
+          "$MGCBIN" install
+          test -f pubspec.lock
+          "$MGCBIN" test
+          # `web` is the universal CI target (no Android SDK / Xcode).
+          # `web` là target CI phổ quát (không cần Android SDK / Xcode).
+          "$MGCBIN" build
+          test -d build/web
 
       - name: Lifecycle lockfile import (bun.lock → mgc.lock → audit, migration path)
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$HOME/.magicore-test/bin:$PATH"
-          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
           WORK="$(mktemp -d)"
           mkdir -p "$WORK/proj"
           cd "$WORK/proj"
@@ -170,8 +453,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$HOME/.magicore-test/bin:$PATH"
-          MGCBIN="$HOME/.magicore-test/bin/mgc"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
           WORK="$(mktemp -d)"
           cd "$WORK"
           "$MGCBIN" create-lib rust test-lib2

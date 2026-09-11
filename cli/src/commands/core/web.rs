@@ -3403,8 +3403,44 @@ async fn apply_web_manifest_seed(
         }
     }
 
+    // P0 finding (2026-09-12): `mgc test` fails honestly ("No test
+    // runner detected") on scaffolds that ship no test script — every
+    // fullstack/vite template that carries TypeScript must ship a
+    // `test` script (tsc --noEmit typecheck is the honest baseline
+    // smoke; vitest/jest flags override it via ensure_script below).
+    // This is the scaffold's OWN test — no CI printf-ing tests into
+    // user projects at run time.
+    // P0 finding (2026-09-12): `mgc test` fail trung thực ("No test
+    // runner detected") trên template không có script test — mọi
+    // template vite có TypeScript phải TỰ mang script `test` (tsc
+    // --noEmit là smoke baseline trung thực; flag vitest/jest ghi đè
+    // qua ensure_script ở dưới). Đây là test CỦA scaffold — CI không
+    // bịa test vào project user lúc chạy.
+    if flags.ts
+        && matches!(
+            seed_name,
+            "react-vite" | "vue-vite" | "solid" | "svelte" | "qwik"
+        )
+    {
+        ensure_script(object, "test", "tsc --noEmit");
+    }
+
     std::fs::write(package_json_path, serde_json::to_string_pretty(&value)?)?;
     Ok(())
+}
+
+/// Insert a scripts entry only when the scaffold did not define it —
+/// user/template choices win over the default baseline.
+/// Chèn mục scripts chỉ khi scaffold chưa định nghĩa — lựa chọn của
+/// user/template thắng baseline mặc định.
+fn ensure_script(root: &mut Map<String, Value>, name: &str, command: &str) {
+    let scripts = root
+        .entry("scripts".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(map) = scripts {
+        map.entry(name.to_string())
+            .or_insert_with(|| Value::String(command.to_string()));
+    }
 }
 
 pub(crate) async fn enrich_web_project_manifest(

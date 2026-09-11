@@ -117,6 +117,75 @@ if __name__ == "__main__":
             ),
         )?;
 
+        // The scaffold ships its OWN tests (P0 finding, 2026-09-12):
+        // `mgc test` auto-detects pytest via pyproject.toml — a
+        // template without tests makes every honest lifecycle run fail
+        // with pytest exit 5 (nothing collected), and CI lanes used to
+        // paper over it by printf-ing tests into the project at run
+        // time. The template carries the test; nobody fabricates it.
+        // Template TỰ mang test (P0 finding, 2026-09-12): `mgc test`
+        // auto-detect pytest qua pyproject.toml — template thiếu test
+        // khiến mọi lần chạy lifecycle trung thực fail với pytest exit
+        // 5 (không có gì để chạy), và lane CI trước đây phải độn test
+        // vào project lúc chạy. Template mang test; không ai bịa test.
+        if framework == "mcp-server" {
+            write_file(
+                &target.join("tests").join("test_server.py"),
+                r#"'''Scaffold smoke test: the MCP server entry point imports.'''
+
+import importlib.util
+import pathlib
+import sys
+
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+
+def test_server_module_imports() -> None:
+    path = SRC / "server.py"
+    spec = importlib.util.spec_from_file_location("server", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert hasattr(module, "main")
+"#,
+            )?;
+        } else {
+            write_file(
+                &target.join("tests").join("test_agent.py"),
+                r#"'''Scaffold smoke test: the agent runs end-to-end.'''
+
+import importlib.util
+import pathlib
+import sys
+
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+
+def _load_agent():
+    path = SRC / "agent.py"
+    spec = importlib.util.spec_from_file_location("agent", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_agent_runs() -> None:
+    agent = _load_agent().AIAgent()
+    assert agent.run("CI") == "Agent processed successfully!"
+
+
+def test_runtime_config_inert() -> None:
+    agent = _load_agent().AIAgent()
+    assert agent.runtime.target_bits is None
+"#,
+            )?;
+        }
+
         write_file(
             &target.join("models").join("README.md"),
             "# AI Models Directory\n\nManage model artifacts with `mgc model pull hf://org/repo`.\n",

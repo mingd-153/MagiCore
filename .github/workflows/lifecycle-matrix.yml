@@ -8,10 +8,24 @@ name: Lifecycle Capability Matrix
 # let lifecycle support regress silently. Java/.NET/Go scaffolds that
 # fall back to another language are FAILED creates here (honest).
 #
+# P0 findings #1/#2/#7 (2026-09-12): the verdict now weighs EVERY
+# required dimension the lane declares (per-lane contracts, not a
+# global 4-dim subset), and the non-regression gate covers the FULL
+# release scope (web/js, ai/py, app/flutter, lib/rust, lib/py, lib/ts)
+# — not just the lib/rust reference lane. AI/App lanes are provisioned
+# (Python 3.12 + uv, Flutter stable) because this workflow is now a
+# release gate, not a sample.
+#
 # P0-2: matrix audit KHÔNG BAO GIỜ suy ra năng lực product — lifecycle
 # là dimension RIÊNG với evidence binary riêng. Lane sinh matrix này
 # mỗi PR chạm code product; scaffold java/.net/go rơi fallback ngôn ngữ
 # khác sẽ là create FAILED (trung thực, không độn sự thật).
+# P0 findings #1/#2/#7: verdict giờ cân MỌI dimension bắt buộc mà lane
+# tuyên bố (hợp đồng từng lane, không phải tập 4-dim toàn cục), và
+# gate non-regression phủ ĐẦY release scope (web/js, ai/py, app/
+# flutter, lib/rust, lib/py, lib/ts) — không chỉ lane tham chiếu
+# lib/rust. Lane AI/App được provision (Python 3.12 + uv, Flutter
+# stable) vì workflow này giờ là release gate, không còn là mẫu.
 
 on:
   pull_request:
@@ -23,7 +37,7 @@ on:
       - "scripts/lifecycle_capability_matrix.py"
       - ".github/workflows/lifecycle-matrix.yml"
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
     paths:
       - "cli/**"
       - "core/**"
@@ -55,7 +69,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Setup Python (uv/pip fallback for lib lanes)
+      - name: Setup Python (ai/py + lib/py lanes; uv/pip fallback)
         uses: actions/setup-python@e5edc8e8e5f3a02d3ce6a42f5ff69917500e5b74 # v6.0.0
         with:
           python-version: "3.12"
@@ -64,6 +78,35 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
+
+      - name: Setup Go (lib/go lane toolchain)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      # AI lane: mgc install (ai) is fail-closed — it needs uv.lock /
+      # requirements.lock; provision uv so the lane can lock then install.
+      # Lane AI: mgc install (ai) fail-closed — cần uv.lock /
+      # requirements.lock; provision uv để lane lock rồi install.
+      - name: Setup uv (ai lane locking)
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1 (latest, node24)
+        with:
+          version: "0.12.10"
+
+      # App lane: flutter toolchain for create→install→test→build.
+      # Lane App: toolchain flutter cho create→install→test→build.
+      - name: Setup Flutter (app lane)
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
+        with:
+          flutter-version: "3.47.2"
+          channel: "stable"
+
+      - name: Install Linux build deps (flutter lane)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
 
       - name: Build mgc binary
         run: cargo build --bin mgc --locked
@@ -80,30 +123,59 @@ jobs:
           name: lifecycle-capability-matrix-${{ runner.os }}
           path: docs/specs/lifecycleCapabilityMatrix.json
 
-      - name: Enforce non-regression (rust lane must stay lifecycle-supported)
-        # Guard: the lib/rust lane is the reference lane — it must stay
-        # lifecycle-supported on every OS. Other lanes are recorded
-        # honestly (partial/unsupported) but not yet gated (gates
-        # tighten per released scope, never per chance).
-        # Guard: lane lib/rust là lane tham chiếu — phải giữ trạng thái
-        # lifecycle-supported trên mọi OS. Lane khác ghi trung thực
-        # (partial/unsupported), chưa bị gate (gate siết theo scope
-        # release, không siết theo may rủi).
+      - name: Enforce release-scope non-regression (all 6 gated lanes)
+        # P0 finding #2 fix (2026-09-12): the gate now covers the FULL
+        # declared release scope — web/javascript, ai/python, app/
+        # flutter, lib/rust, lib/python, lib/typescript. Any gated lane
+        # that is not lifecycle-supported fails the workflow (verdict
+        # semantics fixed by finding #1: a lane missing any required
+        # dimension is partial, never supported). Lanes OUTSIDE the
+        # release scope (lib/go, lib/java, lib/dotnet) are recorded
+        # honestly but not gated — they are not in the RC promise.
+        # P0 finding #2: gate giờ phủ ĐẦY release scope đã tuyên bố —
+        # web/javascript, ai/python, app/flutter, lib/rust, lib/python,
+        # lib/typescript. Lane bị gate mà không lifecycle-supported thì
+        # workflow FAIL (semantics verdict đã sửa ở finding #1: lane
+        # thiếu bất kỳ dimension bắt buộc nào là partial, không bao giờ
+        # supported). Lane NGOÀI release scope (lib/go, lib/java,
+        # lib/dotnet) ghi trung thực nhưng không gate — chúng không
+        # thuộc lời hứa RC.
         shell: python3
         run: |
           import json, sys
 
           data = json.load(open("docs/specs/lifecycleCapabilityMatrix.json"))
+          # Release-scope lanes: every lane the RC promise names.
+          # Lane thuộc release scope: mọi lane mà lời hứa RC nêu tên.
+          RELEASE_SCOPE = {
+              ("web", "javascript"),
+              ("ai", "python"),
+              ("app", "flutter"),
+              ("lib", "rust"),
+              ("lib", "python"),
+              ("lib", "typescript"),
+          }
           failures = []
+          seen = set()
           for lane in data["lanes"]:
-              if (lane["core"], lane["language"]) == ("lib", "rust"):
-                  if lane["verdict"] != "lifecycle-supported":
-                      failures.append(
-                          f"lib/rust lifecycle verdict = {lane['verdict']} "
-                          f"(expected lifecycle-supported) — dimensions: {lane['dimensions']}"
-                      )
+              key = (lane["core"], lane["language"])
+              if key not in RELEASE_SCOPE:
+                  continue
+              seen.add(key)
+              if lane["verdict"] != "lifecycle-supported":
+                  failures.append(
+                      f"{key[0]}/{key[1]} lifecycle verdict = {lane['verdict']} "
+                      f"(expected lifecycle-supported) — dimensions: {lane['dimensions']}"
+                  )
+          missing = RELEASE_SCOPE - seen
+          if missing:
+              failures.append(
+                  "release-scope lanes missing from matrix: "
+                  + ", ".join(f"{c}/{l}" for c, l in sorted(missing))
+              )
           if failures:
               print("LIFECYCLE NON-REGRESSION BLOCKED:")
               print("\n".join(failures))
               sys.exit(1)
-          print("OK: lib/rust reference lane lifecycle-supported")
+          print("OK: release-scope lanes lifecycle-supported: "
+                + ", ".join(f"{c}/{l}" for c, l in sorted(seen)))

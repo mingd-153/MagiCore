@@ -135,6 +135,13 @@ pub fn write_web_lockfile_with_state(
             lockfile_hash: String::new(),
             signer: None,
         },
+        // Web lockfiles carry no imported root graph — the manifest is
+        // the root source of truth; root_dependencies stays empty (P0
+        // finding #6: the field exists for IMPORTERS, web keeps []).
+        // Lockfile web không mang root graph import — manifest là nguồn
+        // chân lý của root; root_dependencies giữ rỗng (P0 finding #6:
+        // trường này dành cho IMPORTER, web để []).
+        root_dependencies: Vec::new(),
         packages: Vec::new(),
     });
 

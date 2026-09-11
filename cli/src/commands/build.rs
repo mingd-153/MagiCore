@@ -95,13 +95,14 @@ async fn build_ai(root: &Path) -> Result<()> {
 
     match runtime {
         DetectedRuntime::PythonPyTorch => {
-            if tool_unavailable("python") {
-                return Err(crate::error::build_toolchain_missing("python"));
+            let python = python_cmd();
+            if tool_unavailable(python) {
+                return Err(crate::error::build_toolchain_missing(python));
             }
             info("Building Python AI package: python -m build");
             let env = optimizer_envs.into_iter().collect::<Vec<_>>();
             let env = (!env.is_empty()).then_some(env);
-            run_allowlisted_tool_with_env(root, "python", &["-m", "build"], env)
+            run_allowlisted_tool_with_env(root, python, &["-m", "build"], env)
                 .map_err(|error| crate::error::python_build_failed(&error))?;
         }
         DetectedRuntime::RustCandle => {
@@ -212,8 +213,9 @@ async fn build_lib(root: &Path) -> Result<()> {
         return build_rust_with_env(root, optimizer_envs);
     }
     if root.join("pyproject.toml").exists() {
-        if tool_unavailable("python") {
-            return Err(crate::error::build_toolchain_missing("python"));
+        let python = python_cmd();
+        if tool_unavailable(python) {
+            return Err(crate::error::build_toolchain_missing(python));
         }
         info("Building python lib: python -m build");
 
@@ -221,7 +223,7 @@ async fn build_lib(root: &Path) -> Result<()> {
         let env: Vec<(String, String)> = optimizer_envs.clone().into_iter().collect();
         let env_opt = if env.is_empty() { None } else { Some(env) };
 
-        return run_allowlisted_tool_with_env(root, "python", &["-m", "build"], env_opt)
+        return run_allowlisted_tool_with_env(root, python, &["-m", "build"], env_opt)
             .map_err(|e| crate::error::python_build_failed(&e));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
@@ -392,7 +394,17 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                     mgc_ui::warning("flutter not found — skipping flutter build");
                     continue;
                 }
-                run_allowlisted_tool(&dir, "flutter", &["build"])?;
+                // `flutter build` without a target exits 2 ("Missing
+                // target"). `web` is the universal desktop-CI target —
+                // no Android SDK, no Xcode, works on all three runners
+                // (P0 finding, 2026-09-12: the honest lifecycle matrix
+                // caught the old bare `flutter build` failing).
+                // `flutter build` thiếu target thì exit 2 ("Missing
+                // target"). `web` là target phổ quát cho CI desktop —
+                // không cần Android SDK, không cần Xcode, chạy được cả
+                // ba runner (P0 finding 2026-09-12: matrix lifecycle
+                // trung thực bắt được `flutter build` trần fail).
+                run_allowlisted_tool(&dir, "flutter", &["build", "web"])?;
                 built += 1;
             }
             other => mgc_ui::warning(&format!("Unknown platform '{other}' — skipping")),
@@ -426,6 +438,27 @@ pub(crate) fn tool_unavailable(tool: &str) -> bool {
         #[cfg(not(windows))]
         true
     })
+}
+
+/// Resolve the Python launcher name for this machine (P0 fix,
+/// 2026-09-12): macOS ships only `python3` (no `python` shim since
+/// Monterey) while setup-python CI images provide `python`. The
+/// honest lifecycle matrix caught the hardcoded `python` failing on
+/// macOS — build/install lanes must resolve the launcher that EXISTS,
+/// never guess one.
+/// Chọn tên launcher Python của máy này (P0 fix, 2026-09-12): macOS chỉ
+/// có `python3` (không còn shim `python` từ Monterey) còn image CI
+/// setup-python có `python`. Matrix lifecycle trung thực đã bắt được
+/// hardcoded `python` fail trên macOS — lane build/install phải chọn
+/// launcher TỒN TẠI, không đoán.
+pub(crate) fn python_cmd() -> &'static str {
+    if !tool_unavailable("python") {
+        "python"
+    } else if !tool_unavailable("python3") {
+        "python3"
+    } else {
+        "python" // Neither exists — surface the honest toolchain error.
+    }
 }
 
 /// Cloud build (06 §4): cdk synth (qua node_modules/.bin — npm-format, như web pattern),

@@ -12,6 +12,21 @@ pub struct Lockfile {
     /// Metadata — Metadata
     pub metadata: LockfileMetadata,
 
+    /// Root direct-dependency pins (workspace root → name@version edges).
+    /// Imported from the source lockfile's root dependency set (deno
+    /// workspace.dependencies, npm root "" entry, …). WITHOUT this field
+    /// the root graph cannot be represented and importers resorted to
+    /// self-edges — a graph-semantics lie (P0 finding #6, 2026-09-12).
+    /// serde default keeps older v2 lockfiles (field absent) parsing.
+    // Pin direct-dep của root (cạnh root → name@version). Nhập từ tập
+    // dependency gốc của lockfile nguồn (deno workspace.dependencies,
+    // entry root "" của npm…). Không có trường này thì graph root không
+    // biểu diễn được và importer phải tự tạo self-edge — sai semantics
+    // (P0 finding #6). serde default để lockfile v2 cũ (thiếu trường)
+    // vẫn parse được.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub root_dependencies: Vec<String>,
+
     /// Package list — Danh sách package
     #[serde(rename = "package")]
     pub packages: Vec<Package>,
@@ -94,6 +109,7 @@ impl Lockfile {
                 lockfile_hash: String::new(), // Will be computed later — Sẽ tính sau
                 signer: None,
             },
+            root_dependencies: Vec::new(),
             packages: Vec::new(),
         }
     }
