@@ -76,6 +76,13 @@ jobs:
       - name: release hash updater syntax
         run: bash -n scripts/update-release-hashes.sh
       - name: package manifests syntax
+        # Windows fix (2026-09-11): this job's default shell on Windows
+        # is pwsh — `>/dev/null` is a bash-ism that pwsh misreads as the
+        # path D:\dev\null. Force bash for the POSIX redirect syntax.
+        # Fix Windows: shell mặc định của job này trên Windows là pwsh —
+        # `>/dev/null` là cú pháp bash mà pwsh hiểu nhầm thành đường dẫn
+        # D:\dev\null. Ép bash cho cú pháp redirect POSIX.
+        shell: bash
         run: |
           ruby -c packaging/homebrew/magicore.rb
           ruby -c packaging/homebrew/magicore-web.rb
