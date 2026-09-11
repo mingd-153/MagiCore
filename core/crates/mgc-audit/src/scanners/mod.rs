@@ -367,7 +367,23 @@ pub fn parse_pip_audit_json(json: &str) -> MgResult<PipAuditParse> {
     let json_start = json
         .find('[')
         .unwrap_or_else(|| json.find('{').unwrap_or(0));
-    let deps: Vec<PipAuditDependency> = serde_json::from_str(json[json_start..].trim())
+    // Stream-parse the FIRST complete JSON value from the payload:
+    // pip-audit 2.9.0 on some CI runners emits trailing noise after
+    // the JSON body (progress/status lines merged into stdout) —
+    // serde_json's streaming deserializer consumes exactly one value
+    // and ignores anything after, while still failing on a genuinely
+    // broken body (fail-closed on corruption, tolerant of suffix junk).
+    // Parse-stream GIÁ TRỊ JSON đầu tiên trong payload: pip-audit
+    // 2.9.0 trên một số runner CI in thêm rác sau thân JSON (dòng
+    // progress/status lẫn vào stdout) — deserializer streaming của
+    // serde_json tiêu thụ đúng một giá trị và bỏ qua phần sau, nhưng
+    // vẫn fail trên thân JSON thật sự hỏng (fail-closed với hỏng,
+    // khoan dung với rác hậu tố).
+    let mut stream = serde_json::Deserializer::from_str(json[json_start..].trim())
+        .into_iter::<Vec<PipAuditDependency>>();
+    let deps: Vec<PipAuditDependency> = stream
+        .next()
+        .ok_or_else(|| MgError::Other("invalid pip-audit JSON: empty payload".to_string()))?
         .map_err(|e| MgError::Other(format!("invalid pip-audit JSON: {e}")))?;
 
     let mut vulns = Vec::new();

@@ -159,11 +159,21 @@ jobs:
       - name: OSV-backed lane E2E (Java/.NET/Swift/Dart — network, no toolchain)
         # These lanes hit the LIVE OSV API only — no gradle/dotnet/swift/
         # flutter toolchain needed. The runner proves lockfile parsing +
-        # advisory mapping + exit codes on every OS.
+        # advisory mapping + exit codes on every OS. libtest takes ONE
+        # substring filter per invocation — the four OSV lanes share no
+        # common prefix, so they run as four exact invocations (CI fix
+        # 2026-09-11: the previous `audit_` substring wrongly pulled
+        # toolchain-dependent lanes into this toolchain-free job).
         # Lane OSV chỉ cần MẠNG — không cần toolchain gradle/dotnet/
-        # swift/flutter. Runner chứng minh parse lockfile + mapping
-        # advisory + exit code trên mọi OS.
-        run: cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --nocapture audit_
+        # swift/flutter. libtest nhận MỘT filter substring mỗi lần gọi —
+        # bốn lane OSV không chung tiền tố nên chạy bốn lệnh exact
+        # (fix CI: substring `audit_` trước đó kéo nhầm lane cần
+        # toolchain vào job không-có-toolchain này).
+        run: |
+          cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --exact audit_lib_java_via_cli_reports_real_osv_finding_exit_1
+          cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --exact audit_lib_dotnet_via_cli_reports_real_osv_finding_exit_1
+          cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --exact audit_app_swift_via_cli_reports_real_osv_findings_exit_1
+          cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --exact audit_app_flutter_via_cli_reports_real_osv_finding_exit_1
         env:
           MGC_E2E_AUDIT_TOOLS: required
       - name: Exec-layer E2E (hermetic contract)

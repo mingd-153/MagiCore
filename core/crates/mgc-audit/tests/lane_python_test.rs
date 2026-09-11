@@ -199,3 +199,26 @@ fn lane_python_10_evidence_stamp_and_honest_info_severity() {
         ));
     }
 }
+
+/// CI fix (2026-09-11): pip-audit 2.9.0 on some CI runners emits noise
+/// AFTER the JSON body (progress lines merged into stdout) — the
+/// stream parser must consume the FIRST value and ignore suffix junk,
+/// while a genuinely broken body still fails closed.
+/// Fix CI: pip-audit 2.9.0 trên một số runner CI in rác SAU thân JSON
+/// (dòng progress lẫn stdout) — parser stream phải tiêu thụ GIÁ TRỊ đầu
+/// và bỏ rác hậu tố, còn thân JSON thật sự hỏng thì vẫn fail-closed.
+#[test]
+fn pip_audit_json_with_trailing_noise_still_parses() {
+    let noisy = format!("{CLEAN}\nInstalled 0 packages\n");
+    let parsed = parse_pip_audit_json(&noisy)
+        .expect("trailing noise after a valid body must not break the parse");
+    // CLEAN carries exactly one audited package.
+    // CLEAN mang đúng một package đã audit.
+    assert_eq!(parsed.packages_audited, 1);
+}
+
+#[test]
+fn pip_audit_broken_json_still_fails_closed() {
+    let broken = "[{\"name\": 123"; // truncated mid-body — must fail
+    assert!(parse_pip_audit_json(broken).is_err());
+}
