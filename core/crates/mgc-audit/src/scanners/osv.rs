@@ -256,15 +256,21 @@ pub async fn audit_osv_pins(pins: &[OsvPin]) -> MgResult<AuditReport> {
     }
     // L1-hardcode (RULE §8): core crates never touch reqwest directly —
     // the shared mgc_http::HttpClient owns transport. Preconfigured with
-    // the JSON content type for OSV query posts. CI hygiene gate
-    // rejects direct reqwest in mgc-audit.
+    // the JSON content type for OSV query posts and NO retry: audit is a
+    // fail-closed read — a dead advisory endpoint must surface the
+    // error immediately (the old direct-reqwest behavior), not hang in
+    // backoff loops.
     // L1-hardcode (RULE §8): crate core không chạm reqwest trực tiếp —
     // mgc_http::HttpClient dùng chung giữ transport; cấu hình sẵn
-    // content-type JSON cho POST query OSV. Hygiene gate CI từ chối
-    // reqwest trực tiếp trong mgc-audit.
+    // content-type JSON cho POST query OSV và KHÔNG retry: audit là
+    // phép đọc fail-closed — advisory endpoint chết phải lộ lỗi NGAY
+    // (đúng hành vi reqwest trực tiếp cũ), không treo trong vòng backoff.
     let client = mgc_http::HttpClient::new()
         .map_err(|e| MgError::Network(format!("osv client error: {e}")))?
-        .with_auth("Content-Type", "application/json");
+        .with_auth("Content-Type", "application/json")
+        .with_retry(mgc_http::retry::RetryStrategy::Fixed(
+            std::time::Duration::ZERO,
+        ));
 
     let mut all = Vec::new();
     for pin in pins {

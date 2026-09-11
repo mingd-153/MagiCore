@@ -78,6 +78,14 @@ impl HttpClient {
             rl.wait().await;
         }
 
+        // Bounded retries (CI fix 2026-09-11): a dead endpoint previously
+        // retried FOREVER on connect errors (is_connect), hanging every
+        // consumer. Three attempts, then the error surfaces — callers own
+        // fail-closed policy.
+        // Retry hữu hạn (fix CI): endpoint chết trước đây retry VÔ HẠN
+        // với connect error (is_connect), treo mọi consumer. Ba lần thử
+        // rồi lỗi nổi lên — caller giữ chính sách fail-closed.
+        const MAX_RETRIES: u32 = 3;
         let mut attempt = 0;
         loop {
             let mut req = req
@@ -90,6 +98,9 @@ impl HttpClient {
 
             match resp {
                 Ok(r) if self.should_retry(r.status()) => {
+                    if attempt >= MAX_RETRIES {
+                        return Ok(r);
+                    }
                     let delay = self.retry.delay(attempt);
                     tracing::warn!("HTTP {} - retry in {:?}", r.status(), delay);
                     tokio::time::sleep(delay).await;
@@ -98,6 +109,9 @@ impl HttpClient {
                 }
                 Ok(r) => return Ok(r),
                 Err(e) if self.is_retryable_error(&e) => {
+                    if attempt >= MAX_RETRIES {
+                        return Err(e.into());
+                    }
                     let delay = self.retry.delay(attempt);
                     tracing::warn!("HTTP error: {} - retry in {:?}", e, delay);
                     tokio::time::sleep(delay).await;
