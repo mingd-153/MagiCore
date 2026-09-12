@@ -257,6 +257,7 @@ jobs:
           "$MGCBIN" audit
           rc=$?
           set -e
+          echo "MARKER audit rc=$rc"
           if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
             echo "web audit exited $rc (0/1 allowed, 2=unverified is a FAIL)" >&2
             exit 1
@@ -278,6 +279,7 @@ jobs:
             "$MGCBIN" dev --port 4315 > dev.log 2>&1 &
             DEV_PID=$!
           fi
+          echo "MARKER dev spawned pid=$DEV_PID"
           probe_ok=false
           for i in $(seq 1 60); do
             # Probe both stacks: vite binds ::1 (IPv6 localhost) on some
@@ -331,6 +333,7 @@ jobs:
           # foreground sẽ dính timeout 300s của exec và chết 143 (bug
           # bắt được ở lần E2E đầu tiên).
           if grep -q '"start"' package.json; then
+            echo "MARKER run probe start"
             "$MGCBIN" run start > run.log 2>&1 &
             RUN_PID=$!
             run_ok=false
@@ -339,6 +342,7 @@ jobs:
               if ! kill -0 $RUN_PID 2>/dev/null; then break; fi
               sleep 2
             done
+            echo "MARKER run probe done ok=$run_ok"
             if [[ "$run_ok" != true ]]; then
               echo "run start did not answer HTTP on port 4315" >&2
               cat run.log >&2 || true
@@ -366,6 +370,7 @@ jobs:
           # Warm reinstall kèm bằng chứng cache-hit: lần install thứ hai
           # phải báo byte lấy từ cache (MgCStore). Cache rỗng = false-
           # green.
+          echo "MARKER warm install start"
           "$MGCBIN" install > warm_install.log 2>&1
           cat warm_install.log
           if ! grep -Eq "from cache|Reused|cache" warm_install.log; then
@@ -380,8 +385,10 @@ jobs:
           # Offline reinstall: với cache đã có, project phải cài lại
           # KHÔNG cần mạng. curl là lính gác mạng — mọi request nghĩa là
           # cổng offline bị rò.
+          echo "MARKER offline reinstall start"
           "$MGCBIN" install --offline
           test -d node_modules
+          echo "MARKER web lane complete"
 
       - name: Lifecycle lib rust (create → install → test → build → strict audit)
         shell: bash
