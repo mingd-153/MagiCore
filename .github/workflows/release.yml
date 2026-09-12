@@ -169,19 +169,26 @@ jobs:
 
       - name: Build Binaries (Standard)
         if: ${{ !matrix.use_cross && !matrix.is_windows }}
-        # GOARCH (2026-09-12, item 12): the esbuild-rs build script
-        # compiles a Go library for the ARCH IT SEES. Cross-compiling
-        # x86_64-apple-darwin on an arm64 runner without GOARCH=amd64
-        # produces an arm64 _GoBuild symbol and the x86_64 link fails
-        # (Undefined symbols for architecture x86_64). Go reads GOARCH
-        # from the env — pin it to the target arch.
-        # GOARCH (item 12): build script của esbuild-rs compile thư viện
-        # Go cho ARCH nó nhìn thấy. Cross-compile x86_64-apple-darwin
-        # trên runner arm64 thiếu GOARCH=amd64 sẽ sinh symbol _GoBuild
-        # arm64 và link x86_64 fail (Undefined symbols for architecture
-        # x86_64). Go đọc GOARCH từ env — ghim theo arch đích.
+        # GOARCH + CGO (2026-09-12, item 12): the esbuild-rs build
+        # script runs plain 'go build' for a cgo c-archive
+        # (ffiapi.go imports "C"). Cross-compiling x86_64-apple-darwin
+        # on the arm64 runner: Go silently disables cgo when GOARCH
+        # mismatches the host and no CC is set ("no Go source files" —
+        # every file filtered out by the cgo constraint), leaving the
+        # static lib missing at link time. Pin GOARCH to the target,
+        # keep cgo ON, and hand Go a clang that emits the target arch.
+        # GOARCH + CGO (item 12): build script của esbuild-rs chạy 'go
+        # build' thường cho c-archive cgo (ffiapi.go import "C").
+        # Cross-compile x86_64-apple-darwin trên runner arm64: Go tự tắt
+        # cgo khi GOARCH lệch host mà không có CC ("no Go source files"
+        # — mọi file bị build-constraint lọc sạch), khiến static lib
+        # mất lúc link. Ghim GOARCH theo target, giữ cgo BẬT, và đưa
+        # cho Go một clang sinh đúng arch đích.
         env:
           GOARCH: ${{ contains(matrix.target, 'aarch64') && 'arm64' || 'amd64' }}
+          CGO_ENABLED: "1"
+          CC: clang
+          CFLAGS: ${{ contains(matrix.target, 'aarch64') && '-arch arm64' || '-arch x86_64' }}
         run: |
           cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features all --locked
           mkdir -p dist/magicore
@@ -772,7 +779,7 @@ jobs:
         # P0-1: scope bắt buộc đến từ manifest expected_lanes (hằng số
         # code, độc lập kết quả test). Lane thiếu khỏi matrix không còn
         # lọt được gate; matrix cũ/stale bị chặn.
-        shell: python3
+        shell: python3 {0}
         run: |
           import json, os, sys
 
