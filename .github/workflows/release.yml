@@ -449,7 +449,13 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          names=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "${{ matrix.variant }}")
+          # The contract speaks 'all'/'web'; the matrix label
+          # 'all-core' is display-only — map it before calling.
+          # Contract chỉ nhận 'all'/'web'; nhãn 'all-core' trong matrix
+          # chỉ để hiển thị — ánh xạ trước khi gọi.
+          CONTRACT_VARIANT="all"
+          if [[ "${{ matrix.variant }}" == "web" ]]; then CONTRACT_VARIANT="web"; fi
+          names=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "$CONTRACT_VARIANT")
           ARTIFACT=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
           echo "name=$ARTIFACT" >> $GITHUB_OUTPUT
           echo "Testing artifact: $ARTIFACT"
@@ -488,7 +494,15 @@ jobs:
 
           echo "✅ Version matches: $VERSION"
 
-      - name: Smoke test - Web install only (not full lifecycle)
+      - name: Smoke test - Web install (explicit core)
+        # 2026-09-12: bare `mgc install` fails honestly on a bare
+        # package.json with no bound core ("could not detect a
+        # MagiCore core") — the smoke must pass the explicit core
+        # exactly as the error hints, or bind a core first.
+        # 2026-09-12: `mgc install` trần fail trung thực trên
+        # package.json không có core ("could not detect a MagiCore
+        # core") — smoke phải truyền core tường minh đúng như error
+        # hint, hoặc bind core trước.
         if: runner.os != 'Windows'
         run: |
           mkdir -p lifecycle-test/web-project
@@ -497,19 +511,19 @@ jobs:
           # Create package.json
           echo '{"name":"test-web","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' > package.json
 
-          # Install (NOT testing: mgc create-web, mgc test, mgc build, mgc run)
-          ../../test-binary/${{ matrix.binary }} install
+          # Install with the explicit web core (NOT testing: create-web, test, build, run — the release-binary E2E covers the full lifecycle).
+          # Install với core web tường minh (full lifecycle do release-binary E2E phủ).
+          ../../test-binary/${{ matrix.binary }} --core web install
 
           # Verify
           if [ ! -d "node_modules/express" ]; then
-            echo "❌ express not installed"
+            echo "express not installed"
             exit 1
           fi
 
-          echo "✅ Web install smoke test passed"
-          echo "⚠️  Full lifecycle (create → test → build → run) not verified in CI"
+          echo "Web install smoke test passed (explicit core)"
 
-      - name: Smoke test - Web install only (Windows)
+      - name: Smoke test - Web install (explicit core, Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -518,7 +532,7 @@ jobs:
 
           '{"name":"test-web","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' | Out-File -FilePath package.json -Encoding utf8
 
-          & "../../test-binary/${{ matrix.binary }}" install
+          & "../../test-binary/${{ matrix.binary }}" --core web install
 
           if (-not (Test-Path "node_modules/express")) {
             Write-Error "express not installed"
