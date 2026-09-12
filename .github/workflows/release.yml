@@ -911,6 +911,17 @@ jobs:
   verify-public-download:
     name: Smoke Test Public Download (${{ matrix.os_name }}-${{ matrix.arch }})
     needs: [resolve-version, publish-github-release]
+    # Draft releases are only visible to tokens with repo WRITE access
+    # (2026-09-12): this job downloads the DRAFT to verify its bytes
+    # before promotion; the elevated permission is scoped to THIS job
+    # and only ever reads. Post-promotion, anonymous users run the same
+    # download with no token at all.
+    # Draft release chỉ hiển thị với token có quyền WRITE repo: job này
+    # tải DRAFT để kiểm tra byte trước khi promote; quyền nâng chỉ áp
+    # cho job này và chỉ đọc. Sau promote, user ẩn danh chạy cùng lệnh
+    # download mà không cần token.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:

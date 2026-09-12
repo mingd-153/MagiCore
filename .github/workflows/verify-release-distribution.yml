@@ -24,7 +24,13 @@ on:
         type: string
 
 permissions:
-  contents: read
+  # Draft releases are only visible to write-capable tokens (2026-09-12):
+  # every job here DOWNLOADS the draft to verify its bytes/manifests
+  # before promotion — read-only through the API, nothing is created.
+  # Draft release chỉ hiển thị với token có quyền write: mọi job ở đây
+  # chỉ TẢI draft để kiểm tra byte/manifest trước khi promote — chỉ đọc
+  # qua API, không tạo gì.
+  contents: write
 
 env:
   # Required environment: a missing tool in this lane is a FAILURE,
