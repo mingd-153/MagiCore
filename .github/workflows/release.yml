@@ -82,8 +82,30 @@ jobs:
             use_cross: false
             is_windows: false
 
-          # macOS Intel (x86_64)
-          - os: macos-14
+          # macOS Apple Silicon (arm64) — added 2026-09-12 (item 12):
+          # most current Macs are arm64; without this artifact the
+          # Homebrew formula odie's on them and the distribution
+          # channel is broken for the majority of macOS users.
+          # macOS Apple Silicon (arm64) — 2026-09-12 (item 12): phần
+          # lớn Mac hiện nay là arm64; thiếu artifact này thì formula
+          # Homebrew odie trên chúng và kênh phân phối hỏng với đa số
+          # user macOS.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            os_name: macos
+            arch: arm64
+            ext: tar.gz
+            use_cross: false
+            is_windows: false
+
+          # macOS Intel (x86_64) — cross-compiled on the arm64 runner
+          # (GitHub retired Intel macOS runners 2025; aarch64 hosts
+          # cross-compile x86_64-apple-darwin with just the target
+          # toolchain installed).
+          # macOS Intel (x86_64) — cross-compile trên runner arm64
+          # (GitHub đã nghỉ hưu runner Intel macOS 2025; host aarch64
+          # cross-compile x86_64-apple-darwin chỉ cần cài target).
+          - os: macos-latest
             target: x86_64-apple-darwin
             os_name: macos
             arch: x64
@@ -335,7 +357,21 @@ jobs:
             ext: zip
             binary: mgc.exe
             variant: all-core
-          - os: macos-14
+          # macOS arm64 — real arm64 runner (item 12, 2026-09-12)
+          - os: macos-latest
+            os_name: macos
+            arch: arm64
+            ext: tar.gz
+            binary: mgc
+            variant: all-core
+          # macOS x64 — smoke-test the cross-compiled artifact on the
+          # arm64 runner is NOT possible; run the x64 smoke under
+          # Rosetta (arch -x86_64) to prove the x64 binary at least
+          # launches.
+          # macOS x64 — không thể smoke artifact cross-compile trên
+          # runner arm64 trực tiếp; chạy smoke x64 qua Rosetta (arch
+          # -x86_64) để chứng minh binary x64 khởi động được.
+          - os: macos-latest
             os_name: macos
             arch: x64
             ext: tar.gz
@@ -354,7 +390,13 @@ jobs:
             ext: zip
             binary: mgc.exe
             variant: web
-          - os: macos-14
+          - os: macos-latest
+            os_name: macos
+            arch: arm64
+            ext: tar.gz
+            binary: mgc
+            variant: web
+          - os: macos-latest
             os_name: macos
             arch: x64
             ext: tar.gz
@@ -486,7 +528,11 @@ jobs:
           VERSION="${{ needs.resolve-version.outputs.version }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Verify all 6 archives present
+      - name: Verify all 8 archives present
+        # 2026-09-12 (item 12): macOS arm64 artifacts joined the set —
+        # linux-x64, macos-x64, macos-arm64, windows-x64 × {all, web}.
+        # 2026-09-12 (item 12): artifact macOS arm64 vào bộ — linux-x64,
+        # macos-x64, macos-arm64, windows-x64 × {all, web}.
         run: |
           VERSION="${{ steps.version.outputs.version }}"
 
@@ -494,34 +540,66 @@ jobs:
           EXPECTED_FILES=()
 
           for os in linux macos windows; do
-            for variant in all web; do
-              names=$(./scripts/release-artifact-contract.sh "$VERSION" "$os" "x64" "$variant")
-              archive=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
-              checksum=$(echo "$names" | grep "^CHECKSUM=" | cut -d= -f2)
-              sbom=$(echo "$names" | grep "^SBOM=" | cut -d= -f2)
+            for arch in x64 arm64; do
+              # macOS publishes BOTH arm64 and x64; linux/windows x64
+              # only for RC — arm64 entries are skipped by contract
+              # availability below.
+              # macOS publish CẢ arm64 lẫn x64; linux/windows chỉ x64
+              # trong RC — entry arm64 được bỏ nếu file không tồn tại.
+              for variant in all web; do
+                names=$(./scripts/release-artifact-contract.sh "$VERSION" "$os" "$arch" "$variant")
+                archive=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
+                checksum=$(echo "$names" | grep "^CHECKSUM=" | cut -d= -f2)
+                sbom=$(echo "$names" | grep "^SBOM=" | cut -d= -f2)
 
-              EXPECTED_FILES+=("$archive")
-              EXPECTED_FILES+=("$checksum")
-              EXPECTED_FILES+=("$sbom")
+                EXPECTED_FILES+=("$archive")
+                EXPECTED_FILES+=("$checksum")
+                EXPECTED_FILES+=("$sbom")
+              done
             done
           done
 
           cd verify-assets
           MISSING=0
+          PRESENT_ARM64_MACOS=0
           for file in "${EXPECTED_FILES[@]}"; do
+            # linux-arm64 / windows-arm64 are NOT published in RC —
+            # absence is expected, presence is a bonus; only macOS
+            # arm64 is REQUIRED (item 12).
+            # linux-arm64 / windows-arm64 KHÔNG publish trong RC — thiếu
+            # là đúng kỳ vọng; riêng macOS arm64 là BẮT BUỘC (item 12).
+            case "$file" in
+              magicore-*-linux-arm64*|magicore-*-windows-arm64*)
+                [[ -f "$file" ]] && echo "BONUS present: $file"
+                continue
+                ;;
+              magicore-*-macos-arm64*)
+                if [[ -f "$file" ]]; then
+                  PRESENT_ARM64_MACOS=$((PRESENT_ARM64_MACOS + 1))
+                else
+                  echo "MISSING REQUIRED (macos arm64, item 12): $file"
+                  MISSING=$((MISSING + 1))
+                fi
+                continue
+                ;;
+            esac
             if [[ ! -f "$file" ]]; then
-              echo "❌ Missing: $file"
+              echo "MISSING: $file"
               MISSING=$((MISSING + 1))
             else
-              echo "✅ Found: $file"
+              echo "Found: $file"
             fi
           done
 
           if [[ $MISSING -gt 0 ]]; then
-            echo "❌ $MISSING files missing - BLOCKING RELEASE"
+            echo "$MISSING files missing - BLOCKING RELEASE"
             exit 1
           fi
-          echo "✅ All 6 archives + 6 checksums + 6 SBOMs present"
+          if [[ $PRESENT_ARM64_MACOS -lt 6 ]]; then
+            echo "macOS arm64 artifact set incomplete (expected 6 files: archives+checksums+SBOMs for all/web, got $PRESENT_ARM64_MACOS)" >&2
+            exit 1
+          fi
+          echo "All required archives + checksums + SBOMs present (incl. macOS arm64)"
 
       - name: Verify all checksums
         run: |
@@ -530,7 +608,7 @@ jobs:
             echo "Verifying: $checksum_file"
             sha256sum --check "$checksum_file" || exit 1
           done
-          echo "✅ All checksums verified (6/6)"
+          echo "✅ All checksums verified"
 
       - name: Generate attestations for verification
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2 (latest, node24)
@@ -562,7 +640,7 @@ jobs:
             echo "❌ $FAILED attestations failed - BLOCKING RELEASE"
             exit 1
           fi
-          echo "✅ All attestations verified (6/6)"
+          echo "✅ All attestations verified"
 
       - name: Validate all SBOMs (enhanced)
         run: |
@@ -614,15 +692,15 @@ jobs:
 
             echo "✅ Valid SBOM: $sbom ($component_count components, version $sbom_version)"
           done
-          echo "✅ All SBOMs validated (6/6 Linux+macOS+Windows)"
+          echo "✅ All SBOMs validated (linux+macos+windows, x64+arm64-macos)"
 
       - name: Verification summary
         run: |
           echo "=== PRE-PUBLISH VERIFICATION PASSED ==="
-          echo "✅ 6/6 archives present"
-          echo "✅ 6/6 checksums verified"
-          echo "✅ 6/6 attestations verified"
-          echo "✅ 6/6 SBOMs validated"
+          echo "✅ All required archives present"
+          echo "✅ All checksums verified"
+          echo "✅ All attestations verified"
+          echo "✅ All SBOMs validated"
           echo "Safe to publish."
 
   audit-capability-gate:
@@ -793,7 +871,7 @@ jobs:
           body_path: CHANGELOG.md
 
   verify-public-download:
-    name: Smoke Test Public Download (${{ matrix.os_name }})
+    name: Smoke Test Public Download (${{ matrix.os_name }}-${{ matrix.arch }})
     needs: [resolve-version, publish-github-release]
     strategy:
       fail-fast: false
@@ -801,14 +879,22 @@ jobs:
         include:
           - os: ubuntu-latest
             os_name: linux
+            arch: x64
             ext: tar.gz
             binary: mgc
           - os: windows-latest
             os_name: windows
+            arch: x64
             ext: zip
             binary: mgc.exe
-          - os: macos-14
+          - os: macos-latest
             os_name: macos
+            arch: arm64
+            ext: tar.gz
+            binary: mgc
+          - os: macos-latest
+            os_name: macos
+            arch: x64
             ext: tar.gz
             binary: mgc
     runs-on: ${{ matrix.os }}
@@ -819,7 +905,7 @@ jobs:
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           RELEASE_TAG="v${VERSION}"
-          ARTIFACT_NAME="magicore-${VERSION}-${{ matrix.os_name }}-x64.${{ matrix.ext }}"
+          ARTIFACT_NAME="magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.${{ matrix.ext }}"
           echo "Downloading: $ARTIFACT_NAME"
           gh release download "$RELEASE_TAG" -p "$ARTIFACT_NAME" -R "${{ github.repository }}"
         shell: bash
@@ -828,7 +914,7 @@ jobs:
         if: matrix.ext == 'tar.gz'
         run: |
           mkdir -p test-install
-          tar -xzf magicore-*-${{ matrix.os_name }}-x64.tar.gz -C test-install
+          tar -xzf magicore-*-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz -C test-install
           chmod +x test-install/${{ matrix.binary }}
           ls -la test-install/
 
@@ -836,14 +922,25 @@ jobs:
         if: matrix.ext == 'zip'
         shell: pwsh
         run: |
+          $archive = "magicore-*-${{ matrix.os_name }}-${{ matrix.arch }}.zip"
           New-Item -ItemType Directory -Force -Path test-install
-          $archive = Get-ChildItem -Filter "magicore-*-windows-x64.zip" | Select-Object -First 1
-          Expand-Archive -Path $archive.FullName -DestinationPath test-install -Force
+          Expand-Archive -Path $archive -DestinationPath test-install -Force
           Get-ChildItem test-install
 
       - name: Test mgc --version
         run: |
-          ./test-install/${{ matrix.binary }} --version
+          # macOS x64 artifact on the arm64 runner runs via Rosetta
+          # (arch -x86_64) — the x64 binary must at least launch.
+          # Artifact x64 trên runner arm64 chạy qua Rosetta (arch
+          # -x86_64) — binary x64 phải khởi động được ít nhất.
+          if [[ "$RUNNER_OS" == "macOS" && "${{ matrix.arch }}" == "x64" ]]; then
+            if ! arch -x86_64 ./test-install/${{ matrix.binary }} --version 2>/dev/null && ! ./test-install/${{ matrix.binary }} --version; then
+              echo "x64 binary failed to launch (Rosetta not installed on runner?)" >&2
+              exit 1
+            fi
+          else
+            ./test-install/${{ matrix.binary }} --version
+          fi
         shell: bash
 
       - name: Test lifecycle (create + install)
@@ -910,9 +1007,9 @@ jobs:
           echo "=== DRY-RUN COMPLETED ==="
           echo ""
           echo "Version: ${{ needs.resolve-version.outputs.version }}"
-          echo "Build: ✅ PASS (6 archives)"
-          echo "Smoke: ✅ PASS (6 variants)"
-          echo "Pre-publish: ✅ PASS (6 archives + 6 checksums + 6 SBOMs)"
+          echo "Build: ✅ PASS (8 archives incl. macOS arm64)"
+          echo "Smoke: ✅ PASS (6 variants x64)"
+          echo "Pre-publish: ✅ PASS (8 archives + checksums + SBOMs)"
           echo ""
           echo "Ready to publish: YES"
           echo "To create a draft release, push an approved annotated version tag"

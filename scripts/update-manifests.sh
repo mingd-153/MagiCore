@@ -104,20 +104,28 @@ artifact_hash() {
   sha256_file "$file"
 }
 
-# Artifact names for RC-3: only x86_64 targets
+# Artifact names for RC-3: x86_64 + macOS arm64 (item 12, 2026-09-12:
+# the arm64 artifact exists — the formula installs it instead of
+# odie-ing; most current Macs are Apple Silicon).
+# Tên artifact RC-3: x86_64 + macOS arm64 (item 12: artifact arm64 đã
+# có — formula cài nó thay vì odie; đa số Mac hiện tại là Apple Silicon).
 magicore_linux_x64="magicore-${version}-linux-x64.tar.gz"
 magicore_macos_x64="magicore-${version}-macos-x64.tar.gz"
+magicore_macos_arm64="magicore-${version}-macos-arm64.tar.gz"
 magicore_windows_x64="magicore-${version}-windows-x64.zip"
 magicore_web_linux_x64="magicore-web-${version}-linux-x64.tar.gz"
 magicore_web_macos_x64="magicore-web-${version}-macos-x64.tar.gz"
+magicore_web_macos_arm64="magicore-web-${version}-macos-arm64.tar.gz"
 magicore_web_windows_x64="magicore-web-${version}-windows-x64.zip"
 
 echo "Computing hashes for version $version..."
 hash_linux_x64=$(artifact_hash "$magicore_linux_x64")
 hash_macos_x64=$(artifact_hash "$magicore_macos_x64")
+hash_macos_arm64=$(artifact_hash "$magicore_macos_arm64")
 hash_windows_x64=$(artifact_hash "$magicore_windows_x64")
 hash_web_linux_x64=$(artifact_hash "$magicore_web_linux_x64")
 hash_web_macos_x64=$(artifact_hash "$magicore_web_macos_x64")
+hash_web_macos_arm64=$(artifact_hash "$magicore_web_macos_arm64")
 hash_web_windows_x64=$(artifact_hash "$magicore_web_windows_x64")
 
 echo "✓ All hashes computed"
@@ -126,6 +134,10 @@ if [[ "$verify_only" -eq 1 ]]; then
   echo "Verify mode - checking manifests contain correct hashes..."
   
   # Check Homebrew magicore.rb
+  if ! grep -q "$hash_macos_arm64" "$homebrew_dir/magicore.rb"; then
+    echo "magicore.rb: macOS arm64 hash mismatch" >&2
+    exit 1
+  fi
   if ! grep -q "$hash_macos_x64" "$homebrew_dir/magicore.rb"; then
     echo "magicore.rb: macOS x64 hash mismatch" >&2
     exit 1
@@ -156,8 +168,13 @@ echo "Updating Homebrew formula: magicore.rb"
 # Ensure directories exist
 mkdir -p "$homebrew_dir" "$scoop_dir"
 
-# Update magicore.rb - write new version with only x64 support
-cat > "$homebrew_dir/magicore.rb" <<EOF
+  # Update magicore.rb — arm64 installs the real arm64 artifact; x64
+  # Rosetta users keep the x64 artifact (item 12: no odie anywhere —
+  # every brew-supported platform has a real binary).
+  # magicore.rb — arm64 cài artifact arm64 thật; user x64/Rosetta giữ
+  # artifact x64 (item 12: không còn odie — mọi nền tảng brew hỗ trợ
+  # đều có binary thật).
+  cat > "$homebrew_dir/magicore.rb" <<EOF
 class Magicore < Formula
   desc "Universal package manager with multi-core runtime"
   homepage "https://github.com/mingd-153/MagiCore"
@@ -167,12 +184,12 @@ class Magicore < Formula
 
   depends_on "rust" => :build
 
-  # Binary releases - x86_64 only for RC-3
-  # ARM64 support planned for future release
   on_macos do
-    if Hardware::CPU.arm?
-      odie "ARM64 not yet supported. Use Rosetta 2 or build from source with: brew install --build-from-source"
-    else
+    on_arm do
+      url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_macos_arm64}"
+      sha256 "$hash_macos_arm64"
+    end
+    on_intel do
       url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_macos_x64}"
       sha256 "$hash_macos_x64"
     end
@@ -180,7 +197,7 @@ class Magicore < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      odie "ARM64 not yet supported. Build from source with: cargo install mgc"
+      odie "ARM64 Linux not yet supported. Build from source with: cargo install mgc"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_linux_x64}"
       sha256 "$hash_linux_x64"
@@ -207,11 +224,12 @@ class MagicoreWeb < Formula
   version "$version"
   license "MIT"
 
-  # Binary releases - x86_64 only for RC-3
   on_macos do
-    if Hardware::CPU.arm?
-      odie "ARM64 not yet supported"
-    else
+    on_arm do
+      url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_web_macos_arm64}"
+      sha256 "$hash_web_macos_arm64"
+    end
+    on_intel do
       url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_web_macos_x64}"
       sha256 "$hash_web_macos_x64"
     end
@@ -297,6 +315,6 @@ echo "✓ Updated magicore-web.json"
 
 echo ""
 echo "All manifests updated for version $version"
-echo "   - Homebrew: x64 only, ARM64 shows error message"
+echo "   - Homebrew: macOS arm64 + x64, Linux x64"
 echo "   - Scoop: x64 only"
 echo "   - All hashes verified"

@@ -1,0 +1,278 @@
+name: Verify Release Distribution
+
+# Item 12 (2026-09-12): a GitHub Release is only "done" when the
+# PUBLIC distribution channel works — download the archive from the
+# release page (not from CI artifacts), verify the published sha256,
+# install through Homebrew (macOS) / Scoop (Windows) / tar.gz (Linux),
+# run a full product lifecycle with the installed binary, then
+# uninstall and reinstall. No step may run a repo-local binary: every
+# command must come from the distributed package.
+#
+# Item 12: GitHub Release chỉ "hoàn thành" khi kênh phân phối CÔNG KHAI
+# chạy được — tải archive từ trang release (không phải artifact CI),
+# verify sha256 đã publish, cài qua Homebrew (macOS) / Scoop (Windows)
+# / tar.gz (Linux), chạy trọn lifecycle bằng binary đã cài, rồi gỡ và
+# cài lại. Không bước nào được dùng binary trong repo: mọi lệnh phải đến
+# từ gói phân phối.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify (e.g., v1.1.0-rc.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # Required environment: a missing tool in this lane is a FAILURE,
+  # never a skip (MGC_E2E_AUDIT_TOOLS contract).
+  # Môi trường bắt buộc: thiếu tool trong lane này là FAIL, không skip.
+  MGC_E2E_AUDIT_TOOLS: required
+
+jobs:
+  verify-archive-download:
+    name: verify archive download (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Download archive + checksum from the public release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p dist-verify && cd dist-verify
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            gh release download "$TAG" -R "${{ github.repository }}" -p "magicore-*-windows-x64.zip" -p "magicore-*-windows-x64.zip.sha256"
+            ARCHIVE="$(ls magicore-*-windows-x64.zip)"
+          else
+            gh release download "$TAG" -R "${{ github.repository }}" -p "magicore-*-${{ runner.os == 'Linux' && 'linux' || 'macos' }}-x64.tar.gz" -p "magicore-*-${{ runner.os == 'Linux' && 'linux' || 'macos' }}-x64.tar.gz.sha256"
+            ARCHIVE="$(ls magicore-*-x64.tar.gz)"
+          fi
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Verify the published sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist-verify
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Windows runners ship Git's GNU sha256sum in bash.
+            # Runner Windows có sha256sum của Git trong bash.
+            sha256sum --check "$ARCHIVE.sha256"
+          else
+            shasum -a 256 --check "$ARCHIVE.sha256"
+          fi
+
+      - name: Install into clean prefix (extracted, not on PATH yet)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.magicore-verify/bin"
+          cd dist-verify
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            tar -xf "$ARCHIVE" -C "$HOME/.magicore-verify/bin"
+            MGC="$HOME/.magicore-verify/bin/mgc.exe"
+          else
+            tar -xzf "$ARCHIVE" -C "$HOME/.magicore-verify/bin"
+            MGC="$HOME/.magicore-verify/bin/mgc"
+            chmod +x "$MGC"
+          fi
+          "$MGC" --version
+
+      - name: Full product lifecycle with the distributed binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGC="$HOME/.magicore-verify/bin/mgc.exe"; else MGC="$HOME/.magicore-verify/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGC" create-web react distweb
+          cd distweb
+          "$MGC" install
+          "$MGC" test
+          "$MGC" build
+          test -d dist
+          # dev probe: real HTTP roundtrip + clean tree shutdown.
+          # dev probe: HTTP roundtrip thật + tắt sạch cả cây.
+          "$MGC" dev --port 4315 > dev.log 2>&1 &
+          DEV_PID=$!
+          probe_ok=false
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then probe_ok=true; break; fi
+            if ! kill -0 $DEV_PID 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [[ "$probe_ok" != true ]]; then
+            echo "dev server did not answer HTTP on 4315" >&2
+            cat dev.log >&2 || true
+            kill $DEV_PID 2>/dev/null || true
+            exit 1
+          fi
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true
+          else
+            kill $DEV_PID 2>/dev/null || true
+            pkill -f "vite.*4315" 2>/dev/null || true
+          fi
+          # run probe: the scaffold's own start script in background.
+          # run probe: script start của chính scaffold chạy nền.
+          "$MGC" run start > run.log 2>&1 &
+          RUN_PID=$!
+          run_ok=false
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then run_ok=true; break; fi
+            if ! kill -0 $RUN_PID 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [[ "$run_ok" != true ]]; then
+            echo "run start did not answer HTTP on 4315" >&2
+            cat run.log >&2 || true
+            kill $RUN_PID 2>/dev/null || true
+            pkill -f "vite.*4315" 2>/dev/null || true
+            exit 1
+          fi
+          kill $RUN_PID 2>/dev/null || true
+          pkill -f "vite.*4315" 2>/dev/null || true
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            taskkill //F //IM node.exe //T > /dev/null 2>&1 || true
+          fi
+          echo "MARKER distribution web lifecycle complete"
+
+  verify-homebrew:
+    name: verify Homebrew formula (macos)
+    # Install through the ACTUAL formula shipped on the release — the
+    # brew install must pull the published archive, not a local file.
+    # Cài qua CHÍNH formula được phát hành trên release — brew install
+    # phải kéo archive đã publish, không phải file local.
+    runs-on: macos-latest
+    steps:
+      - name: Download the formula shipped on the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p formula-verify && cd formula-verify
+          gh release download "$TAG" -R "${{ github.repository }}" -p "packaging/homebrew/magicore.rb"
+          test -f packaging/homebrew/magicore.rb
+          # Formula must not ship placeholder hashes — the release CI
+          # replaces them; a placeholder here means the release is NOT
+          # publishable (fail loudly, never install a broken formula).
+          # Formula không được còn hash placeholder — release CI thay;
+          # còn placeholder nghĩa là release CHƯA publish được.
+          if grep -q "PLACEHOLDER" packaging/homebrew/magicore.rb; then
+            echo "formula still carries PLACEHOLDER hashes — release CI did not finalize" >&2
+            exit 1
+          fi
+
+      - name: Install via Homebrew from the release formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formula-verify
+          mkdir -p "$(brew --repository)/Library/Taps/magicore-local"
+          cp -r packaging/homebrew "$(brew --repository)/Library/Taps/magicore-local/magicore"
+          # Tap dir must be a git repo for brew to accept it.
+          # Thư mục tap phải là git repo thì brew mới nhận.
+          cd "$(brew --repository)/Library/Taps/magicore-local/magicore"
+          git init -q . && git add . && git -c user.email=ci@local -c user.name=ci commit -qm init
+          brew install --verbose magicore-local/magicore/magicore
+          which mgc
+          mgc --version
+
+      - name: Lifecycle with the brew-installed binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          mgc create-web react brewweb
+          cd brewweb
+          mgc install
+          mgc test
+          mgc build
+          test -d dist
+
+      - name: Uninstall + reinstall (package manager roundtrip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew uninstall magicore
+          if command -v mgc >/dev/null 2>&1; then
+            echo "mgc still on PATH after brew uninstall" >&2
+            exit 1
+          fi
+          brew install magicore-local/magicore/magicore
+          mgc --version
+          echo "MARKER homebrew uninstall-reinstall complete"
+
+  verify-scoop:
+    name: verify Scoop manifest (windows)
+    # Install through the ACTUAL manifest shipped on the release.
+    # Cài qua CHÍNH manifest được phát hành trên release.
+    runs-on: windows-latest
+    steps:
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          # GitHub windows runners do not ship scoop by default.
+          # Runner windows của GitHub không có sẵn scoop.
+          irm get.scoop.sh -outfile install.ps1
+          .\install.ps1 -RunAsAdmin
+
+      - name: Download the manifest shipped on the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p scoop-verify && cd scoop-verify
+          gh release download "$TAG" -R "${{ github.repository }}" -p "packaging/scoop/magicore.json"
+          test -f packaging/scoop/magicore.json
+          if grep -q "PLACEHOLDER" packaging/scoop/magicore.json; then
+            echo "scoop manifest still carries PLACEHOLDER hashes — release CI did not finalize" >&2
+            exit 1
+          fi
+
+      - name: Install via Scoop from the release manifest
+        shell: pwsh
+        run: |
+          Set-Location scoop-verify
+          $bucketDir = "$(Join-Path $env:SCOOP 'buckets\magicore-local')"
+          New-Item -ItemType Directory -Force -Path "$bucketDir\bucket" | Out-Null
+          Copy-Item packaging\scoop\magicore.json "$bucketDir\bucket\magicore.json"
+          scoop bucket add magicore-local "$bucketDir" 2>$null; scoop bucket list
+          scoop install magicore
+          mgc --version
+
+      - name: Lifecycle with the scoop-installed binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          mgc create-web react scoopweb
+          cd scoopweb
+          mgc install
+          mgc test
+          mgc build
+          test -d dist
+
+      - name: Uninstall + reinstall (package manager roundtrip)
+        shell: pwsh
+        run: |
+          scoop uninstall magicore
+          if (Get-Command mgc -ErrorAction SilentlyContinue) { Write-Error "mgc still on PATH after scoop uninstall"; exit 1 }
+          scoop install magicore
+          mgc --version
+          Write-Host "MARKER scoop uninstall-reinstall complete"

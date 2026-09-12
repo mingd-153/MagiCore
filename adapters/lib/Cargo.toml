@@ -20,6 +20,7 @@ mgc-adapter-base = { workspace = true }
 mgc-config = { workspace = true }
 mgc-exec = { workspace = true }
 mgc-store = { workspace = true }
+mgc-platform = { workspace = true }
 mgc-web-adapter = { path = "../web" }
 mgc-ui = { workspace = true }
 

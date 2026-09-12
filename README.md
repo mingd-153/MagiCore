@@ -303,14 +303,13 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 
 ## ⚠️ Known Limitations (V1.1.0-RC-3)
 
-**Platform Support** (x86_64 only in RC-3):
+**Platform Support** (RC-3 release artifacts):
 - ✅ macOS Intel (x86_64)
+- ✅ macOS Apple Silicon (arm64) — release artifact + Homebrew support added in RC-3
 - ✅ Linux x86_64
 - ✅ Windows x86_64
-- ⚠️ macOS Apple Silicon - Use Rosetta 2 for now
 - ❌ Linux ARM64 - Not yet supported
 - ❌ Windows ARM64 - Not yet supported
-- ℹ️ ARM64 support planned for future release
 
 **Core Runtime Status** (labels: VALIDATED = CI-proven on the release binary; EXPERIMENTAL = works in source-build CI lanes; UNVERIFIED = no CI evidence; INVALIDATED = evidence withdrawn):
 - ⚠️ **Web** (npm/yarn/pnpm-compatible workflow) - Public Alpha: install/test/build verified in CI; dev/run/audit proven only on source builds, not yet on the distributed release archive; NOT a pnpm replacement until parity data exists
@@ -318,6 +317,14 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 - ⚠️ **App** (Flutter/React Native) - Experimental (requires Flutter SDK)
 - ⚠️ **Lib** (Rust/Go) - Experimental (basic support)
 - ℹ️ Multi-core orchestration in active development
+
+**Shared Store Status** (honest labels, 2026-09-12):
+- ✅ Cargo: mgc-owned shared registry store (`~/.magicore/store/cargo`) — cross-project byte reuse PROVEN by CI integration test (two projects, one download)
+- ✅ PyPI (lib/python + ai/python): shared uv/pip cache root (`~/.magicore/store/pypi`)
+- ✅ Web/npm: mgc CAS content store (MgCStore) — CI-proven
+- ⚠️ Go: delegated to the go module cache (Q9 delegation by design)
+- ⚠️ Java/Maven + .NET/NuGet: not yet installed through mgc (P2)
+- ℹ️ The shared store reuses each toolchain's NATIVE cache layout inside the mgc-owned directory — one download serves many projects; bytes stay toolchain-readable
 
 **Testing Status**:
 - ✅ Unit tests: PASS

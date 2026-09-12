@@ -2,6 +2,11 @@
 //! Orchestrates install across TypeScript (delegate web), Rust (cargo), Python (pip/uv).
 
 pub mod fetch;
+// pub for integration tests (cross-project reuse proof); semver —
+// internal surface, do not use outside this crate's tests.
+// pub cho integration test (chứng minh tái sử dụng chéo project);
+// bề mặt nội bộ — không dùng ngoài test của crate này.
+pub mod shared_store;
 pub mod verify;
 
 use mgc_store::ContentStore;
@@ -83,9 +88,18 @@ async fn install_rust(project_root: &Path, opts: InstallOptions) -> MgResult<Ins
         args.push("--frozen".to_string());
     }
 
-    let started = Instant::now();
+    // Shared store (B-series, 2026-09-12): CARGO_HOME points INSIDE the
+    // mgc store (~/.magicore/store/cargo) so every project reuses the
+    // same registry bytes — cross-project, cross-workspace. The layout
+    // stays cargo-native; mgc owns the directory and measures reuse.
+    // Store chia sẻ (B-series): CARGO_HOME trỏ VÀO store của mgc
+    // (~/.magicore/store/cargo) nên mọi project dùng lại cùng byte
+    // registry — chéo project, chéo workspace. Layout giữ nguyên của
+    // cargo; mgc giữ thư mục và đo mức tái sử dụng.
+    let store = shared_store::SharedStoreRun::cargo()?;
     let exec_opts = mgc_exec::run::ExecOptions {
         cwd: Some(project_root.to_path_buf()),
+        env: store.env_vars(),
         ..Default::default()
     };
 
@@ -99,17 +113,20 @@ async fn install_rust(project_root: &Path, opts: InstallOptions) -> MgResult<Ins
         )));
     }
 
-    // P0-6: cargo's registry cache owns the bytes (delegation) — the
-    // summary labels it Delegated; bytes_from_cache stays 0 BY DESIGN
-    // (never a claim that nothing was cached).
-    // P0-6: registry cache của cargo giữ byte (ủy quyền) — summary ghi
-    // Delegated; bytes_from_cache = 0 THEO THIẾT KẾ (không phải claim
-    // "không cache được gì").
+    let (reused, duration_ms, cache_mode) = store.finish();
+    // The shared mgc store owned every byte: reuse is measured across
+    // projects; when the store grew, the fresh delta was downloaded;
+    // when it did not grow, the whole byte set was served from the
+    // store. Either way the label is MgCStore (the directory is ours).
+    // Store chung của mgc giữ mọi byte: tái sử dụng được đo chéo
+    // project; store lớn thêm nghĩa là có delta mới tải; không lớn
+    // nghĩa là toàn bộ byte được phục vụ từ store. Nhãn luôn MgCStore
+    // (thư mục là của mgc).
     Ok(InstallSummary {
         added: vec![],
-        bytes_from_cache: 0,
-        duration_ms: started.elapsed().as_millis() as u64,
-        cache_mode: InstallCacheMode::Delegated,
+        bytes_from_cache: reused,
+        duration_ms,
+        cache_mode,
     })
 }
 async fn install_python(project_root: &Path, _opts: InstallOptions) -> MgResult<InstallSummary> {
@@ -147,10 +164,16 @@ async fn install_python(project_root: &Path, _opts: InstallOptions) -> MgResult<
         )
     };
 
-    let started = Instant::now();
-
+    // Shared store (B-series): PIP_CACHE_DIR/UV_CACHE_DIR point inside
+    // the mgc store (~/.magicore/store/pypi) — every python project on
+    // this machine shares the same wheel/sdist cache bytes.
+    // Store chia sẻ (B-series): PIP_CACHE_DIR/UV_CACHE_DIR trỏ vào
+    // store mgc (~/.magicore/store/pypi) — mọi project python trên máy
+    // chia sẻ cùng byte cache wheel/sdist.
+    let store = shared_store::SharedStoreRun::pypi()?;
     let exec_opts = mgc_exec::run::ExecOptions {
         cwd: Some(project_root.to_path_buf()),
+        env: store.env_vars(),
         ..Default::default()
     };
 
@@ -164,12 +187,11 @@ async fn install_python(project_root: &Path, _opts: InstallOptions) -> MgResult<
         )));
     }
 
-    // P0-6: uv/pip cache owns the bytes (delegation).
-    // P0-6: cache của uv/pip giữ byte (ủy quyền).
+    let (reused, duration_ms, cache_mode) = store.finish();
     Ok(InstallSummary {
         added: vec![],
-        bytes_from_cache: 0,
-        duration_ms: started.elapsed().as_millis() as u64,
-        cache_mode: InstallCacheMode::Delegated,
+        bytes_from_cache: reused,
+        duration_ms,
+        cache_mode,
     })
 }

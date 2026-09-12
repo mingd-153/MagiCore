@@ -48,7 +48,16 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
         mgc_ui::info(&format!("[dry-run] {} {}", tool, args.join(" ")));
         return Ok(());
     }
-    shared::ai_run_tool(&root, tool, &args)?;
+    // Shared store (B-series, 2026-09-12): uv/pip caches point INSIDE
+    // the mgc store (~/.magicore/store/pypi) — every ai/python project
+    // on this machine reuses the same wheel/sdist bytes (one download,
+    // many projects; identical root to the lib/python lane).
+    // Store chia sẻ (B-series): cache uv/pip trỏ VÀO store mgc
+    // (~/.magicore/store/pypi) — mọi project ai/python trên máy dùng
+    // lại cùng byte wheel/sdist (tải một lần, nhiều project; cùng gốc
+    // với lane lib/python).
+    let shared_env = shared::shared_pypi_store_env()?;
+    shared::ai_run_tool_with_env(&root, tool, &args, shared_env)?;
     Ok(())
 }
 

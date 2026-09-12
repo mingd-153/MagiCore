@@ -10,7 +10,7 @@ use mgc_types::{
 };
 use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
-    print_install_summary, style_cmd, success,
+    style_cmd, success,
 };
 #[cfg(feature = "web")]
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
@@ -266,11 +266,18 @@ pub async fn remove(
             .await?;
         spinner.finish_and_clear();
         summary.duration_ms = started_at.elapsed().as_millis() as u64;
-        print_install_summary(
+        // Cache-source label (B-series honesty) — see install_with_adapter.
+        // Nhãn nguồn cache (B-series) — xem install_with_adapter.
+        let cache_source = match summary.cache_mode {
+            mgc_types::adapter::InstallCacheMode::MgCStore => "shared mgc store",
+            mgc_types::adapter::InstallCacheMode::Delegated => "native toolchain cache",
+        };
+        mgc_ui::print_install_summary_source(
             summary.added.len(),
             summary.bytes_from_cache as usize,
             summary.duration_ms,
             "0 B",
+            Some(cache_source),
         );
         mgc_ui::blank_line();
         success("All dependencies installed");
@@ -441,11 +448,20 @@ pub async fn install_with_adapter(
     profile_install_mark("adapter_install", started_at);
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
 
-    print_install_summary(
+    // Cache-source label (B-series honesty): name WHERE the bytes
+    // came from — the shared mgc store or the native toolchain cache.
+    // Nhãn nguồn cache (B-series): nêu byte đến TỪ ĐÂU — store chung
+    // của mgc hay cache toolchain gốc.
+    let cache_source = match summary.cache_mode {
+        mgc_types::adapter::InstallCacheMode::MgCStore => "shared mgc store",
+        mgc_types::adapter::InstallCacheMode::Delegated => "native toolchain cache",
+    };
+    mgc_ui::print_install_summary_source(
         summary.added.len(),
         summary.bytes_from_cache as usize,
         summary.duration_ms,
         "0 B",
+        Some(cache_source),
     );
     mgc_ui::blank_line();
     success("All dependencies installed");
@@ -662,11 +678,18 @@ async fn try_install_added_packages_from_lock(
         .await?;
     spinner.finish_and_clear();
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
-    print_install_summary(
+    // Cache-source label (B-series honesty) — see install_with_adapter.
+    // Nhãn nguồn cache (B-series) — xem install_with_adapter.
+    let cache_source = match summary.cache_mode {
+        mgc_types::adapter::InstallCacheMode::MgCStore => "shared mgc store",
+        mgc_types::adapter::InstallCacheMode::Delegated => "native toolchain cache",
+    };
+    mgc_ui::print_install_summary_source(
         summary.added.len(),
         summary.bytes_from_cache as usize,
         summary.duration_ms,
         "0 B",
+        Some(cache_source),
     );
     mgc_ui::blank_line();
     success("All dependencies installed");
@@ -1045,6 +1068,45 @@ pub fn ai_run_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Resul
     mgc_exec::prelude::run_inherited(tool, args, &opts)
         .map_err(|e| crate::error::tool_failed(tool, &e))?;
     Ok(())
+}
+
+#[cfg(feature = "ai")]
+pub fn ai_run_tool_with_env(
+    root: &std::path::Path,
+    tool: &str,
+    args: &[String],
+    env: Vec<(String, String)>,
+) -> Result<()> {
+    let opts = mgc_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".magicore").join("exec.log")),
+        env,
+        clean_env: true,
+        ..Default::default()
+    };
+    mgc_exec::prelude::run_inherited(tool, args, &opts)
+        .map_err(|e| crate::error::tool_failed(tool, &e))?;
+    Ok(())
+}
+
+/// Shared pypi store env (B-series, 2026-09-12): PIP_CACHE_DIR and
+/// UV_CACHE_DIR point inside the mgc store so ai + lib python lanes
+/// share the same wheel/sdist bytes machine-wide.
+/// Env store pypi chia sẻ (B-series): PIP_CACHE_DIR và UV_CACHE_DIR trỏ
+/// vào store mgc để lane ai + lib python chia sẻ cùng byte wheel/sdist
+/// trên toàn máy.
+#[cfg(feature = "ai")]
+pub fn shared_pypi_store_env() -> Result<Vec<(String, String)>> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot resolve home dir for the shared store"))?;
+    let pypi_root = home.join(".magicore").join("store").join("pypi");
+    std::fs::create_dir_all(&pypi_root)
+        .map_err(|e| anyhow::anyhow!("cannot create shared pypi store: {e}"))?;
+    let root = pypi_root.display().to_string();
+    Ok(vec![
+        ("PIP_CACHE_DIR".to_string(), root.clone()),
+        ("UV_CACHE_DIR".to_string(), root),
+    ])
 }
 
 #[cfg(feature = "ai")]

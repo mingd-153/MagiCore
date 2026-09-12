@@ -6,7 +6,7 @@ use mgc_types::adapter::{AddOptions, PreparedAdd};
 use mgc_types::{DependencySpec, Manifest, PackageId, ResolvedGraph, ResolvedPackage, Version};
 use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
-    print_install_summary, style_cmd, success,
+    style_cmd, success,
 };
 use serde::Deserialize;
 use std::fs;
@@ -289,11 +289,18 @@ async fn install_into_root(
     spinner.finish_and_clear();
     summary.duration_ms = started_at.elapsed().as_millis() as u64;
 
-    print_install_summary(
+    // Cache-source label (B-series honesty) — see install_with_adapter.
+    // Nhãn nguồn cache (B-series) — xem install_with_adapter.
+    let cache_source = match summary.cache_mode {
+        mgc_types::adapter::InstallCacheMode::MgCStore => "shared mgc store",
+        mgc_types::adapter::InstallCacheMode::Delegated => "native toolchain cache",
+    };
+    mgc_ui::print_install_summary_source(
         summary.added.len(),
         summary.bytes_from_cache as usize,
         summary.duration_ms,
         "0 B",
+        Some(cache_source),
     );
 
     mgc_ui::blank_line();

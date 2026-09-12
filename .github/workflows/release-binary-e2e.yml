@@ -445,12 +445,17 @@ jobs:
           fi
           unset MGC_AUDIT_STRICT
 
-      # P0 finding #7: App/Flutter lane with the INSTALLED binary.
-      # Windows flutter builds need Visual Studio; ubuntu needs GTK
-      # deps; macOS runs natively. All three are the release promise.
-      # P0 finding #7: lane App/Flutter bằng binary đã cài. Build
-      # flutter Windows cần Visual Studio; ubuntu cần GTK; macOS chạy
-      # native. Cả ba đều thuộc lời hứa release.
+      # App/Flutter lane with the INSTALLED binary — all three OS
+      # (A1, 2026-09-12): windows-latest runners ship Visual Studio
+      # Enterprise 2022, so `flutter test` runs natively there; the
+      # build target stays `web` (universal — no Android SDK / Xcode
+      # / WPF workload dependency) so all three runners prove the same
+      # lifecycle shape.
+      # Lane App/Flutter bằng binary đã cài — cả ba OS (A1): runner
+      # windows-latest có sẵn Visual Studio Enterprise 2022 nên
+      # `flutter test` chạy native; target build giữ `web` (phổ quát —
+      # không phụ thuộc Android SDK / Xcode / workload WPF) để cả ba
+      # runner chứng minh cùng một hình lifecycle.
       - name: Install Linux build deps (flutter lane)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -458,22 +463,12 @@ jobs:
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
 
       - name: Setup Flutter (app lane)
-        # Flutter setup only where the flutter lane runs: ubuntu+macOS.
-        # Windows flutter builds need Visual Studio Build Tools — too
-        # heavy for this E2E; the flutter release scope honestly covers
-        # ubuntu+macOS today (the workflow gate enforces those two).
-        # Setup Flutter chỉ chạy ở lane flutter: ubuntu+macOS. Build
-        # flutter trên Windows cần Visual Studio Build Tools — quá nặng
-        # cho E2E này; release scope flutter hôm nay trung thực chỉ gồm
-        # ubuntu+macOS (gate workflow ép đúng hai OS đó).
-        if: matrix.os != 'windows-latest'
         uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
         with:
           flutter-version: "3.47.2"
           channel: "stable"
 
       - name: Lifecycle app flutter (create → install → test → build)
-        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           set -euo pipefail
@@ -523,3 +518,37 @@ jobs:
           # succeed (idempotency of the install pipeline through the
           # installed binary).
           "$MGCBIN" install
+
+      - name: Shared store cross-project reuse proof (B-series)
+        # B1 (2026-09-12): CARGO_HOME/PIP_CACHE_DIR/UV_CACHE_DIR point
+        # INSIDE the mgc store — two rust projects sharing one dep must
+        # NOT download it twice (project B's fetch grows the store by
+        # <1MB of lock metadata; every dep byte served from the shared
+        # store). Runs the REAL #[ignore] integration test with the
+        # real cargo toolchain on this runner.
+        # B1: CARGO_HOME/PIP_CACHE_DIR/UV_CACHE_DIR trỏ VÀO store mgc —
+        # hai project rust cùng một dependency KHÔNG được tải hai lần
+        # (fetch project B làm store tăng <1MB lock metadata; mọi byte
+        # dep được phục vụ từ store chung). Chạy test integration
+        # #[ignore] THẬT với cargo thật trên runner này.
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: cargo test -p mgc-lib-adapter --test shared_store_tests -- --ignored --nocapture
+
+      - name: Install summary shows the shared-store cache label
+        # The distributed binary must NAME its cache source ("shared mgc
+        # store") — honest labeling end to end (B-series).
+        # Binary phân phối phải NÊU TÊN nguồn cache ("shared mgc
+        # store") — gắn nhãn trung thực đầu cuối (B-series).
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-lib rust store-label
+          cd store-label
+          "$MGCBIN" install > install_label.log 2>&1
+          cat install_label.log
+          grep -q "cache source: shared mgc store" install_label.log

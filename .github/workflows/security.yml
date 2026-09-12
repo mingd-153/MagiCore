@@ -199,3 +199,80 @@ jobs:
         # Suite spawn-audit khẳng định lời từ chối + canary im lặng —
         # chạy y hệt trên mọi runner (không cần toolchain).
         run: cargo test -p mgc --test native_engine_spawn_audit --locked -- --nocapture
+
+  flutter-audit-toolchain:
+    # A2 (2026-09-12): the app/flutter SECURITY audit runs via the
+    # live OSV API (no CVE scanner ships inside the flutter toolchain
+    # — dart/flutter have no `pub audit` command; OSV IS the real
+    # scanner for pub.dev advisories). What was missing is the
+    # TOOLCHAIN-DRIVEN lane: this job provisions flutter and proves
+    # `mgc audit` drives the real `flutter pub outdated --json`
+    # (dependency health, exit contract) and that the OSV security
+    # lane resolves real pub advisories on the same SHA — the full
+    # coverage row for the app/flutter security matrix.
+    # A2: SECURITY audit app/flutter chạy qua OSV API trực tiếp (tool
+    # chain flutter không có lệnh CVE scanner — OSV chính là scanner
+    # thật cho advisory pub.dev). Điều thiếu là lane CHẠY TOOLCHAIN:
+    # job này provision flutter và chứng minh `mgc audit` điều phối
+    # `flutter pub outdated --json` THẬT (dependency health + exit
+    # contract) và lane OSV resolve advisory pub thật trên cùng SHA —
+    # dòng coverage đầy đủ cho matrix security app/flutter.
+    name: flutter audit (real toolchain)
+    runs-on: ubuntu-latest
+    env:
+      MGC_E2E_AUDIT_TOOLS: required
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
+        with:
+          flutter-version: "3.47.2"
+          channel: "stable"
+
+      - name: Install cargo-audit (rust parity lane on this SHA)
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Install pip-audit (python parity lane on this SHA)
+        run: |
+          python3 -m pip install --user 'pip-audit==2.9.0'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify scanner versions (fail fast on drift)
+        run: |
+          flutter --version | head -2
+          cargo-audit --version
+          pip-audit --version
+
+      - name: Build mgc (real binary drives the audit)
+        run: cargo build -p mgc --locked
+
+      - name: App-adapter audit tests (flutter toolchain present)
+        # The app adapter suite exercises the pub outdated parser with
+        # the REAL flutter on PATH — no mock tool output.
+        # Suite app adapter chạy parser pub outdated với flutter THẬT
+        # trên PATH — không mock output tool.
+        run: cargo test -p mgc-app-adapter --locked -- --nocapture
+
+      - name: Flutter OSV security lane (real pub advisories, same SHA)
+        run: cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --exact audit_app_flutter_via_cli_reports_real_osv_finding_exit_1
+
+      - name: Rust + python parity lanes (same SHA coverage row)
+        run: |
+          set -euo pipefail
+          MGCBIN="${GITHUB_WORKSPACE}/target/debug/mgc"
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-lib rust lib-rs >/dev/null
+          cd lib-rs
+          "$MGCBIN" install
+          export MGC_AUDIT_STRICT=1
+          set +e
+          "$MGCBIN" audit
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "rust audit exited $rc (0/1 allowed)" >&2
+            exit 1
+          fi
+          echo "MARKER rust toolchain audit rc=$rc"
