@@ -169,26 +169,30 @@ jobs:
 
       - name: Build Binaries (Standard)
         if: ${{ !matrix.use_cross && !matrix.is_windows }}
-        # GOARCH + CGO (2026-09-12, item 12): the esbuild-rs build
-        # script runs plain 'go build' for a cgo c-archive
-        # (ffiapi.go imports "C"). Cross-compiling x86_64-apple-darwin
-        # on the arm64 runner: Go silently disables cgo when GOARCH
-        # mismatches the host and no CC is set ("no Go source files" —
-        # every file filtered out by the cgo constraint), leaving the
-        # static lib missing at link time. Pin GOARCH to the target,
-        # keep cgo ON, and hand Go a clang that emits the target arch.
-        # GOARCH + CGO (item 12): build script của esbuild-rs chạy 'go
-        # build' thường cho c-archive cgo (ffiapi.go import "C").
-        # Cross-compile x86_64-apple-darwin trên runner arm64: Go tự tắt
-        # cgo khi GOARCH lệch host mà không có CC ("no Go source files"
-        # — mọi file bị build-constraint lọc sạch), khiến static lib
-        # mất lúc link. Ghim GOARCH theo target, giữ cgo BẬT, và đưa
-        # cho Go một clang sinh đúng arch đích.
+        # GOARCH + CGO only (2026-09-12, item 12): the esbuild-rs build
+        # script runs plain 'go build' for a cgo c-archive. Go silently
+        # disables cgo when GOARCH mismatches the host and no CC is set
+        # ("no Go source files"), leaving the static lib missing. Go
+        # adds the correct -arch flag ITSELF for darwin targets when
+        # cgo is on — do NOT export CC/CFLAGS globally: a global CFLAGS
+        # -arch poisons every other build script (ring rejects -arch on
+        # linux; host proc-macros compile foreign-arch objects and fail
+        # to link). GOARCH/CGO_ENABLED are go-specific and harmless to
+        # cargo; verified locally: CGO_ENABLED=1 GOARCH=amd64 go build
+        # emits a correct x86_64 c-archive with no CC/CFLAGS at all.
+        # Chỉ GOARCH + CGO (item 12): build script của esbuild-rs chạy
+        # 'go build' thường cho c-archive cgo. Go tự tắt cgo khi GOARCH
+        # lệch host mà không có CC ("no Go source files") khiến static
+        # lib mất. Go TỰ thêm cờ -arch đúng cho target darwin khi cgo
+        # bật — KHÔNG export CC/CFLAGS toàn cục: CFLAGS -arch toàn cục
+        # đầu độc mọi build script khác (ring từ chối -arch trên linux;
+        # proc-macro host compile object sai arch rồi link fail).
+        # GOARCH/CGO_ENABLED là biến riêng của go, vô hại với cargo;
+        # đã kiểm chứng local: CGO_ENABLED=1 GOARCH=amd64 go build sinh
+        # c-archive x86_64 đúng mà không cần CC/CFLAGS.
         env:
           GOARCH: ${{ contains(matrix.target, 'aarch64') && 'arm64' || 'amd64' }}
           CGO_ENABLED: "1"
-          CC: clang
-          CFLAGS: ${{ contains(matrix.target, 'aarch64') && '-arch arm64' || '-arch x86_64' }}
         run: |
           cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features all --locked
           mkdir -p dist/magicore
