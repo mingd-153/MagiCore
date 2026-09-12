@@ -169,6 +169,19 @@ jobs:
 
       - name: Build Binaries (Standard)
         if: ${{ !matrix.use_cross && !matrix.is_windows }}
+        # GOARCH (2026-09-12, item 12): the esbuild-rs build script
+        # compiles a Go library for the ARCH IT SEES. Cross-compiling
+        # x86_64-apple-darwin on an arm64 runner without GOARCH=amd64
+        # produces an arm64 _GoBuild symbol and the x86_64 link fails
+        # (Undefined symbols for architecture x86_64). Go reads GOARCH
+        # from the env — pin it to the target arch.
+        # GOARCH (item 12): build script của esbuild-rs compile thư viện
+        # Go cho ARCH nó nhìn thấy. Cross-compile x86_64-apple-darwin
+        # trên runner arm64 thiếu GOARCH=amd64 sẽ sinh symbol _GoBuild
+        # arm64 và link x86_64 fail (Undefined symbols for architecture
+        # x86_64). Go đọc GOARCH từ env — ghim theo arch đích.
+        env:
+          GOARCH: ${{ contains(matrix.target, 'aarch64') && 'arm64' || 'amd64' }}
         run: |
           cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features all --locked
           mkdir -p dist/magicore
@@ -811,7 +824,7 @@ jobs:
           print(f"OK: {len(data.get('capability', []))} lanes — every expected release lane supported with full evidence at {sha[:12]}")
 
       - name: Upload gate matrix (audit trail)
-        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b038357803cdc9eb # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: release-audit-capability-matrix
           path: docs/specs/auditCapabilityMatrix.json

@@ -18,15 +18,22 @@ VERSION="1.1.0-rc.3"
 
 echo "Creating fake artifacts for version $VERSION..."
 
-# Create fake artifacts with known content
+# Create fake artifacts with known content — macOS arm64 joined the
+# required set (item 12, 2026-09-12): the formula installs a REAL
+# arm64 artifact, so the updater contract requires it.
+# Tạo artifact giả nội dung đã biết — macOS arm64 vào bộ bắt buộc
+# (item 12): formula cài artifact arm64 THẬT nên hợp đồng updater
+# yêu cầu nó.
 echo "fake magicore linux" > "$ARTIFACTS_DIR/magicore-${VERSION}-linux-x64.tar.gz"
-echo "fake magicore macos" > "$ARTIFACTS_DIR/magicore-${VERSION}-macos-x64.tar.gz"
+echo "fake magicore macos x64" > "$ARTIFACTS_DIR/magicore-${VERSION}-macos-x64.tar.gz"
+echo "fake magicore macos arm64" > "$ARTIFACTS_DIR/magicore-${VERSION}-macos-arm64.tar.gz"
 echo "fake magicore windows" > "$ARTIFACTS_DIR/magicore-${VERSION}-windows-x64.zip"
 echo "fake magicore-web linux" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-linux-x64.tar.gz"
-echo "fake magicore-web macos" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-macos-x64.tar.gz"
+echo "fake magicore-web macos x64" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-macos-x64.tar.gz"
+echo "fake magicore-web macos arm64" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-macos-arm64.tar.gz"
 echo "fake magicore-web windows" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-windows-x64.zip"
 
-echo "✓ Created 6 fake artifacts"
+echo "✓ Created 8 fake artifacts"
 
 # Compute expected hashes
 if command -v shasum >/dev/null 2>&1; then
@@ -40,6 +47,7 @@ fi
 
 HASH_LINUX=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-linux-x64.tar.gz" | awk '{print $1}')
 HASH_MACOS=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-macos-x64.tar.gz" | awk '{print $1}')
+HASH_MACOS_ARM64=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-macos-arm64.tar.gz" | awk '{print $1}')
 HASH_WINDOWS=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-windows-x64.zip" | awk '{print $1}')
 
 echo "✓ Computed hashes"
@@ -82,12 +90,19 @@ if ! grep -q "magicore-${VERSION}-macos-x64.tar.gz" "$MANIFEST_DIR/packaging/hom
 fi
 echo "✓ Test 4 PASS: New artifact naming in magicore.rb"
 
-# Test 5: Check Homebrew formula has ARM64 error message
-if ! grep -q "odie \"ARM64 not yet supported" "$MANIFEST_DIR/packaging/homebrew/magicore.rb"; then
-  echo "Test 5 FAIL: ARM64 error message not found"
+# Test 5: Check Homebrew formula installs the REAL arm64 artifact
+# (item 12: no more odie on Apple Silicon — on_arm ships the artifact).
+# Formula cài artifact arm64 THẬT (item 12: hết odie trên Apple
+# Silicon — on_arm phát artifact).
+if ! grep -q "$HASH_MACOS_ARM64" "$MANIFEST_DIR/packaging/homebrew/magicore.rb"; then
+  echo "Test 5 FAIL: macOS arm64 hash not found in magicore.rb"
   exit 1
 fi
-echo "✓ Test 5 PASS: ARM64 error message present"
+if ! grep -q "magicore-${VERSION}-macos-arm64.tar.gz" "$MANIFEST_DIR/packaging/homebrew/magicore.rb"; then
+  echo "Test 5 FAIL: macOS arm64 artifact not referenced in magicore.rb"
+  exit 1
+fi
+echo "✓ Test 5 PASS: macOS arm64 installs the real artifact"
 
 # Test 6: Check Scoop manifest has correct version
 if ! grep -q "\"version\": \"$VERSION\"" "$MANIFEST_DIR/packaging/scoop/magicore.json"; then

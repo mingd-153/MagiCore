@@ -5,8 +5,8 @@ use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, PreparedAdd};
 use mgc_types::{DependencySpec, Manifest, PackageId, ResolvedGraph, ResolvedPackage, Version};
 use mgc_ui::{
-    add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
-    style_cmd, success,
+    add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info, style_cmd,
+    success,
 };
 use serde::Deserialize;
 use std::fs;

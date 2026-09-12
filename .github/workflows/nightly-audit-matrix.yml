@@ -114,7 +114,7 @@ jobs:
           MGC_AUDIT_MATRIX_OUT: docs/specs/auditCapabilityMatrix-${{ runner.os }}.json
 
       - name: Upload matrix artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75ba540c491b038357803cdc9eb # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: audit-capability-matrix-${{ runner.os }}
           path: docs/specs/auditCapabilityMatrix-${{ runner.os }}.json

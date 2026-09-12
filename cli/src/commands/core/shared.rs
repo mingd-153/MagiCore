@@ -9,8 +9,8 @@ use mgc_types::{
     Version, adapter::PreparedAdd,
 };
 use mgc_ui::{
-    add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info,
-    style_cmd, success,
+    add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info, style_cmd,
+    success,
 };
 #[cfg(feature = "web")]
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
