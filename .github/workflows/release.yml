@@ -1002,8 +1002,11 @@ jobs:
           # Create minimal package.json
           echo '{"name":"test","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' > package.json
 
-          # Run mgc install
-          ../../test-install/${{ matrix.binary }} install
+          # Explicit web core — bare install fails honestly on a
+          # package.json with no bound core (2026-09-12).
+          # Core web tường minh — install trần fail trung thực trên
+          # package.json không có core.
+          ../../test-install/${{ matrix.binary }} --core web install
 
           # Verify installation
           if [ ! -d "node_modules" ]; then
@@ -1029,8 +1032,9 @@ jobs:
           # Create minimal package.json
           '{"name":"test","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' | Out-File -FilePath package.json -Encoding utf8
 
-          # Run mgc install
-          & "../../test-install/${{ matrix.binary }}" install
+          # Explicit web core — bare install fails honestly without one.
+          # Core web tường minh — install trần fail trung thực khi thiếu.
+          & "../../test-install/${{ matrix.binary }}" --core web install
 
           # Verify installation
           if (-not (Test-Path "node_modules")) {
