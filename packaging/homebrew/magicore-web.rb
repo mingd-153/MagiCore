@@ -1,7 +1,8 @@
 class MagicoreWeb < Formula
   desc "MagiCore single-core web package manager/runtime"
   homepage "https://github.com/mingd-153/MagiCore"
-  version "1.1.0-rc.3"
+  version "1.1.0-rc.5"
+  # PENDING rc.5: hashes below are still the rc.3 release values — rerun scripts/update-release-hashes.sh after tagging v1.1.0-rc.5.
   license "MIT"
   head "https://github.com/mingd-153/MagiCore.git", branch: "main"
 

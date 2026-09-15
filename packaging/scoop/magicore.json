@@ -1,12 +1,12 @@
 {
-    "version": "1.1.0-rc.3",
+    "version": "1.1.0-rc.5",
     "description": "Multi-language package manager and lifecycle orchestrator",
     "homepage": "https://github.com/mingd-153/MagiCore",
     "license": "MIT",
-    "notes": "SHA256 hashes are the real v1.1.0-rc.3 release values (verified against the published *.sha256 assets, 2026-09-12). Windows arm64 archive is not part of this release.",
+    "notes": "PENDING rc.5: hashes below are still the rc.3 release values — rerun scripts/update-release-hashes.sh after tagging v1.1.0-rc.5. Windows arm64 archive is not part of this release.",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.3/magicore-1.1.0-rc.3-windows-x64.zip",
+            "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.5/magicore-1.1.0-rc.5-windows-x64.zip",
             "hash": "3cdc0d75d6e8be2caa73b4f240e353d77cbdf5a9bbd54245eba7d13089d0cbb7",
             "bin": "mgc.exe"
         }
