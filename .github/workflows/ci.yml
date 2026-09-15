@@ -238,3 +238,56 @@ jobs:
           echo "Runtimes provisioned: Python3, pytest, Node, npm, Flutter"
           echo "All E2E tests running with REAL mgc commands"
           echo "Install smoke tests: structure verified"
+
+  fault-matrix:
+    # Gate 11-D2 (2026-09-15): the fault/stress suites become REQUIRED
+    # jobs. Kill-injection, shared-store stress, install races and disk
+    # fault injection are release-blocking evidence — every step below is
+    # a MUST PASS with NO `|| true`, on BOTH hardened OSes (ubuntu+macos).
+    # (Gate 11-D2: các suite fault/stress thành job BẮT BUỘC. Kill-
+    # injection, stress store chia sẻ, race install và fault injection
+    # đĩa là bằng chứng chặn release — mọi bước dưới đây là MUST PASS,
+    # KHÔNG có `|| true`, trên CẢ HAI OS đã gia cố (ubuntu+macos).)
+    name: Fault + Stress Matrix (MUST PASS)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build test binaries (compile errors fail here, loudly)
+        run: cargo build -p mgc --tests --locked
+        timeout-minutes: 45
+
+      - name: kill injection matrix (MUST PASS — no || true)
+        # Gate 11-B.2 failpoint handshake: SIGKILL at every install phase
+        # must never corrupt the store; doctor --repair must end HEALTHY.
+        # (Gate 11-B.2 handshake failpoint: SIGKILL tại mọi phase install
+        # không được làm hỏng store; doctor --repair phải kết thúc HEALTHY.)
+        run: cargo test -p mgc --test kill_injection_matrix --locked
+        timeout-minutes: 30
+
+      - name: stress shared store matrix (MUST PASS — no || true)
+        run: cargo test -p mgc --test stress_shared_store_matrix --locked
+        timeout-minutes: 20
+
+      - name: install process race (MUST PASS — no || true)
+        run: cargo test -p mgc --test install_process_race --locked
+        timeout-minutes: 20
+
+      - name: 64-process stress race (MUST PASS — no || true)
+        run: cargo test -p mgc --test stress_64_process_race --locked
+        timeout-minutes: 25
+
+      - name: disk fault injection e2e (MUST PASS — no || true)
+        run: cargo test -p mgc --test disk_fault_injection_e2e --locked
+        timeout-minutes: 20

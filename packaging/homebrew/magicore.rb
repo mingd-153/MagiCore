@@ -1,39 +1,34 @@
 class Magicore < Formula
-  desc "Universal package manager with multi-core runtime"
+  desc "Multi-language package manager and lifecycle orchestrator"
   homepage "https://github.com/mingd-153/MagiCore"
   version "1.1.0-rc.3"
   license "MIT"
   head "https://github.com/mingd-153/MagiCore.git", branch: "main"
 
-  depends_on "rust" => :build
-
-  # Binary releases from GitHub
-  # SHA256 will be computed during CI release workflow
-  # Hashes auto-updated by scripts/update-release-hashes.sh
-  # DO NOT install from this formula until after release CI completes
+  # Binary releases from GitHub — SHA256 values below are the REAL hashes
+  # computed locally from the v1.1.0-rc.3 draft release archives
+  # (2026-09-12) and cross-checked against the published *.sha256 assets.
+  # (P0-4 fix: no placeholder hashes in the repo copy.)
   #
-  # ⚠️  PLACEHOLDER HASHES - Release CI will replace with real SHA256
-  # P0.5 FIX: Placeholders are EXPECTED until GitHub Release artifacts exist.
-  # Manual install not supported - wait for GitHub Release CI to complete.
-  # CI automation: .github/workflows/release.yml → builds artifacts → runs update-release-hashes.sh
-  # Test: scripts/update-release-hashes.sh --artifacts <dir> (see packaging/README.md)
+  # Bản binary từ GitHub — SHA256 dưới đây là hash THẬT tính từ archive
+  # release v1.1.0-rc.3 (2026-09-12), đối chiếu với asset *.sha256 đã publish.
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-macos-arm64.tar.gz"
-      sha256 "9b7593fee3317aea2867075fe17082b427f70213fc135e88f7a0b35ccb8b6e93"
+      sha256 "0efe2338df6bb52b0fb256f2cf56d2f765844fec8f8f31f6bcfb1da07d33b93c"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-macos-x64.tar.gz"
-      sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"
+      sha256 "7fb5a180d92ecbaac257c0e4a094d7a2d4e41911eb8a41211f0cb40239373026"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-linux-arm64.tar.gz"
-      sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"
+      sha256 "UNAVAILABLE_NO_LINUX_ARM64_ARCHIVE_IN_RC3"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-linux-x64.tar.gz"
-      sha256 "PLACEHOLDER_WILL_BE_REPLACED_BY_CI"
+      sha256 "d33d9c592c1479c92e3814f58d466175e4269c64da46738ef70f709ac0e4cd79"
     end
   end
 

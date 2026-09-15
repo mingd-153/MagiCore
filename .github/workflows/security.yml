@@ -130,7 +130,7 @@ jobs:
       - name: Generate capability matrix from E2E evidence
         run: python3 scripts/audit_capability_matrix.py
       - name: Upload capability matrix artifact
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: audit-capability-matrix
           path: docs/specs/auditCapabilityMatrix.json
@@ -162,7 +162,7 @@ jobs:
       # viện Go ngay lúc BUILD — thiếu Go thì crate mgc không compile
       # được trên runner macOS/Windows (ubuntu có sẵn Go nên chỉ lane
       # đó pass).
-      - uses: actions/setup-go@v6.0.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
       - name: Parser lanes (OS-independent)

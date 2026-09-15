@@ -26,6 +26,25 @@ name: Lifecycle Capability Matrix
 # flutter, lib/rust, lib/py, lib/ts) — không chỉ lane tham chiếu
 # lib/rust. Lane AI/App được provision (Python 3.12 + uv, Flutter
 # stable) vì workflow này giờ là release gate, không còn là mẫu.
+#
+# Gate 11-C schema v2 (2026-09-15): 16 dimensions × six-value status
+# vocabulary (native/managed/plain-delegation-pass, unverified,
+# unsupported, failed). Gate 11-D evidence-only Windows: windows-latest
+# runs the SAME matrix and uploads the artifact + prints verdicts, but
+# the Enforce step stays ubuntu/macos-only — the Windows lane is not
+# yet release-gate mature (dev/run probes, signal-based recovery and
+# toolchain behaviors differ), so blocking on it would gate on
+# unmatured evidence while BLOCKING lanes must stay the two hardened
+# OSes. Windows evidence is recorded HONESTLY (failed stays failed in
+# the artifact) — this is evidence collection, never a fake pass.
+# (Gate 11-C schema v2: 16 dimension × bộ 6 trạng thái. Windows chỉ
+# thu evidence: windows-latest chạy CÙNG matrix, upload artifact + in
+# verdict, nhưng bước Enforce vẫn chỉ ubuntu/macos — lane Windows chưa
+# đủ chín để làm release gate (probe dev/run, recovery dựa signal và
+# hành vi toolchain khác nhau), chặn trên nó là chặn bằng evidence chưa
+# chín trong khi lane bắt buộc phải giữ ở 2 OS đã gia cố. Evidence
+# Windows ghi TRUNG THỰC (failed vẫn là failed trong artifact) — đây là
+# thu thập bằng chứng, không bao giờ là pass giả.)
 
 on:
   pull_request:
@@ -59,7 +78,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          # Windows runners resolve `python` (setup-python shims `python3`
+          # unreliably across shells); POSIX runners keep `python3`.
+          # (Runner Windows gọi `python` (shim `python3` không ổn định
+          # giữa các shell); runner POSIX giữ `python3`.)
+          - os: windows-latest
+            python_cmd: python
+          - os: ubuntu-latest
+            python_cmd: python3
+          - os: macos-latest
+            python_cmd: python3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -112,29 +142,64 @@ jobs:
         run: cargo build --bin mgc --locked
 
       - name: Generate lifecycle matrix (real binary, real steps)
-        run: python3 scripts/lifecycle_capability_matrix.py
+        # The script resolves the Windows binary (mgc.exe) itself, so the
+        # POSIX-spelled MGC_LIFECYCLE_BIN works on every OS.
+        # (Script tự quy về binary Windows (mgc.exe), nên MGC_LIFECYCLE_BIN
+        # viết kiểu POSIX chạy trên mọi OS.)
+        run: ${{ matrix.python_cmd }} scripts/lifecycle_capability_matrix.py
         env:
           MGC_LIFECYCLE_BIN: ./target/debug/mgc
           MGC_LIFECYCLE_MATRIX_OUT: docs/specs/lifecycleCapabilityMatrix.json
 
+      - name: Print per-lane verdicts into the log (evidence, incl. Windows)
+        # Gate 11-D evidence-only: the verdict of EVERY lane is printed so
+        # the CI log carries the evidence even when the artifact is not
+        # downloaded — on Windows this is the primary honest record.
+        # (Chỉ thu evidence: verdict MỌI lane được in ra để log CI mang
+        # bằng chứng kể cả khi artifact không được tải — trên Windows đây
+        # là bản ghi trung thực chính.)
+        shell: python {0}
+        run: |
+          import json
+          data = json.load(open("docs/specs/lifecycleCapabilityMatrix.json"))
+          print(f"lifecycle matrix schema_version={data.get('schema_version')} "
+                f"dimensions={len(data.get('dimensions', []))}")
+          for lane in data["lanes"]:
+              print(f"{lane['core']}/{lane['language']}: "
+                    f"verdict={lane['verdict']} native_pm={lane.get('native_pm_verdict')}")
+              for dim, status in lane["dimensions"].items():
+                  print(f"  {dim:<14} {status}")
+
       - name: Upload lifecycle matrix
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lifecycle-capability-matrix-${{ runner.os }}
           path: docs/specs/lifecycleCapabilityMatrix.json
 
       - name: Enforce release-scope non-regression (all 6 gated lanes)
+        # Gate 11-D evidence-only Windows: the ENFORCE step runs ONLY on
+        # ubuntu/macos — the two hardened OSes. The Windows lane collects
+        # evidence (matrix + artifact + log) but does not gate: dev/run
+        # probes, POSIX-signal recovery and toolchain behaviors are not
+        # Windows-mature yet. Evidence stays honest; the gate does not
+        # loosen anywhere else.
+        # (Enforce CHỈ chạy trên ubuntu/macos — 2 OS đã gia cố. Lane
+        # Windows thu evidence (matrix + artifact + log) nhưng không gate:
+        # probe dev/run, recovery dựa POSIX-signal và hành vi toolchain
+        # chưa chín trên Windows. Evidence vẫn trung thực; gate không nới
+        # lỏng ở bất kỳ đâu khác.)
+        if: matrix.os != 'windows-latest'
         # P0 finding #2 fix (2026-09-12): the gate now covers the FULL
         # declared release scope — web/javascript, ai/python, app/
         # flutter, lib/rust, lib/python, lib/typescript. Any gated lane
-        # that is not lifecycle-supported fails the workflow (verdict
+        # that is not orchestration-lifecycle-passed fails the workflow (verdict
         # semantics fixed by finding #1: a lane missing any required
         # dimension is partial, never supported). Lanes OUTSIDE the
         # release scope (lib/go, lib/java, lib/dotnet) are recorded
         # honestly but not gated — they are not in the RC promise.
         # P0 finding #2: gate giờ phủ ĐẦY release scope đã tuyên bố —
         # web/javascript, ai/python, app/flutter, lib/rust, lib/python,
-        # lib/typescript. Lane bị gate mà không lifecycle-supported thì
+        # lib/typescript. Lane bị gate mà không orchestration-lifecycle-passed thì
         # workflow FAIL (semantics verdict đã sửa ở finding #1: lane
         # thiếu bất kỳ dimension bắt buộc nào là partial, không bao giờ
         # supported). Lane NGOÀI release scope (lib/go, lib/java,
@@ -157,15 +222,74 @@ jobs:
           }
           failures = []
           seen = set()
+          # Native-PM scope (P0-D taxonomy, adversarial review vòng-9
+          # 2026-09-14): ONLY lanes where mgc itself resolves, locks,
+          # fetches, verifies and materializes the whole dependency graph
+          # into its own CAS. lib/rust and lib/python install via
+          # cargo fetch / uv sync — redirecting CARGO_HOME/UV_CACHE_DIR to
+          # an mgc-managed folder is MANAGED DELEGATION, not a native
+          # resolver; the v1 gate here falsely stamped them native. Only
+          # the web/JS lane is a native candidate today (web engine owns
+          # resolve+lock+fetch+CAS). lib/typescript is a native candidate
+          # IFF it rides the web engine — the matrix JSON now records the
+          # install OWNER per lane; the gate reads that instead of a
+          # hand-maintained set.
+          # (Phạm vi native-PM (taxonomy P0-D vòng-9): CHỈ lane mà mgc tự
+          # resolve, lock, fetch, verify và materialize toàn bộ dependency
+          # graph vào CAS của mình. lib/rust và lib/python install qua
+          # cargo fetch / uv sync — đổi CARGO_HOME/UV_CACHE_DIR sang folder
+          # mgc quản lý là ỦY QUYỀN CÓ QUẢN LÝ, không phải resolver
+          # native; gate v1 ở đây từng đóng dấu native sai cho chúng. Chỉ
+          # lane web/JS là ứng viên native hôm nay (engine web giữ
+          # resolve+lock+fetch+CAS). lib/typescript là ứng viên native NẾU
+          # đi trên engine web — matrix JSON giờ ghi CHỦ SỞ HỮU install
+          # từng lane; gate đọc cái đó thay vì một tập bảo dưỡng tay.)
+          NATIVE_PM_SCOPE = {
+              ("web", "javascript"),
+              ("lib", "typescript"),
+          }
           for lane in data["lanes"]:
               key = (lane["core"], lane["language"])
               if key not in RELEASE_SCOPE:
                   continue
               seen.add(key)
-              if lane["verdict"] != "lifecycle-supported":
+              if lane["verdict"] != "orchestration-lifecycle-passed":
                   failures.append(
                       f"{key[0]}/{key[1]} lifecycle verdict = {lane['verdict']} "
-                      f"(expected lifecycle-supported) — dimensions: {lane['dimensions']}"
+                      f"(expected orchestration-lifecycle-passed) — dimensions: {lane['dimensions']}"
+                  )
+              # A native-PM-scope lane with a delegated install or a
+              # non-passed required dim is NOT native-pm — block the
+              # claim, not the orchestration.
+              # (Lane thuộc phạm vi native-PM mà install delegated hoặc
+              # dim required không passed thì KHÔNG PHẢI native-pm — chặn
+              # claim, không chặn orchestration.)
+              if key in NATIVE_PM_SCOPE and lane.get("native_pm_verdict") != "native-pm-supported":
+                  failures.append(
+                      f"{key[0]}/{key[1]} native_pm verdict = "
+                      f"{lane.get('native_pm_verdict')} — native-PM claim lanes "
+                      f"must not rely on a delegated install"
+                  )
+              # Taxonomy contract (P0-D): every lane MUST declare its
+              # install owner — native-engine, managed-delegation, or
+              # plain-delegation. A missing owner is a matrix bug, not a
+              # pass; a native candidate declaring anything but
+              # native-engine can never satisfy native_pm_verdict.
+              # (Hợp đồng taxonomy: mọi lane PHẢI khai chủ sở hữu
+              # install — native-engine, managed-delegation hoặc
+              # plain-delegation. Thiếu owner là lỗi matrix, không phải
+              # pass; ứng viên native khai gì khác native-engine thì
+              # không bao giờ thỏa native_pm_verdict.)
+              owner = lane.get("install_owner")
+              if owner not in ("native-engine", "managed-delegation", "plain-delegation"):
+                  failures.append(
+                      f"{key[0]}/{key[1]} missing install_owner — the matrix "
+                      f"must name who owns the install (taxonomy P0-D)"
+                  )
+              elif key in NATIVE_PM_SCOPE and owner != "native-engine":
+                  failures.append(
+                      f"{key[0]}/{key[1]} install_owner = {owner} — a "
+                      f"native-PM claim lane must be native-engine"
                   )
           missing = RELEASE_SCOPE - seen
           if missing:
@@ -177,5 +301,15 @@ jobs:
               print("LIFECYCLE NON-REGRESSION BLOCKED:")
               print("\n".join(failures))
               sys.exit(1)
-          print("OK: release-scope lanes lifecycle-supported: "
+          print("OK: release-scope lanes orchestration-lifecycle-passed: "
                 + ", ".join(f"{c}/{l}" for c, l in sorted(seen)))
+          print("OK: native-PM lanes: "
+                + ", ".join(
+                    f"{c}/{l}"
+                    for c, l in sorted(NATIVE_PM_SCOPE)
+                    if any(
+                        (ln["core"], ln["language"]) == (c, l)
+                        and ln.get("native_pm_verdict") == "native-pm-supported"
+                        for ln in data["lanes"]
+                    )
+                ))
