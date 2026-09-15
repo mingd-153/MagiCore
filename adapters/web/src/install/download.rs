@@ -216,6 +216,7 @@ pub async fn prefetch_tarballs(
     Ok(bytes_from_cache)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn pipeline_download_and_extract(
     graph: &mgc_types::adapter::ResolvedGraph,
     skip: &std::collections::HashSet<PackageId>,
@@ -224,6 +225,7 @@ pub async fn pipeline_download_and_extract(
     registry: Option<&native::npm_registry::NpmRegistry>,
     layout: &Layout,
     store: &ContentStore,
+    generation: i64,
 ) -> MgResult<(
     u64,
     std::collections::HashMap<PackageId, std::path::PathBuf>,
@@ -279,6 +281,13 @@ pub async fn pipeline_download_and_extract(
                 &download_sem,
             )
             .await?;
+            // Test-only failpoint (Gate 11-B.2): park after the first
+            // package's tarball is obtained (cache or network) but before
+            // extract — the staging generation still has zero claims.
+            // (Failpoint chỉ-cho-test: đỗ sau khi lấy được tarball của gói
+            // đầu tiên (cache hoặc network) nhưng trước khi extract — staging
+            // generation vẫn chưa có claim.)
+            mgc_store::failpoint::hit("after-fetch");
             pipeline_profile.record_download(
                 &pkg.id,
                 fetch.payload.len(),
@@ -323,6 +332,7 @@ pub async fn pipeline_download_and_extract(
                     shared_cache.as_ref(),
                     &pkg,
                     bytes.as_ref(),
+                    generation,
                 ),
                 TarballPayload::CachedPath(path, _) => ensure_extracted_package_root(
                     &layout,
@@ -330,6 +340,7 @@ pub async fn pipeline_download_and_extract(
                     shared_cache.as_ref(),
                     &pkg,
                     &path,
+                    generation,
                 ),
             })
             .await

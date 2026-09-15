@@ -321,8 +321,19 @@ async fn download_tarball(
                 return Ok(resp.into_response());
             }
             // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
+            // Upstream bytes are verified against the declared digest BEFORE
+            // caching and serving — a mismatched upstream response is dropped
+            // (fail-closed) instead of being cached as poison.
+            // Bytes từ upstream được đối chiếu digest khai TRƯỚC khi cache và
+            // serve — lệch digest thì bỏ (fail-closed), không cache dữ liệu bẩn.
             if let Ok(Some(data)) = store.fetch_upstream_tarball(&v.dist.tarball).await {
-                let _ = store.put_blob(digest, &data).await;
+                match store.put_blob(digest, &data).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::warn!("upstream tarball digest mismatch, not cached: {e:#}");
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
                 let mut resp = axum::response::Response::new(axum::body::Body::from(data));
                 resp.headers_mut().insert(
                     axum::http::header::CONTENT_TYPE,

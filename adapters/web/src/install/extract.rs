@@ -40,32 +40,75 @@ pub fn tarball_prefetch_lock(id: &PackageId) -> Arc<tokio::sync::Mutex<()>> {
         .clone()
 }
 
-pub struct CasClaimContext {
-    pub db: std::result::Result<Database, String>,
-    pub project_key: String,
+/// A fresh, unique temp path next to `canonical_root` for extraction. Used
+/// both for the real extract+rename and for the warm-cache "import + claim
+/// only" throwaway (the temp tree is discarded after import).
+/// (Đường dẫn temp mới, duy nhất cạnh `canonical_root` cho extraction. Dùng
+/// cho cả extract+rename thật lẫn throwaway "chỉ import + claim" của warm
+/// cache — cây temp bị hủy sau khi import.)
+fn fresh_extract_temp_root(pkg: &ResolvedPackage, canonical_root: &Path) -> PathBuf {
+    let parent = canonical_root.parent().unwrap_or(Path::new("."));
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!(".mgc-extract-{}-{}", pkg.id.name_str(), ts))
 }
 
-pub fn cas_claim_context(layout: &Layout) -> Option<CasClaimContext> {
-    let db = Database::open(&layout.db_path()).map_err(|e| e.to_string());
-    Some(CasClaimContext {
+pub struct CasClaimContext {
+    /// Fail-closed DB handle (Gate 11-A, P0-5 of vòng-11 audit): the OLD
+    /// field was `Result<Database, String>` and `as_ref()` folded a DB
+    /// open failure into `None` — extraction continued WITHOUT claims,
+    /// then the end-of-install promote retired previous claims: warm CAS
+    /// silently became unreferenced. Now the constructor RETURNS
+    /// `Result` and every caller propagates the error — an install that
+    /// cannot open the claim DB FAILS, it never claims nothing.
+    /// (Handle DB fail-closed (P0-5): field cũ là
+    /// `Result<Database, String>` và `as_ref()` gộp lỗi mở DB thành
+    /// `None` — extraction tiếp tục KHÔNG claim, rồi promote cuối install
+    /// nghỉ hưu claim cũ: warm CAS âm thầm mất tham chiếu. Giờ constructor
+    /// TRẢ `Result` và mọi caller propagate lỗi — install không mở được DB
+    /// claim thì FAIL, không bao giờ "claim không gì".)
+    pub db: Database,
+    pub project_key: String,
+    /// Install generation token (P0-A): every claim this context files lands
+    /// in THIS generation — begin/promote/abort all key off it, never off a
+    /// global MAX(generation).
+    /// (Token generation của install (P0-A): mọi claim qua context này rơi
+    /// vào generation NÀY — begin/promote/abort đều khóa theo nó, không bao
+    /// giờ theo MAX(generation) toàn cục.)
+    pub generation: i64,
+}
+
+/// Fail-closed claim context (Gate 11-A, P0-5): opening the claim DB is a
+/// HARD prerequisite of a claiming install — the error propagates and the
+/// install fails, exactly like the primary DB open. There is no code path
+/// where blobs materialize unclaimed while the install still promotes.
+/// (Context claim fail-closed (P0-5): mở DB claim là điều kiện TIÊN QUYẾT
+/// cứng của install có claim — lỗi propagate và install fail, giống hệt mở
+/// DB chính. Không tồn tại đường mà blob materialize không claim trong khi
+/// install vẫn promote.)
+pub fn cas_claim_context(layout: &Layout, generation: i64) -> MgResult<CasClaimContext> {
+    let db = Database::open(&layout.db_path()).map_err(|e| {
+        MgError::Store(format!(
+            "claim database open failed (install refuses to materialize \
+             unclaimed blobs — fail-closed, P0-5): {e}"
+        ))
+    })?;
+    Ok(CasClaimContext {
         db,
         project_key: layout.root().to_string_lossy().into_owned(),
+        generation,
     })
 }
 
-pub fn claim_ctx(ctx: Option<&CasClaimContext>) -> Option<(&Database, &str)> {
-    match ctx {
-        Some(ctx) => ctx.as_ref(),
-        None => None,
-    }
+pub fn claim_ctx(ctx: &CasClaimContext) -> (&Database, &str, i64) {
+    (&ctx.db, &ctx.project_key, ctx.generation)
 }
 
 impl CasClaimContext {
-    pub fn as_ref(&self) -> Option<(&Database, &str)> {
-        match &self.db {
-            Ok(db) => Some((db, &self.project_key)),
-            Err(_) => None,
-        }
+    pub fn as_ref(&self) -> (&Database, &str, i64) {
+        (&self.db, &self.project_key, self.generation)
     }
 }
 
@@ -101,9 +144,10 @@ pub fn ensure_extracted_package_root(
     shared_cache: Option<&SharedWebCache>,
     pkg: &ResolvedPackage,
     tarball_path: &Path,
+    generation: i64,
 ) -> MgResult<PathBuf> {
     let fast_marker = expected_extracted_package_marker_from_path(pkg, tarball_path)?;
-    let claim = cas_claim_context(layout);
+    let claim = cas_claim_context(layout, generation)?;
     ensure_extracted_package_root_with_marker(
         layout,
         store,
@@ -119,7 +163,7 @@ pub fn ensure_extracted_package_root(
                     err
                 ))
             })?;
-            extract_tarball_to_cas_and_link(file, temp_root, store, claim_ctx(claim.as_ref()))
+            extract_tarball_to_cas_and_link(file, temp_root, store, Some(claim_ctx(&claim)))
                 .map_err(|e| MgError::Other(e.to_string()))
         },
     )
@@ -131,9 +175,10 @@ pub fn ensure_extracted_package_root_from_bytes(
     shared_cache: Option<&SharedWebCache>,
     pkg: &ResolvedPackage,
     tarball_bytes: &[u8],
+    generation: i64,
 ) -> MgResult<PathBuf> {
     let expected_marker = expected_extracted_package_marker_from_bytes(pkg, tarball_bytes)?;
-    let claim = cas_claim_context(layout);
+    let claim = cas_claim_context(layout, generation)?;
     ensure_extracted_package_root_with_marker(
         layout,
         store,
@@ -145,7 +190,7 @@ pub fn ensure_extracted_package_root_from_bytes(
                 std::io::Cursor::new(tarball_bytes),
                 temp_root,
                 store,
-                claim_ctx(claim.as_ref()),
+                Some(claim_ctx(&claim)),
             )
             .map_err(|e| MgError::Other(e.to_string()))
         },
@@ -180,18 +225,40 @@ where
             && (!extracted_cache_full_validation_enabled()
                 || extracted_content_matches(&canonical_root, marker)?)
         {
+            // Warm-cache reuse (Gate 11-B.2 Task D): skip the re-extraction +
+            // rename, but STILL import the tarball's blobs into THIS project's
+            // per-project CAS and file its refcount claims. A fresh project
+            // that materializes from a warm shared cache must not end up with
+            // an empty CAS (0 blobs) and zero live refs — its own doctor/prune
+            // must be able to track the materialized package. The temp tree is
+            // throwaway: only the CAS import + claims persist.
+            // (Reuse warm-cache (Gate 11-B.2 Task D): bỏ qua extract lại +
+            // rename, nhưng VẪN import blob của tarball vào CAS per-project và
+            // ghi claim refcount. Project mới materialize từ warm shared cache
+            // không được rơi vào CAS rỗng (0 blob) và 0 ref sống — doctor/prune
+            // của chính nó phải theo dõi được package đã materialize. Cây temp
+            // là throwaway: chỉ import CAS + claim tồn tại.)
+            let throwaway = fresh_extract_temp_root(pkg, &canonical_root);
+            if throwaway.exists() {
+                std::fs::remove_dir_all(&throwaway).map_err(|err| {
+                    MgError::Other(format!(
+                        "failed to remove stale temp root '{}' for '{}': {}",
+                        throwaway.display(),
+                        pkg.id.name_str(),
+                        err
+                    ))
+                })?;
+            }
+            let import_result = extract_into(&throwaway);
+            if throwaway.exists() {
+                let _ = std::fs::remove_dir_all(&throwaway);
+            }
+            import_result?;
             return Ok(canonical_root);
         }
     }
 
-    let temp_root = {
-        let parent = canonical_root.parent().unwrap_or(Path::new("."));
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        parent.join(format!(".mgc-extract-{}-{}", pkg.id.name_str(), ts))
-    };
+    let temp_root = fresh_extract_temp_root(pkg, &canonical_root);
     if temp_root.exists() {
         std::fs::remove_dir_all(&temp_root).map_err(|err| {
             MgError::Other(format!(

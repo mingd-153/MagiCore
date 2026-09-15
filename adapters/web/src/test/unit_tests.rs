@@ -46,6 +46,22 @@ async fn bind_test_listener() -> Option<TcpListener> {
 fn test_web_adapter() {
     assert_eq!(WebAdapter::new().registry_url, "https://registry.npmjs.org");
 }
+
+/// Symlink-free temp dir (P0-A contract, 2026-09-13): the CAS now rejects
+/// any symlinked ancestor, and macOS temp lives under /var — a SYSTEM
+/// symlink. Create the temp dir under the CANONICALIZED temp base so every
+/// store/CAS path in these tests is real. Mirrors the convention already
+/// used by core/crates/mgc-store/tests/adversarial_integrity.rs.
+/// (Temp dir không symlink (hợp đồng P0-A): CAS giờ từ chối mọi ancestor
+/// là symlink, mà temp macOS nằm dưới /var — symlink HỆ THỐNG. Tạo temp
+/// dưới base temp ĐÃ CANONICALIZE để mọi path store/CAS trong các test
+/// này là đường dẫn thật. Phản chiếu quy ước mà test adversarial của
+/// mgc-store đã dùng.)
+fn tempdir_real() -> std::io::Result<tempfile::TempDir> {
+    let canonical = std::env::temp_dir().canonicalize()?;
+    tempfile::tempdir_in(canonical)
+}
+
 #[test]
 fn test_package_json() {
     let p = PackageJson::new("t".into(), "1.0.0".into());
@@ -53,7 +69,7 @@ fn test_package_json() {
 }
 #[test]
 fn test_can_handle() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     PackageJson::new("t".into(), "1.0.0".into())
         .save(&dir.path().join("package.json"))
         .unwrap();
@@ -62,7 +78,7 @@ fn test_can_handle() {
 
 #[tokio::test]
 async fn test_add_writes_manifest_and_install_creates_node_modules() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -136,8 +152,8 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
 
 #[tokio::test]
 async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
-    let shared = tempfile::tempdir().unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let dir = tempdir_real().unwrap();
 
     seed_shared_metadata(
         shared.path(),
@@ -213,8 +229,8 @@ async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
 
 #[tokio::test]
 async fn test_audit_fix_fail_closed_keeps_manifest_and_lockfile_when_resolve_fails() {
-    let shared = tempfile::tempdir().unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let dir = tempdir_real().unwrap();
 
     std::fs::write(
         dir.path().join("package.json"),
@@ -258,7 +274,7 @@ async fn test_audit_fix_fail_closed_keeps_manifest_and_lockfile_when_resolve_fai
 
 #[test]
 fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let package_id = PackageId::new(
         PackageName::new("react").unwrap(),
         Version::parse("18.2.0").unwrap(),
@@ -289,7 +305,7 @@ fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
 
 #[tokio::test]
 async fn test_install_materializes_node_modules_bin_links() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -346,7 +362,7 @@ async fn test_install_materializes_node_modules_bin_links() {
 
 #[tokio::test]
 async fn test_resolve_populates_tarball_url_and_integrity_from_shared_metadata() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
     seed_shared_metadata(
         shared.path(),
@@ -399,7 +415,7 @@ async fn test_resolve_populates_tarball_url_and_integrity_from_shared_metadata()
 
 #[tokio::test]
 async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let registry_url = "http://127.0.0.1:9";
     let cache = SharedWebCache {
         root: shared.path().to_path_buf(),
@@ -444,7 +460,7 @@ async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable(
 
 #[test]
 fn test_read_web_lockfile_checked_rejects_checksum_mismatch() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let lock = Lockfile::new();
     let json = serde_json::to_string_pretty(&lock).unwrap();
     std::fs::write(dir.path().join("mgc.lock"), json).unwrap();
@@ -457,7 +473,7 @@ fn test_read_web_lockfile_checked_rejects_checksum_mismatch() {
 
 #[test]
 fn test_read_web_lockfile_checked_rejects_malformed_lockfile() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(dir.path().join("mgc.lock"), "not = [valid").unwrap();
 
     let err = read_web_lockfile_checked(dir.path()).unwrap_err();
@@ -470,7 +486,7 @@ fn test_read_web_lockfile_checked_rejects_malformed_lockfile() {
 
 #[test]
 fn test_pending_scaffold_lockfile_without_checksum_is_allowed() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("mgc.lock"),
         r#"{
@@ -566,7 +582,7 @@ fn test_manifest_resolution_cache_key_ignores_dep_order_and_app_name() {
 
 #[test]
 fn test_prune_shared_cache_to_quota_removes_prunable_entries() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let cache_dir = dir.path().join("cache").join("react");
     let resolution_dir = dir.path().join("resolutions");
     std::fs::create_dir_all(&cache_dir).unwrap();
@@ -585,7 +601,7 @@ fn test_prune_shared_cache_to_quota_removes_prunable_entries() {
 
 #[test]
 fn test_prune_shared_cache_to_quota_does_not_delete_unmarked_package_json_dirs() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let nested = dir.path().join("packages").join("manual").join("nested");
     let cache_dir = dir.path().join("cache").join("react");
     std::fs::create_dir_all(&nested).unwrap();
@@ -603,8 +619,8 @@ fn test_prune_shared_cache_to_quota_does_not_delete_unmarked_package_json_dirs()
 
 #[test]
 fn test_prune_shared_cache_to_quota_keeps_pinned_package_roots() {
-    let dir = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let package_root = dir
         .path()
         .join("packages")
@@ -637,7 +653,7 @@ fn test_prune_shared_cache_to_quota_keeps_pinned_package_roots() {
 
 #[test]
 fn test_project_cas_prune_keeps_hardlinked_live_blobs() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempdir_real().unwrap();
     let cas = temp.path().join("cas");
     let blob = cas.join("ab").join("live");
     let orphan = cas.join("cd").join("orphan");
@@ -658,7 +674,7 @@ fn test_project_cas_prune_keeps_hardlinked_live_blobs() {
 
 #[test]
 fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempdir_real().unwrap();
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
     std::fs::write(&source, b"payload-123").unwrap();
@@ -681,7 +697,7 @@ fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
 
 #[test]
 fn test_backing_link_rematerializes_stale_target() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempdir_real().unwrap();
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
     std::fs::write(&source, b"fresh-content").unwrap();
@@ -695,7 +711,7 @@ fn test_backing_link_rematerializes_stale_target() {
 
 #[test]
 fn test_maybe_prune_skips_quota_scan_when_gc_not_due() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let cache_dir = dir.path().join("cache").join("react");
     std::fs::create_dir_all(&cache_dir).unwrap();
     let tarball_path = cache_dir.join("18.2.0.tgz");
@@ -716,7 +732,7 @@ fn test_maybe_prune_skips_quota_scan_when_gc_not_due() {
 
 #[tokio::test]
 async fn test_alias_dependency_uses_target_metadata_and_range() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
     seed_shared_metadata(
         shared.path(),
@@ -792,7 +808,7 @@ async fn test_alias_dependency_uses_target_metadata_and_range() {
 
 #[tokio::test]
 async fn test_load_metadata_persists_etag_after_initial_fetch() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let Some(listener) = bind_test_listener().await else {
         return;
     };
@@ -889,7 +905,7 @@ async fn test_prefetch_resolution_metadata_dedupes_aliases_by_source_package() {
 #[tokio::test]
 async fn test_stale_metadata_failure_sets_retry_cooldown() {
     let _env_guard = env_test_lock().lock().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let Some(listener) = bind_test_listener().await else {
         return;
     };
@@ -977,7 +993,7 @@ async fn test_stale_metadata_failure_sets_retry_cooldown() {
 #[tokio::test]
 async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
     let _env_guard = env_test_lock().lock().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let Some(listener) = bind_test_listener().await else {
         return;
     };
@@ -1050,7 +1066,7 @@ async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
 #[tokio::test]
 async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
     let _env_guard = env_test_lock().lock().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let registry = native::npm_registry::NpmRegistry::new("http://127.0.0.1:9");
     let cache = SharedWebCache {
         root: shared.path().to_path_buf(),
@@ -1104,9 +1120,9 @@ async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
 
 #[tokio::test]
 async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1163,7 +1179,7 @@ async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
 
 #[tokio::test]
 async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1186,7 +1202,7 @@ async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
 
 #[tokio::test]
 async fn test_list_prefers_lockfile_state() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1238,7 +1254,7 @@ async fn test_list_prefers_lockfile_state() {
 
 #[tokio::test]
 async fn test_install_multiple_packages_from_cache() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1328,7 +1344,7 @@ async fn test_install_multiple_packages_from_cache() {
 
 #[tokio::test]
 async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1438,7 +1454,7 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
 
 #[tokio::test]
 async fn test_install_uses_cache_when_registry_is_unavailable() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1488,9 +1504,9 @@ async fn test_install_uses_cache_when_registry_is_unavailable() {
 
 #[tokio::test]
 async fn test_install_uses_shared_tarball_cache_for_new_project() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1555,9 +1571,9 @@ async fn test_install_uses_shared_tarball_cache_for_new_project() {
 
 #[tokio::test]
 async fn test_install_recovers_from_corrupted_local_cache_using_shared_cache() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1620,7 +1636,7 @@ async fn test_install_recovers_from_corrupted_local_cache_using_shared_cache() {
 
 #[tokio::test]
 async fn test_install_fails_when_registry_is_unavailable_and_cache_is_missing() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1660,7 +1676,7 @@ async fn test_install_fails_when_registry_is_unavailable_and_cache_is_missing() 
 
 #[tokio::test]
 async fn test_install_failure_does_not_materialize_partial_node_modules() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1734,7 +1750,7 @@ async fn test_install_failure_does_not_materialize_partial_node_modules() {
 
 #[tokio::test]
 async fn test_install_skips_when_matching_package_is_already_materialized() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1799,7 +1815,7 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
 
 #[tokio::test]
 async fn test_install_materializes_scoped_package() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1867,7 +1883,7 @@ async fn test_install_materializes_scoped_package() {
 
 #[tokio::test]
 async fn test_install_materializes_nested_conflicting_dependency_versions() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -2020,7 +2036,7 @@ async fn test_install_materializes_nested_conflicting_dependency_versions() {
 
 #[tokio::test]
 async fn test_install_retries_flaky_tarball_download() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -2099,8 +2115,8 @@ async fn test_install_retries_flaky_tarball_download() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_install_materialization_uses_store_links_from_cached_extract_root() {
-    let dir = tempfile::tempdir().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
+    let shared = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -2188,8 +2204,8 @@ async fn test_install_materialization_uses_store_links_from_cached_extract_root(
 #[cfg(unix)]
 #[tokio::test]
 async fn test_install_repairs_broken_store_links_when_shared_packages_are_deleted() {
-    let dir = tempfile::tempdir().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
+    let shared = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -2261,9 +2277,9 @@ async fn test_install_repairs_broken_store_links_when_shared_packages_are_delete
 
 #[tokio::test]
 async fn test_install_rebuilds_shared_extracted_root_when_marker_mismatches() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let first = tempfile::tempdir().unwrap();
+    let first = tempdir_real().unwrap();
     std::fs::write(
         first.path().join("package.json"),
         serde_json::json!({
@@ -2331,7 +2347,7 @@ async fn test_install_rebuilds_shared_extracted_root_when_marker_mismatches() {
     )
     .unwrap();
 
-    let second = tempfile::tempdir().unwrap();
+    let second = tempdir_real().unwrap();
     std::fs::write(
         second.path().join("package.json"),
         serde_json::json!({
@@ -2377,8 +2393,8 @@ async fn test_install_rebuilds_shared_extracted_root_when_marker_mismatches() {
 
 #[tokio::test]
 async fn test_install_rebuilds_cached_root_when_file_tree_is_incomplete() {
-    let shared = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let rollup = PackageId::new(
         PackageName::new("rollup").unwrap(),
         Version::parse("4.62.2").unwrap(),
@@ -2453,8 +2469,8 @@ async fn test_install_rebuilds_cached_root_when_file_tree_is_incomplete() {
 
 #[tokio::test]
 async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing() {
-    let shared = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let entities = PackageId::new(
         PackageName::new("entities").unwrap(),
         Version::parse("7.0.1").unwrap(),
@@ -2525,8 +2541,8 @@ async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplet
     let old = std::env::var_os("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE");
     unsafe { std::env::set_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", "1") };
 
-    let shared = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let rollup = PackageId::new(
         PackageName::new("rollup").unwrap(),
         Version::parse("4.62.2").unwrap(),
@@ -2798,7 +2814,7 @@ fn test_preferred_registry_version_prefers_stable_over_prerelease() {
 
 #[test]
 fn test_installed_package_version_reads_real_version() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let pkg_dir = dir.path().join("node_modules").join("zod");
     std::fs::create_dir_all(&pkg_dir).unwrap();
     std::fs::write(
@@ -2840,7 +2856,7 @@ fn test_known_optional_native_binary_supported_only_matches_current_target() {
 
 #[test]
 fn test_installed_package_matches_version() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let pkg_dir = dir.path().join("node_modules").join("zod");
     std::fs::create_dir_all(&pkg_dir).unwrap();
     std::fs::write(

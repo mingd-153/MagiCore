@@ -87,11 +87,82 @@ pub async fn run_install(
     })?;
     let mut summary = InstallSummary::default();
 
-    if let Some(database) = database.as_ref() {
-        database
-            .clear_all_cas_refs(&layout.root().to_string_lossy())
-            .map_err(|e| MgError::Store(e.to_string()))?;
-    }
+    // Generation-token CAS claims (P0-A, adversarial review vòng-9
+    // 2026-09-14): the install OPENS a staging generation and carries its
+    // TOKEN end-to-end — every claim files into THIS token, and the final
+    // promote names THIS token. The v1 scheme bound claims to a global
+    // MAX(generation) (a concurrent install hijacked another's claims) and
+    // keyed rows by (project, hash) alone (a re-claimed hash silently kept
+    // its OLD generation row, then promote deleted the claim of a blob the
+    // new install still needed — plain sequential reinstall). Crash safety
+    // unchanged: an unfinished staging generation leaves old ∪ new claims
+    // live (over-retention, never a pruned live blob).
+    // (Claim CAS theo token generation (P0-A): install MỞ một staging
+    // generation và mang TOKEN của nó suốt luồng — mọi claim ghi vào đúng
+    // token này, promote cuối gọi đúng token này. Scheme v1 gắn claim vào
+    // MAX(generation) toàn cục (install song song cướp claim của nhau) và
+    // khóa row chỉ theo (project, hash) (hash claim lại âm thầm giữ row
+    // generation CŨ, rồi promote xóa claim của blob mà install mới vẫn cần
+    // — reinstall tuần tự thuần). An toàn crash không đổi: staging gen chưa
+    // xong để lại claim cũ ∪ mới (giữ thừa, không bao giờ prune blob sống).)
+    // Project-level install lock (Gate 11-A item 7, vòng-11): one install
+    // per project at a time. Generation tokens keep CAS claims safe, but
+    // two installs mutating the same node_modules/lockfile in parallel is
+    // a correctness hazard (whoever renames last wins the tree) that no
+    // refcount protocol can fix — production package managers serialize
+    // project mutation the same way. The lock is an OS file lock: a
+    // crashed process releases it automatically. Escape hatch: a second
+    // concurrent install fails FAST with a clear error instead of racing.
+    // (Khóa install mức project: một install mỗi project tại một thời
+    // điểm. Token generation giữ claim CAS an toàn, nhưng 2 install song
+    // song mutate cùng node_modules/lockfile là mối nguy correctness (ai
+    // rename sau cùng thắng cây) mà không giao thức refcount nào sửa được
+    // — package manager production tuần tự hóa mutation project y hệt.
+    // Lock là file lock OS: tiến trình đứt tự nhả. Install song song thứ
+    // hai fail NGAY với lỗi rõ ràng thay vì chạy đua.)
+    let project_key_lock = layout.root().to_string_lossy().to_string();
+    let _install_lock = database
+        .as_ref()
+        .map(|db| db.project_install_lock(&project_key_lock))
+        .transpose()
+        .map_err(|e| MgError::Store(e.to_string()))?;
+
+    // RAII generation guard (Gate 11-A item 6, vòng-11): begin → claims →
+    // promote. EVERY early return/panic below drops the guard and
+    // auto-ABORTS the still-staging token — a failed install can never
+    // leak a staging generation whose claims over-protect blobs. Only a
+    // successful promote disarms it (the v2 protocol leaked staging
+    // markers on every error path: 12+ `return Err` sites, zero aborts).
+    // The i64 token copy threads through the pipeline (a borrow-holding
+    // guard cannot cross those call boundaries); the guard itself stays
+    // here and owns the lifecycle.
+    // (Guard generation RAII: begin → claim → promote. MỌI return sớm/
+    // panic bên dưới drop guard và TỰ HỦY token staging — install fail
+    // không bao giờ rò staging generation mà claim giữ blob vô hạn. Chỉ
+    // promote thành công mới disarm (protocol v2 rò marker staging trên
+    // mọi đường lỗi: 12+ chỗ `return Err`, 0 abort). Bản i64 của token
+    // xuyên qua pipeline (guard giữ borrow không qua được ranh giới gọi
+    // đó); guard ở lại đây và sở hữu vòng đời.)
+    let (cas_generation, cas_generation_guard) = match database.as_ref() {
+        Some(db) => {
+            let project_key = layout.root().to_string_lossy().to_string();
+            let guard = db
+                .begin_cas_generation_guarded(&layout.db_path(), &project_key)
+                .map_err(|e| MgError::Store(e.to_string()))?;
+            let token = guard.generation();
+            (token, Some(guard))
+        }
+        None => (0, None),
+    };
+
+    // Test-only failpoint (Gate 11-B.2): park here AFTER the generation
+    // token is committed to the DB — no SQLite transaction is open, so a
+    // SIGKILL here leaves a clean, claim-less staging marker the doctor
+    // classifies STALE (leaked begin).
+    // (Failpoint chỉ-cho-test: đỗ ở đây SAU khi token generation đã commit
+    // vào DB — không có transaction SQLite đang mở, nên SIGKILL ở đây để
+    // lại marker staging sạch, không claim, doctor phân loại STALE (begin rò).)
+    mgc_store::failpoint::hit("after-generation-begin");
 
     let thread_id_hash = {
         let tid = std::thread::current().id();
@@ -326,6 +397,7 @@ pub async fn run_install(
                 shared_cache.as_ref(),
                 active_package_cache,
                 pkg,
+                cas_generation,
             ) {
                 Ok(root) => root,
                 Err(err) => {
@@ -467,6 +539,7 @@ pub async fn run_install(
                 &mut visiting,
                 0,
                 &mut packages_with_scripts,
+                cas_generation,
             )?;
         }
     } else if fetch_graph.is_empty() {
@@ -486,6 +559,7 @@ pub async fn run_install(
             Some(&registry),
             &layout,
             store,
+            cas_generation,
         )
         .await?;
         eprintln!(
@@ -522,6 +596,11 @@ pub async fn run_install(
 
         let strict_materialize_step_started_at = std::time::Instant::now();
         eprintln!("[magicore:debug] install:strict_materialize_start");
+        // Test-only failpoint: park just before the node_modules tree is
+        // materialized (claims + CAS blobs are already committed upstream).
+        // (Failpoint chỉ-cho-test: đỗ ngay trước khi cây node_modules được
+        // materialize (claim + blob CAS đã commit ở upstream).)
+        mgc_store::failpoint::hit("before-materialize");
         materialize_strict_layout(
             &node_modules,
             graph,
@@ -534,7 +613,13 @@ pub async fn run_install(
             active_package_cache,
             &mut packages_with_scripts,
             &extracted_roots,
+            cas_generation,
         )?;
+        // Test-only failpoint: park after materialization committed the
+        // hardlink tree (still before promote/refs).
+        // (Failpoint chỉ-cho-test: đỗ sau khi materialization đã commit cây
+        // hardlink (vẫn trước promote/refs).)
+        mgc_store::failpoint::hit("after-materialize");
         eprintln!("[magicore:debug] install:strict_materialize_done");
         profile.mark_step(
             "materialize_strict_layout_step",
@@ -674,6 +759,11 @@ pub async fn run_install(
 
     let project_root_str = project_root.to_string_lossy().to_string();
     if let Some(database) = database.as_ref() {
+        // Test-only failpoint: park before the final commit block (refs +
+        // promote) begins — the staging generation still has its claims.
+        // (Failpoint chỉ-cho-test: đỗ trước khi block commit cuối (refs +
+        // promote) bắt đầu — staging generation vẫn còn giữ claim.)
+        mgc_store::failpoint::hit("before-commit");
         database
             .clear_all_refs(&project_root_str)
             .map_err(|e| MgError::Store(e.to_string()))?;
@@ -682,6 +772,61 @@ pub async fn run_install(
                 .set_ref(&project_root_str, &pkg.id)
                 .map_err(|e| MgError::Store(e.to_string()))?;
         }
+        // Promote THIS install's generation token (P0-A): only NOW — after
+        // materialization, lockfile and scripts — does the refset retire,
+        // and it retires by TOKEN, not by a global MAX(generation). Until
+        // here, prune sees old ∪ new claims (safe over-retention); after
+        // here, exactly the claims of this install's graph survive.
+        // (Thăng cấp theo TOKEN generation của install này (P0-A): chỉ BÂY
+        // GIỜ — sau materialization, lockfile và scripts — refset mới nghỉ
+        // hưu, và nghỉ theo TOKEN, không theo MAX(generation) toàn cục.
+        // Trước điểm này prune thấy claim cũ ∪ mới (giữ thừa an toàn); sau
+        // điểm này, đúng claim của graph install này sống sót.)
+        //
+        // KEY FIX (vòng-11 Gate 11-A): promote MUST use the SAME project
+        // key the token was registered under — `layout.root()` (the
+        // project's per-store identity). The WIP run promoted under the
+        // BARE `project_root` string while begin/claims registered under
+        // `layout.root()`, so promote hit `UnknownToken` ("token 1 not
+        // registered") and the whole install failed; the armed guard's
+        // Drop then aborted the still-staging token — which made the
+        // marker VANISH "mid-flight" and masquerade as a marker deletion.
+        // All token-protocol mutations (begin/claim/promote/abort) must
+        // share ONE key: `layout.root()`.
+        // (Sửa khóa: promote PHẢI dùng đúng khóa project mà token đã đăng
+        // ký — `layout.root()` (định danh per-store của project). Bản WIP
+        // promote theo chuỗi `project_root` trần trong khi begin/claim đăng
+        // ký theo `layout.root()`, nên promote dính `UnknownToken` ("token
+        // 1 not registered") và cả install fail; guard còn armed bị Drop
+        // abort token staging — khiến marker "biến mất giữa chừng" và ngụy
+        // trang thành deletion. Mọi mutation của giao thức token phải dùng
+        // MỘT khóa: `layout.root()`.)
+        let cas_project_key = layout.root().to_string_lossy().to_string();
+        // Test-only failpoint: park right before promote flips the token's
+        // generation to 'promoted' (refs already committed above).
+        // (Failpoint chỉ-cho-test: đỗ ngay trước khi promote lật generation
+        // của token sang 'promoted' (refs đã commit ở trên).)
+        mgc_store::failpoint::hit("before-promote");
+        database
+            .promote_cas_generation(&cas_project_key, cas_generation)
+            .map_err(|e| MgError::Store(e.to_string()))?;
+        // Test-only failpoint: park just after the generation flipped to
+        // 'promoted' — the store is committed but the guard is still armed.
+        // (Failpoint chỉ-cho-test: đỗ ngay sau khi generation lật sang
+        // 'promoted' — store đã commit nhưng guard vẫn còn armed.)
+        mgc_store::failpoint::hit("after-generation-flip");
+        // Promote succeeded — disarm the RAII guard so its Drop does NOT
+        // abort the now-promoted token (Gate 11-A item 6).
+        // (Promote thành công — disarm guard RAII để Drop không hủy token
+        // vừa promoted (Gate 11-A mục 6).)
+        if let Some(guard) = cas_generation_guard {
+            guard.disarm();
+        }
+        // Test-only failpoint: park after the final commit block completed
+        // (refs + promote + disarm) — the install is fully committed.
+        // (Failpoint chỉ-cho-test: đỗ sau khi block commit cuối hoàn tất
+        // (refs + promote + disarm) — install đã commit trọn vẹn.)
+        mgc_store::failpoint::hit("after-commit");
     }
 
     if opts.repair {
