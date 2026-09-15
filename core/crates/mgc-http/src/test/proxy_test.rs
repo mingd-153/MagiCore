@@ -51,7 +51,10 @@ impl ProxyEnvGuard {
     #[allow(unsafe_code)]
     fn new() -> Self {
         let lock = env_lock();
-        let saved: Vec<_> = PROXY_ENV_VARS.iter().map(|&key| (key, env::var(key).ok())).collect();
+        let saved: Vec<_> = PROXY_ENV_VARS
+            .iter()
+            .map(|&key| (key, env::var(key).ok()))
+            .collect();
         for (key, _) in &saved {
             // SAFETY: env mutation is serialised process-wide by `env_lock`
             // held in `self._lock`; each var is restored to its captured
