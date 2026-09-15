@@ -248,18 +248,29 @@ fn finish_machine(report: &AuditReport, strict: StrictMode, fmt: OutputFormat) -
 
 /// Strict audit mode flag — `MGC_AUDIT_STRICT` env (set by `--audit-strict`).
 /// Escape hatch contract (RULE §11): default open locally, closed in CI.
+/// `MGC_AUDIT_STRICT=1` forces strict anywhere; when unset, CI environments
+/// (`CI=true|1`, as set by GitHub/GitLab/Circle) default to strict — an
+/// UNVERIFIED audit must never pass a pipeline silently (Tech Lead P0-3).
 /// Cờ strict — env `MGC_AUDIT_STRICT` (bật qua `--audit-strict`).
-/// Hợp đồng escape hatch (RULE §11): mặc định mở locally, đóng trong CI.
+/// Hợp đồng escape hatch (RULE §11): mặc định mở locally, đóng trong CI —
+/// CI=true tự strict, UNVERIFIED không thể lọt pipeline một cách im lặng.
 #[derive(Debug, Clone, Copy)]
 struct StrictMode(bool);
 
 impl StrictMode {
     fn from_env() -> Self {
-        Self(
-            std::env::var("MGC_AUDIT_STRICT")
-                .map(|v| v == "1" || v.to_lowercase() == "true")
-                .unwrap_or(false),
-        )
+        let forced = std::env::var("MGC_AUDIT_STRICT")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+        if forced {
+            return Self(true);
+        }
+        // CI runners export CI=true — strict is the safe default there.
+        // CI runner export CI=true — strict là mặc định an toàn ở đó.
+        let in_ci = std::env::var("CI")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+        Self(in_ci)
     }
 
     fn enabled(self) -> bool {

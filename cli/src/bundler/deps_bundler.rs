@@ -14,6 +14,84 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
+/// Validate a dependency-route name (P1-1, fresh-context review
+/// 2026-09-15): the route segment is joined onto node_modules, so it is
+/// a JAILBOUND input. Legal shapes ONLY:
+///   - `name` — plain package;
+///   - `@scope/name` — scoped package;
+///   - `@scope/name/sub/path` — scoped subpath.
+///
+/// Every segment must be a plausible npm name segment: non-empty, no
+/// `.`/`..`, no path separators inside (they ARE the split), no Windows
+/// drive prefix, no percent-decode leftovers (`%` is not legal in npm
+/// names), no NUL. The first segment of a scoped name MUST start with
+/// `@`. Fail-closed: anything else is a traversal attempt, not a
+/// 404-missing-package.
+/// (Validate tên dependency-route (P1-1): segment route được nối vào
+/// node_modules nên là input BỊ GIỮ NGỤC. Chỉ hợp lệ: `name`,
+/// `@scope/name`, `@scope/name/sub/path`. Mọi segment phải là segment
+/// tên npm hợp lệ: không rỗng, không `.`/`..`, không dấu phân tách,
+/// không prefix ổ đĩa Windows, không `%`, không NUL. Segment đầu của
+/// tên scoped PHẢI bắt đầu `@`. Fail-closed: còn lại là ý đồ traversal,
+/// không phải package-thiếu-404.)
+pub(crate) fn dep_name_is_valid(pkg: &str) -> bool {
+    // Route paths arrive with the leading slash stripped by the
+    // wildcard extractor; a re-appearing absolute marker means the
+    // caller is trying to escape the join (P1-1).
+    // (Path route tới với leading slash đã bị strip bởi wildcard
+    // extractor; marker tuyệt-đối xuất hiện lại nghĩa là caller cố
+    // thoát phép nối (P1-1).)
+    if pkg.is_empty() {
+        return false;
+    }
+    let segments: Vec<&str> = pkg.split('/').collect();
+    let scoped = segments[0].starts_with('@');
+    // A scoped name needs at LEAST `@scope/name`; a plain name is
+    // exactly one segment; deeper paths are only legal under a scope.
+    // (Tên scoped cần ít nhất `@scope/name`; tên thường đúng 1 segment;
+    // path sâu chỉ hợp pháp dưới scope.)
+    if scoped && segments.len() < 2 {
+        return false;
+    }
+    if !scoped && segments.len() != 1 {
+        return false;
+    }
+    for (idx, seg) in segments.iter().enumerate() {
+        // Scope segment: `@` + a real name body.
+        // (Segment scope: `@` + thân tên thật.)
+        if idx == 0 && scoped {
+            if seg.len() < 2 {
+                return false;
+            }
+            continue;
+        }
+        // Plain segment: npm names have no `%`, no NUL, no dot-only
+        // spellings (`.`/`..` are traversal), and a sane length bound
+        // (214 is the documented npm package-name limit).
+        // (Segment thường: tên npm không có `%`, không NUL, không dạng
+        // chỉ-dấu-chấm (`.`/`..` là traversal), và giới hạn độ dài hợp
+        // lý (214 là giới hạn tên npm được tài liệu hóa).)
+        if seg.is_empty()
+            || *seg == "."
+            || *seg == ".."
+            || seg.contains('%')
+            || seg.contains('\0')
+            || seg.len() > 214
+        {
+            return false;
+        }
+        // A drive-letter escape (`C:` inside a segment) only matters on
+        // the FIRST segment — but check every segment for defense in
+        // depth: a `C:` anywhere reshapes the joined path on Windows.
+        // (Thoát ổ đĩa (`C:` trong segment) chỉ quan trọng ở segment
+        // đầu — nhưng check mọi segment cho phòng vệ nhiều lớp.)
+        if seg.len() >= 2 && seg.as_bytes()[1] == b':' {
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Clone, Default)]
 pub struct DepsCache {
     /// Map: package_name → bundled JS content
@@ -132,11 +210,27 @@ impl DepsCache {
             return None;
         }
 
+        // Output selection (P1-2, fresh-context review 2026-09-15 — the
+        // sibling of the transpile-path bug fixed in vòng-11): with
+        // `write=false`, esbuild-rs may report the single output entry's
+        // path as `<stdout>` — a `find(ends_with(".js"))`-only filter
+        // matched NOTHING and the dep was served as EMPTY JS (proved
+        // red by dev_server_request_security.rs). Prefer a real `.js`
+        // output; with none, take the FIRST output — bundling one entry
+        // means the first output IS the bundle. Never default to empty
+        // while outputs exist.
+        // (Chọn output (P1-2 — bug anh em của đường transpile đã sửa
+        // vòng-11): với `write=false`, esbuild-rs có thể báo path output
+        // đơn là `<stdout>` — filter chỉ `ends_with(".js")` khớp 0 và
+        // dep được phục vụ JS RỖNG (chứng minh đỏ). Ưu tiên `.js` thật;
+        // không có thì lấy output ĐẦU — bundle 1 entry nghĩa output đầu
+        // chính là bundle. Không mặc định rỗng khi còn output.)
         let js = result
             .output_files
             .as_slice()
             .iter()
             .find(|f| f.path.as_str().ends_with(".js"))
+            .or_else(|| result.output_files.as_slice().first())
             .map(|f| f.data.as_str().to_string())
             .unwrap_or_default();
 

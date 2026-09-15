@@ -8,11 +8,11 @@ use clap::Subcommand;
 pub enum TelemetryCmd {
     /// Show telemetry status (enabled/disabled)
     Status,
-    /// Show locally queued events (minh bạch — không gửi đi đâu)
+    /// Show locally queued events (transparent — events are never sent anywhere)
     Log,
-    /// Enable telemetry (env MAGICORE_TELEMETRY=1, persist tới ~/.config/magicore/env)
+    /// Enable telemetry (env MAGICORE_TELEMETRY=1, persists to ~/.config/magicore/env)
     On,
-    /// Disable telemetry (mặc định sẵn)
+    /// Disable telemetry (default state)
     Off,
 }
 

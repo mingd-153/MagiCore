@@ -20,43 +20,44 @@ use clap::Subcommand;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Sub-commands cho `mgc config`
+/// Sub-commands for `mgc config` (help text must stay English — RULE §7).
+/// Sub-commands cho `mgc config` (text help phải giữ tiếng Anh — RULE §7).
 #[derive(Subcommand, Debug, Clone)]
 pub enum ConfigCmd {
-    /// Lấy giá trị một key (ưu tiên: env → mgc.toml → .npmrc local → .npmrc user)
+    /// Get a key value (priority: env → mgc.toml → local .npmrc → user .npmrc)
     Get {
-        /// Tên key cần lấy
+        /// Key to read
         key: String,
     },
-    /// Ghi một key=value vào file cấu hình
+    /// Write a key=value pair to the config file
     Set {
-        /// Tên key
+        /// Key to set
         key: String,
-        /// Giá trị cần set
+        /// Value to set
         value: String,
-        /// Ghi vào mgc.toml thay vì .npmrc
+        /// Write to mgc.toml instead of .npmrc
         #[arg(long, help = "write to mgc.toml instead of .npmrc")]
         toml: bool,
     },
-    /// Xóa một key khỏi file cấu hình
+    /// Remove a key from the config file
     Delete {
-        /// Tên key cần xóa
+        /// Key to remove
         key: String,
-        /// Xóa từ mgc.toml thay vì .npmrc
+        /// Remove from mgc.toml instead of .npmrc
         #[arg(long, help = "remove from mgc.toml instead of .npmrc")]
         toml: bool,
     },
     /// Alias for delete
     Unset {
-        /// Tên key cần xóa
+        /// Key to remove
         key: String,
-        /// Xóa từ mgc.toml thay vì .npmrc
+        /// Remove from mgc.toml instead of .npmrc
         #[arg(long, help = "remove from mgc.toml instead of .npmrc")]
         toml: bool,
     },
-    /// Liệt kê tất cả cấu hình (hiện thị nguồn gốc)
+    /// List all config entries (shows the source of each)
     List {
-        /// Chỉ hiển thị config trong project (.npmrc local + mgc.toml)
+        /// Only show project-local config (.npmrc local + mgc.toml)
         #[arg(long, help = "only show project-local config")]
         local: bool,
     },

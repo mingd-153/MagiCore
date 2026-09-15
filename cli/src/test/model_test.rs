@@ -26,7 +26,9 @@ fn cas_import_roundtrip() {
     std::fs::write(&src, b"model-bytes-1234").unwrap();
     let (hash, len) = cas_import(&store, &src).unwrap();
     assert_eq!(len, 16);
-    assert!(store.contains(&mgc_store::cas::IntegrityHash::from_hash_str(&hash, false)));
+    let typed = mgc_store::cas::IntegrityHash::from_hash_str(&hash, false)
+        .expect("cas_import must return a valid blake3 hex digest");
+    assert!(store.contains(&typed));
 }
 
 #[test]

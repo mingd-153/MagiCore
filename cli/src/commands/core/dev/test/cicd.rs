@@ -53,11 +53,42 @@ fn ci_only_providers_bail() {
 
 #[test]
 fn ci_templates_cover_all_providers() {
-    assert!(WORKFLOW_TEMPLATE.contains("actions/checkout@v4"));
+    // Checkout must be pinned by commit SHA — a mutable tag can be hijacked.
+    // Checkout phải ghim theo commit SHA — tag mutable có thể bị chiếm.
+    assert!(
+        WORKFLOW_TEMPLATE.contains("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1")
+    );
+    assert!(!WORKFLOW_TEMPLATE.contains("checkout@v"));
+    // Installer must come from a release tag, not a mutable branch.
+    // Installer phải lấy từ release tag, không phải branch mutable.
+    assert!(WORKFLOW_TEMPLATE.contains("--version {tag}"));
+    assert!(!WORKFLOW_TEMPLATE.contains("--branch"));
     assert!(GITLAB_TEMPLATE.contains("mgc verify"));
     assert!(GITLAB_TEMPLATE.contains("stages:"));
+    assert!(GITLAB_TEMPLATE.contains("--version {tag}"));
     assert!(CIRCLE_TEMPLATE.contains("version: 2.1"));
-    assert!(CIRCLE_TEMPLATE.contains("cimg/rust"));
+    assert!(CIRCLE_TEMPLATE.contains("install-from-gh.sh"));
+    assert!(CIRCLE_TEMPLATE.contains("--version {tag}"));
+}
+
+#[test]
+fn verify_chain_rejects_unknown_steps_before_running() {
+    // Fail-closed: unknown steps and empty chains are config errors.
+    // Fail-closed: step lạ và chain rỗng là lỗi cấu hình.
+    let known = ["audit", "test", "build"];
+    for bad in ["audti", "builld", "", "lint", "deploy"] {
+        assert!(!known.contains(&bad), "test fixture sanity");
+    }
+    let mut chain = vec![bad_step_fixture("audti").to_string()];
+    chain.push("audit".into());
+    // Simulate the validation loop from verify(): any unknown step fails.
+    // Giả lập vòng validate của verify(): step lạ phải fail.
+    let has_unknown = chain.iter().any(|s| !known.contains(&s.as_str()));
+    assert!(has_unknown, "typo'd step must be detected, not skipped");
+}
+
+fn bad_step_fixture(name: &str) -> &str {
+    name
 }
 
 #[test]

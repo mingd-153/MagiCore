@@ -434,6 +434,18 @@ pub fn cicd_project_not_detected() -> Error {
     )
 }
 
+pub fn cicd_verify_unknown_step(step: &str) -> Error {
+    anyhow!(
+        "mgc.toml [cicd] verify contains unknown step '{step}' — allowed steps: audit, test, build. Fix the config; verify must never skip unknown steps silently."
+    )
+}
+
+pub fn cicd_verify_empty_chain() -> Error {
+    anyhow!(
+        "mgc.toml [cicd] verify chain is empty — a verify run with zero steps cannot prove anything. Add at least one of: audit, test, build."
+    )
+}
+
 // ===== dev/clo.rs =====
 
 pub fn deploy_not_implemented(cloud: &str) -> Error {
@@ -1033,23 +1045,11 @@ pub fn dir_missing(dir: &str, cause: String) -> Error {
 }
 
 pub fn runtime_dangerous_flag_rejected(runtime: &str, flag: &str) -> Error {
-    anyhow!(
-        "Rejected dangerous {} flag: {}. Use project scripts only.\n\
-         Bị từ chối flag {} nguy hiểm: {}. Chỉ dùng project scripts.",
-        runtime,
-        flag,
-        runtime,
-        flag
-    )
+    anyhow!("Rejected dangerous {runtime} flag: {flag}. Use project scripts only.")
 }
 
 pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) -> Error {
     anyhow!(
-        "Rejected dangerous {} permission: {}. Explicitly allow in deno.json tasks if needed.\n\
-         Bị từ chối quyền {} nguy hiểm: {}. Cho phép rõ ràng trong deno.json tasks nếu cần.",
-        runtime,
-        permission,
-        runtime,
-        permission
+        "Rejected dangerous {runtime} permission: {permission}. Explicitly allow in deno.json tasks if needed."
     )
 }

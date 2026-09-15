@@ -16,20 +16,22 @@ pub fn ci_generate() -> Result<()> {
             let dir = root.join(".github").join("workflows");
             std::fs::create_dir_all(&dir)?;
             let path = dir.join("ci.yml");
-            let workflow = WORKFLOW_TEMPLATE.replace("{name}", "CI");
+            let workflow = WORKFLOW_TEMPLATE
+                .replace("{name}", "CI")
+                .replace("{tag}", MGC_RELEASE_TAG);
             std::fs::write(&path, workflow)?;
             mgc_ui::success(&format!("CI workflow generated: {}", path.display()));
         }
         mgc_cicd_adapter::CicdProvider::Gitlab => {
             let path = root.join(".gitlab-ci.yml");
-            std::fs::write(&path, GITLAB_TEMPLATE)?;
+            std::fs::write(&path, GITLAB_TEMPLATE.replace("{tag}", MGC_RELEASE_TAG))?;
             mgc_ui::success(&format!("GitLab CI generated: {}", path.display()));
         }
         mgc_cicd_adapter::CicdProvider::CircleCi => {
             let dir = root.join(".circleci");
             std::fs::create_dir_all(&dir)?;
             let path = dir.join("config.yml");
-            std::fs::write(&path, CIRCLE_TEMPLATE)?;
+            std::fs::write(&path, CIRCLE_TEMPLATE.replace("{tag}", MGC_RELEASE_TAG))?;
             mgc_ui::success(&format!("CircleCI config generated: {}", path.display()));
         }
         other => {
@@ -38,6 +40,14 @@ pub fn ci_generate() -> Result<()> {
     }
     Ok(())
 }
+
+/// Install source used by generated CI templates: the latest GitHub Release
+/// instead of a mutable branch. Update this constant on every release tag.
+/// (Pinned actions + release-tagged install: Tech Lead P0-3, 2026-09-12.)
+///
+/// Nguồn cài đặt cho template CI sinh ra: GitHub Release mới nhất thay vì
+/// branch mutable. Cập nhật hằng số này ở mỗi release tag.
+const MGC_RELEASE_TAG: &str = "v1.1.0-rc.3";
 
 const WORKFLOW_TEMPLATE: &str = r#"name: {name}
 
@@ -49,14 +59,16 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install MagiCore
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install MagiCore (release binary)
         run: |
-          rustup toolchain install stable --profile minimal
-          cargo install --git https://github.com/mingd-153/MagiCore --branch phase-4 mgc --locked
+          curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --version {tag}
+          mgc --version
       - name: Install dependencies
         run: mgc install
-      - name: Verify
+      - name: Verify (strict audit in CI)
+        env:
+          MGC_AUDIT_STRICT: "1"
         run: mgc verify
 "#;
 
@@ -65,26 +77,31 @@ const GITLAB_TEMPLATE: &str = r#"stages:
 
 ci:
   stage: ci
-  image: rust:1.86
+  image: rust:latest
   before_script:
-    - rustup toolchain install stable --profile minimal
-    - cargo install --git https://github.com/mingd-153/MagiCore --branch phase-4 mgc --locked
+    - curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --version {tag}
+    - mgc --version
   script:
     - mgc install
-    - mgc verify
+    - MGC_AUDIT_STRICT=1 mgc verify
 "#;
 
 const CIRCLE_TEMPLATE: &str = r#"version: 2.1
 jobs:
   ci:
     docker:
-      - image: cimg/rust:1.86
+      - image: cimg/base:stable
     steps:
       - checkout
-      - run: rustup toolchain install stable --profile minimal
-      - run: cargo install --git https://github.com/mingd-153/MagiCore --branch phase-4 mgc --locked
+      - run:
+          name: Install MagiCore (release binary)
+          command: |
+            curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash -s -- --version {tag}
+            mgc --version
       - run: mgc install
-      - run: mgc verify
+      - run:
+          name: Verify (strict audit)
+          command: MGC_AUDIT_STRICT=1 mgc verify
 workflows:
   version: 2
   ci:
@@ -94,6 +111,14 @@ workflows:
 
 /// `mgc verify` — chạy chain theo adapter: audit (web P1) → test → build (07 §4).
 /// 1 bước fail → dừng, báo rõ project (workspace recursive P2 — chỉ cwd P1).
+///
+/// Fail-closed contract (Tech Lead P0-3, 2026-09-12):
+/// - unknown step trong chain → ERROR (không skip im lặng);
+/// - audit luôn chạy strict trong CI (MGC_AUDIT_STRICT=1) — exit 2 nếu UNVERIFIED;
+/// - không bước nào được bỏ qua rồi vẫn in "Verify chain OK".
+///
+/// Hợp đồng fail-closed: step lạ trong chain → lỗi; audit strict trong CI;
+/// không được bỏ step rồi vẫn báo thành công.
 pub async fn verify() -> Result<()> {
     let root = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     mgc_ui::info(&format!("[verify] project: {}", root.display()));
@@ -101,19 +126,39 @@ pub async fn verify() -> Result<()> {
     let chain = verify_chain(&root)?;
     mgc_ui::info(&format!("[verify] chain: {}", chain.join(" → ")));
 
+    // Validate the whole chain BEFORE running anything — a typo'd step name
+    // fails up front instead of being skipped mid-run.
+    // Validate toàn bộ chain TRƯỚC khi chạy — tên step gõ sai fail ngay từ
+    // đầu thay vì bị bỏ qua giữa chừng.
+    const KNOWN_STEPS: [&str; 3] = ["audit", "test", "build"];
+    for step in &chain {
+        if !KNOWN_STEPS.contains(&step.as_str()) {
+            return Err(crate::error::cicd_verify_unknown_step(step));
+        }
+    }
+    if chain.is_empty() {
+        return Err(crate::error::cicd_verify_empty_chain());
+    }
+
     let core = mgc_config::project::ProjectConfig::load(&root)
         .ok()
         .flatten()
         .map(|cfg| cfg.ecosystem)
         .unwrap_or_default();
 
+    // Note: audit strictness is enforced inside the audit runner — CI
+    // environments (CI=true) default to strict, so an UNVERIFIED audit can
+    // never pass this chain silently. No env mutation needed here.
+    // Ghi chú: strict do audit runner tự thực thi — môi trường CI (CI=true)
+    // mặc định strict nên UNVERIFIED không thể lọt chain. Không cần set env.
+
     for step in &chain {
         match step.as_str() {
             "audit" => {
-                // Real audit for every core — the shared pipeline prints an
-                // UNVERIFIED warning when the core's scanner is unavailable.
-                // Audit thật cho mọi core — pipeline chung tự in cảnh báo
-                // UNVERIFIED khi scanner của core chưa có.
+                // Real audit for every core — strict mode (CI) fails on an
+                // UNVERIFIED result; local mode warns loudly (escape hatch).
+                // Audit thật cho mọi core — strict (CI) fail khi UNVERIFIED;
+                // local cảnh báo to (escape hatch).
                 crate::commands::audit::run(None, false, None).await?;
             }
             "test" => run_test_step(&root, &core).await?,
@@ -126,7 +171,9 @@ pub async fn verify() -> Result<()> {
                     crate::commands::build::run(None, None, None).await?;
                 }
             }
-            other => mgc_ui::warning(&format!("unknown verify step: '{other}' — skipping")),
+            // Unreachable (chain validated above) — kept fail-closed anyway.
+            // Không thể tới đây (chain đã validate) — vẫn giữ fail-closed.
+            other => return Err(crate::error::cicd_verify_unknown_step(other)),
         }
     }
     mgc_ui::success("Verify chain OK");

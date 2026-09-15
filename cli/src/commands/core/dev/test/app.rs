@@ -18,13 +18,16 @@ fn detect_target_platform_returns_valid_variant() {
 #[cfg(target_os = "macos")]
 #[test]
 fn find_ios_simulator_returns_some_or_none_without_panic() {
-    // Trên macOS: không panic; nếu Xcode có → Some(udid), không → None
+    // On macOS: no panic; with Xcode → Some(udid), without → None.
+    // Trên macOS: không panic; có Xcode → Some(udid), không → None.
     let result = find_ios_simulator();
     if let Some(ref udid) = result {
-        // UDID phải dạng hex-dash (8-4-4-4-12)
-        assert!(udid.len() >= 8, "UDID quá ngắn: {udid}");
+        // UDID must be hex-dash form (8-4-4-4-12).
+        // UDID phải dạng hex-dash (8-4-4-4-12).
+        assert!(udid.len() >= 8, "UDID too short: {udid}");
     }
-    // None cũng hợp lệ (Xcode không cài)
+    // None is also valid (Xcode not installed).
+    // None cũng hợp lệ (không cài Xcode).
 }
 
 #[cfg(not(target_os = "macos"))]

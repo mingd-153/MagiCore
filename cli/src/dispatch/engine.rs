@@ -292,7 +292,7 @@ fn reject_unsupported_recursive(command: Option<&Commands>) -> Result<()> {
 
 fn reject_unsupported_filter(command: &Commands) -> Result<()> {
     bail!(
-        "--filter is not wired into '{}' yet (publish recursive pipeline chưa nhận filter). Refusing a silent no-op.",
+        "--filter is not wired into '{}' yet (the publish recursive pipeline does not accept filter). Refusing a silent no-op.",
         command_name(command)
     )
 }

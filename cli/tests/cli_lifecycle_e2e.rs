@@ -11,26 +11,12 @@ use tempfile::TempDir;
 
 /// Find mgc binary in target/debug or target/release
 fn find_mgc_binary() -> String {
-    // Tests run from workspace root, but env::current_dir() might differ
-    // Use CARGO_MANIFEST_DIR to find workspace root
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let cli_dir = std::path::PathBuf::from(manifest_dir);
-    let workspace_root = cli_dir.parent().expect("No parent dir");
-
-    // Try debug first (test build), then release
-    let debug = workspace_root.join("target/debug/mgc");
-    let release = workspace_root.join("target/release/mgc");
-
-    if debug.exists() {
-        debug.to_str().unwrap().to_string()
-    } else if release.exists() {
-        release.to_str().unwrap().to_string()
-    } else {
-        panic!(
-            "mgc binary not found at {:?} or {:?}. Run: cargo build -p mgc",
-            debug, release
-        );
-    }
+    // CARGO_BIN_EXE_mgc: cargo-provided path to the JUST-BUILT binary —
+    // immune to stale target/debug/mgc picking up an older build.
+    // CARGO_BIN_EXE_mgc: cargo trỏ tới binary VỪA BUILD — tránh lẫm
+    // target/debug/mgc cũ là binary lỗi thời.
+    std::env::var("CARGO_BIN_EXE_mgc")
+        .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`")
 }
 
 #[test]

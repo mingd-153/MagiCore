@@ -84,16 +84,14 @@ fn test_archive_download_and_extract() {
         .to_path_buf();
 
     // Find built binary
-    let binary_path = if workspace_root.join("target/debug/mgc").exists() {
-        workspace_root.join("target/debug/mgc")
-    } else if workspace_root.join("target/release/mgc").exists() {
-        workspace_root.join("target/release/mgc")
-    } else {
-        panic!(
-            "Binary not found. Run: cargo build -p mgc\n\
-            P0.3: This test requires a built binary to verify distribution"
-        );
-    };
+    // CARGO_BIN_EXE_mgc: cargo-provided path to the JUST-BUILT binary —
+    // immune to stale target/debug/mgc picking up an older build.
+    // CARGO_BIN_EXE_mgc: cargo trỏ tới binary VỪA BUILD — tránh lẫm
+    // target/debug/mgc cũ là binary lỗi thời.
+    let binary_path = std::path::PathBuf::from(
+        std::env::var("CARGO_BIN_EXE_mgc")
+            .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`"),
+    );
 
     println!("Found binary: {:?}", binary_path);
 
@@ -175,20 +173,12 @@ fn test_archive_download_and_extract() {
 #[test]
 fn test_binary_version_and_help() {
     // BASIC: Verify built binary has correct version and help
-
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let workspace_root = std::path::PathBuf::from(&manifest_dir)
-        .parent()
-        .unwrap()
-        .to_path_buf();
-
-    let binary_path = if workspace_root.join("target/debug/mgc").exists() {
-        workspace_root.join("target/debug/mgc")
-    } else if workspace_root.join("target/release/mgc").exists() {
-        workspace_root.join("target/release/mgc")
-    } else {
-        panic!("mgc binary not found. Run: cargo build -p mgc");
-    };
+    // CARGO_BIN_EXE_mgc: cargo-provided path to the JUST-BUILT binary.
+    // CARGO_BIN_EXE_mgc: cargo trỏ tới binary VỪA BUILD.
+    let binary_path = std::path::PathBuf::from(
+        std::env::var("CARGO_BIN_EXE_mgc")
+            .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`"),
+    );
 
     // Test --version
     let version_output = Command::new(&binary_path)
@@ -232,17 +222,14 @@ fn test_binary_version_and_help() {
 fn test_binary_basic_commands() {
     // BASIC: Test that core commands don't crash
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let workspace_root = std::path::PathBuf::from(&manifest_dir)
-        .parent()
-        .unwrap()
-        .to_path_buf();
-
-    let binary_path = if workspace_root.join("target/debug/mgc").exists() {
-        workspace_root.join("target/debug/mgc")
-    } else {
-        workspace_root.join("target/release/mgc")
-    };
+    // CARGO_BIN_EXE_mgc: cargo-provided path to the JUST-BUILT binary —
+    // immune to stale target/debug/mgc picking up an older build.
+    // CARGO_BIN_EXE_mgc: cargo trỏ tới binary VỪA BUILD — tránh lẫm
+    // target/debug/mgc cũ là binary lỗi thời.
+    let binary_path = std::path::PathBuf::from(
+        std::env::var("CARGO_BIN_EXE_mgc")
+            .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`"),
+    );
 
     // Test doctor
     let doctor_output = Command::new(&binary_path)
@@ -278,22 +265,14 @@ fn test_sha256_checksum_verification() {
 
     println!("\n=== SHA256 Checksum Test (P0.3 REAL) ===");
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let workspace_root = std::path::PathBuf::from(&manifest_dir)
-        .parent()
-        .unwrap()
-        .to_path_buf();
-
-    let binary_path = if workspace_root.join("target/debug/mgc").exists() {
-        workspace_root.join("target/debug/mgc")
-    } else if workspace_root.join("target/release/mgc").exists() {
-        workspace_root.join("target/release/mgc")
-    } else {
-        panic!(
-            "Binary not found. Run: cargo build -p mgc\n\
-            P0.3: This test verifies checksum mechanism"
-        );
-    };
+    // CARGO_BIN_EXE_mgc: cargo-provided path to the JUST-BUILT binary —
+    // immune to stale target/debug/mgc picking up an older build.
+    // CARGO_BIN_EXE_mgc: cargo trỏ tới binary VỪA BUILD — tránh lẫm
+    // target/debug/mgc cũ là binary lỗi thời.
+    let binary_path = std::path::PathBuf::from(
+        std::env::var("CARGO_BIN_EXE_mgc")
+            .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`"),
+    );
 
     println!("Testing binary: {:?}", binary_path);
 

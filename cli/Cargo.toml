@@ -86,6 +86,9 @@ futures-util = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }
 chrono = { workspace = true }
+# PID liveness probe for the doctor's lease GC (Gate 11-B) — kill(pid,0).
+# (Thăm dò pid còn sống cho GC lease của doctor.)
+libc = { workspace = true }
 
 # Import rewriting + hashing
 regex = { workspace = true }
@@ -122,6 +125,50 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 reqwest = { workspace = true }
 mockito = { workspace = true }
+rand = { workspace = true }
+# WS HMR evidence (Gate 11 runtime, vòng-11): real WebSocket handshake
+# + update-event test for the dev server.
+# (Bằng chứng WS HMR: test handshake WebSocket thật + nhận update-event
+# cho dev server.)
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+# Doctor-GC E2E (P2-1/P2-2, fresh-context review 2026-09-15): the race
+# test plants hand-crafted crashed staging rows + holds the REAL
+# ProjectInstallLock across a repair run — needs the store crate and
+# raw rusqlite (same version as the workspace) for the surgery.
+# (E2E GC doctor (P2-1/P2-2): test race cắm row staging đứt dựng tay +
+# giữ ProjectInstallLock THẬT xuyên suốt lượt repair — cần crate store
+# và rusqlite thô (cùng phiên bản workspace) cho phẫu thuật.)
+mgc-store = { workspace = true }
+rusqlite = { workspace = true }
 
 [lints]
 workspace = true
+
+# Gate 11-D2 (2026-09-15): fault/stress integration targets declared
+# EXPLICITLY so the CI fault-matrix job references real, reviewed targets —
+# a deleted or renamed file makes `cargo test --test <name>` fail loudly
+# instead of silently disappearing from auto-discovery.
+# (Gate 11-D2: khai báo TƯỜNG MINH các target fault/stress để job
+# fault-matrix trong CI tham chiếu target thật đã review — file bị xoá/
+# đổi tên sẽ làm `cargo test --test <name>` fail ầm ĩ thay vì lặng lẽ
+# biến mất khỏi auto-discovery.)
+[[test]]
+name = "kill_injection_matrix"
+path = "tests/kill_injection_matrix.rs"
+
+[[test]]
+name = "stress_shared_store_matrix"
+path = "tests/stress_shared_store_matrix.rs"
+
+[[test]]
+name = "install_process_race"
+path = "tests/install_process_race.rs"
+
+[[test]]
+name = "stress_64_process_race"
+path = "tests/stress_64_process_race.rs"
+
+[[test]]
+name = "disk_fault_injection_e2e"
+path = "tests/disk_fault_injection_e2e.rs"

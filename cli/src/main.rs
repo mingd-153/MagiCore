@@ -21,7 +21,7 @@ mod wizard;
 #[command(about = "MagiCore - Universal Package Manager", long_about = None)]
 #[command(version)]
 pub(crate) struct Cli {
-    /// Target core (web, game, ai, clo, cicd, iot, app, lib)
+    /// Target core (web, game, ai, clo, cicd, iot, app, lib, hardware)
     #[arg(global = true, long)]
     core: Option<String>,
 
