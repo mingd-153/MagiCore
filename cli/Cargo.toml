@@ -79,7 +79,13 @@ tower-http = { workspace = true }
 notify = { workspace = true }
 
 # Bundler
-# esbuild-rs = { workspace = true }  # REMOVED: requires Go compiler
+# esbuild-rs stays ACTIVE: the P0-3 exact pin (workspace Cargo.toml) is the
+# Gate 11 compiler-identity fix, and the RC CI lane is green with it
+# (runners ship Go; see GOARCH/CGO release commits 2026-09-12). Removing it
+# here would silently disable the native bundler.
+# (esbuild-rs GIỮ nguyên: pin P0-3 là fix danh tính compiler Gate 11, CI RC
+# vẫn xanh với nó — runner có sẵn Go. Bỏ nó ở đây sẽ tắt bundler native.)
+esbuild-rs = { workspace = true }
 glob = { workspace = true }
 mime_guess = { workspace = true }
 # Removed: lightningcss not used, pulls rkyv 0.7.46 (RUSTSEC-2026-0235)

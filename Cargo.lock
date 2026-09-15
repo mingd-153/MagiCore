@@ -1155,6 +1155,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "esbuild-rs"
+version = "0.13.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "516a2353dabd00559c2f874993ad4fce114beefb27c2482643e2888888d99b93"
+dependencies = [
+ "lazy_static",
+ "libc",
+ "memorymodule-rs",
+]
+
+[[package]]
 name = "etcetera"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2371,6 +2382,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "memorymodule-rs"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c4ead5a227d30610a2dee54d4121a79184072f94865506420e535a778b8a681"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "mgc"
 version = "1.1.0-rc.3"
 dependencies = [
@@ -2384,6 +2405,7 @@ dependencies = [
  "colored 2.2.0",
  "crossterm 0.28.1",
  "dirs",
+ "esbuild-rs",
  "flate2",
  "futures-util",
  "glob",
