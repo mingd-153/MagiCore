@@ -399,6 +399,163 @@ LANES = [
             "materialize": "flutter",        # flutter owns the tree
         },
     },
+    # ===== Evidence-only lanes (P0-6, Tech Lead 2026-09-15) =====
+    # Five lanes RECORD evidence but NEVER gate a release. Their external
+    # toolchains are often absent on dev machines and CI runners — when a
+    # probe fails, EVERY dimension is recorded as `unverified` (honest
+    # absence, never a pass, never a silent skip) and the verdict becomes
+    # `evidence-unverified`. The JSON carries `"evidence_only": true` and
+    # `"gate_role": "evidence-only"` so no consumer can mistake them for
+    # release-blocking lanes. Owner taxonomy is STILL declared (the Gate
+    # 11-C owner gate stays intact — evidence-only is not a metadata
+    # bypass).
+    # (Năm lane CHỈ-GHI-BẰNG-CHỨNG, KHÔNG bao giờ gate release. Toolchain
+    # ngoài của chúng thường vắng trên máy dev và runner CI — probe hụt thì
+    # MỌI dimension ghi `unverified` (vắng mặt trung thực, không phải pass,
+    # không skip âm thầm) và verdict thành `evidence-unverified`. JSON mang
+    # `"evidence_only": true` + `"gate_role": "evidence-only"` để không
+    # consumer nào đọc nhầm thành lane chặn release. Taxonomy owner VẪN
+    # khai (cổng owner Gate 11-C giữ nguyên — evidence-only không phải
+    # lối thoát khỏi metadata).)
+    {
+        "core": "game",
+        "language": "rust",
+        "evidence_only": True,
+        # bevy lane: cargo is the whole toolchain (probe), the scaffold
+        # writes a Cargo.toml (marker "rust" already proves it).
+        # (lane bevy: cargo là toàn bộ toolchain (probe), scaffold ghi
+        # Cargo.toml — marker "rust" chứng minh sẵn.)
+        "toolchain_probes": ["cargo"],
+        "scaffold": ["create-game", "bevy", "test-game"],
+        "steps": [
+            ("install", ["install"]),
+            ("test", ["test"]),
+            ("build", ["build"]),
+        ],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "plain-delegation",
+        "owner_by_operation": {
+            "resolve": "cargo",
+            "lock": "cargo",
+            "fetch": "cargo",
+            "store": "cargo-target-cache",
+            "materialize": "cargo",
+        },
+    },
+    {
+        "core": "iot",
+        "language": "rust",
+        "evidence_only": True,
+        # esp32-rust lane: scaffold emits an embedded-rust Cargo.toml; the
+        # full cross toolchain (xtensa/riscv target) may still be missing —
+        # later steps fail honestly if so.
+        # (lane esp32-rust: scaffold sinh embedded-rust Cargo.toml; cross
+        # toolchain đầy đủ (target xtensa/riscv) có thể vẫn thiếu — các
+        # bước sau fail trung thực nếu vậy.)
+        "toolchain_probes": ["cargo"],
+        "scaffold": ["create-iot", "esp32-rust", "test-iot"],
+        "steps": [
+            ("install", ["install"]),
+            ("test", ["test"]),
+            ("build", ["build"]),
+        ],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "plain-delegation",
+        "owner_by_operation": {
+            "resolve": "cargo",
+            "lock": "cargo",
+            "fetch": "cargo",
+            "store": "cargo-target-cache",
+            "materialize": "cargo",
+        },
+    },
+    {
+        "core": "clo",
+        "language": "terraform",
+        "evidence_only": True,
+        # cloud/terraform lane: terraform CLI is external and usually absent
+        # on runners — the probe records unverified instead of faking a run.
+        # (lane cloud/terraform: CLI terraform là bên ngoài, thường vắng
+        # trên runner — probe ghi unverified thay vì giả một lần chạy.)
+        "toolchain_probes": ["terraform"],
+        "scaffold": ["create-clo", "terraform", "test-cloud"],
+        "steps": [
+            ("install", ["install"]),
+            ("test", ["test"]),
+            ("build", ["build"]),
+        ],
+        "delegated": ["install"],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "plain-delegation",
+        "owner_by_operation": {
+            "resolve": "terraform",
+            "lock": "terraform",           # .terraform.lock.hcl
+            "fetch": "terraform",          # terraform init downloads providers
+            "store": "terraform-provider-cache",
+            "materialize": "terraform",
+        },
+    },
+    {
+        "core": "hardware",
+        "language": "benchmark",
+        "evidence_only": True,
+        # hardware lane: the core's frameworks are `optimizer`/`bench` —
+        # mgc-native benchmark tooling, no FPGA vendor toolchain exists in
+        # this core yet. No external probe (mgc owns the harness); the
+        # `fpga` toolchain question stays open and honestly unclaimed.
+        # (lane hardware: framework của core là `optimizer`/`bench` — công
+        # cụ benchmark của mgc, CHƯA có toolchain FPGA vendor nào ở core
+        # này. Không probe ngoài (mgc giữ harness); câu hỏi toolchain `fpga`
+        # còn mở và trung thực không claim.)
+        "toolchain_probes": [],
+        "scaffold": ["create-hardware", "bench", "test-hw"],
+        "steps": [
+            ("install", ["install"]),
+            ("test", ["test"]),
+            ("build", ["build"]),
+        ],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "native-engine",
+        "owner_by_operation": {
+            "resolve": "mgc",
+            "lock": "mgc",
+            "fetch": "mgc",
+            "store": "magicore-store",
+            "materialize": "mgc",
+        },
+    },
+    {
+        "core": "cicd",
+        "language": "github-actions",
+        "evidence_only": True,
+        # github-actions lane: the scaffold writes .github/workflows/ci.yml
+        # (mgc-native file generation, marker below); lifecycle install/test/
+        # build steps record what actually happens today — evidence, not a
+        # gate.
+        # (lane github-actions: scaffold ghi .github/workflows/ci.yml (sinh
+        # file bởi mgc — marker dưới); các bước install/test/build ghi đúng
+        # cái xảy ra hôm nay — bằng chứng, không phải gate.)
+        "toolchain_probes": [],
+        "scaffold": ["create-cicd", "github-actions", "test-cicd"],
+        "steps": [
+            ("install", ["install"]),
+            ("test", ["test"]),
+            ("build", ["build"]),
+        ],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "native-engine",
+        "owner_by_operation": {
+            "resolve": "mgc",
+            "lock": "mgc",
+            "fetch": "mgc",
+            "store": "magicore-store",
+            "materialize": "mgc",
+        },
+    },
 ]
 
 # Binary step timeout (seconds) — overridable via MGC_LIFECYCLE_STEP_TIMEOUT.
@@ -453,6 +610,17 @@ SCAFFOLD_MARKERS = {
     "dotnet": ["*.csproj", "*.sln"],
     "javascript": ["package.json"],
     "flutter": ["pubspec.yaml"],
+    # Evidence-only lane markers (P0-6): the file that PROVES the scaffold
+    # produced the right artifact for these lanes.
+    # (Marker lane evidence-only (P0-6): file CHỨNG MINH scaffold sinh đúng
+    # artifact cho các lane này.)
+    "terraform": ["main.tf"],
+    "github-actions": [".github/workflows/ci.yml"],
+    # `benchmark` (hardware lane) has no manifest file — the language falls
+    # into the "cannot verify, do not guess" path of
+    # scaffold_language_matches.
+    # (`benchmark` (lane hardware) không có file manifest — ngôn ngữ này rơi
+    # vào nhánh "không verify được, không đoán" của scaffold_language_matches.)
 }
 
 
@@ -939,6 +1107,25 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     sandbox = tempfile.mkdtemp(prefix=f"mgc-lc-{lane['core']}-{lane['language']}-")
     dims: dict[str, str] = {}
     detail = {"sandbox": sandbox}
+
+    # Evidence-only lanes may depend on an external toolchain that is often
+    # absent (terraform, cross rust targets, ...). Probe BEFORE the
+    # lifecycle: a missing tool records EVERY dimension as `unverified` —
+    # honest absence, never a pass, never a silent skip (P0-6).
+    # (Lane evidence-only có thể phụ thuộc toolchain ngoài thường vắng
+    # (terraform, cross rust target, ...). Probe TRƯỚC lifecycle: tool
+    # thiếu thì MỌI dimension ghi `unverified` — vắng mặt trung thực,
+    # không phải pass, không skip âm thầm (P0-6).)
+    for probe_cmd in lane.get("toolchain_probes") or []:
+        if shutil.which(probe_cmd) is None:
+            dims = {dim: STATUS_UNVERIFIED for dim in ALL_DIMENSIONS}
+            detail["toolchain_probe"] = (
+                f"toolchain '{probe_cmd}' not found on PATH — "
+                f"all dimensions recorded as unverified (P0-6 evidence-only lane)"
+            )
+            shutil.rmtree(sandbox, ignore_errors=True)
+            return {"dims": dims, "detail": detail, "toolchain_available": False}
+
     def run_step(argv: list[str], subdir: str = "") -> tuple[int, str]:
         # Steps run INSIDE the scaffolded project (cwd = sandbox/<name>)
         # — install/test/build belong to the project, not the sandbox
@@ -1584,7 +1771,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         dims.setdefault(dim, STATUS_UNSUPPORTED)
 
     shutil.rmtree(sandbox, ignore_errors=True)
-    return {"dims": dims, "detail": detail}
+    return {"dims": dims, "detail": detail, "toolchain_available": True}
 
 
 def main() -> int:
@@ -1647,6 +1834,18 @@ def main() -> int:
             "language": lane["language"],
             "dimensions": r["dims"],
             "required_dimensions": lane["required_dims"],
+            # P0-6 (Tech Lead 2026-09-15): lanes are SPLIT by gate role —
+            # `release-blocking` lanes gate the RC, `evidence-only` lanes
+            # record what the ecosystem does today and NEVER gate. The
+            # machine-readable split means a consumer never has to guess
+            # from lane names.
+            # (P0-6: lane TÁCH theo vai trò gate — lane `release-blocking`
+            # gate RC, lane `evidence-only` chỉ ghi hệ sinh thái hôm nay và
+            # KHÔNG BAO GIỜ gate. Tách máy-đọc-được để consumer không phải
+            # đoán từ tên lane.)
+            "evidence_only": bool(lane.get("evidence_only")),
+            "gate_role": "evidence-only" if lane.get("evidence_only") else "release-blocking",
+            "toolchain_available": r.get("toolchain_available"),
             # Honest dimension rename (P0-mới-2): lanes whose install is
             # proven against a lane-injected fixture (not the template's
             # own dependency set) record that boundary in the dimension
@@ -1725,6 +1924,16 @@ def main() -> int:
         required = r.pop("required_dimensions")
         native_pm_delegated = r.get("native_pm_delegated", [])
         install_owner = r.get("install_owner", "plain-delegation")
+        # P0-6: an evidence-only lane whose external toolchain is absent
+        # gets the honest `evidence-unverified` verdict — it neither passes
+        # nor fails, it records an unprobed environment (never a gate).
+        # (P0-6: lane evidence-only thiếu toolchain ngoài nhận verdict
+        # trung thực `evidence-unverified` — không pass, không fail, ghi
+        # môi trường chưa probe (không bao giờ gate).)
+        if not r.get("toolchain_available", True):
+            r["verdict"] = "evidence-unverified"
+            r["native_pm_verdict"] = "not-native-pm"
+            continue
         r["verdict"] = (
             "orchestration-lifecycle-passed"
             if required and all(_satisfied(dims[d]) for d in required)
