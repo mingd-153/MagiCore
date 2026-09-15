@@ -911,8 +911,15 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, _package: &str) -> R
     if !lock_path.exists() {
         return Err(crate::error::lock_missing_install());
     }
+    // P0-4 (2026-09-15): `unimplemented!` here was a USER-REACHABLE panic —
+    // any `mgc why` against a v1 lockfile aborted the process. Fail closed
+    // with a typed error explaining the lockfile v2 migration instead.
+    // (P0-4: `unimplemented!` tại đây là panic CHẠM TỚI ĐƯỢC từ user —
+    // `mgc why` với lockfile v1 làm sập process. Fail-closed bằng typed
+    // error giải thích migration lockfile v2.)
+    //
     // Issue #4: Reimplement with lockfile v2 schema (no pkg.direct field)
-    unimplemented!("why command requires lockfile v2 migration")
+    Err(crate::error::why_requires_lockfile_v2())
 }
 
 fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {

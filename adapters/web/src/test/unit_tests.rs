@@ -44,7 +44,10 @@ async fn bind_test_listener() -> Option<TcpListener> {
 
 #[test]
 fn test_web_adapter() {
-    assert_eq!(WebAdapter::new().registry_url, "https://registry.npmjs.org");
+    assert_eq!(
+        WebAdapter::new().unwrap().registry_url,
+        "https://registry.npmjs.org"
+    );
 }
 
 /// Symlink-free temp dir (P0-A contract, 2026-09-13): the CAS now rejects
@@ -73,7 +76,7 @@ fn test_can_handle() {
     PackageJson::new("t".into(), "1.0.0".into())
         .save(&dir.path().join("package.json"))
         .unwrap();
-    assert!(WebAdapter::new().can_handle(dir.path()));
+    assert!(WebAdapter::new().unwrap().can_handle(dir.path()));
 }
 
 #[tokio::test]
@@ -94,7 +97,7 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
     )
     .unwrap();
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let name = PackageName::new("tailwindcss").unwrap();
     let range = VersionRange::parse("^3.4.0").unwrap();
     adapter
@@ -350,7 +353,7 @@ async fn test_install_materializes_node_modules_bin_links() {
         }],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -1194,7 +1197,7 @@ async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
     )
     .unwrap();
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
     assert!(manifest.find_dep("react").is_some());
     assert!(manifest.find_dep("@core/shared").is_none());
@@ -1244,7 +1247,7 @@ async fn test_list_prefers_lockfile_state() {
     )
     .unwrap();
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let installed = adapter.list(dir.path()).await.unwrap();
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].id.name_str(), "tailwindcss");
@@ -1324,7 +1327,7 @@ async fn test_install_multiple_packages_from_cache() {
         ],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -1414,7 +1417,7 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
         ],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -1486,7 +1489,7 @@ async fn test_install_uses_cache_when_registry_is_unavailable() {
         }],
     };
 
-    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into()).unwrap();
     let summary = adapter
         .install(
             &graph,
@@ -1789,7 +1792,7 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
         }],
     };
 
-    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into()).unwrap();
     let summary = adapter
         .install(
             &graph,
@@ -1857,7 +1860,7 @@ async fn test_install_materializes_scoped_package() {
         }],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -1993,7 +1996,7 @@ async fn test_install_materializes_nested_conflicting_dependency_versions() {
         ],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -2103,7 +2106,7 @@ async fn test_install_retries_flaky_tarball_download() {
         }],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await

@@ -366,6 +366,22 @@ pub fn lock_missing_install() -> Error {
     anyhow!("mgc.lock not found — run 'mgc install' first")
 }
 
+// P0-4 (2026-09-15): `mgc why` used to `unimplemented!()` (panic) when it
+// reached the v1 lockfile path. A user-reachable panic is never acceptable:
+// the command now returns a typed error that explains the lockfile v2
+// migration instead of aborting the process.
+// (P0-4: `mgc why` từng `unimplemented!()` (panic) khi đi tới nhánh
+// lockfile v1. Panic chạm tới được từ user là không chấp nhận được: lệnh
+// giờ trả typed error giải thích migration lockfile v2 thay vì abort.)
+pub fn why_requires_lockfile_v2() -> Error {
+    anyhow!(
+        "`mgc why` requires the lockfile v2 graph (dependency-reason lookup is not \
+         available in the legacy v1 mgc.lock schema). Re-run `mgc install` to \
+         regenerate mgc.lock in the v2 format; until that migration completes, \
+         `mgc why` stays unavailable for lockfiles written by the v1 installer."
+    )
+}
+
 pub fn local_path_not_found(path: &std::path::Path) -> Error {
     anyhow!("local package path not found: {}", path.display())
 }

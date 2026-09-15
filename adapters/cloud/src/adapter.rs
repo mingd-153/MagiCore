@@ -18,14 +18,22 @@ pub struct CloudAdapter {
     web: Option<mgc_web_adapter::WebAdapter>,
 }
 
-pub fn adapter_for(root: &Path) -> Option<CloudAdapter> {
-    let cloud_type = detect_type(root)?;
+// P0-4 (2026-09-15): fallible construction — WebAdapter::new() carries the
+// typed registry-URL guard now, so adapter_for propagates an Err instead of
+// aborting. "Not a cloud project" stays Ok(None) (an absence is not an error).
+// (P0-4: việc dựng adapter có thể lỗi — WebAdapter::new() mang guard URL
+// typed, adapter_for propagate Err thay vì abort. "Không phải project
+// cloud" vẫn là Ok(None) — vắng mặt không phải là lỗi.)
+pub fn adapter_for(root: &Path) -> anyhow::Result<Option<CloudAdapter>> {
+    let Some(cloud_type) = detect_type(root) else {
+        return Ok(None);
+    };
     let web = if matches!(cloud_type, CloudType::Cdk | CloudType::Pulumi) {
-        Some(mgc_web_adapter::WebAdapter::new())
+        Some(mgc_web_adapter::WebAdapter::new()?)
     } else {
         None
     };
-    Some(CloudAdapter { cloud_type, web })
+    Ok(Some(CloudAdapter { cloud_type, web }))
 }
 
 fn no_package_manager(cloud_type: CloudType) -> MgResult<()> {

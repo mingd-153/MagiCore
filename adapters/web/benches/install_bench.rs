@@ -91,7 +91,7 @@ fn bench_cached_install_single(c: &mut Criterion) {
             seed_cached_tarball(dir.path(), &pkg, 50);
 
             let graph = make_graph(std::slice::from_ref(&pkg));
-            let adapter = WebAdapter::new();
+            let adapter = WebAdapter::new().unwrap();
             adapter
                 .install(&graph, dir.path(), InstallOptions::default())
                 .await
@@ -125,7 +125,7 @@ fn bench_cached_install_multi(c: &mut Criterion) {
             }
 
             let graph = make_graph(&packages);
-            let adapter = WebAdapter::new();
+            let adapter = WebAdapter::new().unwrap();
             adapter.install(&graph, dir.path(), InstallOptions::default()).await.unwrap();
         })
     });
@@ -165,7 +165,7 @@ fn bench_cached_install_stress(c: &mut Criterion) {
             }
 
             let graph = make_graph(&packages);
-            let adapter = WebAdapter::new();
+            let adapter = WebAdapter::new().unwrap();
             adapter
                 .install(&graph, dir.path(), InstallOptions::default())
                 .await

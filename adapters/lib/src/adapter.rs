@@ -26,11 +26,16 @@ pub struct LibAdapter {
 }
 
 impl LibAdapter {
+    // P0-4 (2026-09-15): fallible construction — the TS lane builds a
+    // WebAdapter whose registry-URL guard is a typed error now, so these
+    // builders propagate Result instead of aborting.
+    // (P0-4: dựng adapter có thể lỗi — lane TS dựng WebAdapter với guard
+    // URL typed, builder propagate Result thay vì abort.)
     fn for_language(
         language: LibLanguage,
         registry_url: Option<String>,
         token: Option<String>,
-    ) -> Self {
+    ) -> Result<Self> {
         Self::for_language_with_chain(language, registry_url, token, &[])
     }
 
@@ -39,18 +44,20 @@ impl LibAdapter {
         registry_url: Option<String>,
         token: Option<String>,
         fallbacks: &[(String, Option<String>)],
-    ) -> Self {
+    ) -> Result<Self> {
         let web = if language == LibLanguage::Ts {
             Some(match (registry_url, token) {
-                (Some(url), token) => {
-                    mgc_web_adapter::WebAdapter::with_registry_chain(url, token, fallbacks.to_vec())
-                }
-                (None, _) => mgc_web_adapter::WebAdapter::new(),
+                (Some(url), token) => mgc_web_adapter::WebAdapter::with_registry_chain(
+                    url,
+                    token,
+                    fallbacks.to_vec(),
+                )?,
+                (None, _) => mgc_web_adapter::WebAdapter::new()?,
             })
         } else {
             None
         };
-        Self { language, web }
+        Ok(Self { language, web })
     }
 
     pub fn language(&self) -> &'static str {
@@ -435,13 +442,24 @@ impl PackageAdapter for LibAdapter {
     }
 }
 
+// P0-4 (2026-09-15): Result<Option<_>> — Ok(None) means "not a lib
+// project" (an absence, not an error); Err carries the typed
+// registry-URL failure from the TS/web lane.
+// (P0-4: Result<Option<_>> — Ok(None) nghĩa là "không phải project lib"
+// (vắng mặt, không phải lỗi); Err mang lỗi registry-URL typed từ lane TS/web.)
 pub fn adapter_for(
     root: &Path,
     registry_url: Option<String>,
     token: Option<String>,
-) -> Option<LibAdapter> {
-    let language = detect_language(root)?;
-    Some(LibAdapter::for_language(language, registry_url, token))
+) -> Result<Option<LibAdapter>> {
+    let Some(language) = detect_language(root) else {
+        return Ok(None);
+    };
+    Ok(Some(LibAdapter::for_language(
+        language,
+        registry_url,
+        token,
+    )?))
 }
 
 pub fn adapter_for_with_chain(
@@ -449,12 +467,14 @@ pub fn adapter_for_with_chain(
     registry_url: Option<String>,
     token: Option<String>,
     fallbacks: &[(String, Option<String>)],
-) -> Option<LibAdapter> {
-    let language = detect_language(root)?;
-    Some(LibAdapter::for_language_with_chain(
+) -> Result<Option<LibAdapter>> {
+    let Some(language) = detect_language(root) else {
+        return Ok(None);
+    };
+    Ok(Some(LibAdapter::for_language_with_chain(
         language,
         registry_url,
         token,
         fallbacks,
-    ))
+    )?))
 }

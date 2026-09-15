@@ -79,7 +79,7 @@ fn bench_cached_install_small(c: &mut Criterion) {
                 (dir, graph)
             },
             |(dir, graph)| async move {
-                let adapter = WebAdapter::new();
+                let adapter = WebAdapter::new().unwrap();
                 adapter
                     .install(&graph, dir.path(), InstallOptions::default())
                     .await
@@ -107,7 +107,7 @@ fn bench_cached_install_medium(c: &mut Criterion) {
                 (dir, graph)
             },
             |(dir, graph)| async move {
-                let adapter = WebAdapter::new();
+                let adapter = WebAdapter::new().unwrap();
                 adapter
                     .install(&graph, dir.path(), InstallOptions::default())
                     .await
@@ -137,7 +137,7 @@ fn bench_cached_install_real(c: &mut Criterion) {
                 (dir, graph)
             },
             |(dir, graph)| async move {
-                let adapter = WebAdapter::new();
+                let adapter = WebAdapter::new().unwrap();
                 adapter
                     .install(&graph, dir.path(), InstallOptions::default())
                     .await

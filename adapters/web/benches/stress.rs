@@ -130,7 +130,7 @@ fn bench_large_tree(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 install_all(&adapter, &graph, dir.path());
                 for pkg in &pkgs {
                     let f = dir
@@ -164,13 +164,13 @@ fn bench_concurrent_install(c: &mut Criterion) {
                 let dd1 = d1.clone();
                 let dd2 = d2.clone();
                 let h1 = std::thread::spawn(move || {
-                    let adapter = mgc_web_adapter::WebAdapter::new();
+                    let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(adapter.install(&g1, dd1.path(), InstallOptions::default()))
                         .unwrap();
                 });
                 let h2 = std::thread::spawn(move || {
-                    let adapter = mgc_web_adapter::WebAdapter::new();
+                    let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(adapter.install(&g2, dd2.path(), InstallOptions::default()))
                         .unwrap();
@@ -204,7 +204,7 @@ fn bench_corrupted_metadata(c: &mut Criterion) {
                 let pkg = pkg_id("test-pkg", "1.0.0");
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let graph = make_graph(&[pkg]);
                 (dir, graph, adapter)
             },
@@ -242,7 +242,7 @@ fn bench_deep_chain(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 install_all(&adapter, &graph, dir.path());
                 for pkg in &pkgs {
                     assert!(
@@ -290,7 +290,7 @@ fn bench_reinstall_changed(c: &mut Criterion) {
                 let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball_with_files(dir.path(), &pkg, &[("version.txt", b"v1")]);
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();
@@ -342,7 +342,7 @@ fn bench_mixed_integrity(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let result =
                     rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()));
@@ -374,7 +374,7 @@ fn bench_clean_reinstall(c: &mut Criterion) {
                 let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();

@@ -202,7 +202,8 @@ fn run_fixture_matrix(
             fixture.files_per_package,
         )?;
         with_isolated_shared_cache(rt, None, || {
-            let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+            let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into())
+                .expect("valid bench registry URL");
             let started = Instant::now();
             let summary = rt.block_on(adapter.install(
                 &fixture.graph,
@@ -229,7 +230,8 @@ fn run_fixture_matrix(
             fixture.files_per_package,
         )?;
         with_isolated_shared_cache(rt, None, || {
-            let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+            let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into())
+                .expect("valid bench registry URL");
             rt.block_on(adapter.install(
                 &fixture.graph,
                 dir.path(),
@@ -260,7 +262,8 @@ fn run_fixture_matrix(
         let dir = tempfile::tempdir()?;
         write_package_json(dir.path(), &fixture.direct_dependencies)?;
         with_isolated_shared_cache(rt, None, || {
-            let adapter = WebAdapter::with_registry(registry_fixture.registry_url.clone());
+            let adapter = WebAdapter::with_registry(registry_fixture.registry_url.clone())
+                .expect("valid bench registry URL");
             let started = Instant::now();
             let manifest = rt.block_on(adapter.parse_manifest(dir.path()))?;
             let graph = rt.block_on(adapter.resolve(&manifest))?;
@@ -291,7 +294,8 @@ fn run_fixture_matrix(
             let dir = tempfile::tempdir()?;
             write_package_json(dir.path(), &fixture.direct_dependencies)?;
             with_isolated_shared_cache(rt, Some(shared.path()), || {
-                let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+                let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into())
+                    .expect("valid bench registry URL");
                 let started = Instant::now();
                 let summary = rt.block_on(adapter.install(
                     &fixture.graph,
@@ -318,7 +322,8 @@ fn run_fixture_matrix(
             fixture.files_per_package,
         )?;
         with_isolated_shared_cache(rt, None, || {
-            let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+            let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into())
+                .expect("valid bench registry URL");
             rt.block_on(adapter.install(
                 &fixture.graph,
                 dir.path(),
@@ -353,7 +358,8 @@ fn run_fixture_matrix(
             let dir = tempfile::tempdir()?;
             write_package_json(dir.path(), &fixture.direct_dependencies)?;
             with_isolated_shared_cache(rt, Some(shared.path()), || {
-                let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+                let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into())
+                    .expect("valid bench registry URL");
                 for _ in 0..2 {
                     rt.block_on(adapter.install(
                         &fixture.graph,

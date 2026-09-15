@@ -9,7 +9,7 @@ const PKG_JSON: &str = r#"{"name":"cmp","version":"0.1.0","dependencies":{"lodas
 
 fn run_mg(_label: &str, dir: &std::path::Path) -> (Duration, Duration, Duration) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let adapter = mgc_web_adapter::WebAdapter::new();
+    let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
 
     let t0 = Instant::now();
     let manifest = rt.block_on(adapter.parse_manifest(dir)).unwrap();

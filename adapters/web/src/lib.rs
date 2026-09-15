@@ -93,32 +93,38 @@ pub struct WebAdapter {
 }
 
 impl WebAdapter {
-    pub fn new() -> Self {
-        let registry_url = effective_registry_url(DEFAULT_NPM_REGISTRY);
+    // P0-4 (2026-09-15): constructors are FALLIBLE now — the registry-URL
+    // guards are typed errors (fail-closed kept), so an invalid
+    // MAGICORE_WEB_REGISTRY_URL / unallowed registry surfaces as an Err
+    // instead of aborting the process.
+    // (P0-4: constructor giờ có thể lỗi — guard URL registry là typed
+    // error (vẫn fail-closed), URL sai sẽ trả Err thay vì abort process.)
+    pub fn new() -> Result<Self> {
+        let registry_url = effective_registry_url(DEFAULT_NPM_REGISTRY)?;
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, None, Vec::new(), shared_cache)
+        Ok(Self::build(registry_url, None, Vec::new(), shared_cache))
     }
 
-    pub fn with_registry(registry_url: String) -> Self {
-        let registry_url = effective_registry_url(&registry_url);
+    pub fn with_registry(registry_url: String) -> Result<Self> {
+        let registry_url = effective_registry_url(&registry_url)?;
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, None, Vec::new(), shared_cache)
+        Ok(Self::build(registry_url, None, Vec::new(), shared_cache))
     }
 
-    pub fn with_registry_and_token(registry_url: String, token: Option<String>) -> Self {
-        let registry_url = effective_registry_url(&registry_url);
+    pub fn with_registry_and_token(registry_url: String, token: Option<String>) -> Result<Self> {
+        let registry_url = effective_registry_url(&registry_url)?;
         let shared_cache = SharedWebCache::discover();
-        Self::build(registry_url, token, Vec::new(), shared_cache)
+        Ok(Self::build(registry_url, token, Vec::new(), shared_cache))
     }
 
     pub fn with_registry_chain(
         primary: String,
         token: Option<String>,
         fallbacks: Vec<(String, Option<String>)>,
-    ) -> Self {
-        let primary = effective_registry_url(&primary);
+    ) -> Result<Self> {
+        let primary = effective_registry_url(&primary)?;
         let shared_cache = SharedWebCache::discover();
-        Self::build(primary, token, fallbacks, shared_cache)
+        Ok(Self::build(primary, token, fallbacks, shared_cache))
     }
 
     fn build(
