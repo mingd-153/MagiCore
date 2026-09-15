@@ -39,6 +39,7 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         }
     }
     super::scaffold_and_save_metadata(&config)?;
+
     mgc_ui::success(
         "AI project created. Pull a model with `mgc model pull hf://...` or run `mgc dev`.",
     );

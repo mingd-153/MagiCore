@@ -79,9 +79,10 @@ tower-http = { workspace = true }
 notify = { workspace = true }
 
 # Bundler
-esbuild-rs = { workspace = true }
+# esbuild-rs = { workspace = true }  # REMOVED: requires Go compiler
 glob = { workspace = true }
 mime_guess = { workspace = true }
+# Removed: lightningcss not used, pulls rkyv 0.7.46 (RUSTSEC-2026-0235)
 futures-util = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }

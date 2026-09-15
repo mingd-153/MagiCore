@@ -47,15 +47,8 @@ jobs:
             exit 1
           fi
       - name: Run audit
-        # Remaining ignores — each with an explicit, verifiable justification:
-        # - RUSTSEC-2023-0071 (rsa): lockfile-metadata only via sqlx-mysql
-        #   optional deps; the reachability guard above fails the job if rsa
-        #   ever enters the compiled graph. No fixed upgrade exists upstream.
-        # - RUSTSEC-2025-0134 (rustls-pemfile unmaintained): we are already on
-        #   the latest release (2.2.0) — no maintained replacement crate
-        #   exists; tracked for migration when one ships.
-        # Các ignore còn lại đều có lý do kiểm chứng được ở trên.
-        run: cargo audit --color never --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0134
+        # All known advisories have been fixed as of 2026-08-31 (commit 0a9804c)
+        run: cargo audit --color never
       - name: Verify lockfile is reproducible
         run: cargo check --workspace --locked
 

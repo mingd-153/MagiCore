@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
-//! Adapter tests
+//! Adapter install summary tests.
+//! Kiểm tra summary install adapter game không phụ thuộc network.
 
 use super::*;
 
@@ -11,15 +12,14 @@ fn tmp() -> TempDir {
 }
 
 #[tokio::test]
-#[ignore = "live network: runs cargo fetch against crates.io"]
 async fn test_install_bevy_stub() {
     let tmp = tmp();
-    // Create Cargo.toml
+    // Create a Cargo project without remote deps — giữ test hermetic, không gọi crates.io.
     std::fs::create_dir_all(tmp.path().join("src")).unwrap();
     std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
     std::fs::write(
         tmp.path().join("Cargo.toml"),
-        "[package]\nname=\"test\"\nversion=\"0.1.0\"\n\n[dependencies]\nbevy=\"0.19\"\n",
+        "[package]\nname=\"test\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
     )
     .unwrap();
 

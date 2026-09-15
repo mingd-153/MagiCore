@@ -85,3 +85,28 @@ issue = "https://github.com/your-org/magicore/issues/TBD"
 # - Must re-review every 6 months
 # - New advisories require immediate triage
 # - High/critical must have mitigation plan within 7 days
+
+# L1-hardcode exceptions for controlled HTTP client usage
+[[exception]]
+path = "core/crates/mgc-search/src/clients/npm_client.rs"
+rule = "L1-hardcode"
+reason = "HTTP client for npm registry search - controlled import, read-only queries"
+expires = "2027-12-31"
+
+[[exception]]
+path = "core/crates/mgc-search/src/clients/pypi_client.rs"
+rule = "L1-hardcode"
+reason = "HTTP client for PyPI registry search - controlled import, read-only queries"
+expires = "2027-12-31"
+
+[[exception]]
+path = "core/crates/mgc-search/src/clients/go_client.rs"
+rule = "L1-hardcode"
+reason = "HTTP client for Go proxy search - controlled import, read-only queries"
+expires = "2027-12-31"
+
+[[exception]]
+path = "core/crates/mgc-search/src/clients/crates_client.rs"
+rule = "L1-hardcode"
+reason = "HTTP client for crates.io search - controlled import, read-only queries"
+expires = "2027-12-31"

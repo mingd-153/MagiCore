@@ -1,13 +1,14 @@
 //! TLS configuration & security (12 §10)
 //! (HTTPS bắt buộc, cert validation, User-Agent, token security)
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use reqwest::ClientBuilder;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{
     ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme,
     client::danger::{HandshakeSignatureValid, ServerCertVerified},
 };
+use rustls_pki_types::pem::PemObject;
 use std::sync::Arc;
 
 /// TLS configuration options
@@ -63,11 +64,13 @@ impl TlsConfig {
         // Load system roots using rustls-native-certs
         // 0.8: load_native_certs() returns CertificateResult — certs carry
         // CertificateDer; any load error fails closed.
-        let native = rustls_native_certs::load_native_certs();
-        if let Some(err) = native.errors.first() {
+        // (0.8: load_native_certs() trả CertificateResult — certs mang
+        // CertificateDer; mọi lỗi load đều fail-closed.)
+        let native_certs = rustls_native_certs::load_native_certs();
+        if let Some(err) = native_certs.errors.first() {
             return Err(anyhow::anyhow!("load native certs: {err}"));
         }
-        for cert in native.certs {
+        for cert in native_certs.certs {
             root_store.add(cert)?;
         }
 
@@ -75,11 +78,12 @@ impl TlsConfig {
         if let Some(ca_path) = &self.ca_bundle {
             let ca_pem = std::fs::read_to_string(ca_path)
                 .map_err(|e| anyhow::anyhow!("read CA bundle: {}", e))?;
-            // rustls-pemfile 2.x: certs() is an iterator of Result items.
-            let certs: Vec<_> = rustls_pemfile::certs(&mut ca_pem.as_bytes())
-                .collect::<std::io::Result<Vec<_>>>()
-                .map_err(|e| anyhow::anyhow!("parse CA certs: {}", e))?;
-            for cert in certs {
+            // rustls-pki-types PemObject: iterate PEM certs (replaces
+            // unmaintained rustls-pemfile, RUSTSEC-2025-0134).
+            // (PemObject duyệt cert PEM — thay rustls-pemfile không còn
+            // bảo trì, RUSTSEC-2025-0134.)
+            for cert in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
+                let cert = cert.map_err(|e| anyhow::anyhow!("parse CA cert: {}", e))?;
                 root_store
                     .add(cert)
                     .map_err(|e| anyhow::anyhow!("add custom CA: {}", e))?;
@@ -201,23 +205,19 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
 
 /// Load certs from PEM file
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
-    let file = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(file);
-    // rustls-pemfile 2.x: certs() yields Result items; collect them.
-    let certs = rustls_pemfile::certs(&mut reader).collect::<std::io::Result<Vec<_>>>()?;
-    Ok(certs)
+    // PemObject is imported at module scope (line 15) — no inner re-import.
+    // (PemObject đã import ở scope module — không cần import lại trong hàm.)
+    let pem = std::fs::read_to_string(path)?;
+    CertificateDer::pem_slice_iter(pem.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("parse certs: {}", e))
 }
 
 /// Load private key from PEM file
 fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
-    let file = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(file);
-    // rustls-pemfile 2.x: private_key() parses pkcs8/rsa/ec keys and
-    // returns PrivateKeyDer directly — one call replaces the pkcs8+rsa
-    // fallback chain from 1.x.
-    let key = rustls_pemfile::private_key(&mut reader)?
-        .ok_or_else(|| anyhow::anyhow!("no private key found"))?;
-    Ok(key)
+    let pem = std::fs::read_to_string(path)?;
+    PrivateKeyDer::from_pem_slice(pem.as_bytes())
+        .map_err(|e| anyhow::anyhow!("parse private key: {}", e))
 }
 
 /// Security headers & token handling (12 §10)
