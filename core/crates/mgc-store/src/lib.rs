@@ -6,12 +6,16 @@
 pub mod cache;
 pub mod cas;
 pub mod database;
+pub mod failpoint;
 pub mod index;
 pub mod layout;
 
 pub use cache::PackageCache;
-pub use cas::{CompiledCache, CompiledModule, ContentStore, IntegrityHash};
-pub use database::{Database, DatabaseEntry};
+pub use cas::{
+    COMPILED_CACHE_SCHEMA_VERSION, CompilationKey, CompiledCache, CompiledModule, ContentStore,
+    IntegrityHash,
+};
+pub use database::{CasGenerationError, Database, DatabaseEntry, ProjectInstallLock, StagingLease};
 pub use index::{FileEntry, StoreIndex};
 pub use layout::Layout;
 
