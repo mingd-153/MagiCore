@@ -12,6 +12,15 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# libc: group-signals for the timeout process-tree kill (kill(-pgid)) —
+# already a workspace dependency elsewhere; no new external crate added.
+# Unix-only so the Windows build links nothing new.
+# (libc: group-signal cho kill process-tree theo timeout (kill(-pgid)) —
+# đã là workspace dependency ở chỗ khác; không thêm crate ngoài mới.
+# Chỉ unix để build Windows không link thêm gì.)
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

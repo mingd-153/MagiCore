@@ -13,6 +13,21 @@ use std::time::{Duration, Instant};
 const DEFAULT_EXEC_TIMEOUT_SECS: u64 = 1800;
 const EXEC_TIMEOUT_ENV: &str = "MGC_EXEC_TIMEOUT_SECS";
 const WAIT_POLL_INTERVAL_MS: u64 = 20;
+/// Grace window between the SIGTERM and SIGKILL sweep over the process
+/// group — long enough for a well-behaved tool to flush, short enough to
+/// keep `timeout + grace` far below any caller-visible wall-clock budget.
+/// (Cửa nghiêng giữa SIGTERM và SIGKILL trên process group — đủ cho tool
+/// tử tế kịp flush, đủ ngắn để timeout + grace luôn thấp hơn mọi ngân
+/// sách wall-clock của caller.)
+const TERM_TO_KILL_GRACE_MS: u64 = 100;
+/// Deadline for draining the output pipes AFTER the tree kill. Once the
+/// group is SIGKILLed every write end closes and EOF arrives in
+/// milliseconds; the deadline only exists so a tool that ESCAPED the group
+/// (setsid) can never hang us past the timeout again (P0-3, 2026-09-15).
+/// (Deadline tiêu pipe SAU khi kill cây. Group bị SIGKILL thì mọi đầu ghi
+/// đóng, EOF tới trong vài ms; deadline tồn tại để tool THOÁT khỏi group
+/// (setsid) không thể treo ta quá hạn timeout lần nữa.)
+const POST_KILL_DRAIN_MS: u64 = 200;
 /// Max bytes kept per captured stream (stdout/stderr tails) — bounded memory,
 /// configurable values live in one place (RULE §12).
 /// Giới hạn byte cho mỗi stream captured — bộ nhớ bị chặn, giá trị đổi được
@@ -22,10 +37,19 @@ const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 /// Số dòng giữ tối đa cho mỗi stream — kích thước trích lỗi.
 const MAX_CAPTURE_LINES: usize = 40;
 
-/// Report whether process-tree monitoring is active on this platform.
-/// Báo rõ nền tảng hiện tại có guard process-tree thật hay không.
+/// Report whether process-tree kill is active on this platform.
+/// Unix: the child runs in its own process group and the timeout signals
+/// the WHOLE group. Windows: the kill uses `taskkill /T` (native tree
+/// kill). Both platforms can reap grandchildren; the old /proc walk
+/// matched nothing on macOS (no /proc) and only ever killed the direct
+/// child (P0-3, 2026-09-15).
+/// Báo rõ nền tảng hiện tại có guard kill process-tree thật hay không.
+/// Unix: child chạy trong process group riêng và timeout signal CẢ group.
+/// Windows: kill qua `taskkill /T` (kill cây native). Cả hai nền tảng
+/// đều dọn được grandchild; walk /proc cũ trên macOS không khớp gì
+/// (không có /proc) và chỉ giết được child trực tiếp.
 pub fn process_tree_guard_available() -> bool {
-    cfg!(unix)
+    cfg!(any(unix, windows))
 }
 
 /// Tùy chọn chạy — dry_run in lệnh không chạy (00 §5.5); log_path để ghi audit.
@@ -208,7 +232,6 @@ pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<E
     }
     execute_command(cmd, args, opts, OutputMode::Inherit)
 }
-
 /// Run a concrete project/package binary path with guardrails but without static tool allowlist.
 /// Chạy binary cụ thể đã định vị trong project/cache, vẫn có clean env + blocker + audit.
 pub fn run_project_binary(path: &Path, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
@@ -521,9 +544,14 @@ fn execute_command(
                 .stderr(std::process::Stdio::inherit());
         }
     }
-    if opts.clean_env {
-        configure_process_isolation(&mut command);
-    }
+    // Process-group isolation applies to EVERY spawn (not only clean_env):
+    // the timeout must be able to signal the WHOLE tree for any tool
+    // (P0-3, 2026-09-15). Windows: no-op here — the tree kill uses
+    // `taskkill /T` which walks children natively.
+    // Cô lập process-group áp cho MỌI lần spawn (không chỉ clean_env):
+    // timeout phải signal được CẢ CÂY cho mọi tool (P0-3, 2026-09-15).
+    // Windows: no-op tại đây — kill cây dùng `taskkill /T` tự duyệt con.
+    configure_process_isolation(&mut command);
 
     let _shadow_path = if opts.clean_env {
         let shadow_path = ShadowPath::create(scoped_exempt)?;
@@ -743,32 +771,54 @@ fn wait_with_timeout(
     // không bao giờ thoát — stream govulncheck (JSON MB) từng treo tại
     // đây. Drain stdout/stderr bằng thread đọc để child luôn chạy hết,
     // rồi ghép bytes lại khi nó thoát.
-    let stdout_handle = child.stdout.take().map(|mut s| {
+    //
+    // The threads PUBLISH their bytes over a channel instead of being
+    // joined: a join is unbounded, and a grandchild holding the inherited
+    // pipe kept the join blocked forever even after the timeout fired
+    // (P0-3, 2026-09-15 — the old code hung for the full 30s sleep).
+    // (Thread đọc GỬI bytes qua channel thay vì join: join là vô hạn, và
+    // grandchild giữ pipe thừa hưởng làm join treo mãi mãi dù timeout đã
+    // nổ — code cũ treo đủ 30s của sleep.)
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let _stdout_reader = child.stdout.take().map(|mut s| {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = std::io::Read::read_to_end(&mut s, &mut buf);
-            buf
+            let _ = stdout_tx.send(buf);
         })
     });
-    let stderr_handle = child.stderr.take().map(|mut s| {
+    let _stderr_reader = child.stderr.take().map(|mut s| {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = std::io::Read::read_to_end(&mut s, &mut buf);
-            buf
+            let _ = stderr_tx.send(buf);
         })
     });
-    // Drain the reader threads and collect the final status. Inherit
-    // mode spawns no pipes (handles are None) — drain returns empty
-    // bytes there, matching the old finish_child contract.
-    // Ghép thread đọc và lấy trạng thái cuối. Inherit không có pipe
-    // (handle là None) — drain trả bytes rỗng, khớp hợp đồng finish_child cũ.
-    let drain = |child: &mut std::process::Child| -> ExecOutcome {
-        let stdout = stdout_handle
-            .map(|h| h.join().unwrap_or_default())
-            .unwrap_or_default();
-        let stderr = stderr_handle
-            .map(|h| h.join().unwrap_or_default())
-            .unwrap_or_default();
+    // `bounded`: Some(deadline) is the post-kill contract — the pipes are
+    // expected to EOF within milliseconds, so a short deadline is enough
+    // and outranks a stuck writer (an escaped process cannot hang us).
+    // None keeps the historical behaviour for the natural-exit path (drain
+    // until EOF, full scanner payload). In the unbounded path recv() IS the
+    // join (send completed ⇒ bytes are ours); in the bounded path a still-
+    // parked reader thread is left to die with the process — it owns no
+    // state we need and blocking on it would recreate the hang.
+    // (`bounded`: Some(deadline) là hợp đồng sau-kill — pipe phải EOF trong
+    // vài ms nên deadline ngắn là đủ và thắng writer kẹt (process thoát
+    // group không thể treo ta). None giữ hành vi cũ cho đường thoát tự
+    // nhiên — drain tới EOF, đủ payload. Ở đường vô hạn recv() CHÍNH LÀ
+    // join (send xong ⇒ bytes là của ta); ở đường bounded thread còn kẹt
+    // sẽ chết theo process — nó không giữ state ta cần và chặn nó sẽ
+    // tái tạo cái treo.)
+    let collect = |rx: &std::sync::mpsc::Receiver<Vec<u8>>, bounded: Option<Duration>| -> Vec<u8> {
+        match bounded {
+            Some(deadline) => rx.recv_timeout(deadline).unwrap_or_default(),
+            None => rx.recv().unwrap_or_default(),
+        }
+    };
+    let drain = |child: &mut std::process::Child, bounded: Option<Duration>| -> ExecOutcome {
+        let stdout = collect(&stdout_rx, bounded);
+        let stderr = collect(&stderr_rx, bounded);
         let status = child.wait().unwrap_or_default();
         ExecOutcome {
             status,
@@ -784,7 +834,7 @@ fn wait_with_timeout(
             // reader threads hit EOF (child end closed) and return them.
             // Child đã thoát — pipe có thể còn byte; thread đọc gặp EOF
             // (đầu child đã đóng) và trả về chúng.
-            return Ok(drain(&mut child));
+            return Ok(drain(&mut child, None));
         }
         // Monitor + forbidden child in one guard — gộp điều kiện theo clippy 1.98.
         if monitor_forbidden_children
@@ -792,7 +842,7 @@ fn wait_with_timeout(
         {
             terminate_process_tree(child.id());
             let _ = child.kill();
-            let out = drain(&mut child);
+            let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
             return Err(forbidden_child_error(
                 &found,
                 out.status,
@@ -803,7 +853,7 @@ fn wait_with_timeout(
         if timeout.is_some_and(|timeout| started.elapsed() >= timeout) {
             terminate_process_tree(child.id());
             let _ = child.kill();
-            let out = drain(&mut child);
+            let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
             return Err(timeout_error(
                 timeout.expect("timeout checked above"),
                 out.status,
@@ -821,11 +871,13 @@ struct ExecOutcome {
     stderr: Vec<u8>,
 }
 
-// Process-group isolation is unix-only; the no-op below covers Windows
-// (CI Windows compile fix 2026-09-11 — the unix variant lacked its
-// cfg gate and collided with the no-op on non-unix targets).
-// Cô lập process-group chỉ unix; no-op dưới đây phủ Windows (fix
-// compile CI Windows — bản unix thiếu cfg gate nên đụng no-op).
+// Process-group isolation (unix): the child becomes its own group leader so
+// the timeout can signal the WHOLE tree with `kill(-pgid)`. The no-op below
+// covers Windows, where the tree kill uses `taskkill /T` instead
+// (CI Windows compile fix 2026-09-11 — keep the cfg gates paired).
+// Cô lập process-group (unix): child thành group leader riêng để timeout
+// signal CẢ CÂY bằng `kill(-pgid)`. No-op dưới đây phủ Windows — kill cây
+// dùng `taskkill /T` (fix compile CI Windows 2026-09-11 — giữ cặp cfg gate).
 #[cfg(unix)]
 fn configure_process_isolation(command: &mut Command) {
     use std::os::unix::process::CommandExt;
@@ -838,69 +890,62 @@ fn configure_process_isolation(_command: &mut Command) {}
 
 #[cfg(unix)]
 fn terminate_process_tree(root_pid: u32) {
-    // Không spawn `kill -TERM -{pgid}`: trên GH Runner pgid resolver đánh
-    // trúng process group của job → SIGTERM toàn job (exit 143/canceled).
-    // Walk /proc theo ppid và giết từng pid cụ thể — không đụng ngoài cây.
-    let mut frontier = vec![root_pid];
-    let mut all = Vec::new();
-    while let Some(pid) = frontier.pop() {
-        all.push(pid);
-        frontier.extend(child_pids(pid));
+    // P0-3 (Tech Lead 2026-09-15): kill the WHOLE process GROUP.
+    //
+    // The child is spawned with `process_group(0)` (see
+    // configure_process_isolation), so its PID *is* its PGID and every
+    // descendant — grandchildren included — inherits that group. One group
+    // signal therefore reaches the entire tree, with no /proc walk: the old
+    // walk matched NOTHING on macOS (no /proc) and silently degraded to
+    // "kill the direct child only", leaving the grandchild holding the
+    // stdout pipe and hanging the drain.
+    //
+    // The group is derived from the PID we spawned ourselves (never looked
+    // up), so it can never resolve to the CI job's own group — the failure
+    // mode the old comment warned about.
+    //
+    // (P0-3: kill CẢ process GROUP. Child spawn với `process_group(0)` nên
+    // PID CHÍNH LÀ PGID và mọi con cháu thừa hưởng group đó. Một group
+    // signal tới cả cây, không cần walk /proc: walk cũ trên macOS không
+    // khớp gì (không có /proc) và lặng lẽ thoái hóa thành "chỉ giết child
+    // trực tiếp", để grandchild giữ pipe stdout và treo drain. Group suy
+    // từ PID do chính ta spawn (không tra cứu), nên không bao giờ trỏ vào
+    // group của job CI — đúng chế độ hỏng mà comment cũ cảnh báo.)
+    let group = -(root_pid as i32);
+    unsafe {
+        libc::kill(group, libc::SIGTERM);
     }
-    all.reverse();
-    for &pid in &all {
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+    // Short grace: a well-behaved tool flushes and exits on TERM before the
+    // hammer lands. (Cửa nghiêng ngắn: tool tử tế kịp flush rồi thoát.)
+    std::thread::sleep(Duration::from_millis(TERM_TO_KILL_GRACE_MS));
+    unsafe {
+        libc::kill(group, libc::SIGKILL);
+        // Belt-and-braces: also signal the root directly in case the tool
+        // called setsid() and left our target group. Escaped descendants
+        // are out of reach for a group signal — the bounded post-kill drain
+        // is what keeps that case from hanging the caller.
+        // (Dự phòng: signal luôn root trực tiếp phòng khi tool gọi setsid()
+        // và rời group. Con cháu đã thoát group nằm ngoài tầm group signal —
+        // drain bounded sau kill chính là thứ giữ ca đó không treo caller.)
+        libc::kill(root_pid as i32, libc::SIGKILL);
     }
-    std::thread::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS));
-    for &pid in &all {
-        let _ = Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-}
-
-#[cfg(unix)]
-fn child_pids(ppid: u32) -> Vec<u32> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return out;
-    };
-    for entry in entries.flatten() {
-        let Ok(name) = entry.file_name().into_string() else {
-            continue;
-        };
-        if name.bytes().any(|b| !b.is_ascii_digit()) {
-            continue;
-        }
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{name}/stat")) else {
-            continue;
-        };
-        let Some((_, rest)) = stat.split_once(')') else {
-            continue;
-        };
-        let mut fields = rest.split_whitespace();
-        let _state = fields.next();
-        let Some(ppid_field) = fields.next().and_then(|f| f.parse::<i32>().ok()) else {
-            continue;
-        };
-        // Gộp let-chain theo clippy 1.98 — collapsed guard reads cleaner.
-        if ppid_field == ppid as i32
-            && let Ok(pid) = name.parse::<u32>()
-        {
-            out.push(pid);
-        }
-    }
-    out
 }
 
 #[cfg(not(unix))]
-fn terminate_process_tree(_root_pid: u32) {}
+fn terminate_process_tree(root_pid: u32) {
+    // Windows: no Job-Object API in std and no new dependency is allowed, so
+    // use the OS-native tree kill — taskkill /T walks the child tree and /F
+    // forces it. Best-effort: a process that already exited returns non-zero
+    // and that is fine.
+    // (Windows: std không có Job-Object API và không được thêm dependency,
+    // nên dùng kill cây native của OS — taskkill /T duyệt cây con, /F ép
+    // buộc. Best-effort: process đã thoát trả non-zero, không sao.)
+    let _ = Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &root_pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
 
 #[derive(Debug, Clone)]
 struct ForbiddenProcess {
@@ -1015,9 +1060,17 @@ fn timeout_error(
     } else {
         err_tail
     };
+    // Sub-second timeouts print as milliseconds — "after 0s" hid the
+    // actual budget in tests with 250ms timeouts (P0-3, 2026-09-15).
+    // (Timeout dưới 1 giây in theo ms — "after 0s" giấu ngân sách thật
+    // trong các test dùng timeout 250ms.)
+    let budget = if timeout.as_secs() > 0 || timeout.subsec_millis() == 0 {
+        format!("{}s", timeout.as_secs())
+    } else {
+        format!("{}ms", timeout.as_millis())
+    };
     anyhow::anyhow!(
-        "command timed out after {}s (status after kill: {})\n--- tail ---\n{}",
-        timeout.as_secs(),
+        "command timed out after {budget} (status after kill: {})\n--- tail ---\n{}",
         status,
         output_tail
     )
