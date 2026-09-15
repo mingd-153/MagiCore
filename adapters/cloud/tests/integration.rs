@@ -131,20 +131,20 @@ fn cloud_type_as_str_values() {
 fn adapter_for_returns_some_for_terraform() {
     let dir = tmp("af-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    assert!(adapter_for(&dir).is_some());
+    assert!(adapter_for(&dir).unwrap().is_some());
 }
 
 #[test]
 fn adapter_for_returns_none_without_any_marker() {
     let dir = tmp("af-none");
-    assert!(adapter_for(&dir).is_none());
+    assert!(adapter_for(&dir).unwrap().is_none());
 }
 
 #[test]
 fn adapter_cloud_type_method_returns_correct_str() {
     let dir = tmp("ct-str");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert_eq!(a.cloud_type(), "terraform");
 }
 
@@ -154,7 +154,7 @@ fn adapter_cloud_type_method_returns_correct_str() {
 fn adapter_name_and_ecosystem() {
     let dir = tmp("name-eco");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert_eq!(a.name(), "cloud");
     assert_eq!(format!("{:?}", a.ecosystem()), "Cloud");
 }
@@ -163,7 +163,7 @@ fn adapter_name_and_ecosystem() {
 fn can_handle_returns_true_for_known_marker() {
     let dir = tmp("ch-true");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert!(a.can_handle(&dir));
 }
 
@@ -171,7 +171,7 @@ fn can_handle_returns_true_for_known_marker() {
 async fn parse_manifest_uses_dir_name_for_terraform() {
     let dir = tmp("my-infra-project");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let manifest = a.parse_manifest(&dir).await.unwrap();
     assert!(manifest.name.contains("my-infra-project"));
 }
@@ -183,7 +183,7 @@ async fn install_delegates_to_terraform_binary() {
     // Đây là hành vi ĐÚNG: không có terraform → fail sớm, không silent.
     let dir = tmp("install-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let _manifest = a.parse_manifest(&dir).await.unwrap();
     // Terraform branch has no registry graph — resolve fails closed, so the
     // test drives install with an empty graph directly (install is the part
@@ -214,7 +214,7 @@ async fn install_delegates_to_terraform_binary() {
 async fn add_fails_closed_for_terraform() {
     let dir = tmp("add-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let name = PackageName::new("aws_s3_bucket").unwrap();
     let err = a
         .add(&dir, &name, None, AddOptions::default())
@@ -231,7 +231,7 @@ async fn add_fails_closed_for_terraform() {
 async fn remove_fails_closed_for_terraform() {
     let dir = tmp("remove-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let name = PackageName::new("aws_s3_bucket").unwrap();
     assert!(a.remove(&dir, &name).await.is_err());
 }
@@ -240,7 +240,7 @@ async fn remove_fails_closed_for_terraform() {
 async fn update_fails_closed_for_terraform() {
     let dir = tmp("update-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert!(a.update(&dir, None).await.is_err());
 }
 
@@ -248,7 +248,7 @@ async fn update_fails_closed_for_terraform() {
 async fn audit_returns_clean_for_terraform_project() {
     let dir = tmp("audit-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let report = a.audit(&dir).await.unwrap();
     assert_eq!(report.vulnerabilities.len(), 0);
 }

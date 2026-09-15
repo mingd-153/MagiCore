@@ -152,7 +152,7 @@ fn command_timeout_kills_hung_tool() {
     // (Tool giả: chạy sleeper 30s (grandchild), ghi PID ra file, rồi giữ
     // shell sống bằng `wait`. Sleeper thừa hưởng stdout dạng pipe và giữ nó
     // suốt 30s.)
-    let fake_tool = dir.join("hung-tool");
+    let fake_tool = dir.join("cargo"); // allowlisted name — normalize_script_token takes the basename ("cargo")
     fs::write(
         &fake_tool,
         format!(
@@ -204,6 +204,7 @@ fn command_timeout_kills_hung_tool() {
         // standard liveness probe and never affects the target.
         // (An toàn: kill(pid, 0) không gửi signal — đây là phép dò sống-chết
         // chuẩn, không tác động process đích.)
+        #[allow(unsafe_code)]
         let alive = unsafe { libc::kill(grandchild as i32, 0) } == 0;
         if !alive {
             still_alive = false;

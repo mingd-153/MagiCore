@@ -26,7 +26,22 @@ fn requirements_txt_bootstrap_uses_pip_install() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("requirements.txt"), "numpy\n").unwrap();
     let (tool, args) = super::ai_install_command(&dir).unwrap();
-    assert_eq!(tool, "pip");
+    // The bootstrap picks whichever pip alias exists on THIS machine
+    // (pip, else pip3) — asserting a fixed name made the test
+    // environment-dependent (failed on hosts without a `pip` alias).
+    // (Bootstrap chọn alias pip nào tồn tại trên MÁY NÀY (pip, nếu
+    // không thì pip3) — assert tên cứng khiến test phụ thuộc môi
+    // trường (fail trên máy không có alias `pip`).)
+    let pip_alias = if std::process::Command::new("pip")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        "pip"
+    } else {
+        "pip3"
+    };
+    assert_eq!(tool, pip_alias);
     assert_eq!(
         args,
         vec![

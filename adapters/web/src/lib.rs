@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::atomic::AtomicBool;
 
+use anyhow::Result;
 use async_trait::async_trait;
 use mgc_adapter_base::BaseAdapter;
 use mgc_resolver::Resolver as CoreResolver;
@@ -99,6 +100,13 @@ impl WebAdapter {
     // instead of aborting the process.
     // (P0-4: constructor giờ có thể lỗi — guard URL registry là typed
     // error (vẫn fail-closed), URL sai sẽ trả Err thay vì abort process.)
+    //
+    // The legacy `impl Default` (new() was infallible back then) is gone:
+    // a panicking Default would regress P0-4 and a silent-fallback Default
+    // would not be fail-closed. Use new()/with_registry() explicitly.
+    // (Đã bỏ `impl Default` cũ (thời new() chưa thể lỗi): Default panic
+    // làm hồi quy P0-4, Default fallback âm thầm thì mất fail-closed.
+    // Dùng new()/with_registry() tường minh.)
     pub fn new() -> Result<Self> {
         let registry_url = effective_registry_url(DEFAULT_NPM_REGISTRY)?;
         let shared_cache = SharedWebCache::discover();
@@ -247,12 +255,6 @@ impl WebAdapter {
         self.prefetch_handle
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-impl Default for WebAdapter {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

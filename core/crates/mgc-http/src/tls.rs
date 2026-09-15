@@ -1,7 +1,7 @@
 //! TLS configuration & security (12 §10)
 //! (HTTPS bắt buộc, cert validation, User-Agent, token security)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use reqwest::ClientBuilder;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{

@@ -10,6 +10,7 @@ use crate::tooling::{
     cargo_lock_versions, check_pip_allowed, dist_info_versions, exec_tool, go_module_path,
     placeholder_id, version_from_manifest,
 };
+use anyhow::Result;
 use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,

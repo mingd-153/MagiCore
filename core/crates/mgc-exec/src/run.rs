@@ -912,12 +912,31 @@ fn terminate_process_tree(root_pid: u32) {
     // từ PID do chính ta spawn (không tra cứu), nên không bao giờ trỏ vào
     // group của job CI — đúng chế độ hỏng mà comment cũ cảnh báo.)
     let group = -(root_pid as i32);
+    // SAFETY: the negative pid is the process group of a child this process
+    // spawned itself (process_group(0) made it its own group leader), so the
+    // signal targets a private group we created — it can never resolve to the
+    // caller's own group. Worst case the target already exited: kill()
+    // returns ESRCH and no foreign process is ever addressed.
+    // (An toàn: pid âm là process group của child do chính tiến trình này
+    // spawn (process_group(0) khiến nó tự làm group leader), signal chỉ nhắm
+    // group riêng do ta tạo ra — không bao giờ trùng group của caller. Xấu
+    // nhất target đã thoát: kill() trả ESRCH, không trúng tiến trình lạ.)
+    #[allow(unsafe_code)]
     unsafe {
         libc::kill(group, libc::SIGTERM);
     }
     // Short grace: a well-behaved tool flushes and exits on TERM before the
     // hammer lands. (Cửa nghiêng ngắn: tool tử tế kịp flush rồi thoát.)
     std::thread::sleep(Duration::from_millis(TERM_TO_KILL_GRACE_MS));
+    // SAFETY: same provenance as the SIGTERM shot above — the negative pid
+    // is the private group of our own spawned child and the direct pid is
+    // that same child; neither id is looked up, so a foreign process can
+    // never be addressed. If the target already exited, kill() returns ESRCH.
+    // (An toàn: cùng nguồn gốc như phát SIGTERM trên — pid âm là group riêng
+    // của child do ta spawn, pid dương là chính child đó; không id nào được
+    // tra cứu ngoài, nên không bao giờ trúng tiến trình lạ. Target đã thoát
+    // thì kill() trả ESRCH.)
+    #[allow(unsafe_code)]
     unsafe {
         libc::kill(group, libc::SIGKILL);
         // Belt-and-braces: also signal the root directly in case the tool
