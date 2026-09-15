@@ -247,21 +247,25 @@ jobs:
           echo "All E2E tests running with REAL mgc commands"
           echo "Install smoke tests: structure verified"
 
-  fault-matrix:
-    # Gate 11-D2 (2026-09-15): the fault/stress suites become REQUIRED
-    # jobs. Kill-injection, shared-store stress, install races and disk
-    # fault injection are release-blocking evidence — every step below is
-    # a MUST PASS with NO `|| true`, on BOTH hardened OSes (ubuntu+macos).
-    # (Gate 11-D2: các suite fault/stress thành job BẮT BUỘC. Kill-
-    # injection, stress store chia sẻ, race install và fault injection
-    # đĩa là bằng chứng chặn release — mọi bước dưới đây là MUST PASS,
-    # KHÔNG có `|| true`, trên CẢ HAI OS đã gia cố (ubuntu+macos).)
-    name: Fault + Stress Matrix (MUST PASS)
+  fault-matrix-portable:
+    # Gate 11-D2 (2026-09-15) + P0-6 (Tech Lead 2026-09-15): the fault/stress
+    # suites split by PORTABILITY, and Windows becomes a REQUIRED lane.
+    # kill_injection_matrix / stress_shared_store_matrix /
+    # install_process_race are platform-portable (the unix-only assertion
+    # paths are already cfg-gated inside the suites — kill-injection asserts
+    # SIGKILL details on unix and "did not exit cleanly" elsewhere), so they
+    # gate ALL THREE hardened OSes with NO `|| true` and NO
+    # continue-on-error.
+    # (Gate 11-D2 + P0-6: các suite fault/stress tách theo TÍNH DI ĐỘNG,
+    # Windows thành lane BẮT BUỘC. Ba suite trên chạy được mọi nền tảng
+    # (đường assert unix-only đã cfg-gate sẵn trong suite), nên chúng gate
+    # CẢ BA OS với NO `|| true` và KHÔNG continue-on-error.)
+    name: Fault Matrix — portable (MUST PASS, 3 OS)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -291,6 +295,39 @@ jobs:
       - name: install process race (MUST PASS — no || true)
         run: cargo test -p mgc --test install_process_race --locked
         timeout-minutes: 20
+
+  fault-matrix-unix-only:
+    # P0-6 (Tech Lead 2026-09-15): suites that are NOT (yet) portable stay
+    # REQUIRED on ubuntu+macos. disk_fault_injection_e2e uses
+    # std::os::unix::fs::PermissionsExt (permission fault injection);
+    # stress_64_process_race stays here per the Tech Lead verdict (its 64
+    # concurrent processes are unix-runner territory for now — no unix-only
+    # API was found in it, it may graduate to the portable lane after a
+    # Windows soak).
+    # (P0-6: các suite chưa di động vẫn BẮT BUỘC trên ubuntu+macos.
+    # disk_fault_injection_e2e dùng PermissionsExt (unix-only);
+    # stress_64_process_race ở lại theo phán quyết Tech Lead — không tìm
+    # thấy unix-only API trong nó, có thể chuyển lên lane portable sau khi
+    # ngâm Windows đủ lâu.)
+    name: Fault Matrix — unix-only (MUST PASS)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build test binaries (compile errors fail here, loudly)
+        run: cargo build -p mgc --tests --locked
+        timeout-minutes: 45
 
       - name: 64-process stress race (MUST PASS — no || true)
         run: cargo test -p mgc --test stress_64_process_race --locked
