@@ -455,10 +455,88 @@ fn test_network_timeout_offline_mode() {
     }
 }
 
+/// Failpoint where the killed install parks: the first lifecycle phase, the
+/// earliest deterministic observation point (see kill_injection_matrix.rs).
+/// (Failpoint để install bị kill đỗ: phase đầu của dòng đời — điểm quan sát
+/// sớm nhất tất định (xem kill_injection_matrix.rs).)
+const KILL_PHASE: &str = "after-generation-begin";
+
+/// READY-marker poll timeout (seconds) — matches kill_injection_matrix's
+/// default. (Timeout poll marker READY (giây) — khớp mặc định của
+/// kill_injection_matrix.)
+const READY_TIMEOUT_SECS: u64 = 60;
+
+/// Poll interval between marker-file reads (ms) — matches
+/// kill_injection_matrix. (Khoảng poll giữa các lần đọc marker file (ms) —
+/// khớp kill_injection_matrix.)
+const MARKER_POLL_INTERVAL_MS: u64 = 10;
+
+/// Poll the marker file until it contains `READY:<phase>` or times out.
+/// The child fsyncs the marker, so a successful read is a reliable
+/// readiness signal — no guessed sleeps.
+/// (Poll marker file tới khi chứa `READY:<phase>` hoặc hết giờ. Child fsync
+/// marker nên đọc thành công là tín hiệu sẵn sàng tin cậy — không đoán trễ.)
+fn wait_for_failpoint_ready(marker: &Path, phase: &str, timeout: Duration) -> bool {
+    let needle = format!("READY:{phase}");
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if fs::read_to_string(marker)
+            .map(|contents| contents.contains(&needle))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(MARKER_POLL_INTERVAL_MS));
+    }
+    false
+}
+
+/// Assert the child died by SIGKILL (Unix) — the deterministic handshake must
+/// not be fooled by a child that exited cleanly before the kill landed.
+/// (Khẳng định child chết vì SIGKILL (Unix) — handshake tất định không được
+/// bị lừa bởi child đã exit sạch trước khi kill kịp rơi.)
+#[cfg(unix)]
+fn assert_killed_by_signal(status: &std::process::ExitStatus, phase: &str) {
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGKILL),
+        "{phase}: child must die by SIGKILL (not exit cleanly), got {status:?}"
+    );
+}
+
+#[cfg(not(unix))]
+fn assert_killed_by_signal(status: &std::process::ExitStatus, phase: &str) {
+    assert!(
+        !status.success(),
+        "{phase}: child must not exit cleanly after kill, got {status:?}"
+    );
+}
+
 #[test]
 fn test_process_kill_recovery() {
     // P1.2 STRESS: Process kill mid-install recovery
     // Tests: lock cleanup, no corrupted state
+    //
+    // Gate 11-B.2 aftermath: the original 500ms blind sleep flaked under
+    // full-suite load — the child could be killed before `install` even
+    // began (the kill exercised nothing) or after it had already finished,
+    // so the recovery path was never reliably hit. Replaced with the
+    // deterministic failpoint handshake from cli/tests/kill_injection_matrix.rs:
+    // the child parks at `after-generation-begin` and fsyncs a READY marker;
+    // the test polls the marker, SIGKILLs, and asserts the child truly died
+    // by signal. The recovery contract below is unchanged: leftover
+    // lockfile-lock stays WARN-only and the follow-up install MUST succeed.
+    //
+    // (Gate 11-B.2 aftermath: sleep mù 500ms ban đầu hay flake khi full-suite
+    // tải cao — child có thể bị kill trước khi `install` kịp bắt đầu (kill
+    // chẳng test được gì) hoặc sau khi đã xong, nên đường recovery không bao
+    // giờ được chạm tất định. Thay bằng failpoint handshake tất định theo
+    // mẫu cli/tests/kill_injection_matrix.rs: child đỗ tại
+    // `after-generation-begin` và fsync marker READY; test poll marker, rồi
+    // SIGKILL và khẳng định child chết thật vì signal. Hợp đồng recovery giữ
+    // nguyên: lockfile-lock sót lại chỉ WARN và install tiếp theo PHẢI thành
+    // công.)
 
     println!("\n=== Process Kill Recovery Test ===");
 
@@ -485,21 +563,46 @@ fn test_process_kill_recovery() {
 
     let mgc = find_mgc_binary();
 
-    // Start install in background
+    // Start install parked at the failpoint; the child fsyncs the READY
+    // marker when it reaches the park — deterministic handshake, no sleep.
+    // (Bắt đầu install đỗ tại failpoint; child fsync marker READY khi tới
+    // điểm đỗ — handshake tất định, không sleep.)
+    let ready_file = temp.path().join("ready");
     let mut child = Command::new(&mgc)
         .arg("install")
         .current_dir(&project)
+        .env("MGC_FAILPOINT", KILL_PHASE)
+        .env("MGC_FAILPOINT_READY_FILE", &ready_file)
         .spawn()
         .expect("Failed to spawn mgc install");
 
-    // Wait a bit then kill
-    thread::sleep(Duration::from_millis(500));
+    let timeout = Duration::from_secs(READY_TIMEOUT_SECS);
+    let ready = wait_for_failpoint_ready(&ready_file, KILL_PHASE, timeout);
+    if !ready {
+        // Always reap the child before failing — a parked process must not
+        // leak past a failed assertion.
+        // (Luôn thu hồi child trước khi fail — process đỗ không được rò rỉ
+        // sau assertion thất bại.)
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!(
+            "READY marker not observed within {READY_TIMEOUT_SECS}s at {KILL_PHASE} (failpoint handshake failed)"
+        );
+    }
 
     println!("Killing process mid-install...");
     child.kill().expect("Failed to kill process");
-    let _ = child.wait();
+    let status = child.wait().expect("Failed to reap killed child");
 
-    println!("Process killed");
+    // The handshake must not be fooled by a child that exited cleanly before
+    // the kill landed: on Unix it must die by SIGKILL; on Windows a
+    // terminated child exits nonzero.
+    // (Handshake không được bị lừa bởi child exit sạch trước khi kill rơi:
+    // trên Unix phải chết vì SIGKILL; trên Windows child bị terminate thì
+    // exit nonzero.)
+    assert_killed_by_signal(&status, KILL_PHASE);
+
+    println!("Process killed (died by signal / exited nonzero)");
 
     // Verify: no lockfile lock remains
     let lockfile_lock = project.join("mgc.lock.lock");
