@@ -1,0 +1,165 @@
+//! Native engine wiring tests for the lib adapter — hermetic via mockito.
+//! Test đi dây engine native cho lib adapter — hermetic qua mockito.
+
+#![allow(clippy::unwrap_used)]
+#![allow(unsafe_code)]
+
+use mgc_lib_adapter::native::engine::resolve_with_protocol;
+use mgc_lockfile::EcosystemTag;
+use mgc_resolver::protocols::CratesProtocol;
+use mgc_resolver::protocols::sha256_hex;
+use mgc_types::{
+    DependencyResolver, DependencySpec, Ecosystem, Manifest, PackageName, VersionRange,
+};
+
+async fn mock_server() -> Option<mockito::ServerGuard> {
+    match std::net::TcpListener::bind("127.0.0.1:0") {
+        Ok(listener) => drop(listener),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            eprintln!("warning: skipping adapter wiring mock test (localhost bind blocked)");
+            return None;
+        }
+        Err(error) => panic!("failed to probe localhost bind: {error}"),
+    }
+    Some(mockito::Server::new_async().await)
+}
+
+fn crate_line(name: &str, vers: &str, cksum: &str, deps: &str) -> String {
+    format!(
+        r#"{{"name":"{name}","vers":"{vers}","deps":[{deps}],"cksum":"sha256:{cksum}","features":{{}},"yanked":false,"links":null}}"#
+    )
+}
+
+fn rust_manifest() -> Manifest {
+    let mut manifest = Manifest::new("demo-lib", Ecosystem::Lib);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("serde").unwrap(),
+            VersionRange::parse("^1.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    manifest
+}
+
+#[tokio::test]
+async fn resolve_with_protocol_builds_graph_and_v3_lock_entries() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let serde_bytes = b"SERDE_CRATE";
+    let core_bytes = b"SERDE_CORE";
+    let serde_cksum = sha256_hex(serde_bytes);
+    let core_cksum = sha256_hex(core_bytes);
+    let base = server.url();
+
+    server
+        .mock("GET", "/se/rd/serde")
+        .with_status(200)
+        .with_body(crate_line(
+            "serde",
+            "1.0.219",
+            &serde_cksum,
+            r#"{"name":"serde_core","req":"1.0","features":[],"optional":false,"default_features":true,"target":null,"kind":"normal","package":null}"#,
+        ))
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/se/rd/serde_core")
+        .with_status(200)
+        .with_body(crate_line("serde_core", "1.0.5", &core_cksum, ""))
+        .create_async()
+        .await;
+
+    let protocol = CratesProtocol::with_download_base(&base, &base);
+    let resolution = resolve_with_protocol(
+        &protocol,
+        EcosystemTag::Rust,
+        "crates://sparse+https://index.crates.io",
+        &rust_manifest(),
+    )
+    .await
+    .unwrap();
+
+    // ResolvedGraph: serde + serde_core, correct versions and edges.
+    assert_eq!(resolution.graph.packages.len(), 2);
+    let serde = resolution
+        .graph
+        .packages
+        .iter()
+        .find(|p| p.id.name_str() == "serde")
+        .unwrap();
+    assert_eq!(serde.id.version().to_string(), "1.0.219");
+    assert_eq!(serde.deps.len(), 1);
+    assert_eq!(serde.deps[0].name_str(), "serde_core");
+    assert_eq!(serde.deps[0].version().to_string(), "1.0.5");
+    assert_eq!(serde.integrity, format!("sha256-{serde_cksum}"));
+
+    // v3 lock entries: ecosystem/provenance/registry/artifact recorded.
+    assert_eq!(resolution.lock_packages.len(), 2);
+    let lock_serde = resolution
+        .lock_packages
+        .iter()
+        .find(|p| p.name == "serde")
+        .unwrap();
+    assert_eq!(lock_serde.ecosystem, EcosystemTag::Rust);
+    assert_eq!(
+        lock_serde.registry.as_deref(),
+        Some("crates://sparse+https://index.crates.io")
+    );
+    let provenance = lock_serde.provenance.as_ref().unwrap();
+    assert_eq!(provenance.source_kind, "native-resolve");
+    let artifact = lock_serde.artifact.as_ref().unwrap();
+    assert_eq!(artifact.url, format!("{base}/serde/1.0.219/download"));
+    assert_eq!(
+        artifact.downloaded_from,
+        "crates://sparse+https://index.crates.io"
+    );
+    // blake3 content_hash is filled at install, not resolve — honest empty.
+    assert!(artifact.content_hash.is_empty());
+    assert!(lock_serde.store_ref.is_none());
+}
+
+#[tokio::test]
+async fn lib_adapter_resolve_uses_native_engine_via_env() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let cksum = sha256_hex(b"SERDE_CRATE");
+    server
+        .mock("GET", "/se/rd/serde")
+        .with_status(200)
+        .with_body(crate_line("serde", "1.0.219", &cksum, ""))
+        .create_async()
+        .await;
+
+    // SAFETY: test-only env override to point the native engine at mockito;
+    // the values are process-local and restored immediately after the call.
+    unsafe {
+        std::env::set_var("MGC_CRATES_INDEX_URL", server.url());
+        std::env::set_var("MGC_CRATES_DOWNLOAD_URL", server.url());
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let adapter = mgc_lib_adapter::adapter_for(tmp.path(), None, None)
+        .unwrap()
+        .unwrap();
+    let graph = adapter.resolve(&rust_manifest()).await.unwrap();
+
+    assert_eq!(graph.packages.len(), 1);
+    assert_eq!(graph.packages[0].id.name_str(), "serde");
+    assert_eq!(graph.packages[0].id.version().to_string(), "1.0.219");
+
+    unsafe {
+        std::env::remove_var("MGC_CRATES_INDEX_URL");
+        std::env::remove_var("MGC_CRATES_DOWNLOAD_URL");
+    }
+}

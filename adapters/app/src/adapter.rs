@@ -13,14 +13,17 @@
 
 use crate::language::{AppLanguage, detect_language, manifest_is_app};
 use async_trait::async_trait;
+use mgc_lib_adapter::native::engine::resolve_with_protocol;
+use mgc_lockfile::EcosystemTag;
+use mgc_resolver::protocols::PubProtocol;
 use mgc_types::adapter::{
     AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
 };
 use mgc_types::capabilities::{
-    AuditProvider, Capability, ContentStoreProvider, CoreIdent, LifecycleRunner, LockfileProvider,
-    ProjectDetector, ScaffoldProvider,
+    AuditProvider, Capability, ContentStoreProvider, CoreIdent, DependencyResolver,
+    LifecycleRunner, LockfileProvider, ProjectDetector, ScaffoldProvider,
 };
-use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, Version};
+use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, ResolvedGraph, Version};
 use std::path::{Path, PathBuf};
 
 pub struct AppAdapter {
@@ -51,6 +54,11 @@ impl AppAdapter {
         Capability::ContentStoreProvider,
         Capability::LockfileProvider,
         Capability::AuditProvider,
+        // Phase 2 native pub.dev engine — Flutter resolve/fetch/install is
+        // mgc-native (other app languages stay toolchain-owned).
+        // (Engine pub.dev native Phase 2 — resolve/fetch/install của Flutter
+        // là mgc-native; ngôn ngữ app khác vẫn do toolchain giữ.)
+        Capability::DependencyResolver,
     ];
 }
 
@@ -182,11 +190,51 @@ impl PackageAdapter for AppAdapter {
     }
 }
 
+#[async_trait]
+impl DependencyResolver for AppAdapter {
+    /// Evidence: Flutter resolves through the native pub.dev engine (Phase 2);
+    /// other app languages stay toolchain-owned (gradle/swift/pod) and fail
+    /// closed.
+    /// Dẫn chứng: Flutter resolve qua engine pub.dev native (Phase 2); ngôn
+    /// ngữ app khác vẫn do toolchain giữ (gradle/swift/pod) và fail-closed.
+    fn probe_dependency_resolver(&self) -> MgResult<()> {
+        Ok(())
+    }
+
+    async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        match self.language {
+            AppLanguage::Flutter => {
+                let protocol = PubProtocol::from_env();
+                let resolution =
+                    resolve_with_protocol(&protocol, EcosystemTag::Dart, "pub://pub.dev", manifest)
+                        .await?;
+                Ok(resolution.graph)
+            }
+            // Kotlin/Swift/RN/ObjC/Multi: no native engine yet — toolchain-
+            // owned, fail closed (never an empty-graph false success).
+            // Kotlin/Swift/RN/ObjC/Multi: chưa có engine native — toolchain
+            // sở hữu, fail-closed (không thành công giả graph rỗng).
+            AppLanguage::Kotlin
+            | AppLanguage::Swift
+            | AppLanguage::ReactNative
+            | AppLanguage::ObjC
+            | AppLanguage::Multi => Err(mgc_types::MgError::Unsupported {
+                core: "app",
+                capability: "resolve",
+                guidance: format!(
+                    "{} dependency resolution is owned by its toolchain; mgc-native \
+                     resolution lands with the native engine (Phase 2/3)",
+                    self.language.as_str()
+                ),
+            }),
+        }
+    }
+}
+
 // Unclaimed capabilities — empty impls inherit the fail-closed
 // Unsupported probes/defaults from mgc_types::capabilities.
 // Capability chưa claim — impl rỗng kế thừa probe/default fail-closed
 // từ mgc_types::capabilities.
-impl mgc_types::capabilities::DependencyResolver for AppAdapter {}
 impl mgc_types::capabilities::ArtifactFetcher for AppAdapter {}
 impl mgc_types::capabilities::OptimizerProvider for AppAdapter {}
 impl mgc_types::capabilities::Materializer for AppAdapter {}

@@ -186,20 +186,33 @@ async fn parse_manifest_derives_name_from_dir() {
 }
 
 #[tokio::test]
-async fn resolve_fails_closed_without_dependency_resolver_claim() {
+async fn flutter_resolve_empty_deps_returns_empty_graph() {
     let dir = tmp("resolve");
     std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let manifest = a.parse_manifest(&dir).await.unwrap();
-    // Global Gate 1: app no longer claims DependencyResolver — the old
-    // "empty graph by design" is now an honest fail-closed error.
-    // (Global Gate 1: app không còn claim DependencyResolver — "graph rỗng
-    // theo design" cũ giờ là lỗi fail-closed trung thực.)
+    // Phase 2: app (Flutter) now claims DependencyResolver via the native
+    // pub.dev engine; an empty pubspec resolves to an empty graph (honest —
+    // nothing to resolve, never a fake error and never a fake network call).
+    // (Phase 2: app (Flutter) giờ claim DependencyResolver qua engine pub.dev
+    // native; pubspec rỗng resolve ra graph rỗng (trung thực — không gì để
+    // resolve, không lỗi giả, không gọi mạng giả).)
+    let graph = a.resolve(&manifest).await.unwrap();
+    assert!(graph.packages.is_empty());
+}
+
+#[tokio::test]
+async fn kotlin_resolve_fails_closed_toolchain_owned() {
+    let dir = tmp("resolve-kotlin");
+    std::fs::write(dir.join("build.gradle.kts"), "").unwrap();
+    let a = adapter_for(&dir).unwrap();
+    let manifest = a.parse_manifest(&dir).await.unwrap();
+    // Non-Flutter app languages stay toolchain-owned (gradle) — resolve
+    // fails closed, never an empty-graph false success.
+    // (Ngôn ngữ app không phải Flutter vẫn do toolchain giữ (gradle) —
+    // resolve fail-closed, không thành công giả graph rỗng.)
     let result = a.resolve(&manifest).await;
-    assert!(
-        result.is_err(),
-        "app resolve must fail closed (no DependencyResolver claim)"
-    );
+    assert!(result.is_err(), "kotlin resolve must fail closed");
     assert!(
         result
             .unwrap_err()

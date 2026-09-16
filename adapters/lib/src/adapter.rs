@@ -6,12 +6,15 @@ use crate::manifest::{
     parse_cargo_manifest, parse_go_mod_manifest, parse_pyproject_manifest, write_cargo_manifest,
     write_pyproject_manifest,
 };
+use crate::native::engine::resolve_with_protocol;
 use crate::tooling::{
     cargo_lock_versions, check_pip_allowed, dist_info_versions, exec_tool, go_module_path,
     placeholder_id, version_from_manifest,
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use mgc_lockfile::EcosystemTag;
+use mgc_resolver::protocols::{CratesProtocol, PypiProtocol};
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
@@ -295,26 +298,56 @@ impl DependencyResolver for LibAdapter {
         if let Some(web) = &self.web {
             return web.resolve(manifest).await;
         }
-        // P0-B (2026-09-16) fail-closed: toolchain-owned languages have
-        // no mgc-native resolver yet — the old `Ok(ResolvedGraph::default())`
-        // was a FALSE SUCCESS (an empty graph silently "resolved" every
-        // manifest and let downstream install pretend the tree existed).
-        // Same typed-unsupported contract as java/.NET add/remove above.
-        // P0-B (2026-09-16) fail-closed: ngôn ngữ do toolchain sở hữu chưa
-        // có resolver mgc-native — `Ok(ResolvedGraph::default())` cũ là
-        // THÀNH CÔNG GIẢ (graph rỗng âm thầm "resolve" mọi manifest và
-        // cho install phía sau giả vờ cây đã tồn tại). Cùng hợp đồng
-        // typed-unsupported với add/remove java/.NET bên trên.
-        Err(mgc_types::MgError::Unsupported {
-            core: "lib",
-            capability: "resolve",
-            guidance: format!(
-                "{} dependency resolution is owned by its toolchain; mgc add/remove \
-                 delegate to it, but mgc-native resolution lands with the native \
-                 engine (Phase 2/3)",
-                self.language()
-            ),
-        })
+        match self.language {
+            // Native crates.io engine (Phase 2): fetch sparse index → select
+            // → recurse → build graph + v3 lock entries (mgc-native, no
+            // cargo spawn for resolve/fetch/install).
+            // Engine crates.io native (Phase 2): fetch sparse index → chọn
+            // → đệ quy → dựng graph + entry lock v3 (mgc-native, không spawn
+            // cargo cho resolve/fetch/install).
+            LibLanguage::Rust => {
+                let protocol = CratesProtocol::from_env();
+                let resolution = resolve_with_protocol(
+                    &protocol,
+                    EcosystemTag::Rust,
+                    "crates://sparse+https://index.crates.io",
+                    manifest,
+                )
+                .await?;
+                Ok(resolution.graph)
+            }
+            // Native PyPI engine (Phase 2): JSON API → PEP 440 select →
+            // wheel/sdist → recurse via requires_dist (mgc-native).
+            // Engine PyPI native (Phase 2): JSON API → chọn PEP 440 →
+            // wheel/sdist → đệ quy qua requires_dist (mgc-native).
+            LibLanguage::Python => {
+                let protocol = PypiProtocol::from_env();
+                let resolution = resolve_with_protocol(
+                    &protocol,
+                    EcosystemTag::Python,
+                    "pypi://pypi.org",
+                    manifest,
+                )
+                .await?;
+                Ok(resolution.graph)
+            }
+            // Go/Java/.NET: no native engine yet — toolchain-owned, fail
+            // closed (never an empty-graph false success).
+            // Go/Java/.NET: chưa có engine native — toolchain sở hữu,
+            // fail-closed (không bao giờ thành công giả graph rỗng).
+            LibLanguage::Go | LibLanguage::Java | LibLanguage::DotNet => {
+                Err(mgc_types::MgError::Unsupported {
+                    core: "lib",
+                    capability: "resolve",
+                    guidance: format!(
+                        "{} dependency resolution is owned by its toolchain; mgc-native \
+                         resolution lands with the native engine (Phase 2/3)",
+                        self.language()
+                    ),
+                })
+            }
+            LibLanguage::Ts => unreachable!("ts handled by web delegate"),
+        }
     }
 
     async fn add(

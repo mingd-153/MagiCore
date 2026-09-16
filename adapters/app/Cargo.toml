@@ -25,6 +25,7 @@ mgc-config = { workspace = true }
 mgc-adapter-base = { workspace = true }
 mgc-exec = { workspace = true }
 mgc-store = { workspace = true }
+mgc-resolver = { workspace = true }
 
 # Async
 async-trait.workspace = true

@@ -4,10 +4,11 @@
 pub mod fetch;
 pub mod verify;
 
+use mgc_resolver::protocols::{PubProtocol, RegistryProtocol, ResolvedEntry};
 use mgc_store::ContentStore;
 use mgc_types::adapter::{InstallCacheMode, InstallOptions, InstallSummary};
-use mgc_types::{MgError, MgResult, ResolvedGraph};
-use std::path::Path;
+use mgc_types::{MgError, MgResult, ResolvedGraph, ResolvedPackage};
+use std::path::{Path, PathBuf};
 
 use crate::language::AppLanguage;
 
@@ -21,8 +22,9 @@ pub async fn run_install(
     _store: Option<&ContentStore>,
 ) -> MgResult<InstallSummary> {
     match language {
-        // Flutter: pub get/upgrade
-        AppLanguage::Flutter => install_flutter(project_root, opts).await,
+        // Flutter: native pub.dev engine (Phase 2) — no `flutter pub get`
+        // spawn for resolve/fetch/install.
+        AppLanguage::Flutter => install_flutter_native(graph).await,
 
         // Kotlin/Android: gradle sync
         AppLanguage::Kotlin => install_kotlin(project_root, opts).await,
@@ -43,43 +45,72 @@ pub async fn run_install(
     }
 }
 
-/// Install Flutter dependencies via `flutter pub get`.
-///
-/// DELEGATED: `flutter pub get` runs for real — mgc orchestrates only and
-/// does not own this dependency lifecycle.
-/// (DELEGATED: `flutter pub get` chạy thật — mgc chỉ điều phối và không
-/// sở hữu lifecycle dependency này.)
-async fn install_flutter(project_root: &Path, opts: InstallOptions) -> MgResult<InstallSummary> {
-    let mut args = vec!["pub".to_string(), "get".to_string()];
+/// Native Flutter install: download each package archive → verify sha256 →
+/// import to the mgc CAS (blake3) → extract into the pub cache layout
+/// `{store}/pub/hosted/pub.dev/{name}-{version}/` (usable by
+/// `dart pub get --offline`). No `flutter pub get` spawn — mgc owns
+/// resolve/fetch/install (Phase 2).
+/// Install Flutter native: tải archive từng package → verify sha256 → import
+/// vào CAS mgc (blake3) → giải nén vào layout pub cache
+/// `{store}/pub/hosted/pub.dev/{name}-{version}/` (dùng được bởi
+/// `dart pub get --offline`). Không spawn `flutter pub get` — mgc giữ
+/// resolve/fetch/install (Phase 2).
+async fn install_flutter_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
+    let started = std::time::Instant::now();
+    let protocol = PubProtocol::from_env();
+    let pub_cache = pub_cache_root()?;
+    let store = content_store()?;
+    let mut added = Vec::with_capacity(graph.packages.len());
 
-    if opts.frozen {
-        args.push("--offline".to_string());
+    for pkg in &graph.packages {
+        let entry = entry_from_package(pkg);
+        let bytes = protocol.download(&entry).await?;
+        protocol.verify(&entry, &bytes)?;
+        store
+            .import_bytes(&bytes)
+            .map_err(|e| MgError::Store(e.to_string()))?;
+        protocol.materialize(&entry, &bytes, &pub_cache)?;
+        added.push(pkg.id.clone());
     }
 
-    let exec_opts = mgc_exec::run::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        ..Default::default()
-    };
-
-    let result = mgc_exec::run::run("flutter", &args, &exec_opts)
-        .map_err(|e| MgError::Other(format!("flutter pub get failed: {}", e)))?;
-
-    if result.exit_code != 0 {
-        return Err(MgError::Other(format!(
-            "flutter pub get exited with code {}",
-            result.exit_code
-        )));
-    }
-
-    // Issue #13: parse pubspec.lock to build InstallSummary
     Ok(InstallSummary {
-        added: vec![],
+        added,
         bytes_from_cache: 0,
-        // P0-6: native toolchain cache owns the bytes (delegation).
-        // P0-6: cache toolchain gốc giữ byte (ủy quyền).
-        cache_mode: InstallCacheMode::Delegated,
-        duration_ms: result.duration_ms,
+        duration_ms: started.elapsed().as_millis() as u64,
+        cache_mode: InstallCacheMode::MgCStore,
     })
+}
+
+/// Reconstruct a protocol `ResolvedEntry` from a resolved graph package.
+/// Dựng lại `ResolvedEntry` của protocol từ một package trong graph đã resolve.
+fn entry_from_package(pkg: &ResolvedPackage) -> ResolvedEntry {
+    ResolvedEntry {
+        name: pkg.id.name_str().to_string(),
+        version: pkg.id.version().to_string(),
+        deps: Vec::new(),
+        artifact_url: pkg.tarball_url.clone(),
+        sha256: pkg
+            .integrity
+            .strip_prefix("sha256-")
+            .unwrap_or("")
+            .to_string(),
+        extra_markers: Vec::new(),
+    }
+}
+
+/// Resolve (and create) the mgc-managed pub cache root (`~/.magicore/store/pub`).
+/// Resolve (và tạo) gốc pub cache do mgc quản (`~/.magicore/store/pub`).
+fn pub_cache_root() -> MgResult<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| MgError::Other("no home directory".to_string()))?;
+    let root = home.join(".magicore").join("store").join("pub");
+    std::fs::create_dir_all(&root).map_err(|e| MgError::Other(format!("create pub cache: {e}")))?;
+    Ok(root)
+}
+
+/// Build (and create) the mgc CAS content store used by native install.
+/// Dựng (và tạo) content store CAS mgc cho install native.
+fn content_store() -> MgResult<ContentStore> {
+    ContentStore::new(mgc_store::default_store_root()).map_err(|e| MgError::Store(e.to_string()))
 }
 
 /// Install Kotlin/Android dependencies via `gradle`.
@@ -207,11 +238,11 @@ async fn install_objc(project_root: &Path, opts: InstallOptions) -> MgResult<Ins
 async fn install_multi(
     project_root: &Path,
     opts: InstallOptions,
-    _graph: &ResolvedGraph,
+    graph: &ResolvedGraph,
 ) -> MgResult<InstallSummary> {
     // Try Flutter first (common multi-platform framework)
     if project_root.join("pubspec.yaml").exists() {
-        return install_flutter(project_root, opts).await;
+        return install_flutter_native(graph).await;
     }
 
     // Try Kotlin (Android)
