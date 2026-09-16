@@ -126,6 +126,45 @@ pub(crate) fn parse_go_mod_manifest(root: &Path) -> MgResult<Manifest> {
     Ok(manifest)
 }
 
+/// Parse the project's .csproj `<PackageReference>` entries into a Manifest
+/// (read-only — mgc never rewrites csproj). Entries with a concrete Version
+/// enter the manifest; missing/`*`/floating versions are honestly skipped —
+/// they cannot be resolved deterministically (caller-side markers are not
+/// available on Manifest, so the skip is documented here).
+/// Đọc `<PackageReference>` của .csproj thành Manifest (chỉ đọc — mgc
+/// không bao giờ viết lại csproj). Entry có Version cụ thể vào manifest;
+/// version thiếu/`*`/float được skip trung thực — không resolve tất định
+/// được (Manifest không có chỗ ghi marker nên skip được ghi chú ở đây).
+pub(crate) fn parse_csproj_manifest(root: &Path) -> MgResult<Manifest> {
+    use crate::language::find_csproj;
+    let Some(csproj) = find_csproj(root) else {
+        return Ok(Manifest::new("dotnet-lib", Ecosystem::Lib));
+    };
+    let content = std::fs::read_to_string(&csproj)
+        .map_err(|e| mgc_types::MgError::Other(format!("read {}: {e}", csproj.display())))?;
+    let name = csproj
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("dotnet-lib")
+        .to_string();
+    let (refs, _unresolved) = mgc_resolver::protocols::nuget::parse_package_references(&content);
+    let mut manifest = Manifest::new(&name, Ecosystem::Lib);
+    for r in refs {
+        let Some(version) = &r.version else {
+            continue;
+        };
+        let Ok(dep_name) = PackageName::new(r.id.clone()) else {
+            continue;
+        };
+        let Ok(range) = VersionRange::parse(version) else {
+            continue;
+        };
+        let spec = DependencySpec::new(dep_name, range);
+        manifest.add_dep(spec, false, false, false);
+    }
+    Ok(manifest)
+}
+
 pub(crate) fn parse_pyproject_manifest(root: &Path) -> MgResult<Manifest> {
     let content = std::fs::read_to_string(root.join("pyproject.toml"))
         .map_err(|e| mgc_types::MgError::Other(format!("read pyproject.toml: {e}")))?;

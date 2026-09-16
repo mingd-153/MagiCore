@@ -3,8 +3,8 @@
 
 use crate::language::{LibLanguage, detect_language, manifest_is_lib};
 use crate::manifest::{
-    parse_cargo_manifest, parse_go_mod_manifest, parse_maven_manifest, parse_pyproject_manifest,
-    write_cargo_manifest, write_pyproject_manifest,
+    parse_cargo_manifest, parse_csproj_manifest, parse_go_mod_manifest, parse_maven_manifest,
+    parse_pyproject_manifest, write_cargo_manifest, write_pyproject_manifest,
 };
 use crate::native::engine::resolve_with_protocol;
 use crate::tooling::{
@@ -14,7 +14,9 @@ use crate::tooling::{
 use anyhow::Result;
 use async_trait::async_trait;
 use mgc_lockfile::EcosystemTag;
-use mgc_resolver::protocols::{CratesProtocol, GoModProtocol, MavenProtocol, PypiProtocol};
+use mgc_resolver::protocols::{
+    CratesProtocol, GoModProtocol, MavenProtocol, NuGetProtocol, PypiProtocol,
+};
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
@@ -201,15 +203,13 @@ impl PackageAdapter for LibAdapter {
             // POM của engine Maven native; project gradle giữ manifest rỗng
             // trung thực (resolve fail-closed phía sau).)
             LibLanguage::Java => parse_maven_manifest(project_root),
-            // .NET (P2 audit parity): packages.lock.json owns the pin
-            // truth — audit reads it; csproj PackageReference parsing is
-            // wired for resolve but the manifest surface stays honest for
-            // now (no native lock writer exists).
-            // (.NET (P2 audit parity): packages.lock.json giữ truth ghim —
-            // audit đọc nó; parse PackageReference csproj đã nối cho resolve
-            // nhưng bề mặt manifest vẫn trung thực (chưa có lock writer
-            // native).)
-            LibLanguage::DotNet => Ok(Manifest::new("dotnet-lib", Ecosystem::Lib)),
+            // .NET (Phase 2): the csproj's `<PackageReference>` entries feed
+            // the native NuGet engine; packages.lock.json keeps owning audit
+            // pin truth. mgc never rewrites the csproj (read-only parse).
+            // (.NET (Phase 2): các `<PackageReference>` của csproj nạp cho
+            // engine NuGet native; packages.lock.json vẫn giữ truth ghim cho
+            // audit. mgc không bao giờ viết lại csproj (parse chỉ đọc).)
+            LibLanguage::DotNet => parse_csproj_manifest(project_root),
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }
@@ -438,19 +438,27 @@ impl DependencyResolver for LibAdapter {
                     })
                 }
             },
-            // .NET: no native engine yet — toolchain-owned, fail
-            // closed (never an empty-graph false success).
-            // (.NET: chưa có engine native — toolchain sở hữu,
-            // fail-closed (không bao giờ thành công giả graph rỗng).)
-            LibLanguage::DotNet => Err(mgc_types::MgError::Unsupported {
-                core: "lib",
-                capability: "resolve",
-                guidance: format!(
-                    "{} dependency resolution is owned by its toolchain; mgc-native \
-                         resolution lands with the native engine (Phase 2/3)",
-                    self.language()
-                ),
-            }),
+            // Native NuGet v3 engine (Phase 2): csproj PackageReferences →
+            // flat-container versions → registration SHA-512-verified nupkgs
+            // (mgc-native, no `dotnet restore` spawn for resolve/fetch/
+            // install).
+            // (Engine NuGet v3 native (Phase 2): PackageReference csproj →
+            // version flat container → nupkg xác minh SHA-512 theo
+            // registration (mgc-native, không spawn `dotnet restore` cho
+            // resolve/fetch/install).)
+            LibLanguage::DotNet => {
+                let protocol = NuGetProtocol::from_env().await;
+                let resolution = resolve_with_protocol(
+                    &protocol,
+                    EcosystemTag::NuGet,
+                    "nuget://api.nuget.org",
+                    manifest,
+                )
+                .await?;
+                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                    resolution.lock_packages;
+                Ok(resolution.graph)
+            }
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }

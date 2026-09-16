@@ -54,6 +54,10 @@ workspace = true
 [dev-dependencies]
 criterion = { workspace = true }
 mockito.workspace = true
+# NuGet wiring test needs base64 for SHA-512 registration hashes (pinned
+# workspace dep). (Test wiring NuGet cần base64 cho hash SHA-512 của
+# registration — workspace dep đã ghim.)
+base64 = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }

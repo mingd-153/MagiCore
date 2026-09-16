@@ -63,5 +63,9 @@ name = "test_protocols_maven"
 path = "tests/protocols_maven.rs"
 
 [[test]]
+name = "test_protocols_nuget"
+path = "tests/protocols_nuget.rs"
+
+[[test]]
 name = "test_protocols_zip"
 path = "tests/protocols_zip.rs"

@@ -10,7 +10,8 @@ pub mod shared_store;
 pub mod verify;
 
 use mgc_resolver::protocols::{
-    CratesProtocol, GoModProtocol, MavenProtocol, PypiProtocol, RegistryProtocol, ResolvedEntry,
+    CratesProtocol, GoModProtocol, MavenProtocol, NuGetProtocol, PypiProtocol, RegistryProtocol,
+    ResolvedEntry,
 };
 use mgc_store::ContentStore;
 use mgc_types::adapter::{InstallCacheMode, InstallOptions, InstallSummary};
@@ -72,9 +73,17 @@ pub(crate) async fn run_install(
             write_canonical_lock(project_root, lock_packages)?;
             Ok(summary)
         }
-        LibLanguage::DotNet => Err(MgError::Other(
-            ".NET install is delegated to dotnet restore (mgc reads packages.lock.json for audits); the native .NET install lane lands with P2".to_string(),
-        )),
+        // .NET: native NuGet v3 engine (Phase 2) — nupkg download →
+        // registration SHA-512 verify → CAS → global-packages
+        // materialization (`dotnet restore --source`-readable layout).
+        // (.NET: engine NuGet v3 native (Phase 2) — tải nupkg → verify
+        // SHA-512 theo registration → CAS → materialize global-packages
+        // (layout mà `dotnet restore --source` đọc được).)
+        LibLanguage::DotNet => {
+            let summary = install_nuget_native(graph).await?;
+            write_canonical_lock(project_root, lock_packages)?;
+            Ok(summary)
+        }
     }
 }
 
@@ -152,6 +161,42 @@ async fn install_maven_native(graph: &ResolvedGraph) -> MgResult<InstallSummary>
             .import_bytes(&pom)
             .map_err(|e| MgError::Store(e.to_string()))?;
         protocol.materialize(&entry, &jar, &pom, &m2_root)?;
+        added.push(pkg.id.clone());
+    }
+
+    Ok(InstallSummary {
+        added,
+        bytes_from_cache: 0,
+        duration_ms: started.elapsed().as_millis() as u64,
+        cache_mode: InstallCacheMode::MgCStore,
+    })
+}
+
+/// Native NuGet install: download each nupkg → verify the registration's
+/// base64 SHA-512 → import to the mgc CAS (blake3) → materialize the
+/// global-packages layout (`{nuget_root}/{id-lower}/{version}/` with the
+/// nupkg, extracted contents and `.nupkg.sha512`). No `dotnet restore`
+/// spawn — mgc owns resolve/fetch/install (Phase 2).
+/// Install NuGet native: tải từng nupkg → verify SHA-512 base64 theo
+/// registration → import vào CAS mgc (blake3) → materialize layout
+/// global-packages (`{nuget_root}/{id-lower}/{version}/` với nupkg, nội
+/// dung giải nén và `.nupkg.sha512`). Không spawn `dotnet restore` — mgc
+/// giữ resolve/fetch/install (Phase 2).
+async fn install_nuget_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
+    let started = Instant::now();
+    let protocol = NuGetProtocol::from_env().await;
+    let nuget_root = shared_store::SharedStoreRun::nuget()?.cache_root;
+    let store = content_store()?;
+    let mut added = Vec::with_capacity(graph.packages.len());
+
+    for pkg in &graph.packages {
+        let entry = entry_from_package(pkg);
+        let bytes = protocol.download(&entry).await?;
+        protocol.verify(&entry, &bytes)?;
+        store
+            .import_bytes(&bytes)
+            .map_err(|e| MgError::Store(e.to_string()))?;
+        protocol.materialize(&entry, &bytes, &nuget_root)?;
         added.push(pkg.id.clone());
     }
 

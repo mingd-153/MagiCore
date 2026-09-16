@@ -69,15 +69,29 @@ pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
     {
         return Some(LibLanguage::Java);
     }
-    // .NET: packages.lock.json is the lockfile the audit reads.
-    // .NET: packages.lock.json là lockfile audit đọc.
-    if root.join("packages.lock.json").is_file() {
+    // .NET: packages.lock.json is the lockfile the audit reads; a bare
+    // *.csproj is also .NET (native NuGet engine, Phase 2).
+    // .NET: packages.lock.json là lockfile audit đọc; *.csproj trần cũng
+    // là .NET (engine NuGet native, Phase 2).
+    if root.join("packages.lock.json").is_file() || find_csproj(root).is_some() {
         return Some(LibLanguage::DotNet);
     }
     if root.join("pyproject.toml").exists() {
         return Some(LibLanguage::Python);
     }
     None
+}
+
+/// Find the first `*.csproj` at the project root (single level — NuGet
+/// projects are one csproj per directory in the mgc lib lane).
+/// Tìm `*.csproj` đầu tiên ở gốc project (một cấp — project NuGet trong
+/// lane lib của mgc là một csproj mỗi thư mục).
+pub(crate) fn find_csproj(root: &Path) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(root).ok()?;
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("csproj"))
 }
 
 pub(crate) fn manifest_is_lib(root: &Path) -> bool {

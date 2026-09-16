@@ -19,6 +19,7 @@ pub mod archive;
 pub mod crates;
 pub mod go;
 pub mod maven;
+pub mod nuget;
 #[path = "pub.rs"]
 pub mod pubdev;
 pub mod pypi;
@@ -27,6 +28,7 @@ pub mod zip_reader;
 pub use crates::CratesProtocol;
 pub use go::GoModProtocol;
 pub use maven::MavenProtocol;
+pub use nuget::NuGetProtocol;
 pub use pubdev::PubProtocol;
 pub use pypi::PypiProtocol;
 
