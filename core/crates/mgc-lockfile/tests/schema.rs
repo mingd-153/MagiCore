@@ -6,7 +6,9 @@ use mgc_lockfile::schema::{Lockfile, Package, SignatureFile};
 #[test]
 fn test_lockfile_new() {
     let lockfile = Lockfile::new();
-    assert_eq!(lockfile.version, "2");
+    // Deliberate v3 bump (Phase 1): Lockfile::new() now targets the v3 schema.
+    // Nâng lên v3 có chủ đích (Phase 1): Lockfile::new() giờ nhắm schema v3.
+    assert_eq!(lockfile.version, "3");
     assert_eq!(lockfile.packages.len(), 0);
     assert!(!lockfile.is_signed());
 }

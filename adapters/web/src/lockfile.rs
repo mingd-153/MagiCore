@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use base64::Engine;
 use chrono;
-use mgc_lockfile::{Lockfile, LockfileMetadata, Package};
+use mgc_lockfile::{LOCKFILE_SCHEMA_VERSION, Lockfile, LockfileMetadata, Package};
 use mgc_store::{Layout, PackageCache};
 use mgc_types::{
     Manifest, MgError, MgResult, PackageId, PackageName, Version, adapter::ResolvedGraph,
@@ -33,8 +33,13 @@ pub fn compute_tarball_integrity(bytes: &[u8]) -> String {
 }
 
 pub fn web_lockfile_matches_graph(lockfile: &Lockfile, graph: &ResolvedGraph) -> bool {
-    // Check version is "2" (new schema)
-    if lockfile.version != "2" || lockfile.packages.len() != graph.packages.len() {
+    // Accept both "2" (legacy on-disk locks must still short-circuit the
+    // rewrite) and the current schema version ("3") that this writer emits.
+    // Chấp nhận cả "2" (lock cũ trên đĩa vẫn được phép bỏ qua ghi lại) lẫn
+    // version schema hiện tại ("3") mà writer này ghi ra.
+    if (lockfile.version != "2" && lockfile.version != LOCKFILE_SCHEMA_VERSION)
+        || lockfile.packages.len() != graph.packages.len()
+    {
         return false;
     }
 
@@ -128,12 +133,17 @@ pub fn write_web_lockfile_with_state(
 ) -> MgResult<()> {
     let lock_path = project_root.join("mgc.lock");
     let mut lockfile = read_web_lockfile_checked(project_root)?.unwrap_or_else(|| Lockfile {
-        version: "2".to_string(),
+        // Deliberate v3 bump (Phase 1): newly written web locks target the
+        // canonical v3 schema.
+        // Nâng lên v3 có chủ đích (Phase 1): lock web mới ghi nhắm schema
+        // canonical v3.
+        version: LOCKFILE_SCHEMA_VERSION.to_string(),
         metadata: LockfileMetadata {
             generated_at: chrono::Utc::now().to_rfc3339(),
             generator: format!("mgc/{}", env!("CARGO_PKG_VERSION")),
             lockfile_hash: String::new(),
             signer: None,
+            dependency_ownership: Vec::new(),
         },
         // Web lockfiles carry no imported root graph — the manifest is
         // the root source of truth; root_dependencies stays empty (P0
@@ -143,6 +153,8 @@ pub fn write_web_lockfile_with_state(
         // trường này dành cho IMPORTER, web để []).
         root_dependencies: Vec::new(),
         packages: Vec::new(),
+        workspace: None,
+        optimizer_profile: None,
     });
 
     if web_lockfile_matches_graph(&lockfile, graph) {

@@ -60,6 +60,7 @@ fn test_sbom_generate_from_lockfile() {
             resolved: "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz".to_string(),
             integrity: "blake3:abc123".to_string(),
             dependencies: vec![],
+            ..Default::default()
         },
         Package {
             name: "axios".to_string(),
@@ -67,6 +68,7 @@ fn test_sbom_generate_from_lockfile() {
             resolved: "https://registry.npmjs.org/axios/-/axios-1.0.0.tgz".to_string(),
             integrity: "blake3:def456".to_string(),
             dependencies: vec!["lodash@4.17.21".to_string()],
+            ..Default::default()
         },
     ];
 
@@ -110,6 +112,7 @@ fn test_sbom_generate_json() {
         resolved: "https://registry.npmjs.org/react/-/react-18.0.0.tgz".to_string(),
         integrity: "blake3:xyz789".to_string(),
         dependencies: vec![],
+        ..Default::default()
     }];
 
     let generator = SbomGenerator::default();

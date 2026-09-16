@@ -5,9 +5,18 @@
 //! Chính sách phiên bản: SHAPE-FIRST — chấp nhận theo cấu trúc `packages` map,
 //! số version chỉ để cảnh báo khi chưa test (PM bump version liên tục;
 //! RULE §12: không pin giá trị hay thay đổi vào code).
-// (Import other package managers' lockfiles into mgc.lock v2 — pure data parsers,
+// (Import other package managers' lockfiles into mgc.lock — pure data parsers,
 // never executes/wraps any PM. Version policy: SHAPE-FIRST — acceptance by data
 // structure; version numbers only drive advisories for untested formats.)
+//
+// v3 note: importer-built `Package` entries keep the v3 defaults
+// (`ecosystem = other`, `provenance = None`) via `..Default::default()` —
+// per-ecosystem tagging lands with the Phase 2 ecosystem wiring, and `other`
+// is exempt from provenance verification.
+// Ghi chú v3: `Package` do importer dựng giữ mặc định v3
+// (`ecosystem = other`, `provenance = None`) qua `..Default::default()` —
+// gắn thẻ theo ecosystem sẽ có khi wire ecosystem Phase 2, còn `other`
+// được miễn verify provenance.
 
 use anyhow::{Result, bail};
 use mgc_types::strip_jsonc;
@@ -299,6 +308,7 @@ fn parse_npm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>> 
             resolved,
             integrity,
             dependencies,
+            ..Default::default()
         });
     }
     Ok(out)
@@ -393,6 +403,7 @@ fn parse_pnpm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>>
             resolved,
             integrity,
             dependencies,
+            ..Default::default()
         });
     }
     Ok(out)
@@ -427,6 +438,7 @@ fn parse_yarn(content: &str) -> Result<Vec<Package>> {
                 resolved: std::mem::take(resolved),
                 integrity: std::mem::take(integrity),
                 dependencies: vec![],
+                ..Default::default()
             });
         } else {
             *name = None;
@@ -589,6 +601,7 @@ fn parse_deno(
             resolved: String::new(),
             integrity,
             dependencies: vec![],
+            ..Default::default()
         });
     }
 
@@ -621,6 +634,7 @@ fn parse_deno(
                 resolved: String::new(),
                 integrity: String::new(),
                 dependencies: vec![],
+                ..Default::default()
             });
         }
     }
@@ -724,6 +738,7 @@ fn parse_bun(content: &str, skipped: &mut Vec<SkippedRecord>) -> Result<Vec<Pack
             resolved,
             integrity,
             dependencies,
+            ..Default::default()
         });
     }
     Ok(out)

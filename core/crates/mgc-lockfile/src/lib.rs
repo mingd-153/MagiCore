@@ -1,8 +1,13 @@
 //! `mgc-lockfile` — Cryptographically signed lockfile for Zero-Trust Supply Chain
 //! Lockfile ký mật mã cho chuỗi cung ứng Zero-Trust
 //!
-//! Provides lockfile schema v2 with Ed25519 signatures for tamper detection.
+//! Provides lockfile schema v3 (canonical unified dependency graph) with
+//! Ed25519 signatures for tamper detection. v2 files remain readable.
+//! Cung cấp schema lockfile v3 (đồ thị phụ thuộc hợp nhất canonical) với
+//! chữ ký Ed25519 chống tamper. File v2 vẫn đọc được.
 
+pub mod ecosystem_tag;
+pub mod export;
 pub mod import;
 pub mod merge;
 pub mod migrate;
@@ -12,16 +17,30 @@ pub mod serialization;
 pub mod verifier;
 pub mod writer;
 
+pub use ecosystem_tag::EcosystemTag;
+pub use export::{ExportTarget, export_canonical};
 pub use import::{
     LegacyLockfile, check_trust_downgrade_risk, detect_legacy_lockfiles, import_file,
     import_into_lockfile,
 };
 pub use merge::{MergeConflict, merge3, resolve_git_conflict_markers};
 
-pub use migrate::{auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2};
+pub use migrate::{
+    auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2, migrate_v2_to_v3,
+};
 pub use parser::{load_and_verify_lockfile, load_lockfile, parse_lockfile};
-pub use schema::{Lockfile, LockfileMetadata, Package, SignatureFile, SignerInfo};
-pub use verifier::{VerificationStatus, verification_status_message, verify_lockfile};
+pub use schema::{
+    ArtifactRef, CrossEdge, OWNER_DELEGATED, OWNER_MGC_NATIVE, OWNER_SCAFFOLD_ONLY,
+    OWNER_UNSUPPORTED, Provenance, SOURCE_KIND_DELEGATED_TOOL, SOURCE_KIND_NATIVE_RESOLVE,
+    SOURCE_KIND_REGISTRY_IMPORT,
+};
+pub use schema::{
+    LOCKFILE_SCHEMA_VERSION, Lockfile, LockfileMetadata, OwnershipEntry, Package, SignatureFile,
+    SignerInfo, WorkspaceTopology, load_ownership_ledger,
+};
+pub use verifier::{
+    VerificationStatus, verification_status_message, verify_lockfile, verify_ownership_completeness,
+};
 pub use writer::{
     serialize_lockfile, sign_and_write_lockfile, sign_lockfile_with_default_key, write_lockfile,
 };
@@ -61,6 +80,12 @@ pub enum LockfileError {
 
     #[error("Invalid signature file: {0}")]
     InvalidSignatureFile(String),
+
+    /// Package entry lacks required provenance/registry data (v3 ownership
+    /// completeness gate) — Entry package thiếu dữ liệu provenance/registry
+    /// (cổng kiểm tra tính đầy đủ provenance của v3).
+    #[error("Incomplete provenance: {0}")]
+    IncompleteProvenance(String),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),

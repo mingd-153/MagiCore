@@ -17,6 +17,12 @@ fn v2_lockfile_roundtrips_package_edges() {
     let encoded = serialization::to_toml(&lock).unwrap();
     let decoded: Lockfile = serialization::from_toml(&encoded).unwrap();
 
-    assert_eq!(decoded.version, "2");
+    // Deliberate v3 bump (Phase 1): the package-edges contract now holds on
+    // the current canonical schema; pinned via the constant so future schema
+    // bumps surface here instead of silently drifting.
+    // Nâng lên v3 có chủ đích (Phase 1): hợp đồng package-edges giờ giữ trên
+    // schema canonical hiện tại; ghim qua const để lần nâng schema sau nổi
+    // lên ở đây thay vì trôi âm thầm.
+    assert_eq!(decoded.version, mgc_lockfile::LOCKFILE_SCHEMA_VERSION);
     assert_eq!(decoded.packages[0].dependencies, ["scheduler@0.25.0"]);
 }

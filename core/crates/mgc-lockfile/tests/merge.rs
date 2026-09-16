@@ -9,6 +9,9 @@ fn pkg(name: &str, version: &str) -> Package {
         resolved: format!("https://registry.example/{name}"),
         integrity: String::new(),
         dependencies: vec![],
+        // v3 fields stay at their defaults for merge semantics.
+        // Field v3 giữ mặc định cho ngữ nghĩa merge.
+        ..Default::default()
     }
 }
 
