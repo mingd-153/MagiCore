@@ -2,34 +2,41 @@ class Magicore < Formula
   desc "Multi-language package manager and lifecycle orchestrator"
   homepage "https://github.com/mingd-153/MagiCore"
   version "1.1.0-rc.5"
-  # PENDING rc.5: hashes below are still the rc.3 release values — rerun scripts/update-release-hashes.sh after tagging v1.1.0-rc.5.
+  # RELEASE GATE E (P0-3, 2026-09-16): the SHA256 values below are
+  # DO-NOT-PUBLISH placeholders — the v1.1.0-rc.5 archives do not exist
+  # yet, so NO real hash can be computed. Publishing this manifest as-is
+  # would guarantee install failure (hash mismatch). Rerun
+  # scripts/update-release-hashes.sh after the v1.1.0-rc.5 release assets
+  # are published, then confirm `python3 scripts/verify_release_manifests.py`
+  # exits 0 — it FAILS (exit 1) while any PENDING_/UNAVAILABLE_ placeholder
+  # remains.
+  # (CỔNG RELEASE E (P0-3): giá trị SHA256 dưới đây là placeholder
+  # CẤM-PUBLISH — archive v1.1.0-rc.5 chưa tồn tại nên KHÔNG THỂ tính hash
+  # thật. Publish manifest này nguyên trạng thì install chắc chắn hỏng
+  # (hash lệch). Chạy lại scripts/update-release-hashes.sh sau khi asset
+  # release v1.1.0-rc.5 có thật, rồi xác nhận `python3
+  # scripts/verify_release_manifests.py` exit 0 — script FAIL (exit 1)
+  # khi còn bất kỳ placeholder PENDING_/UNAVAILABLE_ nào.)
   license "MIT"
   head "https://github.com/mingd-153/MagiCore.git", branch: "main"
 
-  # Binary releases from GitHub — SHA256 values below are the REAL hashes
-  # computed locally from the v1.1.0-rc.3 draft release archives
-  # (2026-09-12) and cross-checked against the published *.sha256 assets.
-  # (P0-4 fix: no placeholder hashes in the repo copy.)
-  #
-  # Bản binary từ GitHub — SHA256 dưới đây là hash THẬT tính từ archive
-  # release v1.1.0-rc.3 (2026-09-12), đối chiếu với asset *.sha256 đã publish.
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-macos-arm64.tar.gz"
-      sha256 "0efe2338df6bb52b0fb256f2cf56d2f765844fec8f8f31f6bcfb1da07d33b93c"
+      sha256 "PENDING_RC5_SHA256_DO_NOT_PUBLISH"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-macos-x64.tar.gz"
-      sha256 "7fb5a180d92ecbaac257c0e4a094d7a2d4e41911eb8a41211f0cb40239373026"
+      sha256 "PENDING_RC5_SHA256_DO_NOT_PUBLISH"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-linux-arm64.tar.gz"
-      sha256 "UNAVAILABLE_NO_LINUX_ARM64_ARCHIVE_IN_RC3"
+      sha256 "PENDING_RC5_UNAVAILABLE_NO_LINUX_ARM64_ARCHIVE"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v#{version}/magicore-#{version}-linux-x64.tar.gz"
-      sha256 "d33d9c592c1479c92e3814f58d466175e4269c64da46738ef70f709ac0e4cd79"
+      sha256 "PENDING_RC5_SHA256_DO_NOT_PUBLISH"
     end
   end
 

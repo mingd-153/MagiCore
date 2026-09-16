@@ -3,11 +3,11 @@
     "description": "MagiCore single-core web package manager/runtime",
     "homepage": "https://github.com/mingd-153/MagiCore",
     "license": "MIT",
-    "notes": "PENDING rc.5: hashes below are still the rc.3 release values — rerun scripts/update-release-hashes.sh after tagging v1.1.0-rc.5. Windows arm64 archive is not part of this release.",
+    "notes": "RELEASE GATE E (P0-3): sha256 is a DO-NOT-PUBLISH placeholder — the v1.1.0-rc.5 archives do not exist yet. Rerun scripts/update-release-hashes.sh after the release assets are published; scripts/verify_release_manifests.py must exit 0 before publishing. Windows arm64 archive is not part of this release.",
     "architecture": {
         "64bit": {
             "url": "https://github.com/mingd-153/MagiCore/releases/download/v1.1.0-rc.5/magicore-web-1.1.0-rc.5-windows-x64.zip",
-            "hash": "66e6c0c7e24d8649c07fdf3d20a7999ae89df5778fb7515b3772cd33369e97b7",
+            "hash": "PENDING_RC5_SHA256_DO_NOT_PUBLISH",
             "bin": "mgc.exe"
         }
     },
