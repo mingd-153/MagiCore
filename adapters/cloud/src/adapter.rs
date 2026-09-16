@@ -161,7 +161,24 @@ impl ContentStoreProvider for CloudAdapter {
         }
         exec_tool(project_root, "terraform", &["init".to_string()])?;
         exec_tool(project_root, "terraform", &["get".to_string()])?;
-        Ok(InstallSummary::default())
+        // DELEGATED: install is owned by terraform (`init` + `get` ran
+        // for real above and fetched the modules/providers); mgc does
+        // not own this lifecycle. The summary is HONEST — it only
+        // counts the packages a provided graph named (usually empty for
+        // terraform: resolve is fail-closed, there is no registry
+        // graph). Empty graph → empty summary (truthful), never a
+        // fabricated list; cache bytes stay uncounted (Delegated mode).
+        // DELEGATED: install thuộc terraform (`init` + `get` đã chạy thật
+        // bên trên và tải module/provider); mgc KHÔNG sở hữu lifecycle
+        // này. Summary TRUNG THỰC — chỉ đếm package mà graph cung cấp nêu
+        // (thường rỗng với terraform: resolve fail-closed, không có graph
+        // registry). Graph rỗng → summary rỗng (trung thực), không bao
+        // giờ bịa danh sách; byte cache không đếm (chế độ Delegated).
+        Ok(InstallSummary {
+            added: graph.packages.iter().map(|p| p.id.clone()).collect(),
+            cache_mode: mgc_types::adapter::InstallCacheMode::Delegated,
+            ..Default::default()
+        })
     }
 }
 

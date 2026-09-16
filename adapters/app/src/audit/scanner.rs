@@ -132,6 +132,9 @@ pub(crate) fn parse_flutter_outdated_json(raw: &str) -> MgResult<DependencyHealt
 /// and reports version drift. This is NOT a security audit.
 /// Kiểm tra độ tươi dependency Flutter — chạy `flutter pub outdated --json`
 /// và báo lệch version. Đây KHÔNG phải security audit.
+///
+/// DELEGATED: the `flutter` CLI runs for real — mgc orchestrates only.
+/// (DELEGATED: CLI `flutter` chạy thật — mgc chỉ điều phối.)
 pub async fn dependency_health_flutter(project_root: &Path) -> MgResult<DependencyHealthReport> {
     // Fail closed: without the CLI we CANNOT know freshness — returning a
     // default report would fake "everything is up to date".
@@ -187,6 +190,10 @@ pub async fn audit_flutter(project_root: &Path) -> MgResult<AuditReport> {
     mgc_audit::scanners::audit_flutter_osv(project_root).await
 }
 
+// DELEGATED: gradle/gradlew runs for real — mgc orchestrates only; the
+// version scan is the tool's own output.
+// (DELEGATED: gradle/gradlew chạy thật — mgc chỉ điều phối; kết quả quét
+// version là output của tool.)
 pub async fn audit_kotlin(project_root: &Path) -> MgResult<AuditReport> {
     let tool = if project_root.join("gradlew").exists() {
         "./gradlew"

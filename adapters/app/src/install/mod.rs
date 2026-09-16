@@ -44,6 +44,11 @@ pub async fn run_install(
 }
 
 /// Install Flutter dependencies via `flutter pub get`.
+///
+/// DELEGATED: `flutter pub get` runs for real — mgc orchestrates only and
+/// does not own this dependency lifecycle.
+/// (DELEGATED: `flutter pub get` chạy thật — mgc chỉ điều phối và không
+/// sở hữu lifecycle dependency này.)
 async fn install_flutter(project_root: &Path, opts: InstallOptions) -> MgResult<InstallSummary> {
     let mut args = vec!["pub".to_string(), "get".to_string()];
 
@@ -78,6 +83,11 @@ async fn install_flutter(project_root: &Path, opts: InstallOptions) -> MgResult<
 }
 
 /// Install Kotlin/Android dependencies via `gradle`.
+///
+/// DELEGATED: gradle/gradlew runs for real — mgc orchestrates only and
+/// does not own this dependency lifecycle.
+/// (DELEGATED: gradle/gradlew chạy thật — mgc chỉ điều phối và không sở
+/// hữu lifecycle dependency này.)
 async fn install_kotlin(project_root: &Path, opts: InstallOptions) -> MgResult<InstallSummary> {
     // Use gradlew if available, fallback to gradle
     let tool = if project_root.join("gradlew").exists() {
@@ -119,6 +129,11 @@ async fn install_kotlin(project_root: &Path, opts: InstallOptions) -> MgResult<I
 }
 
 /// Install Swift dependencies via `swift package resolve`.
+///
+/// DELEGATED: `swift package resolve` runs for real — mgc orchestrates
+/// only and does not own this dependency lifecycle.
+/// (DELEGATED: `swift package resolve` chạy thật — mgc chỉ điều phối và
+/// không sở hữu lifecycle dependency này.)
 async fn install_swift(project_root: &Path, _opts: InstallOptions) -> MgResult<InstallSummary> {
     let args = vec!["package".to_string(), "resolve".to_string()];
 
@@ -149,6 +164,11 @@ async fn install_swift(project_root: &Path, _opts: InstallOptions) -> MgResult<I
 }
 
 /// Install ObjC dependencies via `pod install`.
+///
+/// DELEGATED: `pod install` runs for real — mgc orchestrates only and
+/// does not own this dependency lifecycle.
+/// (DELEGATED: `pod install` chạy thật — mgc chỉ điều phối và không sở
+/// hữu lifecycle dependency này.)
 async fn install_objc(project_root: &Path, opts: InstallOptions) -> MgResult<InstallSummary> {
     let mut args = vec!["install".to_string()];
 

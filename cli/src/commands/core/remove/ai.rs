@@ -4,6 +4,10 @@ use anyhow::Result;
 
 use super::super::shared;
 
+// DELEGATED: the args feed a REAL uv/pip run (ai_run_tool) — mgc
+// orchestrates only, it does not own this dependency lifecycle.
+// (DELEGATED: args này nuôi lệnh uv/pip THẬT (ai_run_tool) — mgc chỉ điều
+// phối, không sở hữu lifecycle dependency này.)
 fn remove_args(packages: &[String], tool: &str) -> Vec<String> {
     let mut args = vec![if tool == "uv" {
         "remove".to_string()

@@ -92,6 +92,11 @@ LANES = [
         # (mgc đổi CARGO_HOME + điều phối) — đó là ỦY QUYỀN CÓ QUẢN LÝ,
         # không bao giờ claim PM native.)
         "install_owner": "managed-delegation",
+        # P0-D: lib/rust delegates the whole dependency lifecycle to
+        # cargo (mgc redirects CARGO_HOME) — never mgc-native.
+        # (P0-D: lib/rust ủy quyền toàn bộ lifecycle dependency cho cargo
+        # (mgc đổi CARGO_HOME) — không bao giờ mgc-native.)
+        "dependency_owner": "delegated",
         # Per-OPERATION owners (Gate 11-C, vòng-11 verdict): the audit
         # rejects ONE label covering a whole ecosystem — "mgc holds a
         # cache dir" and "mgc resolves the graph" are DIFFERENT
@@ -133,6 +138,9 @@ LANES = [
         # (uv giữ resolve+lock+install (mgc đổi UV_CACHE_DIR + điều
         # phối) — ủy quyền có quản lý, không bao giờ native (P0-D).)
         "install_owner": "managed-delegation",
+        # P0-D: uv owns resolve+lock+fetch for lib/python — delegated.
+        # (P0-D: uv giữ resolve+lock+fetch cho lib/python — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "uv",                 # uv resolves the graph
             "lock": "uv",                    # uv.lock owns the lock
@@ -157,6 +165,9 @@ LANES = [
         # (TypeScript đi trên engine WEB (mgc resolve+lock+fetch+CAS)
         # — ứng viên native-engine (P0-D).)
         "install_owner": "native-engine",
+        # P0-D: the web engine IS mgc — lib/typescript is mgc-native.
+        # (P0-D: engine web CHÍNH LÀ mgc — lib/typescript là mgc-native.)
+        "dependency_owner": "mgc-native",
         "owner_by_operation": {
             "resolve": "mgc",                # web engine resolves the graph
             "lock": "mgc",                   # mgc.lock
@@ -183,6 +194,9 @@ LANES = [
         # go toolchain owns the module download — plain delegation (P0-D).
         # (go toolchain giữ download module — ủy quyền thuần (P0-D).)
         "install_owner": "plain-delegation",
+        # P0-D: the go toolchain owns modules end to end — delegated.
+        # (P0-D: toolchain go giữ module trọn vẹn — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "go",                 # go resolves the module graph
             "lock": "go",                    # go.sum owns the lock
@@ -209,6 +223,9 @@ LANES = [
         # gradle/maven own resolution — plain delegation (P0-D).
         # (gradle/maven giữ resolution — ủy quyền thuần (P0-D).)
         "install_owner": "plain-delegation",
+        # P0-D: gradle owns resolution — delegated.
+        # (P0-D: gradle giữ resolution — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "gradle",             # gradle resolves the graph
             "lock": "gradle",                # gradle.lockfile / native lock
@@ -231,6 +248,9 @@ LANES = [
         # nuget/dotnet own restore — plain delegation (P0-D).
         # (nuget/dotnet giữ restore — ủy quyền thuần (P0-D).)
         "install_owner": "plain-delegation",
+        # P0-D: nuget/dotnet own restore — delegated.
+        # (P0-D: nuget/dotnet giữ restore — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "dotnet",             # dotnet resolves
             "lock": "dotnet",                # lockfile is dotnet's
@@ -269,6 +289,9 @@ LANES = [
         # (Engine WEB (chính mgc) giữ resolve+lock+fetch+CAS — install
         # native-engine duy nhất hôm nay (taxonomy P0-D).)
         "install_owner": "native-engine",
+        # P0-D: the web engine IS mgc — the flagship mgc-native lane.
+        # (P0-D: engine web CHÍNH LÀ mgc — lane mgc-native chủ lực.)
+        "dependency_owner": "mgc-native",
         "owner_by_operation": {
             "resolve": "mgc",                # web engine resolves the graph
             "lock": "mgc",                   # mgc.lock
@@ -367,6 +390,9 @@ LANES = [
         # (uv lock + resolve + install (lane lock trước bằng uv) — ủy
         # quyền có quản lý, không bao giờ native (P0-D).)
         "install_owner": "managed-delegation",
+        # P0-D: uv owns the ai/python dependency lifecycle — delegated.
+        # (P0-D: uv giữ lifecycle dependency của ai/python — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "uv",
             "lock": "uv",
@@ -391,6 +417,9 @@ LANES = [
         # flutter/pub own the package cache — plain delegation (P0-D).
         # (flutter/pub giữ package cache — ủy quyền thuần (P0-D).)
         "install_owner": "plain-delegation",
+        # P0-D: flutter/pub own the whole lifecycle — delegated.
+        # (P0-D: flutter/pub giữ lifecycle trọn vẹn — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "flutter",            # flutter resolves
             "lock": "flutter",               # pubspec/pubspec.lock
@@ -435,6 +464,11 @@ LANES = [
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
         "install_owner": "plain-delegation",
+        # P0-D: bevy-rust delegates the dependency lifecycle to cargo
+        # (`cargo fetch` runs for real; mgc only orchestrates).
+        # (P0-D: bevy-rust ủy quyền lifecycle dependency cho cargo
+        # (`cargo fetch` chạy thật; mgc chỉ điều phối).)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "cargo",
             "lock": "cargo",
@@ -463,6 +497,11 @@ LANES = [
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
         "install_owner": "plain-delegation",
+        # P0-D: the embedded toolchains own the lifecycle (cargo fetch /
+        # pio pkg install / west update) — delegated.
+        # (P0-D: toolchain embedded giữ lifecycle (cargo fetch / pio pkg
+        # install / west update) — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "cargo",
             "lock": "cargo",
@@ -489,6 +528,10 @@ LANES = [
         "delegated": ["install"],
         "required_dims": ["create", "install", "test", "build"],
         "install_owner": "plain-delegation",
+        # P0-D: terraform owns providers/modules (`init`+`get`) —
+        # delegated (cloud passthrough, honest).
+        # (P0-D: terraform giữ provider/module (`init`+`get`) — delegated.)
+        "dependency_owner": "delegated",
         "owner_by_operation": {
             "resolve": "terraform",
             "lock": "terraform",           # .terraform.lock.hcl
@@ -548,6 +591,17 @@ LANES = [
         # không claim pipeline registry. Owner per-operation nói thẳng:
         # op registry là `unsupported-…`, store/materialize nêu generator.)
         "install_owner": "managed-delegation",
+        # P0-D: hardware is a scaffold/generator core (P0-5 — the adapter
+        # returns Unsupported for the whole registry surface): the only
+        # materialization is mgc's own bundled-template generator, so the
+        # honest owner is scaffold-only, NOT delegated (no external
+        # toolchain) and NOT mgc-native (no registry lifecycle).
+        # (P0-D: hardware là core scaffold/generator (P0-5 — adapter trả
+        # Unsupported cho toàn bộ mặt registry): cơ khí duy nhất là
+        # generator template bundled của mgc, nên owner trung thực là
+        # scaffold-only, KHÔNG phải delegated (không toolchain ngoài) và
+        # KHÔNG phải mgc-native (không lifecycle registry).)
+        "dependency_owner": "scaffold-only",
         "owner_by_operation": {
             "resolve": "unsupported-no-registry-graph",   # adapter.rs:55 Unsupported
             "lock": "unsupported-no-lockfile",            # no lockfile surface
@@ -604,6 +658,12 @@ LANES = [
         # plain-delegation. Owner per-operation nói thẳng: op registry là
         # `unsupported-…`, store/materialize thuộc CI provider.)
         "install_owner": "plain-delegation",
+        # P0-D: cicd is a generator lane (P0-5 — the adapter returns
+        # Unsupported for the registry surface; pipelines are hand-owned
+        # afterwards): scaffold-only.
+        # (P0-D: cicd là lane generator (P0-5 — adapter trả Unsupported
+        # cho mặt registry; pipeline do người quản sau đó): scaffold-only.)
+        "dependency_owner": "scaffold-only",
         "owner_by_operation": {
             "resolve": "unsupported-no-registry-graph",  # adapter.rs:65 Unsupported
             "lock": "unsupported-no-lockfile",           # no lockfile surface
@@ -648,6 +708,24 @@ PASS_STATUSES = (STATUS_NATIVE, STATUS_MANAGED, STATUS_PLAIN)
 # JSON schema version (v2: 16 dimensions + status vocabulary).
 # (Phiên bản schema JSON (v2: 16 dimension + bộ trạng thái).)
 SCHEMA_VERSION = 2
+
+# P0-D (2026-09-16): per-lane DEPENDENCY OWNER — judged from the ADAPTER
+# CODE, never from aspiration. One of exactly four values per lane:
+#   mgc-native      mgc itself resolves+fetches+materializes (web engine)
+#   delegated       an external toolchain owns the dependency lifecycle
+#                   (cargo/uv/go/gradle/dotnet/flutter/pio/west/terraform)
+#   scaffold-only   mgc generates the project once; no dependency lifecycle
+#                   exists afterwards
+#   unsupported     no dependency surface at all
+# Verdict gate: `native-pm-supported` ONLY when dependency_owner is
+# mgc-native; delegated lanes cap at the NEW `compatibility-passed`
+# native-pm verdict; scaffold-only/unsupported read `unsupported`.
+# (P0-D: CHỦ SỞ HỮU DEPENDENCY theo lane — phán theo CODE ADAPTER, không
+# theo khát vọng. Đúng bốn giá trị mỗi lane: mgc-native / delegated /
+# scaffold-only / unsupported. Cổng verdict: `native-pm-supported` CHỈ khi
+# mgc-native; lane delegated trần ở verdict native-pm MỚI
+# `compatibility-passed`; scaffold-only/unsupported đọc `unsupported`.)
+DEPENDENCY_OWNER_VOCABULARY = ("mgc-native", "delegated", "scaffold-only", "unsupported")
 
 # ---------------------------------------------------------------------------
 # P0-3 platform-evidence counter (Tech Lead 2026-09-16): windows-latest
@@ -1189,9 +1267,12 @@ def validate_lane_owners() -> int:
 #   web   → TRUE×3: the native engine IS the registry pipeline
 #           (impl PackageAdapter at adapters/web/src/lib.rs:265, install/
 #           orchestrator + CAS + mgc.lock).
-#   lib   → TRUE×3: LibAdapter delegates resolve to the embedded web
-#           engine and installs via crate::install::run_install
-#           (adapters/lib/src/adapter.rs:132/139/143).
+#   lib   → TRUE×3: TRUE for the TS lane — LibAdapter delegates resolve/
+#           fetch to the embedded web engine (adapters/lib/src/adapter.rs).
+#           P0-B (2026-09-16): resolve/fetch now FAIL CLOSED for the
+#           toolchain-owned languages (rust/python/go/java/dotnet) — the
+#           core-level row stays TRUE because the TS lane's mgc-owned ops
+#           are real; delegated lib lanes never claim mgc owners.
 #   ai    → TRUE×3: implemented fail-closed (requires uv.lock /
 #           requirements.lock) — adapters/ai/src/adapter.rs:57/61/65.
 #   app   → TRUE×3: implemented (flutter pub orchestration) —
@@ -1282,6 +1363,87 @@ def validate_adapter_consistency() -> int:
         "production adapter capabilities (P0-5)"
     )
     return 0
+
+
+def validate_dependency_owners() -> int:
+    """P0-D dependency-owner gate (2026-09-16): every lane declares
+    `dependency_owner` from the closed vocabulary, and an `mgc-native`
+    claim REQUIRES the `native-engine` install_owner label — the two
+    taxonomies must agree or the verdict gate below would be laundrable.
+    Fail-closed: missing/unknown/inconsistent value blocks with exit 1.
+    (Cổng P0-D (2026-09-16): mọi lane khai `dependency_owner` thuộc bộ giá
+    trị đóng, và claim `mgc-native` BẮT BUỘC nhãn install_owner
+    `native-engine` — hai taxonomy phải khớp nếu không cổng verdict bên
+    dưới sẽ bị giặt. Fail-closed: thiếu/lạ/mâu thuẫn → exit 1.)"""
+    violations = []
+    for lane in LANES:
+        tag = f"{lane['core']}/{lane['language']}"
+        dep = lane.get("dependency_owner")
+        if not dep:
+            violations.append(f"{tag}: missing dependency_owner (P0-D)")
+            continue
+        if dep not in DEPENDENCY_OWNER_VOCABULARY:
+            violations.append(
+                f"{tag}: unknown dependency_owner '{dep}' (vocabulary: "
+                f"{', '.join(DEPENDENCY_OWNER_VOCABULARY)})"
+            )
+        if dep == "mgc-native" and lane.get("install_owner") != "native-engine":
+            violations.append(
+                f"{tag}: dependency_owner=mgc-native but install_owner="
+                f"'{lane.get('install_owner')}' — contradiction (P0-D)"
+            )
+    if violations:
+        for v in violations:
+            print(f"DEPENDENCY-OWNER GATE VIOLATION: {v}", file=sys.stderr)
+        return 1
+    print(
+        f"dependency-owner gate: {len(LANES)} lanes clean "
+        f"(vocabulary: {', '.join(DEPENDENCY_OWNER_VOCABULARY)})"
+    )
+    return 0
+
+
+def print_dependency_owner_summary() -> None:
+    """Validate-only report: per-lane dependency_owner table with the
+    verdict ceiling it imposes, plus a machine-readable JSON block on
+    stdout so a consumer never parses the human table.
+    (Báo cáo validate-only: bảng dependency_owner từng lane kèm trần
+    verdict nó áp, cộng khối JSON máy-đọc trên stdout để consumer không
+    bao giờ phải parse bảng người-đọc.)"""
+    ceiling = {
+        "mgc-native": "native-pm-supported (ceiling)",
+        "delegated": "compatibility-passed (ceiling)",
+        "scaffold-only": "unsupported",
+        "unsupported": "unsupported",
+    }
+    print("=== dependency_owner summary (P0-D) ===")
+    print(
+        f"  {'lane':<24} {'dependency_owner':<16} "
+        f"{'install_owner':<20} verdict ceiling"
+    )
+    for lane in LANES:
+        tag = f"{lane['core']}/{lane['language']}"
+        print(
+            f"  {tag:<24} {lane['dependency_owner']:<16} "
+            f"{lane.get('install_owner', '-'):<20} "
+            f"{ceiling[lane['dependency_owner']]}"
+        )
+    print(
+        json.dumps(
+            {
+                "dependency_owner_gate": "pass",
+                "lanes": [
+                    {
+                        "core": lane["core"],
+                        "language": lane["language"],
+                        "dependency_owner": lane["dependency_owner"],
+                    }
+                    for lane in LANES
+                ],
+            },
+            indent=2,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2083,7 +2245,19 @@ def main() -> int:
         # adapter — fail-closed ngay vi phạm đầu tiên.)
         owner_rc = validate_lane_owners()
         adapter_rc = validate_adapter_consistency()
-        return 1 if (owner_rc or adapter_rc) else 0
+        # P0-D: the dependency-owner gate joins the validate-only set;
+        # the per-lane summary table (with verdict ceilings + JSON) only
+        # prints when every gate is clean — a broken taxonomy never gets
+        # a table that looks like a report.
+        # (P0-D: cổng dependency-owner gia nhập bộ validate-only; bảng
+        # summary theo lane (kèm trần verdict + JSON) chỉ in khi mọi cổng
+        # sạch — taxonomy vỡ không bao giờ được có cái bảng trông như
+        # báo cáo.)
+        dep_rc = validate_dependency_owners()
+        if owner_rc or adapter_rc or dep_rc:
+            return 1
+        print_dependency_owner_summary()
+        return 0
     mgc_bin = os.path.abspath(mgc_bin)
     if not os.path.isfile(mgc_bin) and os.name == "nt" and not mgc_bin.endswith(".exe"):
         # Windows binaries carry the .exe suffix — retry the suffixed path
@@ -2111,10 +2285,14 @@ def main() -> int:
     # (Fail-closed (P0-5): cổng vi phạm TỪ CHỐI collect — code cũ bỏ qua
     # return code, cho taxonomy gắn nhãn sai chạm tới matrix dù comment
     # bên trên hứa điều ngược lại.)
-    if validate_lane_owners() != 0 or validate_adapter_consistency() != 0:
+    if (
+        validate_lane_owners() != 0
+        or validate_adapter_consistency() != 0
+        or validate_dependency_owners() != 0
+    ):
         _fail(
-            "lane owner/adapter-consistency gates failed — refusing to "
-            "collect a matrix from mislabeled taxonomy"
+            "lane owner/adapter-consistency/dependency-owner gates failed — "
+            "refusing to collect a matrix from mislabeled taxonomy"
         )
 
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -2173,6 +2351,15 @@ def main() -> int:
                 "install_owner",
                 "plain-delegation" if "install" in lane.get("delegated", []) else "native-engine",
             ),
+            # P0-D: who owns the dependency lifecycle for this lane — the
+            # verdict gate below reads this field (native-pm-supported
+            # REQUIRES mgc-native; delegated caps at compatibility-passed).
+            # Emitted only after validate_dependency_owners() passed.
+            # (P0-D: ai giữ lifecycle dependency của lane — cổng verdict
+            # bên dưới đọc trường này (native-pm-supported BẮT BUỘC
+            # mgc-native; delegated trần compatibility-passed). Chỉ emit
+            # sau khi validate_dependency_owners() pass.)
+            "dependency_owner": lane.get("dependency_owner"),
             # Per-OPERATION owners (Gate 11-C, vòng-11 verdict): resolve/
             # lock/fetch/store/materialize each name their owner — the
             # machine-readable split so "install passed" can never be
@@ -2244,24 +2431,37 @@ def main() -> int:
             else "partial" if any(_satisfied(dims[d]) for d in required)
             else "unsupported"
         )
-        # Native-PM verdict: a single non-native required dimension drops
-        # the lane out of native-pm — managed/plain delegation means the
-        # native toolchain owns that behavior, not mgc. The install OWNER
-        # taxonomy (P0-D) is the second gate: a managed- or
-        # plain-delegation owner can never claim native PM no matter how
-        # the dimensions scored.
-        # (Verdict native-PM: một dimension required không native-pass duy
-        # nhất hạ lane khỏi native-pm — managed/plain delegation nghĩa là
-        # toolchain gốc giữ behavior đó, không phải mgc. Taxonomy chủ sở
-        # hữu install (P0-D) là cổng thứ hai: owner là managed- hoặc
-        # plain-delegation thì không bao giờ claim PM native dù dimension
-        # điểm thế nào.)
+        # Native-PM verdict (P0-D gate, 2026-09-16): `native-pm-supported`
+        # ONLY when the lane's dependency_owner is `mgc-native` — a
+        # delegated toolchain can never back a native claim no matter how
+        # the dimensions scored. Delegated lanes cap at the NEW
+        # `compatibility-passed` verdict (toolchain compatibility proven,
+        # ownership NOT mgc's); `scaffold-only`/`unsupported` lanes read
+        # `unsupported`. The install-OWNER taxonomy (P0-D vòng-9) and the
+        # native-dimension requirement remain additional gates for
+        # native-pm-supported.
+        # (Verdict native-PM (cổng P0-D): `native-pm-supported` CHỈ khi
+        # dependency_owner của lane là `mgc-native` — toolchain ủy quyền
+        # không bao giờ đủ cho claim native dù dimension điểm thế nào.
+        # Lane delegated trần ở verdict MỚI `compatibility-passed` (chứng
+        # minh tương thích toolchain, KHÔNG phải sở hữu của mgc);
+        # `scaffold-only`/`unsupported` đọc `unsupported`. Taxonomy chủ
+        # sở hữu install (P0-D vòng-9) và yêu cầu dimension native vẫn là
+        # các cổng bổ sung cho native-pm-supported.)
+        dep_owner = r.get("dependency_owner", "")
         r["native_pm_verdict"] = (
             "native-pm-supported"
             if required
+            and dep_owner == "mgc-native"
             and all(dims[d] == STATUS_NATIVE for d in required)
             and not native_pm_delegated
             and install_owner == "native-engine"
+            else "compatibility-passed"
+            if dep_owner == "delegated"
+            and required
+            and all(_satisfied(dims[d]) for d in required)
+            else "unsupported"
+            if dep_owner in ("scaffold-only", "unsupported")
             else "not-native-pm"
         )
 

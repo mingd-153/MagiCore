@@ -4,6 +4,10 @@ use anyhow::Result;
 
 use super::super::shared;
 
+// DELEGATED: the args feed a REAL uv/pip run (ai_run_tool) — mgc
+// orchestrates only, it does not own this dependency lifecycle.
+// (DELEGATED: args này nuôi lệnh uv/pip THẬT (ai_run_tool) — mgc chỉ điều
+// phối, không sở hữu lifecycle dependency này.)
 fn update_args(packages: &[String], tool: &str) -> Vec<String> {
     if packages.is_empty() {
         return if tool == "uv" {
@@ -30,6 +34,10 @@ fn update_args(packages: &[String], tool: &str) -> Vec<String> {
     }
 }
 
+// DELEGATED: uv lock/sync and pip flows run for real — mgc orchestrates
+// only, it does not own this dependency lifecycle.
+// (DELEGATED: uv lock/sync và luồng pip chạy thật — mgc chỉ điều phối,
+// không sở hữu lifecycle dependency này.)
 pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
     let root = shared::ai_project_root()?;
     let tool = shared::ai_pick_tool(&root);

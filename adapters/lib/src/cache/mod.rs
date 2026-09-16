@@ -13,6 +13,11 @@ use std::path::{Path, PathBuf};
 /// - Rust: ~/.cargo/registry/cache
 /// - Python: ~/.cache/pip or uv cache
 /// - TypeScript: delegated to web adapter (~/.mgc-store/cache)
+///
+/// DELEGATED: the resolved paths are the NATIVE toolchains' own caches
+/// (cargo/uv/pip) — mgc measures reuse, it does not own the bytes.
+/// (DELEGATED: đường dẫn trả về là cache CỦA toolchain gốc (cargo/uv/pip)
+/// — mgc chỉ đo mức tái sử dụng, không sở hữu byte.)
 pub fn cache_dir(language: &str) -> MgResult<PathBuf> {
     let home =
         dirs::home_dir().ok_or_else(|| MgError::Other("cannot find home directory".to_string()))?;

@@ -6,6 +6,11 @@ use std::path::Path;
 
 /// Install Bevy dependencies via `cargo fetch`
 /// Orchestrate cargo - không reimplement resolver crates.io (Q10)
+///
+/// DELEGATED: `cargo fetch` runs for real and owns this lifecycle; the
+/// returned counts are read from Cargo.lock, not mgc-owned state.
+/// (DELEGATED: `cargo fetch` chạy thật và sở hữu lifecycle này; số đếm
+/// trả về đọc từ Cargo.lock, không phải trạng thái của mgc.)
 pub async fn install_dependencies(project_root: &Path) -> MgResult<(Vec<String>, u64, bool)> {
     let cargo_toml = project_root.join("Cargo.toml");
 
@@ -40,6 +45,11 @@ pub async fn install_dependencies(project_root: &Path) -> MgResult<(Vec<String>,
 }
 
 /// Add Bevy dependency via `cargo add`
+///
+/// DELEGATED: `cargo add` runs for real — mgc orchestrates only and does
+/// not own the dependency lifecycle.
+/// (DELEGATED: `cargo add` chạy thật — mgc chỉ điều phối và không sở hữu
+/// lifecycle dependency.)
 pub async fn add_dependency(
     project_root: &Path,
     name: &str,

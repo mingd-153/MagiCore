@@ -41,6 +41,11 @@ pub fn fetch_rust_crate(_project_root: &Path, package_id: &PackageId) -> MgResul
 /// Currently delegates to pip download (exec passthrough).
 /// Hiện tại delegate cho pip download (exec passthrough).
 /// Issue #14: native PyPI client (PEP 503 Simple Repository API).
+///
+/// DELEGATED: `pip download` runs for real — mgc does not own this
+/// dependency lifecycle.
+/// (DELEGATED: `pip download` chạy thật — mgc không sở hữu lifecycle
+/// dependency này.)
 pub fn fetch_python_package(project_root: &Path, package_id: &PackageId) -> MgResult<PathBuf> {
     // pip download stores in current directory by default
     // pip download lưu trong thư mục hiện tại mặc định

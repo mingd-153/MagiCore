@@ -37,12 +37,12 @@ impl LibAdapter {
     /// - DependencyResolver: add/remove/update are REAL toolchain
     ///   delegations (cargo add / pip install / go get; TS → web
     ///   delegate); resolve delegates to the embedded web engine for TS
-    ///   and returns an empty graph for toolchain-owned languages
-    ///   (adapter.rs resolve) — claimed (the mgc.lock lane backs it).
+    ///   and FAILS CLOSED (unsupported) for toolchain-owned languages —
+    ///   the old empty-graph Ok was a false success (P0-B).
     /// - LockfileProvider: real manifest writers (cargo/pyproject/web).
-    /// - ArtifactFetcher: delegated fetch — TS rides the web engine, the
-    ///   toolchains fetch during their install (matrix lane lib/ts:
-    ///   fetch owned by mgc) — claimed.
+    /// - ArtifactFetcher: delegated fetch — TS rides the web engine; the
+    ///   toolchains fetch during their install. Non-TS fetch FAILS
+    ///   CLOSED (P0-B): a bare Ok(()) faked "fetched" without work.
     /// - ContentStoreProvider: crate::install::run_install with the
     ///   shared store (install/shared_store.rs) — real.
     /// - AuditProvider: per-language scanner dispatch — real.
@@ -280,9 +280,13 @@ impl LockfileProvider for LibAdapter {
 #[async_trait]
 impl DependencyResolver for LibAdapter {
     /// Evidence: add/remove/update really delegate (cargo/pip/go; TS →
-    /// web delegate); resolve rides the web engine for TS.
+    /// web delegate); resolve rides the web engine for TS and FAILS
+    /// CLOSED for toolchain-owned languages (P0-B — no empty-graph
+    /// false success).
     /// Dẫn chứng: add/remove/update ủy quyền thật (cargo/pip/go; TS qua
-    /// web delegate); resolve đi trên web engine cho TS.
+    /// web delegate); resolve đi trên web engine cho TS và FAIL-CLOSED
+    /// cho ngôn ngữ do toolchain sở hữu (P0-B — cấm thành công giả
+    /// graph rỗng).
     fn probe_dependency_resolver(&self) -> MgResult<()> {
         Ok(())
     }
@@ -291,7 +295,26 @@ impl DependencyResolver for LibAdapter {
         if let Some(web) = &self.web {
             return web.resolve(manifest).await;
         }
-        Ok(ResolvedGraph::default())
+        // P0-B (2026-09-16) fail-closed: toolchain-owned languages have
+        // no mgc-native resolver yet — the old `Ok(ResolvedGraph::default())`
+        // was a FALSE SUCCESS (an empty graph silently "resolved" every
+        // manifest and let downstream install pretend the tree existed).
+        // Same typed-unsupported contract as java/.NET add/remove above.
+        // P0-B (2026-09-16) fail-closed: ngôn ngữ do toolchain sở hữu chưa
+        // có resolver mgc-native — `Ok(ResolvedGraph::default())` cũ là
+        // THÀNH CÔNG GIẢ (graph rỗng âm thầm "resolve" mọi manifest và
+        // cho install phía sau giả vờ cây đã tồn tại). Cùng hợp đồng
+        // typed-unsupported với add/remove java/.NET bên trên.
+        Err(mgc_types::MgError::Unsupported {
+            core: "lib",
+            capability: "resolve",
+            guidance: format!(
+                "{} dependency resolution is owned by its toolchain; mgc add/remove \
+                 delegate to it, but mgc-native resolution lands with the native \
+                 engine (Phase 2/3)",
+                self.language()
+            ),
+        })
     }
 
     async fn add(
@@ -301,6 +324,12 @@ impl DependencyResolver for LibAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PackageId> {
+        // DELEGATED: add runs the native toolchain for real (cargo add /
+        // pip install / go get) — mgc orchestrates only, it does not own
+        // this dependency lifecycle.
+        // (DELEGATED: add chạy toolchain gốc thật (cargo add / pip
+        // install / go get) — mgc chỉ điều phối, không sở hữu lifecycle
+        // dependency này.)
         if let Some(web) = &self.web {
             return web.add(project_root, name, range, opts).await;
         }
@@ -368,6 +397,12 @@ impl DependencyResolver for LibAdapter {
     }
 
     async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
+        // DELEGATED: remove runs the native toolchain for real (cargo
+        // remove / pip uninstall) — mgc orchestrates only, it does not
+        // own this dependency lifecycle.
+        // (DELEGATED: remove chạy toolchain gốc thật (cargo remove / pip
+        // uninstall) — mgc chỉ điều phối, không sở hữu lifecycle
+        // dependency này.)
         if let Some(web) = &self.web {
             return web.remove(project_root, name).await;
         }
@@ -422,6 +457,12 @@ impl DependencyResolver for LibAdapter {
         project_root: &Path,
         name: Option<&PackageName>,
     ) -> MgResult<Vec<UpdatedPackage>> {
+        // DELEGATED: update runs the native toolchain for real (cargo
+        // update / pip install --upgrade / go get -u) — mgc orchestrates
+        // only, it does not own this dependency lifecycle.
+        // (DELEGATED: update chạy toolchain gốc thật (cargo update / pip
+        // install --upgrade / go get -u) — mgc chỉ điều phối, không sở
+        // hữu lifecycle dependency này.)
         if let Some(web) = &self.web {
             return web.update(project_root, name).await;
         }
@@ -484,17 +525,37 @@ impl DependencyResolver for LibAdapter {
 #[async_trait]
 impl ArtifactFetcher for LibAdapter {
     /// Evidence: delegated fetch — TS rides the web engine (mgc fetcher +
-    /// CAS), the toolchains fetch during their own install (matrix lane
-    /// lib/typescript: fetch owned by mgc).
+    /// CAS); non-TS lanes FAIL CLOSED (P0-B): a bare Ok(()) claimed
+    /// "artifacts fetched" while nothing was downloaded.
     /// Dẫn chứng: fetch ủy quyền — TS đi trên web engine (mgc fetcher +
-    /// CAS), toolchain tự fetch trong install của nó (lane matrix
-    /// lib/typescript: fetch do mgc sở hữu).
+    /// CAS); lane non-TS FAIL-CLOSED (P0-B): Ok(()) trần tuyên bố "đã
+    /// fetch" trong khi không tải gì cả.
     fn probe_artifact_fetcher(&self) -> MgResult<()> {
         Ok(())
     }
 
-    async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Ok(())
+    async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
+        if let Some(web) = &self.web {
+            return web.fetch(graph).await;
+        }
+        // P0-B (2026-09-16) fail-closed: delegated fetch must never
+        // answer a fake Ok. The toolchain fetches during its own
+        // install (managed store); mgc-native fetch lands with the
+        // native engine (Phase 2/3).
+        // P0-B (2026-09-16) fail-closed: fetch ủy quyền không bao giờ
+        // được trả Ok giả. Toolchain tự fetch trong install của nó
+        // (store có quản lý); fetch mgc-native thuộc native engine
+        // (Phase 2/3).
+        Err(mgc_types::MgError::Unsupported {
+            core: "lib",
+            capability: "fetch",
+            guidance: format!(
+                "{} artifacts are fetched by the toolchain itself during its \
+                 install; mgc-native fetch lands with the native engine \
+                 (Phase 2/3)",
+                self.language()
+            ),
+        })
     }
 }
 

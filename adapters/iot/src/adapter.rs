@@ -96,7 +96,7 @@ impl ContentStoreProvider for IotAdapter {
 
     async fn install(
         &self,
-        _graph: &ResolvedGraph,
+        graph: &ResolvedGraph,
         project_root: &Path,
         _opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
@@ -111,7 +111,22 @@ impl ContentStoreProvider for IotAdapter {
             }
             IotFramework::Zephyr => exec_tool(project_root, "west", &["update".to_string()])?,
         }
-        Ok(InstallSummary::default())
+        // DELEGATED: install is owned by the toolchain (cargo fetch /
+        // pio pkg install / west update ran for real above); mgc does
+        // not own this lifecycle. The summary is HONEST — it only
+        // counts the packages the manifest graph named. An empty graph
+        // yields an empty summary (truthful), never a fabricated list;
+        // cache bytes stay uncounted (Delegated mode).
+        // DELEGATED: install thuộc toolchain (cargo fetch / pio pkg
+        // install / west update đã chạy thật bên trên); mgc KHÔNG sở hữu
+        // lifecycle này. Summary TRUNG THỰC — chỉ đếm package mà graph
+        // manifest nêu. Graph rỗng → summary rỗng (trung thực), không
+        // bao giờ bịa danh sách; byte cache không đếm (chế độ Delegated).
+        Ok(InstallSummary {
+            added: graph.packages.iter().map(|p| p.id.clone()).collect(),
+            cache_mode: mgc_types::adapter::InstallCacheMode::Delegated,
+            ..Default::default()
+        })
     }
 }
 
@@ -150,6 +165,10 @@ impl DependencyResolver for IotAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PackageId> {
+        // DELEGATED: esp32-rust runs `cargo add` + `cargo fetch`, pio runs
+        // `pio pkg install` for real — mgc orchestrates only.
+        // (DELEGATED: esp32-rust chạy `cargo add` + `cargo fetch`, pio
+        // chạy `pio pkg install` thật — mgc chỉ điều phối.)
         if opts.no_save {
             return Ok(placeholder_id(name, range));
         }
@@ -184,6 +203,10 @@ impl DependencyResolver for IotAdapter {
     }
 
     async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
+        // DELEGATED: esp32-rust runs `cargo remove`, pio runs
+        // `pio pkg uninstall` for real — mgc orchestrates only.
+        // (DELEGATED: esp32-rust chạy `cargo remove`, pio chạy
+        // `pio pkg uninstall` thật — mgc chỉ điều phối.)
         match self.framework {
             IotFramework::Esp32Rust => exec_tool(
                 project_root,
@@ -210,6 +233,10 @@ impl DependencyResolver for IotAdapter {
         project_root: &Path,
         name: Option<&PackageName>,
     ) -> MgResult<Vec<UpdatedPackage>> {
+        // DELEGATED: esp32-rust/pio run their own update commands, zephyr
+        // runs `west update` — mgc orchestrates only.
+        // (DELEGATED: esp32-rust/pio chạy lệnh update của chúng, zephyr
+        // chạy `west update` — mgc chỉ điều phối.)
         match self.framework {
             IotFramework::Esp32Rust => {
                 let mut args = vec!["update".to_string()];

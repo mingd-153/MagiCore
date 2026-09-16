@@ -59,6 +59,11 @@ pub(crate) async fn run_install(
 
 /// Fetch Go modules per go.mod — delegated to the go toolchain.
 /// Tải module Go theo go.mod — ủy quyền cho go toolchain.
+///
+/// DELEGATED: `go mod download` runs for real — mgc does not own this
+/// dependency lifecycle.
+/// (DELEGATED: `go mod download` chạy thật — mgc không sở hữu lifecycle
+/// dependency này.)
 async fn install_go(project_root: &Path, _opts: InstallOptions) -> MgResult<InstallSummary> {
     // P0-6: delegated install — the go module cache owns the bytes, so
     // the summary says so instead of a silent zero byte-count.
@@ -84,6 +89,10 @@ async fn install_go(project_root: &Path, _opts: InstallOptions) -> MgResult<Inst
 }
 
 async fn install_rust(project_root: &Path, opts: InstallOptions) -> MgResult<InstallSummary> {
+    // DELEGATED: `cargo fetch` (managed CARGO_HOME) runs for real — mgc
+    // does not own this dependency lifecycle.
+    // (DELEGATED: `cargo fetch` (CARGO_HOME có quản lý) chạy thật — mgc
+    // không sở hữu lifecycle dependency này.)
     let mut args = vec!["fetch".to_string()];
     if opts.frozen {
         args.push("--frozen".to_string());
@@ -131,6 +140,10 @@ async fn install_rust(project_root: &Path, opts: InstallOptions) -> MgResult<Ins
     })
 }
 async fn install_python(project_root: &Path, _opts: InstallOptions) -> MgResult<InstallSummary> {
+    // DELEGATED: `uv sync` / `pip install` run for real — mgc does not
+    // own this dependency lifecycle.
+    // (DELEGATED: `uv sync` / `pip install` chạy thật — mgc không sở hữu
+    // lifecycle dependency này.)
     // Python install contract (aligned with the ai core lane, P0 fix
     // 2026-09-12): uv has NO `uv install` subcommand. With a uv.lock
     // the honest sync is `uv sync` (toolchain-native, same as the ai

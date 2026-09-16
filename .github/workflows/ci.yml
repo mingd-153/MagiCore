@@ -29,6 +29,26 @@ jobs:
         run: cargo test -p mgc-exec --test test_run 2>&1
         timeout-minutes: 2
 
+  dependency-ownership-audit:
+    # P0-A (2026-09-16): MUST-PASS ownership gate — every PM-tool spawn in
+    # the dependency lifecycle must be either a whitelisted non-dependency
+    # op (build/test/run/dev/flash/doctor, tests, benches) or carry a
+    # `DELEGATED:` declaration; an undocumented spawn fails CI. Fast: pure
+    # static scan, no build.
+    # (P0-A (2026-09-16): cổng sở hữu BẮT BUỘC PASS — mọi spawn tool PM
+    # trong lifecycle dependency phải là op whitelist phi-dependency
+    # (build/test/run/dev/flash/doctor, tests, benches) hoặc mang khai báo
+    # `DELEGATED:`; spawn chưa khai làm CI fail. Nhanh: quét tĩnh thuần,
+    # không build.)
+    name: Dependency Ownership Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Audit dependency delegation (fail on undocumented violation)
+        run: python3 scripts/audit_dependency_delegation.py
+      - name: Audit ledger stays gitignored (local-only)
+        run: git check-ignore -q docs/specs/dependencyDelegationAudit.json
+
   windows-spawn-tests:
     name: Windows Spawn Tests
     runs-on: windows-latest

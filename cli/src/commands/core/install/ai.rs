@@ -30,6 +30,10 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+// DELEGATED: uv sync / pip install run for real — mgc orchestrates only,
+// it does not own this dependency lifecycle.
+// (DELEGATED: uv sync / pip install chạy thật — mgc chỉ điều phối, không
+// sở hữu lifecycle dependency này.)
 fn ai_install_command(root: &std::path::Path) -> Result<(&'static str, Vec<String>)> {
     // pip3 fallback for systems without a `pip` alias (merged from the RC line).
     // pip3 fallback cho hệ thống không có alias `pip` (gộp từ nhánh RC).

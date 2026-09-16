@@ -96,7 +96,7 @@ impl ContentStoreProvider for GameAdapter {
 
     async fn install(
         &self,
-        _graph: &ResolvedGraph,
+        graph: &ResolvedGraph,
         project_root: &Path,
         _opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
@@ -127,7 +127,22 @@ impl ContentStoreProvider for GameAdapter {
                 ));
             }
         }
-        Ok(InstallSummary::default())
+        // DELEGATED: install is owned by the toolchain (Bevy → `cargo
+        // fetch` ran for real above); mgc does not own this lifecycle.
+        // The summary is HONEST — it only counts the packages the
+        // manifest graph named. An empty graph yields an empty summary
+        // (truthful), never a fabricated package list; cache bytes stay
+        // uncounted (cargo owns its cache — Delegated mode).
+        // DELEGATED: install thuộc toolchain (Bevy → `cargo fetch` đã chạy
+        // thật bên trên); mgc KHÔNG sở hữu lifecycle này. Summary TRUNG
+        // THỰC — chỉ đếm package mà graph manifest nêu. Graph rỗng →
+        // summary rỗng (trung thực), không bao giờ bịa danh sách package;
+        // byte cache không đếm (cargo giữ cache của nó — chế độ Delegated).
+        Ok(InstallSummary {
+            added: graph.packages.iter().map(|p| p.id.clone()).collect(),
+            cache_mode: mgc_types::adapter::InstallCacheMode::Delegated,
+            ..Default::default()
+        })
     }
 }
 
@@ -166,6 +181,10 @@ impl DependencyResolver for GameAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PackageId> {
+        // DELEGATED: the bevy lane runs `cargo add` + `cargo fetch` for
+        // real — mgc orchestrates only; other engines fail closed below.
+        // (DELEGATED: lane bevy chạy `cargo add` + `cargo fetch` thật —
+        // mgc chỉ điều phối; engine khác fail-closed bên dưới.)
         if opts.no_save {
             return Ok(placeholder_id(name, range));
         }
@@ -195,6 +214,10 @@ impl DependencyResolver for GameAdapter {
     }
 
     async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
+        // DELEGATED: the bevy lane runs `cargo remove` for real — mgc
+        // orchestrates only; other engines fail closed below.
+        // (DELEGATED: lane bevy chạy `cargo remove` thật — mgc chỉ điều
+        // phối; engine khác fail-closed bên dưới.)
         match self.engine {
             GameEngine::Bevy => exec_tool(
                 project_root,
@@ -216,6 +239,10 @@ impl DependencyResolver for GameAdapter {
         project_root: &Path,
         name: Option<&PackageName>,
     ) -> MgResult<Vec<UpdatedPackage>> {
+        // DELEGATED: the bevy lane runs `cargo update` for real — mgc
+        // orchestrates only; other engines fail closed below.
+        // (DELEGATED: lane bevy chạy `cargo update` thật — mgc chỉ điều
+        // phối; engine khác fail-closed bên dưới.)
         match self.engine {
             GameEngine::Bevy => {
                 let mut args = vec!["update".to_string()];

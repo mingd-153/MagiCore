@@ -24,6 +24,10 @@ pub struct InstallCommand {
     pub args: Vec<String>,
 }
 
+// DELEGATED: the chosen command runs the native toolchain for real
+// (flutter/gradle/swift) — mgc orchestrates only.
+// (DELEGATED: lệnh được chọn chạy toolchain gốc thật (flutter/gradle/
+// swift) — mgc chỉ điều phối.)
 fn install_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
     match lang {
         mgc_app_adapter::AppLanguage::Flutter => InstallCommand {
@@ -54,6 +58,11 @@ fn install_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
 }
 
 /// Lệnh dev theo language — Q20 (flutter run / gradle run / swift run).
+///
+/// DELEGATED: these commands run the native toolchains for real (mgc dev
+/// passthrough) — mgc does not own their lifecycles.
+/// (DELEGATED: các lệnh chạy toolchain gốc thật (passthrough mgc dev) —
+/// mgc không sở hữu lifecycle của chúng.)
 #[allow(dead_code)]
 fn dev_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
     match lang {
@@ -107,6 +116,11 @@ pub fn run_tool_with_env(
 }
 
 /// Lệnh theo language cho verb — None = không có CLI passthrough, sửa manifest tay.
+///
+/// DELEGATED: the passthrough commands run the native toolchains for real
+/// (flutter pub add / gradle / swift package) — mgc orchestrates only.
+/// (DELEGATED: lệnh passthrough chạy toolchain gốc thật (flutter pub add
+/// / gradle / swift package) — mgc chỉ điều phối.)
 pub fn tool_command(lang: mgc_app_adapter::AppLanguage, verb: &str) -> Option<InstallCommand> {
     let (tool, base): (&str, &[&str]) = match (lang, verb) {
         (mgc_app_adapter::AppLanguage::Flutter, "add") => ("flutter", &["pub", "add"]),
@@ -234,6 +248,11 @@ fn tool_unavailable(tool: &str) -> bool {
 
 /// Shared app platforms with native allowlisted toolchains only.
 /// Các platform dùng toolchain allowlist; React Native chờ runner native riêng.
+///
+/// DELEGATED: every command here runs the native toolchain for real —
+/// mgc orchestrates only, it does not own these lifecycles.
+/// (DELEGATED: mọi lệnh ở đây chạy toolchain gốc thật — mgc chỉ điều
+/// phối, không sở hữu các lifecycle này.)
 fn platform_install_commands() -> (InstallCommand, InstallCommand, InstallCommand) {
     (
         InstallCommand {

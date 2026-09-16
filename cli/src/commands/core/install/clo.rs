@@ -6,6 +6,10 @@ use super::super::dev::clo as clo_tools;
 use super::super::shared;
 use mgc_types::Ecosystem;
 
+// DELEGATED: terraform init/get (or the CDK/Pulumi web-engine lane) runs
+// for real — mgc does not own this dependency lifecycle.
+// (DELEGATED: terraform init/get (hoặc lane web-engine CDK/Pulumi) chạy
+// thật — mgc không sở hữu lifecycle dependency này.)
 pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     let root = shared::core_project_root("clo")?;
     let adapter = shared::core_adapter(&Ecosystem::Cloud);
