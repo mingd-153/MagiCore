@@ -47,7 +47,7 @@ pub fn ci_generate() -> Result<()> {
 ///
 /// Nguồn cài đặt cho template CI sinh ra: GitHub Release mới nhất thay vì
 /// branch mutable. Cập nhật hằng số này ở mỗi release tag.
-const MGC_RELEASE_TAG: &str = "v1.1.0-rc.5";
+const MGC_RELEASE_TAG: &str = "v1.1.0-rc.6";
 
 const WORKFLOW_TEMPLATE: &str = r#"name: {name}
 

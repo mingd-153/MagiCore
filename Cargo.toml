@@ -10,7 +10,7 @@ exclude = ["tools/core-web-lab", "tools/mgc-mcp"]
 resolver = "2"
 
 [workspace.package]
-version = "1.1.0-rc.5"
+version = "1.1.0-rc.6"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
