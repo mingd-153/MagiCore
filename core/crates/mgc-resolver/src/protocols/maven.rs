@@ -505,7 +505,7 @@ pub struct PomDependency {
 /// counted; self-closing and attribute-carrying open tags are handled).
 /// Trả nội dung bên trong của mọi khối `<tag>…</tag>` (đếm lồng cùng tên;
 /// xử lý tag tự đóng và tag mở có attribute).
-fn element_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
+pub fn element_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     let open_prefix = format!("<{tag}");
     let close = format!("</{tag}>");
     let mut out = Vec::new();
@@ -533,7 +533,18 @@ fn element_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
         let Some(gt_rel) = rest[start..].find('>') else {
             break;
         };
-        let content_start = start + gt_rel + 1;
+        let gt = start + gt_rel;
+        // Self-closing with attributes (`<dependency id="x" />`) — empty
+        // content, keep scanning (a missing close tag must not abort the
+        // whole scan).
+        // (Tự đóng có attribute (`<dependency id="x" />`) — nội dung rỗng,
+        // quét tiếp (thiếu close tag không được làm hỏng cả vòng quét).)
+        if rest[start..=gt].ends_with("/>") {
+            out.push("");
+            rest = &rest[gt + 1..];
+            continue;
+        }
+        let content_start = gt + 1;
         let mut depth = 1usize;
         let mut cursor = content_start;
         let mut end = None;
