@@ -83,36 +83,25 @@ LANES = [
         # hợp đồng verdict theo từng lane, không theo tập toàn cục (P0
         # finding #1).
         "required_dims": ["create", "install", "test", "build"],
-        # Install OWNER taxonomy (P0-D, adversarial review vòng-9): who
-        # actually resolves+locks+fetches+materializes. cargo fetch owns
-        # the rust install (mgc redirects CARGO_HOME + orchestrates) —
-        # that is MANAGED DELEGATION, never a native PM claim.
-        # (Taxonomy chủ sở hữu install (P0-D): ai thực sự
-        # resolve+lock+fetch+materialize. cargo fetch giữ install rust
-        # (mgc đổi CARGO_HOME + điều phối) — đó là ỦY QUYỀN CÓ QUẢN LÝ,
-        # không bao giờ claim PM native.)
-        "install_owner": "managed-delegation",
-        # P0-D: lib/rust delegates the whole dependency lifecycle to
-        # cargo (mgc redirects CARGO_HOME) — never mgc-native.
-        # (P0-D: lib/rust ủy quyền toàn bộ lifecycle dependency cho cargo
-        # (mgc đổi CARGO_HOME) — không bao giờ mgc-native.)
-        "dependency_owner": "delegated",
-        # Per-OPERATION owners (Gate 11-C, vòng-11 verdict): the audit
-        # rejects ONE label covering a whole ecosystem — "mgc holds a
-        # cache dir" and "mgc resolves the graph" are DIFFERENT
-        # capabilities. Each operation names its owner so install-pass
-        # can never be laundered into resolve/lock/store native-pass.
-        # (Chủ sở hữu THEO-TỪNG-OPERATION (Gate 11-C): audit từ chối
-        # MỘT nhãn phủ cả ecosystem — "mgc giữ thư mục cache" và "mgc
-        # resolve graph" là HAI năng lực khác nhau. Mỗi operation nêu
-        # owner để install-pass không bao giờ được giặt thành
-        # resolve/lock/store native-pass.)
+        # Phase 2 (2026-09-16): lib/rust resolves+fetches+materializes via
+        # the native crates.io engine (mgc-resolver) — mgc OWNS the install
+        # lifecycle, no `cargo fetch` spawn. Verdict stays honest (evidence:
+        # unit + mockito; runtime lane not yet proven in this matrix).
+        # (Phase 2: lib/rust resolve+fetch+materialize qua engine crates.io
+        # native (mgc-resolver) — mgc GIỮ lifecycle install, không spawn
+        # `cargo fetch`. Verdict giữ trung thực (evidence: unit + mockito;
+        # runtime lane chưa chứng minh trong matrix này).)
+        "install_owner": "native-engine",
+        # Native crates.io engine exists (unit + mockito evidence).
+        # (Engine crates.io native tồn tại (evidence unit + mockito).)
+        "dependency_owner": "mgc-native",
+        "note": "native-engine: exists, evidence: unit+mockito",
         "owner_by_operation": {
-            "resolve": "cargo",              # cargo resolves the graph
-            "lock": "mgc",                   # mgc.lock is written by mgc
-            "fetch": "cargo",                # cargo fetch does the download
-            "store": "magicore-managed-cargo-home",  # mgc redirects CARGO_HOME
-            "materialize": "cargo",          # cargo layout owns the tree
+            "resolve": "mgc",                # mgc sparse-index engine resolves
+            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                  # mgc downloads the .crate
+            "store": "magicore-shared-cas",  # blake3 CAS import
+            "materialize": "mgc",            # mgc writes registry/{cache,src} layout
         },
     },
     {
@@ -133,20 +122,24 @@ LANES = [
         ],
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        # uv owns resolve+lock+install (mgc redirects UV_CACHE_DIR +
-        # orchestrates) — managed delegation, never native (P0-D).
-        # (uv giữ resolve+lock+install (mgc đổi UV_CACHE_DIR + điều
-        # phối) — ủy quyền có quản lý, không bao giờ native (P0-D).)
-        "install_owner": "managed-delegation",
-        # P0-D: uv owns resolve+lock+fetch for lib/python — delegated.
-        # (P0-D: uv giữ resolve+lock+fetch cho lib/python — delegated.)
-        "dependency_owner": "delegated",
+        # Phase 2 (2026-09-16): lib/python resolves+fetches+materializes via
+        # the native PyPI engine (mgc-resolver) — mgc OWNS the install
+        # lifecycle, no `uv sync`/`pip install` spawn. Verdict stays honest
+        # (evidence: unit + mockito).
+        # (Phase 2: lib/python resolve+fetch+materialize qua engine PyPI
+        # native (mgc-resolver) — mgc GIỮ lifecycle install, không spawn
+        # `uv sync`/`pip install`. Verdict giữ trung thực (unit + mockito).)
+        "install_owner": "native-engine",
+        # Native PyPI engine exists (unit + mockito evidence).
+        # (Engine PyPI native tồn tại (evidence unit + mockito).)
+        "dependency_owner": "mgc-native",
+        "note": "native-engine: exists, evidence: unit+mockito",
         "owner_by_operation": {
-            "resolve": "uv",                 # uv resolves the graph
-            "lock": "uv",                    # uv.lock owns the lock
-            "fetch": "uv",                   # uv downloads
-            "store": "magicore-managed-uv-cache",    # mgc redirects UV_CACHE_DIR
-            "materialize": "uv",             # uv layout owns the tree
+            "resolve": "mgc",                # mgc JSON API engine resolves
+            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                  # mgc downloads wheel/sdist
+            "store": "magicore-shared-cas",  # blake3 CAS import
+            "materialize": "mgc",            # mgc writes pypi/wheels layout
         },
     },
     {
@@ -410,22 +403,28 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
-        # flutter toolchain owns pub cache (delegation by design).
-        # flutter toolchain giữ pub cache (ủy quyền theo thiết kế).
-        "delegated": ["install"],
+        # Phase 2 (2026-09-16): app/flutter resolves+fetches+materializes
+        # via the native pub.dev engine (mgc-resolver) — mgc OWNS the
+        # install lifecycle, no `flutter pub get` spawn. Verdict stays
+        # honest (evidence: unit + mockito).
+        # (Phase 2: app/flutter resolve+fetch+materialize qua engine pub.dev
+        # native (mgc-resolver) — mgc GIỮ lifecycle install, không spawn
+        # `flutter pub get`. Verdict giữ trung thực (unit + mockito).)
+        "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        # flutter/pub own the package cache — plain delegation (P0-D).
-        # (flutter/pub giữ package cache — ủy quyền thuần (P0-D).)
-        "install_owner": "plain-delegation",
-        # P0-D: flutter/pub own the whole lifecycle — delegated.
-        # (P0-D: flutter/pub giữ lifecycle trọn vẹn — delegated.)
-        "dependency_owner": "delegated",
+        # Native pub.dev engine exists (unit + mockito evidence).
+        # (Engine pub.dev native tồn tại (evidence unit + mockito).)
+        "install_owner": "native-engine",
+        # Native pub.dev engine exists (unit + mockito evidence).
+        # (Engine pub.dev native tồn tại (evidence unit + mockito).)
+        "dependency_owner": "mgc-native",
+        "note": "native-engine: exists, evidence: unit+mockito",
         "owner_by_operation": {
-            "resolve": "flutter",            # flutter resolves
-            "lock": "flutter",               # pubspec/pubspec.lock
-            "fetch": "flutter",              # flutter pub get
-            "store": "pub-cache",            # native cache, mgc orchestrates only
-            "materialize": "flutter",        # flutter owns the tree
+            "resolve": "mgc",                # mgc pub.dev API engine resolves
+            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                  # mgc downloads the archive
+            "store": "magicore-shared-cas",  # blake3 CAS import
+            "materialize": "mgc",            # mgc writes hosted/pub.dev layout
         },
     },
     # ===== Evidence-only lanes (P0-6, Tech Lead 2026-09-15) =====
