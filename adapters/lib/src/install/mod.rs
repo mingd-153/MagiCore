@@ -28,6 +28,7 @@ pub(crate) async fn run_install(
     project_root: &Path,
     opts: InstallOptions,
     _store: Option<&ContentStore>,
+    lock_packages: Vec<mgc_lockfile::Package>,
 ) -> MgResult<InstallSummary> {
     match language {
         LibLanguage::Ts => {
@@ -36,8 +37,16 @@ pub(crate) async fn run_install(
             })?;
             web.install(graph, project_root, opts).await
         }
-        LibLanguage::Rust => install_rust_native(graph).await,
-        LibLanguage::Python => install_python_native(graph).await,
+        LibLanguage::Rust => {
+            let summary = install_rust_native(graph).await?;
+            write_canonical_lock(project_root, lock_packages)?;
+            Ok(summary)
+        }
+        LibLanguage::Python => {
+            let summary = install_python_native(graph).await?;
+            write_canonical_lock(project_root, lock_packages)?;
+            Ok(summary)
+        }
         // Go: `go mod download` fetches the pinned module set — the go
         // toolchain owns module caching (Q9-style delegation, no shim).
         // Go: `go mod download` tải tập module đã ghim — go toolchain giữ
@@ -176,4 +185,53 @@ fn entry_from_package(pkg: &ResolvedPackage) -> ResolvedEntry {
 /// Dựng (và tạo) content store CAS mgc cho install native.
 fn content_store() -> MgResult<ContentStore> {
     ContentStore::new(mgc_store::default_store_root()).map_err(|e| MgError::Store(e.to_string()))
+}
+
+/// Flush the native-resolution lock entries to the canonical mgc.lock v3.
+/// Ghi entry lock từ resolve native xuống mgc.lock v3 canonical.
+fn write_canonical_lock(
+    project_root: &Path,
+    lock_packages: Vec<mgc_lockfile::Package>,
+) -> MgResult<()> {
+    if lock_packages.is_empty() {
+        // Nothing resolved natively (e.g. empty dependency set) — leave any
+        // existing lock untouched.
+        // (Không resolve gì native — giữ nguyên lock có sẵn.)
+        return Ok(());
+    }
+    let lock_path = project_root.join("mgc.lock");
+    let mut lockfile = if lock_path.exists() {
+        mgc_lockfile::parser::parse_lockfile(
+            &std::fs::read_to_string(&lock_path)
+                .map_err(|e| MgError::Other(format!("failed to read existing mgc.lock: {e}")))?,
+        )
+        .unwrap_or_else(|_| mgc_lockfile::Lockfile::new())
+    } else {
+        mgc_lockfile::Lockfile::new()
+    };
+    for pkg in lock_packages {
+        // Replace same name+version entry, keep others — merge-by-identity.
+        // (Thay entry cùng name+version, giữ entry khác — merge theo danh
+        // tính.)
+        lockfile
+            .packages
+            .retain(|p| !(p.name == pkg.name && p.version == pkg.version));
+        lockfile.packages.push(pkg);
+    }
+    lockfile.metadata.generated_at = {
+        // ISO-8601 without external deps — seconds precision is enough
+        // for the metadata field. (ISO-8601 không cần crate ngoài — độ
+        // chính xác giây đủ cho trường metadata.)
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("{secs}")
+    };
+    lockfile.metadata.generator = format!("mgc/{}", env!("CARGO_PKG_VERSION"));
+    let toml = mgc_lockfile::writer::serialize_lockfile(&lockfile)
+        .map_err(|e| MgError::Other(format!("lockfile serialization failed: {e}")))?;
+    std::fs::write(&lock_path, toml.as_bytes())
+        .map_err(|e| MgError::Other(format!("failed to write mgc.lock: {e}")))?;
+    Ok(())
 }

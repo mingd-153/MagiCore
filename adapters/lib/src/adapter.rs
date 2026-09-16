@@ -31,6 +31,11 @@ use std::path::{Path, PathBuf};
 pub struct LibAdapter {
     language: LibLanguage,
     web: Option<mgc_web_adapter::WebAdapter>,
+    /// Lock v3 entries produced by the native resolve — flushed to
+    /// mgc.lock during install.
+    /// (Entry lock v3 sinh từ resolve native — ghi xuống mgc.lock lúc
+    /// install.)
+    pending_lock: std::sync::Mutex<Vec<mgc_lockfile::Package>>,
 }
 
 impl LibAdapter {
@@ -92,7 +97,11 @@ impl LibAdapter {
         } else {
             None
         };
-        Ok(Self { language, web })
+        Ok(Self {
+            language,
+            web,
+            pending_lock: std::sync::Mutex::new(Vec::new()),
+        })
     }
 
     pub fn language(&self) -> &'static str {
@@ -314,6 +323,8 @@ impl DependencyResolver for LibAdapter {
                     manifest,
                 )
                 .await?;
+                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                    resolution.lock_packages;
                 Ok(resolution.graph)
             }
             // Native PyPI engine (Phase 2): JSON API → PEP 440 select →
@@ -329,6 +340,8 @@ impl DependencyResolver for LibAdapter {
                     manifest,
                 )
                 .await?;
+                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                    resolution.lock_packages;
                 Ok(resolution.graph)
             }
             // Go/Java/.NET: no native engine yet — toolchain-owned, fail
@@ -610,6 +623,8 @@ impl ContentStoreProvider for LibAdapter {
     ) -> MgResult<InstallSummary> {
         // Use new install pipeline (install/mod.rs)
         // Dùng install pipeline mới (install/mod.rs)
+        let lock_packages =
+            std::mem::take(&mut *self.pending_lock.lock().expect("lib pending lock poisoned"));
         crate::install::run_install(
             self.language,
             self.web.as_ref(),
@@ -617,6 +632,7 @@ impl ContentStoreProvider for LibAdapter {
             project_root,
             opts,
             None, // Issue #6: pass ContentStore when available
+            lock_packages,
         )
         .await
     }

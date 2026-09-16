@@ -606,13 +606,23 @@ fn test_cross_core_cache_isolation() {
         "CACHE BUG: Web node_modules leaked into Lib project"
     );
 
-    // Verify Lib has its own deps (Cargo.lock or target/)
-    let has_lib_artifacts =
-        lib_project.join("Cargo.lock").exists() || lib_project.join("target").exists();
-    assert!(
-        has_lib_artifacts,
-        "Lib install did not create Cargo artifacts"
-    );
+    // Phase 2 native: lib install (rust) no longer shells out to cargo —
+    // the mgc-native crates engine resolves/downloads/verifies and writes
+    // the canonical mgc.lock v3 (ecosystem=rust) + CAS artifacts. Cargo
+    // artifacts (Cargo.lock/target) belong to BUILD lanes, not install.
+    // (Phase 2 native: lib install (rust) không còn gọi cargo — engine
+    // crates mgc-native tự resolve/download/verify và ghi mgc.lock v3
+    // (ecosystem=rust) + artifact CAS. Cargo.lock/target thuộc lane build,
+    // không phải install.)
+    // Phase 2 native contract: isolation is the guarantee here. The fixture
+    // has zero dependencies, so native resolve produces no lock entries and
+    // no mgc.lock is written (honest empty); the old "Cargo.lock/target"
+    // expectation belonged to the delegated cargo lane, which no longer
+    // runs during install.
+    // (Hợp đồng Phase 2 native: isolation là bảo đảm. Fixture không có dep
+    // nào nên resolve native ra 0 entry lock và không ghi mgc.lock (trung
+    // thực); kỳ vọng "Cargo.lock/target" cũ thuộc lane cargo delegated đã
+    // không còn chạy lúc install.)
 
     println!("Cross-core cache isolation verified");
 }

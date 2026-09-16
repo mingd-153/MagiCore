@@ -381,6 +381,13 @@ fn capability_map_matches_audited_contract() {
                 Capability::ContentStoreProvider,
                 Capability::LockfileProvider,
                 Capability::AuditProvider,
+                // Phase 2: app resolves Dart deps through the native
+                // pub.dev engine (PubProtocol) — DependencyResolver is now
+                // real for flutter projects.
+                // (Phase 2: app resolve Dart deps qua engine pub.dev native
+                // (PubProtocol) — DependencyResolver giờ là thật cho
+                // project flutter.)
+                Capability::DependencyResolver,
             ],
         ),
         (
