@@ -30,6 +30,9 @@ tokio = { workspace = true }
 # no new external crates). (Engine Go: base64 cho dirhash h1 của sumdb —
 # workspace dep đã ghim sẵn, không thêm crate ngoài.)
 base64 = { workspace = true }
+# Maven engine: sha1 for .jar.sha1 verification (pinned workspace dep).
+# (Engine Maven: sha1 để xác minh .jar.sha1 — workspace dep đã ghim.)
+sha1 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -54,6 +57,10 @@ path = "tests/protocols.rs"
 [[test]]
 name = "test_protocols_go"
 path = "tests/protocols_go.rs"
+
+[[test]]
+name = "test_protocols_maven"
+path = "tests/protocols_maven.rs"
 
 [[test]]
 name = "test_protocols_zip"

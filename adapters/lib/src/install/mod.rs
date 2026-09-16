@@ -10,7 +10,7 @@ pub mod shared_store;
 pub mod verify;
 
 use mgc_resolver::protocols::{
-    CratesProtocol, GoModProtocol, PypiProtocol, RegistryProtocol, ResolvedEntry,
+    CratesProtocol, GoModProtocol, MavenProtocol, PypiProtocol, RegistryProtocol, ResolvedEntry,
 };
 use mgc_store::ContentStore;
 use mgc_types::adapter::{InstallCacheMode, InstallOptions, InstallSummary};
@@ -58,15 +58,20 @@ pub(crate) async fn run_install(
             write_canonical_lock(project_root, lock_packages)?;
             Ok(summary)
         }
-        // Java/.NET install is not wired yet (P2 audit parity scope):
-        // gradle/dotnet own dependency fetching; mgc audits their
-        // lockfiles. Honest failure, never a silent no-op summary.
-        // Install Java/.NET chưa nối (scope parity audit P2): gradle/
-        // dotnet giữ việc tải dependency; mgc audit lockfile của chúng.
-        // Fail trung thực, không trả summary no-op âm thầm.
-        LibLanguage::Java => Err(MgError::Other(
-            "java install is delegated to gradle (mgc reads gradle/verification-metadata.xml for audits); the native java install lane lands with P2".to_string(),
-        )),
+        // Java: native Maven engine (Phase 2) — jar+pom download →
+        // sha256/sha1 verify → CAS → local-repo materialization
+        // (`mvn -o` readable). Gradle-owned installs stay unsupported
+        // (build scripts are programs — honest failure, never a silent
+        // no-op summary).
+        // (Java: engine Maven native (Phase 2) — tải jar+pom → verify
+        // sha256/sha1 → CAS → materialize local repo (đọc được bởi
+        // `mvn -o`). Install do gradle giữ vẫn unsupported (build script là
+        // chương trình — fail trung thực, không trả summary no-op âm thầm).)
+        LibLanguage::Java => {
+            let summary = install_maven_native(graph).await?;
+            write_canonical_lock(project_root, lock_packages)?;
+            Ok(summary)
+        }
         LibLanguage::DotNet => Err(MgError::Other(
             ".NET install is delegated to dotnet restore (mgc reads packages.lock.json for audits); the native .NET install lane lands with P2".to_string(),
         )),
@@ -104,6 +109,49 @@ async fn install_go_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
             .import_bytes(&files.info)
             .map_err(|e| MgError::Store(e.to_string()))?;
         protocol.materialize(&entry, &files, &gomodcache)?;
+        added.push(pkg.id.clone());
+    }
+
+    Ok(InstallSummary {
+        added,
+        bytes_from_cache: 0,
+        duration_ms: started.elapsed().as_millis() as u64,
+        cache_mode: InstallCacheMode::MgCStore,
+    })
+}
+
+/// Native Maven install: download each jar → verify sha256 (or the recorded
+/// sha1) → import to the mgc CAS (blake3) → download the POM → materialize
+/// into `{m2_root}/repository/{gpath}/{artifact}/{version}/` (`mvn -o`
+/// readable). No `mvn dependency:go-offline` spawn — mgc owns
+/// resolve/fetch/install for pom.xml projects (Phase 2).
+/// Install Maven native: tải từng jar → verify sha256 (hoặc sha1 đã ghi) →
+/// import vào CAS mgc (blake3) → tải POM → materialize vào
+/// `{m2_root}/repository/{gpath}/{artifact}/{version}/` (đọc được bởi
+/// `mvn -o`). Không spawn `mvn dependency:go-offline` — mgc giữ
+/// resolve/fetch/install cho project pom.xml (Phase 2).
+async fn install_maven_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
+    let started = Instant::now();
+    let protocol = MavenProtocol::from_env();
+    let m2_root = shared_store::SharedStoreRun::maven()?.cache_root;
+    let store = content_store()?;
+    let mut added = Vec::with_capacity(graph.packages.len());
+
+    for pkg in &graph.packages {
+        let entry = entry_from_package(pkg);
+        let jar = protocol.download(&entry).await?;
+        protocol.verify(&entry, &jar)?;
+        let (group, artifact) = MavenProtocol::split_coordinate(&entry.name)?;
+        let pom = protocol
+            .download_pom(&group, &artifact, &entry.version)
+            .await?;
+        store
+            .import_bytes(&jar)
+            .map_err(|e| MgError::Store(e.to_string()))?;
+        store
+            .import_bytes(&pom)
+            .map_err(|e| MgError::Store(e.to_string()))?;
+        protocol.materialize(&entry, &jar, &pom, &m2_root)?;
         added.push(pkg.id.clone());
     }
 

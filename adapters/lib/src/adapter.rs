@@ -3,8 +3,8 @@
 
 use crate::language::{LibLanguage, detect_language, manifest_is_lib};
 use crate::manifest::{
-    parse_cargo_manifest, parse_go_mod_manifest, parse_pyproject_manifest, write_cargo_manifest,
-    write_pyproject_manifest,
+    parse_cargo_manifest, parse_go_mod_manifest, parse_maven_manifest, parse_pyproject_manifest,
+    write_cargo_manifest, write_pyproject_manifest,
 };
 use crate::native::engine::resolve_with_protocol;
 use crate::tooling::{
@@ -14,7 +14,7 @@ use crate::tooling::{
 use anyhow::Result;
 use async_trait::async_trait;
 use mgc_lockfile::EcosystemTag;
-use mgc_resolver::protocols::{CratesProtocol, GoModProtocol, PypiProtocol};
+use mgc_resolver::protocols::{CratesProtocol, GoModProtocol, MavenProtocol, PypiProtocol};
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
@@ -28,8 +28,27 @@ use mgc_types::{
 };
 use std::path::{Path, PathBuf};
 
+/// Which build manifest owns a Java lib project — Maven pom.xml is natively
+/// parseable/resolvable; Gradle build scripts are toolchain programs and can
+/// only fail closed honestly.
+/// Build manifest nào sở hữu project lib Java — pom.xml của Maven parse và
+/// resolve native được; build script Gradle là chương trình toolchain, chỉ
+/// có thể fail-closed trung thực.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum JavaManifestKind {
+    Pom,
+    Gradle,
+    #[default]
+    None,
+}
+
 pub struct LibAdapter {
     language: LibLanguage,
+    /// Java-only: which build manifest the project carries (detected at
+    /// construction, when the project root is known).
+    /// (Chỉ cho Java: project mang build manifest nào (detect lúc dựng, khi
+    /// đã biết project root).)
+    java_kind: JavaManifestKind,
     web: Option<mgc_web_adapter::WebAdapter>,
     /// Lock v3 entries produced by the native resolve — flushed to
     /// mgc.lock during install.
@@ -73,18 +92,31 @@ impl LibAdapter {
     // URL typed, builder propagate Result thay vì abort.)
     fn for_language(
         language: LibLanguage,
+        root: &Path,
         registry_url: Option<String>,
         token: Option<String>,
     ) -> Result<Self> {
-        Self::for_language_with_chain(language, registry_url, token, &[])
+        Self::for_language_with_chain(language, root, registry_url, token, &[])
     }
 
     fn for_language_with_chain(
         language: LibLanguage,
+        root: &Path,
         registry_url: Option<String>,
         token: Option<String>,
         fallbacks: &[(String, Option<String>)],
     ) -> Result<Self> {
+        // Java build-manifest kind: pom.xml is natively owned, gradle
+        // build scripts fail closed downstream.
+        // (Loại build-manifest Java: pom.xml sở hữu native, build script
+        // gradle fail-closed phía sau.)
+        let java_kind = if root.join("pom.xml").is_file() {
+            JavaManifestKind::Pom
+        } else if root.join("build.gradle").is_file() || root.join("build.gradle.kts").is_file() {
+            JavaManifestKind::Gradle
+        } else {
+            JavaManifestKind::None
+        };
         let web = if language == LibLanguage::Ts {
             Some(match (registry_url, token) {
                 (Some(url), token) => mgc_web_adapter::WebAdapter::with_registry_chain(
@@ -99,6 +131,7 @@ impl LibAdapter {
         };
         Ok(Self {
             language,
+            java_kind,
             web,
             pending_lock: std::sync::Mutex::new(Vec::new()),
         })
@@ -161,16 +194,22 @@ impl PackageAdapter for LibAdapter {
             // (parse via the go list wrapper when needed).
             // Go không có manifest do mgc viết — `go mod` sở hữu go.mod.
             LibLanguage::Go => parse_go_mod_manifest(project_root),
-            // Java/.NET (P2 audit parity): the gradle verification
-            // metadata / packages.lock.json own the pin truth — audit
-            // reads them; lifecycle manifest parsing is not wired yet
-            // (honest empty until the lifecycle lane lands).
-            // Java/.NET: metadata verification gradle / packages.lock
-            // giữ truth ghim — audit đọc chúng; parse manifest
-            // lifecycle chưa nối (rỗng trung thực).
-            LibLanguage::Java | LibLanguage::DotNet => {
-                Ok(Manifest::new("java-dotnet-lib", Ecosystem::Lib))
-            }
+            // Java (Phase 2): pom.xml projects are parsed by the SAME POM
+            // parser the native Maven engine uses; gradle projects keep an
+            // honest empty manifest (resolve fails closed downstream).
+            // (Java (Phase 2): project pom.xml được parse bằng CÙNG parser
+            // POM của engine Maven native; project gradle giữ manifest rỗng
+            // trung thực (resolve fail-closed phía sau).)
+            LibLanguage::Java => parse_maven_manifest(project_root),
+            // .NET (P2 audit parity): packages.lock.json owns the pin
+            // truth — audit reads it; csproj PackageReference parsing is
+            // wired for resolve but the manifest surface stays honest for
+            // now (no native lock writer exists).
+            // (.NET (P2 audit parity): packages.lock.json giữ truth ghim —
+            // audit đọc nó; parse PackageReference csproj đã nối cho resolve
+            // nhưng bề mặt manifest vẫn trung thực (chưa có lock writer
+            // native).)
+            LibLanguage::DotNet => Ok(Manifest::new("dotnet-lib", Ecosystem::Lib)),
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }
@@ -365,11 +404,45 @@ impl DependencyResolver for LibAdapter {
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
-            // Java/.NET: no native engine yet — toolchain-owned, fail
+            // Java (Phase 2): pom.xml projects resolve natively through the
+            // Maven engine (metadata → POM graph → verified jar); gradle
+            // build scripts are toolchain programs — fail closed with
+            // honest guidance (never an empty-graph false success).
+            // (Java (Phase 2): project pom.xml resolve native qua engine
+            // Maven (metadata → graph POM → jar đã xác minh); build script
+            // gradle là chương trình toolchain — fail-closed kèm hướng dẫn
+            // trung thực (không thành công giả graph rỗng).)
+            LibLanguage::Java => match self.java_kind {
+                JavaManifestKind::Pom => {
+                    let protocol = MavenProtocol::from_env();
+                    let resolution = resolve_with_protocol(
+                        &protocol,
+                        EcosystemTag::Maven,
+                        "maven://repo.maven.apache.org",
+                        manifest,
+                    )
+                    .await?;
+                    *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                        resolution.lock_packages;
+                    Ok(resolution.graph)
+                }
+                JavaManifestKind::Gradle | JavaManifestKind::None => {
+                    Err(mgc_types::MgError::Unsupported {
+                        core: "lib",
+                        capability: "resolve",
+                        guidance: "gradle build scripts are programs, not parseable manifests — \
+                                   declare dependencies in a pom.xml for native resolution, or \
+                                   let the gradle toolchain own resolution (mgc audits \
+                                   gradle/verification-metadata.xml)"
+                            .to_string(),
+                    })
+                }
+            },
+            // .NET: no native engine yet — toolchain-owned, fail
             // closed (never an empty-graph false success).
-            // Java/.NET: chưa có engine native — toolchain sở hữu,
-            // fail-closed (không bao giờ thành công giả graph rỗng).
-            LibLanguage::Java | LibLanguage::DotNet => Err(mgc_types::MgError::Unsupported {
+            // (.NET: chưa có engine native — toolchain sở hữu,
+            // fail-closed (không bao giờ thành công giả graph rỗng).)
+            LibLanguage::DotNet => Err(mgc_types::MgError::Unsupported {
                 core: "lib",
                 capability: "resolve",
                 guidance: format!(
@@ -707,6 +780,7 @@ pub fn adapter_for(
     };
     Ok(Some(LibAdapter::for_language(
         language,
+        root,
         registry_url,
         token,
     )?))
@@ -723,6 +797,7 @@ pub fn adapter_for_with_chain(
     };
     Ok(Some(LibAdapter::for_language_with_chain(
         language,
+        root,
         registry_url,
         token,
         fallbacks,

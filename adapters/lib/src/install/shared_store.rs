@@ -117,6 +117,18 @@ impl SharedStoreRun {
         })
     }
 
+    /// Begin a measured Maven run: local repo → ~/.magicore/store/maven.
+    /// Bắt đầu lượt chạy Maven có đo lường: local repo → ~/.magicore/store/maven.
+    pub fn maven() -> MgResult<Self> {
+        let root = shared_root("maven")?;
+        let bytes_before = dir_size_bytes(&root);
+        Ok(Self {
+            cache_root: root,
+            bytes_before,
+            started: Instant::now(),
+        })
+    }
+
     /// Env vars the child toolchain needs to use the shared root.
     /// Biến môi trường toolchain con cần để dùng gốc chung.
     pub fn env_vars(&self) -> Vec<(String, String)> {

@@ -8,6 +8,53 @@ pub(crate) fn parse_cargo_manifest(root: &Path) -> MgResult<Manifest> {
     mgc_adapter_base::cargo_manifest::parse_manifest(root, Ecosystem::Lib)
 }
 
+/// Parse a project pom.xml into a Manifest (read-only — mgc never rewrites
+/// pom.xml). Only the SAME compile/runtime deps the native engine uses enter
+/// the manifest, keyed as `groupId:artifactId`; `${property}`/missing
+/// versions and test/provided scopes are honestly skipped (they would fail
+/// resolution anyway). Gradle projects get an honest empty manifest — build
+/// scripts are not parseable without the toolchain and resolve fails closed
+/// downstream with guidance.
+/// Đọc pom.xml của project thành Manifest (chỉ đọc — mgc không bao giờ viết
+/// lại pom.xml). Chỉ những dep compile/runtime mà engine native dùng vào
+/// manifest, khóa theo `groupId:artifactId`; version `${property}`/thiếu và
+/// scope test/provided được skip trung thực (chúng sẽ fail resolve anyway).
+/// Project gradle nhận manifest rỗng trung thực — build script không parse
+/// được nếu không có toolchain và resolve sẽ fail-closed kèm hướng dẫn.
+pub(crate) fn parse_maven_manifest(root: &Path) -> MgResult<Manifest> {
+    let pom_path = root.join("pom.xml");
+    if !pom_path.is_file() {
+        return Ok(Manifest::new("java-gradle-lib", Ecosystem::Lib));
+    }
+    let content = std::fs::read_to_string(&pom_path)
+        .map_err(|e| mgc_types::MgError::Other(format!("read pom.xml: {e}")))?;
+    let (group, artifact) = mgc_resolver::protocols::maven::pom_project_coordinates(&content)
+        .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
+    let mut manifest = Manifest::new(&format!("{group}:{artifact}"), Ecosystem::Lib);
+    let (deps, _) = mgc_resolver::protocols::maven::collect_pom_dependencies(&content);
+    for dep in deps {
+        let scope = dep.scope.as_deref().unwrap_or("compile");
+        if !matches!(scope, "compile" | "runtime" | "") || dep.optional {
+            continue;
+        }
+        let (Some(g), Some(a), Some(v)) = (&dep.group, &dep.artifact, &dep.version) else {
+            continue;
+        };
+        if v.contains("${") {
+            continue;
+        }
+        let Ok(dep_name) = PackageName::new(format!("{g}:{a}")) else {
+            continue;
+        };
+        let Ok(range) = VersionRange::parse(v) else {
+            continue;
+        };
+        let spec = DependencySpec::new(dep_name, range);
+        manifest.add_dep(spec, false, false, false);
+    }
+    Ok(manifest)
+}
+
 pub(crate) fn write_cargo_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
     mgc_adapter_base::cargo_manifest::write_manifest(root, manifest)
 }

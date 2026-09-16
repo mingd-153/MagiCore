@@ -54,15 +54,18 @@ pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
         return Some(LibLanguage::Go);
     }
     // Java/Kotlin: the gradle verification metadata (lockfile) is the
-    // audit source — prefer it over the plain build file.
+    // audit source — prefer it over the plain build file. A pom.xml
+    // project is also Java (native Maven engine, Phase 2).
     // Java/Kotlin: metadata verification gradle (lockfile) là nguồn
-    // audit — ưu tiên trước build file thường.
+    // audit — ưu tiên trước build file thường. Project pom.xml cũng là
+    // Java (engine Maven native, Phase 2).
     if root
         .join("gradle")
         .join("verification-metadata.xml")
         .is_file()
         || root.join("build.gradle").is_file()
         || root.join("build.gradle.kts").is_file()
+        || root.join("pom.xml").is_file()
     {
         return Some(LibLanguage::Java);
     }
