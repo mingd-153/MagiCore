@@ -58,6 +58,9 @@ hex = { workspace = true }
 # (Test wiring Swift native cần mock registry hermetic (workspace dep đã
 # ghim — không thêm crate ngoài).)
 mockito = { workspace = true }
+# RN iOS-tier wiring test computes the podspec sha1 (pinned workspace dep).
+# (Test wiring tier iOS của RN tính sha1 podspec (workspace dep đã ghim).)
+sha1 = { workspace = true }
 
 [[bench]]
 name = "perf_bench"

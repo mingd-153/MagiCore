@@ -28,6 +28,13 @@ use std::path::{Path, PathBuf};
 
 pub struct AppAdapter {
     pub language: AppLanguage,
+    // Root captured at detection — the RN layered resolve needs the
+    // project's tier files (gradle.lockfile / Podfile.lock) which the
+    // `resolve(&manifest)` signature does not carry.
+    // (Gốc bắt lúc detect — resolve phân tầng RN cần các file tier của
+    // project (gradle.lockfile / Podfile.lock) mà chữ ký
+    // `resolve(&manifest)` không mang theo.)
+    pub project_root: PathBuf,
     // Native-resolve lock entries (Swift/RN lanes) carried from
     // `DependencyResolver::resolve` to `install` — the same pending-lock
     // pattern the lib adapter uses (same-instance CLI flow).
@@ -39,12 +46,15 @@ pub struct AppAdapter {
 
 impl AppAdapter {
     /// Public constructor for direct-language use (tests, CLI lanes) —
-    /// the pending lock starts empty.
+    /// the pending lock starts empty and the project root is unknown
+    /// (RN tier files resolve against an empty root → honest skips).
     /// (Constructor public cho dùng trực tiếp theo ngôn ngữ (test, lane
-    /// CLI) — pending lock khởi tạo rỗng.)
+    /// CLI) — pending lock khởi tạo rỗng và gốc project không biết (file
+    /// tier RN resolve theo gốc rỗng → skip trung thực).)
     pub fn new(language: AppLanguage) -> Self {
         Self {
             language,
+            project_root: PathBuf::new(),
             pending_lock: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -72,12 +82,14 @@ impl AppAdapter {
         Capability::ContentStoreProvider,
         Capability::LockfileProvider,
         Capability::AuditProvider,
-        // Phase 2 native engines — Flutter (pub.dev) and Swift (SwiftPM
-        // registry + git deps) resolve/fetch/install are mgc-native; the
-        // other app languages stay toolchain-owned.
+        // Phase 2 native engines — Flutter (pub.dev), Swift (SwiftPM
+        // registry + git deps) and React Native (layered JS/Android/iOS)
+        // resolve/fetch/install are mgc-native; the remaining app
+        // languages stay toolchain-owned.
         // (Engine native Phase 2 — resolve/fetch/install của Flutter
-        // (pub.dev) và Swift (SwiftPM registry + dep git) là mgc-native;
-        // ngôn ngữ app khác vẫn do toolchain giữ.)
+        // (pub.dev), Swift (SwiftPM registry + dep git) và React Native
+        // (phân tầng JS/Android/iOS) là mgc-native; các ngôn ngữ app còn
+        // lại vẫn do toolchain giữ.)
         Capability::DependencyResolver,
     ];
 }
@@ -86,6 +98,7 @@ pub fn adapter_for(root: &Path) -> Option<AppAdapter> {
     let language = detect_language(root)?;
     Some(AppAdapter {
         language,
+        project_root: root.to_path_buf(),
         pending_lock: std::sync::Mutex::new(Vec::new()),
     })
 }
@@ -268,22 +281,39 @@ impl DependencyResolver for AppAdapter {
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
-            // Kotlin/RN/ObjC/Multi: no native engine yet — toolchain-owned,
+            // RN layered engine (Phase 2): the JS tier delegates to the web
+            // adapter's npm pipeline; gradle.lockfile pins resolve through
+            // the native Maven engine (ecosystem=maven) and Podfile.lock
+            // pods are verified against the CocoaPods CDN sha1 checksums
+            // (ecosystem=cocoapods) — per-tier entries in mgc.lock.
+            // (Engine phân tầng RN (Phase 2): tier JS ủy quyền cho pipeline
+            // npm của adapter web; pin gradle.lockfile resolve qua engine
+            // Maven native (ecosystem=maven) và pod Podfile.lock được xác
+            // minh theo checksum sha1 của CDN CocoaPods
+            // (ecosystem=cocoapods) — entry riêng theo tier trong mgc.lock.)
+            AppLanguage::ReactNative => {
+                let resolution =
+                    crate::native::rn_layers::resolve_rn_layers(manifest, &self.project_root)
+                        .await?;
+                *self.pending_lock.lock().expect("app pending lock poisoned") =
+                    resolution.lock_packages;
+                Ok(resolution.graph)
+            }
+            // Kotlin/ObjC/Multi: no native engine yet — toolchain-owned,
             // fail closed (never an empty-graph false success).
-            // (Kotlin/RN/ObjC/Multi: chưa có engine native — toolchain sở
+            // (Kotlin/ObjC/Multi: chưa có engine native — toolchain sở
             // hữu, fail-closed (không thành công giả graph rỗng).)
-            AppLanguage::Kotlin
-            | AppLanguage::ReactNative
-            | AppLanguage::ObjC
-            | AppLanguage::Multi => Err(mgc_types::MgError::Unsupported {
-                core: "app",
-                capability: "resolve",
-                guidance: format!(
-                    "{} dependency resolution is owned by its toolchain; mgc-native \
-                     resolution lands with the native engine (Phase 2/3)",
-                    self.language.as_str()
-                ),
-            }),
+            AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
+                Err(mgc_types::MgError::Unsupported {
+                    core: "app",
+                    capability: "resolve",
+                    guidance: format!(
+                        "{} dependency resolution is owned by its toolchain; mgc-native \
+                         resolution lands with the native engine (Phase 2/3)",
+                        self.language.as_str()
+                    ),
+                })
+            }
         }
     }
 }

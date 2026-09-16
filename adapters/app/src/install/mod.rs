@@ -40,12 +40,29 @@ pub async fn run_install(
         // theo checksum registry, dep chỉ-git clone tại SHA đã ghim,
         // checkouts materialize dưới gốc Swift của mgc và Package.resolved
         // tương thích SwiftPM được xuất vào project.)
-        AppLanguage::Swift => install_swift_native(graph, &lock_packages, project_root).await,
+        AppLanguage::Swift => {
+            let summary = install_swift_native(graph, &lock_packages, project_root).await?;
+            write_canonical_lock(project_root, lock_packages)?;
+            Ok(summary)
+        }
 
-        // React Native: delegate to web adapter (npm)
-        AppLanguage::ReactNative => Err(MgError::Other(
-            "React Native should delegate to web adapter for npm dependencies".to_string(),
-        )),
+        // React Native: layered install — Android pins through the native
+        // Maven lane, the JS tier delegates to the web adapter's npm
+        // pipeline, iOS pods were checksum-verified at resolve time.
+        // (React Native: install phân tầng — pin Android qua lane Maven
+        // native, tier JS ủy quyền cho pipeline npm của adapter web, pod
+        // iOS đã xác minh checksum lúc resolve.)
+        AppLanguage::ReactNative => {
+            let summary = crate::native::rn_layers::install_rn_layers(
+                graph,
+                &lock_packages,
+                project_root,
+                opts,
+            )
+            .await?;
+            write_canonical_lock(project_root, lock_packages)?;
+            Ok(summary)
+        }
 
         // ObjC: CocoaPods pod install
         AppLanguage::ObjC => install_objc(project_root, opts).await,
@@ -381,4 +398,54 @@ async fn install_multi(
     Err(MgError::Other(
         "multi-platform project: no recognized manifest found".to_string(),
     ))
+}
+
+/// Flush the native-resolve entries into the canonical v3 mgc.lock
+/// (merge-by-identity — same contract as the lib adapter lane). Nothing
+/// resolved natively → the existing lock stays untouched.
+/// Ghi các entry resolve-native vào mgc.lock v3 chuẩn (merge theo danh
+/// tính — cùng hợp đồng với lane lib adapter). Không resolve gì native →
+/// lock có sẵn giữ nguyên.
+fn write_canonical_lock(
+    project_root: &Path,
+    lock_packages: Vec<mgc_lockfile::Package>,
+) -> MgResult<()> {
+    if lock_packages.is_empty() {
+        return Ok(());
+    }
+    let lock_path = project_root.join("mgc.lock");
+    let mut lockfile = if lock_path.exists() {
+        mgc_lockfile::parser::parse_lockfile(
+            &std::fs::read_to_string(&lock_path)
+                .map_err(|e| MgError::Other(format!("failed to read existing mgc.lock: {e}")))?,
+        )
+        .unwrap_or_else(|_| mgc_lockfile::Lockfile::new())
+    } else {
+        mgc_lockfile::Lockfile::new()
+    };
+    for pkg in lock_packages {
+        // Replace same name+version entry, keep others — merge-by-identity.
+        // (Thay entry cùng name+version, giữ entry khác — merge theo danh
+        // tính.)
+        lockfile
+            .packages
+            .retain(|p| !(p.name == pkg.name && p.version == pkg.version));
+        lockfile.packages.push(pkg);
+    }
+    lockfile.metadata.generated_at = {
+        // ISO-8601 without external deps — seconds precision is enough for
+        // the metadata field. (ISO-8601 không cần crate ngoài — độ chính
+        // xác giây đủ cho trường metadata.)
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("{secs}")
+    };
+    lockfile.metadata.generator = format!("mgc/{}", env!("CARGO_PKG_VERSION"));
+    let toml = mgc_lockfile::writer::serialize_lockfile(&lockfile)
+        .map_err(|e| MgError::Other(format!("lockfile serialization failed: {e}")))?;
+    std::fs::write(&lock_path, toml.as_bytes())
+        .map_err(|e| MgError::Other(format!("failed to write mgc.lock: {e}")))?;
+    Ok(())
 }

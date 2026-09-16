@@ -23,6 +23,7 @@ pub mod nuget;
 #[path = "pub.rs"]
 pub mod pubdev;
 pub mod pypi;
+pub mod reactnative;
 pub mod swift;
 pub mod zip_reader;
 
@@ -32,6 +33,10 @@ pub use maven::MavenProtocol;
 pub use nuget::NuGetProtocol;
 pub use pubdev::PubProtocol;
 pub use pypi::PypiProtocol;
+pub use reactnative::{
+    CocoaPodsProtocol, GradleLockEntry, PODSPEC_SHA1_MARKER_PREFIX, PodfileLock,
+    RN_TIER_MARKER_PREFIX,
+};
 pub use swift::SwiftRegistryProtocol;
 
 use async_trait::async_trait;
