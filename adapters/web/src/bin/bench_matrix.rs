@@ -2,6 +2,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use mgc_store::{Layout, PackageCache};
+use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver};
 use mgc_types::{PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
 use mgc_web_adapter::WebAdapter;
 use serde::{Deserialize, Serialize};

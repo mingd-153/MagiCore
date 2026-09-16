@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used)]
 use criterion::{Criterion, criterion_group, criterion_main};
+use mgc_types::capabilities::ContentStoreProvider;
 use mgc_types::{
-    PackageAdapter, PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version,
-    adapter::InstallOptions,
+    PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version, adapter::InstallOptions,
 };
 use std::path::Path;
 use std::sync::Arc;

@@ -3,6 +3,7 @@ pub mod audit;
 pub mod bench;
 pub mod build;
 pub mod cache;
+pub mod capabilities;
 pub mod compat;
 #[cfg(test)]
 #[path = "compat_test.rs"]

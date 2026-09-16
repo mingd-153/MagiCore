@@ -3,8 +3,11 @@
 //! Kiểm thử: detect framework, adapter_for, PackageAdapter trait methods.
 
 use mgc_ai_adapter::{AiAdapter, AiFramework, adapter_for, detect_framework, generate_sbom};
-use mgc_types::PackageName;
 use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::capabilities::{
+    AuditProvider, ContentStoreProvider, CoreIdent, DependencyResolver, ProjectDetector,
+};
+use mgc_types::{PackageName, ResolvedGraph};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
@@ -144,9 +147,15 @@ async fn resolve_returns_empty_graph_by_design() {
     std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"python-agent\"\n").unwrap();
     let adapter = adapter_for(&dir).unwrap();
     let manifest = adapter.parse_manifest(&dir).await.unwrap();
-    let graph = adapter.resolve(&manifest).await.unwrap();
-    // AI không quản lý deps — graph rỗng theo design
-    assert!(graph.packages.is_empty());
+    // AI does NOT claim DependencyResolver (Global Gate 1) — resolve must
+    // now fail closed instead of returning an empty graph.
+    // (AI KHÔNG claim DependencyResolver (Global Gate 1) — resolve phải
+    // fail closed thay vì trả graph rỗng.)
+    let result = adapter.resolve(&manifest).await;
+    assert!(
+        result.is_err(),
+        "ai resolve must fail closed (no DependencyResolver claim)"
+    );
 }
 
 #[tokio::test]
@@ -155,13 +164,21 @@ async fn install_fails_closed_with_descriptive_error() {
     std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"python-agent\"\n").unwrap();
     let adapter = adapter_for(&dir).unwrap();
     let manifest = adapter.parse_manifest(&dir).await.unwrap();
-    let graph = adapter.resolve(&manifest).await.unwrap();
+    // resolve itself fails closed first (no DependencyResolver claim) —
+    // install cannot even be reached without a graph.
+    // (resolve đã fail closed trước (không claim DependencyResolver) —
+    // install không thể gọi khi chưa có graph.)
+    assert!(
+        adapter.resolve(&manifest).await.is_err(),
+        "ai resolve must fail closed"
+    );
+    let graph = ResolvedGraph::default();
     let result = adapter.install(&graph, &dir, Default::default()).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("pip"),
-        "error message should mention pip: {msg}"
+        msg.contains("ai core"),
+        "error message should name the ai core: {msg}"
     );
 }
 
@@ -175,8 +192,8 @@ async fn add_fails_closed_with_descriptive_error() {
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("pip"),
-        "error message should mention pip: {msg}"
+        msg.contains("ai core"),
+        "error message should name the ai core: {msg}"
     );
 }
 

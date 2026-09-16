@@ -180,6 +180,8 @@ pub enum Commands {
     },
     #[command(about = "Start native Model Context Protocol (MCP) server for AI coding agents")]
     Mcp,
+    #[command(about = "Show the capability manifest of each core (Global Gate 1)")]
+    Capabilities,
 
     // ── Engine Commands (In-project, auto-detect core) ───────────────
     #[command(about = "Start the local development server", alias = "dev-web")]

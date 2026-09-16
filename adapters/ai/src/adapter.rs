@@ -1,20 +1,56 @@
 //! PackageAdapter implementation for AI cores.
 //! Điều phối fail-closed dependency flow riêng khỏi framework detection.
+//!
+//! Global Gate 1 (2026-09-16): the registry-lifecycle surface that always
+//! failed (resolve/fetch/install/add/remove/update) and the fake-success
+//! write_manifest no-op are GONE — the fail-closed defaults from
+//! `mgc_types::capabilities` answer now. AI deps flow through the CLI
+//! uv/pip lane; the adapter keeps detection, listing, audit, and the
+//! model-artifact scanner.
+//! Global Gate 1: các method registry-lifecycle vốn luôn lỗi
+//! (resolve/fetch/install/add/remove/update) và no-op write_manifest giả
+//! thành công đã BỊ XÓA — default fail-closed từ
+//! `mgc_types::capabilities` trả lời thay. Dep AI đi qua lane uv/pip của
+//! CLI; adapter giữ detect, list, audit và scanner model-artifact.
 
 use crate::framework::{AiFramework, detect_framework};
 use async_trait::async_trait;
-use mgc_types::adapter::{
-    AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
-    UpdatedPackage,
+use mgc_types::adapter::{AuditReport, InstalledPackage, PackageAdapter};
+use mgc_types::capabilities::{
+    AuditProvider, Capability, CoreIdent, LifecycleRunner, OptimizerProvider, ProjectDetector,
+    ScaffoldProvider,
 };
-use mgc_types::{
-    Ecosystem, Manifest, MgError, MgResult, PackageId, PackageName, ResolvedGraph, Version,
-    VersionRange,
-};
+use mgc_types::{Ecosystem, Manifest, MgError, MgResult, PackageId, PackageName, Version};
 use std::path::{Path, PathBuf};
 
 pub struct AiAdapter {
     pub framework: AiFramework,
+}
+
+impl AiAdapter {
+    /// Capability manifest (Global Gate 1) — code-reality notes:
+    /// - ProjectDetector: `detect_framework` (framework.rs) — real.
+    /// - ScaffoldProvider: the `mgc create-ai` CLI scaffolder lane — real.
+    /// - LifecycleRunner: the uv/pip install lifecycle runs through the
+    ///   CLI per-core lane (cli/src/commands/core/install/ai.rs) — real.
+    /// - OptimizerProvider: `mgc optimize` supports the ai core
+    ///   (cli/src/commands/optimizer) — real.
+    /// - AuditProvider: dependency scanners (pip-audit/cargo-audit/
+    ///   govulncheck) + the model-artifact scanner — real.
+    ///
+    /// DependencyResolver/ArtifactFetcher/ContentStoreProvider are
+    /// deliberately NOT claimed: mgc does not manage virtualenvs
+    /// (adapters/ai/src/adapter.rs previously failed closed via
+    /// `no_package_manager`) — the defaults answer now.
+    /// Bảng capability (Global Gate 1) — ghi chú theo code thật; các
+    /// capability registry KHÔNG được claim vì mgc không quản virtualenv.
+    pub const CAPABILITIES: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::LifecycleRunner,
+        Capability::OptimizerProvider,
+        Capability::AuditProvider,
+    ];
 }
 
 pub fn adapter_for(root: &Path) -> Option<AiAdapter> {
@@ -22,14 +58,11 @@ pub fn adapter_for(root: &Path) -> Option<AiAdapter> {
     Some(AiAdapter { framework })
 }
 
-fn no_package_manager() -> MgResult<()> {
-    Err(mgc_types::MgError::Other(
-        "ai deps flow through pip (allowlist) — run `pip install -r requirements.txt` manually; mgc does not manage virtualenvs".to_string(),
-    ))
-}
+impl CoreIdent for AiAdapter {
+    fn core_id(&self) -> &'static str {
+        "ai"
+    }
 
-#[async_trait]
-impl PackageAdapter for AiAdapter {
     fn name(&self) -> &str {
         "ai"
     }
@@ -37,82 +70,48 @@ impl PackageAdapter for AiAdapter {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Ai
     }
+}
 
+impl ProjectDetector for AiAdapter {
     fn can_handle(&self, project_root: &Path) -> bool {
         detect_framework(project_root).is_some()
     }
+}
 
-    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
-        let name = project_root
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "ai".to_string());
-        Ok(Manifest::new(&name, Ecosystem::Ai))
-    }
-
-    async fn write_manifest(&self, _project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
+impl ScaffoldProvider for AiAdapter {
+    /// Evidence: `mgc create-ai` scaffold lane (CLI create commands).
+    /// Dẫn chứng: lane scaffold `mgc create-ai` (lệnh create của CLI).
+    fn probe_scaffold(&self) -> MgResult<()> {
         Ok(())
     }
+}
 
-    async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        Ok(ResolvedGraph::default())
-    }
-
-    async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
+impl LifecycleRunner for AiAdapter {
+    /// Evidence: the uv/pip install lifecycle (lock → sync) runs in the
+    /// CLI per-core install lane (cli/src/commands/core/install/ai.rs).
+    /// Dẫn chứng: lifecycle install uv/pip (lock → sync) chạy ở lane
+    /// install per-core của CLI.
+    fn probe_lifecycle_runner(&self) -> MgResult<()> {
         Ok(())
     }
+}
 
-    async fn install(
-        &self,
-        _graph: &ResolvedGraph,
-        _project_root: &Path,
-        _opts: InstallOptions,
-    ) -> MgResult<InstallSummary> {
-        no_package_manager()?;
-        unreachable!()
+impl OptimizerProvider for AiAdapter {
+    /// Evidence: `mgc optimize` dispatches the ai core
+    /// (cli/src/commands/optimizer — Ecosystem::Ai branch).
+    /// Dẫn chứng: `mgc optimize` điều phối core ai (optimizer CLI).
+    fn probe_optimizer(&self) -> MgResult<()> {
+        Ok(())
     }
+}
 
-    async fn add(
-        &self,
-        _project_root: &Path,
-        _name: &PackageName,
-        _range: Option<&VersionRange>,
-        _opts: AddOptions,
-    ) -> MgResult<PackageId> {
-        no_package_manager()?;
-        unreachable!()
-    }
-
-    async fn remove(&self, _project_root: &Path, _name: &PackageName) -> MgResult<()> {
-        no_package_manager()
-    }
-
-    async fn update(
-        &self,
-        _project_root: &Path,
-        _name: Option<&PackageName>,
-    ) -> MgResult<Vec<UpdatedPackage>> {
-        no_package_manager()?;
-        unreachable!()
-    }
-
-    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: PackageId::new(
-                    dep.name.clone(),
-                    dep.range
-                        .satisfying_version()
-                        .unwrap_or_else(|| Version::new(0, 1, 0)),
-                ),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+#[async_trait]
+impl AuditProvider for AiAdapter {
+    /// Evidence: the two-layer aggregate below (dependency scanners +
+    /// model-artifact scanner). Dẫn chứng: aggregate hai lớp bên dưới
+    /// (scanner dependency + scanner model-artifact).
+    fn probe_audit_provider(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
@@ -190,11 +189,55 @@ impl PackageAdapter for AiAdapter {
 
         plan.execute().await
     }
-
-    fn set_dedupe_pref(&self, _enabled: bool) {}
-
-    fn set_existing_versions(&self, _versions: std::collections::HashMap<String, String>) {}
 }
+
+#[async_trait]
+impl PackageAdapter for AiAdapter {
+    fn capabilities(&self) -> &'static [Capability] {
+        Self::CAPABILITIES
+    }
+
+    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
+        let name = project_root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "ai".to_string());
+        Ok(Manifest::new(&name, Ecosystem::Ai))
+    }
+
+    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
+        let manifest = self.parse_manifest(project_root).await?;
+        Ok(manifest
+            .all_dependencies()
+            .map(|dep| InstalledPackage {
+                id: PackageId::new(
+                    dep.name.clone(),
+                    dep.range
+                        .satisfying_version()
+                        .unwrap_or_else(|| Version::new(0, 1, 0)),
+                ),
+                path: PathBuf::new(),
+                integrity: None,
+                is_direct: true,
+                is_dev: dep.dev,
+            })
+            .collect())
+    }
+}
+// Unclaimed capabilities — empty impls inherit the fail-closed
+// Unsupported probes/defaults from mgc_types::capabilities.
+// Capability chưa claim — impl rỗng kế thừa probe/default fail-closed
+// từ mgc_types::capabilities.
+impl mgc_types::capabilities::DependencyResolver for AiAdapter {}
+impl mgc_types::capabilities::ArtifactFetcher for AiAdapter {}
+impl mgc_types::capabilities::ContentStoreProvider for AiAdapter {}
+impl mgc_types::capabilities::LockfileProvider for AiAdapter {}
+impl mgc_types::capabilities::Materializer for AiAdapter {}
+impl mgc_types::capabilities::SimulatorProvider for AiAdapter {}
+impl mgc_types::capabilities::DeviceProvider for AiAdapter {}
+impl mgc_types::capabilities::DeployProvider for AiAdapter {}
+impl mgc_types::capabilities::ModelRuntimeProvider for AiAdapter {}
+
 /// Convert the model-artifact audit (internal Finding format) into the
 /// unified AuditReport — every High/Critical model finding becomes a
 /// Vulnerability row so the aggregate and exit contract stay uniform.

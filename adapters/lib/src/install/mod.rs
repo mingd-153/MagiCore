@@ -10,7 +10,8 @@ pub mod shared_store;
 pub mod verify;
 
 use mgc_store::ContentStore;
-use mgc_types::adapter::{InstallCacheMode, InstallOptions, InstallSummary, PackageAdapter};
+use mgc_types::adapter::{InstallCacheMode, InstallOptions, InstallSummary};
+use mgc_types::capabilities::ContentStoreProvider;
 use mgc_types::{MgError, MgResult, ResolvedGraph};
 use std::path::Path;
 use std::time::Instant;

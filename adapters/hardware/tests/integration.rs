@@ -4,6 +4,7 @@
 
 use mgc_hardware_adapter::{HardwareAdapter, adapter_for, generate_sbom};
 use mgc_types::adapter::PackageAdapter;
+use mgc_types::capabilities::{AuditProvider, CoreIdent, DependencyResolver, ProjectDetector};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

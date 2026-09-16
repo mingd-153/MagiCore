@@ -1,4 +1,3 @@
-use crate::ecosystem::Ecosystem;
 use crate::error::{MgError, MgResult};
 use crate::manifest::Manifest;
 use crate::package::{PackageId, PackageName, VersionRange};
@@ -437,29 +436,44 @@ pub struct ResolvedPackage {
     pub dev: bool,
 }
 
+/// PackageAdapter — the FAÇADE combining the capability traits (Global
+/// Gate 1, phase 1). CLI dispatch keeps calling these methods unchanged;
+/// capability methods live on the supertraits in `crate::capabilities`
+/// with fail-closed defaults, and per-adapter impls are split per trait.
+/// PackageAdapter — FAÇADE kết hợp các capability trait (Global Gate 1,
+/// phase 1). Dispatch CLI giữ nguyên cách gọi; method capability nằm trên
+/// các supertrait trong `crate::capabilities` với default fail-closed,
+/// impl từng adapter được tách theo trait.
 #[async_trait]
-pub trait PackageAdapter: Send + Sync {
-    fn name(&self) -> &str;
-    fn ecosystem(&self) -> Ecosystem;
-    fn can_handle(&self, project_root: &Path) -> bool;
-
+pub trait PackageAdapter:
+    crate::capabilities::CoreIdent
+    + crate::capabilities::ProjectDetector
+    + crate::capabilities::DependencyResolver
+    + crate::capabilities::ArtifactFetcher
+    + crate::capabilities::ContentStoreProvider
+    + crate::capabilities::LockfileProvider
+    + crate::capabilities::AuditProvider
+    + crate::capabilities::ScaffoldProvider
+    + crate::capabilities::LifecycleRunner
+    + crate::capabilities::OptimizerProvider
+    + crate::capabilities::Materializer
+    + crate::capabilities::SimulatorProvider
+    + crate::capabilities::DeviceProvider
+    + crate::capabilities::DeployProvider
+    + crate::capabilities::ModelRuntimeProvider
+    + Send
+    + Sync
+{
+    /// Orchestrator-level: parse the project manifest (not a capability —
+    /// every adapter needs it for mixed flows). Parse manifest project —
+    /// cấp orchestrator (không phải capability — mọi adapter cần cho flow
+    /// trộn).
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest>;
-    async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()>;
-    async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph>;
-    async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()>;
-    async fn install(
-        &self,
-        graph: &ResolvedGraph,
-        project_root: &Path,
-        opts: InstallOptions,
-    ) -> MgResult<InstallSummary>;
-    async fn add(
-        &self,
-        project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
-    ) -> MgResult<PackageId>;
+
+    /// Orchestrator-level: list installed packages. Liệt kê package đã cài
+    /// — cấp orchestrator.
+    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>>;
+
     async fn prepare_add(
         &self,
         project_root: &Path,
@@ -487,14 +501,6 @@ pub trait PackageAdapter: Send + Sync {
             range: saved_range,
         })
     }
-    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()>;
-    async fn update(
-        &self,
-        project_root: &Path,
-        name: Option<&PackageName>,
-    ) -> MgResult<Vec<UpdatedPackage>>;
-    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>>;
-    async fn audit(&self, project_root: &Path) -> MgResult<AuditReport>;
 
     /// T5 audit --fix: re-resolve the given vulnerable packages to a newer
     /// version and rewrite the lockfile ONLY when re-resolution succeeds
@@ -513,4 +519,14 @@ pub trait PackageAdapter: Send + Sync {
     /// Provide already-installed versions (from lockfile) for dedupe resolution.
     /// Default no-op.
     fn set_existing_versions(&self, _versions: std::collections::HashMap<String, String>) {}
+
+    /// Capability manifest — default claims NOTHING. Every adapter overrides
+    /// this with its real `CAPABILITIES` const; the CLI exposes it via
+    /// `mgc capabilities --json` and the lifecycle matrix reads it.
+    /// Bảng capability — mặc định KHÔNG claim gì. Mỗi adapter override bằng
+    /// const `CAPABILITIES` thật; CLI expose qua `mgc capabilities --json`
+    /// và lifecycle matrix đọc từ đó.
+    fn capabilities(&self) -> &'static [crate::capabilities::Capability] {
+        &[]
+    }
 }

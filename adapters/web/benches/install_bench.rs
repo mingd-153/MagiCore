@@ -2,7 +2,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use mgc_types::{PackageAdapter, PackageId, PackageName, Version, adapter::InstallOptions};
+use mgc_types::capabilities::ContentStoreProvider;
+use mgc_types::{PackageId, PackageName, Version, adapter::InstallOptions};
 use mgc_web_adapter::WebAdapter;
 use std::path::Path;
 use tar::{Builder, Header};

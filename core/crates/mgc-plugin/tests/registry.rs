@@ -4,13 +4,15 @@
 use mgc_plugin::Plugin;
 use mgc_types::Ecosystem;
 use mgc_types::adapter::{
-    AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
-    ResolvedGraph, UpdatedPackage,
+    InstallOptions, InstallSummary, InstalledPackage, PackageAdapter, ResolvedGraph,
+};
+use mgc_types::capabilities::{
+    ArtifactFetcher, AuditProvider, ContentStoreProvider, CoreIdent, DependencyResolver,
+    LockfileProvider, ProjectDetector,
 };
 use mgc_types::error::MgResult;
 use mgc_types::manifest::Manifest;
-use mgc_types::package::{PackageId, PackageName, VersionRange};
-use mgc_types::version::Version;
+use mgc_types::package::{PackageId, PackageName};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -18,29 +20,58 @@ use async_trait::async_trait;
 
 async fn spawn_adapter_plugin() -> Arc<dyn PackageAdapter> {
     struct DummyAdapter;
-    #[async_trait]
-    impl PackageAdapter for DummyAdapter {
+    impl CoreIdent for DummyAdapter {
+        fn core_id(&self) -> &'static str {
+            "dummy"
+        }
         fn name(&self) -> &str {
             "dummy"
         }
         fn ecosystem(&self) -> Ecosystem {
             Ecosystem::Web
         }
+    }
+    impl ProjectDetector for DummyAdapter {
         fn can_handle(&self, _: &Path) -> bool {
             true
         }
-        async fn parse_manifest(&self, _: &Path) -> MgResult<Manifest> {
-            Ok(Manifest::new("dummy", Ecosystem::Web))
-        }
-        async fn write_manifest(&self, _: &Path, _: &Manifest) -> MgResult<()> {
-            Ok(())
-        }
+    }
+    #[async_trait]
+    impl DependencyResolver for DummyAdapter {
         async fn resolve(&self, _: &Manifest) -> MgResult<ResolvedGraph> {
             Ok(ResolvedGraph::empty())
         }
+        async fn add(
+            &self,
+            _: &Path,
+            _: &PackageName,
+            _: Option<&mgc_types::VersionRange>,
+            _: mgc_types::adapter::AddOptions,
+        ) -> MgResult<PackageId> {
+            Ok(PackageId::new(
+                PackageName::new("dummy").unwrap(),
+                mgc_types::Version::new(1, 0, 0),
+            ))
+        }
+        async fn remove(&self, _: &Path, _: &PackageName) -> MgResult<()> {
+            Ok(())
+        }
+        async fn update(
+            &self,
+            _: &Path,
+            _: Option<&PackageName>,
+        ) -> MgResult<Vec<mgc_types::adapter::UpdatedPackage>> {
+            Ok(vec![])
+        }
+    }
+    #[async_trait]
+    impl ArtifactFetcher for DummyAdapter {
         async fn fetch(&self, _: &ResolvedGraph) -> MgResult<()> {
             Ok(())
         }
+    }
+    #[async_trait]
+    impl ContentStoreProvider for DummyAdapter {
         async fn install(
             &self,
             _: &ResolvedGraph,
@@ -49,29 +80,36 @@ async fn spawn_adapter_plugin() -> Arc<dyn PackageAdapter> {
         ) -> MgResult<InstallSummary> {
             Ok(InstallSummary::default())
         }
-        async fn add(
-            &self,
-            _: &Path,
-            _: &PackageName,
-            _: Option<&VersionRange>,
-            _: AddOptions,
-        ) -> MgResult<PackageId> {
-            Ok(PackageId::new(
-                PackageName::new("dummy").unwrap(),
-                Version::new(1, 0, 0),
-            ))
-        }
-        async fn remove(&self, _: &Path, _: &PackageName) -> MgResult<()> {
+    }
+    #[async_trait]
+    impl LockfileProvider for DummyAdapter {
+        async fn write_manifest(&self, _: &Path, _: &Manifest) -> MgResult<()> {
             Ok(())
         }
-        async fn update(&self, _: &Path, _: Option<&PackageName>) -> MgResult<Vec<UpdatedPackage>> {
-            Ok(vec![])
+    }
+    #[async_trait]
+    impl AuditProvider for DummyAdapter {
+        async fn audit(&self, _: &Path) -> MgResult<mgc_types::adapter::AuditReport> {
+            Ok(mgc_types::adapter::AuditReport::clean(0))
+        }
+    }
+    // Unclaimed capabilities — empty impls inherit the fail-closed defaults.
+    // Capability chưa claim — impl rỗng kế thừa default fail-closed.
+    impl mgc_types::capabilities::ScaffoldProvider for DummyAdapter {}
+    impl mgc_types::capabilities::LifecycleRunner for DummyAdapter {}
+    impl mgc_types::capabilities::OptimizerProvider for DummyAdapter {}
+    impl mgc_types::capabilities::Materializer for DummyAdapter {}
+    impl mgc_types::capabilities::SimulatorProvider for DummyAdapter {}
+    impl mgc_types::capabilities::DeviceProvider for DummyAdapter {}
+    impl mgc_types::capabilities::DeployProvider for DummyAdapter {}
+    impl mgc_types::capabilities::ModelRuntimeProvider for DummyAdapter {}
+    #[async_trait]
+    impl PackageAdapter for DummyAdapter {
+        async fn parse_manifest(&self, _: &Path) -> MgResult<Manifest> {
+            Ok(Manifest::new("dummy", Ecosystem::Web))
         }
         async fn list(&self, _: &Path) -> MgResult<Vec<InstalledPackage>> {
             Ok(vec![])
-        }
-        async fn audit(&self, _: &Path) -> MgResult<AuditReport> {
-            Ok(AuditReport::clean(0))
         }
     }
     Arc::new(DummyAdapter)

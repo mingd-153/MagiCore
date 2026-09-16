@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod adapter;
+pub mod capabilities;
 pub mod ecosystem;
 pub mod error;
 pub mod jsonc;
@@ -11,6 +12,12 @@ pub mod publish;
 pub mod version;
 
 pub use adapter::*;
+pub use capabilities::{
+    ArtifactFetcher, AuditProvider, Capability, ContentStoreProvider, CoreIdent,
+    DependencyResolver, DeployProvider, DeviceProvider, LifecycleRunner, LockfileProvider,
+    Materializer, ModelRuntimeProvider, OptimizerProvider, ProjectDetector, ScaffoldProvider,
+    SimulatorProvider, unsupported_capability,
+};
 pub use ecosystem::Ecosystem;
 pub use error::{MgError, MgResult};
 pub use jsonc::strip_jsonc;

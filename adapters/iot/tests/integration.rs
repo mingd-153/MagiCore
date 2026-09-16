@@ -4,7 +4,8 @@
 
 use mgc_iot_adapter::{IotFramework, adapter_for, detect_framework, generate_sbom};
 use mgc_types::PackageName;
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::adapter::AddOptions;
+use mgc_types::capabilities::{AuditProvider, CoreIdent, DependencyResolver, ProjectDetector};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

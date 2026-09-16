@@ -23,6 +23,11 @@ use mgc_types::{
         AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
         ResolvedGraph, ResolvedPackage, UpdatedPackage,
     },
+    capabilities::{
+        ArtifactFetcher, AuditProvider, Capability, ContentStoreProvider, CoreIdent,
+        DependencyResolver, LifecycleRunner, LockfileProvider, Materializer, ProjectDetector,
+        ScaffoldProvider,
+    },
 };
 
 pub mod audit;
@@ -94,6 +99,25 @@ pub struct WebAdapter {
 }
 
 impl WebAdapter {
+    /// Capability manifest (Global Gate 1) — the web engine IS the registry
+    /// pipeline: resolve/lock/fetch/CAS/materialize/lifecycle/audit plus
+    /// detection and scaffolding. Evidence per claim lives on the probe
+    /// overrides below.
+    /// Bảng capability (Global Gate 1) — engine web CHÍNH LÀ pipeline
+    /// registry: resolve/lock/fetch/CAS/materialize/lifecycle/audit cộng
+    /// detect và scaffold. Dẫn chứng từng claim nằm ở override probe bên dưới.
+    pub const CAPABILITIES: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::DependencyResolver,
+        Capability::LockfileProvider,
+        Capability::ArtifactFetcher,
+        Capability::ContentStoreProvider,
+        Capability::Materializer,
+        Capability::LifecycleRunner,
+        Capability::AuditProvider,
+    ];
+
     // P0-4 (2026-09-15): constructors are FALLIBLE now — the registry-URL
     // guards are typed errors (fail-closed kept), so an invalid
     // MAGICORE_WEB_REGISTRY_URL / unallowed registry surfaces as an Err
@@ -261,8 +285,11 @@ impl WebAdapter {
 #[async_trait]
 impl BaseAdapter for WebAdapter {}
 
-#[async_trait]
-impl PackageAdapter for WebAdapter {
+impl CoreIdent for WebAdapter {
+    fn core_id(&self) -> &'static str {
+        "web"
+    }
+
     fn name(&self) -> &str {
         "web"
     }
@@ -270,9 +297,47 @@ impl PackageAdapter for WebAdapter {
     fn ecosystem(&self) -> mgc_types::ecosystem::Ecosystem {
         mgc_types::ecosystem::Ecosystem::Web
     }
+}
 
+impl ProjectDetector for WebAdapter {
     fn can_handle(&self, project_root: &Path) -> bool {
         project_root.join("package.json").exists()
+    }
+}
+
+impl ScaffoldProvider for WebAdapter {
+    /// Evidence: the scaffold lane — `mgc create-web` via the CLI scaffold
+    /// engine (cli/src/scaffold + commands/core/create).
+    /// Dẫn chứng: lane scaffold — `mgc create-web` qua scaffold engine CLI.
+    fn probe_scaffold(&self) -> MgResult<()> {
+        Ok(())
+    }
+}
+
+impl Materializer for WebAdapter {
+    /// Evidence: the node_modules materializer (install/materialize.rs +
+    /// layout.rs — strict symlink virtual store / legacy flat layout).
+    /// Dẫn chứng: bộ materialize node_modules (install/materialize.rs +
+    /// layout.rs — virtual store symlink strict / layout phẳng legacy).
+    fn probe_materializer(&self) -> MgResult<()> {
+        Ok(())
+    }
+}
+
+impl LifecycleRunner for WebAdapter {
+    /// Evidence: the lifecycle script runner (lifecycle.rs +
+    /// script_policy.rs — preinstall/install/postinstall under policy).
+    /// Dẫn chứng: bộ chạy lifecycle script (lifecycle.rs +
+    /// script_policy.rs — preinstall/install/postinstall theo policy).
+    fn probe_lifecycle_runner(&self) -> MgResult<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl PackageAdapter for WebAdapter {
+    fn capabilities(&self) -> &'static [Capability] {
+        Self::CAPABILITIES
     }
 
     fn set_dedupe_pref(&self, enabled: bool) {
@@ -298,8 +363,54 @@ impl PackageAdapter for WebAdapter {
         parse_manifest(project_root)
     }
 
+    async fn prepare_add(
+        &self,
+        _project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<mgc_types::adapter::PreparedAdd> {
+        let inferred = self.infer_add_range(name, range, opts.exact).await?;
+        let version = inferred
+            .satisfying_version()
+            .unwrap_or_else(|| Version::new(0, 0, 0));
+        Ok(mgc_types::adapter::PreparedAdd {
+            id: PackageId::new(name.clone(), version),
+            range: inferred,
+        })
+    }
+
+    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
+        crate::list::run_list(project_root).await
+    }
+
+    async fn audit_fix(&self, project_root: &Path, vulnerable: &[PackageId]) -> MgResult<usize> {
+        run_audit_fix(project_root, vulnerable, |m| async move {
+            self.resolve(&m).await
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl LockfileProvider for WebAdapter {
+    fn probe_lockfile_provider(&self) -> MgResult<()> {
+        Ok(())
+    }
+
+    /// Evidence: real package.json writer (manifest::write_manifest) and
+    /// the mgc.lock lane (lockfile.rs).
+    /// Dẫn chứng: bộ viết package.json thật (manifest::write_manifest) và
+    /// lane mgc.lock (lockfile.rs).
     async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
         write_manifest(project_root, manifest)
+    }
+}
+
+#[async_trait]
+impl DependencyResolver for WebAdapter {
+    fn probe_dependency_resolver(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
@@ -502,6 +613,55 @@ impl PackageAdapter for WebAdapter {
         Ok(graph)
     }
 
+    async fn add(
+        &self,
+        project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<PackageId> {
+        let mut manifest = self.parse_manifest(project_root).await?;
+        let inferred = self.infer_add_range(name, range, opts.exact).await?;
+
+        let mut spec = DependencySpec::new(name.clone(), inferred.clone());
+        spec.dev = opts.dev;
+        spec.optional = opts.optional;
+        spec.peer = opts.peer;
+        manifest.add_dep(spec, opts.dev, opts.optional, opts.peer);
+
+        if !opts.no_save {
+            self.write_manifest(project_root, &manifest).await?;
+        }
+
+        let version = inferred
+            .satisfying_version()
+            .unwrap_or_else(|| Version::new(0, 0, 0));
+        Ok(PackageId::new(name.clone(), version))
+    }
+
+    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
+        self.base_remove(project_root, name).await
+    }
+
+    async fn update(
+        &self,
+        project_root: &Path,
+        name: Option<&PackageName>,
+    ) -> MgResult<Vec<UpdatedPackage>> {
+        crate::update::run_update(project_root, name, &self.registry_url, &self.provider).await
+    }
+}
+
+#[async_trait]
+impl ArtifactFetcher for WebAdapter {
+    /// Evidence: registry tarball downloader (fetch body below, feeding
+    /// the content store; install/ also prefetches via spawn_tarball_download).
+    /// Dẫn chứng: bộ tải tarball registry (thân fetch bên dưới, nạp vào
+    /// content store; install/ còn prefetch qua spawn_tarball_download).
+    fn probe_artifact_fetcher(&self) -> MgResult<()> {
+        Ok(())
+    }
+
     async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
         let reg = native::npm_registry::NpmRegistry::new_with_token(
             &self.registry_url,
@@ -531,6 +691,17 @@ impl PackageAdapter for WebAdapter {
         }
         Ok(())
     }
+}
+
+#[async_trait]
+impl ContentStoreProvider for WebAdapter {
+    /// Evidence: the CAS-backed install pipeline (install/run_install —
+    /// virtual store + content-addressable store).
+    /// Dẫn chứng: pipeline install qua CAS (install/run_install — virtual
+    /// store + content-addressable store).
+    fn probe_content_store(&self) -> MgResult<()> {
+        Ok(())
+    }
 
     async fn install(
         &self,
@@ -557,64 +728,16 @@ impl PackageAdapter for WebAdapter {
         )
         .await
     }
+}
 
-    async fn add(
-        &self,
-        project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
-    ) -> MgResult<PackageId> {
-        let mut manifest = self.parse_manifest(project_root).await?;
-        let inferred = self.infer_add_range(name, range, opts.exact).await?;
-
-        let mut spec = DependencySpec::new(name.clone(), inferred.clone());
-        spec.dev = opts.dev;
-        spec.optional = opts.optional;
-        spec.peer = opts.peer;
-        manifest.add_dep(spec, opts.dev, opts.optional, opts.peer);
-
-        if !opts.no_save {
-            self.write_manifest(project_root, &manifest).await?;
-        }
-
-        let version = inferred
-            .satisfying_version()
-            .unwrap_or_else(|| Version::new(0, 0, 0));
-        Ok(PackageId::new(name.clone(), version))
-    }
-
-    async fn prepare_add(
-        &self,
-        _project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
-    ) -> MgResult<mgc_types::adapter::PreparedAdd> {
-        let inferred = self.infer_add_range(name, range, opts.exact).await?;
-        let version = inferred
-            .satisfying_version()
-            .unwrap_or_else(|| Version::new(0, 0, 0));
-        Ok(mgc_types::adapter::PreparedAdd {
-            id: PackageId::new(name.clone(), version),
-            range: inferred,
-        })
-    }
-
-    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
-        self.base_remove(project_root, name).await
-    }
-
-    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        crate::list::run_list(project_root).await
-    }
-
-    async fn update(
-        &self,
-        project_root: &Path,
-        name: Option<&PackageName>,
-    ) -> MgResult<Vec<UpdatedPackage>> {
-        crate::update::run_update(project_root, name, &self.registry_url, &self.provider).await
+#[async_trait]
+impl AuditProvider for WebAdapter {
+    /// Evidence: the multi-scanner audit aggregate (npm bulk advisory +
+    /// rust/python/go sidecars + wasm provenance lane).
+    /// Dẫn chứng: aggregate audit đa scanner (npm bulk advisory + sidecar
+    /// rust/python/go + lane nguồn gốc wasm).
+    fn probe_audit_provider(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
@@ -732,14 +855,17 @@ impl PackageAdapter for WebAdapter {
 
         plan.execute().await
     }
-
-    async fn audit_fix(&self, project_root: &Path, vulnerable: &[PackageId]) -> MgResult<usize> {
-        run_audit_fix(project_root, vulnerable, |m| async move {
-            self.resolve(&m).await
-        })
-        .await
-    }
 }
+
+// Unclaimed capabilities — empty impls inherit the fail-closed
+// Unsupported probes/defaults from mgc_types::capabilities.
+// Capability chưa claim — impl rỗng kế thừa probe/default fail-closed
+// từ mgc_types::capabilities.
+impl mgc_types::capabilities::OptimizerProvider for WebAdapter {}
+impl mgc_types::capabilities::SimulatorProvider for WebAdapter {}
+impl mgc_types::capabilities::DeviceProvider for WebAdapter {}
+impl mgc_types::capabilities::DeployProvider for WebAdapter {}
+impl mgc_types::capabilities::ModelRuntimeProvider for WebAdapter {}
 
 /// Discover `.wasm` artifacts under the project (bounded walk: skip
 /// node_modules/target/.git — those are vendor/dep trees, not project

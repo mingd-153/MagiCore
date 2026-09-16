@@ -6,6 +6,9 @@
 use mgc_cloud_adapter::{CloudType, adapter_for, detect_type, generate_sbom};
 use mgc_types::PackageName;
 use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::capabilities::{
+    AuditProvider, ContentStoreProvider, CoreIdent, DependencyResolver, ProjectDetector,
+};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

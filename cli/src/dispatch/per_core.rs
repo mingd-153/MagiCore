@@ -163,6 +163,7 @@ pub fn command_to_dispatch(
         Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
         Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
         Commands::Mcp => Some(CommonCommand::Mcp),
+        Commands::Capabilities => Some(CommonCommand::Capabilities),
         Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
         Commands::Bench { args } => Some(CommonCommand::Bench { args }),
         Commands::Network { cmd } => Some(CommonCommand::Network { cmd }),

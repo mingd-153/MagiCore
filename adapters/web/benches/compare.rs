@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver};
 use mgc_types::{PackageAdapter, adapter::InstallOptions};
 /// Compare MagiCore vs npm / pnpm / bun on the same packages.
 /// Usage: cargo bench -p mgc-web-adapter --bench compare

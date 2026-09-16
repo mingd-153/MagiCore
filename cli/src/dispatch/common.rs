@@ -194,5 +194,6 @@ pub async fn dispatch_common(
         CommonCommand::Template { cmd } => commands::template::run(cmd).await,
         CommonCommand::Workspace { cmd } => commands::workspace::run(cmd).await,
         CommonCommand::Mcp => commands::mcp::run().await,
+        CommonCommand::Capabilities => commands::capabilities::run(core),
     }
 }

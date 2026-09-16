@@ -311,6 +311,7 @@ fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
 fn command_name(command: &Commands) -> &'static str {
     match command {
         Commands::Init { .. } => "init",
+        Commands::Capabilities => "capabilities",
         Commands::Info { .. } => "info",
         Commands::Search { .. } => "search",
         Commands::Outdated { .. } => "outdated",

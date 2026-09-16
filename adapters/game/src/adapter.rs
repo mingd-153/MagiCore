@@ -1,5 +1,16 @@
 //! PackageAdapter implementation for game cores.
 //! Điều phối Bevy/Godot/Unity/Unreal riêng khỏi detect và helper tooling.
+//!
+//! Global Gate 1 (2026-09-16): `resolve`/`fetch` overrides are GONE — the
+//! fail-closed `MgError::Unsupported` defaults answer now (game engines
+//! own their dependency graphs). The Bevy toolchain-delegating
+//! add/remove/update stay real (the CLI per-core lane calls `adapter.add`)
+//! while the capability is NOT claimed because `resolve` is fail-closed.
+//! Global Gate 1: override resolve/fetch đã BỊ XÓA — default
+//! `MgError::Unsupported` fail-closed trả lời (engine game tự sở hữu
+//! dependency graph). add/remove/update ủy quyền toolchain Bevy giữ
+//! nguyên (lane CLI per-core gọi `adapter.add`) nhưng capability KHÔNG
+//! được claim vì `resolve` fail-closed.
 
 use crate::engine::{GameEngine, detect_engine, manifest_is_game};
 use crate::tooling::{bevy_dep_version, exec_tool, placeholder_id};
@@ -7,6 +18,10 @@ use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
+};
+use mgc_types::capabilities::{
+    AuditProvider, Capability, ContentStoreProvider, CoreIdent, DependencyResolver,
+    LockfileProvider, ProjectDetector, ScaffoldProvider,
 };
 use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, VersionRange,
@@ -17,8 +32,33 @@ pub struct GameAdapter {
     engine: GameEngine,
 }
 
-#[async_trait]
-impl PackageAdapter for GameAdapter {
+impl GameAdapter {
+    /// Capability manifest (Global Gate 1) — code-reality notes:
+    /// - ProjectDetector: `detect_engine`/`manifest_is_game` — real.
+    /// - ScaffoldProvider: `mgc create-game <engine>` + src/scaffold — real.
+    /// - ContentStoreProvider: install is REAL per engine (Bevy →
+    ///   `cargo fetch` via exec_tool; Godot/Unreal/Unity fail closed
+    ///   inside install) — claimed.
+    /// - AuditProvider: shared-engine polyglot dispatch — real.
+    ///
+    /// DependencyResolver is NOT claimed (resolve is fail-closed — the
+    /// engine toolchain owns the graph), though add/remove/update stay
+    /// real for Bevy; LockfileProvider is NOT claimed (Bevy-only
+    /// write_manifest is not the full trait surface).
+    /// Bảng capability (Global Gate 1) — ghi chú theo code thật.
+    pub const CAPABILITIES: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::ContentStoreProvider,
+        Capability::AuditProvider,
+    ];
+}
+
+impl CoreIdent for GameAdapter {
+    fn core_id(&self) -> &'static str {
+        "game"
+    }
+
     fn name(&self) -> &str {
         "game"
     }
@@ -26,53 +66,32 @@ impl PackageAdapter for GameAdapter {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Game
     }
+}
 
+impl ProjectDetector for GameAdapter {
     fn can_handle(&self, project_root: &Path) -> bool {
         manifest_is_game(project_root)
     }
+}
 
-    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
-        match self.engine {
-            GameEngine::Bevy => {
-                mgc_adapter_base::cargo_manifest::parse_manifest(project_root, Ecosystem::Game)
-            }
-            GameEngine::Godot | GameEngine::Unity | GameEngine::Unreal => {
-                let name = project_root
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "game".to_string());
-                Ok(Manifest::new(&name, Ecosystem::Game))
-            }
-        }
+impl ScaffoldProvider for GameAdapter {
+    /// Evidence: src/scaffold (bevy/godot/unity/unreal generators) + the
+    /// `mgc create-game` CLI lane.
+    /// Dẫn chứng: src/scaffold (bộ sinh bevy/godot/unity/unreal) + lane
+    /// CLI `mgc create-game`.
+    fn probe_scaffold(&self) -> MgResult<()> {
+        Ok(())
     }
+}
 
-    async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
-        match self.engine {
-            GameEngine::Bevy => {
-                mgc_adapter_base::cargo_manifest::write_manifest(project_root, manifest)
-            }
-            GameEngine::Godot | GameEngine::Unity | GameEngine::Unreal => Ok(()),
-        }
-    }
-
-    async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        // No registry dependency graph for game engines — fail closed.
-        // Game engine không có dependency graph registry — fail-closed.
-        Err(mgc_types::MgError::Unsupported {
-            core: "game",
-            capability: "resolve",
-            guidance: "game dependencies are managed by the engine's own \
-                       toolchain (cargo/UPM/Epic); no registry graph is resolved"
-                .to_string(),
-        })
-    }
-
-    async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Err(mgc_types::MgError::Unsupported {
-            core: "game",
-            capability: "fetch",
-            guidance: "game dependency fetch is delegated to the engine toolchain".to_string(),
-        })
+#[async_trait]
+impl ContentStoreProvider for GameAdapter {
+    /// Evidence: install is real per engine — Bevy runs `cargo fetch`
+    /// (exec_tool); other engines fail closed inside install.
+    /// Dẫn chứng: install thật theo engine — Bevy chạy `cargo fetch`
+    /// (exec_tool); engine khác fail-closed bên trong install.
+    fn probe_content_store(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn install(
@@ -110,7 +129,36 @@ impl PackageAdapter for GameAdapter {
         }
         Ok(InstallSummary::default())
     }
+}
 
+#[async_trait]
+impl LockfileProvider for GameAdapter {
+    async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
+        match self.engine {
+            GameEngine::Bevy => {
+                mgc_adapter_base::cargo_manifest::write_manifest(project_root, manifest)
+            }
+            GameEngine::Godot | GameEngine::Unity | GameEngine::Unreal => {
+                // Fail-closed (hardware precedent): the old silent Ok no-op
+                // faked a manifest write that never happened.
+                // Fail-closed (tiền lệ hardware): Ok no-op cũ giả một lần
+                // ghi manifest không bao giờ xảy ra.
+                Err(mgc_types::MgError::Unsupported {
+                    core: "game",
+                    capability: "write_manifest",
+                    guidance: format!(
+                        "{} projects do not use mgc-written manifests; regenerate via \
+                         `mgc create-game` or edit the project file directly",
+                        self.engine.as_str()
+                    ),
+                })
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl DependencyResolver for GameAdapter {
     async fn add(
         &self,
         project_root: &Path,
@@ -190,19 +238,16 @@ impl PackageAdapter for GameAdapter {
         }
         Ok(vec![])
     }
+}
 
-    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: placeholder_id(&dep.name, Some(&dep.range)),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+#[async_trait]
+impl AuditProvider for GameAdapter {
+    /// Evidence: shared-engine polyglot dispatch (real cargo-audit for
+    /// Bevy Cargo.toml; honest UnsupportedEcosystem label otherwise).
+    /// Dẫn chứng: dispatch polyglot qua engine chung (cargo-audit thật
+    /// cho Cargo.toml Bevy; nhãn UnsupportedEcosystem trung thực còn lại).
+    fn probe_audit_provider(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
@@ -226,6 +271,42 @@ impl PackageAdapter for GameAdapter {
     }
 }
 
+#[async_trait]
+impl PackageAdapter for GameAdapter {
+    fn capabilities(&self) -> &'static [Capability] {
+        Self::CAPABILITIES
+    }
+
+    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
+        match self.engine {
+            GameEngine::Bevy => {
+                mgc_adapter_base::cargo_manifest::parse_manifest(project_root, Ecosystem::Game)
+            }
+            GameEngine::Godot | GameEngine::Unity | GameEngine::Unreal => {
+                let name = project_root
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "game".to_string());
+                Ok(Manifest::new(&name, Ecosystem::Game))
+            }
+        }
+    }
+
+    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
+        let manifest = self.parse_manifest(project_root).await?;
+        Ok(manifest
+            .all_dependencies()
+            .map(|dep| InstalledPackage {
+                id: placeholder_id(&dep.name, Some(&dep.range)),
+                path: PathBuf::new(),
+                integrity: None,
+                is_direct: true,
+                is_dev: dep.dev,
+            })
+            .collect())
+    }
+}
+
 impl GameAdapter {
     pub fn detect(root: &Path) -> Option<Self> {
         let engine = detect_engine(root)?;
@@ -241,3 +322,16 @@ pub fn adapter_for(root: &Path) -> Option<GameAdapter> {
     let engine = detect_engine(root)?;
     Some(GameAdapter { engine })
 }
+
+// Unclaimed capabilities — empty impls inherit the fail-closed
+// Unsupported probes/defaults from mgc_types::capabilities.
+// Capability chưa claim — impl rỗng kế thừa probe/default fail-closed
+// từ mgc_types::capabilities.
+impl mgc_types::capabilities::ArtifactFetcher for GameAdapter {}
+impl mgc_types::capabilities::LifecycleRunner for GameAdapter {}
+impl mgc_types::capabilities::OptimizerProvider for GameAdapter {}
+impl mgc_types::capabilities::Materializer for GameAdapter {}
+impl mgc_types::capabilities::SimulatorProvider for GameAdapter {}
+impl mgc_types::capabilities::DeviceProvider for GameAdapter {}
+impl mgc_types::capabilities::DeployProvider for GameAdapter {}
+impl mgc_types::capabilities::ModelRuntimeProvider for GameAdapter {}

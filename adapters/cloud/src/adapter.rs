@@ -1,5 +1,19 @@
 //! PackageAdapter implementation for cloud cores.
 //! Điều phối CDK/Pulumi delegate và Terraform passthrough riêng khỏi detect.
+//!
+//! Global Gate 1 (2026-09-16): DependencyResolver/ArtifactFetcher/
+//! LockfileProvider are NOT claimed — the registry surface is real only
+//! through the embedded web engine (CDK/Pulumi), so the conditional
+//! delegates stay as overrides while `resolve` remains fail-closed for
+//! Terraform. The terraform write_manifest silent-Ok no-op is now
+//! fail-closed (hardware precedent). What IS claimed: detection,
+//! scaffold, deploy, lifecycle, install (real in both branches), audit.
+//! Global Gate 1: KHÔNG claim DependencyResolver/ArtifactFetcher/
+//! LockfileProvider — mặt registry chỉ thật qua web engine nhúng
+//! (CDK/Pulumi), delegate điều kiện giữ nguyên làm override còn `resolve`
+//! vẫn fail-closed cho Terraform. No-op Ok âm thầm của write_manifest
+//! terraform giờ fail-closed (tiền lệ hardware). Claim thật: detect,
+//! scaffold, deploy, lifecycle, install (thật ở cả 2 nhánh), audit.
 
 use crate::cloud_type::{CloudType, detect_type, manifest_is_cloud};
 use crate::tooling::exec_tool;
@@ -8,14 +22,47 @@ use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
 };
+use mgc_types::capabilities::{
+    ArtifactFetcher, AuditProvider, Capability, ContentStoreProvider, CoreIdent,
+    DependencyResolver, DeployProvider, LifecycleRunner, LockfileProvider, ProjectDetector,
+    ScaffoldProvider,
+};
 use mgc_types::{
-    Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
+    Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, VersionRange,
 };
 use std::path::{Path, PathBuf};
 
 pub struct CloudAdapter {
     cloud_type: CloudType,
     web: Option<mgc_web_adapter::WebAdapter>,
+}
+
+impl CloudAdapter {
+    /// Capability manifest (Global Gate 1) — code-reality notes:
+    /// - ProjectDetector: `detect_type`/`manifest_is_cloud` — real.
+    /// - ScaffoldProvider: src/scaffold + `mgc create-clo` — real.
+    /// - DeployProvider: src/deploy (cdk deploy / pulumi up /
+    ///   terraform apply via mgc-exec, dry-run default) — real.
+    /// - LifecycleRunner: install runs `terraform init`/`terraform get`;
+    ///   CDK/Pulumi ride the web engine — real.
+    /// - ContentStoreProvider: install is REAL in both branches
+    ///   (terraform passthrough or web-engine delegate) — claimed.
+    /// - AuditProvider: terraform provider-lock lane + polyglot + web
+    ///   delegate — real.
+    ///
+    /// Bảng capability (Global Gate 1) — ghi chú theo code thật.
+    pub const CAPABILITIES: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::DeployProvider,
+        Capability::LifecycleRunner,
+        Capability::ContentStoreProvider,
+        Capability::AuditProvider,
+    ];
+
+    pub fn cloud_type(&self) -> &'static str {
+        self.cloud_type.as_str()
+    }
 }
 
 // P0-4 (2026-09-15): fallible construction — WebAdapter::new() carries the
@@ -43,8 +90,11 @@ fn no_package_manager(cloud_type: CloudType) -> MgResult<()> {
     )))
 }
 
-#[async_trait]
-impl PackageAdapter for CloudAdapter {
+impl CoreIdent for CloudAdapter {
+    fn core_id(&self) -> &'static str {
+        "clo"
+    }
+
     fn name(&self) -> &str {
         "cloud"
     }
@@ -52,55 +102,52 @@ impl PackageAdapter for CloudAdapter {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Cloud
     }
+}
 
+impl ProjectDetector for CloudAdapter {
     fn can_handle(&self, project_root: &Path) -> bool {
         manifest_is_cloud(project_root)
     }
+}
 
-    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
-        if let Some(web) = &self.web {
-            return web.parse_manifest(project_root).await;
-        }
-        let name = project_root
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "infra".to_string());
-        Ok(Manifest::new(&name, Ecosystem::Cloud))
-    }
-
-    async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
-        if let Some(web) = &self.web {
-            return web.write_manifest(project_root, manifest).await;
-        }
+impl ScaffoldProvider for CloudAdapter {
+    /// Evidence: src/scaffold (terraform/cdk/pulumi generators) + the
+    /// `mgc create-clo` CLI lane.
+    /// Dẫn chứng: src/scaffold (bộ sinh terraform/cdk/pulumi) + lane CLI
+    /// `mgc create-clo`.
+    fn probe_scaffold(&self) -> MgResult<()> {
         Ok(())
     }
+}
 
-    async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        if let Some(web) = &self.web {
-            return web.resolve(manifest).await;
-        }
-        // Terraform/CDK modules are not resolved through a registry graph.
-        // Module Terraform/CDK không resolve qua graph registry.
-        Err(mgc_types::MgError::Unsupported {
-            core: "cloud",
-            capability: "resolve",
-            guidance: "cloud dependencies are managed by terraform/CDK \
-                       (`terraform init` runs during install); no registry graph"
-                .to_string(),
-        })
+impl DeployProvider for CloudAdapter {
+    /// Evidence: src/deploy/mod.rs — real mgc-exec passthrough
+    /// (`cdk deploy` / `pulumi up` / `terraform apply`, dry-run default).
+    /// Dẫn chứng: src/deploy/mod.rs — passthrough mgc-exec thật
+    /// (`cdk deploy` / `pulumi up` / `terraform apply`, dry-run mặc định).
+    fn probe_deploy(&self) -> MgResult<()> {
+        Ok(())
     }
+}
 
-    async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
-        if let Some(web) = &self.web {
-            return web.fetch(graph).await;
-        }
-        Err(mgc_types::MgError::Unsupported {
-            core: "cloud",
-            capability: "fetch",
-            guidance: "terraform modules are fetched by `terraform init` \
-                       during install; there is no separate fetch step"
-                .to_string(),
-        })
+impl LifecycleRunner for CloudAdapter {
+    /// Evidence: install runs `terraform init` + `terraform get` (below);
+    /// CDK/Pulumi ride the web engine lifecycle.
+    /// Dẫn chứng: install chạy `terraform init` + `terraform get` (bên
+    /// dưới); CDK/Pulumi đi trên lifecycle web engine.
+    fn probe_lifecycle_runner(&self) -> MgResult<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ContentStoreProvider for CloudAdapter {
+    /// Evidence: install is REAL in both branches — terraform passthrough
+    /// (exec_tool init/get) or the embedded web engine pipeline.
+    /// Dẫn chứng: install THẬT ở cả hai nhánh — passthrough terraform
+    /// (exec_tool init/get) hoặc pipeline web engine nhúng.
+    fn probe_content_store(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn install(
@@ -115,6 +162,50 @@ impl PackageAdapter for CloudAdapter {
         exec_tool(project_root, "terraform", &["init".to_string()])?;
         exec_tool(project_root, "terraform", &["get".to_string()])?;
         Ok(InstallSummary::default())
+    }
+}
+
+#[async_trait]
+impl LockfileProvider for CloudAdapter {
+    async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
+        if let Some(web) = &self.web {
+            return web.write_manifest(project_root, manifest).await;
+        }
+        // Fail-closed (hardware precedent): the old silent Ok no-op faked
+        // a manifest write that never happened for terraform projects.
+        // Fail-closed (tiền lệ hardware): Ok no-op cũ giả một lần ghi
+        // manifest không bao giờ xảy ra cho project terraform.
+        Err(mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "write_manifest",
+            guidance: "terraform projects do not use mgc-written manifests; \
+                       write resources in HCL directly or scaffold via `mgc create-clo`"
+                .to_string(),
+        })
+    }
+}
+
+// Registry surface: REAL only through the embedded web engine (CDK/Pulumi).
+// Terraform answers fail-closed. The capability is therefore NOT claimed —
+// the delegates stay so mixed core flows keep working.
+// Mặt registry: CHỈ thật qua web engine nhúng (CDK/Pulumi). Terraform trả
+// fail-closed. Vì thế KHÔNG claim capability — delegate giữ nguyên để các
+// flow mixed core vẫn chạy.
+#[async_trait]
+impl DependencyResolver for CloudAdapter {
+    async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        if let Some(web) = &self.web {
+            return web.resolve(manifest).await;
+        }
+        // Terraform/CDK modules are not resolved through a registry graph.
+        // Module Terraform/CDK không resolve qua graph registry.
+        Err(mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "resolve",
+            guidance: "cloud dependencies are managed by terraform/CDK \
+                       (`terraform init` runs during install); no registry graph"
+                .to_string(),
+        })
     }
 
     async fn add(
@@ -149,27 +240,31 @@ impl PackageAdapter for CloudAdapter {
         no_package_manager(self.cloud_type)?;
         Ok(vec![])
     }
+}
 
-    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
+#[async_trait]
+impl ArtifactFetcher for CloudAdapter {
+    async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
         if let Some(web) = &self.web {
-            return web.list(project_root).await;
+            return web.fetch(graph).await;
         }
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: PackageId::new(
-                    dep.name.clone(),
-                    dep.range
-                        .satisfying_version()
-                        .unwrap_or_else(|| Version::new(0, 1, 0)),
-                ),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+        Err(mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "fetch",
+            guidance: "terraform modules are fetched by `terraform init` \
+                       during install; there is no separate fetch step"
+                .to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl AuditProvider for CloudAdapter {
+    /// Evidence: terraform provider-lock lane + polyglot engine + web
+    /// delegate (below). Dẫn chứng: lane terraform provider-lock + engine
+    /// polyglot + web delegate (bên dưới).
+    fn probe_audit_provider(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
@@ -206,6 +301,13 @@ impl PackageAdapter for CloudAdapter {
         }
         plan.execute().await
     }
+}
+
+#[async_trait]
+impl PackageAdapter for CloudAdapter {
+    fn capabilities(&self) -> &'static [Capability] {
+        Self::CAPABILITIES
+    }
 
     fn set_dedupe_pref(&self, enabled: bool) {
         if let Some(web) = &self.web {
@@ -218,10 +320,47 @@ impl PackageAdapter for CloudAdapter {
             web.set_existing_versions(versions);
         }
     }
-}
 
-impl CloudAdapter {
-    pub fn cloud_type(&self) -> &'static str {
-        self.cloud_type.as_str()
+    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
+        if let Some(web) = &self.web {
+            return web.parse_manifest(project_root).await;
+        }
+        let name = project_root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "infra".to_string());
+        Ok(Manifest::new(&name, Ecosystem::Cloud))
+    }
+
+    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
+        if let Some(web) = &self.web {
+            return web.list(project_root).await;
+        }
+        let manifest = self.parse_manifest(project_root).await?;
+        Ok(manifest
+            .all_dependencies()
+            .map(|dep| InstalledPackage {
+                id: PackageId::new(
+                    dep.name.clone(),
+                    dep.range
+                        .satisfying_version()
+                        .unwrap_or_else(|| mgc_types::Version::new(0, 1, 0)),
+                ),
+                path: PathBuf::new(),
+                integrity: None,
+                is_direct: true,
+                is_dev: dep.dev,
+            })
+            .collect())
     }
 }
+
+// Unclaimed capabilities — empty impls inherit the fail-closed
+// Unsupported probes/defaults from mgc_types::capabilities.
+// Capability chưa claim — impl rỗng kế thừa probe/default fail-closed
+// từ mgc_types::capabilities.
+impl mgc_types::capabilities::OptimizerProvider for CloudAdapter {}
+impl mgc_types::capabilities::Materializer for CloudAdapter {}
+impl mgc_types::capabilities::SimulatorProvider for CloudAdapter {}
+impl mgc_types::capabilities::DeviceProvider for CloudAdapter {}
+impl mgc_types::capabilities::ModelRuntimeProvider for CloudAdapter {}

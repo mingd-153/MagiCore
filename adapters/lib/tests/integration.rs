@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use mgc_lib_adapter::{adapter_for, check_pip_allowed, generate_sbom};
 use mgc_types::adapter::PackageAdapter;
+use mgc_types::capabilities::{AuditProvider, CoreIdent, DependencyResolver, LockfileProvider};
 use mgc_types::{DependencySpec, PackageName, VersionRange};
 use std::path::PathBuf;
 

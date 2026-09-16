@@ -3,8 +3,11 @@
 //! Kiểm thử: detect_language (all 6 paths), adapter_for, PackageAdapter trait methods.
 
 use mgc_app_adapter::{AppAdapter, AppLanguage, adapter_for, detect_language, generate_sbom};
-use mgc_types::PackageName;
 use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::capabilities::{
+    AuditProvider, ContentStoreProvider, CoreIdent, DependencyResolver, ProjectDetector,
+};
+use mgc_types::{PackageName, ResolvedGraph};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
@@ -183,26 +186,44 @@ async fn parse_manifest_derives_name_from_dir() {
 }
 
 #[tokio::test]
-async fn resolve_returns_empty_graph() {
+async fn resolve_fails_closed_without_dependency_resolver_claim() {
     let dir = tmp("resolve");
     std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let manifest = a.parse_manifest(&dir).await.unwrap();
-    let graph = a.resolve(&manifest).await.unwrap();
-    assert!(graph.packages.is_empty());
+    // Global Gate 1: app no longer claims DependencyResolver — the old
+    // "empty graph by design" is now an honest fail-closed error.
+    // (Global Gate 1: app không còn claim DependencyResolver — "graph rỗng
+    // theo design" cũ giờ là lỗi fail-closed trung thực.)
+    let result = a.resolve(&manifest).await;
+    assert!(
+        result.is_err(),
+        "app resolve must fail closed (no DependencyResolver claim)"
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("app core does not support 'resolve'"),
+        "error must be the capability default naming the core"
+    );
 }
 
 #[tokio::test]
-async fn install_returns_ok_delegating_to_tooling() {
+async fn install_is_real_while_resolve_stays_fail_closed() {
     let dir = tmp("install-ok");
     std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
     let a = adapter_for(&dir).unwrap();
-    let manifest = a.parse_manifest(&dir).await.unwrap();
-    let graph = a.resolve(&manifest).await.unwrap();
-    // App install now actually calls flutter pub get
-    // Test accepts either success (if flutter installed) or error (if not)
+    // ContentStoreProvider IS claimed (install delegates to flutter pub
+    // get) while DependencyResolver is NOT — build the graph directly
+    // instead of going through the fail-closed resolve.
+    // (ContentStoreProvider ĐƯỢC claim (install ủy quyền flutter pub get)
+    // trong khi DependencyResolver KHÔNG — dựng graph trực tiếp thay vì
+    // đi qua resolve fail-closed.)
+    let graph = ResolvedGraph::default();
     let result = a.install(&graph, &dir, Default::default()).await;
-    // Just verify it doesn't panic - ok or error both acceptable
+    // Accepts success or a toolchain error — never a panic.
+    // (Chấp nhận thành công hoặc lỗi toolchain — không bao giờ panic.)
     let _ = result;
 }
 
@@ -217,10 +238,13 @@ async fn add_fails_closed_directs_to_tooling() {
         .await
         .unwrap_err();
     let msg = err.to_string();
-    // Error message phải hướng dẫn user dùng mgc install thay vì add trực tiếp
+    // Global Gate 1: app does NOT claim DependencyResolver — add fails
+    // closed with the unified capability message naming the core.
+    // (Global Gate 1: app KHÔNG claim DependencyResolver — add fail
+    // closed với message capability thống nhất nêu tên core.)
     assert!(
-        msg.contains("flutter") || msg.contains("gradle") || msg.contains("mgc install"),
-        "error must mention tooling: {msg}"
+        msg.contains("app core does not support 'add'"),
+        "error must be the capability default naming the core: {msg}"
     );
 }
 

@@ -170,6 +170,7 @@ pub enum CommonCommand {
         cmd: crate::commands::model::ModelCmd,
     },
     Mcp,
+    Capabilities,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -516,6 +517,7 @@ impl TryFrom<Commands> for DispatchCommand {
             }),
             Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
             Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
+            Commands::Capabilities => Some(CommonCommand::Capabilities),
             Commands::Run {
                 script,
                 args,

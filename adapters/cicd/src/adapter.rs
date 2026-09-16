@@ -1,19 +1,47 @@
 //! PackageAdapter implementation for CI/CD cores.
 //! Điều phối dependency flow fail-closed riêng khỏi provider detection.
+//!
+//! Global Gate 1 (2026-09-16): the whole registry-lifecycle surface that
+//! always failed (resolve/fetch/install/write_manifest/add/remove/update)
+//! is GONE — the fail-closed defaults from `mgc_types::capabilities`
+//! answer with the same `MgError::Unsupported` style. CI/CD keeps
+//! detection, listing, and its own audit lane.
+//! Global Gate 1: toàn bộ mặt registry-lifecycle vốn luôn lỗi
+//! (resolve/fetch/install/write_manifest/add/remove/update) đã BỊ XÓA —
+//! default fail-closed trả lời cùng style `MgError::Unsupported`. Cicd
+//! giữ detect, list và lane audit riêng.
 
 use crate::provider::{CicdProvider, detect_provider, manifest_is_cicd};
 use async_trait::async_trait;
-use mgc_types::adapter::{
-    AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
-    UpdatedPackage,
+use mgc_types::adapter::{AuditReport, InstalledPackage, PackageAdapter};
+use mgc_types::capabilities::{
+    AuditProvider, Capability, CoreIdent, ProjectDetector, ScaffoldProvider,
 };
-use mgc_types::{
-    Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
-};
+use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, Version};
 use std::path::{Path, PathBuf};
 
 pub struct CicdAdapter {
     pub provider: CicdProvider,
+}
+
+impl CicdAdapter {
+    /// Capability manifest (Global Gate 1) — code-reality notes:
+    /// - ProjectDetector: `manifest_is_cicd`/`detect_provider` — real.
+    /// - ScaffoldProvider: `mgc create-cicd <provider>` (the scaffold lane
+    ///   the old write_manifest guidance pointed at) — real.
+    /// - AuditProvider: the github-actions policy lane + polyglot engine
+    ///   (audit body below) — real.
+    ///
+    /// DependencyResolver/ArtifactFetcher/ContentStoreProvider/
+    /// LockfileProvider are NOT claimed — pipeline files are hand-owned
+    /// and `mgc deploy` (dry-run default) is the CLI lane, not the
+    /// adapter surface.
+    /// Bảng capability (Global Gate 1) — ghi chú theo code thật.
+    pub const CAPABILITIES: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::AuditProvider,
+    ];
 }
 
 pub fn adapter_for(root: &Path) -> Option<CicdAdapter> {
@@ -21,14 +49,11 @@ pub fn adapter_for(root: &Path) -> Option<CicdAdapter> {
     Some(CicdAdapter { provider })
 }
 
-fn no_package_manager() -> MgResult<()> {
-    Err(mgc_types::MgError::Other(
-        "cicd has no package manager — deploy through `mgc deploy` (dry-run default)".to_string(),
-    ))
-}
+impl CoreIdent for CicdAdapter {
+    fn core_id(&self) -> &'static str {
+        "cicd"
+    }
 
-#[async_trait]
-impl PackageAdapter for CicdAdapter {
     fn name(&self) -> &str {
         "cicd"
     }
@@ -36,106 +61,28 @@ impl PackageAdapter for CicdAdapter {
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Cicd
     }
+}
 
+impl ProjectDetector for CicdAdapter {
     fn can_handle(&self, project_root: &Path) -> bool {
         manifest_is_cicd(project_root)
     }
+}
 
-    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
-        let name = project_root
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "ci".to_string());
-        Ok(Manifest::new(&name, Ecosystem::Cicd))
+impl ScaffoldProvider for CicdAdapter {
+    /// Evidence: `mgc create-cicd <provider>` scaffold lane.
+    /// Dẫn chứng: lane scaffold `mgc create-cicd <provider>`.
+    fn probe_scaffold(&self) -> MgResult<()> {
+        Ok(())
     }
+}
 
-    async fn write_manifest(&self, _project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-        // Fail-closed: pipeline files are hand-owned — no-op success would
-        // fake a manifest write that never happened.
-        // Fail-closed: file pipeline do người quản lý — Ok no-op là giả.
-        Err(mgc_types::MgError::Unsupported {
-            core: "cicd",
-            capability: "write_manifest",
-            guidance: "CI/CD pipeline files are maintained by hand; \
-                       scaffold via `mgc create-cicd <provider>` instead"
-                .to_string(),
-        })
-    }
-
-    async fn resolve(&self, _manifest: &Manifest) -> MgResult<ResolvedGraph> {
-        // CI/CD providers have no registry dependency graph — fail closed.
-        // Provider CI/CD không có dependency graph registry — fail-closed.
-        Err(mgc_types::MgError::Unsupported {
-            core: "cicd",
-            capability: "resolve",
-            guidance: "CI/CD templates have no dependency graph to resolve".to_string(),
-        })
-    }
-
-    async fn fetch(&self, _graph: &ResolvedGraph) -> MgResult<()> {
-        Err(mgc_types::MgError::Unsupported {
-            core: "cicd",
-            capability: "fetch",
-            guidance: "nothing to fetch — CI/CD templates carry no registry packages".to_string(),
-        })
-    }
-
-    async fn install(
-        &self,
-        _graph: &ResolvedGraph,
-        _project_root: &Path,
-        _opts: InstallOptions,
-    ) -> MgResult<InstallSummary> {
-        Err(mgc_types::MgError::Unsupported {
-            core: "cicd",
-            capability: "install",
-            guidance: "CI/CD has no package install; deploy through `mgc deploy` \
-                       (dry-run default)"
-                .to_string(),
-        })
-    }
-
-    async fn add(
-        &self,
-        _project_root: &Path,
-        _name: &PackageName,
-        _range: Option<&VersionRange>,
-        _opts: AddOptions,
-    ) -> MgResult<PackageId> {
-        no_package_manager()?;
-        unreachable!()
-    }
-
-    async fn remove(&self, _project_root: &Path, _name: &PackageName) -> MgResult<()> {
-        no_package_manager()
-    }
-
-    async fn update(
-        &self,
-        _project_root: &Path,
-        _name: Option<&PackageName>,
-    ) -> MgResult<Vec<UpdatedPackage>> {
-        no_package_manager()?;
-        unreachable!()
-    }
-
-    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: PackageId::new(
-                    dep.name.clone(),
-                    dep.range
-                        .satisfying_version()
-                        .unwrap_or_else(|| Version::new(0, 1, 0)),
-                ),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+#[async_trait]
+impl AuditProvider for CicdAdapter {
+    /// Evidence: the github-actions policy lane + polyglot engine below.
+    /// Dẫn chứng: lane policy github-actions + engine polyglot bên dưới.
+    fn probe_audit_provider(&self) -> MgResult<()> {
+        Ok(())
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
@@ -170,10 +117,40 @@ impl PackageAdapter for CicdAdapter {
         }
         plan.execute().await
     }
+}
 
-    fn set_dedupe_pref(&self, _enabled: bool) {}
+#[async_trait]
+impl PackageAdapter for CicdAdapter {
+    fn capabilities(&self) -> &'static [Capability] {
+        Self::CAPABILITIES
+    }
 
-    fn set_existing_versions(&self, _versions: std::collections::HashMap<String, String>) {}
+    async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
+        let name = project_root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "ci".to_string());
+        Ok(Manifest::new(&name, Ecosystem::Cicd))
+    }
+
+    async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
+        let manifest = self.parse_manifest(project_root).await?;
+        Ok(manifest
+            .all_dependencies()
+            .map(|dep| InstalledPackage {
+                id: PackageId::new(
+                    dep.name.clone(),
+                    dep.range
+                        .satisfying_version()
+                        .unwrap_or_else(|| Version::new(0, 1, 0)),
+                ),
+                path: PathBuf::new(),
+                integrity: None,
+                is_direct: true,
+                is_dev: dep.dev,
+            })
+            .collect())
+    }
 }
 
 impl CicdAdapter {
@@ -181,3 +158,19 @@ impl CicdAdapter {
         self.provider.as_str()
     }
 }
+
+// Unclaimed capabilities — empty impls inherit the fail-closed
+// Unsupported probes/defaults from mgc_types::capabilities.
+// Capability chưa claim — impl rỗng kế thừa probe/default fail-closed
+// từ mgc_types::capabilities.
+impl mgc_types::capabilities::DependencyResolver for CicdAdapter {}
+impl mgc_types::capabilities::ArtifactFetcher for CicdAdapter {}
+impl mgc_types::capabilities::ContentStoreProvider for CicdAdapter {}
+impl mgc_types::capabilities::LockfileProvider for CicdAdapter {}
+impl mgc_types::capabilities::LifecycleRunner for CicdAdapter {}
+impl mgc_types::capabilities::OptimizerProvider for CicdAdapter {}
+impl mgc_types::capabilities::Materializer for CicdAdapter {}
+impl mgc_types::capabilities::SimulatorProvider for CicdAdapter {}
+impl mgc_types::capabilities::DeviceProvider for CicdAdapter {}
+impl mgc_types::capabilities::DeployProvider for CicdAdapter {}
+impl mgc_types::capabilities::ModelRuntimeProvider for CicdAdapter {}
