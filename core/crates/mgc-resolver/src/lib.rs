@@ -6,6 +6,9 @@
 pub mod cache;
 pub mod graph;
 pub mod patches;
+// Phase 2 native registry protocol slots — type-checked stubs, no wiring.
+// Chỗ cắm registry protocol native Phase 2 — stub có type-check, chưa wire.
+pub mod protocols;
 pub mod solver;
 pub mod version;
 

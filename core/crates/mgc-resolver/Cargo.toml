@@ -31,3 +31,7 @@ path = "tests/patches.rs"
 [[test]]
 name = "test_dedupe"
 path = "tests/dedupe.rs"
+
+[[test]]
+name = "protocols"
+path = "tests/protocols.rs"
