@@ -26,6 +26,10 @@ blake3 = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 tokio = { workspace = true }
+# Go engine: base64 for the sumdb h1 dirhash (already-pinned workspace deps —
+# no new external crates). (Engine Go: base64 cho dirhash h1 của sumdb —
+# workspace dep đã ghim sẵn, không thêm crate ngoài.)
+base64 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -46,3 +50,11 @@ path = "tests/dedupe.rs"
 [[test]]
 name = "protocols"
 path = "tests/protocols.rs"
+
+[[test]]
+name = "test_protocols_go"
+path = "tests/protocols_go.rs"
+
+[[test]]
+name = "test_protocols_zip"
+path = "tests/protocols_zip.rs"

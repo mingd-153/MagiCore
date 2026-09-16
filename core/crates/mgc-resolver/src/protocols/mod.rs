@@ -1,25 +1,30 @@
 //! Phase 2 native registry protocol engines.
 //! Engine registry protocol native Phase 2.
 //!
-//! Real HTTP engines for crates.io (Rust), PyPI (Python) and pub.dev (Dart)
-//! plus the still-stubbed npm slot (the web core keeps its own native path).
-//! Each engine resolves a `name` within a `range` against its registry,
-//! selects the highest matching version, filters deps, verifies the artifact
-//! sha256 and materializes the toolchain layout. The engines are a LIBRARY
-//! in core — adapters wire into them, they never touch adapters directly.
-//! Engine HTTP thật cho crates.io (Rust), PyPI (Python) và pub.dev (Dart)
-//! cùng slot npm vẫn là stub (core web giữ đường native riêng). Mỗi engine
-//! resolve `name` trong `range` trên registry của nó, chọn version cao nhất
-//! thoả, lọc deps, xác minh sha256 artifact và materialize layout toolchain.
-//! Engine là LIBRARY trong core — adapter wire vào, engine không đụng adapter.
+//! Real HTTP engines for crates.io (Rust), PyPI (Python), pub.dev (Dart) and
+//! the Go module proxy, plus the still-stubbed npm slot (the web core keeps
+//! its own native path). Each engine resolves a `name` within a `range`
+//! against its registry, selects the highest matching version, filters deps,
+//! verifies the artifact hash and materializes the toolchain layout. The
+//! engines are a LIBRARY in core — adapters wire into them, they never touch
+//! adapters directly.
+//! Engine HTTP thật cho crates.io (Rust), PyPI (Python), pub.dev (Dart) và
+//! Go module proxy, cùng slot npm vẫn là stub (core web giữ đường native
+//! riêng). Mỗi engine resolve `name` trong `range` trên registry của nó,
+//! chọn version cao nhất thoả, lọc deps, xác minh hash artifact và
+//! materialize layout toolchain. Engine là LIBRARY trong core — adapter wire
+//! vào, engine không đụng adapter.
 
 pub mod archive;
 pub mod crates;
+pub mod go;
 #[path = "pub.rs"]
 pub mod pubdev;
 pub mod pypi;
+pub mod zip_reader;
 
 pub use crates::CratesProtocol;
+pub use go::GoModProtocol;
 pub use pubdev::PubProtocol;
 pub use pypi::PypiProtocol;
 

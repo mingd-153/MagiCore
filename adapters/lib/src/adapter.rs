@@ -14,7 +14,7 @@ use crate::tooling::{
 use anyhow::Result;
 use async_trait::async_trait;
 use mgc_lockfile::EcosystemTag;
-use mgc_resolver::protocols::{CratesProtocol, PypiProtocol};
+use mgc_resolver::protocols::{CratesProtocol, GoModProtocol, PypiProtocol};
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     UpdatedPackage,
@@ -344,21 +344,40 @@ impl DependencyResolver for LibAdapter {
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
-            // Go/Java/.NET: no native engine yet — toolchain-owned, fail
-            // closed (never an empty-graph false success).
-            // Go/Java/.NET: chưa có engine native — toolchain sở hữu,
-            // fail-closed (không bao giờ thành công giả graph rỗng).
-            LibLanguage::Go | LibLanguage::Java | LibLanguage::DotNet => {
-                Err(mgc_types::MgError::Unsupported {
-                    core: "lib",
-                    capability: "resolve",
-                    guidance: format!(
-                        "{} dependency resolution is owned by its toolchain; mgc-native \
-                         resolution lands with the native engine (Phase 2/3)",
-                        self.language()
-                    ),
-                })
+            // Native Go module proxy engine (Phase 2): go.mod pins → @v/list
+            // selection → .mod graph → ziphash/sumdb-verified install
+            // (mgc-native, no `go mod download` spawn for resolve/fetch/
+            // install).
+            // Engine Go module proxy native (Phase 2): pin go.mod → chọn
+            // @v/list → graph qua .mod → install xác minh ziphash/sumdb
+            // (mgc-native, không spawn `go mod download` cho resolve/fetch/
+            // install).
+            LibLanguage::Go => {
+                let protocol = GoModProtocol::from_env();
+                let resolution = resolve_with_protocol(
+                    &protocol,
+                    EcosystemTag::Go,
+                    "go://proxy.golang.org",
+                    manifest,
+                )
+                .await?;
+                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                    resolution.lock_packages;
+                Ok(resolution.graph)
             }
+            // Java/.NET: no native engine yet — toolchain-owned, fail
+            // closed (never an empty-graph false success).
+            // Java/.NET: chưa có engine native — toolchain sở hữu,
+            // fail-closed (không bao giờ thành công giả graph rỗng).
+            LibLanguage::Java | LibLanguage::DotNet => Err(mgc_types::MgError::Unsupported {
+                core: "lib",
+                capability: "resolve",
+                guidance: format!(
+                    "{} dependency resolution is owned by its toolchain; mgc-native \
+                         resolution lands with the native engine (Phase 2/3)",
+                    self.language()
+                ),
+            }),
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }

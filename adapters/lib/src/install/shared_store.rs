@@ -105,6 +105,18 @@ impl SharedStoreRun {
         })
     }
 
+    /// Begin a measured Go run: GOMODCACHE → ~/.magicore/store/go.
+    /// Bắt đầu lượt chạy Go có đo lường: GOMODCACHE → ~/.magicore/store/go.
+    pub fn go() -> MgResult<Self> {
+        let root = shared_root("go")?;
+        let bytes_before = dir_size_bytes(&root);
+        Ok(Self {
+            cache_root: root,
+            bytes_before,
+            started: Instant::now(),
+        })
+    }
+
     /// Env vars the child toolchain needs to use the shared root.
     /// Biến môi trường toolchain con cần để dùng gốc chung.
     pub fn env_vars(&self) -> Vec<(String, String)> {
