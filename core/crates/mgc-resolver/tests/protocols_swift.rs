@@ -303,10 +303,7 @@ async fn swift_git_dep_clone_provenance_and_materialize() {
     let checkout = protocol
         .materialize_git(&entry, Some(&sha), root.path())
         .unwrap();
-    assert_eq!(
-        checkout,
-        root.path().join("checkouts").join("GitDep-1.0.0")
-    );
+    assert_eq!(checkout, root.path().join("checkouts").join("GitDep-1.0.0"));
     assert!(checkout.join("Package.swift").is_file());
 
     let err = protocol

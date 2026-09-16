@@ -178,24 +178,21 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
-        # go toolchain owns module download/test/build (delegation by
-        # design Q9) — install recorded as delegated, not shared-store.
-        # go toolchain giữ download/test/build (delegation Q9) — install
-        # ghi delegated, không ghi shared-store.
-        "delegated": ["install"],
+        # Phase 2 native (2026-09-16): the GoMod proxy engine
+        # (protocols/go.rs) resolves/downloads/verifies modules — install
+        # is mgc-owned now; go toolchain remains for build/test only.
+        # (Phase 2 native: engine GoMod proxy (protocols/go.rs) tự
+        # resolve/download/verify module — install là của mgc; go toolchain
+        # chỉ còn build/test.)
         "required_dims": ["create", "install", "test", "build"],
-        # go toolchain owns the module download — plain delegation (P0-D).
-        # (go toolchain giữ download module — ủy quyền thuần (P0-D).)
-        "install_owner": "plain-delegation",
-        # P0-D: the go toolchain owns modules end to end — delegated.
-        # (P0-D: toolchain go giữ module trọn vẹn — delegated.)
-        "dependency_owner": "delegated",
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
         "owner_by_operation": {
-            "resolve": "go",                 # go resolves the module graph
-            "lock": "go",                    # go.sum owns the lock
-            "fetch": "go",                   # go mod download
-            "store": "go-module-cache",      # native GOPATH cache, mgc orchestrates only
-            "materialize": "go",             # go owns the tree
+            "resolve": "mgc",                # GoMod proxy engine resolves the graph
+            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                  # mgc downloads @v zips
+            "store": "magicore-shared-cas",  # blake3 CAS import
+            "materialize": "mgc",            # GOMODCACHE layout for offline builds
         },
     },
     {
@@ -207,24 +204,21 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
-        # mgc audits gradle lockfiles; native install lane lands P2 —
-        # honest delegated status, never a silent no-op.
-        # mgc audit lockfile gradle; install native thuộc P2 — trạng
-        # thái delegated trung thực, không no-op âm thầm.
-        "delegated": ["install"],
+        # Phase 2 native (2026-09-16): the Maven engine (protocols/maven.rs)
+        # resolves POM graphs and verifies jars (sha256/sha1) — install is
+        # mgc-owned for pom.xml projects; gradle stays a build-lane tool.
+        # (Phase 2 native: engine Maven (protocols/maven.rs) tự resolve graph
+        # POM và verify jar (sha256/sha1) — install là của mgc cho project
+        # pom.xml; gradle chỉ là tool build-lane.)
         "required_dims": ["create", "install", "test", "build"],
-        # gradle/maven own resolution — plain delegation (P0-D).
-        # (gradle/maven giữ resolution — ủy quyền thuần (P0-D).)
-        "install_owner": "plain-delegation",
-        # P0-D: gradle owns resolution — delegated.
-        # (P0-D: gradle giữ resolution — delegated.)
-        "dependency_owner": "delegated",
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
         "owner_by_operation": {
-            "resolve": "gradle",             # gradle resolves the graph
-            "lock": "gradle",                # gradle.lockfile / native lock
-            "fetch": "gradle",               # gradle downloads
-            "store": "gradle-cache",          # native cache, mgc orchestrates only
-            "materialize": "gradle",         # gradle owns the tree
+            "resolve": "mgc",                # Maven engine resolves the POM graph
+            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                  # mgc downloads jars
+            "store": "magicore-shared-cas",  # sha256/sha1-verified CAS import
+            "materialize": "mgc",            # M2 repository layout for offline builds
         },
     },
     {
@@ -236,20 +230,21 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
-        "delegated": ["install"],
+        # Phase 2 native (2026-09-16): the NuGet v3 engine
+        # (protocols/nuget.rs) resolves flat-container versions and
+        # verifies SHA-512 nupkgs — install is mgc-owned.
+        # (Phase 2 native: engine NuGet v3 (protocols/nuget.rs) tự resolve
+        # flat-container versions và verify SHA-512 nupkg — install là của
+        # mgc.)
         "required_dims": ["create", "install", "test", "build"],
-        # nuget/dotnet own restore — plain delegation (P0-D).
-        # (nuget/dotnet giữ restore — ủy quyền thuần (P0-D).)
-        "install_owner": "plain-delegation",
-        # P0-D: nuget/dotnet own restore — delegated.
-        # (P0-D: nuget/dotnet giữ restore — delegated.)
-        "dependency_owner": "delegated",
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
         "owner_by_operation": {
-            "resolve": "dotnet",             # dotnet resolves
-            "lock": "dotnet",                # lockfile is dotnet's
-            "fetch": "dotnet",               # dotnet restore
-            "store": "nuget-cache",          # native cache, mgc orchestrates only
-            "materialize": "dotnet",         # dotnet owns the tree
+            "resolve": "mgc",               # NuGet v3 engine resolves
+            "lock": "mgc",                  # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                 # mgc downloads nupkgs
+            "store": "magicore-shared-cas", # sha512-verified CAS import
+            "materialize": "mgc",           # global-packages layout for offline restore
         },
     },
     {
@@ -425,6 +420,71 @@ LANES = [
             "fetch": "mgc",                  # mgc downloads the archive
             "store": "magicore-shared-cas",  # blake3 CAS import
             "materialize": "mgc",            # mgc writes hosted/pub.dev layout
+        },
+    },
+    # ===== Phase 2 native app lanes (2026-09-16) — evidence-only until
+    # release E2E exists. SwiftPM engine (protocols/swift.rs), RN layered
+    # engine (protocols/reactnative.rs: JS web delegate + gradle.lockfile
+    # -> Maven + Podfile.lock -> CocoaPods CDN).
+    # (Phase 2 native app lanes — chỉ-ghi-bằng-chứng cho tới khi có release
+    # E2E. Engine SwiftPM (protocols/swift.rs), engine RN layered
+    # (protocols/reactnative.rs: JS delegate web + gradle.lockfile ->
+    # Maven + Podfile.lock -> CocoaPods CDN).) =====
+    {
+        "core": "app",
+        "language": "swift",
+        "evidence_only": True,
+        "toolchain_probes": ["swift"],
+        "scaffold": ["create-app", "swift", "test-app"],
+        "steps": [("install", ["install"])],
+        "required_dims": ["create", "install"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "note": "native SwiftPM registry engine exists, evidence: unit+mockito",
+        "owner_by_operation": {
+            "resolve": "mgc",
+            "lock": "mgc",
+            "fetch": "mgc",
+            "store": "magicore-shared-cas",
+            "materialize": "mgc",
+        },
+    },
+    {
+        "core": "app",
+        "language": "objc",
+        "evidence_only": True,
+        "toolchain_probes": ["pod"],
+        "scaffold": ["create-app", "objc", "test-app"],
+        "steps": [("install", ["install"])],
+        "required_dims": ["create", "install"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "note": "native CocoaPods CDN engine exists (Podfile.lock sha1 verify), evidence: unit+mockito",
+        "owner_by_operation": {
+            "resolve": "mgc",
+            "lock": "mgc",
+            "fetch": "mgc",
+            "store": "magicore-shared-cas",
+            "materialize": "mgc",
+        },
+    },
+    {
+        "core": "app",
+        "language": "react-native",
+        "evidence_only": True,
+        "toolchain_probes": ["node"],
+        "scaffold": ["create-app", "react-native", "test-app"],
+        "steps": [("install", ["install"])],
+        "required_dims": ["create", "install"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "note": "layered: JS via web engine + Android gradle.lockfile via Maven engine + iOS Podfile.lock via CocoaPods CDN, evidence: unit+mockito",
+        "owner_by_operation": {
+            "resolve": "mgc",
+            "lock": "mgc",
+            "fetch": "mgc",
+            "store": "magicore-shared-cas",
+            "materialize": "mgc",
         },
     },
     # ===== Evidence-only lanes (P0-6, Tech Lead 2026-09-15) =====
