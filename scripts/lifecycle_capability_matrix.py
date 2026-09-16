@@ -518,13 +518,42 @@ LANES = [
         ],
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        "install_owner": "native-engine",
+        # P0-5 (Tech Lead verdict 2026-09-16): the previous `native-engine`
+        # + mgc-owned resolve/fetch claim was a taxonomy FALSE-POSITIVE —
+        # the production adapter returns MgError::Unsupported for the whole
+        # registry surface: HardwareAdapter::resolve (adapter.rs:55),
+        # ::fetch (adapter.rs:67), ::install (adapter.rs:77),
+        # ::update (adapter.rs:111), ::write_manifest (adapter.rs:41).
+        # Hardware is a SCAFFOLD/GENERATOR-ONLY core: `mgc add-hardware
+        # <pkg>` materializes bundled templates into optimizer/ + bench/,
+        # nothing ever resolves or fetches. Of the three owner labels this
+        # is the most honest: the ONLY machinery that materializes is mgc's
+        # own in-tree, mgc-managed template generator — no unmanaged
+        # external toolchain exists (toolchain_probes below is empty), so
+        # plain-delegation would be literally false; managed-delegation
+        # captures "mgc manages the machinery" without claiming the
+        # registry pipeline. Per-operation owners name the truth: registry
+        # ops are `unsupported-…`, store/materialize name the generator.
+        # (P0-5: claim cũ `native-engine` + resolve/fetch của mgc là
+        # false-positive taxonomy — adapter production trả
+        # MgError::Unsupported cho toàn bộ mặt registry: resolve/fetch/
+        # install/update/write_manifest (adapter.rs:55/67/77/111/41).
+        # hardware là core CHỈ-SCAFFOLD/GENERATOR: `mgc add-hardware <pkg>`
+        # materialize template bundled vào optimizer/ + bench/, không gì
+        # resolve hay fetch cả. Trong 3 nhãn hiện có đây là nhãn trung thực
+        # nhất: cơ khí DUY NHẤT materialize là template generator trong-
+        # tree do chính mgc quản — không tồn tại toolchain ngoài nào
+        # (toolchain_probes bên dưới rỗng), nên plain-delegation sẽ sai
+        # đen; managed-delegation bắt được nghĩa "mgc quản cơ khí" mà
+        # không claim pipeline registry. Owner per-operation nói thẳng:
+        # op registry là `unsupported-…`, store/materialize nêu generator.)
+        "install_owner": "managed-delegation",
         "owner_by_operation": {
-            "resolve": "mgc",
-            "lock": "mgc",
-            "fetch": "mgc",
-            "store": "magicore-store",
-            "materialize": "mgc",
+            "resolve": "unsupported-no-registry-graph",   # adapter.rs:55 Unsupported
+            "lock": "unsupported-no-lockfile",            # no lockfile surface
+            "fetch": "unsupported-nothing-to-fetch",      # adapter.rs:67 Unsupported
+            "store": "magicore-bundled-templates",        # templates ship inside mgc
+            "materialize": "mgc-add-hardware-generator",  # add-hardware writes the tree
         },
     },
     {
@@ -547,13 +576,40 @@ LANES = [
         ],
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        "install_owner": "native-engine",
+        # P0-5 (Tech Lead verdict 2026-09-16): the previous `native-engine`
+        # + mgc-owned resolve/fetch claim was a taxonomy FALSE-POSITIVE —
+        # the production adapter returns MgError::Unsupported for the
+        # registry surface: CicdAdapter::resolve (adapter.rs:65), ::fetch
+        # (adapter.rs:75), ::install (adapter.rs:83), ::write_manifest
+        # (adapter.rs:52), and ::add/::remove/::update all fail with
+        # "cicd has no package manager". CI/CD is a GENERATOR lane: the
+        # scaffold writes .github/workflows/ci.yml once, pipeline files are
+        # HAND-OWNED afterwards (adapter guidance), and execution lives on
+        # the CI provider — mgc manages no cache or toolchain here. Of the
+        # three owner labels this is the most honest: everything past the
+        # scaffold belongs to an unmanaged external system (the provider +
+        # humans), which is exactly plain-delegation. Per-operation owners
+        # name the truth: registry ops are `unsupported-…`, store/
+        # materialize belong to the CI provider.
+        # (P0-5: claim cũ `native-engine` + resolve/fetch của mgc là
+        # false-positive taxonomy — adapter production trả
+        # MgError::Unsupported cho mặt registry: resolve/fetch/install/
+        # write_manifest (adapter.rs:65/75/83/52), add/remove/update đều
+        # fail "cicd has no package manager". cicd là lane GENERATOR:
+        # scaffold ghi .github/workflows/ci.yml một lần, file pipeline do
+        # NGƯỜI quản sau đó (guidance của adapter), thực thi nằm ở CI
+        # provider — mgc không quản cache/toolchain nào ở đây. Trong 3
+        # nhãn đây là nhãn trung thực nhất: mọi thứ sau scaffold thuộc hệ
+        # thống ngoài không quản lý (provider + con người) — đúng nghĩa
+        # plain-delegation. Owner per-operation nói thẳng: op registry là
+        # `unsupported-…`, store/materialize thuộc CI provider.)
+        "install_owner": "plain-delegation",
         "owner_by_operation": {
-            "resolve": "mgc",
-            "lock": "mgc",
-            "fetch": "mgc",
-            "store": "magicore-store",
-            "materialize": "mgc",
+            "resolve": "unsupported-no-registry-graph",  # adapter.rs:65 Unsupported
+            "lock": "unsupported-no-lockfile",           # no lockfile surface
+            "fetch": "unsupported-nothing-to-fetch",     # adapter.rs:75 Unsupported
+            "store": "ci-provider-owned",                # provider owns caches/artifacts
+            "materialize": "ci-provider-owned",          # workflows run on the provider
         },
     },
 ]
@@ -1095,6 +1151,110 @@ def validate_lane_owners() -> int:
             print(f"OWNER GATE VIOLATION: {v}", file=sys.stderr)
         return 1
     print(f"owner gate: {len(LANES)} lanes clean (install_owner + per-operation owners consistent)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# P0-5 adapter-capability ground truth (Tech Lead verdict 2026-09-16):
+# hardcoded from the PRODUCTION adapters — what each core's PackageAdapter
+# actually returns for the registry lifecycle surface. The lane taxonomy
+# must match this table, never the aspiration (fail-closed gate below).
+# Evidence per row (dẫn chứng từng dòng):
+#   web   → TRUE×3: the native engine IS the registry pipeline
+#           (impl PackageAdapter at adapters/web/src/lib.rs:265, install/
+#           orchestrator + CAS + mgc.lock).
+#   lib   → TRUE×3: LibAdapter delegates resolve to the embedded web
+#           engine and installs via crate::install::run_install
+#           (adapters/lib/src/adapter.rs:132/139/143).
+#   ai    → TRUE×3: implemented fail-closed (requires uv.lock /
+#           requirements.lock) — adapters/ai/src/adapter.rs:57/61/65.
+#   app   → TRUE×3: implemented (flutter pub orchestration) —
+#           adapters/app/src/adapter.rs:52/56/60.
+#   game  → resolve/fetch FALSE: MgError::Unsupported, "managed by the
+#           engine's own toolchain" (adapters/game/src/adapter.rs:58/70);
+#           install TRUE via engine exec only (bevy → `cargo fetch`,
+#           adapter.rs:78; Godot/Unity/Unreal fail-closed).
+#   iot   → resolve/fetch FALSE: MgError::Unsupported —
+#           adapters/iot/src/adapter.rs:58/70; install TRUE via toolchain
+#           exec (cargo/pio/west, adapter.rs:80).
+#   clo   → resolve/fetch FALSE outside the embedded web engine —
+#           terraform/CDK modules are fetched by `terraform init`
+#           (adapters/cloud/src/adapter.rs:78/93); install TRUE
+#           (adapter.rs:106).
+#   hardware → FALSE×3: MgError::Unsupported for resolve/fetch/install
+#           (adapters/hardware/src/adapter.rs:55/67/77), plus
+#           write_manifest (:41) and update (:111).
+#   cicd  → FALSE×3: MgError::Unsupported for resolve/fetch/install
+#           (adapters/cicd/src/adapter.rs:65/75/83), plus write_manifest
+#           (:52); add/remove/update → "cicd has no package manager".
+# (Bảng capability production cứng từ adapter THẬT — taxonomy lane phải
+# khớp bảng này, không khớp khát vọng: lane nào adapter trả Unsupported
+# cho install/resolve/fetch thì cấm native-engine và cấm owner mgc cho
+# op đó — đúng false-positive P0-5 của hardware/cicd.)
+# ---------------------------------------------------------------------------
+ADAPTER_REGISTRY_CAPABILITIES = {
+    "web":      {"resolve": True,  "fetch": True,  "install": True},
+    "lib":      {"resolve": True,  "fetch": True,  "install": True},
+    "ai":       {"resolve": True,  "fetch": True,  "install": True},
+    "app":      {"resolve": True,  "fetch": True,  "install": True},
+    "game":     {"resolve": False, "fetch": False, "install": True},
+    "iot":      {"resolve": False, "fetch": False, "install": True},
+    "clo":      {"resolve": False, "fetch": False, "install": True},
+    "hardware": {"resolve": False, "fetch": False, "install": False},
+    "cicd":     {"resolve": False, "fetch": False, "install": False},
+}
+
+
+def validate_adapter_consistency() -> int:
+    """P0-5 consistency gate (Tech Lead verdict 2026-09-16): the lane
+    taxonomy must match the PRODUCTION adapters' real capabilities — an
+    adapter that returns MgError::Unsupported for install/resolve/fetch
+    can never back a `native-engine` label or an mgc-owned per-operation
+    claim. Fail-closed: any mismatch (or an unknown core row) blocks with
+    exit 1.
+    Cổng nhất quán P0-5: taxonomy lane phải khớp capability THẬT của
+    adapter production — adapter trả MgError::Unsupported cho
+    install/resolve/fetch thì không bao giờ được đứng sau nhãn
+    native-engine hay claim owner mgc. Fail-closed: lệch (hoặc core chưa
+    có dòng bảng) là chặn exit 1."""
+    violations = []
+    for lane in LANES:
+        tag = f"{lane['core']}/{lane['language']}"
+        caps = ADAPTER_REGISTRY_CAPABILITIES.get(lane["core"])
+        if caps is None:
+            # Unknown core row = the taxonomy cannot be verified against
+            # the adapter — fail-closed instead of assuming.
+            # (Core chưa có dòng bảng = không verify được taxonomy với
+            # adapter — fail-closed thay vì giả định.)
+            violations.append(
+                f"{tag}: core '{lane['core']}' missing from "
+                "ADAPTER_REGISTRY_CAPABILITIES — add the adapter's real row"
+            )
+            continue
+        owner = lane.get("install_owner", "")
+        ops = lane.get("owner_by_operation", {})
+        if not caps["install"] and owner == "native-engine":
+            violations.append(
+                f"{tag}: install_owner=native-engine but the production "
+                "adapter returns Unsupported for install — false-positive "
+                "taxonomy (P0-5)"
+            )
+        for op in ("resolve", "fetch"):
+            op_owner = str(ops.get(op, ""))
+            if not caps[op] and op_owner.startswith(("mgc", "magicore")):
+                violations.append(
+                    f"{tag}: owner_by_operation['{op}']='{op_owner}' but the "
+                    f"production adapter returns Unsupported for {op} — "
+                    "false-positive taxonomy (P0-5)"
+                )
+    if violations:
+        for v in violations:
+            print(f"ADAPTER CONSISTENCY GATE VIOLATION: {v}", file=sys.stderr)
+        return 1
+    print(
+        f"adapter consistency gate: {len(LANES)} lanes match "
+        "production adapter capabilities (P0-5)"
+    )
     return 0
 
 
@@ -1789,7 +1949,13 @@ def main() -> int:
     # taxonomy hoặc tự mâu thuẫn (install owner native-engine mà fetch
     # thuộc cargo, v.v.).)
     if os.environ.get("MGC_LIFECYCLE_VALIDATE_ONLY") == "1":
-        return validate_lane_owners()
+        # P0-5: BOTH gates run here — owner taxonomy AND adapter
+        # consistency — fail-closed on the first violation.
+        # (P0-5: CHẠY CẢ HAI cổng ở đây — taxonomy owner VÀ nhất quán
+        # adapter — fail-closed ngay vi phạm đầu tiên.)
+        owner_rc = validate_lane_owners()
+        adapter_rc = validate_adapter_consistency()
+        return 1 if (owner_rc or adapter_rc) else 0
     mgc_bin = os.path.abspath(mgc_bin)
     if not os.path.isfile(mgc_bin) and os.name == "nt" and not mgc_bin.endswith(".exe"):
         # Windows binaries carry the .exe suffix — retry the suffixed path
@@ -1811,7 +1977,17 @@ def main() -> int:
     # operation TRƯỚC khi collect — lane thiếu taxonomy sẽ sinh matrix
     # trông máy-đọc-được nhưng giặt "install passed" thành "ecosystem
     # được quản lý" (đúng finding của audit).)
-    validate_lane_owners()
+    # Fail-closed (P0-5): a violated gate REFUSES collection — the old call
+    # ignored the return code, letting mislabeled taxonomy reach the matrix
+    # despite the comment above promising otherwise.
+    # (Fail-closed (P0-5): cổng vi phạm TỪ CHỐI collect — code cũ bỏ qua
+    # return code, cho taxonomy gắn nhãn sai chạm tới matrix dù comment
+    # bên trên hứa điều ngược lại.)
+    if validate_lane_owners() != 0 or validate_adapter_consistency() != 0:
+        _fail(
+            "lane owner/adapter-consistency gates failed — refusing to "
+            "collect a matrix from mislabeled taxonomy"
+        )
 
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
