@@ -455,6 +455,111 @@ fn test_network_timeout_offline_mode() {
     }
 }
 
+// In-process mock npm registry — mirrors cli/tests/kill_injection_matrix.rs.
+// (Registry npm giả in-process — phản chiếu cli/tests/kill_injection_matrix.rs.)
+// R2 flake root cause: the old manifest pulled 4 real packages from the
+// PUBLIC npmjs.org registry; under full-suite load, slow resolution delayed
+// the READY park past the 60s poll. A single tiny mock package keeps the
+// handshake deterministic and network-free.
+// (Nguyên nhân flake R2: manifest cũ kéo 4 package thật từ registry
+// npmjs.org CÔNG CỘNG; dưới tải full-suite, resolve chậm đẩy điểm đỗ READY
+// qua mốc poll 60s. Một package giả nhỏ giúp handshake tất định, không mạng.)
+
+/// Mock registry fixture serving exactly one package: is-odd 3.0.1.
+/// (Fixture registry giả phục vụ đúng một package: is-odd 3.0.1.)
+struct RegistryFixture {
+    _server: mockito::ServerGuard,
+    _mocks: Vec<mockito::Mock>,
+    url: String,
+}
+
+impl RegistryFixture {
+    fn new() -> Self {
+        let mut server = mockito::Server::new();
+        let url = server.url();
+        let metadata = serde_json::json!({
+            "name": "is-odd",
+            "dist-tags": { "latest": "3.0.1" },
+            "versions": { "3.0.1": package_metadata(&url, "3.0.1") }
+        });
+        let metadata_mock = server
+            .mock("GET", "/is-odd")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(metadata.to_string())
+            .expect_at_least(1)
+            .create();
+        let tarball_mock = server
+            .mock("GET", "/is-odd/-/is-odd-3.0.1.tgz")
+            .with_status(200)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(package_tarball())
+            .expect_at_least(1)
+            .create();
+
+        Self {
+            _server: server,
+            _mocks: vec![metadata_mock, tarball_mock],
+            url,
+        }
+    }
+}
+
+/// Minimal packument for the mock is-odd version.
+/// (Packument tối thiểu cho phiên bản is-odd giả.)
+fn package_metadata(registry_url: &str, version: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": "is-odd",
+        "version": version,
+        "dependencies": {},
+        "dist": { "tarball": format!("{registry_url}/is-odd/-/is-odd-{version}.tgz") }
+    })
+}
+
+/// Deterministic in-memory tarball for is-odd 3.0.1 — no public network.
+/// (Tarball in-memory tất định cho is-odd 3.0.1 — không mạng công cộng.)
+fn package_tarball() -> Vec<u8> {
+    let package_json = serde_json::json!({
+        "name": "is-odd",
+        "version": "3.0.1",
+        "main": "index.js"
+    })
+    .to_string();
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    let mut header = tar::Header::new_gnu();
+    header.set_size(package_json.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, "package/package.json", package_json.as_bytes())
+        .unwrap();
+    let index = "module.exports = function isOdd(n){return Math.abs(n % 2) === 1;};";
+    let mut header = tar::Header::new_gnu();
+    header.set_size(index.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, "package/index.js", index.as_bytes())
+        .unwrap();
+    let encoder = archive.into_inner().unwrap();
+    encoder.finish().unwrap()
+}
+
+/// Install command pinned to the mock registry with the cache inside the
+/// temp project — fully hermetic, same shape as kill_injection_matrix.
+/// (Lệnh install ghim registry giả với cache nằm trong project tạm — kín
+/// hoàn toàn, cùng dạng kill_injection_matrix.)
+fn install_cmd(mgc: &str, project: &Path, registry_url: &str) -> Command {
+    let mut cmd = Command::new(mgc);
+    cmd.arg("--core").arg("web").arg("install");
+    cmd.current_dir(project);
+    cmd.env("MAGICORE_WEB_REGISTRY_URL", registry_url);
+    cmd.env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url);
+    cmd.env("MGC_CACHE_DIR", project.join(".magicore"));
+    cmd
+}
+
 /// Failpoint where the killed install parks: the first lifecycle phase, the
 /// earliest deterministic observation point (see kill_injection_matrix.rs).
 /// (Failpoint để install bị kill đỗ: phase đầu của dòng đời — điểm quan sát
@@ -525,18 +630,34 @@ fn test_process_kill_recovery() {
     // deterministic failpoint handshake from cli/tests/kill_injection_matrix.rs:
     // the child parks at `after-generation-begin` and fsyncs a READY marker;
     // the test polls the marker, SIGKILLs, and asserts the child truly died
-    // by signal. The recovery contract below is unchanged: leftover
-    // lockfile-lock stays WARN-only and the follow-up install MUST succeed.
+    // by signal.
     //
-    // (Gate 11-B.2 aftermath: sleep mù 500ms ban đầu hay flake khi full-suite
-    // tải cao — child có thể bị kill trước khi `install` kịp bắt đầu (kill
-    // chẳng test được gì) hoặc sau khi đã xong, nên đường recovery không bao
-    // giờ được chạm tất định. Thay bằng failpoint handshake tất định theo
-    // mẫu cli/tests/kill_injection_matrix.rs: child đỗ tại
+    // R2 flake fix (Tech Lead verdict 2026-09-16): the manifest used to list
+    // 4 real packages (lodash/axios/react/next) resolved against the PUBLIC
+    // npmjs.org registry — ~101s standalone, and under full-suite load the
+    // READY poll (60s) missed because resolution crawled before the child
+    // reached the failpoint. The test now runs against the in-process mockito
+    // registry with ONE tiny dep (is-odd ^3.0.1), exactly like
+    // kill_injection_matrix.rs: instant resolve, zero public network. The
+    // recovery contract is unchanged: leftover lockfile-lock stays WARN-only
+    // and the follow-up install (same mock registry) MUST succeed.
+    //
+    // (Sau Gate 11-B.2: sleep mù 500ms ban đầu hay flake khi full-suite tải
+    // cao — child có thể bị kill trước khi `install` kịp bắt đầu (kill chẳng
+    // test được gì) hoặc sau khi đã xong, nên đường recovery không bao giờ
+    // được chạm tất định. Đã thay bằng handshake failpoint tất định theo mẫu
+    // cli/tests/kill_injection_matrix.rs: child đỗ tại
     // `after-generation-begin` và fsync marker READY; test poll marker, rồi
-    // SIGKILL và khẳng định child chết thật vì signal. Hợp đồng recovery giữ
-    // nguyên: lockfile-lock sót lại chỉ WARN và install tiếp theo PHẢI thành
-    // công.)
+    // SIGKILL và khẳng định child chết thật vì signal.
+    //
+    // Sửa flake R2 (phán quyết Tech Lead 2026-09-16): manifest cũ liệt kê 4
+    // package thật (lodash/axios/react/next) resolve qua registry npmjs.org
+    // CÔNG CỘNG — ~101s chạy đơn, và dưới tải full-suite poll READY (60s)
+    // miss vì resolve chập chờn trước khi child tới failpoint. Test giờ chạy
+    // qua registry mockito in-process với MỘT dep nhỏ (is-odd ^3.0.1), y hệt
+    // kill_injection_matrix.rs: resolve tức thì, không mạng công cộng. Hợp
+    // đồng recovery giữ nguyên: lockfile-lock sót lại chỉ WARN và install
+    // tiếp theo (cùng registry giả) PHẢI thành công.)
 
     println!("\n=== Process Kill Recovery Test ===");
 
@@ -544,37 +665,36 @@ fn test_process_kill_recovery() {
     let project = temp.path().join("project");
     fs::create_dir_all(&project).unwrap();
 
-    // Use larger manifest to ensure install takes some time
+    // Single tiny dep against the mock registry — instant fetch, hermetic.
+    // (Một dep nhỏ duy nhất qua registry giả — tải tức thì, kín mạng.)
     fs::write(
         project.join("package.json"),
-        r#"{
-  "name": "kill-test",
-  "version": "1.0.0",
-  "dependencies": {
-    "lodash": "^4.17.21",
-    "axios": "^1.6.0",
-    "react": "^18.2.0",
-    "next": "^14.0.0"
-  }
-}"#,
+        r#"{ "name": "kill-test", "version": "1.0.0", "dependencies": { "is-odd": "^3.0.1" } }"#,
     )
     .unwrap();
     fs::write(project.join(".mgc.core"), "web\n").unwrap();
 
     let mgc = find_mgc_binary();
+    let registry = RegistryFixture::new();
 
     // Start install parked at the failpoint; the child fsyncs the READY
     // marker when it reaches the park — deterministic handshake, no sleep.
+    // Child stdout/stderr go to files so a failed handshake dumps the real
+    // reason instead of a bare timeout.
     // (Bắt đầu install đỗ tại failpoint; child fsync marker READY khi tới
-    // điểm đỗ — handshake tất định, không sleep.)
+    // điểm đỗ — handshake tất định, không sleep. stdout/stderr của child ghi
+    // ra file để handshake hỏng dump được nguyên nhân thật thay vì timeout
+    // trống.)
     let ready_file = temp.path().join("ready");
-    let mut child = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
-        .env("MGC_FAILPOINT", KILL_PHASE)
-        .env("MGC_FAILPOINT_READY_FILE", &ready_file)
-        .spawn()
-        .expect("Failed to spawn mgc install");
+    let log_dir = project.join("logs");
+    fs::create_dir_all(&log_dir).unwrap();
+    let stdout_f = fs::File::create(log_dir.join("victim.out")).unwrap();
+    let stderr_f = fs::File::create(log_dir.join("victim.err")).unwrap();
+    let mut cmd = install_cmd(&mgc, &project, &registry.url);
+    cmd.env("MGC_FAILPOINT", KILL_PHASE);
+    cmd.env("MGC_FAILPOINT_READY_FILE", &ready_file);
+    cmd.stdout(stdout_f).stderr(stderr_f);
+    let mut child = cmd.spawn().expect("Failed to spawn mgc install");
 
     let timeout = Duration::from_secs(READY_TIMEOUT_SECS);
     let ready = wait_for_failpoint_ready(&ready_file, KILL_PHASE, timeout);
@@ -585,8 +705,9 @@ fn test_process_kill_recovery() {
         // sau assertion thất bại.)
         let _ = child.kill();
         let _ = child.wait();
+        let stderr = fs::read_to_string(log_dir.join("victim.err")).unwrap_or_default();
         panic!(
-            "READY marker not observed within {READY_TIMEOUT_SECS}s at {KILL_PHASE} (failpoint handshake failed)"
+            "READY marker not observed within {READY_TIMEOUT_SECS}s at {KILL_PHASE} (failpoint handshake failed)\nstderr:\n{stderr}"
         );
     }
 
@@ -604,7 +725,10 @@ fn test_process_kill_recovery() {
 
     println!("Process killed (died by signal / exited nonzero)");
 
-    // Verify: no lockfile lock remains
+    // Verify: no lockfile lock remains. WARN-only by contract — the OS
+    // auto-releases the flock, so a leftover file is hygiene, not failure.
+    // (Kiểm tra: không còn lockfile lock. Chỉ WARN theo hợp đồng — OS tự nhả
+    // flock nên file sót là vệ sinh, không phải failure.)
     let lockfile_lock = project.join("mgc.lock.lock");
     if lockfile_lock.exists() {
         println!("WARN: Lock file still exists (should be cleaned by signal handler)");
@@ -612,10 +736,9 @@ fn test_process_kill_recovery() {
         println!("Lock file cleaned up");
     }
 
-    // Try install again - should succeed
-    let output2 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
+    // Follow-up install against the SAME mock registry must succeed.
+    // (Install tiếp theo qua CÙNG registry giả phải thành công.)
+    let output2 = install_cmd(&mgc, &project, &registry.url)
         .output()
         .expect("Failed to run mgc install");
 
