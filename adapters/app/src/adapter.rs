@@ -28,9 +28,27 @@ use std::path::{Path, PathBuf};
 
 pub struct AppAdapter {
     pub language: AppLanguage,
+    // Native-resolve lock entries (Swift/RN lanes) carried from
+    // `DependencyResolver::resolve` to `install` — the same pending-lock
+    // pattern the lib adapter uses (same-instance CLI flow).
+    // (Entry lock từ resolve native (lane Swift/RN) chuyển từ
+    // `DependencyResolver::resolve` sang `install` — cùng pattern
+    // pending-lock của lib adapter (flow CLI cùng instance).)
+    pending_lock: std::sync::Mutex<Vec<mgc_lockfile::Package>>,
 }
 
 impl AppAdapter {
+    /// Public constructor for direct-language use (tests, CLI lanes) —
+    /// the pending lock starts empty.
+    /// (Constructor public cho dùng trực tiếp theo ngôn ngữ (test, lane
+    /// CLI) — pending lock khởi tạo rỗng.)
+    pub fn new(language: AppLanguage) -> Self {
+        Self {
+            language,
+            pending_lock: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
     /// Capability manifest (Global Gate 1) — code-reality notes:
     /// - ProjectDetector: `detect_language`/`manifest_is_app` — real.
     /// - ScaffoldProvider: `mgc create-app` CLI lane — real.
@@ -54,17 +72,22 @@ impl AppAdapter {
         Capability::ContentStoreProvider,
         Capability::LockfileProvider,
         Capability::AuditProvider,
-        // Phase 2 native pub.dev engine — Flutter resolve/fetch/install is
-        // mgc-native (other app languages stay toolchain-owned).
-        // (Engine pub.dev native Phase 2 — resolve/fetch/install của Flutter
-        // là mgc-native; ngôn ngữ app khác vẫn do toolchain giữ.)
+        // Phase 2 native engines — Flutter (pub.dev) and Swift (SwiftPM
+        // registry + git deps) resolve/fetch/install are mgc-native; the
+        // other app languages stay toolchain-owned.
+        // (Engine native Phase 2 — resolve/fetch/install của Flutter
+        // (pub.dev) và Swift (SwiftPM registry + dep git) là mgc-native;
+        // ngôn ngữ app khác vẫn do toolchain giữ.)
         Capability::DependencyResolver,
     ];
 }
 
 pub fn adapter_for(root: &Path) -> Option<AppAdapter> {
     let language = detect_language(root)?;
-    Some(AppAdapter { language })
+    Some(AppAdapter {
+        language,
+        pending_lock: std::sync::Mutex::new(Vec::new()),
+    })
 }
 
 impl CoreIdent for AppAdapter {
@@ -121,8 +144,21 @@ impl ContentStoreProvider for AppAdapter {
         project_root: &Path,
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        // Use new install pipeline
-        crate::install::run_install(self.language, graph, project_root, opts, None).await
+        // Use new install pipeline (pending native-resolve lock entries are
+        // consumed here — same-instance flow).
+        // (Dùng install pipeline mới (entry lock từ resolve native được
+        // tiêu thụ ở đây — flow cùng instance).)
+        let lock_packages =
+            std::mem::take(&mut *self.pending_lock.lock().expect("app pending lock poisoned"));
+        crate::install::run_install(
+            self.language,
+            graph,
+            project_root,
+            opts,
+            None,
+            lock_packages,
+        )
+        .await
     }
 }
 
@@ -192,11 +228,13 @@ impl PackageAdapter for AppAdapter {
 
 #[async_trait]
 impl DependencyResolver for AppAdapter {
-    /// Evidence: Flutter resolves through the native pub.dev engine (Phase 2);
-    /// other app languages stay toolchain-owned (gradle/swift/pod) and fail
+    /// Evidence: Flutter resolves through the native pub.dev engine (Phase
+    /// 2); Swift resolves through the native SwiftPM engine (Phase 2);
+    /// other app languages stay toolchain-owned (gradle/pod) and fail
     /// closed.
-    /// Dẫn chứng: Flutter resolve qua engine pub.dev native (Phase 2); ngôn
-    /// ngữ app khác vẫn do toolchain giữ (gradle/swift/pod) và fail-closed.
+    /// Dẫn chứng: Flutter resolve qua engine pub.dev native (Phase 2);
+    /// Swift resolve qua engine SwiftPM native (Phase 2); ngôn ngữ app
+    /// khác vẫn do toolchain giữ (gradle/pod) và fail-closed.
     fn probe_dependency_resolver(&self) -> MgResult<()> {
         Ok(())
     }
@@ -210,12 +248,31 @@ impl DependencyResolver for AppAdapter {
                         .await?;
                 Ok(resolution.graph)
             }
-            // Kotlin/Swift/RN/ObjC/Multi: no native engine yet — toolchain-
-            // owned, fail closed (never an empty-graph false success).
-            // Kotlin/Swift/RN/ObjC/Multi: chưa có engine native — toolchain
-            // sở hữu, fail-closed (không thành công giả graph rỗng).
+            // Native SwiftPM engine (Phase 2): registry-scope/name packages
+            // from the SwiftPM registry + git-only deps through allowlisted
+            // `git clone --depth 1 --branch {tag}` with commit-SHA
+            // provenance; lock entries ride the pending lock into install
+            // (Package.resolved export + checkout SHA verification).
+            // (Engine SwiftPM native (Phase 2): package registry
+            // scope/name + dep chỉ-git qua `git clone --depth 1 --branch
+            // {tag}` đã allowlist với provenance SHA commit; entry lock
+            // đi qua pending lock vào install (export Package.resolved +
+            // xác minh SHA checkout).)
+            AppLanguage::Swift => {
+                let protocol = mgc_resolver::protocols::SwiftRegistryProtocol::from_env();
+                let registry = swift_registry_tag(&protocol);
+                let resolution =
+                    resolve_with_protocol(&protocol, EcosystemTag::Swift, &registry, manifest)
+                        .await?;
+                *self.pending_lock.lock().expect("app pending lock poisoned") =
+                    resolution.lock_packages;
+                Ok(resolution.graph)
+            }
+            // Kotlin/RN/ObjC/Multi: no native engine yet — toolchain-owned,
+            // fail closed (never an empty-graph false success).
+            // (Kotlin/RN/ObjC/Multi: chưa có engine native — toolchain sở
+            // hữu, fail-closed (không thành công giả graph rỗng).)
             AppLanguage::Kotlin
-            | AppLanguage::Swift
             | AppLanguage::ReactNative
             | AppLanguage::ObjC
             | AppLanguage::Multi => Err(mgc_types::MgError::Unsupported {
@@ -229,6 +286,17 @@ impl DependencyResolver for AppAdapter {
             }),
         }
     }
+}
+
+/// Registry tag for lock provenance (`swift://{host}` from the configured
+/// base; unconfigured → the honest `swift://unconfigured` marker).
+/// Tag registry cho provenance lock (`swift://{host}` từ base đã cấu hình;
+/// chưa cấu hình → marker trung thực `swift://unconfigured`).
+fn swift_registry_tag(protocol: &mgc_resolver::protocols::SwiftRegistryProtocol) -> String {
+    let host = protocol
+        .registry_host()
+        .unwrap_or_else(|| "unconfigured".to_string());
+    format!("swift://{host}")
 }
 
 // Unclaimed capabilities — empty impls inherit the fail-closed

@@ -149,9 +149,7 @@ fn applanguage_as_str_values() {
 
 #[test]
 fn adapter_name_and_ecosystem() {
-    let a = AppAdapter {
-        language: AppLanguage::Flutter,
-    };
+    let a = AppAdapter::new(AppLanguage::Flutter);
     assert_eq!(a.name(), "app");
     assert_eq!(format!("{:?}", a.ecosystem()), "App");
 }
@@ -160,18 +158,14 @@ fn adapter_name_and_ecosystem() {
 fn can_handle_returns_true_for_pubspec_project() {
     let dir = tmp("ch-true");
     std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
-    let a = AppAdapter {
-        language: AppLanguage::Flutter,
-    };
+    let a = AppAdapter::new(AppLanguage::Flutter);
     assert!(a.can_handle(&dir));
 }
 
 #[test]
 fn can_handle_returns_false_for_empty_dir() {
     let dir = tmp("ch-false");
-    let a = AppAdapter {
-        language: AppLanguage::Flutter,
-    };
+    let a = AppAdapter::new(AppLanguage::Flutter);
     assert!(!a.can_handle(&dir));
 }
 

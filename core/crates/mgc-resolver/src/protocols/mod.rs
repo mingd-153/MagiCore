@@ -23,6 +23,7 @@ pub mod nuget;
 #[path = "pub.rs"]
 pub mod pubdev;
 pub mod pypi;
+pub mod swift;
 pub mod zip_reader;
 
 pub use crates::CratesProtocol;
@@ -31,6 +32,7 @@ pub use maven::MavenProtocol;
 pub use nuget::NuGetProtocol;
 pub use pubdev::PubProtocol;
 pub use pypi::PypiProtocol;
+pub use swift::SwiftRegistryProtocol;
 
 use async_trait::async_trait;
 use mgc_types::{MgError, MgResult};

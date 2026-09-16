@@ -33,6 +33,11 @@ base64 = { workspace = true }
 # Maven engine: sha1 for .jar.sha1 verification (pinned workspace dep).
 # (Engine Maven: sha1 để xác minh .jar.sha1 — workspace dep đã ghim.)
 sha1 = { workspace = true }
+# Swift engine: git clone/ls-remote for git-only deps via the mgc-exec
+# allowlist (workspace-internal crate — no new external dependency).
+# (Engine Swift: git clone/ls-remote cho dep chỉ-git qua allowlist
+# mgc-exec (crate nội bộ workspace — không thêm dependency ngoài).)
+mgc-exec = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -65,6 +70,10 @@ path = "tests/protocols_maven.rs"
 [[test]]
 name = "test_protocols_nuget"
 path = "tests/protocols_nuget.rs"
+
+[[test]]
+name = "test_protocols_swift"
+path = "tests/protocols_swift.rs"
 
 [[test]]
 name = "test_protocols_zip"

@@ -53,6 +53,11 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 sha2 = { workspace = true }
 hex = { workspace = true }
+# Native Swift wiring test needs the hermetic mock registry (pinned
+# workspace dep — no new external crate).
+# (Test wiring Swift native cần mock registry hermetic (workspace dep đã
+# ghim — không thêm crate ngoài).)
+mockito = { workspace = true }
 
 [[bench]]
 name = "perf_bench"

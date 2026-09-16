@@ -47,12 +47,22 @@ fn parse_kotlin_gradle_returns_manifest() {
 }
 
 #[test]
-fn parse_swift_package_returns_manifest() {
+fn parse_swift_package_fails_closed_on_invalid_manifest() {
     let dir = tmp("swift");
+    // Phase 2 native lane: Package.swift is Swift SOURCE — only the
+    // toolchain can evaluate it. A placeholder/broken manifest fails
+    // closed (with or without a toolchain installed) — never an empty
+    // false-success manifest.
+    // (Lane native Phase 2: Package.swift là MÃ NGUỒN Swift — chỉ toolchain
+    // đánh giá được. Manifest placeholder/hỏng fail-closed (có hoặc không
+    // có toolchain) — không bao giờ manifest rỗng thành công giả.)
     std::fs::write(dir.join("Package.swift"), "// swift package\n").unwrap();
-
-    let manifest = parse_manifest(AppLanguage::Swift, &dir).unwrap();
-    assert!(!manifest.name.is_empty());
+    let err = parse_manifest(AppLanguage::Swift, &dir).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("dump-package") || msg.contains("Swift toolchain"),
+        "fail-closed guidance required: {msg}"
+    );
 }
 
 #[test]
