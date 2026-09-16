@@ -649,6 +649,32 @@ PASS_STATUSES = (STATUS_NATIVE, STATUS_MANAGED, STATUS_PLAIN)
 # (Phiên bản schema JSON (v2: 16 dimension + bộ trạng thái).)
 SCHEMA_VERSION = 2
 
+# ---------------------------------------------------------------------------
+# P0-3 platform-evidence counter (Tech Lead 2026-09-16): windows-latest
+# runs the SAME lifecycle matrix but is evidence-only — and "experimental"
+# must never be permanent. The gitignored counter file (same treatment as
+# the matrix JSON) records CONSECUTIVE fully-green matrix runs per OS:
+#   {"<os>": {"runs": N, "last_green_sha": "...", "last_green_at": "..."}}
+# The CI workflow increments it after every green Windows run
+# (--record-green), zeroes it whenever the Windows lane breaks (--reset),
+# and the windows-evidence-promotion job fails the workflow once the count
+# reaches PLATFORM_EVIDENCE_PROMOTION_THRESHOLD — the self-enforcing
+# "flip Windows to required now" tripwire.
+# (── Counter evidence platform P0-3 (Tech Lead 2026-09-16):
+# windows-latest chạy CÙNG lifecycle matrix nhưng chỉ thu evidence — và
+# "experimental" không được thành vĩnh viễn. File counter gitignored (xử
+# lý như matrix JSON) ghi số lần chạy matrix XANH TRỌN VẸN LIÊN TIẾP theo
+# OS: {"<os>": {"runs": N, "last_green_sha": "...", "last_green_at":
+# "..."}}. Workflow CI tăng sau mỗi lần Windows xanh (--record-green), về
+# 0 khi lane Windows vỡ (--reset), và job windows-evidence-promotion FAIL
+# workflow khi đủ PLATFORM_EVIDENCE_PROMOTION_THRESHOLD — bẫy tự-ép "đổi
+# Windows thành required ngay".)
+PLATFORM_EVIDENCE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    os.pardir, "docs", "specs", "lifecyclePlatformEvidence.json",
+)
+PLATFORM_EVIDENCE_PROMOTION_THRESHOLD = 3
+
 
 # Manifest markers per language: the file that PROVES the scaffold
 # actually produced a project of the requested language (not a
@@ -1255,6 +1281,90 @@ def validate_adapter_consistency() -> int:
         f"adapter consistency gate: {len(LANES)} lanes match "
         "production adapter capabilities (P0-5)"
     )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# P0-3 platform-evidence counter I/O — see PLATFORM_EVIDENCE_PATH above.
+# (I/O counter evidence platform P0-3 — xem PLATFORM_EVIDENCE_PATH bên trên.)
+# ---------------------------------------------------------------------------
+
+
+def _platform_evidence_load() -> dict:
+    """Load the platform-evidence counter; {} when absent or unreadable
+    (fresh checkout / first run). A corrupt file reads as {} — never a
+    crash, never a fake streak.
+    (Đọc counter evidence platform; {} khi chưa có hoặc hỏng (checkout
+    mới / lần chạy đầu). File hỏng đọc thành {} — không bao giờ crash,
+    không bao giờ giả chuỗi xanh.)"""
+    try:
+        with open(PLATFORM_EVIDENCE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _platform_evidence_write(evidence: dict) -> None:
+    os.makedirs(os.path.dirname(PLATFORM_EVIDENCE_PATH) or ".", exist_ok=True)
+    with open(PLATFORM_EVIDENCE_PATH, "w", encoding="utf-8") as f:
+        json.dump(evidence, f, indent=2)
+        f.write("\n")
+
+
+def record_platform_green(os_name: str) -> int:
+    """--record-green <os>: increment the CONSECUTIVE green-run counter
+    for `os` and stamp the run SHA + UTC time. SHA source:
+    MGC_PLATFORM_EVIDENCE_SHA env (CI passes GITHUB_SHA), falling back to
+    `git rev-parse HEAD` for local runs.
+    (--record-green <os>: tăng counter lần xanh LIÊN TIẾP cho `os` và đóng
+    dấu SHA + giờ UTC của lần chạy. Nguồn SHA: env
+    MGC_PLATFORM_EVIDENCE_SHA (CI truyền GITHUB_SHA), dự phòng
+    `git rev-parse HEAD` cho lần chạy local.)"""
+    evidence = _platform_evidence_load()
+    entry = evidence.get(os_name)
+    if not isinstance(entry, dict):
+        entry = {}
+    entry["runs"] = int(entry.get("runs", 0)) + 1
+    sha = (os.environ.get("MGC_PLATFORM_EVIDENCE_SHA") or "").strip()
+    if not sha:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+        )
+        sha = (proc.stdout or "").strip()
+    entry["last_green_sha"] = sha or "unknown"
+    entry["last_green_at"] = datetime.datetime.now(
+        datetime.timezone.utc
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    evidence[os_name] = entry
+    _platform_evidence_write(evidence)
+    print(
+        f"platform evidence: {os_name} consecutive green runs = {entry['runs']} "
+        f"(last_green_sha={entry['last_green_sha']}, last_green_at={entry['last_green_at']})"
+    )
+    if entry["runs"] >= PLATFORM_EVIDENCE_PROMOTION_THRESHOLD:
+        print(
+            f"platform evidence: {os_name} reached the promotion threshold "
+            f"({PLATFORM_EVIDENCE_PROMOTION_THRESHOLD}) — flip it to a required gate now"
+        )
+    return 0
+
+
+def reset_platform_counter(os_name: str) -> int:
+    """--reset <os>: zero the consecutive-green counter — a failed run
+    broke the streak and an honest counter must show it. The last_green_*
+    fields stay: they are historical facts, not claims.
+    (--reset <os>: về 0 counter lần xanh liên tiếp — lần chạy fail đã phá
+    chuỗi và counter trung thực phải thể hiện điều đó. Trường last_green_*
+    giữ nguyên: đó là sự thật lịch sử, không phải claim.)"""
+    evidence = _platform_evidence_load()
+    entry = evidence.get(os_name)
+    if not isinstance(entry, dict):
+        entry = {}
+    entry["runs"] = 0
+    evidence[os_name] = entry
+    _platform_evidence_write(evidence)
+    print(f"platform evidence: {os_name} consecutive-green counter reset to 0 (streak broken)")
     return 0
 
 
@@ -1935,6 +2045,24 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
 
 
 def main() -> int:
+    # P0-3 platform-evidence CLI: --record-green <os> / --reset <os> write
+    # the gitignored streak counter consumed by the matrix JSON
+    # (platform_evidence) and the CI promotion job. Kept in THIS script so
+    # the counter schema has exactly one home.
+    # (CLI evidence platform P0-3: --record-green <os> / --reset <os> ghi
+    # counter gitignored mà JSON matrix (platform_evidence) và job
+    # promotion CI tiêu thụ. Đặt trong CHÍNH script này để schema counter
+    # chỉ có một ngôi nhà duy nhất.)
+    cli_args = sys.argv[1:]
+    if cli_args:
+        if cli_args[0] in ("--record-green", "--reset") and len(cli_args) == 2:
+            if cli_args[0] == "--record-green":
+                return record_platform_green(cli_args[1])
+            return reset_platform_counter(cli_args[1])
+        _fail(
+            f"unknown arguments: {' '.join(cli_args)} "
+            "(expected --record-green <os> / --reset <os>)"
+        )
     # Resolve to an ABSOLUTE path: steps run with cwd = sandbox, so a
     # relative binary path would resolve inside the sandbox and vanish.
     # Quy về đường dẫn TUYỆT ĐỐI: bước chạy với cwd = sandbox nên đường
@@ -2152,6 +2280,13 @@ def main() -> int:
             STATUS_UNVERIFIED, STATUS_UNSUPPORTED, STATUS_FAILED,
         ],
         "dimensions": ALL_DIMENSIONS,
+        # P0-3: per-OS CONSECUTIVE green-run platform evidence (see the
+        # counter block above). Embedded so one artifact carries both the
+        # matrix verdicts and how much platform evidence backs them.
+        # (P0-3: evidence platform số lần xanh LIÊN TIẾP theo OS (xem block
+        # counter bên trên). Nhúng vào đây để một artifact mang cả verdict
+        # matrix lẫn lượng evidence platform đứng sau verdict đó.)
+        "platform_evidence": _platform_evidence_load(),
         "lanes": results,
     }
 

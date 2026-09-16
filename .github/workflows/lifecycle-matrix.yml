@@ -313,3 +313,142 @@ jobs:
                         for ln in data["lanes"]
                     )
                 ))
+
+      # ── P0-3 platform evidence (Tech Lead 2026-09-16): Windows stays
+      # evidence-only TODAY (the Enforce step above skips it), but the
+      # evidence must ACCUMULATE — "experimental" must never rot into a
+      # permanent state. Every fully-green Windows matrix run increments
+      # the gitignored counter docs/specs/lifecyclePlatformEvidence.json
+      # (--record-green; schema {os: {runs, last_green_sha, last_green_at}}),
+      # persisted across runs via actions/cache (unique key per run +
+      # restore-keys prefix = the latest streak wins). Any failed step on
+      # the Windows runner zeroes the counter (--reset) so the count stays
+      # CONSECUTIVE-green. When the counter reaches the promotion
+      # threshold (3), the windows-evidence-promotion job below FAILS the
+      # workflow: "Windows has enough evidence — flip it to required now".
+      # Branch-scope note: actions/cache entries are branch-scoped — the
+      # authoritative streak accumulates on the default branch (PR runs
+      # see it, their saves never leak back).
+      # (── P0-3 evidence platform (Tech Lead 2026-09-16): Windows vẫn
+      # evidence-only HÔM NAY (bước Enforce trên bỏ qua nó) nhưng bằng
+      # chứng phải TÍCH LŨY — "experimental" không được mục rữa thành trạng
+      # thái vĩnh viễn. Mỗi lần chạy matrix Windows xanh trọn vẹn tăng
+      # counter gitignored docs/specs/lifecyclePlatformEvidence.json
+      # (--record-green; schema {os: {runs, last_green_sha,
+      # last_green_at}}), giữ qua các lần chạy nhờ actions/cache (key
+      # unique mỗi run + restore-keys prefix = lấy chuỗi mới nhất). Bất kỳ
+      # bước nào fail trên runner Windows đều về 0 counter (--reset) để
+      # con số luôn là lần XANH LIÊN TIẾP. Khi counter đạt ngưỡng promotion
+      # (3), job windows-evidence-promotion bên dưới FAIL workflow:
+      # "Windows has enough evidence — flip it to required now". Lưu ý
+      # phạm-vi-branch: cache theo branch — chuỗi chính thức tích lũy trên
+      # default branch (run PR nhìn thấy, không ghi ngược).)
+      - name: Restore Windows platform-evidence counter (cross-run)
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: docs/specs/lifecyclePlatformEvidence.json
+          key: lifecycle-platform-evidence-windows-${{ github.run_id }}
+          restore-keys: |
+            lifecycle-platform-evidence-windows-
+
+      # Default success() gating: a step after a failure is skipped — a
+      # red Windows run NEVER records green evidence.
+      # (success() mặc định: bước sau khi fail bị skip — lần chạy Windows
+      # đỏ KHÔNG BAO GIỜ được ghi là xanh.)
+      - name: Record Windows green matrix run (platform evidence)
+        if: matrix.os == 'windows-latest'
+        run: ${{ matrix.python_cmd }} scripts/lifecycle_capability_matrix.py --record-green "${{ matrix.os }}"
+        env:
+          MGC_PLATFORM_EVIDENCE_SHA: ${{ github.sha }}
+
+      - name: Save Windows platform-evidence counter (cross-run)
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: docs/specs/lifecyclePlatformEvidence.json
+          key: lifecycle-platform-evidence-windows-${{ github.run_id }}
+
+      - name: Upload Windows platform evidence (promotion-gate input)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: platform-evidence-windows
+          path: docs/specs/lifecyclePlatformEvidence.json
+          if-no-files-found: error
+
+      # Consecutive-green contract: any failure on the Windows runner
+      # breaks the streak — zero the counter (last_green_* history kept).
+      # (Hợp đồng xanh-liên-tiếp: bất kỳ fail nào trên runner Windows đều
+      # phá chuỗi — về 0 counter (giữ lịch sử last_green_*).)
+      - name: Reset Windows evidence counter (streak broken)
+        if: failure() && matrix.os == 'windows-latest'
+        run: ${{ matrix.python_cmd }} scripts/lifecycle_capability_matrix.py --reset "${{ matrix.os }}"
+
+      - name: Save reset Windows counter (cross-run)
+        if: failure() && matrix.os == 'windows-latest'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: docs/specs/lifecyclePlatformEvidence.json
+          key: lifecycle-platform-evidence-windows-reset-${{ github.run_id }}
+
+  windows-evidence-promotion:
+    name: windows evidence promotion tripwire
+    needs: [lifecycle-matrix]
+    runs-on: ubuntu-latest
+    # P0-3 self-enforcing promotion (Tech Lead 2026-09-16): Windows is
+    # evidence-only TODAY, but "experimental" must never be permanent.
+    # Once ≥3 CONSECUTIVE green Windows matrix runs are on record (the
+    # counter above), this job FAILS the workflow with an explicit
+    # instruction. The ONLY fix is the honest one: make the Windows lane
+    # a required gate in the Enforce step (drop the
+    # `matrix.os != 'windows-latest'` guard) and retire this job in the
+    # same change. Runs only when the whole matrix job is green (default
+    # needs gating); a missing/corrupt counter fails closed.
+    # (P0-3 promotion tự-ép (Tech Lead 2026-09-16): Windows evidence-only
+    # HÔM NAY, nhưng "experimental" không được thành vĩnh viễn. Khi đã ghi
+    # ≥ 3 lần chạy matrix Windows xanh LIÊN TIẾP (counter bên trên), job
+    # này FAIL workflow kèm chỉ dẫn tường minh. Cách sửa DUY NHẤT là cách
+    # trung thực: biến lane Windows thành gate bắt buộc trong bước Enforce
+    # (bỏ guard `matrix.os != 'windows-latest'`) và xoá job này trong cùng
+    # thay đổi. Chỉ chạy khi job matrix xanh trọn vẹn (needs mặc định);
+    # counter thiếu/hỏng thì fail-closed.)
+    steps:
+      - name: Download Windows platform evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: platform-evidence-windows
+          path: docs/specs
+
+      - name: Enforce Windows promotion threshold (flip to required at >=3)
+        shell: python3 {0}
+        run: |
+          import json, sys
+
+          PROMOTION_THRESHOLD = 3
+          try:
+              with open("docs/specs/lifecyclePlatformEvidence.json") as f:
+                  data = json.load(f)
+          except (OSError, ValueError) as exc:
+              # Fail-closed: an unreadable counter cannot prove the
+              # evidence is still immature.
+              # (Fail-closed: counter không đọc được không chứng minh được
+              # rằng bằng chứng còn non.)
+              print(f"platform-evidence counter unreadable: {exc}")
+              sys.exit(1)
+          win = data.get("windows-latest") or {}
+          runs = int(win.get("runs", 0))
+          sha = win.get("last_green_sha", "unknown")
+          at = win.get("last_green_at", "unknown")
+          if runs >= PROMOTION_THRESHOLD:
+              print(
+                  "Windows has enough evidence — flip it to required now "
+                  f"(consecutive green runs={runs}, last_green_sha={sha}, "
+                  f"last_green_at={at})"
+              )
+              sys.exit(1)
+          print(
+              f"Windows evidence-only: {runs}/{PROMOTION_THRESHOLD} consecutive "
+              f"green runs recorded (last_green_sha={sha}, last_green_at={at}) — "
+              "promotion not due yet"
+          )
