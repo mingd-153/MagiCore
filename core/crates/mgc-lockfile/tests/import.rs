@@ -334,7 +334,8 @@ fn imported_output_is_deterministic_sorted() {
         a.packages, b.packages,
         "import 2 lần phải ra cùng danh sách package"
     );
-    assert_eq!(a.version, "2");
+    // importer ghi lock v3 (schema mới nhất) — export of record
+    assert_eq!(a.version, "3");
 }
 
 // --------------------------------------------- audit round: adversarial cases

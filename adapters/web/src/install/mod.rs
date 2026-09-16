@@ -319,7 +319,7 @@ pub async fn run_install(
         }
     }
     if !fetch_graph.is_empty() {
-        write_web_lockfile_with_state(project_root, graph, "installing").inspect_err(|_e| {
+        write_web_lockfile_with_state(project_root, graph, registry_url).inspect_err(|_e| {
             if let Some(root) = &staging_root {
                 let _ = std::fs::remove_dir_all(root);
             }
@@ -670,7 +670,7 @@ pub async fn run_install(
     profile.mark("rebuild_bin_links", start);
 
     eprintln!("[magicore:debug] install:write_lockfile_start");
-    write_web_lockfile_with_state(project_root, graph, "locked")?;
+    write_web_lockfile_with_state(project_root, graph, registry_url)?;
     profile.mark("write_lockfile", start);
     eprintln!("[magicore:debug] install:prune_cache_start");
     prune_project_local_cache(&layout);

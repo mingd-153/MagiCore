@@ -28,6 +28,9 @@ fn test_lock_matches_manifest_when_versions_satisfy_ranges() {
         resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec![],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
 
     assert!(lock_matches_manifest(&lock, &manifest));
@@ -53,6 +56,9 @@ fn test_lock_matches_manifest_rejects_stale_version() {
         resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec![],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
 
     assert!(!lock_matches_manifest(&lock, &manifest));
@@ -80,6 +86,9 @@ fn test_load_locked_graph_rejects_unsupported_lock_version() {
         resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec![],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
     std::fs::write(
         dir.path().join("mgc.lock"),
@@ -127,6 +136,9 @@ fn test_graph_from_lockfile_rejects_invalid_dependency_id() {
         resolved: "https://registry.npmjs.org/react/-/react-18.2.0.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec!["not-a-package-id".into()],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
 
     let err = graph_from_lockfile(&lock).unwrap_err();

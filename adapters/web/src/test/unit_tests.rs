@@ -296,13 +296,13 @@ fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
         }],
     };
 
-    write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
     let lock_path = dir.path().join("mgc.lock");
     let first_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 
-    write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
     let second_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
 
     assert_eq!(first_lock_modified, second_lock_modified);

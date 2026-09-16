@@ -365,12 +365,11 @@ fn derive_core_from_finding_path(file: &str) -> String {
         && segments[1] == "src"
         && segments[2] == "commands"
         && segments[3] == "core"
+        && let Some(last) = segments.last()
     {
-        if let Some(last) = segments.last() {
-            let stem = last.strip_suffix(".rs").unwrap_or(last);
-            if stem != "mod" && stem != "lib" {
-                return stem.to_string();
-            }
+        let stem = last.strip_suffix(".rs").unwrap_or(last);
+        if stem != "mod" && stem != "lib" {
+            return stem.to_string();
         }
     }
 

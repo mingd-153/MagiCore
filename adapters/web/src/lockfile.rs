@@ -129,7 +129,7 @@ pub fn maybe_warn_missing_lockfile_checksum(project_root: &Path, lockfile: &Lock
 pub fn write_web_lockfile_with_state(
     project_root: &Path,
     graph: &ResolvedGraph,
-    _state: &str,
+    registry_url: &str,
 ) -> MgResult<()> {
     let lock_path = project_root.join("mgc.lock");
     let mut lockfile = read_web_lockfile_checked(project_root)?.unwrap_or_else(|| Lockfile {
@@ -195,6 +195,13 @@ pub fn write_web_lockfile_with_state(
                 resolved: pkg.tarball_url.clone(),
                 integrity,
                 dependencies: pkg.deps.iter().map(ToString::to_string).collect(),
+                ecosystem: mgc_lockfile::EcosystemTag::Web,
+                // Web is the one MGC-native engine — every entry records its
+                // registry source and CAS ref so the lock owns the graph.
+                // (Web là engine mgc-native duy nhất — mỗi entry ghi registry
+                // source và CAS ref để lock sở hữu graph.)
+                registry: Some(format!("npm://{registry_url}")),
+                ..Package::default()
             }
         })
         .collect();

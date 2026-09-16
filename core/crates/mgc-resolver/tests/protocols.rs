@@ -19,8 +19,8 @@ fn assert_unsupported(err: &mgc_types::MgError, core: &str) {
             capability,
             ..
         } => {
-            assert_eq!(actual_core, core);
-            assert_eq!(capability, "resolve");
+            assert_eq!(actual_core.to_string(), core);
+            assert_eq!(capability.to_string(), "resolve");
         }
         other => panic!("expected MgError::Unsupported, got: {other:?}"),
     }
