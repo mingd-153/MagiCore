@@ -105,9 +105,20 @@ pub async fn add(
     no_save: bool,
     install: bool,
     global: bool,
+    compat_runtime: Option<String>,
 ) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // C0 ownership firewall (T0.3): web is native.
+    // (Tường lửa C0: web native.)
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        "web",
+        crate::commands::dep_gate::DepOp::Add,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = web_adapter();
     let result = shared::add(
         &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, install, global,
@@ -118,9 +129,23 @@ pub async fn add(
 }
 
 /// Remove web dependencies
-pub async fn remove(packages: Vec<String>, install: bool) -> Result<()> {
+pub async fn remove(
+    packages: Vec<String>,
+    install: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // C0 ownership firewall (T0.3): web is native.
+    // (Tường lửa C0: web native.)
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        "web",
+        crate::commands::dep_gate::DepOp::Remove,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = web_adapter();
     let result = shared::remove(&*adapter, &root, packages, install).await;
     web_command_profile_mark("web_remove_total", started_at);
@@ -131,6 +156,19 @@ pub async fn remove(packages: Vec<String>, install: bool) -> Result<()> {
 pub async fn list() -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // C0 ownership firewall (T0.3): web list is a native manifest read.
+    // List lanes take no --compat-runtime flag (unit variants) — compat
+    // flows via MGC_COMPAT_RUNTIME only.
+    // (Tường lửa C0: list web đọc manifest native. Lane list không có cờ
+    // --compat-runtime — compat chỉ qua env.)
+    let compat = crate::commands::dep_gate::from_dep_flag(None)?;
+    crate::commands::dep_gate::gate(
+        "web",
+        crate::commands::dep_gate::DepOp::List,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = web_adapter();
     let result = shared::list(&*adapter, &root).await;
     web_command_profile_mark("web_list_total", started_at);
@@ -138,15 +176,30 @@ pub async fn list() -> Result<()> {
 }
 
 /// Update web packages
-pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
+pub async fn update(
+    packages: Vec<String>,
+    install: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // C0 ownership firewall (T0.3): web is native.
+    // (Tường lửa C0: web native.)
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        "web",
+        crate::commands::dep_gate::DepOp::Update,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = web_adapter();
     let result = shared::update(&*adapter, &root, packages, install).await;
     web_command_profile_mark("web_update_total", started_at);
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn install(
     packages: Vec<String>,
     frozen: bool,
@@ -155,8 +208,21 @@ pub async fn install(
     prefer_dedupe: bool,
     repair: bool,
     _offline: bool, // Issue #3: Implement offline mode (v1.2.0 milestone)
+    compat_runtime: Option<String>,
 ) -> Result<()> {
+    // C0 ownership firewall (T0.3): web is native — the gate records the
+    // decision and warns if compat was passed pointlessly.
+    // (Tường lửa C0: web native — gate ghi nhận và cảnh báo nếu compat
+    // thừa.)
     let root = project_root()?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        "web",
+        crate::commands::dep_gate::DepOp::Install,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter: Arc<dyn PackageAdapter> = web_adapter();
     let targets = install_targets(&root)?;
 

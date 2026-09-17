@@ -42,6 +42,9 @@ const POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <artifactId>core</artifactId>
   <version>1.2.3</version>
   <packaging>jar</packaging>
+  <properties>
+    <util.version>4.5.6</util.version>
+  </properties>
   <dependencyManagement>
     <dependencies>
       <dependency>
@@ -114,8 +117,9 @@ async fn maven_resolves_graph_filters_scopes_and_materializes_m2_layout() {
         vec![
             ("com.example:util".to_string(), "1.2.3".to_string()),
             ("org.slf4j:slf4j-api".to_string(), "2.0.9".to_string()),
+            ("com.example:prop-dep".to_string(), "4.5.6".to_string()),
         ],
-        "only compile/runtime deps enter the graph"
+        "only compile/runtime deps enter the graph; ${{}} properties resolve from <properties>"
     );
     assert!(
         entry
@@ -134,11 +138,11 @@ async fn maven_resolves_graph_filters_scopes_and_materializes_m2_layout() {
         entry.extra_markers
     );
     assert!(
-        entry
+        !entry
             .extra_markers
             .iter()
-            .any(|m| m == "unresolved-version:com.example:prop-dep:${util.version}"),
-        "property version must be an honest skip: {:?}",
+            .any(|m| m.starts_with("unresolved-version:")),
+        "no silent version drops remain: {:?}",
         entry.extra_markers
     );
     assert!(
@@ -315,4 +319,324 @@ async fn maven_no_checksum_anywhere_fails_closed() {
         .await
         .unwrap_err();
     assert!(matches!(err, mgc_types::MgError::Integrity(_)), "{err:?}");
+}
+
+const UNRESOLVABLE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>badprop</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId><artifactId>mystery</artifactId><version>${nope.prop}</version>
+    </dependency>
+  </dependencies>
+</project>"#;
+
+#[tokio::test]
+async fn maven_unresolvable_property_fails_closed() {
+    // V1.2 (D0): a ${} no properties/parent can satisfy is an error
+    // naming the property — never a silent graph hole.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    server
+        .mock("GET", "/com/example/badprop/maven-metadata.xml")
+        .with_status(200)
+        .with_body(METADATA_FOR_BADPROP)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/badprop/1.0.0/badprop-1.0.0.pom")
+        .with_status(200)
+        .with_body(UNRESOLVABLE_POM)
+        .create_async()
+        .await;
+
+    let protocol = MavenProtocol::new(&server.url());
+    let err = protocol
+        .resolve("com.example:badprop", "[1.0.0]")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("nope.prop"),
+        "the error must name the property: {err}"
+    );
+}
+
+const METADATA_FOR_BADPROP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>com.example</groupId>
+  <artifactId>badprop</artifactId>
+  <versioning>
+    <latest>1.0.0</latest>
+    <release>1.0.0</release>
+    <versions>
+      <version>1.0.0</version>
+    </versions>
+  </versioning>
+</metadata>"#;
+
+const MANAGED_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>managed</artifactId>
+  <version>2.0.0</version>
+  <packaging>jar</packaging>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.example</groupId><artifactId>managed-dep</artifactId><version>9.9.9</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId><artifactId>managed-dep</artifactId>
+    </dependency>
+  </dependencies>
+</project>"#;
+
+#[tokio::test]
+async fn maven_managed_version_fills_missing() {
+    // A version-less dep with a dependencyManagement entry resolves to
+    // the managed version (no fetch beyond the POM itself).
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    server
+        .mock("GET", "/com/example/managed/maven-metadata.xml")
+        .with_status(200)
+        .with_body(METADATA_FOR_MANAGED)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/managed/2.0.0/managed-2.0.0.pom")
+        .with_status(200)
+        .with_body(MANAGED_POM)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/managed/2.0.0/managed-2.0.0.jar.sha256")
+        .with_status(200)
+        .with_body(sha256_hex(b"MANAGED_JAR").as_str())
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/managed/2.0.0/managed-2.0.0.jar.sha1")
+        .with_status(404)
+        .create_async()
+        .await;
+
+    let protocol = MavenProtocol::new(&server.url());
+    let entry = protocol
+        .resolve("com.example:managed", "[2.0.0]")
+        .await
+        .unwrap();
+    assert_eq!(
+        entry.deps,
+        vec![("com.example:managed-dep".to_string(), "9.9.9".to_string())]
+    );
+}
+
+const METADATA_FOR_MANAGED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>com.example</groupId>
+  <artifactId>managed</artifactId>
+  <versioning>
+    <latest>2.0.0</latest>
+    <release>2.0.0</release>
+    <versions>
+      <version>2.0.0</version>
+    </versions>
+  </versioning>
+</metadata>"#;
+
+const CHILD_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.example</groupId><artifactId>parent</artifactId><version>1.0.0</version>
+  </parent>
+  <groupId>com.example</groupId>
+  <artifactId>child</artifactId>
+  <version>3.0.0</version>
+  <packaging>jar</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId><artifactId>inherited</artifactId><version>${parent.dep.version}</version>
+    </dependency>
+  </dependencies>
+</project>"#;
+
+const PARENT_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>parent</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+  <properties>
+    <parent.dep.version>7.7.7</parent.dep.version>
+  </properties>
+</project>"#;
+
+#[tokio::test]
+async fn maven_parent_chain_resolves_property() {
+    // The child's ${} comes from the parent POM: one lazy fetch, child
+    // keys win, then the chain ends.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    server
+        .mock("GET", "/com/example/child/maven-metadata.xml")
+        .with_status(200)
+        .with_body(METADATA_FOR_CHILD)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/child/3.0.0/child-3.0.0.pom")
+        .with_status(200)
+        .with_body(CHILD_POM)
+        .create_async()
+        .await;
+    let parent_mock = server
+        .mock("GET", "/com/example/parent/1.0.0/parent-1.0.0.pom")
+        .with_status(200)
+        .with_body(PARENT_POM)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/child/3.0.0/child-3.0.0.jar.sha256")
+        .with_status(200)
+        .with_body(sha256_hex(b"CHILD_JAR").as_str())
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/child/3.0.0/child-3.0.0.jar.sha1")
+        .with_status(404)
+        .create_async()
+        .await;
+
+    let protocol = MavenProtocol::new(&server.url());
+    let entry = protocol
+        .resolve("com.example:child", "[3.0.0]")
+        .await
+        .unwrap();
+    assert_eq!(
+        entry.deps,
+        vec![("com.example:inherited".to_string(), "7.7.7".to_string())]
+    );
+    parent_mock.assert_async().await;
+}
+
+const METADATA_FOR_CHILD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>com.example</groupId>
+  <artifactId>child</artifactId>
+  <versioning>
+    <latest>3.0.0</latest>
+    <release>3.0.0</release>
+    <versions>
+      <version>3.0.0</version>
+    </versions>
+  </versioning>
+</metadata>"#;
+
+const EMPTY_VERSION_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>emptyver</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId><artifactId>hollow</artifactId><version></version>
+    </dependency>
+  </dependencies>
+</project>"#;
+
+#[tokio::test]
+async fn maven_empty_version_is_missing_not_empty_edge() {
+    // REVIEW fix: `<version></version>` used to slip through as an
+    // empty-string graph edge; it must take the missing-version path
+    // (managed lookup, then fail-closed) instead.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    server
+        .mock("GET", "/com/example/emptyver/maven-metadata.xml")
+        .with_status(200)
+        .with_body(METADATA_FOR_EMPTYVER)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/emptyver/1.0.0/emptyver-1.0.0.pom")
+        .with_status(200)
+        .with_body(EMPTY_VERSION_POM)
+        .create_async()
+        .await;
+
+    let protocol = MavenProtocol::new(&server.url());
+    let err = protocol
+        .resolve("com.example:emptyver", "[1.0.0]")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("no version"),
+        "empty version must fail closed as missing: {err}"
+    );
+}
+
+const METADATA_FOR_EMPTYVER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>com.example</groupId>
+  <artifactId>emptyver</artifactId>
+  <versioning>
+    <latest>1.0.0</latest>
+    <release>1.0.0</release>
+    <versions>
+      <version>1.0.0</version>
+    </versions>
+  </versioning>
+</metadata>"#;
+
+#[tokio::test]
+async fn maven_unreachable_parent_fails_closed() {
+    // A needed-but-unfetchable parent POM is a network failure, never a
+    // silent skip back to the old marker behavior.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    server
+        .mock("GET", "/com/example/child/maven-metadata.xml")
+        .with_status(200)
+        .with_body(METADATA_FOR_CHILD)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/child/3.0.0/child-3.0.0.pom")
+        .with_status(200)
+        .with_body(CHILD_POM)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/com/example/parent/1.0.0/parent-1.0.0.pom")
+        .with_status(404)
+        .create_async()
+        .await;
+
+    let protocol = MavenProtocol::new(&server.url());
+    let err = protocol
+        .resolve("com.example:child", "[3.0.0]")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("parent POM"),
+        "unreachable parent must fail closed: {err}"
+    );
 }

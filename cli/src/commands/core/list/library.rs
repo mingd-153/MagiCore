@@ -1,4 +1,9 @@
 //! `mgc list library` — tách từ core/library.rs (Phase 7 v5).
+//!
+//! GATE-EXEMPT: adapter manifest/lock read — no toolchain spawn, no
+//! package mutation in this lane.
+//! (GATE-EXEMPT: đọc manifest/lock qua adapter — lane này không spawn
+//! toolchain, không đổi package.)
 
 use anyhow::Result;
 use mgc_types::Ecosystem;

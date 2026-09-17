@@ -15,6 +15,7 @@ fn audit_strict_rejects_materializing_install_commands() {
         repair: false,
         dry_run: false,
         offline: false,
+        compat_runtime: None,
     };
     assert!(reject_unsupported_audit_strict(&install).is_ok());
 
@@ -27,6 +28,8 @@ fn audit_strict_rejects_materializing_install_commands() {
         no_save: false,
         no_install: false,
         global: false,
+        compat_runtime: None,
+        version: None,
     };
     assert!(reject_unsupported_audit_strict(&add).is_ok());
 }
@@ -50,6 +53,8 @@ fn audit_strict_allows_audit_and_manifest_only_mutation() {
         no_save: false,
         no_install: true,
         global: false,
+        compat_runtime: None,
+        version: None,
     };
     assert!(reject_unsupported_audit_strict(&add).is_ok());
 }
@@ -101,8 +106,58 @@ fn recursive_supported_includes_install_and_add() {
         repair: false,
         dry_run: false,
         offline: false,
+        compat_runtime: None,
     }));
     assert!(recursive_supported(&Commands::List));
+}
+
+#[test]
+fn bare_add_version_pin_reaches_core_command() {
+    use crate::dispatch::bare::bare_core_command;
+    use crate::dispatch::types::DispatchCommand;
+    let command = Commands::Add {
+        packages: vec!["zod".into()],
+        version: Some("3.22.4".into()),
+        dev: false,
+        global: false,
+        exact: false,
+        optional: false,
+        peer: false,
+        no_save: false,
+        no_install: false,
+        compat_runtime: None,
+    };
+    match bare_core_command(command, Some("ai".to_string())).unwrap() {
+        DispatchCommand::Core(crate::dispatch::types::CoreCommand::AddAi { version, .. }) => {
+            assert_eq!(version.as_deref(), Some("3.22.4"))
+        }
+        _ => panic!("expected AddAi core command"),
+    }
+}
+
+#[test]
+fn per_core_add_version_pin_reaches_lane() {
+    // T0.3-version parity: per-core `add-* --version` forwards the pin
+    // (previously only bare `add` even parsed it, then dropped it).
+    use crate::dispatch::per_core::command_to_dispatch;
+    use crate::dispatch::types::DispatchCommand;
+    let command = Commands::AddLib {
+        packages: vec!["serde".into()],
+        dev: false,
+        exact: false,
+        optional: false,
+        peer: false,
+        no_save: false,
+        global: false,
+        compat_runtime: None,
+        version: Some("1.0.0".into()),
+    };
+    match command_to_dispatch(command, None).unwrap() {
+        DispatchCommand::Core(crate::dispatch::types::CoreCommand::AddLib { version, .. }) => {
+            assert_eq!(version.as_deref(), Some("1.0.0"))
+        }
+        _ => panic!("expected AddLib core command"),
+    }
 }
 
 #[test]

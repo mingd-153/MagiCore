@@ -58,18 +58,18 @@ const MGC_RELEASE_TAG: &str = "v1.1.0-rc.6";
 const MGC_INSTALLER_SHA: &str = "285fd62d2dbf4693cb0675425dc52861b6327c5a";
 
 /// Embedded SHA-256 of `scripts/install-from-gh.sh` at `MGC_INSTALLER_SHA`.
-/// Contract (P0-E):
-/// - empty (default) → the generated pipeline prints a loud WARNING and
-///   still runs (no break for existing pipelines);
+/// Contract (P0-E/T0.5):
+/// - empty → the generated pipeline prints a loud WARNING and still runs
+///   (no break for existing pipelines);
 /// - a `.sha256` file published next to the installer is verified whenever
 ///   present (mismatch fails the pipeline);
 /// - when set, a checksum mismatch FAILS the pipeline (fail-closed).
 ///
-/// (P0-E: SHA-256 nhúng của installer tại `MGC_INSTALLER_SHA`. Rỗng (mặc
-/// định) → pipeline in WARNING rõ ràng rồi vẫn chạy (không vỡ pipeline hiện
-/// có); file `.sha256` đặt cạnh installer được verify khi có (lệch →
-/// fail); khi đặt giá trị → lệch checksum FAIL (fail-closed).)
-const MGC_INSTALLER_SHA256: &str = "";
+/// (P0-E/T0.5: SHA-256 nhúng của installer tại `MGC_INSTALLER_SHA`. Rỗng →
+/// pipeline in WARNING rõ ràng rồi vẫn chạy; file `.sha256` cạnh installer
+/// được verify khi có (lệch → fail); khi đặt giá trị → lệch checksum FAIL.)
+const MGC_INSTALLER_SHA256: &str =
+    "74821b9a70d1aaf2bb1896344f777ec0ca8038b66385a8a46e3c83fc63442dc6";
 
 /// Render a CI template: release tag + immutable installer pin (P0-E).
 /// Every placeholder substitution lives in ONE helper so a half-rendered

@@ -1069,3 +1069,77 @@ pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) ->
         "Rejected dangerous {runtime} permission: {permission}. Explicitly allow in deno.json tasks if needed."
     )
 }
+
+// ===== dependency ownership gate (C0 firewall, T0.3) =====
+
+/// Native mode hit a delegated dependency operation without compat opt-in.
+pub fn dep_gate_requires_compat(core: &str, op: &str, tools: &[&str]) -> Error {
+    anyhow!(
+        "`{core}` {op} is toolchain-delegated (owner toolchain: {}) — MagiCore has no native engine for it yet. Re-run with an explicit compatibility opt-in (`--compat-runtime <tool>` or `MGC_COMPAT_RUNTIME=<tool>`); compat runs are excluded from native-support claims",
+        tools.join(", ")
+    )
+}
+
+/// An operation with no dependency lifecycle at all (no engine, no lane).
+pub fn dep_gate_unsupported(core: &str, op: &str) -> Error {
+    anyhow!(
+        "`{core}` {op} has no dependency lifecycle (unsupported) — no native engine and no toolchain lane to delegate to"
+    )
+}
+
+/// Compat named a tool that does not own this (core, op) cell.
+pub fn dep_gate_wrong_tool(core: &str, op: &str, got: &str, tools: &[&str]) -> Error {
+    anyhow!(
+        "`--compat-runtime '{got}'` does not own `{core}` {op} (owner toolchain: {}) — pass the owning toolchain or run without compat to see the native-engine error",
+        tools.join(", ")
+    )
+}
+
+/// Multi-platform install finished with skipped platforms (skip is not success).
+pub fn app_multi_platforms_skipped(skipped: &[String]) -> Error {
+    anyhow!(
+        "install incomplete — skipped platform(s): {} (missing tool or runner; install them and re-run — a skip is never success)",
+        skipped.join(", ")
+    )
+}
+
+/// `mgc migrate` does not know this target (only `--to v4` exists).
+pub fn migrate_unknown_target(to: &str) -> Error {
+    anyhow!("unknown migrate target '{to}' (only `--to v4` exists)")
+}
+
+/// `mgc migrate lock` found no mgc.lock to migrate.
+pub fn migrate_no_lockfile(root: &std::path::Path) -> Error {
+    anyhow!("no mgc.lock in '{}' — nothing to migrate", root.display())
+}
+
+/// `mgc migrate lock` cannot start from this schema version.
+pub fn migrate_unsupported_version(version: u8) -> Error {
+    anyhow!("cannot migrate lockfile schema version {version} (supported sources: v1, v2, v3)")
+}
+
+/// --compat-runtime value outside the known tool universe for dependency ops.
+pub fn dep_gate_invalid_tool(tool: &str, valid: &[&str]) -> Error {
+    anyhow!(
+        "invalid --compat-runtime '{tool}' for dependency operations — supported: {} (rival JS runtimes stay on the dev/test/run/build lanes)",
+        valid.join(", ")
+    )
+}
+
+/// --version pinning is not implemented for this lane (its tool call has
+/// no verified version semantics) — failed loudly instead of silently
+/// dropping the pin.
+/// (--version chưa hỗ trợ cho lane này — fail rõ thay vì nuốt version.)
+pub fn add_version_unsupported(core: &str, pinned: &str) -> Error {
+    anyhow!(
+        "`{core}` add does not support `--version {pinned}` yet (no verified version semantics on this lane) — pin the version inside the package spec or omit --version"
+    )
+}
+
+/// A package already carrying its own version spec combined with
+/// `--version` is ambiguous — failed loudly, never merged silently.
+pub fn add_version_conflict(package: &str, pinned: &str) -> Error {
+    anyhow!(
+        "package '{package}' already carries a version spec and `--version {pinned}` was also given — use one or the other"
+    )
+}

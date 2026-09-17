@@ -1,4 +1,8 @@
 //! `mgc add-hardware <pkg>` — materialize optimizer/bench vào project. Phase 7 v5.
+//!
+//! GATE-EXEMPT: template materialization is not a package lifecycle (no
+//! registry, no toolchain spawn in this lane).
+//! (GATE-EXEMPT: materialize template không phải package lifecycle.)
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -19,7 +23,18 @@ fn hardware_kind(pkg: &str) -> Result<()> {
     }
 }
 
-pub async fn add(packages: Vec<String>) -> Result<()> {
+pub async fn add(
+    packages: Vec<String>,
+    _compat_runtime: Option<String>,
+    version: Option<String>,
+) -> Result<()> {
+    // Templates have no versions — a pinned version here is a user error,
+    // failed loudly instead of silently ignored.
+    // (Template không có version — version ghim ở đây là lỗi user, fail
+    // rõ thay vì bỏ qua âm thầm.)
+    if let Some(pinned) = version.as_deref() {
+        return Err(crate::error::add_version_unsupported("hardware", pinned));
+    }
     let root = project_root()?;
     for pkg in &packages {
         hardware_kind(pkg)?;

@@ -13,7 +13,12 @@ pub struct HardwareInfo {
     pub arch: String,
     /// Hệ điều hành (macos, linux, windows)
     pub os: String,
-    /// Dung lượng RAM ước tính (tính bằng GiB)
+    /// Dung lượng RAM ước tính (tính bằng GiB).
+    /// RAM size estimate in GiB. `0` means UNKNOWN (detection failed) —
+    /// never a measured value; memory-derived tuning must be skipped
+    /// when this is 0 (see generators).
+    /// (0 nghĩa là KHÔNG BIẾT (đọc thất bại) — không bao giờ là số đo
+    /// thật; tuning dẫn xuất từ RAM phải bỏ qua khi bằng 0.)
     pub total_memory_gb: usize,
     /// Profile nhận diện (Desktop, Laptop, Server/Container)
     pub profile: SystemProfile,
@@ -39,16 +44,17 @@ impl HardwareInfo {
         let arch = std::env::consts::ARCH.to_string();
         let os = std::env::consts::OS.to_string();
 
-        // Ước tính dung lượng RAM dựa theo platform
-        let total_memory_gb = Self::detect_memory_gb().unwrap_or(16);
+        // RAM detection failure is NOT patched with a fabricated number:
+        // unknown stays 0 (sentinel) and the profile degrades to
+        // Constrained — writing tuned values from a guessed 16 GB would
+        // be a false measurement (V1.2: no fabricated evidence).
+        // (Đọc RAM thất bại KHÔNG vá bằng số bịa: unknown giữ 0 (sentinel)
+        // và profile hạ về Constrained — ghi giá trị tuning từ 16 GB đoán
+        // mò sẽ là bằng chứng giả.)
+        let memory_gb = Self::detect_memory_gb();
+        let total_memory_gb = memory_gb.unwrap_or(0);
 
-        let profile = if cpu_cores >= 8 && total_memory_gb >= 16 {
-            SystemProfile::HighPerformance
-        } else if cpu_cores >= 4 && total_memory_gb >= 8 {
-            SystemProfile::Standard
-        } else {
-            SystemProfile::Constrained
-        };
+        let profile = Self::profile_for(cpu_cores, memory_gb);
 
         Self {
             cpu_cores,
@@ -56,6 +62,23 @@ impl HardwareInfo {
             os,
             total_memory_gb,
             profile,
+        }
+    }
+
+    /// Pure profile selection — unknown RAM always degrades to Constrained
+    /// (fail-safe: never tune from a guessed size).
+    /// (Chọn profile thuần — RAM unknown luôn hạ về Constrained (an toàn
+    /// fail-safe: không bao giờ tuning từ số đoán).)
+    pub fn profile_for(cpu_cores: usize, memory_gb: Option<usize>) -> SystemProfile {
+        let Some(total_memory_gb) = memory_gb else {
+            return SystemProfile::Constrained;
+        };
+        if cpu_cores >= 8 && total_memory_gb >= 16 {
+            SystemProfile::HighPerformance
+        } else if cpu_cores >= 4 && total_memory_gb >= 8 {
+            SystemProfile::Standard
+        } else {
+            SystemProfile::Constrained
         }
     }
 

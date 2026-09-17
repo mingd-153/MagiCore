@@ -236,3 +236,86 @@ async fn pypi_resolve_download_verify_store_ref_full_path() {
     version_mock.assert_async().await;
     file_mock.assert_async().await;
 }
+
+#[tokio::test]
+async fn pypi_foreign_wheel_loses_to_sdist() {
+    // V1.2 (D0): no "any wheel" fallback — a wheel built for another
+    // platform must never install silently. `win_amd64` matches no host
+    // branch on any CI OS (macos-aarch64 / linux-aarch64 / windows all
+    // reject it), so the sdist must win everywhere.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let wheel_sha = sha256_hex(b"FOREIGN_WHEEL");
+    let sdist_sha = sha256_hex(b"SDIST_FALLBACK");
+    let base = server.url();
+    let releases = format!(
+        r#""1.0.0": [{w}, {s}]"#,
+        w = file_entry(
+            "demo-1.0.0-cp312-cp312-win_amd64.whl",
+            &format!("{base}/files/demo-1.0.0-cp312-cp312-win_amd64.whl"),
+            &wheel_sha,
+            "bdist_wheel"
+        ),
+        s = file_entry(
+            "demo-1.0.0.tar.gz",
+            &format!("{base}/files/demo-1.0.0.tar.gz"),
+            &sdist_sha,
+            "sdist"
+        ),
+    );
+    server
+        .mock("GET", "/pypi/demo/json")
+        .with_status(200)
+        .with_body(index_json(&releases))
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/pypi/demo/1.0.0/json")
+        .with_status(200)
+        .with_body(version_json(""))
+        .create_async()
+        .await;
+
+    let protocol = PypiProtocol::new(&base);
+    let entry = protocol.resolve("demo", "==1.0.0").await.unwrap();
+    assert_eq!(
+        entry.artifact_url,
+        format!("{base}/files/demo-1.0.0.tar.gz"),
+        "foreign wheel must lose to sdist"
+    );
+    assert_eq!(entry.sha256, sdist_sha);
+}
+
+#[tokio::test]
+async fn pypi_only_foreign_wheel_fails_closed() {
+    // Nothing installable and no sdist: resolve MUST fail, never hand
+    // back the foreign wheel.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let wheel_sha = sha256_hex(b"FOREIGN_ONLY");
+    let base = server.url();
+    let releases = format!(
+        r#""1.0.0": [{w}]"#,
+        w = file_entry(
+            "demo-1.0.0-cp312-cp312-win_amd64.whl",
+            &format!("{base}/files/demo-1.0.0-cp312-cp312-win_amd64.whl"),
+            &wheel_sha,
+            "bdist_wheel"
+        ),
+    );
+    server
+        .mock("GET", "/pypi/demo/json")
+        .with_status(200)
+        .with_body(index_json(&releases))
+        .create_async()
+        .await;
+
+    let protocol = PypiProtocol::new(&base);
+    let err = protocol.resolve("demo", "==1.0.0").await.unwrap_err();
+    assert!(
+        err.to_string().contains("no downloadable file"),
+        "unexpected error: {err}"
+    );
+}

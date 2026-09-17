@@ -30,6 +30,26 @@ path = "tests/migrate.rs"
 name = "import"
 path = "tests/import.rs"
 
+[[test]]
+name = "v4_identity"
+path = "tests/v4_identity.rs"
+
+[[test]]
+name = "v4_canonical"
+path = "tests/v4_canonical.rs"
+
+[[test]]
+name = "v4_policy"
+path = "tests/v4_policy.rs"
+
+[[test]]
+name = "v4_atomic"
+path = "tests/v4_atomic.rs"
+
+[[test]]
+name = "v4_migrate"
+path = "tests/v4_migrate.rs"
+
 [dependencies]
 # Crypto primitives (local crate)
 mgc-crypto = { path = "../mgc-crypto" }
@@ -43,6 +63,12 @@ mgc-types = { path = "../mgc-types" }
 # TOML parsing/serialization
 toml = "0.8"
 toml_edit = { version = "0.22", features = ["serde"] }
+
+# Base64 for digest strings (workspace-pinned)
+base64 = { workspace = true }
+
+# OS file locking for the project writer lock (V1.2 lock v4)
+fs2 = { workspace = true }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -61,3 +87,11 @@ tempfile = "3.8"
 
 [features]
 default = []
+
+# PID liveness probes for stale-temp cleanup (unix-only)
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+# Atomic replace + reparse-point refusal (Windows-only)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem"] }

@@ -4,7 +4,7 @@
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LibLanguage {
+pub enum LibLanguage {
     Ts,
     Rust,
     Python,
@@ -15,7 +15,7 @@ pub(crate) enum LibLanguage {
 
 type ManifestProbe = fn(&Path) -> Option<String>;
 
-pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
+pub fn detect_language(root: &Path) -> Option<LibLanguage> {
     let mgc_toml = root.join("mgc.toml");
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
     if let Ok(content) = std::fs::read_to_string(&mgc_toml)

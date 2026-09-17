@@ -13,9 +13,22 @@ use std::path::Path;
 /// REFACTORED: Runtime detection → adapter dispatch (no hardcoded language/runtime) — đã refactor: phát hiện runtime → dispatch adapter
 pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<()> {
     let hw = detect::HardwareInfo::detect();
+    if hw.total_memory_gb == 0 {
+        mgc_ui::warning(
+            "RAM size could not be detected on this machine — profile degraded to Constrained and memory-derived tuning is skipped (no fabricated values).",
+        );
+    }
     mgc_ui::info(&format!(
-        "Detected System: {} ({}), {} Cores, ~{}GB RAM -> Profile: {:?}",
-        hw.os, hw.arch, hw.cpu_cores, hw.total_memory_gb, hw.profile
+        "Detected System: {} ({}), {} Cores, {} RAM -> Profile: {:?}",
+        hw.os,
+        hw.arch,
+        hw.cpu_cores,
+        if hw.total_memory_gb == 0 {
+            "unknown".to_string()
+        } else {
+            format!("~{}GB", hw.total_memory_gb)
+        },
+        hw.profile
     ));
 
     // Detect runtimes for this project — phát hiện runtimes cho project này
@@ -26,11 +39,15 @@ pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<
             runtime_detect::DetectedRuntime::Unknown
         )
     {
-        mgc_ui::warning(&format!(
-            "No runtime detected for `{core}` core in {}. Optimizer skipped.",
+        // Fail closed: automation reading Ok(()) here would report a
+        // successful optimization that never happened (V1.2: no success
+        // without verifiable state change).
+        // (Fail-closed: automation đọc Ok(()) ở đây sẽ báo tối ưu thành
+        // công trong khi chưa có gì xảy ra.)
+        anyhow::bail!(
+            "No runtime detected for `{core}` core in {} — nothing was optimized (not a success).",
             project_root.display()
-        ));
-        return Ok(());
+        );
     }
 
     mgc_ui::info(&format!(

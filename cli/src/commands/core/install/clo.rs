@@ -10,7 +10,11 @@ use mgc_types::Ecosystem;
 // for real — mgc does not own this dependency lifecycle.
 // (DELEGATED: terraform init/get (hoặc lane web-engine CDK/Pulumi) chạy
 // thật — mgc không sở hữu lifecycle dependency này.)
-pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
+pub async fn install(
+    packages: Vec<String>,
+    dry_run: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let root = shared::core_project_root("clo")?;
     let adapter = shared::core_adapter(&Ecosystem::Cloud);
     if dry_run {
@@ -21,16 +25,31 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
                 packages
             ));
         }
-        let kind = clo_tools::cloud_type(&root)?;
-        if kind != "terraform" {
+        let cloud_kind = clo_tools::cloud_type(&root)?;
+        if cloud_kind != "terraform" {
             mgc_ui::info(&format!(
-                "[dry-run] would run npm-registry install via mgc-resolver for {kind}"
+                "[dry-run] would run npm-registry install via mgc-resolver for {cloud_kind}"
             ));
             return Ok(());
         }
         mgc_ui::info("[dry-run] would run: terraform init");
         mgc_ui::info("[dry-run] would run: terraform get");
         return Ok(());
+    }
+    // C0 ownership firewall (T0.3): terraform init/get delegates; the
+    // CDK/Pulumi branch rides the native web engine and skips the gate.
+    // (Tường lửa C0: terraform init/get delegate; nhánh CDK/Pulumi đi
+    // engine web native nên không qua gate.)
+    let cloud_kind = clo_tools::cloud_type(&root)?;
+    if cloud_kind == "terraform" {
+        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+        crate::commands::dep_gate::gate(
+            "clo",
+            crate::commands::dep_gate::DepOp::Install,
+            Some("terraform"),
+            &compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
     }
     for pkg in &packages {
         let spinner = mgc_ui::create_spinner(&format!("  Adding {}...", pkg));

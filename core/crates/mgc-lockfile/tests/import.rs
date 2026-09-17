@@ -172,6 +172,69 @@ packages:
 }
 
 #[test]
+fn pnpm_two_documents_uses_project_graph_not_env() {
+    // Rival-grounded (pnpm ≥10 two-doc files; Deno documents the trap):
+    // a single-doc parse silently returns the FIRST (env) document. mgc
+    // parses every document and imports the LAST (project graph); the env
+    // document is reported, never silently merged.
+    // (File hai document: parse đơn-doc âm thầm trả document ĐẦU (env).
+    // mgc parse mọi document và nhập CUỐI (graph project).)
+    let tmp = TempDir::new().unwrap();
+    let path = write_lock(
+        tmp.path(),
+        "pnpm-lock.yaml",
+        r#"---
+lockfileVersion: '9.0'
+importers:
+  .:
+    configDependencies: {}
+    packageManagerDependencies:
+      pnpm:
+        specifier: 11.26.0
+        version: 11.26.0
+packages:
+  /pnpm@11.26.0:
+    resolution: {integrity: sha512-envpnpm}
+    name: pnpm
+    version: 11.26.0
+snapshots: {}
+---
+lockfileVersion: '9.0'
+settings:
+  autoInstallPeers: true
+importers:
+  .:
+    dependencies:
+      react:
+        specifier: ^19.0.0
+        version: 19.0.0
+packages:
+  /react@19.0.0:
+    resolution: {integrity: sha512-react190}
+snapshots: {}
+"#,
+    );
+    let (lock, report) = import_file(&path).unwrap();
+    assert!(
+        lock.packages.iter().any(|p| p.name == "react"),
+        "project graph must be imported: {:?}",
+        lock.packages.iter().map(|p| &p.name).collect::<Vec<_>>()
+    );
+    assert!(
+        !lock.packages.iter().any(|p| p.name == "pnpm"),
+        "env document must NOT leak into the project graph"
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("LAST (project graph)")),
+        "env document must be reported: {:?}",
+        report.warnings
+    );
+}
+
+#[test]
 fn pnpm_missing_packages_map_rejected() {
     let tmp = TempDir::new().unwrap();
     let path = write_lock(

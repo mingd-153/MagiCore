@@ -739,6 +739,7 @@ jobs:
           echo "✅ All checksums verified"
           echo "✅ All attestations verified"
           echo "✅ All SBOMs validated"
+          echo "✅ 8 archives + 8 checksums + 8 SBOMs verified (linux-x64, macos-x64, macos-arm64, windows-x64 x all/web)"
           echo "Safe to publish."
 
   audit-capability-gate:

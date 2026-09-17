@@ -130,6 +130,20 @@ pub struct ProjectConfig {
     /// Security config (mgc.toml [security]) — min_release_age per ecosystem
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub security: Option<SecurityConfig>,
+    /// Lock config (mgc.toml [lock]) — signature policy, writer lock
+    /// timeouts (V1.2 lock v4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<LockConfig>,
+    /// Trust roots (mgc.toml [trust]) — key ids accepted in `require` mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust: Option<TrustConfig>,
+    /// Compatibility opt-ins (mgc.toml [compat]) — explicit escape hatches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compat: Option<CompatConfig>,
+    /// Registry/index sources (mgc.toml [[sources]]) — multi-index
+    /// source-selection policy (design §5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<SourceConfig>>,
 }
 
 /// AI core config — `[ai] framework` (python-agent/mcp-server).
@@ -229,6 +243,10 @@ impl ProjectConfig {
             app: None,
             ai: None,
             security: None,
+            lock: None,
+            trust: None,
+            compat: None,
+            sources: None,
         }
     }
 
@@ -359,6 +377,10 @@ impl ProjectConfig {
             app,
             ai,
             security: None,
+            lock: None,
+            trust: None,
+            compat: None,
+            sources: None,
         }
     }
 
@@ -575,6 +597,26 @@ pub struct SecurityConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cicd: Option<u64>,
+
+    /// Explicit per-ecosystem unsigned-artifact escape (`"*" rejected —
+    /// see `unsigned_artifact_allowed`). Wired into lanes in Phase C;
+    /// today the resolver denies unsigned artifacts unconditionally.
+    /// (Escape artifact-không-chữ-ký per-ecosystem tường minh.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_unsigned_artifacts: Option<Vec<String>>,
+}
+
+/// Check an unsigned-artifact escape list (`mgc.toml [security]
+/// allow_unsigned_artifacts`, mirrored by `MGC_ALLOW_UNSIGNED_ARTIFACTS`
+/// comma env): explicit per-ecosystem opt-outs only — `"*"` is rejected
+/// as a value (a global opt-out must be a deliberate empty-vs-absent
+/// decision at the call site, never a wildcard in config).
+/// (Kiểm tra danh sách escape artifact-không-chữ-ký: chỉ opt-out
+/// per-ecosystem tường minh — từ chối `"*"`.)
+pub fn unsigned_artifact_allowed(allowed: &[String], ecosystem: &str) -> bool {
+    allowed
+        .iter()
+        .any(|entry| entry.trim().eq_ignore_ascii_case(ecosystem))
 }
 
 impl SecurityConfig {
@@ -592,4 +634,72 @@ impl SecurityConfig {
             _ => self.min_release_age,
         }
     }
+}
+
+/// Lock config — `mgc.toml [lock]` (V1.2 lock v4: signature policy +
+/// writer-lock timeouts). All fields optional; absences fall back to
+/// environment-aware defaults (policy.rs).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LockConfig {
+    /// Signature policy: `off` | `warn` | `require`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+    /// Writer-lock acquire timeout in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquire_timeout_ms: Option<u64>,
+    /// Stale-temp grace period in seconds before cleanup may unlink.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmp_grace_secs: Option<u64>,
+}
+
+/// Trust roots — `mgc.toml [trust]`: key ids accepted when the lock
+/// policy is `require` (local keyrings never qualify on their own).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustConfig {
+    /// Accepted signing key ids (8-byte BLAKE3 hex).
+    #[serde(default)]
+    pub keys: Vec<String>,
+}
+
+/// Compatibility opt-ins — `mgc.toml [compat]`: explicit escape hatches
+/// (default-deny everything else).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompatConfig {
+    /// Allow git-dependency resolution at all (Swift git-only deps).
+    #[serde(default)]
+    pub allow_git_deps: bool,
+    /// Host allowlist for git dependencies.
+    #[serde(default)]
+    pub git_hosts: Vec<String>,
+}
+
+/// Registry/index source — `mgc.toml [[sources]]` (design §5
+/// multi-index source-selection policy).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceConfig {
+    /// Stable id referenced by lockfile source_id.
+    pub id: String,
+    /// Base URL.
+    pub url: String,
+    /// Ecosystem served (`python`, `npm`, …).
+    #[serde(default)]
+    pub ecosystem: String,
+    /// Lower number wins among equal-specificity claims.
+    #[serde(default)]
+    pub priority: u64,
+    /// Name patterns claimed (`*`, `corp-*`, `@corp/*`, exact).
+    #[serde(default)]
+    pub claims: Vec<String>,
+    /// Private/internal source (never overridden by public ones).
+    #[serde(default)]
+    pub trusted: bool,
+    /// Exact hosts allowed when trusted.
+    #[serde(default)]
+    pub allow_hosts: Vec<String>,
+    /// Private CIDRs allowed when trusted.
+    #[serde(default)]
+    pub allow_cidrs: Vec<String>,
+    /// URL schemes allowed when trusted.
+    #[serde(default)]
+    pub allow_protocols: Vec<String>,
 }

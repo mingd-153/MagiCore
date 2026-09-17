@@ -285,7 +285,7 @@ async fn app_rn_podspec_checksum_mismatch_fails_closed() {
 }
 
 #[tokio::test]
-async fn app_rn_podfile_without_lock_skips_ios_tier_with_guidance() {
+async fn app_rn_podfile_without_lock_fails_closed() {
     let _env_guard = ENV_LOCK.lock().await;
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -297,10 +297,17 @@ async fn app_rn_podfile_without_lock_skips_ios_tier_with_guidance() {
 
     let adapter = mgc_app_adapter::adapter_for(tmp.path()).expect("RN project detected");
     let manifest = adapter.parse_manifest(tmp.path()).await.unwrap();
-    // No Podfile.lock → the iOS tier is honestly skipped (no error, no
-    // silent empty iOS graph claim).
-    // (Không Podfile.lock → tier iOS bị bỏ trung thực (không lỗi, không
-    // tuyên bố graph iOS rỗng âm thầm).)
-    let graph = adapter.resolve(&manifest).await.unwrap();
-    assert!(graph.packages.is_empty(), "{:?}", graph.packages);
+    // No Podfile.lock → the iOS tier has no verifiable closure, so resolve
+    // MUST fail closed (V1.2: skip paths must never read as pass).
+    // (Không Podfile.lock → tier iOS không có bao đóng kiểm chứng được,
+    // resolve PHẢI fail-closed.)
+    let err = adapter.resolve(&manifest).await.unwrap_err();
+    assert!(
+        matches!(err, mgc_types::MgError::Unsupported { .. }),
+        "a Podfile without Podfile.lock must fail closed as Unsupported: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("Podfile.lock"),
+        "the error must tell the user how to recover: {err}"
+    );
 }

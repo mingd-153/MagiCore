@@ -177,8 +177,8 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         packages.clone(),
                         None,   // core: detect from project
                         false,  // ignore_scripts
-                        true,   // allow_scripts (default)
-                        false,  // offline
+                        false, // allow_scripts: deny-by-default, like the CLI (B5 — AI consumers get the strictest default, trust gate still applies per package)
+                        false, // offline
                         frozen, // frozen mode (CI): fail if lockfile needs update
                     )
                     .await

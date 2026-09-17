@@ -154,7 +154,11 @@ pub fn manifest_hint(lang: mgc_app_adapter::AppLanguage, verb: &str) -> anyhow::
 }
 
 /// `mgc install` — passthrough tool theo language; `--dry-run` in lệnh không chạy.
-pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
+pub async fn install(
+    packages: Vec<String>,
+    dry_run: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let root = project_root()?;
     let lang = language(&root)?;
 
@@ -163,10 +167,10 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
     }
 
     if lang == mgc_app_adapter::AppLanguage::Multi {
-        return install_multi(&root, dry_run).await;
+        return install_multi(&root, dry_run, compat_runtime).await;
     }
     if matches!(lang, mgc_app_adapter::AppLanguage::ObjC) {
-        return install_objc(&root, dry_run).await;
+        return install_objc(&root, dry_run, compat_runtime).await;
     }
 
     let cmd = install_command(lang);
@@ -183,13 +187,28 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
         ));
         return Ok(());
     }
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): single control path — provider
+    // toolchain spawn only behind an explicit compat opt-in.
+    // (Tường lửa C0: đường điều khiển duy nhất — chỉ spawn toolchain khi
+    // có compat tường minh.)
+    crate::commands::dep_gate::gate(
+        "app",
+        crate::commands::dep_gate::DepOp::Install,
+        Some(cmd.tool.as_str()),
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     mgc_ui::info(&format!("Installing: {} {}", cmd.tool, cmd.args.join(" ")));
     run_tool(&root, &cmd.tool, &cmd.args)?;
     Ok(())
 }
 
-/// Multi: install từng platform trong subdir; toolchain thiếu → skip cảnh báo.
-async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
+/// Multi: install từng platform trong subdir; toolchain thiếu → lỗi rõ
+/// (skip không bao giờ tính là xong).
+async fn install_multi(root: &Path, dry_run: bool, compat_runtime: Option<String>) -> Result<()> {
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    let audit_log = root.join(".magicore").join("exec.log");
     let (android, ios, flutter) = platform_install_commands();
     let mut platforms: Vec<(&str, PathBuf, InstallCommand)> = vec![
         ("android", root.join("android"), android),
@@ -204,6 +223,7 @@ async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
             args: vec![],
         },
     ));
+    let mut skipped: Vec<String> = Vec::new();
     for (name, dir, cmd) in platforms {
         if !dir.exists() {
             mgc_ui::info(&format!("Platform '{name}' missing directory — skipping"));
@@ -213,10 +233,12 @@ async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
             mgc_ui::warning(&format!(
                 "{name} install is blocked in beta until a MagiCore-native runner is available"
             ));
+            skipped.push(name.to_string());
             continue;
         }
         if tool_unavailable(&cmd.tool) {
             mgc_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
+            skipped.push(format!("{name} ({} not found)", cmd.tool));
             continue;
         }
         if dry_run {
@@ -227,12 +249,24 @@ async fn install_multi(root: &Path, dry_run: bool) -> Result<()> {
             ));
             continue;
         }
+        // C0 ownership firewall per platform (T0.3).
+        // (Tường lửa C0 cho từng platform.)
+        crate::commands::dep_gate::gate(
+            "app",
+            crate::commands::dep_gate::DepOp::Install,
+            Some(cmd.tool.as_str()),
+            &compat,
+            Some(&audit_log),
+        )?;
         mgc_ui::info(&format!(
             "Installing {name}: {} {}",
             cmd.tool,
             cmd.args.join(" ")
         ));
         run_tool(&dir, &cmd.tool, &cmd.args)?;
+    }
+    if !skipped.is_empty() {
+        return Err(crate::error::app_multi_platforms_skipped(&skipped));
     }
     Ok(())
 }
@@ -272,7 +306,7 @@ fn platform_install_commands() -> (InstallCommand, InstallCommand, InstallComman
 
 /// objC: resolve package dependencies qua xcodebuild (allowlist §3 — xcodebuild P2).
 /// Project/workspace tìm từ thư mục con; không thấy → lỗi rõ.
-async fn install_objc(root: &Path, dry_run: bool) -> Result<()> {
+async fn install_objc(root: &Path, dry_run: bool, compat_runtime: Option<String>) -> Result<()> {
     let Some(xcode_project) = find_xcode_project(root) else {
         return Err(crate::error::xcode_project_missing(root));
     };
@@ -293,6 +327,16 @@ async fn install_objc(root: &Path, dry_run: bool) -> Result<()> {
         ));
         return Ok(());
     }
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): xcodebuild resolves packages — delegated.
+    // (Tường lửa C0: xcodebuild resolve package — delegate.)
+    crate::commands::dep_gate::gate(
+        "app",
+        crate::commands::dep_gate::DepOp::Install,
+        Some("xcodebuild"),
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     mgc_ui::info(&format!("Installing objC: xcodebuild {}", args.join(" ")));
     run_tool(root, "xcodebuild", &args)
 }

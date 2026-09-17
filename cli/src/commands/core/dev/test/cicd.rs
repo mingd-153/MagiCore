@@ -148,6 +148,49 @@ fn bad_step_fixture(name: &str) -> &str {
 }
 
 #[test]
+fn installer_checksum_is_pinned_hex() {
+    // T0.5: the embedded checksum must be a real SHA-256 (64 lowercase
+    // hex), never empty — empty means warning-only mode.
+    // (Checksum nhúng phải là SHA-256 thật, không bao giờ rỗng.)
+    assert_eq!(MGC_INSTALLER_SHA256.len(), 64);
+    assert!(
+        MGC_INSTALLER_SHA256
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    );
+}
+
+#[test]
+fn rendered_templates_verify_checksum_fail_closed() {
+    // T0.5: every generated template must substitute the pins, verify
+    // checksums with fail-closed semantics, and never fetch from a
+    // mutable branch.
+    for template in [WORKFLOW_TEMPLATE, GITLAB_TEMPLATE, CIRCLE_TEMPLATE] {
+        let rendered = render_ci_template(template, "CI");
+        assert!(
+            !rendered.contains("{installer_sha256}"),
+            "sha256 pin must be substituted"
+        );
+        assert!(
+            !rendered.contains("{installer_sha}"),
+            "commit SHA pin must be substituted"
+        );
+        assert!(
+            rendered.contains(MGC_INSTALLER_SHA256),
+            "embedded checksum must reach the pipeline"
+        );
+        assert!(
+            rendered.contains("sha256sum -c"),
+            "pipeline must verify checksums"
+        );
+        assert!(
+            !rendered.contains("raw.githubusercontent.com/mingd-153/MagiCore/main/"),
+            "generated pipeline must never fetch from mutable main"
+        );
+    }
+}
+
+#[test]
 fn verify_chain_parses_custom_or_default() {
     let tmp = std::env::temp_dir().join(format!("mgc-cicd-chain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);

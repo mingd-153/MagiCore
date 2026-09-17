@@ -1,4 +1,4 @@
-name: Primary Four-Core Lifecycle Verification
+name: Delegated Toolchain Compatibility Matrix
 
 # Scope: Full lifecycle for all 4 cores
 # Web/AI/App/Lib: create → install → test → build

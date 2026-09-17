@@ -135,3 +135,50 @@ async fn pub_resolves_dependencies_and_full_path() {
     api_mock.assert_async().await;
     archive_mock.assert_async().await;
 }
+
+#[tokio::test]
+async fn pub_unresolvable_deps_record_markers_not_silence() {
+    // V1.2 (D0): SDK-owned, path/git/hosted-object, and empty-constraint
+    // deps are recorded as markers — the old silent `continue` hid graph
+    // holes.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let base = server.url();
+    let sha = sha256_hex(b"ARCHIVE2");
+    let versions = vec![pub_version(
+        "3.0.0",
+        &format!("{base}/archives/mix-3.0.0.tar.gz"),
+        &sha,
+        json!({
+            "flutter": "sdk",
+            "gitdep": {"git": "https://example.invalid/repo.git"},
+            "emptydep": "",
+            "realdep": "^1.0.0",
+        }),
+    )];
+    server
+        .mock("GET", "/api/packages/mix")
+        .with_status(200)
+        .with_body(pub_json(versions))
+        .create_async()
+        .await;
+
+    let protocol = PubProtocol::new(&base);
+    let entry = protocol.resolve("mix", "any").await.unwrap();
+    assert_eq!(
+        entry.deps,
+        vec![("realdep".to_string(), "^1.0.0".to_string())]
+    );
+    for marker in [
+        "sdk-owned:flutter",
+        "non-registry-dep:gitdep",
+        "empty-constraint:emptydep",
+    ] {
+        assert!(
+            entry.extra_markers.iter().any(|m| m == marker),
+            "missing marker {marker}: {:?}",
+            entry.extra_markers
+        );
+    }
+}

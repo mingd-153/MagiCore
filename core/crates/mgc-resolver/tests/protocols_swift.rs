@@ -213,9 +213,10 @@ async fn swift_registry_without_scope_fails_closed() {
 }
 
 /// Local bare-work git fixture: init → commit → tag 1.0.0. Returns
-/// (worktree, commit sha).
-/// Git fixture cục bộ: init → commit → tag 1.0.0. Trả về (worktree, sha
-/// commit).
+/// (worktree, commit sha). Used ONLY to prove file:// transport is
+/// blocked (the fixture itself is never cloned from).
+/// Git fixture cục bộ: chỉ dùng để chứng minh transport file:// bị
+/// chặn (không bao giờ clone từ fixture này).
 fn local_git_repo() -> Option<(tempfile::TempDir, String)> {
     let tmp = tempfile::tempdir().ok()?;
     // The repo lives in a fixed-name subdir — the checkout name derives
@@ -261,53 +262,57 @@ let package = Package(
 }
 
 #[tokio::test]
-async fn swift_git_dep_clone_provenance_and_materialize() {
-    let Some((repo, sha)) = local_git_repo() else {
-        eprintln!("warning: skipping git fixture test (tempdir unavailable)");
+async fn swift_git_dep_default_blocked_no_clone() {
+    // V1.2 (§13.3): external git transport is default-blocked — a
+    // file:// dependency fails BEFORE any clone, naming the opt-in.
+    // The local fixture exists only to name a real path.
+    let Some((repo, _sha)) = local_git_repo() else {
+        eprintln!("warning: skipping git block test (tempdir unavailable)");
         return;
     };
     let name = format!("file://{}", repo.path().join("GitDep").display());
     let protocol = SwiftRegistryProtocol::with_registry("http://127.0.0.1:9");
 
-    // Tag-range selection from the local repo.
-    // (Chọn tag theo range từ repo cục bộ.)
-    let entry = protocol.resolve(&name, "tag:1.0.0").await.unwrap();
-    assert_eq!(entry.version, "1.0.0");
-    let commit = entry
-        .extra_markers
-        .iter()
-        .find_map(|m| m.strip_prefix("git-commit:"))
-        .unwrap()
-        .to_string();
-    assert_eq!(commit, sha, "provenance SHA must be the tagged commit");
-    assert_eq!(
-        entry.deps,
-        vec![("transitive/lib".to_string(), "from:3.0.0".to_string())]
+    let err = protocol.resolve(&name, "tag:1.0.0").await.unwrap_err();
+    assert!(
+        err.to_string().contains("blocked"),
+        "file:// must fail closed naming the block: {err}"
     );
+}
 
-    // verify(): the downloaded "artifact" is the pinned SHA — a moved ref
-    // cannot pass.
-    // (verify(): "artifact" tải về là SHA đã ghim — ref bị dịch không qua
-    // được.)
-    let downloaded = protocol.download(&entry).await.unwrap();
-    protocol.verify(&entry, &downloaded).unwrap();
-    let tampered = b"ffffffffffffffffffffffffffffffffffffffff".to_vec();
-    let err = protocol.verify(&entry, &tampered).unwrap_err();
-    assert!(matches!(err, mgc_types::MgError::Integrity(_)), "{err:?}");
+#[tokio::test]
+async fn swift_git_dep_private_host_blocked_despite_opt_in() {
+    // Opt-in opens the gate ONLY for public allowlisted hosts: loopback
+    // stays blocked even when explicitly listed.
+    let _serial = GIT_ENV_SERIAL.lock().await;
+    set_env("MGC_GIT_DEPS", "1");
+    set_env("MGC_GIT_HOSTS", "127.0.0.1");
+    let result = SwiftRegistryProtocol::with_registry("http://127.0.0.1:9")
+        .resolve("127.0.0.1/x.git", "branch:main")
+        .await;
+    remove_env("MGC_GIT_DEPS");
+    remove_env("MGC_GIT_HOSTS");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("not a public address"),
+        "loopback must stay blocked: {err}"
+    );
+}
 
-    // materialize_git: checkout at the pinned SHA — expected match passes,
-    // a moved-tag expectation fails closed.
-    // (materialize_git: checkout tại SHA đã ghim — khớp kỳ vọng thì pass,
-    // kỳ vọng tag-dịch fail-closed.)
-    let root = tempfile::tempdir().unwrap();
-    let checkout = protocol
-        .materialize_git(&entry, Some(&sha), root.path())
-        .unwrap();
-    assert_eq!(checkout, root.path().join("checkouts").join("GitDep-1.0.0"));
-    assert!(checkout.join("Package.swift").is_file());
+static GIT_ENV_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    let err = protocol
-        .materialize_git(&entry, Some(&"f".repeat(40)), root.path())
-        .unwrap_err();
-    assert!(matches!(err, mgc_types::MgError::Integrity(_)), "{err:?}");
+fn set_env(key: &str, value: &str) {
+    // SAFETY: test-only, serialized by GIT_ENV_SERIAL, restored by the
+    // same test before release.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var(key, value);
+    }
+}
+
+fn remove_env(key: &str) {
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::remove_var(key);
+    }
 }

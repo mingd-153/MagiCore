@@ -20,8 +20,20 @@ fn iot_adapter() -> Arc<dyn PackageAdapter> {
         .expect("iot adapter always available in iot core build")
 }
 
-pub async fn remove(packages: Vec<String>) -> Result<()> {
+pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): the IoT remove lane routes to the
+    // adapter, whose frameworks delegate (cargo/pio/west).
+    // (Tường lửa C0: lane remove IoT gọi adapter, framework trong đó
+    // delegate.)
+    crate::commands::dep_gate::gate(
+        "iot",
+        crate::commands::dep_gate::DepOp::Remove,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = iot_adapter();
     shared::remove(&*adapter, &root, packages, true).await
 }

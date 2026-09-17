@@ -20,8 +20,24 @@ fn iot_adapter() -> Arc<dyn PackageAdapter> {
         .expect("iot adapter always available in iot core build")
 }
 
-pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
+pub async fn update(
+    packages: Vec<String>,
+    install: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let root = project_root()?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): the IoT update lane routes to the
+    // adapter, whose frameworks delegate (cargo/pio/west).
+    // (Tường lửa C0: lane update IoT gọi adapter, framework trong đó
+    // delegate.)
+    crate::commands::dep_gate::gate(
+        "iot",
+        crate::commands::dep_gate::DepOp::Update,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = iot_adapter();
     shared::update(&*adapter, &root, packages, install).await
 }

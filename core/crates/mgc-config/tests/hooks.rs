@@ -62,3 +62,46 @@ fn hooks_reject_package_manager_tools() {
     let err = run_hooks(dir.path(), "pre-install").unwrap_err();
     assert!(err.to_string().contains("forbidden"));
 }
+
+#[test]
+fn hooks_reject_toolchain_on_dependency_events() {
+    // C0 firewall (T0.3/B4): cargo/uv/deno must not run on dependency
+    // events even though they are not rival package managers.
+    for (event, cmd) in [
+        ("pre-install", "cargo fetch"),
+        ("post-add", "uv sync"),
+        ("pre-remove", "deno run x.ts"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("mgc.hooks.toml"),
+            format!("hooks = {{ \"{event}\" = [\"{cmd}\"] }}\n"),
+        )
+        .unwrap();
+        let err = run_hooks(dir.path(), event).unwrap_err();
+        assert!(
+            err.to_string().contains("forbidden"),
+            "{event}/{cmd} must be refused: {err}"
+        );
+    }
+}
+
+#[test]
+fn hooks_allow_toolchain_on_non_dependency_events() {
+    // The extended deny list applies ONLY to dependency events: a custom
+    // event keeps the rival-only list (the spawn itself may still fail —
+    // what matters is it is never a *forbidden* refusal).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.hooks.toml"),
+        "hooks = { \"my-event\" = [\"uv sync\"] }\n",
+    )
+    .unwrap();
+    match run_hooks(dir.path(), "my-event") {
+        Ok(()) => {}
+        Err(err) => assert!(
+            !err.to_string().contains("forbidden"),
+            "custom events must not apply the dependency deny list: {err}"
+        ),
+    }
+}

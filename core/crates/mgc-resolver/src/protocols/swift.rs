@@ -270,6 +270,12 @@ impl SwiftRegistryProtocol {
     /// Resolve chỉ-git (name là host path không scheme hoặc URL file://).
     async fn resolve_git(&self, name: &str, range: &str) -> MgResult<ResolvedEntry> {
         let url = git_name_to_url(name);
+        // Default-block (§13.3): external git transport runs ONLY behind
+        // the explicit opt-in + host allowlist — checked BEFORE any
+        // network (even tag listing would leak intent to the remote).
+        // (Chặn mặc định: transport git ngoài chỉ chạy khi opt-in tường
+        // minh + allowlist host — kiểm tra TRƯỚC mọi network.)
+        git_transport_env_allowed(&url)?;
         // Tag requirement → select the highest matching remote tag; branch /
         // revision → use as-is (fail-closed on fetch errors).
         // (Yêu cầu tag → chọn tag remote cao nhất khớp; branch / revision →
@@ -367,13 +373,13 @@ impl SwiftRegistryProtocol {
             git_repo_name(&entry.name),
             entry.version
         ));
+        let url = git_name_to_url(&entry.name);
         let ref_ = entry
             .extra_markers
             .iter()
             .find_map(|m| m.strip_prefix("git-ref:"))
             .unwrap_or(&entry.version)
             .to_string();
-        let url = git_name_to_url(&entry.name);
         if dir.exists() {
             // Idempotent re-run: verify the existing checkout instead of
             // clobbering it.
@@ -392,6 +398,12 @@ impl SwiftRegistryProtocol {
             return Ok(dir);
         }
         std::fs::create_dir_all(swift_root.join("checkouts"))?;
+        // Same transport gate as resolve, on the CLONE path only: a
+        // hand-edited lockfile must not smuggle a blocked URL into the
+        // clone machinery. Re-verifying an existing checkout above stays
+        // a local read.
+        // (Cùng cổng transport như resolve, chỉ trên đường CLONE.)
+        git_transport_env_allowed(&url)?;
         match clone_shallow(&url, &ref_, &dir) {
             Ok(()) => {}
             Err(e) => {
@@ -483,6 +495,14 @@ impl SwiftDep {
 #[async_trait]
 impl RegistryProtocol for SwiftRegistryProtocol {
     async fn resolve(&self, name: &str, range: &str) -> MgResult<ResolvedEntry> {
+        // Local paths never resolve anywhere: neither the git transport
+        // (default-blocked) nor the scoped registry can serve them.
+        // (Đường dẫn local không resolve ở đâu cả.)
+        if name.starts_with("file://") {
+            return Err(MgError::Other(
+                "file:// dependencies are blocked — local paths never enter the git transport or the registry (fail-closed)".to_string(),
+            ));
+        }
         if is_git_name(name) {
             self.resolve_git(name, range).await
         } else {
@@ -555,12 +575,16 @@ impl RegistryProtocol for SwiftRegistryProtocol {
             }
             return Ok(());
         }
-        // Shared default sha256 check (the registry checksum is mandatory
-        // and already carried on the entry).
-        // (Kiểm tra sha256 chung (checksum registry là bắt buộc và đã mang
-        // trên entry).)
+        // Registry entries carry a mandatory checksum: an empty digest
+        // is a corrupt registry record, failed closed like the shared
+        // default (V1.2 zero-trust).
+        // (Entry registry mang checksum bắt buộc: digest rỗng là bản ghi
+        // registry hỏng, fail-closed như default chung.)
         if entry.sha256.is_empty() {
-            return Ok(());
+            return Err(MgError::Integrity(format!(
+                "refusing artifact without digest for {}@{} (Swift registry checksum missing)",
+                entry.name, entry.version
+            )));
         }
         let actual = super::sha256_hex(bytes);
         if !actual.eq_ignore_ascii_case(&entry.sha256) {
@@ -574,14 +598,20 @@ impl RegistryProtocol for SwiftRegistryProtocol {
 }
 
 /// Git-name detection: registry names are `scope/name` (exactly one slash,
-/// dot-less scope); anything with a host-like first segment, `.git` suffix
-/// or an explicit file:// scheme is a git-only dependency.
-/// Dò tên git: tên registry là `scope/name` (đúng một dấu sẹo, scope không
-/// chấm); mọi tên có segment đầu kiểu host, đuôi `.git` hoặc scheme file://
-/// tường minh là dep chỉ-git.
+/// dot-less scope); anything with a host-like first segment or a `.git`
+/// suffix is a git-only dependency. `file://` is NOT recognized: local
+/// paths never enter the git transport (default-block, §13.3).
+/// Dò tên git: tên registry là `scope/name`; mọi tên có segment đầu kiểu
+/// host hoặc đuôi `.git` là dep chỉ-git. `file://` KHÔNG được nhận diện.
 pub fn is_git_name(name: &str) -> bool {
-    name.starts_with("file://")
-        || name.ends_with(".git")
+    // A scheme other than https (file/http/ssh/git) is never a git
+    // transport candidate — rejected here so it can fail explicitly
+    // downstream instead of riding the git path.
+    // (Scheme khác https không bao giờ là ứng viên transport git.)
+    if name.contains("://") && !name.starts_with("https://") {
+        return false;
+    }
+    name.ends_with(".git")
         || name.matches('/').count() > 1
         || name
             .split('/')
@@ -589,10 +619,13 @@ pub fn is_git_name(name: &str) -> bool {
             .is_some_and(|first| first.contains('.') && !first.contains(".."))
 }
 
-/// Map a dependency name to its clone URL.
-/// Ánh xạ tên dep sang URL clone.
+/// Map a graph-edge name back to a clone URL. Full URLs ride through
+/// UNCHANGED so the transport gate below sees the real scheme (a
+/// rewritten `https://http://…` would dodge the http/file rejection).
+/// Ánh xạ tên cạnh graph về URL clone. URL đầy đủ giữ nguyên để cổng
+/// transport thấy scheme thật.
 fn git_name_to_url(name: &str) -> String {
-    if name.starts_with("file://") {
+    if name.contains("://") {
         return name.to_string();
     }
     if name.ends_with(".git") {
@@ -602,16 +635,13 @@ fn git_name_to_url(name: &str) -> String {
     }
 }
 
-/// Map a `.package(url:)` value to the graph-edge name (scheme + `.git`
-/// stripped; file:// URLs ride as-is — PackageName accepts `:`).
-/// Ánh xạ giá trị `.package(url:)` sang tên cạnh graph (bỏ scheme + `.git`;
-/// URL file:// giữ nguyên — PackageName chấp nhận `:`).
+/// Map a `.package(url:)` value to the graph-edge name (https scheme +
+/// `.git` stripped; anything else rides through unchanged and fails
+/// explicitly at resolve time — no silent acceptance).
+/// Ánh xạ giá trị `.package(url:)` sang tên cạnh graph.
 pub fn git_url_to_name(url: &str) -> String {
     let url = url.trim();
-    if let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    {
+    if let Some(rest) = url.strip_prefix("https://") {
         rest.trim_end_matches('/')
             .strip_suffix(".git")
             .unwrap_or(rest.trim_end_matches('/'))
@@ -619,6 +649,100 @@ pub fn git_url_to_name(url: &str) -> String {
     } else {
         url.to_string()
     }
+}
+
+/// Git-transport policy (§13.3, default-block): pure decision function
+/// over an explicit opt-in — unit-testable without environment.
+/// - transport MUST be `https` (file/http/ssh/git rejected);
+/// - the host MUST NOT be loopback/private/link-local/unspecified
+///   (DNS-rebinding guard; residual redirect risk is documented and
+///   in-process transport remains Phase E);
+/// - `allow_git_deps` must be true AND the host must appear in `hosts`
+///   (empty allowlist allows nothing).
+///
+/// Chính sách transport git (chặn mặc định): hàm thuần trên opt-in
+/// tường minh.
+pub fn git_transport_allowed(
+    url: &str,
+    allow_git_deps: bool,
+    hosts: &[&str],
+) -> Result<(), MgError> {
+    if !allow_git_deps {
+        return Err(MgError::Other(
+            "git dependencies are blocked by default — set MGC_GIT_DEPS=1 and MGC_GIT_HOSTS=<host>,... to opt in explicitly (in-process git transport is Phase E)".to_string(),
+        ));
+    }
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| MgError::Other(format!("unparseable git URL '{url}'")))?;
+    if parsed.scheme() != "https" {
+        return Err(MgError::Other(format!(
+            "git URL scheme '{}' is blocked — only https:// (no file://, http://, ssh:) (fail-closed)",
+            parsed.scheme()
+        )));
+    }
+    if !parsed.username().is_empty() {
+        return Err(MgError::Other(format!(
+            "git URL '{url}' carries userinfo — blocked (fail-closed)"
+        )));
+    }
+    let Some(host) = parsed.host_str() else {
+        return Err(MgError::Other(format!("git URL '{url}' has no host")));
+    };
+    let host_lower = host.trim_end_matches('.').to_ascii_lowercase();
+    if host_lower == "localhost" {
+        return Err(MgError::Other(format!(
+            "git host '{host}' is loopback — blocked (fail-closed)"
+        )));
+    }
+    if let Ok(ip) = host_lower.parse::<std::net::IpAddr>()
+        && is_blocked_ip(&ip)
+    {
+        return Err(MgError::Other(format!(
+            "git host '{host}' is not a public address — blocked (fail-closed)"
+        )));
+    }
+    let allowed = hosts
+        .iter()
+        .any(|h| h.trim_end_matches('.').eq_ignore_ascii_case(&host_lower));
+    if !allowed {
+        return Err(MgError::Other(format!(
+            "git host '{host}' is not in the allowlist (MGC_GIT_HOSTS) — blocked (fail-closed)"
+        )));
+    }
+    Ok(())
+}
+
+/// Non-public addresses: loopback, unspecified, private, link-local
+/// (either family).
+/// (Địa chỉ không-public: loopback, unspecified, private, link-local.)
+fn is_blocked_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback() || v4.is_unspecified() || v4.is_private() || v4.is_link_local()
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+        }
+    }
+}
+
+/// Environment gate for git transport: `MGC_GIT_DEPS=1` master switch +
+/// `MGC_GIT_HOSTS` comma allowlist.
+/// (Cổng env cho transport git.)
+fn git_transport_env_allowed(url: &str) -> Result<(), MgError> {
+    let enabled = std::env::var("MGC_GIT_DEPS")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let hosts_raw = std::env::var("MGC_GIT_HOSTS").unwrap_or_default();
+    let hosts: Vec<&str> = hosts_raw
+        .split(',')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .collect();
+    git_transport_allowed(url, enabled, &hosts)
 }
 
 /// Repository display name (last path segment, `.git` stripped).
@@ -1292,14 +1416,62 @@ let package = Package(
         assert!(!is_git_name("scope/lib"));
         assert!(is_git_name("github.com/example/repo"));
         assert!(is_git_name("host/x.git"));
-        assert!(is_git_name("file:///tmp/repo"));
+        // file:// is NOT a git transport anymore (default-block §13.3):
+        // local paths must never reach the clone machinery.
+        assert!(!is_git_name("file:///tmp/repo"));
         assert_eq!(
             git_url_to_name("https://github.com/example/repo.git"),
             "github.com/example/repo"
         );
-        assert_eq!(git_url_to_name("file:///tmp/repo"), "file:///tmp/repo");
+        assert_eq!(
+            git_url_to_name("http://github.com/example/repo.git"),
+            "http://github.com/example/repo.git"
+        );
         assert_eq!(git_repo_name("github.com/example/repo"), "repo");
         assert_eq!(git_repo_name("host/x.git"), "x");
+    }
+
+    #[test]
+    fn git_transport_policy_blocks_by_default() {
+        // Default-block: no opt-in → every URL refused before network.
+        let blocked = git_transport_allowed("https://github.com/o/r.git", false, &[]);
+        assert!(blocked.is_err());
+        // Opted in but no allowlist → still blocked.
+        let blocked = git_transport_allowed("https://github.com/o/r.git", true, &[]);
+        assert!(blocked.is_err());
+        // Non-https schemes never pass, even allowlisted.
+        for url in [
+            "file:///tmp/repo",
+            "http://github.com/o/r.git",
+            "ssh://git@github.com/o/r.git",
+            "git://github.com/o/r.git",
+        ] {
+            assert!(
+                git_transport_allowed(url, true, &["github.com"]).is_err(),
+                "{url} must be blocked"
+            );
+        }
+        // Loopback / private / link-local hosts never pass.
+        for url in [
+            "https://localhost/o/r.git",
+            "https://127.0.0.1/o/r.git",
+            "https://10.0.0.9/o/r.git",
+            "https://192.168.1.9/o/r.git",
+            "https://[::1]/o/r.git",
+            "https://[fe80::1]/o/r.git",
+            "https://user@github.com/o/r.git",
+        ] {
+            assert!(
+                git_transport_allowed(url, true, &["localhost", "10.0.0.9", "github.com"]).is_err(),
+                "{url} must be blocked"
+            );
+        }
+        // Allowlisted public host passes (case-insensitive).
+        assert!(git_transport_allowed("https://github.com/o/r.git", true, &["GitHub.COM"]).is_ok());
+        // Wrong allowlist → blocked.
+        assert!(
+            git_transport_allowed("https://github.com/o/r.git", true, &["gitlab.com"]).is_err()
+        );
     }
 
     #[test]

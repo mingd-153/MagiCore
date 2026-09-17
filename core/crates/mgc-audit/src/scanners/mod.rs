@@ -464,6 +464,13 @@ pub fn truncate_utf8(text: &str, max_chars: usize) -> String {
 /// Audit Rust dependencies using cargo-audit.
 /// Audit dependencies Rust dùng cargo-audit.
 ///
+/// DELEGATED: advisory evaluation runs inside the external `cargo-audit`
+/// binary (not the MGC advisory engine) until the native OSV-based
+/// evaluation lands — audit-via-tool, never claimed as native.
+/// DELEGATED: đánh giá advisory chạy trong binary ngoài `cargo-audit`
+/// (không phải engine advisory của MGC) cho tới khi cơ chế đánh giá native
+/// qua OSV xong — audit qua tool, không bao giờ tính là native.
+///
 /// Requires cargo-audit to be installed: `cargo install cargo-audit`
 pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
     // Check if cargo-audit is available
@@ -606,6 +613,13 @@ pub fn find_pylock_file(project_root: &Path) -> Option<String> {
 /// - pyproject.toml KHÔNG lockfile → Failed: dependency chưa resolve —
 ///   audit environment ngoài không chứng minh gì cho project này.
 /// - không có gì → Failed kèm hướng dẫn thật.
+///
+/// DELEGATED: advisory evaluation runs inside the external `pip-audit`
+/// binary (not the MGC advisory engine) until the native OSV-based
+/// evaluation lands — audit-via-tool, never claimed as native.
+/// DELEGATED: đánh giá advisory chạy trong binary ngoài `pip-audit`
+/// (không phải engine advisory của MGC) cho tới khi cơ chế đánh giá native
+/// qua OSV xong — audit qua tool, không bao giờ tính là native.
 pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
     if which::which("pip-audit").is_err() {
         return Ok(AuditReport::tool_missing(

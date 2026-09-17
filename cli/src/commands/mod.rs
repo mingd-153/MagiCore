@@ -13,6 +13,7 @@ pub mod core;
 pub mod dedupe;
 /// CLI command implementations
 pub mod definitions;
+pub mod dep_gate;
 pub mod dev;
 pub mod dlx;
 pub mod docs;
@@ -26,6 +27,7 @@ pub mod install;
 pub mod launcher_policy;
 pub mod login;
 pub mod mcp;
+pub mod migrate;
 pub mod model;
 pub mod network;
 pub mod optimizer;

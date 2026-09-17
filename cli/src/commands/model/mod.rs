@@ -388,6 +388,13 @@ pub async fn run(args: ModelArgs) -> Result<()> {
 }
 
 /// GGUF quantize qua python passthrough (A4, sys-mgc/05 §4)
+///
+/// DELEGATED: quantization runs inside the external `llama_cpp` python
+/// package (not an MGC-native engine) until the native model runtime
+/// lands — model-lifecycle-via-tool, never claimed as native.
+/// DELEGATED: quantize chạy trong package python ngoài `llama_cpp`
+/// (không phải engine native của MGC) cho tới khi runtime model native
+/// xong — lifecycle model qua tool, không bao giờ tính là native.
 fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
     if target != "q4_k_m" && target != "q8_0" {
         return Err(crate::error::unsupported_quantize_target(target));

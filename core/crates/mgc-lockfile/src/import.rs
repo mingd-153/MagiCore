@@ -319,8 +319,36 @@ fn parse_npm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>> 
 // ---------------------------------------------------------------------------
 
 fn parse_pnpm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>> {
-    let yaml: serde_yaml::Value = serde_yaml::from_str(content)
+    // Multi-document files (pnpm ≥10 env document + project document):
+    // a single-doc parse silently returns the FIRST (env) document — the
+    // exact trap Deno documents for pnpm consumers. Always parse every
+    // document and take the LAST (project graph); the env document is
+    // reported, never silently merged (different universe: .pnpm-config).
+    // (File nhiều document: parse đơn-doc âm thầm trả document ĐẦU (env)
+    // — đúng bẫy Deno đã ghi. Luôn parse mọi document và lấy CUỐI
+    // (graph project); document env được báo cáo, không bao giờ gộp âm
+    // thầm.)
+    use serde::Deserialize;
+    let documents: Vec<serde_yaml::Value> = serde_yaml::Deserializer::from_str(content)
+        .map(serde_yaml::Value::deserialize)
+        .collect::<Result<_, _>>()
         .map_err(|e| anyhow::anyhow!("pnpm-lock.yaml is not valid YAML: {e}"))?;
+    if documents.len() > 1 {
+        let env_packages = documents[..documents.len() - 1]
+            .iter()
+            .filter_map(|doc| doc.get("packages"))
+            .filter_map(|packages| packages.as_mapping())
+            .map(|mapping| mapping.len())
+            .sum::<usize>();
+        warnings.push(format!(
+            "pnpm-lock.yaml has {} documents: using the LAST (project graph); {} env-document package(s) recorded but not imported (configDependencies live outside the project graph)",
+            documents.len(),
+            env_packages
+        ));
+    }
+    let yaml = documents
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("pnpm-lock.yaml is empty"))?;
 
     // Shape-first như npm — pnpm đổi '9.0' → '10.0'... không cần sửa code.
     // (Shape-first like npm — pnpm bumping '9.0' → '10.0' needs no code change.)

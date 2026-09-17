@@ -34,15 +34,13 @@ fn create_node_project(dir: &TempDir) -> PathBuf {
 
 /// Helper: Run mgc binary with arguments
 fn run_mgc(args: &[&str], cwd: Option<&PathBuf>) -> std::process::Output {
-    let mgc_bin = env::var("MGC_BIN").unwrap_or_else(|_| {
-        // Default to workspace target/debug/mgc
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let mut path = manifest_dir.parent().unwrap().to_path_buf(); // Go up from cli/ to workspace root
-        path.push("target");
-        path.push("debug");
-        path.push("mgc");
-        path.to_string_lossy().to_string()
-    });
+    // CARGO_BIN_EXE_mgc: the just-built binary under test — never a stale
+    // target/debug/mgc and never `cargo run` (release evidence must come
+    // from the artifact under test, not the source tree).
+    // (Binary vừa build đang test — không bao giờ target/debug cũ hay
+    // `cargo run`.)
+    let mgc_bin = env::var("CARGO_BIN_EXE_mgc")
+        .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`");
 
     let mut cmd = std::process::Command::new(&mgc_bin);
     cmd.args(args);
@@ -58,14 +56,16 @@ fn test_npm_allowed_in_test_runner_scope() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let project_root = create_node_project(&temp_dir);
 
-    // Ensure npm is available (skip test if not)
+    // npm is REQUIRED for this lane: a missing tool in a required lane is
+    // a FAIL, never a skip (skip must never read as pass).
+    // (npm BẮT BUỘC cho lane này: thiếu tool ở lane bắt buộc là FAIL,
+    // không bao giờ skip.)
     if std::process::Command::new("npm")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("SKIP: npm not available");
-        return;
+        panic!("FAIL: npm is required for the TestRunner-scope lane — refusing a silent skip");
     }
 
     // Run: mgc test (should auto-detect npm test and succeed)

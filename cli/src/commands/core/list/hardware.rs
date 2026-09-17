@@ -1,4 +1,9 @@
 //! `mgc list-hardware` — báo optimizer/bench hiện có qua adapter. Phase 7 v5.
+//!
+//! GATE-EXEMPT: adapter directory read — no toolchain spawn, no package
+//! mutation in this lane.
+//! (GATE-EXEMPT: đọc thư mục qua adapter — lane này không spawn
+//! toolchain, không đổi package.)
 
 use anyhow::Result;
 use std::path::PathBuf;

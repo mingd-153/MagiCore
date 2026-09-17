@@ -401,9 +401,9 @@ async fn lib_adapter_csproj_project_resolves_natively_via_env() {
     // (Nupkg method store tự ghép — không crate zip.)
     let nupkg = {
         let name = "Demo.Lib.nuspec";
-        let data =
-            "<package><metadata><id>Demo.Lib</id><dependencies /></metadata></package>".to_string()
-                .into_bytes();
+        let data = "<package><metadata><id>Demo.Lib</id><dependencies /></metadata></package>"
+            .to_string()
+            .into_bytes();
         let mut out: Vec<u8> = Vec::new();
         let crc = mgc_resolver::protocols::zip_reader::crc32(&data);
         out.extend_from_slice(b"PK\x03\x04");

@@ -69,6 +69,67 @@ fn test_generate_optimizations_for_game_core() {
 }
 
 #[test]
+fn test_profile_for_unknown_ram_degrades_to_constrained() {
+    // Unknown RAM must never tune from a guessed size: even a 64-core
+    // machine degrades to Constrained when memory cannot be measured.
+    // (RAM unknown không bao giờ tuning từ số đoán: máy 64 core cũng hạ
+    // về Constrained khi không đo được RAM.)
+    assert_eq!(
+        HardwareInfo::profile_for(64, None),
+        SystemProfile::Constrained
+    );
+    assert_eq!(
+        HardwareInfo::profile_for(8, Some(16)),
+        SystemProfile::HighPerformance
+    );
+    assert_eq!(
+        HardwareInfo::profile_for(4, Some(8)),
+        SystemProfile::Standard
+    );
+    assert_eq!(
+        HardwareInfo::profile_for(2, Some(4)),
+        SystemProfile::Constrained
+    );
+}
+
+#[test]
+fn test_unknown_ram_skips_memory_derived_configs() {
+    // total_memory_gb == 0 is the unknown sentinel: only the honest
+    // manifest may be emitted, never adapter files with degenerate
+    // memory-derived values (e.g. a 0MB Dart heap).
+    // (total_memory_gb == 0 là sentinel unknown: chỉ manifest trung thực
+    // được xuất, không bao giờ file adapter với giá trị suy biến.)
+    let dir = tempdir().unwrap();
+    let project_root = dir.path();
+    fs::write(project_root.join("package.json"), "{}").unwrap();
+
+    let hw = HardwareInfo {
+        cpu_cores: 8,
+        arch: "x86_64".to_string(),
+        os: "linux".to_string(),
+        total_memory_gb: 0,
+        profile: SystemProfile::Constrained,
+    };
+
+    let files = generate_optimizations_for_core("web", &hw, project_root);
+    assert_eq!(files.len(), 1);
+    assert!(files[0].relative_path.contains("profile.json"));
+}
+
+#[test]
+fn test_optimize_project_without_runtime_fails_closed() {
+    // No detectable runtime is NOT a success: automation must observe an
+    // error, never Ok(()) for work that never happened.
+    // (Không có runtime không phải thành công: automation phải thấy lỗi.)
+    let dir = tempdir().unwrap();
+    let result = super::optimize_project(dir.path(), "web", false);
+    assert!(
+        result.is_err(),
+        "optimize with no detectable runtime must fail closed"
+    );
+}
+
+#[test]
 fn test_hash_guard_prevents_overwriting_user_custom_file() {
     let dir = tempdir().unwrap();
     let root = dir.path();

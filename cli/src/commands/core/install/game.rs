@@ -7,8 +7,20 @@ use mgc_types::Ecosystem;
 
 const OPTIMIZER_PKG: &str = "optimizer";
 
-pub async fn install(packages: Vec<String>) -> Result<()> {
+pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = super::super::shared::core_project_root("game")?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): the game install lane routes to the
+    // adapter, whose engines delegate (Bevy → cargo).
+    // (Tường lửa C0: lane install game gọi adapter, engine trong đó
+    // delegate.)
+    crate::commands::dep_gate::gate(
+        "game",
+        crate::commands::dep_gate::DepOp::Install,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = super::super::shared::core_adapter(&Ecosystem::Game);
 
     // optimizer: materialize + hook dep; không gửi qua adapter (không phải registry crate)

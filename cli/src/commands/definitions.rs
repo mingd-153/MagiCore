@@ -81,6 +81,11 @@ pub enum Commands {
         #[arg(long, help = "Target project directory to import")]
         dir: Option<std::path::PathBuf>,
     },
+    #[command(about = "Migrate mgc.lock to a newer schema (explicit, never automatic)")]
+    Migrate {
+        #[command(subcommand)]
+        cmd: crate::commands::migrate::MigrateCmd,
+    },
 
     // ── W6: SBOM Export ──────────────────────────────────────────────
     #[command(about = "Generate Software Bill of Materials (SBOM) from lockfile")]
@@ -311,6 +316,14 @@ pub enum Commands {
             help = "Offline mode: install from cache only, no network (T4.1)"
         )]
         offline: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Manage the local store (prune unreferenced packages)")]
     Store {
@@ -382,6 +395,14 @@ pub enum Commands {
         no_save: bool,
         #[arg(long, help = "Only update manifest, do not install dependencies")]
         no_install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Remove dependencies (auto-detect core)", alias = "rm")]
     Remove {
@@ -389,12 +410,28 @@ pub enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Only update manifest, do not reinstall dependencies")]
         no_install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Update packages (auto-detect core)", alias = "up")]
     Update {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "List installed packages (auto-detect core)", alias = "ls")]
     List,
@@ -566,55 +603,141 @@ pub enum Commands {
         repair: bool,
         #[arg(long, help = "Use only cached packages, no network requests")]
         offline: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "install-game",
         alias = "i-game",
         about = "Install game dependencies"
     )]
-    InstallGame { packages: Vec<String> },
+    InstallGame {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "install-ai", alias = "i-ai", about = "Install AI dependencies")]
     InstallAi {
         packages: Vec<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "install-clo",
         alias = "i-clo",
         about = "Install cloud dependencies"
     )]
-    InstallClo { packages: Vec<String> },
+    InstallClo {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-cicd",
         alias = "i-cicd",
         about = "Install CI/CD dependencies"
     )]
-    InstallCicd { packages: Vec<String> },
+    InstallCicd {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-iot",
         alias = "i-iot",
         about = "Install IoT dependencies"
     )]
-    InstallIot { packages: Vec<String> },
+    InstallIot {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-app",
         alias = "i-app",
         about = "Install app dependencies"
     )]
-    InstallApp { packages: Vec<String> },
+    InstallApp {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-lib",
         alias = "i-lib",
         about = "Install library dependencies"
     )]
-    InstallLib { packages: Vec<String> },
+    InstallLib {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-hardware",
         alias = "i-hardware",
         about = "Install hardware packages (optimizer/bench)"
     )]
-    InstallHardware { packages: Vec<String> },
+    InstallHardware {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
 
     // ── Per-core: add-<core> ───────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -636,6 +759,20 @@ pub enum Commands {
         no_install: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-game", alias = "a-game", about = "Add game dependencies")]
     AddGame {
@@ -653,6 +790,20 @@ pub enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-ai", alias = "a-ai", about = "Add AI dependencies")]
     AddAi {
@@ -670,6 +821,20 @@ pub enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-clo", alias = "a-clo", about = "Add cloud dependencies")]
     AddClo {
@@ -687,6 +852,20 @@ pub enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-cicd", alias = "a-cicd", about = "Add CI/CD dependencies")]
     AddCicd {
@@ -704,6 +883,20 @@ pub enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-iot", alias = "a-iot", about = "Add IoT dependencies")]
     AddIot {
@@ -721,6 +914,20 @@ pub enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-app", alias = "a-app", about = "Add app dependencies")]
     AddApp {
@@ -738,6 +945,20 @@ pub enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-lib", alias = "a-lib", about = "Add library dependencies")]
     AddLib {
@@ -755,6 +976,20 @@ pub enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "add-hardware",
@@ -764,6 +999,20 @@ pub enum Commands {
     AddHardware {
         #[arg(required = true)]
         packages: Vec<String>,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
 
     // ── Per-core: remove-<core> ────────────────────────────────
@@ -778,45 +1027,123 @@ pub enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Only update manifest, do not reinstall dependencies")]
         no_install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "remove-game",
         alias = "rm-game",
         about = "Remove game dependencies"
     )]
-    RemoveGame { packages: Vec<String> },
+    RemoveGame {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "remove-ai", alias = "rm-ai", about = "Remove AI dependencies")]
-    RemoveAi { packages: Vec<String> },
+    RemoveAi {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-clo",
         alias = "rm-clo",
         about = "Remove cloud dependencies"
     )]
-    RemoveClo { packages: Vec<String> },
+    RemoveClo {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-cicd",
         alias = "rm-cicd",
         about = "Remove CI/CD dependencies"
     )]
-    RemoveCicd { packages: Vec<String> },
+    RemoveCicd {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-iot",
         alias = "rm-iot",
         about = "Remove IoT dependencies"
     )]
-    RemoveIot { packages: Vec<String> },
+    RemoveIot {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-app",
         alias = "rm-app",
         about = "Remove app dependencies"
     )]
-    RemoveApp { packages: Vec<String> },
+    RemoveApp {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-lib",
         alias = "rm-lib",
         about = "Remove library dependencies"
     )]
-    RemoveLib { packages: Vec<String> },
+    RemoveLib {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
 
     // ── Per-core: list-<core> ──────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -850,6 +1177,14 @@ pub enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "update-game",
@@ -860,18 +1195,42 @@ pub enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-ai", alias = "up-ai", about = "Update AI packages")]
     UpdateAi {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-clo", alias = "up-clo", about = "Update cloud packages")]
     UpdateClo {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "update-cicd",
@@ -882,18 +1241,42 @@ pub enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-iot", alias = "up-iot", about = "Update IoT packages")]
     UpdateIot {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-app", alias = "up-app", about = "Update app packages")]
     UpdateApp {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "update-lib",
@@ -904,6 +1287,14 @@ pub enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
     },
 }
 

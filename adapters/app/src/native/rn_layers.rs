@@ -12,7 +12,7 @@
 //! - iOS tier → `Podfile.lock` (CocoaPods' own closure + `SPEC
 //!   CHECKSUMS:`): every pod spec is fetched from the CocoaPods CDN and
 //!   its sha1 must match the lock checksum. A project with a Podfile but
-//!   no Podfile.lock skips the tier with guidance (never a silent empty
+//!   no Podfile.lock fails closed with `Unsupported` (never a silent empty
 //!   iOS graph).
 //!
 //! Một project React Native trải ba vũ trụ dependency; mỗi tier giữ
@@ -26,7 +26,7 @@
 //! - Tier iOS → `Podfile.lock` (bao đóng của chính CocoaPods + `SPEC
 //!   CHECKSUMS:`): mọi spec pod tải từ CDN CocoaPods và sha1 phải khớp
 //!   checksum trong lock. Project có Podfile nhưng thiếu Podfile.lock thì
-//!   bỏ tier kèm hướng dẫn (không bao giờ graph iOS rỗng âm thầm).
+//!   fail-closed bằng `Unsupported` (không bao giờ graph iOS rỗng âm thầm).
 
 use mgc_lib_adapter::native::engine::resolve_with_protocol;
 use mgc_lockfile::EcosystemTag;
@@ -35,7 +35,7 @@ use mgc_resolver::protocols::reactnative::{
     collapse_gradle_pins, parse_gradle_lockfile, parse_podfile_lock, pod_root,
 };
 use mgc_resolver::protocols::{MavenProtocol, RegistryProtocol};
-use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver};
+use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver, unsupported_capability};
 use mgc_types::{
     DependencySpec, Ecosystem, Manifest, MgError, MgResult, PackageId, PackageName, ResolvedGraph,
     ResolvedPackage, Version, VersionRange,
@@ -176,13 +176,17 @@ pub async fn resolve_rn_layers(manifest: &Manifest, project_root: &Path) -> MgRe
             });
         }
     } else if project_root.join("Podfile").is_file() {
-        // Guidance, not failure: the iOS tier is honestly skipped.
-        // (Hướng dẫn, không phải lỗi: tier iOS bị bỏ một cách trung thực.)
-        eprintln!(
-            "WARNING: {} exists but Podfile.lock is missing — the iOS pod tier is SKIPPED \
-             (run `pod install` to produce the lock, then re-run resolve)",
-            project_root.join("Podfile").display()
-        );
+        // Fail closed: a Podfile without Podfile.lock means the iOS tier
+        // has no verifiable closure — silently skipping would fake a
+        // complete resolution (V1.2: skip paths must never read as pass).
+        // (Fail-closed: Podfile thiếu Podfile.lock nghĩa là tier iOS không
+        // có bao đóng kiểm chứng được — bỏ qua âm thầm sẽ giả vờ resolve
+        // đầy đủ.)
+        return Err(unsupported_capability(
+            "app",
+            "resolve",
+            "React Native iOS tier has a Podfile but no Podfile.lock — run `pod install` to produce the lock, then re-run resolve",
+        ));
     }
 
     Ok(RNResolution {

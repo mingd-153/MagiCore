@@ -312,3 +312,91 @@ async fn nuget_minimum_version_selection_with_float_range() {
     assert_eq!(entry.version, "1.0.5");
     assert!(entry.deps.is_empty());
 }
+
+fn multi_tfm_nuspec(dep_a: &str, ver_a: &str, dep_b: &str, ver_b: &str) -> String {
+    format!(
+        r#"<package><metadata>
+  <dependencies>
+    <group targetFramework="net6.0">
+      <dependency id="{dep_a}" version="{ver_a}" />
+    </group>
+    <group targetFramework="net48">
+      <dependency id="{dep_b}" version="{ver_b}" />
+    </group>
+  </dependencies>
+</metadata></package>"#
+    )
+}
+
+async fn resolve_nuspec(
+    server: &mut mockito::ServerGuard,
+    nuspec: String,
+) -> (NuGetProtocol, String) {
+    let base = server.url();
+    let nupkg = build_nupkg("Multi.Tfm", "9.9.9");
+    let sha512_b64 = base64::engine::general_purpose::STANDARD.encode(Sha512::digest(&nupkg));
+    server
+        .mock("GET", "/flat/multi.tfm/index.json")
+        .with_status(200)
+        .with_body(r#"{"versions":["9.9.9"]}"#)
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/reg/multi.tfm/index.json")
+        .with_status(200)
+        .with_body(registration_body("Multi.Tfm", "9.9.9", &sha512_b64))
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/flat/multi.tfm/9.9.9/multi.tfm.nuspec")
+        .with_status(200)
+        .with_body(nuspec)
+        .create_async()
+        .await;
+    let protocol = NuGetProtocol::with_bases(&format!("{base}/reg"), &format!("{base}/flat"));
+    (protocol, sha512_b64)
+}
+
+#[tokio::test]
+async fn nuget_divergent_tfm_groups_fail_closed() {
+    // V1.2 (D0): two frameworks with different dependency sets and no
+    // consumer target to select by — merging would silently build the
+    // wrong graph. Fail naming both frameworks.
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let (protocol, _) = resolve_nuspec(
+        &mut server,
+        multi_tfm_nuspec("net6.dep", "1.0.0", "net48.dep", "2.0.0"),
+    )
+    .await;
+    let err = protocol.resolve("Multi.Tfm", "9.9.9").await.unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("net6.0") && message.contains("net48"),
+        "must name both frameworks: {message}"
+    );
+}
+
+#[tokio::test]
+async fn nuget_identical_tfm_groups_merge_honestly() {
+    // Same dep set under two frameworks: merging is harmless and stays
+    // allowed, labeled by marker (no consumer target needed).
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let (protocol, _) = resolve_nuspec(
+        &mut server,
+        multi_tfm_nuspec("shared.dep", "1.0.0", "shared.dep", "1.0.0"),
+    )
+    .await;
+    let entry = protocol.resolve("Multi.Tfm", "9.9.9").await.unwrap();
+    assert!(
+        entry
+            .extra_markers
+            .iter()
+            .any(|m| m.starts_with("multi-tfm-identical:")),
+        "{:?}",
+        entry.extra_markers
+    );
+}

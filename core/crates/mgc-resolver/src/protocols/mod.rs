@@ -18,6 +18,7 @@
 pub mod archive;
 pub mod crates;
 pub mod go;
+pub mod hfhub;
 pub mod maven;
 pub mod nuget;
 #[path = "pub.rs"]
@@ -29,6 +30,7 @@ pub mod zip_reader;
 
 pub use crates::CratesProtocol;
 pub use go::GoModProtocol;
+pub use hfhub::{HfHubProtocol, ModelFile, ModelResolution, git_blob_sha1};
 pub use maven::MavenProtocol;
 pub use nuget::NuGetProtocol;
 pub use pubdev::PubProtocol;
@@ -77,15 +79,19 @@ pub trait RegistryProtocol: Send + Sync {
     async fn download(&self, entry: &ResolvedEntry) -> MgResult<Vec<u8>>;
 
     /// Verify the downloaded artifact's sha256 against the declared digest.
-    /// Fail-closed on mismatch. An empty declared digest is NOT a failure —
-    /// there is simply no registry hash to check against (the CAS import in
-    /// the install path still records the blake3 truth).
+    /// Fail-closed on mismatch AND on a missing digest: an artifact no
+    /// registry hash vouches for is never installed (V1.2 zero-trust —
+    /// engines with alternative integrity (sha1 markers, sumdb dirhash,
+    /// git-commit pins) override this method; see go/maven/nuget/swift).
     /// Xác minh sha256 của artifact đã tải so với digest khai báo.
-    /// Fail-closed khi lệch. Digest rỗng KHÔNG phải lỗi — chỉ là registry
-    /// không cho hash để check (import CAS ở đường install vẫn ghi blake3).
+    /// Fail-closed khi lệch VÀ khi thiếu digest: artifact không có hash
+    /// registry bảo lãnh không bao giờ được cài.
     fn verify(&self, entry: &ResolvedEntry, bytes: &[u8]) -> MgResult<()> {
         if entry.sha256.is_empty() {
-            return Ok(());
+            return Err(MgError::Integrity(format!(
+                "refusing artifact without digest for {}@{} (registry provided no sha256 — re-resolve after the registry publishes checksums)",
+                entry.name, entry.version
+            )));
         }
         let actual = sha256_hex(bytes);
         if !actual.eq_ignore_ascii_case(&entry.sha256) {

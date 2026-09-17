@@ -314,12 +314,31 @@ fn test_ai_full_lifecycle() {
     // === STEP 2: Add dependency to create lockfile ===
     println!("\n=== STEP 2: mgc add (create lockfile) ===");
 
+    // C0 (T0.3): ai lanes delegate to uv/pip — this E2E exercises the
+    // EXPLICIT compat path (the only supported way to run delegated
+    // lanes). The tool mirrors the lane's own pick order (uv.lock →
+    // requirements.lock → uv on PATH → pip) so the gate always sees the
+    // owning toolchain.
+    // (C0: lane ai delegate uv/pip — E2E này chạy đường compat tường
+    // minh (cách duy nhất được hỗ trợ cho lane delegate). Tool chọn
+    // giống thứ tự của lane để gate luôn thấy đúng toolchain.)
+    let compat_tool = if project_path.join("uv.lock").exists() {
+        "uv"
+    } else if project_path.join("requirements.lock").exists() {
+        "pip"
+    } else if Command::new("uv").arg("--version").output().is_ok() {
+        "uv"
+    } else {
+        "pip"
+    };
+
     // AI scaffold has pyproject.toml but no initial deps
     // Run `mgc add` to create lockfile before `mgc install`
     let add_output = Command::new(&mgc)
         .arg("add")
         .arg("pytest") // Add pytest as a dev dependency
         .current_dir(&project_path)
+        .env("MGC_COMPAT_RUNTIME", compat_tool)
         .output()
         .expect("mgc add failed");
 
@@ -340,6 +359,7 @@ fn test_ai_full_lifecycle() {
     let install_output = Command::new(&mgc)
         .arg("install")
         .current_dir(&project_path)
+        .env("MGC_COMPAT_RUNTIME", compat_tool)
         .output()
         .expect("mgc install failed");
 
@@ -351,6 +371,16 @@ fn test_ai_full_lifecycle() {
             String::from_utf8_lossy(&install_output.stderr)
         );
     }
+
+    let install_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&install_output.stdout),
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    assert!(
+        install_combined.contains("COMPATIBILITY MODE"),
+        "compat install must announce itself:\n{install_combined}"
+    );
 
     println!("INSTALL verified");
 

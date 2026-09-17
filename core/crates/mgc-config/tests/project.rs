@@ -356,3 +356,32 @@ fn non_cicd_has_no_cicd_config() {
     let web = ProjectConfig::from_scaffold("r", "web", "", vec![], "", vec![]);
     assert!(web.cicd.is_none());
 }
+
+#[test]
+fn unsigned_artifact_escape_is_per_ecosystem_only() {
+    use mgc_config::project::unsigned_artifact_allowed;
+    let allowed = vec!["python".to_string(), " Go ".to_string()];
+    assert!(unsigned_artifact_allowed(&allowed, "python"));
+    assert!(unsigned_artifact_allowed(&allowed, "go"));
+    assert!(!unsigned_artifact_allowed(&allowed, "rust"));
+    assert!(!unsigned_artifact_allowed(&[], "python"));
+    // A "*" wildcard never opts anything out.
+    assert!(!unsigned_artifact_allowed(&["*".to_string()], "python"));
+}
+
+#[test]
+fn security_config_parses_unsigned_escape_list() {
+    use mgc_config::project::ProjectConfig;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.toml"),
+        "name = \"x\"\necosystem = \"lib\"\n[security]\nallow_unsigned_artifacts = [\"python\"]\n",
+    )
+    .unwrap();
+    let cfg = ProjectConfig::load(dir.path()).unwrap().unwrap();
+    let security = cfg.security.unwrap();
+    assert_eq!(
+        security.allow_unsigned_artifacts,
+        Some(vec!["python".to_string()])
+    );
+}

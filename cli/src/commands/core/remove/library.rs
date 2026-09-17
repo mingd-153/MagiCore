@@ -45,8 +45,28 @@ use std::sync::Arc;
 
 use crate::commands::core::shared;
 
-pub async fn remove(packages: Vec<String>) -> Result<()> {
+pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): TypeScript rides the native web engine;
+    // every other lib language delegates to its toolchain (compat only).
+    // (Tường lửa C0: TypeScript đi engine web native; ngôn ngữ lib khác
+    // delegate toolchain.)
+    let language = mgc_lib_adapter::detect_language(&root).and_then(|lang| {
+        if lang == mgc_lib_adapter::LibLanguage::Ts {
+            Some("ts")
+        } else {
+            None
+        }
+    });
+    crate::commands::dep_gate::gate_full(
+        "lib",
+        language,
+        crate::commands::dep_gate::DepOp::Remove,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = lib_adapter();
     shared::remove(&*adapter, &root, packages, true).await
 }

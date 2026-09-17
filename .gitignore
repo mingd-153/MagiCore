@@ -143,3 +143,5 @@ tools/*/docs/
 !CHANGELOG.md
 !CONTRIBUTING.md
 packaging/artifacts/
+
+.claude

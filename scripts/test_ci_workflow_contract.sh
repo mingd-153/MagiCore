@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ALL_CORE="$ROOT/.github/workflows/all-core-lifecycle.yml"
+ALL_CORE="$ROOT/.github/workflows/delegated-compatibility-matrix.yml"
 RELEASE="$ROOT/.github/workflows/release.yml"
 SECURITY="$ROOT/.github/workflows/security.yml"
 LOCAL_RUNNER="$ROOT/scripts/run_all_core_tests.sh"
@@ -14,16 +14,16 @@ fail() {
   exit 1
 }
 
-grep -q '^  pull_request:' "$ALL_CORE" || fail "all-core lifecycle must run on pull requests"
-grep -q '"core/\*\*"' "$ALL_CORE" || fail "all-core lifecycle path filter misses the core directory"
-grep -q '"fix/\*\*"' "$ALL_CORE" || fail "all-core lifecycle must run on RC fix branches"
+grep -q '^  pull_request:' "$ALL_CORE" || fail "delegated-compatibility matrix must run on pull requests"
+grep -q '"core/\*\*"' "$ALL_CORE" || fail "delegated-compatibility matrix path filter misses the core directory"
+grep -q '"fix/\*\*"' "$ALL_CORE" || fail "delegated-compatibility matrix must run on RC fix branches"
 grep -q '"fix/\*\*"' "$ROOT/.github/workflows/ci.yml" || fail "CI must run on RC fix branches"
 grep -q '".github/workflows/security.yml"' "$SECURITY" || fail "security workflow changes must retrigger security checks"
 grep -q '82a92a6e8fbeee089604da2575dc567ae9ddeaff' "$ROOT/.github/workflows/ci.yml" && fail "CI contains the invalid rust-cache SHA"
 grep -q '6323deb102c322ba6fcbdcafc7e3dddab59af2b6' "$ROOT/.github/workflows/ci.yml" || fail "CI rust-cache pin must resolve to v2.9.2 (latest, node24)"
 grep -q '7b1c307e0dcbda6122208f10795a713336a9b35a' "$ROOT/.github/workflows/ci.yml" && fail "CI contains the broken Rust toolchain pin"
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ROOT/.github/workflows/ci.yml" || fail "CI Rust toolchain pin must resolve to stable"
-grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ALL_CORE" || fail "all-core Rust toolchain pin must resolve to stable"
+grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ALL_CORE" || fail "delegated-compatibility Rust toolchain pin must resolve to stable"
 
 # Verify GitHub Actions SHA pins (real commit refs)
 checkout_sha='3d3c42e5aac5ba805825da76410c181273ba90b1' # v7.0.1 real
@@ -31,10 +31,10 @@ setup_node_sha='820762786026740c76f36085b0efc47a31fe5020' # v7.0.0 real
 setup_python_sha='5fda3b95a4ea91299a34e894583c3862153e4b97' # v7.0.0 real
 setup_go_sha='b7ad1dad31e06c5925ef5d2fc7ad053ef454303e' # v7.0.0 real
 
-grep -q "actions/checkout@${checkout_sha}" "$ALL_CORE" || fail "all-core checkout SHA must be v7.0.1 real commit"
-grep -q "actions/setup-node@${setup_node_sha}" "$ALL_CORE" || fail "all-core setup-node SHA must be v7.0.0 real commit"
-grep -q "actions/setup-python@${setup_python_sha}" "$ALL_CORE" || fail "all-core setup-python SHA must be v7.0.0 real commit"
-grep -q "actions/setup-go@${setup_go_sha}" "$ALL_CORE" || fail "all-core setup-go SHA must be v7.0.0 real commit"
+grep -q "actions/checkout@${checkout_sha}" "$ALL_CORE" || fail "delegated-compatibility checkout SHA must be v7.0.1 real commit"
+grep -q "actions/setup-node@${setup_node_sha}" "$ALL_CORE" || fail "delegated-compatibility setup-node SHA must be v7.0.0 real commit"
+grep -q "actions/setup-python@${setup_python_sha}" "$ALL_CORE" || fail "delegated-compatibility setup-python SHA must be v7.0.0 real commit"
+grep -q "actions/setup-go@${setup_go_sha}" "$ALL_CORE" || fail "delegated-compatibility setup-go SHA must be v7.0.0 real commit"
 
 # Cross-check pinned SHAs against the REAL upstream tag refs via git
 # ls-remote — a self-fulfilling hardcoded SHA list proves nothing, so the
@@ -81,14 +81,14 @@ else
 fi
 
 setup_go_count="$(grep -c "actions/setup-go@${setup_go_sha}" "$ALL_CORE")"
-[[ "$setup_go_count" -eq 4 ]] || fail "all-core lifecycle must provision pinned Go for all four core jobs"
+[[ "$setup_go_count" -eq 4 ]] || fail "delegated-compatibility matrix must provision pinned Go for all four core jobs"
 go_version_count="$(grep -c 'go-version: "1.27.1"' "$ALL_CORE")"
-[[ "$go_version_count" -eq 4 ]] || fail "all-core lifecycle must pin Go 1.27.1 for all four core jobs"
+[[ "$go_version_count" -eq 4 ]] || fail "delegated-compatibility matrix must pin Go 1.27.1 for all four core jobs"
 grep -q "actions/setup-go@${setup_go_sha}" "$RELEASE" || fail "release builds must provision pinned Go for esbuild-rs"
 grep -q 'go-version: "1.27.1"' "$RELEASE" || fail "release builds must pin Go 1.27.1"
 
 if grep -Eq 'uses: [^ ]+@(v[0-9]+|main|master|stable|latest)([[:space:]]|$)' "$ALL_CORE"; then
-  fail "all-core workflow contains floating action references"
+  fail "delegated-compatibility workflow contains floating action references"
 fi
 
 grep -q 'App: SKIP' "$LOCAL_RUNNER" && fail "local all-core runner must not convert App failures into skips"
@@ -120,7 +120,7 @@ for section in "$web_section" "$ai_section" "$app_section" "$lib_section"; do
 done
 
 if grep -Eq '\|\|[[:space:]]*(true|echo)|exit[[:space:]]+0[[:space:]]*#.*skip' "$ALL_CORE"; then
-  fail "all-core lifecycle contains a pass-through bypass"
+  fail "delegated-compatibility matrix contains a pass-through bypass"
 fi
 
 # Anti-overclaim: the workflow verifies Web/AI/App/Lib only. Its name and
@@ -129,7 +129,7 @@ fi
 # Chống overclaim: workflow chỉ verify Web/AI/App/Lib — tên và summary
 # không được claim 9 core trước khi job lifecycle của các core kia tồn tại.
 if grep -Eq '^name:[[:space:]]+All-Core' "$ALL_CORE"; then
-  fail "workflow name overclaims: only Web/AI/App/Lib have lifecycle jobs — rename to Primary Four-Core or add all 9 cores"
+  fail "workflow name overclaims: only Web/AI/App/Lib have lifecycle jobs — keep the Delegated Compatibility name or add all 9 cores"
 fi
 if grep -q 'ALL CORES' "$ALL_CORE"; then
   fail "workflow summary overclaims 'ALL CORES' while covering only four cores"
@@ -142,10 +142,23 @@ contract_line="$(grep -n 'name: Set artifact names' "$RELEASE" | head -1 | cut -
 ref_count="$(grep -c 'GITHUB_REF_NAME' "$RELEASE" || true)"
 [[ "$ref_count" -eq 1 ]] || fail "resolved release version must be reused downstream"
 
-grep -q '6 SBOMs' "$RELEASE" || fail "release summary must require all six SBOMs"
+grep -q '8 SBOMs' "$RELEASE" || fail "release summary must require all eight SBOMs (4 combos x all/web since macOS arm64 item 12)"
 grep -q 'Windows doesn.t generate SBOM' "$RELEASE" && fail "Windows SBOM must not be silently excluded"
 
 grep -q 'cargo-audit --version 0.22.2' "$SECURITY" || fail "cargo-audit pin is stale"
 grep -q 'OSV_VERSION="2.5.1"' "$SECURITY" || fail "OSV-Scanner pin is stale"
+
+# T0.5 installer freshness: the embedded SHA-256 in dev/cicd.rs must be
+# non-empty AND must match scripts/install-from-gh.sh at the pinned
+# commit — a stale checksum fails the pipeline it generates.
+# (Portable sed: BSD grep on macOS runners has no -P.)
+# (Tươi checksum installer: SHA-256 nhúng phải khác rỗng VÀ khớp file ở
+# commit ghim — checksum cũ làm fail pipeline nó sinh ra.)
+installer_sha="$(sed -n 's/.*MGC_INSTALLER_SHA: &str = "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$ROOT/cli/src/commands/core/dev/cicd.rs" | head -n 1)"
+[[ -n "$installer_sha" ]] || fail "installer commit pin is missing"
+embedded_sha256="$(grep -A1 'MGC_INSTALLER_SHA256: &str' "$ROOT/cli/src/commands/core/dev/cicd.rs" | sed -n 's/.*"\([0-9a-f][0-9a-f]*\)".*/\1/p' | head -n 1)"
+[[ -n "$embedded_sha256" ]] || fail "installer checksum is not pinned (MGC_INSTALLER_SHA256 empty)"
+expected_sha256="$(git -C "$ROOT" show "${installer_sha}:scripts/install-from-gh.sh" | shasum -a 256 | awk '{print $1}')"
+[[ "$embedded_sha256" == "$expected_sha256" ]] || fail "installer checksum is stale for the pinned commit"
 
 echo "PASS: CI workflow contract"

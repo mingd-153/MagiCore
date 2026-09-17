@@ -2850,7 +2850,10 @@ name = "mgc-lockfile"
 version = "1.1.0-rc.6"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
+ "fs2",
+ "libc",
  "mgc-crypto",
  "mgc-types",
  "serde",
@@ -2860,6 +2863,7 @@ dependencies = [
  "thiserror 1.0.69",
  "toml",
  "toml_edit",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

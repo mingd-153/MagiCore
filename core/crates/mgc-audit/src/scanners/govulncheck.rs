@@ -335,6 +335,13 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 /// Audit Go dependencies using govulncheck (source mode, `./...`).
 /// Requires: govulncheck on PATH, go.mod in the project root.
 /// Audit dependency Go bằng govulncheck (source mode, `./...`).
+///
+/// DELEGATED: advisory evaluation runs inside the external `govulncheck`
+/// binary (not the MGC advisory engine) until the native OSV-based
+/// evaluation lands — audit-via-tool, never claimed as native.
+/// DELEGATED: đánh giá advisory chạy trong binary ngoài `govulncheck`
+/// (không phải engine advisory của MGC) cho tới khi cơ chế đánh giá native
+/// qua OSV xong — audit qua tool, không bao giờ tính là native.
 pub async fn audit_go(project_root: &Path) -> MgResult<AuditReport> {
     if !project_root.join("go.mod").is_file() {
         return Ok(AuditReport::scanner_failed(

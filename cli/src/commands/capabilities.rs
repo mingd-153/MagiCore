@@ -47,6 +47,60 @@ fn capabilities_for_core(core: &str) -> Result<&'static [Capability]> {
     Ok(caps)
 }
 
+/// Dependency ownership per core, derived from the C0 firewall table
+/// (`dep_gate::owner_for`, language-unaware conservative branch) — the
+/// SINGLE machine-readable source the lifecycle matrix cross-checks
+/// against (T0.4). Shape per operation: {"owner", "tools"}; cores with
+/// per-language splits additionally carry a "languages" map with ONLY
+/// the differing languages.
+/// Quyền sở hữu dependency từng core, suy ra từ bảng tường lửa C0 —
+/// nguồn máy-đọc DUY NHẤT matrix cross-check (T0.4).
+pub fn dependency_ownership(core: &str) -> serde_json::Value {
+    use crate::commands::dep_gate::{DepOp, DepOwner, SPLIT_LANGUAGES, owner_for};
+    fn ops_for(core: &str, language: Option<&str>) -> serde_json::Value {
+        let ops = [
+            DepOp::Install,
+            DepOp::Add,
+            DepOp::Remove,
+            DepOp::Update,
+            DepOp::List,
+        ];
+        let mut map = serde_json::Map::new();
+        for op in ops {
+            let (owner, tools) = match owner_for(core, language, op) {
+                DepOwner::Native => ("mgc-native", Vec::new()),
+                DepOwner::Delegated { tools } => (
+                    "delegated",
+                    tools.iter().map(|tool| (*tool).to_string()).collect(),
+                ),
+                DepOwner::Unsupported => ("unsupported", Vec::new()),
+            };
+            map.insert(
+                op.as_str().to_string(),
+                serde_json::json!({"owner": owner, "tools": tools}),
+            );
+        }
+        serde_json::Value::Object(map)
+    }
+    let base = ops_for(core, None);
+    let mut languages = serde_json::Map::new();
+    for language in SPLIT_LANGUAGES {
+        let split = ops_for(core, Some(language));
+        if split != base {
+            languages.insert((*language).to_string(), split);
+        }
+    }
+    let mut root = serde_json::Map::new();
+    root.insert("operations".to_string(), base);
+    if !languages.is_empty() {
+        root.insert(
+            "languages".to_string(),
+            serde_json::Value::Object(languages),
+        );
+    }
+    serde_json::Value::Object(root)
+}
+
 /// `mgc capabilities [--core <core>]` — with `--core`, prints the single
 /// chotted shape; without it, prints all built cores (the lifecycle matrix
 /// consumes the all-cores shape).
@@ -60,6 +114,7 @@ pub fn run(core: Option<&str>) -> Result<()> {
                 "version": env!("CARGO_PKG_VERSION"),
                 "core": name,
                 "capabilities": caps,
+                "dependency_ownership": dependency_ownership(name),
                 "everything_else": "unsupported",
             });
             println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -78,6 +133,7 @@ pub fn run(core: Option<&str>) -> Result<()> {
                 cores.push(serde_json::json!({
                     "core": name,
                     "capabilities": caps,
+                    "dependency_ownership": dependency_ownership(name),
                     "everything_else": "unsupported",
                 }));
             }

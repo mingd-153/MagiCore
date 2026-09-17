@@ -236,3 +236,41 @@ mode = "single"
 
     assert!(discover_workspace_projects(dir.path()).unwrap().is_none());
 }
+
+#[cfg(feature = "clo")]
+#[test]
+fn clo_adapter_path_terraform_gates_without_compat() {
+    // T0.3-clo-gap: terraform on the adapter path gates as delegated —
+    // native mode fails closed naming --compat-runtime (no spawn here,
+    // the gate decision is the whole assertion).
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("main.tf"), "terraform {}\n").unwrap();
+    let err = clo_adapter_path_gate(dir.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("--compat-runtime"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(feature = "clo")]
+#[test]
+fn clo_adapter_path_cdk_skips_gate_natively() {
+    // CDK rides the native web engine inside the adapter — no gate, no
+    // compat needed.
+    let dir = tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.toml"),
+        "name = \"x\"\n[cloud]\ntype = \"cdk\"\n",
+    )
+    .unwrap();
+    clo_adapter_path_gate(dir.path()).unwrap();
+}
+
+#[cfg(feature = "clo")]
+#[test]
+fn clo_adapter_path_undetected_type_fails_closed() {
+    // No detectable cloud type is never assumed native.
+    let dir = tempdir().unwrap();
+    let err = clo_adapter_path_gate(dir.path()).unwrap_err();
+    assert!(!err.to_string().is_empty());
+}

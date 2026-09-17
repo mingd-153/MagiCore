@@ -6,7 +6,7 @@ use crate::commands::core::install::app::{
     language, manifest_hint, project_root, run_tool, tool_command,
 };
 
-pub async fn remove(packages: Vec<String>) -> Result<()> {
+pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
     let lang = language(&root)?;
     if packages.is_empty() {
@@ -15,6 +15,16 @@ pub async fn remove(packages: Vec<String>) -> Result<()> {
     let Some(mut cmd) = tool_command(lang, "remove") else {
         return Err(manifest_hint(lang, "remove"));
     };
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): single control path.
+    // (Tường lửa C0: đường điều khiển duy nhất.)
+    crate::commands::dep_gate::gate(
+        "app",
+        crate::commands::dep_gate::DepOp::Remove,
+        Some(cmd.tool.as_str()),
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     cmd.args.extend(
         packages
             .iter()

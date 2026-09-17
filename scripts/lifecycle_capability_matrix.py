@@ -398,28 +398,28 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
-        # Phase 2 (2026-09-16): app/flutter resolves+fetches+materializes
-        # via the native pub.dev engine (mgc-resolver) — mgc OWNS the
-        # install lifecycle, no `flutter pub get` spawn. Verdict stays
-        # honest (evidence: unit + mockito).
-        # (Phase 2: app/flutter resolve+fetch+materialize qua engine pub.dev
-        # native (mgc-resolver) — mgc GIỮ lifecycle install, không spawn
-        # `flutter pub get`. Verdict giữ trung thực (unit + mockito).)
+        # C0 (T0.3, 2026-09-17): the invoked install lane runs
+        # `flutter pub get` for real — delegated, never mgc-native, even
+        # though a native pub.dev resolve engine exists (unwired to the
+        # lane; Phase C). The C0 firewall refuses this lane without an
+        # explicit --compat-runtime opt-in.
+        # (C0: lane install gọi `flutter pub get` thật — delegated, không
+        # bao giờ mgc-native, dù engine resolve pub.dev native tồn tại
+        # (chưa nối vào lane; Phase C).)
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        # Native pub.dev engine exists (unit + mockito evidence).
-        # (Engine pub.dev native tồn tại (evidence unit + mockito).)
-        "install_owner": "native-engine",
-        # Native pub.dev engine exists (unit + mockito evidence).
-        # (Engine pub.dev native tồn tại (evidence unit + mockito).)
-        "dependency_owner": "mgc-native",
-        "note": "native-engine: exists, evidence: unit+mockito",
+        "install_owner": "plain-delegation",
+        # P0-D/T0.4: flutter owns the app/flutter dependency lifecycle
+        # (lane spawns `flutter pub get`; C0-gated).
+        # (P0-D/T0.4: flutter giữ lifecycle dependency app/flutter.)
+        "dependency_owner": "delegated",
+        "note": "lane delegates to `flutter pub get` (C0-gated); native pub.dev resolve engine exists but is unwired to the lane (Phase C)",
         "owner_by_operation": {
-            "resolve": "mgc",                # mgc pub.dev API engine resolves
-            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
-            "fetch": "mgc",                  # mgc downloads the archive
-            "store": "magicore-shared-cas",  # blake3 CAS import
-            "materialize": "mgc",            # mgc writes hosted/pub.dev layout
+            "resolve": "flutter",            # lane runs `flutter pub get`
+            "lock": "flutter",               # pubspec.lock owned by flutter
+            "fetch": "flutter",              # flutter downloads the archive
+            "store": "flutter-pub-cache",    # no shared mgc CAS on this lane
+            "materialize": "flutter",        # flutter writes .dart_tool
         },
     },
     # ===== Phase 2 native app lanes (2026-09-16) — evidence-only until
@@ -438,15 +438,23 @@ LANES = [
         "scaffold": ["create-app", "swift", "test-app"],
         "steps": [("install", ["install"])],
         "required_dims": ["create", "install"],
-        "install_owner": "native-engine",
-        "dependency_owner": "mgc-native",
-        "note": "native SwiftPM registry engine exists, evidence: unit+mockito",
+        # C0 (T0.3, 2026-09-17): the invoked install lane runs
+        # `swift package resolve` for real — delegated, never mgc-native,
+        # even though a native SwiftPM registry engine exists for
+        # registry packages (unwired to the lane; Phase C). Git-only
+        # dependencies stay default-blocked.
+        # (C0: lane install chạy `swift package resolve` thật —
+        # delegated.)
+        "install_owner": "plain-delegation",
+        # P0-D/T0.4: swift owns the app/swift dependency lifecycle.
+        "dependency_owner": "delegated",
+        "note": "lane delegates to `swift package resolve` (C0-gated); native SwiftPM registry engine exists but is unwired to the lane (Phase C); git-only deps default-blocked",
         "owner_by_operation": {
-            "resolve": "mgc",
-            "lock": "mgc",
-            "fetch": "mgc",
-            "store": "magicore-shared-cas",
-            "materialize": "mgc",
+            "resolve": "swift",
+            "lock": "swift",
+            "fetch": "swift",
+            "store": "swift-package-cache",
+            "materialize": "swift",
         },
     },
     {
@@ -457,15 +465,21 @@ LANES = [
         "scaffold": ["create-app", "objc", "test-app"],
         "steps": [("install", ["install"])],
         "required_dims": ["create", "install"],
-        "install_owner": "native-engine",
-        "dependency_owner": "mgc-native",
-        "note": "native CocoaPods CDN engine exists (Podfile.lock sha1 verify), evidence: unit+mockito",
+        # C0 (T0.3, 2026-09-17): the invoked install lane runs
+        # `xcodebuild -resolvePackageDependencies` for real — delegated;
+        # no ObjC-native resolve engine exists at all.
+        # (C0: lane install chạy xcodebuild thật — delegated; không có
+        # engine resolve ObjC native nào.)
+        "install_owner": "plain-delegation",
+        # P0-D/T0.4: xcodebuild owns the app/objc dependency lifecycle.
+        "dependency_owner": "delegated",
+        "note": "lane delegates to `xcodebuild -resolvePackageDependencies` (C0-gated); no ObjC-native engine exists",
         "owner_by_operation": {
-            "resolve": "mgc",
-            "lock": "mgc",
-            "fetch": "mgc",
-            "store": "magicore-shared-cas",
-            "materialize": "mgc",
+            "resolve": "xcodebuild",
+            "lock": "xcodebuild",
+            "fetch": "xcodebuild",
+            "store": "xcode-derived-data",
+            "materialize": "xcodebuild",
         },
     },
     {
@@ -476,15 +490,24 @@ LANES = [
         "scaffold": ["create-app", "react-native", "test-app"],
         "steps": [("install", ["install"])],
         "required_dims": ["create", "install"],
-        "install_owner": "native-engine",
-        "dependency_owner": "mgc-native",
-        "note": "layered: JS via web engine + Android gradle.lockfile via Maven engine + iOS Podfile.lock via CocoaPods CDN, evidence: unit+mockito",
+        # C0 (T0.3, 2026-09-17): React Native has PER-TIER ownership (no
+        # single-row native label): JS tier rides the web pipeline, Android
+        # tier resolves via the native Maven engine, iOS tier verifies
+        # Podfile.lock via the CocoaPods CDN engine — but the invoked
+        # `install-app` lane has NO runner and errors before any spawn, so
+        # the lane as-invoked supports no install lifecycle: unsupported.
+        # (C0: React Native sở hữu PER-TIER (không nhãn native đơn dòng):
+        # lane install không có runner nên lỗi — unsupported.)
+        "install_owner": "plain-delegation",
+        # P0-D/T0.4: no install lifecycle exists on the invoked lane.
+        "dependency_owner": "unsupported",
+        "note": "per-tier: js=web-pipeline, android=Maven-engine, ios=CocoaPods-CDN-verify; invoked lane has no runner and errors (fail-closed); iOS tier fail-closed without Podfile.lock",
         "owner_by_operation": {
-            "resolve": "mgc",
-            "lock": "mgc",
-            "fetch": "mgc",
-            "store": "magicore-shared-cas",
-            "materialize": "mgc",
+            "resolve": "mgc-per-tier",
+            "lock": "unsupported-no-runner",
+            "fetch": "unsupported-no-runner",
+            "store": "unsupported-no-runner",
+            "materialize": "unsupported-no-runner",
         },
     },
     # ===== Evidence-only lanes (P0-6, Tech Lead 2026-09-15) =====
@@ -1462,6 +1485,118 @@ def validate_dependency_owners() -> int:
     return 0
 
 
+def check_dep_gate_consistency(binary_ownership: dict, lanes: list) -> list:
+    """Pure cross-check: matrix lane `dependency_owner` vs the binary's
+    `mgc capabilities --json` dependency_ownership table (install op).
+    Both directions fail — a lane claiming native the binary denies is
+    laundering, and a lane denying native the binary proves is stale.
+    `unsupported` on the binary side accepts matrix `unsupported` or
+    `scaffold-only` (both mean "no supported install lifecycle").
+    (Đối chiếu thuần: `dependency_owner` của lane matrix với bảng của
+    binary. Cả hai chiều đều fail.)
+    `binary_ownership`: {core: {"install": owner, "languages": {lang:
+    owner}}} with owners mgc-native | delegated | unsupported. Matrix
+    lane languages map to gate languages (typescript->ts,
+    react-native->rn, others identical).
+    Returns the violation list (empty = consistent)."""
+    expected = {
+        "mgc-native": ("mgc-native",),
+        "delegated": ("delegated",),
+        "unsupported": ("unsupported", "scaffold-only"),
+    }
+    language_alias = {"typescript": "ts", "react-native": "rn"}
+    violations = []
+    for lane in lanes:
+        tag = f"{lane['core']}/{lane['language']}"
+        claimed = lane.get("dependency_owner")
+        entry = binary_ownership.get(lane["core"])
+        if entry is None:
+            violations.append(f"{tag}: core missing from binary ownership table")
+            continue
+        gate_lang = language_alias.get(lane["language"], lane["language"])
+        truth = entry.get("languages", {}).get(gate_lang)
+        if truth is None:
+            truth = entry.get("install")
+        if truth is None:
+            violations.append(f"{tag}: install ownership missing from binary table")
+            continue
+        if claimed not in expected.get(truth, ()):
+            violations.append(
+                f"{tag}: matrix claims '{claimed}' but the binary owns "
+                f"install as '{truth}'"
+            )
+    return violations
+
+
+def validate_dep_gate_consistency(mgc_bin=None) -> int:
+    """T0.4 binary↔matrix consistency gate: shell `mgc capabilities` and
+    require every lane's `dependency_owner` to agree with the C0 firewall
+    table for the install op. No binary → honest UNAVAILABLE record
+    (internal taxonomy gates above still enforced; release-gating runs
+    MUST provide the binary).
+    (Cổng nhất quán T0.4: gọi `mgc capabilities` và bắt mọi lane khớp
+    bảng tường lửa C0 ở op install. Không có binary → ghi UNAVAILABLE
+    trung thực.)"""
+    import subprocess
+
+    candidates = []
+    if mgc_bin:
+        candidates.append(mgc_bin)
+    env_bin = os.environ.get("MGC_BIN")
+    if env_bin:
+        candidates.append(env_bin)
+    candidates.append("./target/debug/mgc")
+    binary = next((c for c in candidates if os.path.isfile(c)), None)
+    if binary is None:
+        print(
+            "dep-gate cross-check: UNAVAILABLE (no mgc binary) — "
+            "internal taxonomy gates still enforced; release runs must "
+            "provide the binary"
+        )
+        return 0
+    try:
+        raw = subprocess.run(
+            [binary, "capabilities"], capture_output=True, text=True, timeout=120
+        )
+    except (OSError, subprocess.SubprocessError) as err:
+        print(f"DEP-GATE CROSS-CHECK VIOLATION: cannot run binary: {err}", file=sys.stderr)
+        return 1
+    if raw.returncode != 0:
+        print(
+            "DEP-GATE CROSS-CHECK VIOLATION: `mgc capabilities` failed: "
+            f"{raw.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        payload = json.loads(raw.stdout)
+        ownership = {}
+        for core in payload["cores"]:
+            table = core["dependency_ownership"]
+            entry = {
+                "install": table["operations"]["install"]["owner"],
+                "languages": {
+                    language: cells["install"]["owner"]
+                    for language, cells in table.get("languages", {}).items()
+                },
+            }
+            ownership[core["core"]] = entry
+    except (ValueError, KeyError, TypeError) as err:
+        print(
+            "DEP-GATE CROSS-CHECK VIOLATION: unparseable capabilities "
+            f"payload: {err}",
+            file=sys.stderr,
+        )
+        return 1
+    violations = check_dep_gate_consistency(ownership, LANES)
+    if violations:
+        for v in violations:
+            print(f"DEP-GATE CROSS-CHECK VIOLATION: {v}", file=sys.stderr)
+        return 1
+    print(f"dep-gate cross-check: {len(LANES)} lanes agree with the binary")
+    return 0
+
+
 def print_dependency_owner_summary() -> None:
     """Validate-only report: per-lane dependency_owner table with the
     verdict ceiling it imposes, plus a machine-readable JSON block on
@@ -2313,7 +2448,11 @@ def main() -> int:
         # sạch — taxonomy vỡ không bao giờ được có cái bảng trông như
         # báo cáo.)
         dep_rc = validate_dependency_owners()
-        if owner_rc or adapter_rc or dep_rc:
+        # T0.4: the binary↔matrix consistency gate joins the validate-only
+        # set (mgc_bin resolved above from MGC_LIFECYCLE_BIN or default).
+        # (T0.4: cổng nhất quán binary↔matrix gia nhập bộ validate-only.)
+        dep_gate_rc = validate_dep_gate_consistency(mgc_bin)
+        if owner_rc or adapter_rc or dep_rc or dep_gate_rc:
             return 1
         print_dependency_owner_summary()
         return 0

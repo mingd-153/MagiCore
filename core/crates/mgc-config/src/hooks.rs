@@ -8,7 +8,58 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const FORBIDDEN_HOOK_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx"];
+const FORBIDDEN_HOOK_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx", "deno"];
+
+/// Toolchains that must never run on dependency-lifecycle hook events:
+/// a hook program is user config, but on a dependency event it would
+/// bypass the C0 ownership firewall through the hooks lane (T0.3/B4).
+/// Non-dependency events keep the rival-only list above.
+/// (Toolchain không bao giờ chạy trên hook event dependency: chương trình
+/// hook là config của user, nhưng trên event dependency nó sẽ vòng qua
+/// tường lửa C0. Event khác giữ danh sách rival-only.)
+const DEPENDENCY_EVENT_TOOLS: &[&str] = &[
+    "npm",
+    "npx",
+    "pnpm",
+    "yarn",
+    "bun",
+    "bunx",
+    "deno",
+    "cargo",
+    "uv",
+    "pip",
+    "pip3",
+    "go",
+    "flutter",
+    "dart",
+    "gradle",
+    "mvn",
+    "dotnet",
+    "swift",
+    "pod",
+    "xcodebuild",
+    "terraform",
+    "pio",
+    "platformio",
+    "west",
+];
+
+/// True for hook events wired into the dependency lifecycle
+/// (pre/post-install/add/remove/update/publish) — hook programs there run
+/// with dependency-operation privilege and must pass the toolchain gate.
+/// (True cho hook event thuộc lifecycle dependency — chương trình hook ở
+/// đó chạy với đặc quyền dependency-op và phải qua cổng toolchain.)
+fn is_dependency_event(event: &str) -> bool {
+    let verb = event
+        .strip_prefix("pre-")
+        .or_else(|| event.strip_prefix("post-"))
+        .unwrap_or(event);
+    matches!(verb, "install" | "add" | "remove" | "update" | "publish")
+}
+// `deno` rides along: rival JS runtimes must never execute on dependency
+// events, matching the Install-scope guard in mgc-exec (allowlist.rs).
+// (Kèm `deno`: runtime JS đối thủ không bao giờ chạy trên event
+// dependency, khớp cổng Install-scope trong mgc-exec.)
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct HooksConfig {
@@ -60,7 +111,7 @@ pub fn run_hooks(project_root: &Path, event: &str) -> Result<()> {
         let Some((program, args)) = argv.split_first() else {
             continue;
         };
-        reject_forbidden_hook_tool(program)?;
+        reject_forbidden_hook_tool(program, event)?;
         let status = std::process::Command::new(program)
             .args(args)
             .current_dir(project_root)
@@ -72,13 +123,20 @@ pub fn run_hooks(project_root: &Path, event: &str) -> Result<()> {
     Ok(())
 }
 
-fn reject_forbidden_hook_tool(program: &str) -> Result<()> {
+fn reject_forbidden_hook_tool(program: &str, event: &str) -> Result<()> {
     let name = Path::new(program)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(program);
-    if FORBIDDEN_HOOK_TOOLS.contains(&name) {
-        bail!("hook command '{name}' is forbidden; use MagiCore-native commands instead");
+    let denied = if is_dependency_event(event) {
+        DEPENDENCY_EVENT_TOOLS
+    } else {
+        FORBIDDEN_HOOK_TOOLS
+    };
+    if denied.contains(&name) {
+        bail!(
+            "hook command '{name}' is forbidden on '{event}'; use MagiCore-native commands instead"
+        );
     }
     Ok(())
 }

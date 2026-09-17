@@ -36,6 +36,19 @@ pub fn generate_optimizations_for_core(
         ),
     });
 
+    // 0b. Unknown RAM guard: memory-derived adapter values (heap sizes,
+    // container limits) would be degenerate from the 0 sentinel — emit the
+    // honest manifest only, never tuned files from a guessed size.
+    // (Chặn RAM unknown: giá trị adapter dẫn xuất từ RAM sẽ suy biến từ
+    // sentinel 0 — chỉ xuất manifest trung thực, không bao giờ ghi file
+    // tuning từ số đoán.)
+    if hw.total_memory_gb == 0 {
+        mgc_ui::warning(
+            "RAM size unknown — skipping memory-derived adapter configs (manifest only).",
+        );
+        return files;
+    }
+
     // 1. Detect runtimes for this project + core — phát hiện runtimes cho project + core này
     let detected_runtimes = runtime_detect::detect_runtimes(project_root, core);
 

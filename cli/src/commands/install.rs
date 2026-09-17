@@ -124,6 +124,42 @@ pub async fn run(
     .await
 }
 
+/// Cloud branch of the adapter-path firewall (T0.3-clo-gap): mirrors
+/// the `clo` CLI lanes exactly — terraform gates as delegated, every
+/// other detected type rides the native web engine inside the adapter.
+/// An undetected type fails closed (never assumed native).
+/// (Nhánh cloud của tường lửa adapter-path: terraform gate delegate,
+/// type khác đi engine web native; type không nhận diện được thì
+/// fail-closed.)
+#[cfg(feature = "clo")]
+fn clo_adapter_path_gate(project_root: &Path) -> Result<()> {
+    use mgc_cloud_adapter::CloudType;
+    match mgc_cloud_adapter::detect_type(project_root) {
+        Some(CloudType::Terraform) => {
+            let compat = crate::commands::dep_gate::from_dep_flag(None)?;
+            crate::commands::dep_gate::gate(
+                "clo",
+                crate::commands::dep_gate::DepOp::Install,
+                Some("terraform"),
+                &compat,
+                Some(&project_root.join(".magicore").join("exec.log")),
+            )
+        }
+        Some(_) => Ok(()),
+        None => Err(crate::error::detect_core_failed("clo")),
+    }
+}
+
+/// No cloud support compiled in — a cloud adapter reaching this path is
+/// a build-configuration error, failed closed.
+/// (Không biên dịch hỗ trợ cloud — adapter cloud tới được đây là lỗi
+/// cấu hình build, fail-closed.)
+#[cfg(not(feature = "clo"))]
+fn clo_adapter_path_gate(project_root: &Path) -> Result<()> {
+    let _ = project_root;
+    Err(crate::error::core_not_in_build("clo"))
+}
+
 async fn install_into_root(
     adapter: &dyn mgc_types::adapter::PackageAdapter,
     project_root: &Path,
@@ -238,6 +274,45 @@ async fn install_into_root(
             style_cmd(&add_cmd)
         ));
         return Ok(());
+    }
+
+    // C0 ownership firewall (T0.3): the adapter path serves MCP +
+    // workspace/monorepo installs — it passes the same gate as the
+    // per-core lanes (tool set comes from the owner table: adapter-routed
+    // lanes cannot name their exact tool here).
+    // Cloud branch (T0.3-clo-gap): CDK/Pulumi projects ride the native
+    // web engine and skip the gate; terraform projects gate as
+    // delegated; an undetected cloud type fails closed (never assumed
+    // native, never silently delegated).
+    // (Tường lửa C0: đường adapter phục vụ MCP + workspace — qua cùng gate
+    // như lane per-core. Nhánh cloud: CDK/Pulumi đi engine web native nên
+    // không qua gate; terraform gate delegate; type không nhận diện được
+    // thì fail-closed.)
+    {
+        use mgc_types::Ecosystem;
+        let core = match adapter.ecosystem() {
+            Ecosystem::Web => "web",
+            Ecosystem::Ai => "ai",
+            Ecosystem::App => "app",
+            Ecosystem::Lib => "lib",
+            Ecosystem::Game => "game",
+            Ecosystem::Iot => "iot",
+            Ecosystem::Cicd => "cicd",
+            Ecosystem::Hardware => "hardware",
+            Ecosystem::Cloud => "",
+        };
+        if !core.is_empty() {
+            let compat = crate::commands::dep_gate::from_dep_flag(None)?;
+            crate::commands::dep_gate::gate(
+                core,
+                crate::commands::dep_gate::DepOp::Install,
+                None,
+                &compat,
+                Some(&project_root.join(".magicore").join("exec.log")),
+            )?;
+        } else {
+            clo_adapter_path_gate(project_root)?;
+        }
     }
 
     let (graph, used_lockfile) = if let Some(graph) =

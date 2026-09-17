@@ -31,6 +31,7 @@ pub async fn add(
     peer: bool,
     no_save: bool,
     global: bool,
+    compat_runtime: Option<String>,
 ) -> Result<()> {
     let root = super::super::shared::core_project_root("game")?;
     let adapter = super::super::shared::core_adapter(&Ecosystem::Game);
@@ -44,6 +45,17 @@ pub async fn add(
         return Ok(());
     }
 
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): the game add lane routes to the
+    // adapter, whose engines delegate (Bevy → cargo).
+    // (Tường lửa C0: lane add game gọi adapter, engine trong đó delegate.)
+    crate::commands::dep_gate::gate(
+        "game",
+        crate::commands::dep_gate::DepOp::Add,
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     shared::add(
         &*adapter,
         &root,

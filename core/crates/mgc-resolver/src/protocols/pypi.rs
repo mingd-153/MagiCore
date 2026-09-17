@@ -212,8 +212,12 @@ impl RegistryProtocol for PypiProtocol {
     }
 }
 
-/// Select the best installable file: universal wheel → host wheel → wheel → sdist.
-/// Chọn file cài tốt nhất: wheel phổ quát → wheel host → wheel → sdist.
+/// Select the best installable file: universal wheel → host wheel →
+/// sdist. There is deliberately NO "any wheel" fallback: installing a
+/// wheel built for another platform is a silent wrong-artifact install
+/// (V1.2: fail-closed — no file at all beats the wrong file).
+/// Chọn file cài tốt nhất: wheel phổ quát → wheel host → sdist. Cố ý
+/// KHÔNG fallback "wheel bất kỳ".
 fn select_file(files: &[PypiFile]) -> Option<&PypiFile> {
     if let Some(f) = files.iter().find(|f| is_universal_wheel(f)) {
         return Some(f);
@@ -222,9 +226,6 @@ fn select_file(files: &[PypiFile]) -> Option<&PypiFile> {
         .iter()
         .find(|f| f.packagetype == "bdist_wheel" && wheel_platform_matches_host(&f.filename))
     {
-        return Some(f);
-    }
-    if let Some(f) = files.iter().find(|f| f.packagetype == "bdist_wheel") {
         return Some(f);
     }
     files.iter().find(|f| f.packagetype == "sdist")

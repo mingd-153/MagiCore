@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// `rename_all = "lowercase"` cannot emit hyphenated names.
 /// Serialize dạng lowercase; `cloud-module` cần rename tường minh vì
 /// `rename_all = "lowercase"` không sinh được tên có gạch nối.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EcosystemTag {
     /// JavaScript/TypeScript packages from npm-compatible registries.

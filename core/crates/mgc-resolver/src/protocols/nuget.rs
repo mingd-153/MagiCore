@@ -393,34 +393,70 @@ impl RegistryProtocol for NuGetProtocol {
                 "GET {nuspec_url} returned {nuspec_status} — the nuspec is required to build the graph (fail-closed)"
             )));
         }
-        // Merge every group's deps (host TFM unknown); a group with an
-        // explicit targetFramework is recorded as a marker.
-        // (Gộp dep của mọi group (TFM host không biết); group có
-        // targetFramework tường minh được ghi marker.)
+        // Per-group collection first: merging every TFM group's deps
+        // would silently build the wrong graph when frameworks diverge
+        // (V1.2: no silent merge — identical sets merge, divergent sets
+        // fail closed until the consumer target framework is plumbed
+        // through from the project manifest, Phase C).
+        // (Thu thập từng group trước: gộp dep mọi group TFM sẽ âm thầm
+        // dựng sai graph khi các framework khác nhau.)
         // tag_blocks keeps the OPENING tag, so targetFramework is readable;
         // element_blocks alone would return only the inner content.
         // (tag_blocks giữ tag MỞ nên đọc được targetFramework; chỉ dùng
         // element_blocks sẽ chỉ trả nội dung bên trong.)
+        let mut grouped: Vec<(Option<String>, Vec<(String, String)>)> = Vec::new();
         for group in tag_blocks(&nuspec, "group") {
-            if let Some(tfm) = group_tfm(group) {
-                markers.push(format!("group-tfm:{tfm}"));
+            let tfm = group_tfm(group);
+            if let Some(t) = tfm.as_deref() {
+                markers.push(format!("group-tfm:{t}"));
             }
             // Dependencies are self-closing elements whose data lives in
             // attributes — iterate TAGS (tag_blocks), not inner content.
             // (Dependency là phần tử tự đóng mang dữ liệu trong attribute —
             // duyệt TAG (tag_blocks), không phải nội dung bên trong.)
+            let mut group_deps = Vec::new();
             for dep_xml in tag_blocks(group, "dependency") {
                 let attr = |a: &str| tag_attr(dep_xml, a);
                 let Some(dep_id) = attr("id") else {
                     continue;
                 };
                 match attr("version") {
-                    Some(v) if !v.is_empty() => deps.push((dep_id, v)),
+                    Some(v) if !v.is_empty() => group_deps.push((dep_id, v)),
                     // No version attribute → honest skip with a marker.
                     // (Thiếu attribute version → skip trung thực kèm marker.)
                     _ => markers.push(format!("unresolved-version:{dep_id}")),
                 }
             }
+            grouped.push((tfm, group_deps));
+        }
+        let mut distinct_tfms: Vec<&str> = grouped
+            .iter()
+            .filter_map(|(tfm, _)| tfm.as_deref())
+            .collect();
+        distinct_tfms.sort_unstable();
+        distinct_tfms.dedup();
+        if distinct_tfms.len() > 1 {
+            let mut dep_sets: Vec<Vec<(String, String)>> = grouped
+                .iter()
+                .filter(|(tfm, _)| tfm.is_some())
+                .map(|(_, deps)| {
+                    let mut sorted = deps.clone();
+                    sorted.sort();
+                    sorted
+                })
+                .collect();
+            dep_sets.sort();
+            dep_sets.dedup();
+            if dep_sets.len() > 1 {
+                return Err(MgError::Other(format!(
+                    "multi-target package {id} {version} has divergent dependency sets across frameworks ({}) — target-framework selection is required (fail-closed, no silent merge)",
+                    distinct_tfms.join(", ")
+                )));
+            }
+            markers.push(format!("multi-tfm-identical:{}", distinct_tfms.join(",")));
+        }
+        for (_, group_deps) in &grouped {
+            deps.extend(group_deps.iter().cloned());
         }
 
         let artifact_url = self.nupkg_url(id, &version);

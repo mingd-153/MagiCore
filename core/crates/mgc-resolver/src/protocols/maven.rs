@@ -147,6 +147,107 @@ impl MavenProtocol {
     /// layout `{m2_root}/repository/{gpath}/{artifact}/{version}/` (jar +
     /// pom + published checksums) — readable by `mvn -o`.
     /// Materialize artifact đã resolve vào layout local Maven repository
+    /// Resolve one dependency version: literal → properties →
+    /// dependencyManagement → lazy parent chain → fail-closed error.
+    /// Parent POMs fetch ONLY when needed (an unneeded unreachable parent
+    /// must not break resolution); at most 3 ancestors, cycle-guarded.
+    /// (Resolve version một dependency: literal → properties →
+    /// dependencyManagement → chuỗi parent lười → lỗi fail-closed. POM cha
+    /// chỉ fetch khi cần; tối đa 3 đời, chặn chu trình.)
+    #[allow(clippy::too_many_arguments)]
+    async fn maven_dep_version(
+        &self,
+        pom: &str,
+        group: &str,
+        artifact: &str,
+        version: Option<&str>,
+        props: &mut std::collections::HashMap<String, String>,
+        managed: &mut std::collections::HashMap<(String, String), String>,
+        visited_parents: &mut std::collections::HashSet<String>,
+    ) -> MgResult<String> {
+        // Merge parent knowledge lazily until this dep resolves or the
+        // chain is exhausted (at most 3 ancestor fetches, cycle-guarded;
+        // `current` walks up the chain so grandparents resolve too).
+        // (Merge tri thức cha lười tới khi dep này resolve xong hoặc hết
+        // chuỗi.)
+        //
+        // REVIEW: an empty `<version></version>` is a missing version, not
+        // an empty-string edge — it takes the managed/parent path exactly
+        // like an absent version (real Maven semantics).
+        let version = version.filter(|v| !v.trim().is_empty());
+        let mut current = pom.to_string();
+        for _ in 0..4 {
+            if let Some(raw) = version {
+                if !raw.contains("${") {
+                    return Ok(raw.to_string());
+                }
+                if let Some(resolved) = substitute_properties(raw, props) {
+                    return Ok(resolved);
+                }
+            } else if let Some(pinned) = managed.get(&(group.to_string(), artifact.to_string())) {
+                return Ok(pinned.clone());
+            }
+            match self
+                .merge_parent_data(&current, props, managed, visited_parents)
+                .await?
+            {
+                Some(parent_pom) => current = parent_pom,
+                None => break,
+            }
+        }
+        match version {
+            Some(raw) => Err(MgError::Other(format!(
+                "unresolvable version '{raw}' for {group}:{artifact} — declare a literal version, a <properties> entry, or a resolvable parent POM (fail-closed, no silent drop)"
+            ))),
+            None => Err(MgError::Other(format!(
+                "no version for {group}:{artifact} and no dependencyManagement entry (checked parent chain) — declare one (fail-closed, no silent drop)"
+            ))),
+        }
+    }
+
+    /// Merge ONE ancestor level (properties + managed versions, child
+    /// wins): returns the parent POM text when a new ancestor was merged,
+    /// None when the chain ends here. Unreachable parents fail (needed
+    /// data must not come from nowhere); a missing/unparseable `<parent>`
+    /// block simply ends the chain.
+    /// (Merge MỘT tầng tổ tiên: trả text POM cha khi merge được tầng mới,
+    /// None khi hết chuỗi.)
+    async fn merge_parent_data(
+        &self,
+        pom: &str,
+        props: &mut std::collections::HashMap<String, String>,
+        managed: &mut std::collections::HashMap<(String, String), String>,
+        visited_parents: &mut std::collections::HashSet<String>,
+    ) -> MgResult<Option<String>> {
+        let Some((group, artifact, version)) = parse_parent_coords(pom) else {
+            return Ok(None);
+        };
+        let coordinate = format!("{group}:{artifact}:{version}");
+        if visited_parents.contains(&coordinate) || visited_parents.len() >= 3 {
+            return Ok(None);
+        }
+        visited_parents.insert(coordinate);
+        let url = self.repo_url_for(
+            &group,
+            &artifact,
+            &version,
+            &format!("{artifact}-{version}.pom"),
+        );
+        let (status, parent_pom) = self.get_text(&url).await?;
+        if !(200..300).contains(&status) {
+            return Err(MgError::Network(format!(
+                "GET {url} returned {status} — parent POM is required to resolve versions (fail-closed)"
+            )));
+        }
+        for (key, value) in collect_pom_properties(&parent_pom) {
+            props.entry(key).or_insert(value);
+        }
+        for (key, value) in collect_managed_versions(&parent_pom) {
+            managed.entry(key).or_insert(value);
+        }
+        Ok(Some(parent_pom))
+    }
+
     /// `{m2_root}/repository/{gpath}/{artifact}/{version}/` (jar + pom +
     /// checksum công bố) — đọc được bởi `mvn -o`.
     pub fn materialize(
@@ -252,6 +353,14 @@ impl RegistryProtocol for MavenProtocol {
 
         let mut markers = Vec::new();
         let (deps_xml, packaging) = collect_pom_dependencies(&pom);
+        // Own-POM knowledge first; parent POMs merge lazily below, child
+        // wins on every key (standard Maven inheritance).
+        // (Tri thức POM hiện tại trước; POM cha merge lười bên dưới, con
+        // thắng mọi key.)
+        let mut props = collect_pom_properties(&pom);
+        let mut managed = collect_managed_versions(&pom);
+        let mut visited_parents: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut deps = Vec::new();
         if packaging.as_deref() == Some("pom") {
             // BOM: no transitive graph — the main lock pins the BOM itself.
@@ -273,21 +382,18 @@ impl RegistryProtocol for MavenProtocol {
                     markers.push(format!("optional:{g}:{a}"));
                     continue;
                 }
-                match dep.version.as_deref() {
-                    Some(v) if !v.contains("${") => {
-                        deps.push((format!("{g}:{a}"), v.to_string()));
-                    }
-                    // `${property}` or missing → honest skip; real
-                    // dependencyManagement resolution is P2.1.
-                    // (`${property}` hoặc thiếu → skip trung thực; resolve
-                    // dependencyManagement thật là P2.1.)
-                    other => {
-                        markers.push(format!(
-                            "unresolved-version:{g}:{a}:{}",
-                            other.unwrap_or("")
-                        ));
-                    }
-                }
+                let version = self
+                    .maven_dep_version(
+                        &pom,
+                        g,
+                        a,
+                        dep.version.as_deref(),
+                        &mut props,
+                        &mut managed,
+                        &mut visited_parents,
+                    )
+                    .await?;
+                deps.push((format!("{g}:{a}"), version));
             }
         }
 
@@ -627,6 +733,151 @@ pub fn collect_pom_dependencies(pom: &str) -> (Vec<PomDependency>, Option<String
     (deps, packaging)
 }
 
+/// Properties of one POM: its `<properties>` entries plus the
+/// `project.*` built-ins (groupId/artifactId/version of the POM itself).
+/// Later merges never overwrite keys already present (child wins).
+/// (Properties của một POM: entry `<properties>` cộng built-in
+/// `project.*`. Merge sau không bao giờ ghi đè key đã có (con thắng).)
+pub fn collect_pom_properties(pom: &str) -> std::collections::HashMap<String, String> {
+    let mut props = std::collections::HashMap::new();
+    for block in element_blocks(pom, "properties").iter().take(1) {
+        for (key, value) in pom_direct_entries(block) {
+            props.entry(key).or_insert(value);
+        }
+    }
+    let stripped = remove_element_blocks(pom, "dependencyManagement");
+    let stripped = remove_element_blocks(&stripped, "dependencies");
+    let field = |tag: &str| {
+        element_blocks(&stripped, tag)
+            .first()
+            .map(|s| s.trim().to_string())
+    };
+    if let (Some(group), Some(artifact), Some(version)) =
+        (field("groupId"), field("artifactId"), field("version"))
+    {
+        props.entry("project.groupId".to_string()).or_insert(group);
+        props
+            .entry("project.artifactId".to_string())
+            .or_insert(artifact);
+        props
+            .entry("project.version".to_string())
+            .or_insert(version);
+    }
+    props
+}
+
+/// Direct `key → text` children of a block (nested blocks ignored).
+/// (Các con trực tiếp `key → text` của một khối.)
+fn pom_direct_entries(block: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = block;
+    while let Some(start) = rest.find('<') {
+        if rest[start..].starts_with("</") {
+            break;
+        }
+        let after = &rest[start + 1..];
+        let end = after
+            .find(['>', ' ', '/'])
+            .unwrap_or(after.len());
+        let tag = &after[..end];
+        if tag.is_empty() || tag.starts_with('?') || tag.starts_with('!') {
+            rest = &after[end.min(after.len())..];
+            continue;
+        }
+        let inner = element_blocks(rest, tag).first().map(|s| s.to_string());
+        let Some(text) = inner else {
+            break;
+        };
+        // Advance past this whole element for the next sibling.
+        // (Tiến qua cả phần tử này để tới anh em kế.)
+        if let Some(close) = rest.find(&format!("</{tag}>")) {
+            rest = &rest[close + tag.len() + 3..];
+        } else if let Some(gt) = rest[start..].find('>') {
+            rest = &rest[start + gt + 1..];
+        } else {
+            break;
+        }
+        if text.contains('<') {
+            continue;
+        }
+        out.push((tag.to_string(), text.trim().to_string()));
+    }
+    out
+}
+
+/// `dependencyManagement` versions with literal (non-`${}`) versions:
+/// `(group, artifact) → version`.
+/// (Version `dependencyManagement` dạng literal.)
+pub fn collect_managed_versions(pom: &str) -> std::collections::HashMap<(String, String), String> {
+    let mut managed = std::collections::HashMap::new();
+    for management in element_blocks(pom, "dependencyManagement") {
+        for block in element_blocks(management, "dependencies") {
+            for dep_xml in element_blocks(block, "dependency") {
+                let field = |tag: &str| {
+                    element_blocks(dep_xml, tag)
+                        .first()
+                        .map(|s| s.trim().to_string())
+                };
+                if let (Some(g), Some(a), Some(v)) =
+                    (field("groupId"), field("artifactId"), field("version"))
+                    && !v.contains("${")
+                {
+                    managed.entry((g, a)).or_insert(v);
+                }
+            }
+        }
+    }
+    managed
+}
+
+/// Coordinates of the `<parent>` block, if all three are literal.
+/// (Tọa độ khối `<parent>`, nếu cả ba đều literal.)
+pub fn parse_parent_coords(pom: &str) -> Option<(String, String, String)> {
+    let block = element_blocks(pom, "parent").first()?.to_string();
+    let field = |tag: &str| {
+        element_blocks(&block, tag)
+            .first()
+            .map(|s| s.trim().to_string())
+    };
+    let (g, a, v) = (field("groupId")?, field("artifactId")?, field("version")?);
+    if g.contains("${") || a.contains("${") || v.contains("${") {
+        return None;
+    }
+    Some((g, a, v))
+}
+
+/// Substitute `${key}` from props (iterated: values may nest one level).
+/// Returns None when any `${…}` remains unresolvable.
+/// (Thế `${key}` từ props. Trả None khi còn `${…}` không resolve được.)
+pub fn substitute_properties(
+    raw: &str,
+    props: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let mut current = raw.to_string();
+    for _ in 0..5 {
+        if !current.contains("${") {
+            return Some(current);
+        }
+        let mut next = current.clone();
+        let mut keys: Vec<&String> = props.keys().collect();
+        keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
+        for key in keys {
+            let placeholder = format!("${{{key}}}");
+            if next.contains(&placeholder) {
+                next = next.replace(&placeholder, &props[key]);
+            }
+        }
+        if next == current {
+            return None;
+        }
+        current = next;
+    }
+    if current.contains("${") {
+        None
+    } else {
+        Some(current)
+    }
+}
 /// Project coordinates `(groupId, artifactId)` of a pom.xml: dependency
 /// blocks are stripped first so nested artifactIds can never shadow the
 /// project's own coordinates.

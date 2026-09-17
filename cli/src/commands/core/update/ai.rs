@@ -38,9 +38,25 @@ fn update_args(packages: &[String], tool: &str) -> Vec<String> {
 // only, it does not own this dependency lifecycle.
 // (DELEGATED: uv lock/sync và luồng pip chạy thật — mgc chỉ điều phối,
 // không sở hữu lifecycle dependency này.)
-pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
+pub async fn update(
+    packages: Vec<String>,
+    install: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let root = shared::ai_project_root()?;
     let tool = shared::ai_pick_tool(&root);
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): single control path — uv/pip spawn
+    // only behind an explicit compat opt-in.
+    // (Tường lửa C0: đường điều khiển duy nhất — chỉ spawn uv/pip khi có
+    // compat tường minh.)
+    crate::commands::dep_gate::gate(
+        "ai",
+        crate::commands::dep_gate::DepOp::Update,
+        Some(tool),
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let args = update_args(&packages, tool);
     shared::ai_run_tool(&root, tool, &args)?;
     if packages.is_empty() {

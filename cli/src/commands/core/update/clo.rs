@@ -5,8 +5,27 @@ use anyhow::Result;
 use super::super::shared;
 use mgc_types::Ecosystem;
 
-pub async fn update(packages: Vec<String>, install: bool) -> Result<()> {
+pub async fn update(
+    packages: Vec<String>,
+    install: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let root = shared::core_project_root("clo")?;
+    // C0 ownership firewall (T0.3): terraform delegates; the CDK/Pulumi
+    // branch rides the native web engine and skips the gate.
+    // (Tường lửa C0: terraform delegate; nhánh CDK/Pulumi đi engine web
+    // native nên không qua gate.)
+    let cloud_kind = super::super::dev::clo::cloud_type(&root)?;
+    if cloud_kind == "terraform" {
+        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+        crate::commands::dep_gate::gate(
+            "clo",
+            crate::commands::dep_gate::DepOp::Update,
+            Some("terraform"),
+            &compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
+    }
     let adapter = shared::core_adapter(&Ecosystem::Cloud);
     shared::update(&*adapter, &root, packages, install).await
 }

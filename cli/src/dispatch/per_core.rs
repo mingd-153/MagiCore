@@ -46,6 +46,7 @@ pub fn command_to_dispatch(
         Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
         Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
         Commands::Import { dir } => Some(CommonCommand::Import { dir }),
+        Commands::Migrate { cmd } => Some(CommonCommand::Migrate { cmd }),
         Commands::Sbom {
             format,
             output,
@@ -255,6 +256,7 @@ pub fn command_to_dispatch(
             prefer_dedupe,
             repair,
             offline,
+            compat_runtime,
         } => Some(CoreCommand::InstallWeb {
             packages,
             frozen,
@@ -263,26 +265,69 @@ pub fn command_to_dispatch(
             prefer_dedupe,
             repair,
             offline,
+            compat_runtime,
         }),
-        Commands::InstallGame { packages } => Some(CoreCommand::InstallGame { packages }),
-        Commands::InstallAi { packages, dry_run } => {
-            Some(CoreCommand::InstallAi { packages, dry_run })
-        }
-        Commands::InstallClo { packages } => Some(CoreCommand::InstallClo {
+        Commands::InstallGame {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::InstallGame {
+            packages,
+            compat_runtime,
+        }),
+        Commands::InstallAi {
+            packages,
+            dry_run,
+            compat_runtime,
+        } => Some(CoreCommand::InstallAi {
+            packages,
+            dry_run,
+            compat_runtime,
+        }),
+        Commands::InstallClo {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::InstallClo {
             packages,
             dry_run: false,
+            compat_runtime,
         }),
-        Commands::InstallCicd { packages } => Some(CoreCommand::InstallCicd {
+        Commands::InstallCicd {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::InstallCicd {
             packages,
             dry_run: false,
+            compat_runtime,
         }),
-        Commands::InstallIot { packages } => Some(CoreCommand::InstallIot { packages }),
-        Commands::InstallApp { packages } => Some(CoreCommand::InstallApp {
+        Commands::InstallIot {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::InstallIot {
+            packages,
+            compat_runtime,
+        }),
+        Commands::InstallApp {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::InstallApp {
             packages,
             dry_run: false,
+            compat_runtime,
         }),
-        Commands::InstallLib { packages } => Some(CoreCommand::InstallLib { packages }),
-        Commands::InstallHardware { packages } => Some(CoreCommand::InstallHardware { packages }),
+        Commands::InstallLib {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::InstallLib {
+            packages,
+            compat_runtime,
+        }),
+        Commands::InstallHardware {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::InstallHardware {
+            packages,
+            compat_runtime,
+        }),
         Commands::AddWeb {
             packages,
             dev,
@@ -292,6 +337,9 @@ pub fn command_to_dispatch(
             no_save,
             no_install,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddWeb {
             packages,
             dev,
@@ -301,6 +349,9 @@ pub fn command_to_dispatch(
             no_save,
             install: !no_install,
             global,
+            compat_runtime,
+
+            version,
         }),
         Commands::AddGame {
             packages,
@@ -310,6 +361,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddGame {
             packages,
             dev,
@@ -318,6 +372,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         }),
         Commands::AddAi {
             packages,
@@ -327,6 +384,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddAi {
             packages,
             dev,
@@ -335,6 +395,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         }),
         Commands::AddClo {
             packages,
@@ -344,6 +407,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddClo {
             packages,
             dev,
@@ -352,6 +418,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         }),
         Commands::AddCicd {
             packages,
@@ -361,6 +430,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddCicd {
             packages,
             dev,
@@ -369,6 +441,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         }),
         Commands::AddIot {
             packages,
@@ -378,6 +453,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddIot {
             packages,
             dev,
@@ -386,6 +464,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         }),
         Commands::AddApp {
             packages,
@@ -395,6 +476,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddApp {
             packages,
             dev,
@@ -403,6 +487,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         }),
         Commands::AddLib {
             packages,
@@ -412,6 +499,9 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         } => Some(CoreCommand::AddLib {
             packages,
             dev,
@@ -420,22 +510,79 @@ pub fn command_to_dispatch(
             peer,
             no_save,
             global,
+            compat_runtime,
+
+            version,
         }),
-        Commands::AddHardware { packages } => Some(CoreCommand::AddHardware { packages }),
+        Commands::AddHardware {
+            packages,
+            compat_runtime,
+
+            version,
+        } => Some(CoreCommand::AddHardware {
+            packages,
+            compat_runtime,
+
+            version,
+        }),
         Commands::RemoveWeb {
             packages,
             no_install,
+            compat_runtime,
         } => Some(CoreCommand::RemoveWeb {
             packages,
             install: !no_install,
+            compat_runtime,
         }),
-        Commands::RemoveGame { packages } => Some(CoreCommand::RemoveGame { packages }),
-        Commands::RemoveAi { packages } => Some(CoreCommand::RemoveAi { packages }),
-        Commands::RemoveClo { packages } => Some(CoreCommand::RemoveClo { packages }),
-        Commands::RemoveCicd { packages } => Some(CoreCommand::RemoveCicd { packages }),
-        Commands::RemoveIot { packages } => Some(CoreCommand::RemoveIot { packages }),
-        Commands::RemoveApp { packages } => Some(CoreCommand::RemoveApp { packages }),
-        Commands::RemoveLib { packages } => Some(CoreCommand::RemoveLib { packages }),
+        Commands::RemoveGame {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::RemoveGame {
+            packages,
+            compat_runtime,
+        }),
+        Commands::RemoveAi {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::RemoveAi {
+            packages,
+            compat_runtime,
+        }),
+        Commands::RemoveClo {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::RemoveClo {
+            packages,
+            compat_runtime,
+        }),
+        Commands::RemoveCicd {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::RemoveCicd {
+            packages,
+            compat_runtime,
+        }),
+        Commands::RemoveIot {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::RemoveIot {
+            packages,
+            compat_runtime,
+        }),
+        Commands::RemoveApp {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::RemoveApp {
+            packages,
+            compat_runtime,
+        }),
+        Commands::RemoveLib {
+            packages,
+            compat_runtime,
+        } => Some(CoreCommand::RemoveLib {
+            packages,
+            compat_runtime,
+        }),
         Commands::ListWeb => Some(CoreCommand::ListWeb),
         Commands::ListGame => Some(CoreCommand::ListGame),
         Commands::ListAi => Some(CoreCommand::ListAi),
@@ -445,30 +592,78 @@ pub fn command_to_dispatch(
         Commands::ListApp => Some(CoreCommand::ListApp),
         Commands::ListLib => Some(CoreCommand::ListLib),
         Commands::ListHardware => Some(CoreCommand::ListHardware),
-        Commands::UpdateWeb { packages, install } => {
-            Some(CoreCommand::UpdateWeb { packages, install })
-        }
-        Commands::UpdateGame { packages, install } => {
-            Some(CoreCommand::UpdateGame { packages, install })
-        }
-        Commands::UpdateAi { packages, install } => {
-            Some(CoreCommand::UpdateAi { packages, install })
-        }
-        Commands::UpdateClo { packages, install } => {
-            Some(CoreCommand::UpdateClo { packages, install })
-        }
-        Commands::UpdateCicd { packages, install } => {
-            Some(CoreCommand::UpdateCicd { packages, install })
-        }
-        Commands::UpdateIot { packages, install } => {
-            Some(CoreCommand::UpdateIot { packages, install })
-        }
-        Commands::UpdateApp { packages, install } => {
-            Some(CoreCommand::UpdateApp { packages, install })
-        }
-        Commands::UpdateLib { packages, install } => {
-            Some(CoreCommand::UpdateLib { packages, install })
-        }
+        Commands::UpdateWeb {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateWeb {
+            packages,
+            install,
+            compat_runtime,
+        }),
+        Commands::UpdateGame {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateGame {
+            packages,
+            install,
+            compat_runtime,
+        }),
+        Commands::UpdateAi {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateAi {
+            packages,
+            install,
+            compat_runtime,
+        }),
+        Commands::UpdateClo {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateClo {
+            packages,
+            install,
+            compat_runtime,
+        }),
+        Commands::UpdateCicd {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateCicd {
+            packages,
+            install,
+            compat_runtime,
+        }),
+        Commands::UpdateIot {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateIot {
+            packages,
+            install,
+            compat_runtime,
+        }),
+        Commands::UpdateApp {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateApp {
+            packages,
+            install,
+            compat_runtime,
+        }),
+        Commands::UpdateLib {
+            packages,
+            install,
+            compat_runtime,
+        } => Some(CoreCommand::UpdateLib {
+            packages,
+            install,
+            compat_runtime,
+        }),
         _ => None,
     };
 

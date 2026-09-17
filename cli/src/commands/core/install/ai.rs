@@ -4,7 +4,11 @@ use anyhow::Result;
 
 use super::super::shared;
 
-pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
+pub async fn install(
+    packages: Vec<String>,
+    dry_run: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
     let root = shared::ai_project_root()?;
     if !packages.is_empty() {
         mgc_ui::info(&format!(
@@ -17,6 +21,18 @@ pub async fn install(packages: Vec<String>, dry_run: bool) -> Result<()> {
         mgc_ui::info(&format!("[dry-run] {} {}", tool, args.join(" ")));
         return Ok(());
     }
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // C0 ownership firewall (T0.3): single control path — uv/pip spawn
+    // only behind an explicit compat opt-in (warned + audit-logged).
+    // (Tường lửa C0: đường điều khiển duy nhất — chỉ spawn uv/pip khi có
+    // compat tường minh.)
+    crate::commands::dep_gate::gate(
+        "ai",
+        crate::commands::dep_gate::DepOp::Install,
+        Some(tool),
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     // Shared store (B-series, 2026-09-12): uv/pip caches point INSIDE
     // the mgc store (~/.magicore/store/pypi) — every ai/python project
     // on this machine reuses the same wheel/sdist bytes (one download,

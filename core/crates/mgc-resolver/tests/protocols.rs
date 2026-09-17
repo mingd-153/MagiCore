@@ -63,7 +63,10 @@ fn default_verify_sha256_mismatch_fails_closed() {
 }
 
 #[test]
-fn default_verify_empty_declared_sha256_is_not_a_failure() {
+fn default_verify_empty_declared_sha256_fails_closed() {
+    // V1.2 zero-trust (D0): an artifact no registry hash vouches for is
+    // never installed — the old fail-open (`Ok(())` on empty) was a
+    // supply-chain hole, now closed at the shared default.
     let entry = ResolvedEntry {
         name: "serde".to_string(),
         version: "1.0.0".to_string(),
@@ -72,7 +75,12 @@ fn default_verify_empty_declared_sha256_is_not_a_failure() {
         sha256: String::new(),
         extra_markers: vec![],
     };
-    NpmProtocol.verify(&entry, b"bytes").unwrap();
+    let err = NpmProtocol.verify(&entry, b"bytes").unwrap_err();
+    assert!(matches!(err, mgc_types::MgError::Integrity(_)), "{err:?}");
+    assert!(
+        err.to_string().contains("without digest"),
+        "the error must say why: {err}"
+    );
 }
 
 #[test]

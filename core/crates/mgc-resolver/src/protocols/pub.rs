@@ -131,17 +131,22 @@ impl RegistryProtocol for PubProtocol {
             markers.push(format!("sdk:{}", pv.pubspec.environment.sdk));
         }
         for (dep_name, constraint) in &pv.pubspec.dependencies {
-            // SDK-owned packages are not resolvable on pub.dev.
-            // (Package thuộc SDK không resolve được trên pub.dev.)
+            // SDK-owned packages are not resolvable on pub.dev — recorded,
+            // never silently dropped.
+            // (Package thuộc SDK không resolve được trên pub.dev — ghi
+            // nhận, không bao giờ bỏ âm thầm.)
             if matches!(dep_name.as_str(), "flutter" | "flutter_test" | "dart") {
+                markers.push(format!("sdk-owned:{dep_name}"));
                 continue;
             }
             // path/git/hosted dependencies are objects, not version constraints.
             // (Dep path/git/hosted là object, không phải ràng buộc version.)
             let Some(dep_range) = constraint.as_str() else {
+                markers.push(format!("non-registry-dep:{dep_name}"));
                 continue;
             };
             if dep_range.trim().is_empty() {
+                markers.push(format!("empty-constraint:{dep_name}"));
                 continue;
             }
             deps.push((dep_name.clone(), dep_range.to_string()));

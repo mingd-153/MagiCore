@@ -78,3 +78,19 @@ path = "tests/protocols_swift.rs"
 [[test]]
 name = "test_protocols_zip"
 path = "tests/protocols_zip.rs"
+
+[[test]]
+name = "test_protocols_hfhub"
+path = "tests/protocols_hfhub.rs"
+
+[[test]]
+name = "test_protocols_pypi"
+path = "tests/protocols_pypi.rs"
+
+[[test]]
+name = "test_protocols_crates"
+path = "tests/protocols_crates.rs"
+
+[[test]]
+name = "test_protocols_pub"
+path = "tests/protocols_pub.rs"
