@@ -1047,31 +1047,47 @@ pub fn ai_project_root() -> Result<PathBuf> {
         .ok_or_else(crate::error::ai_project_not_detected)
 }
 
-/// ai: chọn tool theo lock — uv.lock → uv, requirements.lock → pip, mặc định uv nếu có, else pip.
+/// ai: chọn tool theo lock file DUY NHẤT — uv.lock/pyproject → uv,
+/// requirements → pip. KHÔNG scan PATH, KHÔNG spawn probe (`--version`,
+/// `which`): tool probing trước gate là bypass C0 (P0 fix) — gate chạy
+/// trước, spawn thật (hoặc lỗi tool-missing rõ ràng) xảy ra sau gate.
+/// (ai: pick tool by lock file ONLY — no PATH scan, no spawn probe.)
 #[cfg(feature = "ai")]
 pub fn ai_pick_tool(root: &std::path::Path) -> &'static str {
-    if root.join("uv.lock").exists() {
-        "uv"
-    } else if root.join("requirements.lock").exists() {
-        "pip"
-    } else if ai_tool_uv_available() {
+    if root.join("uv.lock").exists() || root.join("pyproject.toml").exists() {
         "uv"
     } else {
         "pip"
     }
 }
 
+/// Post-gate pip binary resolution: the gate already approved the pip
+/// owner (`pip` ~ `pip3` alias); this picks the binary that EXISTS for
+/// the real spawn — `pip` preferred, `pip3` fallback, else `pip` so a
+/// missing tool surfaces a clear spawn error. Filesystem lookup ONLY
+/// (no `--version` probe spawn), `split_paths` for Windows correctness,
+/// and called strictly AFTER the gate.
+/// (Resolve binary pip SAU gate: chỉ lookup filesystem, không spawn probe.)
 #[cfg(feature = "ai")]
-fn ai_tool_uv_available() -> bool {
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .map(|dir| PathBuf::from(dir).join("uv"))
-        .any(|p| p.is_file())
+fn resolve_ai_tool(tool: &str) -> &str {
+    if tool != "pip" {
+        return tool;
+    }
+    fn on_path(bin: &str) -> bool {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join(bin))
+            .any(|p| p.is_file())
+    }
+    if on_path("pip") || !on_path("pip3") {
+        "pip"
+    } else {
+        "pip3"
+    }
 }
 
 #[cfg(feature = "ai")]
 pub fn ai_run_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Result<()> {
+    let tool = resolve_ai_tool(tool);
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
@@ -1090,6 +1106,7 @@ pub fn ai_run_tool_with_env(
     args: &[String],
     env: Vec<(String, String)>,
 ) -> Result<()> {
+    let tool = resolve_ai_tool(tool);
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
@@ -1124,6 +1141,7 @@ pub fn shared_pypi_store_env() -> Result<Vec<(String, String)>> {
 
 #[cfg(feature = "ai")]
 pub fn ai_run_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) -> Result<String> {
+    let tool = resolve_ai_tool(tool);
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),

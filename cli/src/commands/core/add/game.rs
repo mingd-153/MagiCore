@@ -50,8 +50,13 @@ pub async fn add(
     // adapter, whose engines delegate (Bevy → cargo).
     // (Tường lửa C0: lane add game gọi adapter, engine trong đó delegate.)
     crate::commands::dep_gate::gate(
-        "game",
-        crate::commands::dep_gate::DepOp::Add,
+        &crate::commands::dep_gate::DepContext::new(
+            "game",
+            Some(crate::commands::dep_gate::eco::BEVY),
+            Some(crate::commands::dep_gate::eco::BEVY),
+            None,
+            crate::commands::dep_gate::DepOp::Add,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

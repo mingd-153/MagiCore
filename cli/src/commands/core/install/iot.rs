@@ -23,13 +23,25 @@ fn iot_adapter() -> Arc<dyn PackageAdapter> {
 pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // Full gate context (P0#2): the detected framework id IS the iot
+    // ecosystem (no separate language layer) plus the board target.
+    // Undetectable framework ⇒ Unsupported, never generic-delegated.
+    // (Context gate đầy đủ: framework detect được là ecosystem iot.)
+    let iot = mgc_iot_adapter::adapter_for(&root);
+    let framework = iot.as_ref().map(|a| a.framework());
+    let target_owned = iot.as_ref().and_then(|a| a.target(&root));
     // C0 ownership firewall (T0.3): the IoT install lane routes to the
     // adapter, whose frameworks delegate (cargo/pio/west).
     // (Tường lửa C0: lane install IoT gọi adapter, framework trong đó
     // delegate.)
     crate::commands::dep_gate::gate(
-        "iot",
-        crate::commands::dep_gate::DepOp::Install,
+        &crate::commands::dep_gate::DepContext::new(
+            "iot",
+            framework,
+            framework,
+            target_owned.as_deref(),
+            crate::commands::dep_gate::DepOp::Install,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

@@ -33,34 +33,44 @@ struct CanarySandbox {
 
 impl CanarySandbox {
     fn new(tool: &str) -> Self {
+        Self::multi(&[tool])
+    }
+
+    /// Multi-tool sandbox: every listed tool resolves from PATH to a
+    /// canary sharing ONE log — proves ZERO PM processes spawn (the old
+    /// pre-gate `--version` probes would have fired pip AND pip3 here).
+    /// (Sandbox đa-tool: chứng minh KHÔNG process PM nào chạy.)
+    fn multi(tools: &[&str]) -> Self {
         let bin_dir = TempDir::new().unwrap();
         let home_dir = TempDir::new().unwrap();
         let log_dir = bin_dir.path().join(".canary");
         std::fs::create_dir_all(&log_dir).unwrap();
         let log = log_dir.join("spawned.log");
-        let sh = bin_dir.path().join(tool);
-        std::fs::write(
-            &sh,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"{} $*\" >> {}\nexit 0\n",
-                tool,
-                log.display()
-            ),
-        )
-        .unwrap();
-        make_executable(&sh);
-        #[cfg(windows)]
-        {
-            let cmd = bin_dir.path().join(format!("{tool}.cmd"));
+        for tool in tools {
+            let sh = bin_dir.path().join(tool);
             std::fs::write(
-                &cmd,
+                &sh,
                 format!(
-                    "@echo off\necho {} %* >> {}\nexit /b 0\n",
+                    "#!/bin/sh\nprintf '%s\\n' \"{} $*\" >> {}\nexit 0\n",
                     tool,
                     log.display()
                 ),
             )
             .unwrap();
+            make_executable(&sh);
+            #[cfg(windows)]
+            {
+                let cmd = bin_dir.path().join(format!("{tool}.cmd"));
+                std::fs::write(
+                    &cmd,
+                    format!(
+                        "@echo off\necho {} %* >> {}\nexit /b 0\n",
+                        tool,
+                        log.display()
+                    ),
+                )
+                .unwrap();
+            }
         }
         Self {
             bin_dir,
@@ -130,6 +140,25 @@ fn ai_project(dir: &std::path::Path) {
     .unwrap();
     // uv.lock present → the lane deterministically picks `uv`.
     std::fs::write(dir.join("uv.lock"), "version = 1\n").unwrap();
+}
+
+fn pip_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-ai-pip\"\n[ai]\nframework = \"python-agent\"\n",
+    )
+    .unwrap();
+    // requirements only → the lane deterministically picks `pip`.
+    std::fs::write(dir.join("requirements.txt"), "requests==2.31.0\n").unwrap();
+}
+
+fn rn_project(dir: &std::path::Path) {
+    // package.json carrying react-native → AppLanguage::ReactNative.
+    std::fs::write(
+        dir.join("package.json"),
+        "{\"name\": \"canary-rn\", \"dependencies\": {\"react-native\": \"0.74.0\"}}\n",
+    )
+    .unwrap();
 }
 
 fn flutter_project(dir: &std::path::Path) {
@@ -322,5 +351,205 @@ fn lib_add_native_refuses_without_spawning_cargo() {
     assert!(
         output.contains("--compat-runtime"),
         "refusal must name the escape hatch:\n{output}"
+    );
+}
+
+// ── P0#1 expanded matrix: every PM canary at once ────────────────────
+// The multi-tool sandbox proves native mode spawns ZERO package-manager
+// processes — including the pre-gate `--version`/`which` probes the old
+// code ran (those would have fired pip AND pip3 canaries here).
+
+/// All four PM canaries + python in one PATH.
+fn pm_sandbox() -> CanarySandbox {
+    CanarySandbox::multi(&["uv", "pip", "pip3", "python"])
+}
+
+#[test]
+fn ai_install_native_with_pip_project_spawns_nothing() {
+    // requirements.txt project → lane wants `pip`. Native refusal must
+    // leave uv/pip/pip3/python ALL silent (no probe spawns).
+    let project = TempDir::new().unwrap();
+    pip_project(project.path());
+    let sandbox = pm_sandbox();
+
+    let (code, stdout, stderr, marker) = run_mgc(&["install-ai"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "native 'install-ai' must refuse:\n{output}");
+    assert!(
+        marker.is_empty(),
+        "NO pm canary may fire under native 'install-ai' (probes included):\n{marker}"
+    );
+    assert!(
+        output.contains("--compat-runtime"),
+        "refusal must name the escape hatch:\n{output}"
+    );
+}
+
+#[test]
+fn ai_add_native_spawns_nothing() {
+    let project = TempDir::new().unwrap();
+    ai_project(project.path());
+    let sandbox = pm_sandbox();
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["add-ai", "requests"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "native 'add-ai' must refuse:\n{output}");
+    assert!(
+        marker.is_empty(),
+        "NO pm canary may fire under native 'add-ai':\n{marker}"
+    );
+}
+
+#[test]
+fn ai_remove_native_spawns_nothing() {
+    let project = TempDir::new().unwrap();
+    ai_project(project.path());
+    let sandbox = pm_sandbox();
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["remove-ai", "requests"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "native 'remove-ai' must refuse:\n{output}");
+    assert!(
+        marker.is_empty(),
+        "NO pm canary may fire under native 'remove-ai':\n{marker}"
+    );
+}
+
+#[test]
+fn ai_update_native_spawns_nothing() {
+    let project = TempDir::new().unwrap();
+    ai_project(project.path());
+    let sandbox = pm_sandbox();
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["update-ai", "requests"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "native 'update-ai' must refuse:\n{output}");
+    assert!(
+        marker.is_empty(),
+        "NO pm canary may fire under native 'update-ai':\n{marker}"
+    );
+}
+
+#[test]
+fn ai_list_native_spawns_nothing() {
+    let project = TempDir::new().unwrap();
+    ai_project(project.path());
+    let sandbox = pm_sandbox();
+
+    let (code, stdout, stderr, marker) = run_mgc(&["list-ai"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "native 'list-ai' must refuse without --compat-runtime:\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "NO pm canary may fire under native 'list-ai':\n{marker}"
+    );
+}
+
+#[test]
+fn ai_list_compat_flag_spawns_pip_through_the_gate() {
+    // P0#3 end-to-end: the explicit --compat-runtime FLAG (not env)
+    // opens list-ai and the lane actually spawns pip.
+    let project = TempDir::new().unwrap();
+    pip_project(project.path());
+    let sandbox = pm_sandbox();
+
+    let (code, stdout, stderr, marker) = run_mgc(
+        &["list-ai", "--compat-runtime", "pip"],
+        project.path(),
+        &sandbox,
+        None,
+    );
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0), "compat list-ai must proceed:\n{output}");
+    assert!(
+        marker.contains("pip"),
+        "compat must actually spawn pip through the gate:\n{}",
+        sandbox.marker_text()
+    );
+    assert!(
+        !marker.contains("uv"),
+        "only the opted-in tool may spawn:\n{}",
+        sandbox.marker_text()
+    );
+    assert!(
+        output.contains("COMPATIBILITY MODE"),
+        "every compat spawn must warn loudly:\n{output}"
+    );
+}
+
+// ── P0#2: React Native hits the app/rn Unsupported rule ───────────────
+
+#[test]
+fn rn_install_hits_unsupported_rule_without_spawning() {
+    let project = TempDir::new().unwrap();
+    rn_project(project.path());
+    let sandbox = CanarySandbox::multi(&["flutter", "npm", "yarn"]);
+
+    let (code, stdout, stderr, marker) = run_mgc(&["install-app"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "React Native 'install-app' must fail closed:\n{output}"
+    );
+    assert!(
+        output.contains("rn"),
+        "the failure must come from the app/rn rule (names the ecosystem):\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "NO toolchain canary may fire for React Native:\n{marker}"
+    );
+}
+
+#[test]
+fn app_list_native_refuses_without_spawning_flutter() {
+    let project = TempDir::new().unwrap();
+    flutter_project(project.path());
+    let sandbox = CanarySandbox::new("flutter");
+
+    let (code, stdout, stderr, marker) = run_mgc(&["list-app"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "native 'list-app' must refuse without --compat-runtime:\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "flutter canary must NEVER fire under native 'list-app':\n{marker}"
+    );
+    assert!(
+        output.contains("--compat-runtime"),
+        "refusal must name the escape hatch:\n{output}"
+    );
+}
+
+#[test]
+fn rn_add_hits_unsupported_rule_without_spawning() {
+    // P0#2 for every verb: RN add has no command at all — the failure
+    // must come from the app/rn gate rule, not a manifest hint.
+    let project = TempDir::new().unwrap();
+    rn_project(project.path());
+    let sandbox = CanarySandbox::multi(&["flutter", "npm", "yarn"]);
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["add-app", "lodash"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "React Native 'add-app' must fail closed:\n{output}");
+    assert!(
+        output.contains("rn"),
+        "the failure must come from the app/rn rule (names the ecosystem):\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "NO toolchain canary may fire for React Native:\n{marker}"
     );
 }

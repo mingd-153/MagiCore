@@ -113,8 +113,13 @@ pub async fn add(
     // (Tường lửa C0: web native.)
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
-        "web",
-        crate::commands::dep_gate::DepOp::Add,
+        &crate::commands::dep_gate::DepContext::new(
+            "web",
+            Some(crate::commands::dep_gate::eco::JS),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Add,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
@@ -140,8 +145,13 @@ pub async fn remove(
     // (Tường lửa C0: web native.)
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
-        "web",
-        crate::commands::dep_gate::DepOp::Remove,
+        &crate::commands::dep_gate::DepContext::new(
+            "web",
+            Some(crate::commands::dep_gate::eco::JS),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Remove,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
@@ -153,18 +163,23 @@ pub async fn remove(
 }
 
 /// List web packages
-pub async fn list() -> Result<()> {
+pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
-    // C0 ownership firewall (T0.3): web list is a native manifest read.
-    // List lanes take no --compat-runtime flag (unit variants) — compat
-    // flows via MGC_COMPAT_RUNTIME only.
-    // (Tường lửa C0: list web đọc manifest native. Lane list không có cờ
-    // --compat-runtime — compat chỉ qua env.)
-    let compat = crate::commands::dep_gate::from_dep_flag(None)?;
+    // C0 ownership firewall (T0.3): web list is a native manifest read —
+    // the explicit --compat-runtime flag is accepted for CLI uniformity
+    // and ignored by the native engine (gate logs the notice).
+    // (Tường lửa C0: list web đọc manifest native — cờ tường minh được
+    // chấp nhận để đồng nhất CLI, engine native bỏ qua.)
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
-        "web",
-        crate::commands::dep_gate::DepOp::List,
+        &crate::commands::dep_gate::DepContext::new(
+            "web",
+            Some(crate::commands::dep_gate::eco::JS),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::List,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
@@ -187,8 +202,13 @@ pub async fn update(
     // (Tường lửa C0: web native.)
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
-        "web",
-        crate::commands::dep_gate::DepOp::Update,
+        &crate::commands::dep_gate::DepContext::new(
+            "web",
+            Some(crate::commands::dep_gate::eco::JS),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Update,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
@@ -217,8 +237,13 @@ pub async fn install(
     let root = project_root()?;
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
-        "web",
-        crate::commands::dep_gate::DepOp::Install,
+        &crate::commands::dep_gate::DepContext::new(
+            "web",
+            Some(crate::commands::dep_gate::eco::JS),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Install,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

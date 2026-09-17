@@ -1073,24 +1073,55 @@ pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) ->
 // ===== dependency ownership gate (C0 firewall, T0.3) =====
 
 /// Native mode hit a delegated dependency operation without compat opt-in.
-pub fn dep_gate_requires_compat(core: &str, op: &str, tools: &[&str]) -> Error {
+pub fn dep_gate_requires_compat(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
     anyhow!(
-        "`{core}` {op} is toolchain-delegated (owner toolchain: {}) — MagiCore has no native engine for it yet. Re-run with an explicit compatibility opt-in (`--compat-runtime <tool>` or `MGC_COMPAT_RUNTIME=<tool>`); compat runs are excluded from native-support claims",
+        "{lane} is toolchain-delegated (owner toolchain: {}) — MagiCore has no native engine for it yet. Re-run with an explicit compatibility opt-in (`--compat-runtime <tool>` or `MGC_COMPAT_RUNTIME=<tool>`); compat runs are excluded from native-support claims",
         tools.join(", ")
     )
 }
 
 /// An operation with no dependency lifecycle at all (no engine, no lane).
-pub fn dep_gate_unsupported(core: &str, op: &str) -> Error {
-    anyhow!(
-        "`{core}` {op} has no dependency lifecycle (unsupported) — no native engine and no toolchain lane to delegate to"
-    )
+/// cicd/hardware lanes are scaffold-only by design — the message says so
+/// instead of letting anyone read them as package installs.
+pub fn dep_gate_unsupported(core: &str, op: &str, ecosystem: Option<&str>) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    if matches!(core, "cicd" | "hardware") {
+        anyhow!(
+            "{lane} has no package lifecycle — this is a scaffold-only lane (templates/pipelines/generators), never a native package install"
+        )
+    } else {
+        anyhow!(
+            "{lane} has no dependency lifecycle (unsupported) — no native engine and no toolchain lane to delegate to"
+        )
+    }
 }
 
-/// Compat named a tool that does not own this (core, op) cell.
-pub fn dep_gate_wrong_tool(core: &str, op: &str, got: &str, tools: &[&str]) -> Error {
+/// Compat named a tool that does not own this (core, ecosystem, op) cell.
+pub fn dep_gate_wrong_tool(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    got: &str,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
     anyhow!(
-        "`--compat-runtime '{got}'` does not own `{core}` {op} (owner toolchain: {}) — pass the owning toolchain or run without compat to see the native-engine error",
+        "`--compat-runtime '{got}'` does not own {lane} (owner toolchain: {}) — pass the owning toolchain or run without compat to see the native-engine error",
         tools.join(", ")
     )
 }

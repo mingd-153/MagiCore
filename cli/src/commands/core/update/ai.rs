@@ -51,8 +51,13 @@ pub async fn update(
     // (Tường lửa C0: đường điều khiển duy nhất — chỉ spawn uv/pip khi có
     // compat tường minh.)
     crate::commands::dep_gate::gate(
-        "ai",
-        crate::commands::dep_gate::DepOp::Update,
+        &crate::commands::dep_gate::DepContext::new(
+            "ai",
+            Some(crate::commands::dep_gate::eco::PYTHON),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Update,
+        ),
         Some(tool),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

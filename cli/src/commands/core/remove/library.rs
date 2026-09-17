@@ -52,17 +52,15 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
     // every other lib language delegates to its toolchain (compat only).
     // (Tường lửa C0: TypeScript đi engine web native; ngôn ngữ lib khác
     // delegate toolchain.)
-    let language = mgc_lib_adapter::detect_language(&root).and_then(|lang| {
-        if lang == mgc_lib_adapter::LibLanguage::Ts {
-            Some("ts")
-        } else {
-            None
-        }
-    });
-    crate::commands::dep_gate::gate_full(
-        "lib",
-        language,
-        crate::commands::dep_gate::DepOp::Remove,
+    let language = mgc_lib_adapter::detect_language(&root).map(|lang| lang.ecosystem());
+    crate::commands::dep_gate::gate(
+        &crate::commands::dep_gate::DepContext::new(
+            "lib",
+            language,
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Remove,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

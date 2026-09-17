@@ -1,9 +1,9 @@
 //! `mgc list-hardware` — báo optimizer/bench hiện có qua adapter. Phase 7 v5.
 //!
-//! GATE-EXEMPT: adapter directory read — no toolchain spawn, no package
-//! mutation in this lane.
-//! (GATE-EXEMPT: đọc thư mục qua adapter — lane này không spawn
-//! toolchain, không đổi package.)
+//! GATED NATIVE READ (P0#3): adapter directory read — no toolchain spawn,
+//! no package mutation in this lane. The gate records the native decision.
+//! (Đọc thư mục qua adapter, có gate — lane này không spawn toolchain,
+//! không đổi package.)
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -17,8 +17,21 @@ fn project_root() -> Result<PathBuf> {
     Ok(root)
 }
 
-pub async fn list() -> Result<()> {
+pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        &crate::commands::dep_gate::DepContext::new(
+            "hardware",
+            None,
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::List,
+        ),
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     shared::list(
         &*crate::factory::create_adapter(&mgc_types::Ecosystem::Hardware, None, None)
             .expect("hardware adapter always available in hardware core build"),

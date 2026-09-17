@@ -48,26 +48,36 @@ fn capabilities_for_core(core: &str) -> Result<&'static [Capability]> {
 }
 
 /// Dependency ownership per core, derived from the C0 firewall table
-/// (`dep_gate::owner_for`, language-unaware conservative branch) — the
-/// SINGLE machine-readable source the lifecycle matrix cross-checks
-/// against (T0.4). Shape per operation: {"owner", "tools"}; cores with
-/// per-language splits additionally carry a "languages" map with ONLY
-/// the differing languages.
+/// (`dep_gate::owner_for` over full `DepContext`s) — the SINGLE
+/// machine-readable source the lifecycle matrix cross-checks against
+/// (T0.4). Shape per operation: {"owner", "tools"}; cores with
+/// per-ecosystem splits additionally carry a "languages" map with ONLY
+/// the differing ecosystems (gate ids: "rn", not "react-native").
 /// Quyền sở hữu dependency từng core, suy ra từ bảng tường lửa C0 —
 /// nguồn máy-đọc DUY NHẤT matrix cross-check (T0.4).
 pub fn dependency_ownership(core: &str) -> serde_json::Value {
-    use crate::commands::dep_gate::{DepOp, DepOwner, SPLIT_LANGUAGES, owner_for};
-    fn ops_for(core: &str, language: Option<&str>) -> serde_json::Value {
+    use crate::commands::dep_gate::{DepContext, DepOp, DepOwner, SPLIT_LANGUAGES, owner_for};
+    fn ops_for(core: &str, ecosystem: Option<&str>) -> serde_json::Value {
         let ops = [
             DepOp::Install,
             DepOp::Add,
             DepOp::Remove,
             DepOp::Update,
             DepOp::List,
+            DepOp::Resolve,
+            DepOp::Lock,
+            DepOp::Fetch,
+            DepOp::Verify,
+            DepOp::Store,
+            DepOp::Materialize,
+            DepOp::FrozenInstall,
+            DepOp::OfflineReinstall,
+            DepOp::Gc,
         ];
         let mut map = serde_json::Map::new();
         for op in ops {
-            let (owner, tools) = match owner_for(core, language, op) {
+            let ctx = DepContext::new(core, ecosystem, None, None, op);
+            let (owner, tools) = match owner_for(&ctx) {
                 DepOwner::Native => ("mgc-native", Vec::new()),
                 DepOwner::Delegated { tools } => (
                     "delegated",

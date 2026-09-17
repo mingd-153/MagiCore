@@ -1,7 +1,12 @@
 name: Delegated Toolchain Compatibility Matrix
 
-# Scope: Full lifecycle for all 4 cores
-# Web/AI/App/Lib: create → install → test → build
+# Scope: delegated-toolchain compatibility for the four lifecycle lanes
+# (Web native; AI/App via explicit --compat-runtime; Lib native per
+# protocol engine). AI/App install steps below exercise DELEGATED
+# toolchains — their green results are COMPATIBILITY evidence only and
+# must NEVER be used as native-engine release-gate evidence.
+# (Phạm vi: tương thích toolchain delegate. Kết quả AI/App chỉ là
+# evidence compat, không bao giờ là evidence native/release.)
 
 on:
   workflow_dispatch:
@@ -12,7 +17,7 @@ on:
       - "core/**"
       - "adapters/**"
       - "scripts/**"
-      - ".github/workflows/all-core-lifecycle.yml"
+      - ".github/workflows/delegated-compatibility-matrix.yml"
   push:
     branches: [main, "fix/**"]
     paths:
@@ -20,7 +25,7 @@ on:
       - "core/**"
       - "adapters/**"
       - "scripts/**"
-      - ".github/workflows/all-core-lifecycle.yml"
+      - ".github/workflows/delegated-compatibility-matrix.yml"
 
 permissions:
   contents: read
@@ -183,9 +188,12 @@ jobs:
             exit 1
           fi
           test -f uv.lock || test -f requirements.lock
+          # C0: the AI lane is toolchain-delegated — the compat opt-in is
+          # explicit here (never a CI-added bypass to "make it green").
+          # (C0: lane AI delegate — opt-in compat tường minh.)
           install_ok=false
           for i in 1 2 3; do
-            if "$MGC_PARENT_BIN" install; then install_ok=true; break; fi
+            if "$MGC_PARENT_BIN" install --compat-runtime uv; then install_ok=true; break; fi
             echo "mgc AI install failed (attempt $i) — retrying transient registry/DNS failure in 20s"
             sleep 20
           done
@@ -265,7 +273,10 @@ jobs:
         shell: bash
         run: |
           cd test_app
-          "$MGC_PARENT_BIN" install
+          # C0: the App lane is toolchain-delegated — explicit opt-in
+          # (flutter). This run is COMPATIBILITY evidence only.
+          # (C0: lane App delegate — opt-in tường minh.)
+          "$MGC_PARENT_BIN" install --compat-runtime flutter
 
       - name: Verify lockfile
         shell: bash
@@ -432,14 +443,18 @@ jobs:
           test -d dist || test -d lib || test -d build
 
   lifecycle-summary:
-    name: Primary Four-Core Lifecycle Summary
+    name: Delegated Toolchain Compatibility Summary
     needs: [web-lifecycle, ai-lifecycle, app-lifecycle, lib-lifecycle]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check all results
         run: |
-          echo "=== PRIMARY FOUR-CORE LIFECYCLE RESULTS (Web, AI, App, Lib) ==="
+          echo "=== DELEGATED TOOLCHAIN COMPATIBILITY RESULTS (Web, AI, App, Lib) ==="
+          echo "Web/Lib lanes run the native engine; AI/App install steps run"
+          echo "under explicit --compat-runtime (delegated toolchains)."
+          echo "AI/App green results are COMPATIBILITY evidence ONLY — they must"
+          echo "NEVER be used as native-engine release-gate evidence."
           echo "Game/IoT/Hardware/Cloud/CI-CD are NOT covered by this workflow —"
           echo "those cores are prototype/scaffold status and fail closed in adapters."
           echo ""
@@ -478,7 +493,7 @@ jobs:
             exit 1
           fi
 
-          echo "✅ PRIMARY FOUR CORES (Web, AI, App, Lib): full lifecycle verified"
+          echo "✅ DELEGATED COMPATIBILITY (Web, AI, App, Lib): lifecycle verified — AI/App via explicit compat opt-in (compatibility evidence only)"
           echo ""
           echo "Verified:"
           echo "- Create (CLI commands work)"

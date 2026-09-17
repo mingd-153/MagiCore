@@ -24,6 +24,22 @@ impl AppLanguage {
             AppLanguage::Multi => "multi",
         }
     }
+
+    /// Canonical C0 firewall ecosystem id — the ONLY string
+    /// `dep_gate::owner_for` matches on. NOTE: ReactNative maps to "rn",
+    /// NOT the display name "react-native": passing `as_str()` to the
+    /// gate would silently miss the Unsupported rule (P0 bypass fix).
+    /// (Id ecosystem chuẩn cho tường lửa C0 — ReactNative map sang "rn".)
+    pub fn ecosystem(&self) -> &'static str {
+        match self {
+            AppLanguage::Flutter => "flutter",
+            AppLanguage::Kotlin => "kotlin",
+            AppLanguage::Swift => "swift",
+            AppLanguage::ReactNative => "rn",
+            AppLanguage::ObjC => "objc",
+            AppLanguage::Multi => "multi",
+        }
+    }
 }
 
 pub fn detect_language(root: &Path) -> Option<AppLanguage> {

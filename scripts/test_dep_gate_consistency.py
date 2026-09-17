@@ -32,14 +32,51 @@ def ownership(install, languages=None):
     return {"install": install, "languages": languages or {}}
 
 
+# Mirror of the REAL `mgc capabilities --json` dependency_ownership
+# projection ({core: {"install": owner, "languages": {gate_lang: owner}}}).
+# P0#2 truth: an UNDECLARED ecosystem fails closed, so every core-level
+# base row is "unsupported" except the single-ecosystem lanes the binary
+# can still name... none: even web/ai/game/iot/clo lanes must detect
+# their ecosystem (web "js", ai "python", game "bevy", iot framework,
+# clo "terraform"), so ALL bases are unsupported and every supported
+# cell lives under its gate-ecosystem key.
 BINARY = {
-    "web": ownership("mgc-native"),
-    "lib": ownership("mgc-native"),
-    "ai": ownership("delegated"),
-    "app": ownership("delegated", {"rn": "unsupported"}),
-    "game": ownership("delegated"),
-    "iot": ownership("delegated"),
-    "clo": ownership("delegated"),
+    "web": ownership(
+        "unsupported",
+        {"js": "mgc-native", "ts": "mgc-native", "javascript": "mgc-native"},
+    ),
+    "lib": ownership(
+        "unsupported",
+        {
+            "ts": "mgc-native",
+            "rust": "mgc-native",
+            "python": "mgc-native",
+            "go": "mgc-native",
+            "java": "mgc-native",
+            "dotnet": "mgc-native",
+        },
+    ),
+    "ai": ownership("unsupported", {"python": "delegated"}),
+    "app": ownership(
+        "unsupported",
+        {
+            "flutter": "delegated",
+            "kotlin": "delegated",
+            "swift": "delegated",
+            "objc": "delegated",
+            "rn": "unsupported",
+        },
+    ),
+    "game": ownership("unsupported", {"bevy": "delegated"}),
+    "iot": ownership(
+        "unsupported",
+        {
+            "esp32-rust": "delegated",
+            "platformio": "delegated",
+            "zephyr": "delegated",
+        },
+    ),
+    "clo": ownership("unsupported", {"terraform": "delegated"}),
     "cicd": ownership("unsupported"),
     "hardware": ownership("unsupported"),
 }

@@ -13,8 +13,13 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
     // (Tường lửa C0: lane remove game gọi adapter, engine trong đó
     // delegate.)
     crate::commands::dep_gate::gate(
-        "game",
-        crate::commands::dep_gate::DepOp::Remove,
+        &crate::commands::dep_gate::DepContext::new(
+            "game",
+            Some(crate::commands::dep_gate::eco::BEVY),
+            Some(crate::commands::dep_gate::eco::BEVY),
+            None,
+            crate::commands::dep_gate::DepOp::Remove,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

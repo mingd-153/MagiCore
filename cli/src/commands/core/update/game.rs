@@ -17,8 +17,13 @@ pub async fn update(
     // (Tường lửa C0: lane update game gọi adapter, engine trong đó
     // delegate.)
     crate::commands::dep_gate::gate(
-        "game",
-        crate::commands::dep_gate::DepOp::Update,
+        &crate::commands::dep_gate::DepContext::new(
+            "game",
+            Some(crate::commands::dep_gate::eco::BEVY),
+            Some(crate::commands::dep_gate::eco::BEVY),
+            None,
+            crate::commands::dep_gate::DepOp::Update,
+        ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

@@ -22,13 +22,16 @@ pub async fn install(
         return Ok(());
     }
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    // C0 ownership firewall (T0.3): single control path — uv/pip spawn
-    // only behind an explicit compat opt-in (warned + audit-logged).
-    // (Tường lửa C0: đường điều khiển duy nhất — chỉ spawn uv/pip khi có
-    // compat tường minh.)
+    // C0 ownership firewall (T0.3): gate MUST run BEFORE any tool probing.
+    // (C0: gate PHẢI chạy TRƯỚC mọi probing tool.)
     crate::commands::dep_gate::gate(
-        "ai",
-        crate::commands::dep_gate::DepOp::Install,
+        &crate::commands::dep_gate::DepContext::new(
+            "ai",
+            Some(crate::commands::dep_gate::eco::PYTHON),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Install,
+        ),
         Some(tool),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
@@ -51,34 +54,19 @@ pub async fn install(
 // (DELEGATED: uv sync / pip install chạy thật — mgc chỉ điều phối, không
 // sở hữu lifecycle dependency này.)
 fn ai_install_command(root: &std::path::Path) -> Result<(&'static str, Vec<String>)> {
-    // pip3 fallback for systems without a `pip` alias (merged from the RC line).
-    // pip3 fallback cho hệ thống không có alias `pip` (gộp từ nhánh RC).
-    let pip_cmd = if std::process::Command::new("pip")
-        .arg("--version")
-        .output()
-        .is_ok()
-    {
-        "pip"
-    } else if std::process::Command::new("pip3")
-        .arg("--version")
-        .output()
-        .is_ok()
-    {
-        "pip3"
-    } else {
-        "pip" // Fallback — missing tool surfaces a clear error at spawn time.
-    };
+    // Tool selection by lock file ONLY — no process spawning for probing.
+    // (Chọn tool theo lock file DUY NHẤT — không spawn process để probe.)
     if root.join("uv.lock").exists() {
         return Ok(("uv", vec!["sync".to_string()]));
     }
     if root.join("requirements.lock").exists() {
-        return Ok((pip_cmd, pip_requirements_args("requirements.lock")));
+        return Ok(("pip", pip_requirements_args("requirements.lock")));
     }
     if root.join("pyproject.toml").exists() {
         return Ok(("uv", vec!["sync".to_string()]));
     }
     if root.join("requirements.txt").exists() {
-        return Ok((pip_cmd, pip_requirements_args("requirements.txt")));
+        return Ok(("pip", pip_requirements_args("requirements.txt")));
     }
     Err(crate::error::ai_no_lockfile())
 }

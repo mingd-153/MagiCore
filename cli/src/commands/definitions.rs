@@ -434,7 +434,16 @@ pub enum Commands {
         compat_runtime: Option<String>,
     },
     #[command(about = "List installed packages (auto-detect core)", alias = "ls")]
-    List,
+    List {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(about = "Connect the local project to another one", alias = "ln")]
     Link { package: Option<String> },
     #[command(about = "Unlinks a package")]
@@ -1146,29 +1155,113 @@ pub enum Commands {
     },
 
     // ── Per-core: list-<core> ──────────────────────────────────
+    // Every list lane carries the explicit --compat-runtime opt-in
+    // (P0#3): spawning lanes (ai/app) REQUIRE it; native-read lanes
+    // accept it for CLI uniformity and the gate logs the ignore notice.
     #[cfg_attr(not(feature = "web"), command(hide = true))]
     #[command(name = "list-web", alias = "ls-web", about = "List web packages")]
-    ListWeb,
+    ListWeb {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-game", alias = "ls-game", about = "List game packages")]
-    ListGame,
+    ListGame {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-ai", alias = "ls-ai", about = "List AI packages")]
-    ListAi,
+    ListAi {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-clo", alias = "ls-clo", about = "List cloud packages")]
-    ListClo,
+    ListClo {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-cicd", alias = "ls-cicd", about = "List CI/CD packages")]
-    ListCicd,
+    ListCicd {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-iot", alias = "ls-iot", about = "List IoT packages")]
-    ListIot,
+    ListIot {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-app", alias = "ls-app", about = "List app packages")]
-    ListApp,
+    ListApp {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-lib", alias = "ls-lib", about = "List library packages")]
-    ListLib,
+    ListLib {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "list-hardware",
         alias = "ls-hardware",
         about = "List hardware packages"
     )]
-    ListHardware,
+    ListHardware {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+        )]
+        compat_runtime: Option<String>,
+    },
 
     // ── Per-core: update-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]

@@ -138,8 +138,13 @@ fn clo_adapter_path_gate(project_root: &Path) -> Result<()> {
         Some(CloudType::Terraform) => {
             let compat = crate::commands::dep_gate::from_dep_flag(None)?;
             crate::commands::dep_gate::gate(
-                "clo",
-                crate::commands::dep_gate::DepOp::Install,
+                &crate::commands::dep_gate::DepContext::new(
+                    "clo",
+                    Some(crate::commands::dep_gate::eco::TERRAFORM),
+                    None,
+                    None,
+                    crate::commands::dep_gate::DepOp::Install,
+                ),
                 Some("terraform"),
                 &compat,
                 Some(&project_root.join(".magicore").join("exec.log")),
@@ -290,22 +295,77 @@ async fn install_into_root(
     // thì fail-closed.)
     {
         use mgc_types::Ecosystem;
-        let core = match adapter.ecosystem() {
-            Ecosystem::Web => "web",
-            Ecosystem::Ai => "ai",
-            Ecosystem::App => "app",
-            Ecosystem::Lib => "lib",
-            Ecosystem::Game => "game",
-            Ecosystem::Iot => "iot",
-            Ecosystem::Cicd => "cicd",
-            Ecosystem::Hardware => "hardware",
-            Ecosystem::Cloud => "",
+        // Full gate context (P0#2): the adapter path serves MCP +
+        // workspace/monorepo installs — ecosystem is detected per core
+        // exactly like the per-core lanes (undetectable ⇒ Unsupported).
+        // (Context gate đầy đủ: detect ecosystem từng core như lane
+        // per-core.)
+        let app_eco: Option<&str> = {
+            #[cfg(feature = "app")]
+            {
+                mgc_app_adapter::adapter_for(project_root).map(|a| a.language.ecosystem())
+            }
+            #[cfg(not(feature = "app"))]
+            {
+                None
+            }
         };
+        let lib_eco: Option<&str> = {
+            #[cfg(feature = "lib")]
+            {
+                mgc_lib_adapter::detect_language(project_root).map(|l| l.ecosystem())
+            }
+            #[cfg(not(feature = "lib"))]
+            {
+                None
+            }
+        };
+        let iot_fw = {
+            #[cfg(feature = "iot")]
+            {
+                mgc_iot_adapter::adapter_for(project_root).map(|a| a.framework())
+            }
+            #[cfg(not(feature = "iot"))]
+            {
+                None
+            }
+        };
+        let (core, ecosystem, framework): (&str, Option<&str>, Option<&str>) =
+            match adapter.ecosystem() {
+                Ecosystem::Web => (
+                    "web",
+                    Some(crate::commands::dep_gate::eco::JS),
+                    None,
+                ),
+                Ecosystem::Ai => (
+                    "ai",
+                    Some(crate::commands::dep_gate::eco::PYTHON),
+                    None,
+                ),
+                Ecosystem::App => ("app", app_eco, None),
+                Ecosystem::Lib => ("lib", lib_eco, None),
+                Ecosystem::Game => (
+                    "game",
+                    Some(crate::commands::dep_gate::eco::BEVY),
+                    Some(crate::commands::dep_gate::eco::BEVY),
+                ),
+                // iot carries the framework id in both slots (no separate
+                // language layer exists in the iot lane).
+                Ecosystem::Iot => ("iot", iot_fw, iot_fw),
+                Ecosystem::Cicd => ("cicd", None, None),
+                Ecosystem::Hardware => ("hardware", None, None),
+                Ecosystem::Cloud => ("", None, None),
+            };
         if !core.is_empty() {
             let compat = crate::commands::dep_gate::from_dep_flag(None)?;
             crate::commands::dep_gate::gate(
-                core,
-                crate::commands::dep_gate::DepOp::Install,
+                &crate::commands::dep_gate::DepContext::new(
+                    core,
+                    ecosystem,
+                    framework,
+                    None,
+                    crate::commands::dep_gate::DepOp::Install,
+                ),
                 None,
                 &compat,
                 Some(&project_root.join(".magicore").join("exec.log")),

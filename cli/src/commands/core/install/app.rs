@@ -18,6 +18,37 @@ pub fn language(root: &Path) -> Result<mgc_app_adapter::AppLanguage> {
         .ok_or_else(|| crate::error::no_app_language(root))
 }
 
+/// React Native has NO runner for any verb: run the gate FIRST so the
+/// app/rn Unsupported rule owns the failure (P0#2) instead of a manifest
+/// hint. Every other language returns Ok and continues to verb
+/// resolution (unimplemented verbs keep their honest manifest hints —
+/// the gate must not promise a compat opt-in for a verb that has no
+/// command at all).
+/// (RN không có runner cho verb nào: gate TRƯỚC để rule Unsupported sở
+/// hữu lỗi.)
+pub fn gate_react_native(
+    root: &Path,
+    lang: mgc_app_adapter::AppLanguage,
+    op: crate::commands::dep_gate::DepOp,
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<()> {
+    if lang == mgc_app_adapter::AppLanguage::ReactNative {
+        crate::commands::dep_gate::gate(
+            &crate::commands::dep_gate::DepContext::new(
+                "app",
+                Some(lang.ecosystem()),
+                None,
+                None,
+                op,
+            ),
+            None,
+            compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
+    }
+    Ok(())
+}
+
 /// Lệnh install theo language — Q18 (allowlist §5.1: flutter/pub/gradle/swift).
 pub struct InstallCommand {
     pub tool: String,
@@ -173,13 +204,17 @@ pub async fn install(
         return install_objc(&root, dry_run, compat_runtime).await;
     }
 
+    // install_command is PURE (zero spawn) — resolve before the gate so
+    // React Native (empty command) hits the app/rn Unsupported rule (P0#2)
+    // instead of the generic not-available error below.
+    // (install_command thuần túy — resolve trước gate để RN vào rule.)
     let cmd = install_command(lang);
-    if cmd.tool.is_empty() {
-        return Err(not_available(
-            "has no install flow for this language yet — edit manifest and resolve with the platform tool",
-        ));
-    }
     if dry_run {
+        if cmd.tool.is_empty() {
+            return Err(not_available(
+                "has no install flow for this language yet — edit manifest and resolve with the platform tool",
+            ));
+        }
         mgc_ui::info(&format!(
             "[dry-run] would run: {} {} (real install runs when the tool is present — drop `--dry-run`)",
             cmd.tool,
@@ -193,12 +228,26 @@ pub async fn install(
     // (Tường lửa C0: đường điều khiển duy nhất — chỉ spawn toolchain khi
     // có compat tường minh.)
     crate::commands::dep_gate::gate(
-        "app",
-        crate::commands::dep_gate::DepOp::Install,
-        Some(cmd.tool.as_str()),
+        &crate::commands::dep_gate::DepContext::new(
+            "app",
+            Some(lang.ecosystem()),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Install,
+        ),
+        if cmd.tool.is_empty() {
+            None
+        } else {
+            Some(cmd.tool.as_str())
+        },
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
+    if cmd.tool.is_empty() {
+        return Err(not_available(
+            "has no install flow for this language yet — edit manifest and resolve with the platform tool",
+        ));
+    }
     mgc_ui::info(&format!("Installing: {} {}", cmd.tool, cmd.args.join(" ")));
     run_tool(&root, &cmd.tool, &cmd.args)?;
     Ok(())
@@ -229,16 +278,35 @@ async fn install_multi(root: &Path, dry_run: bool, compat_runtime: Option<String
             mgc_ui::info(&format!("Platform '{name}' missing directory — skipping"));
             continue;
         }
+        // Per-platform ecosystem for the gate: react-native MUST hit the
+        // app/rn Unsupported rule (P0#2) — never a skip-warning.
+        // (Ecosystem từng platform cho gate: RN phải vào rule Unsupported.)
+        let platform_eco: Option<&str> = match name {
+            "android" => Some(crate::commands::dep_gate::eco::KOTLIN),
+            "ios" => Some(crate::commands::dep_gate::eco::SWIFT),
+            "flutter" => Some(crate::commands::dep_gate::eco::FLUTTER),
+            "react-native" => Some(crate::commands::dep_gate::eco::RN),
+            _ => None,
+        };
         if cmd.tool.is_empty() {
+            // No runner for this platform: still pass the gate so the
+            // Unsupported rule (not a skip-warning) owns the failure.
+            crate::commands::dep_gate::gate(
+                &crate::commands::dep_gate::DepContext::new(
+                    "app",
+                    platform_eco,
+                    None,
+                    None,
+                    crate::commands::dep_gate::DepOp::Install,
+                ),
+                None,
+                &compat,
+                Some(&audit_log),
+            )?;
             mgc_ui::warning(&format!(
                 "{name} install is blocked in beta until a MagiCore-native runner is available"
             ));
             skipped.push(name.to_string());
-            continue;
-        }
-        if tool_unavailable(&cmd.tool) {
-            mgc_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
-            skipped.push(format!("{name} ({} not found)", cmd.tool));
             continue;
         }
         if dry_run {
@@ -249,11 +317,21 @@ async fn install_multi(root: &Path, dry_run: bool, compat_runtime: Option<String
             ));
             continue;
         }
+        if tool_unavailable(&cmd.tool) {
+            mgc_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
+            skipped.push(format!("{name} ({} not found)", cmd.tool));
+            continue;
+        }
         // C0 ownership firewall per platform (T0.3).
         // (Tường lửa C0 cho từng platform.)
         crate::commands::dep_gate::gate(
-            "app",
-            crate::commands::dep_gate::DepOp::Install,
+            &crate::commands::dep_gate::DepContext::new(
+                "app",
+                platform_eco,
+                None,
+                None,
+                crate::commands::dep_gate::DepOp::Install,
+            ),
             Some(cmd.tool.as_str()),
             &compat,
             Some(&audit_log),
@@ -272,10 +350,11 @@ async fn install_multi(root: &Path, dry_run: bool, compat_runtime: Option<String
 }
 
 fn tool_unavailable(tool: &str) -> bool {
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .map(|dir| std::path::Path::new(dir).join(tool))
+    // P1 portability: PATH entries split with split_paths (';' on
+    // Windows) — a ':' split misdetects tools on Windows.
+    // (P1: tách PATH bằng split_paths cho đúng Windows.)
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join(tool))
         .find(|p| p.is_file())
         .is_none()
 }
@@ -331,8 +410,13 @@ async fn install_objc(root: &Path, dry_run: bool, compat_runtime: Option<String>
     // C0 ownership firewall (T0.3): xcodebuild resolves packages — delegated.
     // (Tường lửa C0: xcodebuild resolve package — delegate.)
     crate::commands::dep_gate::gate(
-        "app",
-        crate::commands::dep_gate::DepOp::Install,
+        &crate::commands::dep_gate::DepContext::new(
+            "app",
+            Some(crate::commands::dep_gate::eco::OBJC),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Install,
+        ),
         Some("xcodebuild"),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

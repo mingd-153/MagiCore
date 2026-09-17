@@ -223,7 +223,7 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::Add { .. }
             | Commands::Remove { .. }
             | Commands::Update { .. }
-            | Commands::List
+            | Commands::List { .. }
             | Commands::Build { .. }
             | Commands::Run { .. }
             | Commands::Test { .. }
@@ -265,15 +265,15 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::UpdateIot { .. }
             | Commands::UpdateApp { .. }
             | Commands::UpdateLib { .. }
-            | Commands::ListWeb
-            | Commands::ListGame
-            | Commands::ListAi
-            | Commands::ListClo
-            | Commands::ListCicd
-            | Commands::ListIot
-            | Commands::ListApp
-            | Commands::ListLib
-            | Commands::ListHardware
+            | Commands::ListWeb { .. }
+            | Commands::ListGame { .. }
+            | Commands::ListAi { .. }
+            | Commands::ListClo { .. }
+            | Commands::ListCicd { .. }
+            | Commands::ListIot { .. }
+            | Commands::ListApp { .. }
+            | Commands::ListLib { .. }
+            | Commands::ListHardware { .. }
     )
 }
 
@@ -354,7 +354,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Add { .. } => "add",
         Commands::Remove { .. } => "remove",
         Commands::Update { .. } => "update",
-        Commands::List => "list",
+        Commands::List { .. } => "list",
         Commands::Link { .. } => "link",
         Commands::Unlink { .. } => "unlink",
         Commands::Why { .. } => "why",
@@ -393,15 +393,15 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::RemoveIot { .. } => "remove-iot",
         Commands::RemoveApp { .. } => "remove-app",
         Commands::RemoveLib { .. } => "remove-lib",
-        Commands::ListWeb => "list-web",
-        Commands::ListGame => "list-game",
-        Commands::ListAi => "list-ai",
-        Commands::ListClo => "list-clo",
-        Commands::ListCicd => "list-cicd",
-        Commands::ListIot => "list-iot",
-        Commands::ListApp => "list-app",
-        Commands::ListLib => "list-lib",
-        Commands::ListHardware => "list-hardware",
+        Commands::ListWeb { .. } => "list-web",
+        Commands::ListGame { .. } => "list-game",
+        Commands::ListAi { .. } => "list-ai",
+        Commands::ListClo { .. } => "list-clo",
+        Commands::ListCicd { .. } => "list-cicd",
+        Commands::ListIot { .. } => "list-iot",
+        Commands::ListApp { .. } => "list-app",
+        Commands::ListLib { .. } => "list-lib",
+        Commands::ListHardware { .. } => "list-hardware",
         Commands::UpdateWeb { .. } => "update-web",
         Commands::UpdateGame { .. } => "update-game",
         Commands::UpdateAi { .. } => "update-ai",

@@ -35,8 +35,13 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
     // C0 ownership firewall (T0.3): single control path.
     // (Tường lửa C0: đường điều khiển duy nhất.)
     crate::commands::dep_gate::gate(
-        "ai",
-        crate::commands::dep_gate::DepOp::Remove,
+        &crate::commands::dep_gate::DepContext::new(
+            "ai",
+            Some(crate::commands::dep_gate::eco::PYTHON),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Remove,
+        ),
         Some(tool),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),

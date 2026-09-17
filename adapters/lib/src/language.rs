@@ -13,6 +13,23 @@ pub enum LibLanguage {
     DotNet,
 }
 
+impl LibLanguage {
+    /// Canonical C0 firewall ecosystem id — the ONLY string
+    /// `dep_gate::owner_for` matches on. Single source of truth so CLI
+    /// lanes can never drift from the gate table.
+    /// (Id ecosystem chuẩn cho tường lửa C0.)
+    pub fn ecosystem(&self) -> &'static str {
+        match self {
+            LibLanguage::Ts => "ts",
+            LibLanguage::Rust => "rust",
+            LibLanguage::Python => "python",
+            LibLanguage::Go => "go",
+            LibLanguage::Java => "java",
+            LibLanguage::DotNet => "dotnet",
+        }
+    }
+}
+
 type ManifestProbe = fn(&Path) -> Option<String>;
 
 pub fn detect_language(root: &Path) -> Option<LibLanguage> {

@@ -263,18 +263,20 @@ pub fn bare_core_command(
             },
             other => return Err(crate::error::unknown_core(other)),
         }),
-        Commands::List => SomeCore(match require_ecosystem("list", ecosystem.as_deref())? {
-            "web" => CoreCommand::ListWeb,
-            "game" => CoreCommand::ListGame,
-            "ai" => CoreCommand::ListAi,
-            "clo" => CoreCommand::ListClo,
-            "cicd" => CoreCommand::ListCicd,
-            "iot" => CoreCommand::ListIot,
-            "app" => CoreCommand::ListApp,
-            "lib" => CoreCommand::ListLib,
-            "hardware" => CoreCommand::ListHardware,
-            other => return Err(crate::error::unknown_core(other)),
-        }),
+        Commands::List { compat_runtime } => {
+            SomeCore(match require_ecosystem("list", ecosystem.as_deref())? {
+                "web" => CoreCommand::ListWeb { compat_runtime },
+                "game" => CoreCommand::ListGame { compat_runtime },
+                "ai" => CoreCommand::ListAi { compat_runtime },
+                "clo" => CoreCommand::ListClo { compat_runtime },
+                "cicd" => CoreCommand::ListCicd { compat_runtime },
+                "iot" => CoreCommand::ListIot { compat_runtime },
+                "app" => CoreCommand::ListApp { compat_runtime },
+                "lib" => CoreCommand::ListLib { compat_runtime },
+                "hardware" => CoreCommand::ListHardware { compat_runtime },
+                other => return Err(crate::error::unknown_core(other)),
+            })
+        }
         _ => unreachable!("Unhandled command"),
     };
     Ok(dispatch)

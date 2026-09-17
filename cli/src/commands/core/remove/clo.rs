@@ -15,8 +15,13 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
     if cloud_kind == "terraform" {
         let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
         crate::commands::dep_gate::gate(
-            "clo",
-            crate::commands::dep_gate::DepOp::Remove,
+            &crate::commands::dep_gate::DepContext::new(
+                "clo",
+                Some(crate::commands::dep_gate::eco::TERRAFORM),
+                None,
+                None,
+                crate::commands::dep_gate::DepOp::Remove,
+            ),
             Some("terraform"),
             &compat,
             Some(&root.join(".magicore").join("exec.log")),

@@ -386,15 +386,33 @@ pub enum CoreCommand {
         packages: Vec<String>,
         compat_runtime: Option<String>,
     },
-    ListWeb,
-    ListGame,
-    ListAi,
-    ListClo,
-    ListCicd,
-    ListIot,
-    ListApp,
-    ListLib,
-    ListHardware,
+    ListWeb {
+        compat_runtime: Option<String>,
+    },
+    ListGame {
+        compat_runtime: Option<String>,
+    },
+    ListAi {
+        compat_runtime: Option<String>,
+    },
+    ListClo {
+        compat_runtime: Option<String>,
+    },
+    ListCicd {
+        compat_runtime: Option<String>,
+    },
+    ListIot {
+        compat_runtime: Option<String>,
+    },
+    ListApp {
+        compat_runtime: Option<String>,
+    },
+    ListLib {
+        compat_runtime: Option<String>,
+    },
+    ListHardware {
+        compat_runtime: Option<String>,
+    },
     UpdateWeb {
         packages: Vec<String>,
         install: bool,

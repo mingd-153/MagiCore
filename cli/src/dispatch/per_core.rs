@@ -583,15 +583,17 @@ pub fn command_to_dispatch(
             packages,
             compat_runtime,
         }),
-        Commands::ListWeb => Some(CoreCommand::ListWeb),
-        Commands::ListGame => Some(CoreCommand::ListGame),
-        Commands::ListAi => Some(CoreCommand::ListAi),
-        Commands::ListClo => Some(CoreCommand::ListClo),
-        Commands::ListCicd => Some(CoreCommand::ListCicd),
-        Commands::ListIot => Some(CoreCommand::ListIot),
-        Commands::ListApp => Some(CoreCommand::ListApp),
-        Commands::ListLib => Some(CoreCommand::ListLib),
-        Commands::ListHardware => Some(CoreCommand::ListHardware),
+        Commands::ListWeb { compat_runtime } => Some(CoreCommand::ListWeb { compat_runtime }),
+        Commands::ListGame { compat_runtime } => Some(CoreCommand::ListGame { compat_runtime }),
+        Commands::ListAi { compat_runtime } => Some(CoreCommand::ListAi { compat_runtime }),
+        Commands::ListClo { compat_runtime } => Some(CoreCommand::ListClo { compat_runtime }),
+        Commands::ListCicd { compat_runtime } => Some(CoreCommand::ListCicd { compat_runtime }),
+        Commands::ListIot { compat_runtime } => Some(CoreCommand::ListIot { compat_runtime }),
+        Commands::ListApp { compat_runtime } => Some(CoreCommand::ListApp { compat_runtime }),
+        Commands::ListLib { compat_runtime } => Some(CoreCommand::ListLib { compat_runtime }),
+        Commands::ListHardware { compat_runtime } => {
+            Some(CoreCommand::ListHardware { compat_runtime })
+        }
         Commands::UpdateWeb {
             packages,
             install,
@@ -680,7 +682,7 @@ pub fn command_to_dispatch(
         | Commands::Add { .. }
         | Commands::Remove { .. }
         | Commands::Update { .. }
-        | Commands::List => match bare::bare_core_command(command, ecosystem)? {
+        | Commands::List { .. } => match bare::bare_core_command(command, ecosystem)? {
             DispatchCommand::Core(cmd) => SomeCore(cmd),
             DispatchCommand::Common(_) => unreachable!("bare verbs are core commands"),
         },

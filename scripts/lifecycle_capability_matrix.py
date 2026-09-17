@@ -1504,7 +1504,19 @@ def check_dep_gate_consistency(binary_ownership: dict, lanes: list) -> list:
         "delegated": ("delegated",),
         "unsupported": ("unsupported", "scaffold-only"),
     }
-    language_alias = {"typescript": "ts", "react-native": "rn"}
+    # Matrix-taxonomy → gate-ecosystem ids, PER CORE: the matrix names a
+    # lane by its toolchain language while the firewall matches the
+    # lane's detected ecosystem id. (lib, typescript) scaffolds a
+    # TypeScript project (gate "ts"); (app, react-native) scaffolds an RN
+    # project (gate "rn"); (game, rust) scaffolds BEVY (gate "bevy");
+    # (iot, rust) scaffolds esp32-rust (gate "esp32-rust"). Every other
+    # (core, language) pair already spells the gate id.
+    language_alias = {
+        ("lib", "typescript"): "ts",
+        ("app", "react-native"): "rn",
+        ("game", "rust"): "bevy",
+        ("iot", "rust"): "esp32-rust",
+    }
     violations = []
     for lane in lanes:
         tag = f"{lane['core']}/{lane['language']}"
@@ -1513,7 +1525,7 @@ def check_dep_gate_consistency(binary_ownership: dict, lanes: list) -> list:
         if entry is None:
             violations.append(f"{tag}: core missing from binary ownership table")
             continue
-        gate_lang = language_alias.get(lane["language"], lane["language"])
+        gate_lang = language_alias.get((lane["core"], lane["language"]), lane["language"])
         truth = entry.get("languages", {}).get(gate_lang)
         if truth is None:
             truth = entry.get("install")
