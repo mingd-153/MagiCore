@@ -12,6 +12,8 @@ pub async fn update(
 ) -> Result<()> {
     let root = super::super::shared::core_project_root("game")?;
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    // Full gate context: detected engine id (non-bevy hits Unsupported).
+    let engine = mgc_game_adapter::adapter_for(&root).map(|a| a.engine());
     // C0 ownership firewall (T0.3): the game update lane routes to the
     // adapter, whose engines delegate (Bevy → cargo).
     // (Tường lửa C0: lane update game gọi adapter, engine trong đó
@@ -19,8 +21,8 @@ pub async fn update(
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "game",
-            Some(crate::commands::dep_gate::eco::BEVY),
-            Some(crate::commands::dep_gate::eco::BEVY),
+            engine,
+            engine,
             None,
             crate::commands::dep_gate::DepOp::Update,
         ),

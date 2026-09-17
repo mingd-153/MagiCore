@@ -308,8 +308,17 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("iot", Some("esp32-rust" | "platformio" | "zephyr"), _) => DepOwner::Delegated {
             tools: &["cargo", "pio", "platformio", "west"],
         },
-        // Cloud terraform: CDK/Pulumi ride the web engine (native —
-        // those lanes branch BEFORE the gate and never call it).
+        // Cloud terraform: ONLY install runs (terraform init/get);
+        // add/remove/update have NO runner (the adapter answers
+        // no-package-manager) — Unsupported. CDK/Pulumi ride the web
+        // engine (native — those lanes branch BEFORE the gate and never
+        // call it).
+        ("clo", Some(eco::TERRAFORM), DepOp::Install) => DepOwner::Delegated {
+            tools: &["terraform"],
+        },
+        ("clo", Some(eco::TERRAFORM), DepOp::Add | DepOp::Remove | DepOp::Update) => {
+            DepOwner::Unsupported
+        }
         ("clo", Some(eco::TERRAFORM), _) => DepOwner::Delegated {
             tools: &["terraform"],
         },

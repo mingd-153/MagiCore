@@ -19,6 +19,7 @@ pub mod dlx;
 pub mod docs;
 pub mod doctor;
 pub mod exec;
+pub mod framework_records;
 pub mod hooks;
 pub mod import;
 pub mod info;

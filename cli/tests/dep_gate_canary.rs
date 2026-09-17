@@ -197,6 +197,14 @@ fn python_lib_project(dir: &std::path::Path) {
     std::fs::write(dir.join("pyproject.toml"), "[project]\nname = \"canary-pylib\"\n").unwrap();
 }
 
+fn godot_game_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-godot\"\necosystem = \"game\"\n[game]\nengine = \"godot\"\n",
+    )
+    .unwrap();
+}
+
 fn flutter_project(dir: &std::path::Path) {
     std::fs::write(dir.join("pubspec.yaml"), "name: canary_app\n").unwrap();
 }
@@ -709,4 +717,26 @@ fn swift_add_hits_unsupported_without_spawning() {
         "swift add must answer Unsupported:\n{output}"
     );
     assert!(marker.is_empty(), "swift canary must NEVER fire:\n{marker}");
+}
+
+#[test]
+fn godot_install_hits_unsupported_without_spawning() {
+    // Godot has no package manager: the detected engine id hits
+    // Unsupported at the gate (not a post-gate adapter error).
+    let project = TempDir::new().unwrap();
+    godot_game_project(project.path());
+    let sandbox = CanarySandbox::new("cargo");
+
+    let (code, stdout, stderr, marker) = run_mgc(&["install-game"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "godot 'install-game' must fail closed:\n{output}"
+    );
+    assert!(
+        output.contains("unsupported"),
+        "godot install must answer Unsupported:\n{output}"
+    );
+    assert!(marker.is_empty(), "cargo canary must NEVER fire:\n{marker}");
 }

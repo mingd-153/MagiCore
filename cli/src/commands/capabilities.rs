@@ -126,6 +126,7 @@ pub fn run(core: Option<&str>) -> Result<()> {
                 "core": name,
                 "capabilities": caps,
                 "dependency_ownership": dependency_ownership(name),
+                "framework_qualification": crate::commands::framework_records::qualification_json(name),
                 "everything_else": "unsupported",
             });
             println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -145,6 +146,7 @@ pub fn run(core: Option<&str>) -> Result<()> {
                     "core": name,
                     "capabilities": caps,
                     "dependency_ownership": dependency_ownership(name),
+                    "framework_qualification": crate::commands::framework_records::qualification_json(name),
                     "everything_else": "unsupported",
                 }));
             }

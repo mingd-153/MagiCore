@@ -331,6 +331,12 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
             ("app", Some(eco::KOTLIN), DepOp::Remove),
             ("app", Some(eco::OBJC), DepOp::List),
             ("app", Some(eco::OBJC), DepOp::Add),
+            // Terraform runs install only; add/remove/update have no runner.
+            ("clo", Some(eco::TERRAFORM), DepOp::Add),
+            ("clo", Some(eco::TERRAFORM), DepOp::Remove),
+            // Non-bevy game engines have no package manager.
+            ("game", Some("godot"), DepOp::Install),
+            ("game", Some("unity"), DepOp::Add),
         ] {
             assert!(
                 gate(&ctx(core, eco, op), None, &mode, None).is_err(),
