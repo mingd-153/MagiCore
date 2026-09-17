@@ -317,7 +317,10 @@ async fn install_multi(root: &Path, dry_run: bool, compat_runtime: Option<String
             ));
             continue;
         }
-        if tool_unavailable(&cmd.tool) {
+        // Shared PATH/PATHEXT lookup (build::tool_unavailable): exact
+        // name plus .BAT/.CMD/.EXE wrappers, so a `flutter.bat` shim
+        // counts as present on Windows (P0#4 fix).
+        if crate::commands::build::tool_unavailable(&cmd.tool) {
             mgc_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
             skipped.push(format!("{name} ({} not found)", cmd.tool));
             continue;
@@ -347,16 +350,6 @@ async fn install_multi(root: &Path, dry_run: bool, compat_runtime: Option<String
         return Err(crate::error::app_multi_platforms_skipped(&skipped));
     }
     Ok(())
-}
-
-fn tool_unavailable(tool: &str) -> bool {
-    // P1 portability: PATH entries split with split_paths (';' on
-    // Windows) — a ':' split misdetects tools on Windows.
-    // (P1: tách PATH bằng split_paths cho đúng Windows.)
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join(tool))
-        .find(|p| p.is_file())
-        .is_none()
 }
 
 /// Shared app platforms with native allowlisted toolchains only.

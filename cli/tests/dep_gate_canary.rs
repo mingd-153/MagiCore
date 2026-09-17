@@ -161,6 +161,42 @@ fn rn_project(dir: &std::path::Path) {
     .unwrap();
 }
 
+fn go_lib_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-go\"\necosystem = \"lib\"\n[lib]\nlanguage = \"go\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("go.mod"), "module canary-go\n\ngo 1.23\n").unwrap();
+}
+
+fn java_lib_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-java\"\necosystem = \"lib\"\n[lib]\nlanguage = \"java\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("pom.xml"), "<project></project>\n").unwrap();
+}
+
+fn swift_app_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-swift\"\necosystem = \"app\"\n[app]\nlanguage = \"swift\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("Package.swift"), "// swift-tools-version:5.9\n").unwrap();
+}
+
+fn python_lib_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-pylib\"\necosystem = \"lib\"\n[lib]\nlanguage = \"python\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("pyproject.toml"), "[project]\nname = \"canary-pylib\"\n").unwrap();
+}
+
 fn flutter_project(dir: &std::path::Path) {
     std::fs::write(dir.join("pubspec.yaml"), "name: canary_app\n").unwrap();
 }
@@ -552,4 +588,125 @@ fn rn_add_hits_unsupported_rule_without_spawning() {
         marker.is_empty(),
         "NO toolchain canary may fire for React Native:\n{marker}"
     );
+}
+
+// ── Review round 3: install/add split + exact cells, lane-level ───────
+
+#[test]
+fn install_lib_with_packages_fails_closed_without_spawning_cargo() {
+    // P0 finding #1: `install-lib serde` must NOT flow into adapter.add
+    // (cargo spawn) under the native Install gate — packages belong to
+    // `add-lib` behind its own gate.
+    let project = TempDir::new().unwrap();
+    rust_lib_project(project.path());
+    let sandbox = CanarySandbox::new("cargo");
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["install-lib", "serde"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "'install-lib serde' must refuse (packages belong to add-lib):\n{output}"
+    );
+    assert!(
+        output.contains("add-lib"),
+        "refusal must name the exact command:\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "cargo canary must NEVER fire for 'install-lib serde':\n{marker}"
+    );
+}
+
+#[test]
+fn install_lib_with_packages_fails_closed_without_spawning_pip() {
+    let project = TempDir::new().unwrap();
+    python_lib_project(project.path());
+    let sandbox = CanarySandbox::multi(&["uv", "pip", "pip3", "python"]);
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["install-lib", "requests"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "'install-lib requests' must refuse (packages belong to add-lib):\n{output}"
+    );
+    assert!(
+        output.contains("add-lib"),
+        "refusal must name the exact command:\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "NO pm canary may fire for 'install-lib requests':\n{marker}"
+    );
+}
+
+#[test]
+fn go_remove_hits_unsupported_without_spawning() {
+    // Go removal has no runner (manual `go mod tidy`): the lane must fail
+    // Unsupported before the adapter — even under compat.
+    let project = TempDir::new().unwrap();
+    go_lib_project(project.path());
+    let sandbox = CanarySandbox::new("go");
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["remove-lib", "example.com/mod"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "go 'remove-lib' must fail closed:\n{output}");
+    assert!(
+        output.contains("unsupported"),
+        "go remove must answer Unsupported:\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "go canary must NEVER fire for unsupported remove:\n{marker}"
+    );
+}
+
+#[test]
+fn java_add_hits_unsupported_without_spawning() {
+    // Java add has no runner (manual gradle step): Unsupported, and
+    // compat (mvn) must not open it either.
+    let project = TempDir::new().unwrap();
+    java_lib_project(project.path());
+    let sandbox = CanarySandbox::new("mvn");
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["add-lib", "com.example:demo"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "java 'add-lib' must fail closed:\n{output}");
+    assert!(
+        output.contains("unsupported"),
+        "java add must answer Unsupported:\n{output}"
+    );
+    assert!(marker.is_empty(), "NO spawn for unsupported java add:\n{marker}");
+
+    let (code, _, _, marker) = run_mgc(
+        &["add-lib", "com.example:demo", "--compat-runtime", "mvn"],
+        project.path(),
+        &sandbox,
+        None,
+    );
+    assert_ne!(code, Some(0), "compat must not open java add");
+    assert!(marker.is_empty(), "NO spawn under compat either:\n{marker}");
+}
+
+#[test]
+fn swift_add_hits_unsupported_without_spawning() {
+    // Swift has install + list runners only: add answers Unsupported.
+    let project = TempDir::new().unwrap();
+    swift_app_project(project.path());
+    let sandbox = CanarySandbox::new("swift");
+
+    let (code, stdout, stderr, marker) =
+        run_mgc(&["add-app", "somepkg"], project.path(), &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(code, Some(0), "swift 'add-app' must fail closed:\n{output}");
+    assert!(
+        output.contains("unsupported"),
+        "swift add must answer Unsupported:\n{output}"
+    );
+    assert!(marker.is_empty(), "swift canary must NEVER fire:\n{marker}");
 }

@@ -14,8 +14,9 @@ pub async fn update(
     let root = project_root()?;
     let lang = language(&root)?;
     // tool_command is PURE (zero spawn). Order: React Native gates first
-    // (P0#2); unimplemented verbs hint without gating (no false compat
-    // promise); implemented verbs gate with the exact tool.
+    // (P0#2), then gate with the resolved tool (None when the verb has no
+    // command — the exact table cell answers Unsupported). The manifest
+    // hint below is defensive fallback.
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     gate_react_native(
         &root,
@@ -23,9 +24,7 @@ pub async fn update(
         crate::commands::dep_gate::DepOp::Update,
         &compat,
     )?;
-    let Some(mut cmd) = tool_command(lang, "update") else {
-        return Err(manifest_hint(lang, "update"));
-    };
+    let cmd_opt = tool_command(lang, "update");
     // C0 ownership firewall (T0.3): single control path.
     // (Tường lửa C0: đường điều khiển duy nhất.)
     crate::commands::dep_gate::gate(
@@ -36,10 +35,13 @@ pub async fn update(
             None,
             crate::commands::dep_gate::DepOp::Update,
         ),
-        Some(cmd.tool.as_str()),
+        cmd_opt.as_ref().map(|c| c.tool.as_str()),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
+    let Some(mut cmd) = cmd_opt else {
+        return Err(manifest_hint(lang, "update"));
+    };
     cmd.args.extend(
         packages
             .iter()

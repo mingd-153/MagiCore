@@ -79,6 +79,7 @@ pub fn dependency_ownership(core: &str) -> serde_json::Value {
             let ctx = DepContext::new(core, ecosystem, None, None, op);
             let (owner, tools) = match owner_for(&ctx) {
                 DepOwner::Native => ("mgc-native", Vec::new()),
+                DepOwner::ScaffoldOnly => ("scaffold-only", Vec::new()),
                 DepOwner::Delegated { tools } => (
                     "delegated",
                     tools.iter().map(|tool| (*tool).to_string()).collect(),

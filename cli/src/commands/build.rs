@@ -422,27 +422,49 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
     Ok(())
 }
 
+/// PATH lookup with Windows PATHEXT awareness: on top of the exact
+/// name, `<tool><ext>` is accepted for every extension in PATHEXT
+/// (`.BAT`/`.CMD`/`.EXE` wrappers like `flutter.bat`). PATHEXT is read
+/// whenever present (Windows always sets it) so the lookup is
+/// unit-testable on every OS; without it, Windows falls back to the
+/// classic default set and other platforms check the exact name only.
+/// (Tìm PATH có nhận biết PATHEXT Windows.)
 pub(crate) fn tool_unavailable(tool: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return true;
     };
+    let extensions: Vec<String> = std::env::var_os("PATHEXT")
+        .and_then(|value| value.into_string().ok())
+        .map(|value| {
+            value
+                .split(';')
+                .filter(|extension| !extension.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            {
+                vec![
+                    ".COM".to_string(),
+                    ".EXE".to_string(),
+                    ".BAT".to_string(),
+                    ".CMD".to_string(),
+                ]
+            }
+            #[cfg(not(windows))]
+            {
+                Vec::new()
+            }
+        });
 
     std::env::split_paths(&path).all(|directory| {
         if directory.join(tool).is_file() {
             return false;
         }
-        #[cfg(windows)]
-        {
-            let extensions = std::env::var_os("PATHEXT")
-                .and_then(|value| value.into_string().ok())
-                .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string());
-            return !extensions
-                .split(';')
-                .filter(|extension| !extension.is_empty())
-                .any(|extension| directory.join(format!("{tool}{extension}")).is_file());
-        }
-        #[cfg(not(windows))]
-        true
+        !extensions
+            .iter()
+            .any(|extension| directory.join(format!("{tool}{extension}")).is_file())
     })
 }
 

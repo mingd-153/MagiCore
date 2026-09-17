@@ -10,8 +10,9 @@ pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
     let lang = language(&root)?;
     // tool_command is PURE (zero spawn). Order: React Native gates first
-    // (P0#2); unimplemented verbs hint without gating; implemented verbs
-    // gate with the exact tool.
+    // (P0#2), then gate with the resolved tool (None when the verb has no
+    // command — the exact table cell answers Unsupported). The manifest
+    // hint below is defensive fallback.
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     gate_react_native(
         &root,
@@ -19,9 +20,7 @@ pub async fn list(compat_runtime: Option<String>) -> Result<()> {
         crate::commands::dep_gate::DepOp::List,
         &compat,
     )?;
-    let Some(cmd) = tool_command(lang, "list") else {
-        return Err(manifest_hint(lang, "list"));
-    };
+    let cmd_opt = tool_command(lang, "list");
     // C0 ownership firewall (T0.3): list spawns the provider tool — the
     // explicit --compat-runtime flag is REQUIRED (P0#3).
     // (Tường lửa C0: list spawn tool — cờ tường minh BẮT BUỘC.)
@@ -33,10 +32,13 @@ pub async fn list(compat_runtime: Option<String>) -> Result<()> {
             None,
             crate::commands::dep_gate::DepOp::List,
         ),
-        Some(cmd.tool.as_str()),
+        cmd_opt.as_ref().map(|c| c.tool.as_str()),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
+    let Some(cmd) = cmd_opt else {
+        return Err(manifest_hint(lang, "list"));
+    };
     run_tool(&root, &cmd.tool, &cmd.args)?;
     Ok(())
 }

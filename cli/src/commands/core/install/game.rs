@@ -22,7 +22,8 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
             None,
             crate::commands::dep_gate::DepOp::Install,
         ),
-        None,
+        // Exact tool the bevy lane spawns (never None on a spawning lane).
+        Some("cargo"),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;

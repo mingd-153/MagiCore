@@ -60,10 +60,10 @@ pub async fn add(
         return Err(crate::error::add_app_usage());
     }
     // tool_command is PURE (string building, zero spawn). Order: React
-    // Native gates first (no runner for any verb — P0#2); unimplemented
-    // verbs fail with manifest hints WITHOUT gating (no spawn to guard,
-    // and the gate must not promise a compat opt-in for a verb that has
-    // no command); implemented verbs gate with the exact tool.
+    // Native gates first (no runner for any verb — P0#2), then gate with
+    // the resolved tool (None when the verb has no command — the exact
+    // table cell answers Unsupported for swift/kotlin/objc verbs without
+    // runners). The manifest hint below is defensive fallback.
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     gate_react_native(
         &root,
@@ -71,9 +71,7 @@ pub async fn add(
         crate::commands::dep_gate::DepOp::Add,
         &compat,
     )?;
-    let Some(mut cmd) = tool_command(lang, "add") else {
-        return Err(manifest_hint(lang, "add"));
-    };
+    let cmd_opt = tool_command(lang, "add");
     // C0 ownership firewall (T0.3): single control path.
     // (Tường lửa C0: đường điều khiển duy nhất.)
     crate::commands::dep_gate::gate(
@@ -84,10 +82,13 @@ pub async fn add(
             None,
             crate::commands::dep_gate::DepOp::Add,
         ),
-        Some(cmd.tool.as_str()),
+        cmd_opt.as_ref().map(|c| c.tool.as_str()),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
+    let Some(mut cmd) = cmd_opt else {
+        return Err(manifest_hint(lang, "add"));
+    };
     cmd.args
         .extend(apply_version_pin(lang, &packages, _version.as_deref())?);
     run_tool(&root, &cmd.tool, &cmd.args)?;

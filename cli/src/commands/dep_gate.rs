@@ -161,34 +161,60 @@ pub mod eco {
     pub const TERRAFORM: &str = "terraform";
 }
 
-/// Ownership of one (core, op) cell — the ONLY source for gate decisions.
+/// Ownership of one (core, ecosystem, operation) cell — the ONLY source
+/// for gate decisions.
 /// Capability matrices and docs must derive from this table, never
 /// hardcode their own copy.
-/// Quyền sở hữu của một ô (core, op) — nguồn DUY NHẤT cho quyết định gate.
-/// Matrix capability và docs phải suy ra từ bảng này, không hardcode bản
-/// sao riêng.
+/// Quyền sở hữu của một ô (core, ecosystem, operation) — nguồn DUY NHẤT
+/// cho quyết định gate. Matrix capability và docs phải suy ra từ bảng
+/// này, không hardcode bản sao riêng.
 pub enum DepOwner {
     /// MGC owns the full lifecycle — proceeds in every mode.
     Native,
     /// An external toolchain owns it — compat opt-in only, never support.
     Delegated { tools: &'static [&'static str] },
+    /// No package lifecycle, but a REAL read-only inventory command
+    /// exists (hardware list) — passes the gate like Native, reported as
+    /// "scaffold-only" (never "mgc-native") in capabilities. A compat
+    /// opt-in on such a cell is accepted for CLI uniformity and ignored
+    /// with a notice.
+    ScaffoldOnly,
     /// No lifecycle at all — always fails closed, even under compat.
     Unsupported,
 }
 
 /// Static ownership table (V1.2 §6.3 evidence baseline, HEAD 030ee69b).
-/// Matched on (core, ecosystem, operation) — never on core alone: a
-/// native resolve engine does NOT imply a native install/add lane (the
-/// gate measures the LANE the user invokes, not the engine's theoretical
-/// capability). Every arm names an explicit ecosystem; the catch-all is
-/// Unsupported — an undetermined ecosystem fails closed, never falls
-/// back to a generic delegated lane.
+/// Matched on (core, ecosystem, operation) — never on core alone, and
+/// never one label for a whole ecosystem: an operation WITHOUT a real
+/// runner is Unsupported, not Delegated (a "delegated" cell for a command
+/// that does not exist is a false capability, not a cautious one).
+/// Every arm names an explicit ecosystem; the catch-all is Unsupported —
+/// an undetermined ecosystem fails closed, never falls back to a generic
+/// delegated lane.
+///
+/// Pipeline stages (resolve/lock/fetch/verify/store/materialize/frozen/
+/// offline/gc) share their (core, ecosystem)'s INSTALL ownership: the
+/// engine/toolchain that owns install owns the pipeline. Only the five
+/// user verbs plus List keep distinct cells.
 /// Bảng sở hữu tĩnh (baseline §6.3). Khớp theo (core, ecosystem,
-/// operation) — không bao giờ theo core đơn độc. Mọi nhánh ghi ecosystem
-/// tường minh; nhánh vét là Unsupported — ecosystem không xác định được
-/// thì fail-closed.
+/// operation) — operation không có runner thật là Unsupported, không
+/// phải Delegated.
 pub fn owner_for(ctx: &DepContext) -> DepOwner {
-    match (ctx.core, ctx.ecosystem, ctx.op) {
+    // Pipeline stages ride Install ownership; the verbs + List stay exact.
+    // (Stage pipeline đi theo ownership của Install.)
+    let op = match ctx.op {
+        DepOp::Resolve
+        | DepOp::Lock
+        | DepOp::Fetch
+        | DepOp::Verify
+        | DepOp::Store
+        | DepOp::Materialize
+        | DepOp::FrozenInstall
+        | DepOp::OfflineReinstall
+        | DepOp::Gc => DepOp::Install,
+        verb => verb,
+    };
+    match (ctx.core, ctx.ecosystem, op) {
         // Web JS/TS: the native npm pipeline (resolve/lock/fetch/CAS/
         // materialize/lifecycle/audit) — the only fully native engine.
         // "javascript"/"typescript" are accepted as the same engine's
@@ -196,26 +222,31 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("web", Some(eco::JS | eco::TS | "javascript" | "typescript"), _) => DepOwner::Native,
         // Lib TypeScript rides the embedded web engine end to end.
         ("lib", Some(eco::TS), _) => DepOwner::Native,
-        // Lib protocol languages: the native pipeline owns every stage
-        // EXCEPT add/remove/update, which edit through the provider
-        // toolchain (per-language tool sets — a python project can never
-        // open the gate with `--compat-runtime cargo`).
+        // Lib protocol languages: the native pipeline owns install and
+        // every stage EXCEPT the mutating verbs below, which spawn the
+        // provider toolchain for real (verified per arm against
+        // adapters/lib/src/adapter.rs).
         ("lib", Some(eco::RUST), DepOp::Add | DepOp::Remove | DepOp::Update) => {
             DepOwner::Delegated { tools: &["cargo"] }
         }
+        // Python edits spawn PIP for real (adapter hardcodes pip) — `uv`
+        // is NOT in the set: a uv opt-in running pip would break the
+        // flag==process contract.
         ("lib", Some(eco::PYTHON), DepOp::Add | DepOp::Remove | DepOp::Update) => {
             DepOwner::Delegated {
-                tools: &["uv", "pip", "pip3"],
+                tools: &["pip", "pip3"],
             }
         }
-        ("lib", Some(eco::GO), DepOp::Add | DepOp::Remove | DepOp::Update) => {
+        // Go: `go get` / `go get -u` spawn for real; removal has NO
+        // runner (honest manual `go mod tidy` step) — Unsupported.
+        ("lib", Some(eco::GO), DepOp::Add | DepOp::Update) => {
             DepOwner::Delegated { tools: &["go"] }
         }
-        ("lib", Some(eco::JAVA), DepOp::Add | DepOp::Remove | DepOp::Update) => {
-            DepOwner::Delegated { tools: &["mvn"] }
-        }
-        ("lib", Some(eco::DOTNET), DepOp::Add | DepOp::Remove | DepOp::Update) => {
-            DepOwner::Delegated { tools: &["dotnet"] }
+        ("lib", Some(eco::GO), DepOp::Remove) => DepOwner::Unsupported,
+        // Java/.NET: add/remove/update have NO runner (honest manual
+        // gradle/dotnet steps) — Unsupported until a real runner exists.
+        ("lib", Some(eco::JAVA | eco::DOTNET), DepOp::Add | DepOp::Remove | DepOp::Update) => {
+            DepOwner::Unsupported
         }
         (
             "lib",
@@ -242,14 +273,33 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // lane gọi lỗi trước mọi spawn, nên không có lifecycle install nào
         // để hỗ trợ.)
         ("app", Some(eco::RN), _) => DepOwner::Unsupported,
-        // App Flutter/Swift/Kotlin/ObjC tiers: provider toolchains own
-        // install/add/remove/update/list even where a native resolve
-        // engine exists (the lane does not use it).
-        ("app", Some(eco::FLUTTER | eco::KOTLIN | eco::SWIFT | eco::OBJC), _) => {
-            DepOwner::Delegated {
-                tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
-            }
+        // App Flutter: provider toolchain owns every verb (tool_command
+        // implements add/remove/list/update; install runs flutter pub).
+        ("app", Some(eco::FLUTTER), _) => DepOwner::Delegated {
+            tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
+        },
+        // App Swift: install + list runners exist; add/remove/update have
+        // NO command — Unsupported (never a delegated promise).
+        ("app", Some(eco::SWIFT), DepOp::Add | DepOp::Remove | DepOp::Update) => {
+            DepOwner::Unsupported
         }
+        ("app", Some(eco::SWIFT), _) => DepOwner::Delegated {
+            tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
+        },
+        // App Kotlin: install + list runners exist; add/remove/update have
+        // NO command — Unsupported.
+        ("app", Some(eco::KOTLIN), DepOp::Add | DepOp::Remove | DepOp::Update) => {
+            DepOwner::Unsupported
+        }
+        ("app", Some(eco::KOTLIN), _) => DepOwner::Delegated {
+            tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
+        },
+        // App ObjC: ONLY the xcodebuild install runner exists;
+        // add/remove/update/list have NO command — Unsupported.
+        ("app", Some(eco::OBJC), DepOp::Install) => DepOwner::Delegated {
+            tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
+        },
+        ("app", Some(eco::OBJC), _) => DepOwner::Unsupported,
         // Game bevy lane: cargo owns the graph.
         ("game", Some(eco::BEVY), _) => DepOwner::Delegated { tools: &["cargo"] },
         // IoT frameworks own theirs (esp32-rust/cargo, pio, zephyr/west).
@@ -263,10 +313,11 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("clo", Some(eco::TERRAFORM), _) => DepOwner::Delegated {
             tools: &["terraform"],
         },
-        // Hardware list is an adapter directory read (optimizer/bench
-        // inventory) — spawn-free, so native; every other hardware op has
-        // no package lifecycle (scaffold-only lane).
-        ("hardware", _, DepOp::List) => DepOwner::Native,
+        // Hardware list is a REAL read-only inventory command over
+        // optimizer/bench templates — no package lifecycle, so it is
+        // ScaffoldOnly (passes the gate, reported as such, never
+        // "mgc-native").
+        ("hardware", _, DepOp::List) => DepOwner::ScaffoldOnly,
         // CI/CD and hardware have no package lifecycle (scaffold/pipeline
         // and template/generator only) — compat cannot open what does not
         // exist.
@@ -405,6 +456,16 @@ pub fn gate(
             }
             Ok(())
         }
+        DepOwner::ScaffoldOnly => {
+            if let CompatMode::Explicit(other) = compat {
+                mgc_ui::info(&format!(
+                    "`{}` {} is a scaffold-only lane (inventory/templates, no package lifecycle) — ignoring `--compat-runtime {other}`.",
+                    ctx.describe(),
+                    ctx.op.as_str()
+                ));
+            }
+            Ok(())
+        }
         DepOwner::Unsupported => Err(crate::error::dep_gate_unsupported(
             ctx.core,
             ctx.op.as_str(),
@@ -421,7 +482,7 @@ pub fn gate(
                 let allowed = match tool {
                     Some(actual) => {
                         if !tools.contains(&actual) {
-                            return Err(crate::error::dep_gate_wrong_tool(
+                            return Err(crate::error::dep_gate_lane_tool_not_owned(
                                 ctx.core,
                                 ctx.op.as_str(),
                                 ctx.ecosystem,
@@ -434,12 +495,24 @@ pub fn gate(
                     None => tools.contains(&wanted.as_str()),
                 };
                 if !allowed {
-                    let got = tool.unwrap_or(wanted.as_str());
+                    // Exact-tool lane, wrong family member: name BOTH so
+                    // the flag==process mismatch is visible (never report
+                    // the lane's tool as if the user had passed it).
+                    if let Some(actual) = tool {
+                        return Err(crate::error::dep_gate_tool_mismatch(
+                            ctx.core,
+                            ctx.op.as_str(),
+                            ctx.ecosystem,
+                            wanted,
+                            actual,
+                            tools,
+                        ));
+                    }
                     return Err(crate::error::dep_gate_wrong_tool(
                         ctx.core,
                         ctx.op.as_str(),
                         ctx.ecosystem,
-                        got,
+                        wanted,
                         tools,
                     ));
                 }

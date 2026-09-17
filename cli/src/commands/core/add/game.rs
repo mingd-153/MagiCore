@@ -57,7 +57,8 @@ pub async fn add(
             None,
             crate::commands::dep_gate::DepOp::Add,
         ),
-        None,
+        // Exact tool the bevy lane spawns (never None on a spawning lane).
+        Some("cargo"),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;

@@ -131,6 +131,57 @@ fn tool_unavailable_true_for_nonsense_tool() {
     assert!(tool_unavailable("definitely-not-a-real-tool-mgc"));
 }
 
+#[test]
+// SAFETY (edition 2024): `env::set_var` is unsafe — this test mutates
+// PATH/PATHEXT with a unique probe name, restoring both vars after
+// (repo-wide test env convention: install_test.rs).
+#[allow(unsafe_code)]
+fn tool_unavailable_honors_pathext_wrappers() {
+    // P0#4 Windows: a `<tool>.bat` shim counts as present when PATHEXT
+    // names .BAT — verified on every OS by setting PATHEXT explicitly
+    // (the helper reads it whenever present). The probe name is unique
+    // per process so concurrent tests sharing env are unaffected.
+    let probe = format!("mgc-pathext-probe-{}", std::process::id());
+    let dir = std::env::temp_dir().join(format!("mgc-pathext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{probe}.bat")), "@echo off\n").unwrap();
+    let old_path = std::env::var_os("PATH");
+    let old_pathext = std::env::var_os("PATHEXT");
+    let mut paths = vec![dir.clone()];
+    if let Some(existing) = &old_path {
+        paths.extend(std::env::split_paths(existing));
+    }
+    // SAFETY (edition 2024): `env::set_var` is unsafe — this test mutates
+    // process env with a unique probe name, restoring both vars after.
+    // (An toàn: test đổi env với tên probe duy nhất, restore sau.)
+    unsafe {
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        std::env::set_var("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+    }
+    assert!(
+        !tool_unavailable(&probe),
+        "{probe}.bat must satisfy the lookup under PATHEXT"
+    );
+    assert!(
+        tool_unavailable("definitely-not-a-real-tool-mgc-pathext"),
+        "absent tool must stay unavailable"
+    );
+    unsafe {
+        if let Some(path) = old_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        if let Some(pathext) = old_pathext {
+            std::env::set_var("PATHEXT", pathext);
+        } else {
+            std::env::remove_var("PATHEXT");
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[cfg(feature = "app")]
 #[test]
 fn build_multi_fails_when_no_platform_artifact_is_created() {

@@ -33,7 +33,10 @@ fn test_app_commands_require_app_project() {
 }
 
 #[test]
-fn test_add_app_without_cli_passthrough_edits_manifest() {
+fn test_add_app_without_cli_passthrough_is_unsupported() {
+    // Swift has NO add runner: the exact table cell (app/swift/add) is
+    // Unsupported — the gate owns the failure (names the ecosystem), not
+    // a manifest hint and never a compat promise.
     let dir = common::work_dir();
     write_app_project(&dir, "swift");
     std::fs::write(
@@ -42,9 +45,13 @@ fn test_add_app_without_cli_passthrough_edits_manifest() {
     )
     .unwrap();
     let (ok, out) = common::mgc_in(&dir, &["add-app", "somepkg"]);
-    assert!(!ok, "add-app on swift must fail (no CLI add)");
+    assert!(!ok, "add-app on swift must fail (no runner)");
     assert!(
-        out.contains("edit Package.swift"),
-        "expected manifest hint, got: {out}"
+        out.contains("swift") && out.contains("unsupported"),
+        "expected app/swift Unsupported gate error, got: {out}"
     );
+    // Compat cannot open a cell with no runner.
+    let (ok, out) = common::mgc_in(&dir, &["add-app", "somepkg", "--compat-runtime", "swift"]);
+    assert!(!ok, "compat must not open swift add");
+    assert!(out.contains("unsupported"), "got: {out}");
 }

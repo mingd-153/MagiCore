@@ -42,7 +42,9 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
             target_owned.as_deref(),
             crate::commands::dep_gate::DepOp::Install,
         ),
-        None,
+        // Exact tool for the detected framework (never None on a
+        // spawning lane): esp32-rust→cargo, platformio→pio, zephyr→west.
+        framework.and_then(shared::iot_framework_tool),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;

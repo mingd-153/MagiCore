@@ -63,7 +63,12 @@ pub async fn add(
     // every other lib language delegates to its toolchain (compat only).
     // (Tường lửa C0: TypeScript đi engine web native; ngôn ngữ lib khác
     // delegate toolchain.)
-    let language = mgc_lib_adapter::detect_language(&root).map(|lang| lang.ecosystem());
+    let detected = mgc_lib_adapter::detect_language(&root);
+    let language = detected.map(|lang| lang.ecosystem());
+    // Actual tool the adapter WILL spawn (never None on a spawning
+    // lane): the gate must see `pip` for python — a `--compat-runtime
+    // uv` opt-in must NOT open a pip spawn (flag==process contract).
+    let tool = detected.and_then(shared::lib_edit_tool);
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "lib",
@@ -72,7 +77,7 @@ pub async fn add(
             None,
             crate::commands::dep_gate::DepOp::Add,
         ),
-        None,
+        tool,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;

@@ -1108,7 +1108,8 @@ pub fn dep_gate_unsupported(core: &str, op: &str, ecosystem: Option<&str>) -> Er
     }
 }
 
-/// Compat named a tool that does not own this (core, ecosystem, op) cell.
+/// Compat named a tool that does not own this (core, ecosystem, op) cell
+/// (adapter-routed lane: the exact tool is unknown, only the owner set).
 pub fn dep_gate_wrong_tool(
     core: &str,
     op: &str,
@@ -1126,11 +1127,62 @@ pub fn dep_gate_wrong_tool(
     )
 }
 
+/// The lane's exact tool is not in the owner set at all — a lane/table
+/// mismatch (lane bug), failed closed, never silently run.
+pub fn dep_gate_lane_tool_not_owned(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    actual: &str,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    anyhow!(
+        "lane tool '{actual}' does not own {lane} (owner toolchain: {}) — refusing to run (lane/table mismatch, fail-closed)",
+        tools.join(", ")
+    )
+}
+
+/// The opt-in names a DIFFERENT tool than the lane will actually spawn
+/// (e.g. `--compat-runtime uv` on a lane that spawns pip): the flag must
+/// equal the process (flag==process contract) — failed closed with both
+/// names so the user sees the mismatch.
+pub fn dep_gate_tool_mismatch(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    wanted: &str,
+    actual: &str,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    anyhow!(
+        "`--compat-runtime '{wanted}'` does not own {lane}: this lane spawns '{actual}' (owner toolchain: {}) — pass `--compat-runtime {actual}` (the flag must name the process that will run)",
+        tools.join(", ")
+    )
+}
+
 /// Multi-platform install finished with skipped platforms (skip is not success).
 pub fn app_multi_platforms_skipped(skipped: &[String]) -> Error {
     anyhow!(
         "install incomplete — skipped platform(s): {} (missing tool or runner; install them and re-run — a skip is never success)",
         skipped.join(", ")
+    )
+}
+
+/// `install-lib` got package args: install replays the existing
+/// graph/lock, it never adds (adding spawns the provider toolchain and
+/// belongs to `add-lib` behind its own gate).
+pub fn install_lib_packages_use_add(packages: &[String]) -> Error {
+    anyhow!(
+        "`install-lib` takes no packages (got {:?}) — install replays the existing graph/lock through the native pipeline; add packages with `mgc add-lib <package>`",
+        packages
     )
 }
 

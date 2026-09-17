@@ -48,7 +48,7 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     ));
     assert!(gate(&ctx("lib", Some(eco::TS), DepOp::Install), None, &native(), None).is_ok());
     // Protocol languages: native pipeline (install/resolve/verify/...) but
-    // toolchain-owned edits (add/remove/update) with PER-LANGUAGE tools.
+    // toolchain-owned edits with PER-LANGUAGE tools.
     for lang in [eco::RUST, eco::PYTHON, eco::GO, eco::JAVA, eco::DOTNET] {
         assert!(
             gate(&ctx("lib", Some(lang), DepOp::Install), None, &native(), None).is_ok(),
@@ -63,11 +63,43 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
             "lib[{lang}] add must fail closed without compat"
         );
     }
+    // Exact actual-tool matching: python runs PIP — a uv opt-in is a
+    // wrong-tool refusal, never a pip spawn (flag==process contract).
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::PYTHON), DepOp::Add),
+            Some("pip"),
+            &explicit("pip"),
+            None
+        )
+        .is_ok()
+    );
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::PYTHON), DepOp::Add),
+            Some("pip"),
+            &explicit("pip3"),
+            None
+        )
+        .is_ok(),
+        "pip~pip3 alias: same owner"
+    );
+    let err = gate(
+        &ctx("lib", Some(eco::PYTHON), DepOp::Add),
+        Some("pip"),
+        &explicit("uv"),
+        None,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("does not own"), "{err}");
+    // The mismatch names BOTH sides (flag uv, process pip).
+    assert!(err.to_string().contains("'uv'"), "{err}");
+    assert!(err.to_string().contains("'pip'"), "{err}");
     // Per-language tool sets: a rust project cannot opt in with uv.
     assert!(
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
-            None,
+            Some("cargo"),
             &explicit("cargo"),
             None
         )
@@ -76,12 +108,38 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     assert!(
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
-            None,
+            Some("cargo"),
             &explicit("uv"),
             None
         )
         .is_err()
     );
+    // Go removal has NO runner (manual `go mod tidy`): Unsupported even
+    // under compat — compat cannot open what does not exist.
+    for mode in [native(), explicit("go")] {
+        assert!(
+            gate(
+                &ctx("lib", Some(eco::GO), DepOp::Remove),
+                Some("go"),
+                &mode,
+                None
+            )
+            .is_err(),
+            "lib[go] remove must stay Unsupported"
+        );
+    }
+    // Java/.NET add/remove/update have NO runner (manual gradle/dotnet).
+    for lang in [eco::JAVA, eco::DOTNET] {
+        for op in [DepOp::Add, DepOp::Remove, DepOp::Update] {
+            for mode in [native(), explicit("mvn"), explicit("dotnet")] {
+                assert!(
+                    gate(&ctx("lib", Some(lang), op), None, &mode, None).is_err(),
+                    "lib[{lang}] {} must stay Unsupported",
+                    op.as_str()
+                );
+            }
+        }
+    }
     // Undetected lib language: pipeline ops fail closed (P1 wildcard fix).
     assert!(gate(&ctx("lib", None, DepOp::Install), None, &native(), None).is_err());
     assert!(gate(&ctx("lib", None, DepOp::Add), None, &native(), None).is_err());
@@ -265,6 +323,14 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
             ("unknown-core", None, DepOp::Install),
             ("app", Some(eco::RN), DepOp::Install),
             ("lib", None, DepOp::Install),
+            // Exact cells without runners (never Delegated promises).
+            ("lib", Some(eco::GO), DepOp::Remove),
+            ("lib", Some(eco::JAVA), DepOp::Add),
+            ("lib", Some(eco::DOTNET), DepOp::Update),
+            ("app", Some(eco::SWIFT), DepOp::Add),
+            ("app", Some(eco::KOTLIN), DepOp::Remove),
+            ("app", Some(eco::OBJC), DepOp::List),
+            ("app", Some(eco::OBJC), DepOp::Add),
         ] {
             assert!(
                 gate(&ctx(core, eco, op), None, &mode, None).is_err(),
@@ -273,6 +339,42 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
             );
         }
     }
+}
+
+#[test]
+fn app_exact_verbs_match_real_runners() {
+    // Reviewer table: flutter every verb delegated; swift/kotlin
+    // install+list delegated; objc install only; everything else
+    // Unsupported — including under compat.
+    assert!(
+        gate(
+            &ctx("app", Some(eco::FLUTTER), DepOp::Update),
+            Some("flutter"),
+            &explicit("flutter"),
+            None
+        )
+        .is_ok()
+    );
+    for lang in [eco::SWIFT, eco::KOTLIN] {
+        let tool = if lang == eco::SWIFT { "swift" } else { "gradle" };
+        assert!(
+            gate(&ctx("app", Some(lang), DepOp::Install), None, &explicit(tool), None).is_ok(),
+            "app[{lang}] install opens for its toolchain"
+        );
+        assert!(
+            gate(&ctx("app", Some(lang), DepOp::List), None, &explicit(tool), None).is_ok(),
+            "app[{lang}] list opens for its toolchain"
+        );
+    }
+    assert!(
+        gate(
+            &ctx("app", Some(eco::OBJC), DepOp::Install),
+            Some("xcodebuild"),
+            &explicit("xcodebuild"),
+            None
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -286,8 +388,13 @@ fn scaffold_only_lanes_say_so() {
             "{core} must be labeled scaffold-only: {err}"
         );
     }
-    // Hardware list is a spawn-free adapter read, so it stays native.
+    // Hardware list is a REAL read-only inventory command: it passes the
+    // gate, but its owner is ScaffoldOnly — never "mgc-native".
     assert!(gate(&ctx("hardware", None, DepOp::List), None, &native(), None).is_ok());
+    assert!(matches!(
+        owner_for(&ctx("hardware", None, DepOp::List)),
+        DepOwner::ScaffoldOnly
+    ));
 }
 
 #[test]
@@ -335,7 +442,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
                 "{core}/{op} must carry {{owner, tools}}"
             );
             assert!(
-                ["mgc-native", "delegated", "unsupported"]
+                ["mgc-native", "delegated", "scaffold-only", "unsupported"]
                     .contains(&cell["owner"].as_str().unwrap_or("")),
                 "{core}/{op} owner must be closed-vocabulary"
             );
@@ -360,6 +467,18 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(lib_languages["ts"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["rust"]["install"]["owner"], "mgc-native");
     assert_eq!(lib_languages["rust"]["add"]["owner"], "delegated");
+    // Capability snapshot vs REAL runners: python edits spawn pip only
+    // (uv excluded); go remove / java add have no runner (unsupported).
+    assert_eq!(
+        lib_languages["python"]["add"]["tools"],
+        serde_json::json!(["pip", "pip3"])
+    );
+    assert_eq!(lib_languages["python"]["add"]["owner"], "delegated");
+    assert_eq!(lib_languages["go"]["remove"]["owner"], "unsupported");
+    assert_eq!(lib_languages["go"]["add"]["owner"], "delegated");
+    assert_eq!(lib_languages["java"]["add"]["owner"], "unsupported");
+    assert_eq!(lib_languages["java"]["install"]["owner"], "mgc-native");
+    assert_eq!(lib_languages["dotnet"]["update"]["owner"], "unsupported");
     let app_languages = dependency_ownership("app")["languages"].clone();
     // "rn" is omitted when identical to the (unsupported) base row — the
     // languages map carries ONLY differing ecosystems. When present it
@@ -369,4 +488,16 @@ fn capabilities_json_carries_dep_gate_ownership() {
         assert_eq!(rn["install"]["owner"], "unsupported");
     }
     assert_eq!(app_languages["flutter"]["install"]["owner"], "delegated");
+    // Exact app verbs: swift/kotlin add unsupported, objc list
+    // unsupported, objc install delegated.
+    assert_eq!(app_languages["swift"]["add"]["owner"], "unsupported");
+    assert_eq!(app_languages["swift"]["install"]["owner"], "delegated");
+    assert_eq!(app_languages["kotlin"]["remove"]["owner"], "unsupported");
+    assert_eq!(app_languages["kotlin"]["list"]["owner"], "delegated");
+    assert_eq!(app_languages["objc"]["list"]["owner"], "unsupported");
+    assert_eq!(app_languages["objc"]["install"]["owner"], "delegated");
+    // Hardware list reads scaffold-only, never mgc-native.
+    let hardware_full = dependency_ownership("hardware");
+    assert_eq!(hardware_full["operations"]["list"]["owner"], "scaffold-only");
+    assert_eq!(hardware_full["operations"]["install"]["owner"], "unsupported");
 }

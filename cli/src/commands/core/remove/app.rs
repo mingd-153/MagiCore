@@ -13,8 +13,9 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
         return Err(crate::error::remove_app_usage());
     }
     // tool_command is PURE (zero spawn). Order: React Native gates first
-    // (P0#2); unimplemented verbs hint without gating (no false compat
-    // promise); implemented verbs gate with the exact tool.
+    // (P0#2), then gate with the resolved tool (None when the verb has no
+    // command — the exact table cell answers Unsupported). The manifest
+    // hint below is defensive fallback.
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     gate_react_native(
         &root,
@@ -22,9 +23,7 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
         crate::commands::dep_gate::DepOp::Remove,
         &compat,
     )?;
-    let Some(mut cmd) = tool_command(lang, "remove") else {
-        return Err(manifest_hint(lang, "remove"));
-    };
+    let cmd_opt = tool_command(lang, "remove");
     // C0 ownership firewall (T0.3): single control path.
     // (Tường lửa C0: đường điều khiển duy nhất.)
     crate::commands::dep_gate::gate(
@@ -35,10 +34,13 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
             None,
             crate::commands::dep_gate::DepOp::Remove,
         ),
-        Some(cmd.tool.as_str()),
+        cmd_opt.as_ref().map(|c| c.tool.as_str()),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
+    let Some(mut cmd) = cmd_opt else {
+        return Err(manifest_hint(lang, "remove"));
+    };
     cmd.args.extend(
         packages
             .iter()

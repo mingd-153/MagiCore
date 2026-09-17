@@ -1061,6 +1061,37 @@ pub fn ai_pick_tool(root: &std::path::Path) -> &'static str {
     }
 }
 
+/// Actual provider tool a lib mutating verb (add/remove/update) will
+/// spawn for this language — MUST match adapters/lib/src/adapter.rs
+/// arm-for-arm: Rust→cargo, Python→pip (the adapter hardcodes pip — uv
+/// NEVER spawns here, so the gate set excludes uv), Go→go, Ts→None
+/// (native web engine, no spawn), Java/DotNet→None (no runner; the gate
+/// fails Unsupported before any spawn).
+/// (Tool thật lane lib sẽ spawn theo ngôn ngữ — khớp từng arm adapter.)
+#[cfg(feature = "lib")]
+pub fn lib_edit_tool(lang: mgc_lib_adapter::LibLanguage) -> Option<&'static str> {
+    match lang {
+        mgc_lib_adapter::LibLanguage::Ts => None,
+        mgc_lib_adapter::LibLanguage::Rust => Some("cargo"),
+        mgc_lib_adapter::LibLanguage::Python => Some("pip"),
+        mgc_lib_adapter::LibLanguage::Go => Some("go"),
+        mgc_lib_adapter::LibLanguage::Java | mgc_lib_adapter::LibLanguage::DotNet => None,
+    }
+}
+
+/// Actual provider tool an iot lane will spawn for the detected
+/// framework: esp32-rust→cargo, platformio→pio, zephyr→west.
+/// (Tool thật lane iot sẽ spawn theo framework.)
+#[cfg(feature = "iot")]
+pub fn iot_framework_tool(framework: &str) -> Option<&'static str> {
+    match framework {
+        "esp32-rust" => Some("cargo"),
+        "platformio" => Some("pio"),
+        "zephyr" => Some("west"),
+        _ => None,
+    }
+}
+
 /// Post-gate pip binary resolution: the gate already approved the pip
 /// owner (`pip` ~ `pip3` alias); this picks the binary that EXISTS for
 /// the real spawn — `pip` preferred, `pip3` fallback, else `pip` so a

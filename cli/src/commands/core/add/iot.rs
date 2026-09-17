@@ -50,7 +50,9 @@ pub async fn add(
             target_owned.as_deref(),
             crate::commands::dep_gate::DepOp::Add,
         ),
-        None,
+        // Exact tool for the detected framework (never None on a
+        // spawning lane).
+        framework.and_then(shared::iot_framework_tool),
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
