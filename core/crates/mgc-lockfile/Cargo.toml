@@ -92,6 +92,9 @@ default = []
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
-# Atomic replace + reparse-point refusal (Windows-only)
+# Atomic replace + reparse-point refusal (Windows-only). MoveFileExW's
+# link in windows-sys 0.52 additionally requires Win32_Foundation (BOOL)
+# — without it Windows builds fail with unresolved import E0432.
+# (MoveFileExW cần thêm feature Win32_Foundation.)
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

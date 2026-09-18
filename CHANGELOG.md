@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.1.0-rc.8] - 2026-09-19
+
+### Fixed
+- Windows build: `windows-sys` needs `Win32_Foundation` for `MoveFileExW` (all Windows CI jobs failed to compile)
+- Single-core builds: `OPTIMIZER_PKG`/`BENCH_PKG` cfg-gate turned them into pattern bindings (E0408 in every non-all build)
+- Release Binary E2E: ai/flutter `install` steps now pass the required `--compat-runtime` opt-in flag
+
 ## [1.1.0-rc.7] - 2026-09-19
 
 ### Added

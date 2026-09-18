@@ -1524,9 +1524,12 @@ pub(crate) fn detect_ai_runtime(
 
 /// Hardware core — optimizer/bench packages (shared cho game/ai/cloud).
 /// Không có native package manager: packages được materialize từ templates/hardware/.
-#[cfg(any(feature = "game", feature = "hardware"))]
+/// Unconditional (no feature gate): single-core builds reference these
+/// names in match patterns, and a cfg'd-out const turns into a pattern
+/// binding (E0408) instead of a comparison — this broke every
+/// single-core CI build.
+/// (Không gate feature: const bị cfg-out sẽ thành binding trong pattern.)
 pub const OPTIMIZER_PKG: &str = "optimizer";
-#[cfg(any(feature = "game", feature = "hardware"))]
 pub const BENCH_PKG: &str = "bench";
 
 pub async fn materialize_template(root: &Path, framework: &str) -> anyhow::Result<()> {

@@ -457,7 +457,10 @@ jobs:
           "$MGCBIN" create-ai python-agent test-ai
           cd test-ai
           uv lock
-          "$MGCBIN" install
+          # ai install is toolchain-delegated (uv owns it) — the explicit
+          # opt-in flag is REQUIRED (C0 P0#3); bare install fails closed.
+          # (install ai ủy thác uv — thiếu flag là fail đúng thiết kế.)
+          "$MGCBIN" install --compat-runtime uv
           if [[ -f pyproject.toml ]] && grep -q "pytest\|unittest" pyproject.toml; then
             "$MGCBIN" test
           fi
@@ -505,7 +508,10 @@ jobs:
           cd "$WORK"
           "$MGCBIN" create-app flutter test-flut
           cd test-flut
-          "$MGCBIN" install
+          # flutter install is toolchain-delegated — explicit opt-in
+          # REQUIRED (C0 P0#3); bare install fails closed by design.
+          # (install flutter ủy thác — thiếu flag là fail đúng thiết kế.)
+          "$MGCBIN" install --compat-runtime flutter
           test -f pubspec.lock
           "$MGCBIN" test
           # `web` is the universal CI target (no Android SDK / Xcode).
