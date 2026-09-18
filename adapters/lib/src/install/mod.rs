@@ -46,7 +46,7 @@ pub(crate) async fn run_install(
             Ok(summary)
         }
         LibLanguage::Python => {
-            let summary = install_python_native(graph).await?;
+            let summary = install_python_native(graph, &lock_packages).await?;
             write_canonical_lock(project_root, lock_packages)?;
             Ok(summary)
         }
@@ -55,7 +55,7 @@ pub(crate) async fn run_install(
         // (Go: engine module proxy native (Phase 2) — tải zip → verify
         // ziphash/sumdb → CAS → materialize download cache.)
         LibLanguage::Go => {
-            let summary = install_go_native(graph).await?;
+            let summary = install_go_native(graph, &lock_packages).await?;
             write_canonical_lock(project_root, lock_packages)?;
             Ok(summary)
         }
@@ -69,7 +69,7 @@ pub(crate) async fn run_install(
         // `mvn -o`). Install do gradle giữ vẫn unsupported (build script là
         // chương trình — fail trung thực, không trả summary no-op âm thầm).)
         LibLanguage::Java => {
-            let summary = install_maven_native(graph).await?;
+            let summary = install_maven_native(graph, &lock_packages).await?;
             write_canonical_lock(project_root, lock_packages)?;
             Ok(summary)
         }
@@ -80,7 +80,7 @@ pub(crate) async fn run_install(
         // SHA-512 theo registration → CAS → materialize global-packages
         // (layout mà `dotnet restore --source` đọc được).)
         LibLanguage::DotNet => {
-            let summary = install_nuget_native(graph).await?;
+            let summary = install_nuget_native(graph, &lock_packages).await?;
             write_canonical_lock(project_root, lock_packages)?;
             Ok(summary)
         }
@@ -97,7 +97,47 @@ pub(crate) async fn run_install(
 /// CAS mgc (blake3) → materialize go download cache
 /// (`{gomodcache}/cache/download/{module}/@v/…`, đọc được với `GOPROXY=off`).
 /// Không spawn `go mod download` — mgc giữ resolve/fetch/install (Phase 2).
-async fn install_go_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
+/// Integrity markers for one graph package, reattached from its lock
+/// entry by identity. Graph packages carry sha256/integrity only —
+/// protocol-specific markers (go sumdb-ziphash, nuget sha512) travel in
+/// the lock; without reattaching, the verifier sees neither source.
+/// (Gắn lại marker toàn vẹn từ entry lock theo danh tính.)
+fn markers_for(
+    pkg: &mgc_types::ResolvedPackage,
+    lock_packages: &[mgc_lockfile::Package],
+) -> Vec<String> {
+    lock_entry_for(pkg, lock_packages)
+        .and_then(|p| p.markers.clone())
+        .unwrap_or_default()
+}
+
+/// Lock entry for one graph package: exact name+version first, then
+/// parse-equal fallback — Maven coordinates are NOT semver-normalizable
+/// (`1.3` ≠ `1.3.0` on disk) while graph versions are normalized, so an
+/// exact-only match orphans real entries.
+/// (Tìm entry lock: khớp chính xác trước, rồi khớp nới lỏng.)
+fn lock_entry_for<'a>(
+    pkg: &mgc_types::ResolvedPackage,
+    lock_packages: &'a [mgc_lockfile::Package],
+) -> Option<&'a mgc_lockfile::Package> {
+    let name = pkg.id.name_str();
+    let version = pkg.id.version().to_string();
+    if let Some(found) = lock_packages
+        .iter()
+        .find(|p| p.name == name && p.version == version)
+    {
+        return Some(found);
+    }
+    lock_packages.iter().find(|p| {
+        p.name == name
+            && mgc_types::Version::parse(&p.version).ok().as_ref() == Some(pkg.id.version())
+    })
+}
+
+async fn install_go_native(
+    graph: &ResolvedGraph,
+    lock_packages: &[mgc_lockfile::Package],
+) -> MgResult<InstallSummary> {
     let started = Instant::now();
     let protocol = GoModProtocol::from_env();
     let gomodcache = shared_store::SharedStoreRun::go()?.cache_root;
@@ -105,7 +145,8 @@ async fn install_go_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
     let mut added = Vec::with_capacity(graph.packages.len());
 
     for pkg in &graph.packages {
-        let entry = entry_from_package(pkg);
+        let mut entry = entry_from_package(pkg);
+        entry.extra_markers = markers_for(pkg, lock_packages);
         let files = protocol.download_module(&entry).await?;
         protocol.verify(&entry, &files.zip)?;
         store
@@ -139,7 +180,10 @@ async fn install_go_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
 /// `{m2_root}/repository/{gpath}/{artifact}/{version}/` (đọc được bởi
 /// `mvn -o`). Không spawn `mvn dependency:go-offline` — mgc giữ
 /// resolve/fetch/install cho project pom.xml (Phase 2).
-async fn install_maven_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
+async fn install_maven_native(
+    graph: &ResolvedGraph,
+    lock_packages: &[mgc_lockfile::Package],
+) -> MgResult<InstallSummary> {
     let started = Instant::now();
     let protocol = MavenProtocol::from_env();
     let m2_root = shared_store::SharedStoreRun::maven()?.cache_root;
@@ -147,7 +191,15 @@ async fn install_maven_native(graph: &ResolvedGraph) -> MgResult<InstallSummary>
     let mut added = Vec::with_capacity(graph.packages.len());
 
     for pkg in &graph.packages {
-        let entry = entry_from_package(pkg);
+        let mut entry = entry_from_package(pkg);
+        entry.extra_markers = markers_for(pkg, lock_packages);
+        // Maven coordinates keep their RAW version string (`1.3`, never
+        // normalized `1.3.0`): filenames on Central are literal. Prefer
+        // the lock entry's raw version when present.
+        // (Tọa độ Maven giữ chuỗi version THÔ.)
+        if let Some(raw) = lock_entry_for(pkg, lock_packages).map(|p| p.version.clone()) {
+            entry.version = raw;
+        }
         let jar = protocol.download(&entry).await?;
         protocol.verify(&entry, &jar)?;
         let (group, artifact) = MavenProtocol::split_coordinate(&entry.name)?;
@@ -182,7 +234,10 @@ async fn install_maven_native(graph: &ResolvedGraph) -> MgResult<InstallSummary>
 /// global-packages (`{nuget_root}/{id-lower}/{version}/` với nupkg, nội
 /// dung giải nén và `.nupkg.sha512`). Không spawn `dotnet restore` — mgc
 /// giữ resolve/fetch/install (Phase 2).
-async fn install_nuget_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
+async fn install_nuget_native(
+    graph: &ResolvedGraph,
+    lock_packages: &[mgc_lockfile::Package],
+) -> MgResult<InstallSummary> {
     let started = Instant::now();
     let protocol = NuGetProtocol::from_env().await;
     let nuget_root = shared_store::SharedStoreRun::nuget()?.cache_root;
@@ -190,7 +245,8 @@ async fn install_nuget_native(graph: &ResolvedGraph) -> MgResult<InstallSummary>
     let mut added = Vec::with_capacity(graph.packages.len());
 
     for pkg in &graph.packages {
-        let entry = entry_from_package(pkg);
+        let mut entry = entry_from_package(pkg);
+        entry.extra_markers = markers_for(pkg, lock_packages);
         let bytes = protocol.download(&entry).await?;
         protocol.verify(&entry, &bytes)?;
         store
@@ -246,7 +302,10 @@ async fn install_rust_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> 
 /// Install python native: tải từng wheel/sdist → verify sha256 → import vào
 /// CAS mgc → materialize vào `{store}/pypi/wheels/`. Không spawn `uv sync`/
 /// `pip install` — mgc giữ resolve/fetch/install (Phase 2).
-async fn install_python_native(graph: &ResolvedGraph) -> MgResult<InstallSummary> {
+async fn install_python_native(
+    graph: &ResolvedGraph,
+    lock_packages: &[mgc_lockfile::Package],
+) -> MgResult<InstallSummary> {
     let started = Instant::now();
     let protocol = PypiProtocol::from_env();
     let wheels_dir = shared_store::SharedStoreRun::pypi()?
@@ -256,9 +315,14 @@ async fn install_python_native(graph: &ResolvedGraph) -> MgResult<InstallSummary
     let mut added = Vec::with_capacity(graph.packages.len());
 
     for pkg in &graph.packages {
-        let entry = entry_from_package(pkg);
+        let mut entry = entry_from_package(pkg);
+        // Reattach lock markers (wheel tags for the ABI warning, sdist
+        // flags) — the graph carries integrity only.
+        // (Gắn lại marker từ lock.)
+        entry.extra_markers = markers_for(pkg, lock_packages);
         let bytes = protocol.download(&entry).await?;
         protocol.verify(&entry, &bytes)?;
+        warn_unverified_wheel_abi(&entry);
         store
             .import_bytes(&bytes)
             .map_err(|e| MgError::Store(e.to_string()))?;
@@ -272,6 +336,50 @@ async fn install_python_native(graph: &ResolvedGraph) -> MgResult<InstallSummary
         duration_ms: started.elapsed().as_millis() as u64,
         cache_mode: InstallCacheMode::MgCStore,
     })
+}
+
+/// Warn once per install about versioned-ABI wheels installed without a
+/// known consumer Python (`MGC_PYTHON_VERSION` unset), and about sdists
+/// (stored verified, NOT built — not importable without a build
+/// backend): mgc matched OS/arch only, so a cp310-on-3.9 style mismatch
+/// surfaces here instead of failing silently at import time. Universal
+/// wheels never warn.
+/// (Cảnh báo một lần về wheel ABI-version khi không rõ Python consumer,
+/// và về sdist (lưu chứ không build).)
+fn warn_unverified_wheel_abi(entry: &mgc_resolver::protocols::ResolvedEntry) {
+    use std::sync::OnceLock;
+    static WARNED_ABI: OnceLock<()> = OnceLock::new();
+    static WARNED_SDIST: OnceLock<()> = OnceLock::new();
+    let is_sdist = entry.extra_markers.iter().any(|m| m.starts_with("sdist:"));
+    if is_sdist {
+        WARNED_SDIST.get_or_init(|| {
+            eprintln!(
+                "WARNING: sdist stored verified but NOT built ({} — no build backend runs) — it is not importable; use compat pip to build it.",
+                entry.artifact_url.rsplit('/').next().unwrap_or(&entry.name)
+            );
+        });
+        return;
+    }
+    if std::env::var("MGC_PYTHON_VERSION")
+        .ok()
+        .is_some_and(|v| !v.trim().is_empty())
+    {
+        return;
+    }
+    let versioned_abi = entry.extra_markers.iter().any(|m| {
+        m.strip_prefix("wheel:").is_some_and(|tags| {
+            let mut parts = tags.split('-');
+            let abi = parts.nth(1).unwrap_or("none");
+            abi != "none"
+        })
+    });
+    if versioned_abi {
+        WARNED_ABI.get_or_init(|| {
+            eprintln!(
+                "WARNING: versioned-ABI wheel installed without a known consumer Python — ABI compatibility matched on OS/arch only. Set MGC_PYTHON_VERSION=<major.minor> (e.g. 3.9) for strict selection."
+            );
+        });
+    }
 }
 
 /// Reconstruct a protocol `ResolvedEntry` from a resolved graph package.

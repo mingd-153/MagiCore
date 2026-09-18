@@ -187,7 +187,15 @@ impl DependencyResolver for IotAdapter {
                     .unwrap_or_else(|| placeholder_id(name, range)))
             }
             IotFramework::Platformio => {
-                let mut args = vec!["pkg".to_string(), "install".to_string()];
+                // pio 6.x requires `-l/--library` for library specs — a
+                // bare positional spec is rejected ("unexpected extra
+                // argument"). Verified against pio 6.2.0 `--help`.
+                // (pio 6.x đòi `-l` cho spec library.)
+                let mut args = vec![
+                    "pkg".to_string(),
+                    "install".to_string(),
+                    "-l".to_string(),
+                ];
                 if let Some(r) = range.filter(|r| !r.is_star()) {
                     args.push(format!("{}@{}", name.as_str(), r.as_str()));
                 } else {
@@ -219,6 +227,7 @@ impl DependencyResolver for IotAdapter {
                 &[
                     "pkg".to_string(),
                     "uninstall".to_string(),
+                    "-l".to_string(),
                     name.as_str().to_string(),
                 ],
             ),
@@ -246,7 +255,7 @@ impl DependencyResolver for IotAdapter {
                 exec_tool(project_root, "cargo", &args)?;
             }
             IotFramework::Platformio => {
-                let mut args = vec!["pkg".to_string(), "update".to_string()];
+                let mut args = vec!["pkg".to_string(), "update".to_string(), "-l".to_string()];
                 if let Some(n) = name {
                     args.push(n.as_str().to_string());
                 }
@@ -293,12 +302,23 @@ impl PackageAdapter for IotAdapter {
         Self::CAPABILITIES
     }
 
+    fn manifest_owned(&self) -> bool {
+        // platformio.ini / west.yml are owned SOLELY by their toolchains
+        // (write_manifest fails closed for them — same precedent as
+        // game/iot non-manifest engines): booking an add in memory would
+        // fake a mutation the tool never sees. Only the esp32-rust
+        // Cargo.toml is mgc-written.
+        // (platformio.ini/west.yml do toolchain sở hữu DUY NHẤT.)
+        matches!(self.framework, IotFramework::Esp32Rust)
+    }
+
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
         match self.framework {
             IotFramework::Esp32Rust => {
                 mgc_adapter_base::cargo_manifest::parse_manifest(project_root, Ecosystem::Iot)
             }
-            IotFramework::Platformio | IotFramework::Zephyr => {
+            IotFramework::Platformio => parse_platformio_manifest(project_root),
+            IotFramework::Zephyr => {
                 let name = project_root
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
@@ -321,6 +341,78 @@ impl PackageAdapter for IotAdapter {
             })
             .collect())
     }
+}
+
+/// Parse `lib_deps` from `platformio.ini` `[env:*]` sections (read-only —
+/// pio owns the file). Entries are `owner/name[@req]`, comma- or
+/// newline-separated, continuations indented. Anything mgc cannot model
+/// (URLs, `file://`, `symlink://`) fails CLOSED naming the line — a
+/// skipped dep would fake an empty graph (the old parser returned NO
+/// deps at all, so `list` lied and the add re-read check could never
+/// pass).
+/// (Đọc `lib_deps` từ platformio.ini (chỉ đọc); dòng không mô hình được
+/// thì lỗi rõ, không bỏ qua âm thầm.)
+fn parse_platformio_manifest(project_root: &Path) -> MgResult<Manifest> {
+    let content = std::fs::read_to_string(project_root.join("platformio.ini"))
+        .map_err(|e| mgc_types::MgError::Other(format!("read platformio.ini: {e}")))?;
+    let name = project_root
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "firmware".to_string());
+    let mut manifest = Manifest::new(&name, Ecosystem::Iot);
+    let flush = |buf: &mut String, manifest: &mut Manifest| -> MgResult<()> {
+        for raw in buf.split([',', '\n']) {
+            let spec = raw.trim();
+            if spec.is_empty() || spec.starts_with([';', '#']) {
+                continue;
+            }
+            if spec.contains("://") || spec.starts_with("git@") || spec.starts_with("file:") {
+                return Err(mgc_types::MgError::Other(format!(
+                    "platformio.ini lib_deps entry '{spec}' is not modelable (URL/file/symlink dep) — manage it with pio directly; mgc refuses to fake the graph"
+                )));
+            }
+            let dep = mgc_types::DependencySpec::parse(spec).map_err(|e| {
+                mgc_types::MgError::Other(format!("parse platformio.ini lib_deps '{spec}': {e}"))
+            })?;
+            manifest.add_dep(dep, false, false, false);
+        }
+        buf.clear();
+        Ok(())
+    };
+    let mut in_env = false;
+    let mut collecting = false;
+    let mut buf = String::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            flush(&mut buf, &mut manifest)?;
+            collecting = false;
+            in_env = trimmed.starts_with("[env:");
+            continue;
+        }
+        if !in_env {
+            continue;
+        }
+        if collecting && (line.starts_with([' ', '\t']) || trimmed.is_empty()) {
+            if !trimmed.is_empty() {
+                buf.push('\n');
+                buf.push_str(trimmed);
+            }
+            continue;
+        }
+        if collecting {
+            flush(&mut buf, &mut manifest)?;
+            collecting = false;
+        }
+        if let Some((key, value)) = trimmed.split_once('=')
+            && key.trim() == "lib_deps"
+        {
+            buf.push_str(value.trim());
+            collecting = true;
+        }
+    }
+    flush(&mut buf, &mut manifest)?;
+    Ok(manifest)
 }
 
 impl IotAdapter {

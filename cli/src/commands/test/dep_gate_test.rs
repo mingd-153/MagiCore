@@ -37,7 +37,15 @@ fn web_is_native_only_for_declared_js_ts() {
     }
     // Undeclared ecosystem never defaults open.
     assert!(gate(&ctx("web", None, DepOp::Install), None, &native(), None).is_err());
-    assert!(gate(&ctx("web", Some("python"), DepOp::Install), None, &native(), None).is_err());
+    assert!(
+        gate(
+            &ctx("web", Some("python"), DepOp::Install),
+            None,
+            &native(),
+            None
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -46,16 +54,36 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         owner_for(&ctx("lib", Some(eco::TS), DepOp::Install)),
         DepOwner::Native
     ));
-    assert!(gate(&ctx("lib", Some(eco::TS), DepOp::Install), None, &native(), None).is_ok());
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::TS), DepOp::Install),
+            None,
+            &native(),
+            None
+        )
+        .is_ok()
+    );
     // Protocol languages: native pipeline (install/resolve/verify/...) but
     // toolchain-owned edits with PER-LANGUAGE tools.
     for lang in [eco::RUST, eco::PYTHON, eco::GO, eco::JAVA, eco::DOTNET] {
         assert!(
-            gate(&ctx("lib", Some(lang), DepOp::Install), None, &native(), None).is_ok(),
+            gate(
+                &ctx("lib", Some(lang), DepOp::Install),
+                None,
+                &native(),
+                None
+            )
+            .is_ok(),
             "lib[{lang}] install is native (no toolchain spawn)"
         );
         assert!(
-            gate(&ctx("lib", Some(lang), DepOp::Resolve), None, &native(), None).is_ok(),
+            gate(
+                &ctx("lib", Some(lang), DepOp::Resolve),
+                None,
+                &native(),
+                None
+            )
+            .is_ok(),
             "lib[{lang}] resolve is native"
         );
         assert!(
@@ -247,14 +275,36 @@ fn game_iot_clo_need_declared_ecosystem() {
         )
         .is_ok()
     );
-    assert!(gate(&ctx("game", None, DepOp::Install), None, &explicit("cargo"), None).is_err());
+    assert!(
+        gate(
+            &ctx("game", None, DepOp::Install),
+            None,
+            &explicit("cargo"),
+            None
+        )
+        .is_err()
+    );
     for fw in ["esp32-rust", "platformio", "zephyr"] {
         assert!(
-            gate(&ctx("iot", Some(fw), DepOp::Install), None, &explicit("pio"), None).is_ok(),
+            gate(
+                &ctx("iot", Some(fw), DepOp::Install),
+                None,
+                &explicit("pio"),
+                None
+            )
+            .is_ok(),
             "iot[{fw}] must open for its toolchain set"
         );
     }
-    assert!(gate(&ctx("iot", None, DepOp::Install), None, &explicit("pio"), None).is_err());
+    assert!(
+        gate(
+            &ctx("iot", None, DepOp::Install),
+            None,
+            &explicit("pio"),
+            None
+        )
+        .is_err()
+    );
     assert!(
         gate(
             &ctx("clo", Some(eco::TERRAFORM), DepOp::Install),
@@ -362,13 +412,29 @@ fn app_exact_verbs_match_real_runners() {
         .is_ok()
     );
     for lang in [eco::SWIFT, eco::KOTLIN] {
-        let tool = if lang == eco::SWIFT { "swift" } else { "gradle" };
+        let tool = if lang == eco::SWIFT {
+            "swift"
+        } else {
+            "gradle"
+        };
         assert!(
-            gate(&ctx("app", Some(lang), DepOp::Install), None, &explicit(tool), None).is_ok(),
+            gate(
+                &ctx("app", Some(lang), DepOp::Install),
+                None,
+                &explicit(tool),
+                None
+            )
+            .is_ok(),
             "app[{lang}] install opens for its toolchain"
         );
         assert!(
-            gate(&ctx("app", Some(lang), DepOp::List), None, &explicit(tool), None).is_ok(),
+            gate(
+                &ctx("app", Some(lang), DepOp::List),
+                None,
+                &explicit(tool),
+                None
+            )
+            .is_ok(),
             "app[{lang}] list opens for its toolchain"
         );
     }
@@ -458,7 +524,10 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(web["install"]["owner"], "unsupported");
     let web_languages = dependency_ownership("web")["languages"].clone();
     assert_eq!(web_languages["js"]["install"]["owner"], "mgc-native");
-    assert_eq!(web_languages["javascript"]["install"]["owner"], "mgc-native");
+    assert_eq!(
+        web_languages["javascript"]["install"]["owner"],
+        "mgc-native"
+    );
     let ai = &dependency_ownership("ai")["operations"];
     assert_eq!(ai["install"]["owner"], "unsupported");
     let ai_languages = dependency_ownership("ai")["languages"].clone();
@@ -504,6 +573,44 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(app_languages["objc"]["install"]["owner"], "delegated");
     // Hardware list reads scaffold-only, never mgc-native.
     let hardware_full = dependency_ownership("hardware");
-    assert_eq!(hardware_full["operations"]["list"]["owner"], "scaffold-only");
-    assert_eq!(hardware_full["operations"]["install"]["owner"], "unsupported");
+    assert_eq!(
+        hardware_full["operations"]["list"]["owner"],
+        "scaffold-only"
+    );
+    assert_eq!(
+        hardware_full["operations"]["install"]["owner"],
+        "unsupported"
+    );
+}
+
+#[test]
+fn zephyr_add_remove_unsupported_install_update_delegated() {
+    // Zephyr add/remove have NO runner (west.yml is hand-managed; the
+    // adapter answers an honest not-supported error) — Unsupported even
+    // with compat. Install/Update delegate to west.
+    // (Zephyr add/remove không có runner — Unsupported.)
+    for op in [DepOp::Add, DepOp::Remove] {
+        assert!(
+            gate(
+                &ctx("iot", Some("zephyr"), op),
+                Some("west"),
+                &explicit("west"),
+                None
+            )
+            .is_err(),
+            "zephyr {op:?} must stay Unsupported"
+        );
+    }
+    for op in [DepOp::Install, DepOp::Update] {
+        assert!(
+            gate(
+                &ctx("iot", Some("zephyr"), op),
+                Some("west"),
+                &explicit("west"),
+                None
+            )
+            .is_ok(),
+            "zephyr {op:?} must delegate to west"
+        );
+    }
 }

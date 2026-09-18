@@ -58,6 +58,7 @@ fn pytorch_env_reaches_real_child_process() {
         os: "macos".to_string(),
         total_memory_gb: 16,
         profile: SystemProfile::Standard,
+        gpus: vec![],
     };
     let files = PyTorchAdapter.generate(&hw);
     let env_file = files

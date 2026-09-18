@@ -474,6 +474,18 @@ pub trait PackageAdapter:
     /// — cấp orchestrator.
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>>;
 
+    /// Does mgc own this adapter's manifest file (mgc may edit + rewrite
+    /// it)? `false` means the provider toolchain is the SOLE owner
+    /// (go.mod, platformio.ini): the orchestrator must run the real
+    /// toolchain add and re-read the file instead of bookkeeping a
+    /// manifest the tool will never read. Default `true`.
+    /// (mgc có sở hữu file manifest của adapter này không? `false` nghĩa
+    /// toolchain là chủ DUY NHẤT: orchestrator phải chạy add thật rồi đọc
+    /// lại file.)
+    fn manifest_owned(&self) -> bool {
+        true
+    }
+
     async fn prepare_add(
         &self,
         project_root: &Path,

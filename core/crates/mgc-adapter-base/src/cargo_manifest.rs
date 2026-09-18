@@ -68,24 +68,28 @@ pub fn write_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
         .ok_or_else(|| mgc_types::MgError::Other("Cargo.toml not a table".into()))?;
 
     let mut deps_table = toml::Table::new();
-    for dep in manifest.dependencies.iter().filter(|d| !d.range.is_star()) {
-        deps_table.insert(
-            dep.name.as_str().to_string(),
-            toml::Value::String(dep.range.as_str().to_string()),
-        );
+    // Star ranges are REAL any-version deps — `*` is valid Cargo — so
+    // they serialize instead of being dropped (dropping would silently
+    // delete a hand-written dep on the next add).
+    // (Range `*` là dep thật, Cargo hiểu — ghi lại, không rào mất.)
+    for dep in manifest.dependencies.iter() {
+        let req = if dep.range.is_star() {
+            "*".to_string()
+        } else {
+            dep.range.as_str().to_string()
+        };
+        deps_table.insert(dep.name.as_str().to_string(), toml::Value::String(req));
     }
     deps.insert("dependencies".to_string(), toml::Value::Table(deps_table));
 
     let mut dev_table = toml::Table::new();
-    for dep in manifest
-        .dev_dependencies
-        .iter()
-        .filter(|d| !d.range.is_star())
-    {
-        dev_table.insert(
-            dep.name.as_str().to_string(),
-            toml::Value::String(dep.range.as_str().to_string()),
-        );
+    for dep in manifest.dev_dependencies.iter() {
+        let req = if dep.range.is_star() {
+            "*".to_string()
+        } else {
+            dep.range.as_str().to_string()
+        };
+        dev_table.insert(dep.name.as_str().to_string(), toml::Value::String(req));
     }
     deps.insert(
         "dev-dependencies".to_string(),

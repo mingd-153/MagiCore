@@ -43,7 +43,17 @@ pub fn detect_language(root: &Path) -> Option<LibLanguage> {
             .is_some_and(|eco| eco != "lib")
             && v.get("lib").is_none()
         {
-            return None;
+            // A package.json project belongs to the JS lane — the lib
+            // lane must not claim it. But a NON-JS manifest (go.mod /
+            // Cargo.toml / pyproject / ...) with NO package.json is a
+            // backend the lib machinery can serve (web-lane delegation
+            // for create-web backend scaffolds) — fall through to marker
+            // detection instead of refusing blindly.
+            // (Project có package.json thuộc lane JS; manifest non-JS mà
+            // không có package.json thì rơi xuống detect marker.)
+            if root.join("package.json").exists() {
+                return None;
+            }
         }
         if let Some(lang) = v
             .get("lib")

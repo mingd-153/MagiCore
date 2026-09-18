@@ -26,7 +26,19 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
                     fw
                 ));
             }
-            Err(e) => anyhow::bail!("Required iot template layer missing: {}", e),
+            Err(e) => {
+                // Built-in generator fallback — but ONLY for frameworks
+                // this core's processor actually generates; anything else
+                // keeps the honest layer-required error (no mislabeled scaffold).
+                // (Fallback generator nội bộ — chỉ framework processor hỗ trợ.)
+                if crate::scaffold::processors::iot::IotProcessor::supports(fw) {
+                    mgc_ui::warning(&format!(
+                        "Registry layer unavailable ({e}) — using built-in iot generator",
+                    ));
+                } else {
+                    anyhow::bail!("Required iot template layer missing: {}", e)
+                }
+            }
         }
     }
     super::scaffold_and_save_metadata(&config)?;

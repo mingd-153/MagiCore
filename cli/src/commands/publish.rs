@@ -83,7 +83,21 @@ pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
 /// `mgc stage` — pack project vào .mgc-stage/ (không đăng registry).
 /// Kiểm tra nhanh trước khi publish: tarball hợp lệ, files selection đúng.
 pub async fn stage(dir: Option<String>) -> Result<()> {
-    let cwd = dir.map(PathBuf::from).unwrap_or(std::env::current_dir()?);
+    // Resolve --dir against the real cwd: downstream pack/tar joins
+    // assume an absolute root, and a bare relative dir surfaces as a
+    // cryptic empty-path IO error.
+    // (--dir tương đối phải nối với cwd — pack/tar cần root tuyệt đối.)
+    let cwd = match dir {
+        Some(d) => {
+            let p = PathBuf::from(&d);
+            if p.is_absolute() {
+                p
+            } else {
+                std::env::current_dir()?.join(p)
+            }
+        }
+        None => std::env::current_dir()?,
+    };
     let project_root =
         ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
     let project = ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mgc_toml_missing)?;

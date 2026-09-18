@@ -100,3 +100,14 @@ fn v2_graph_preserves_dependency_edges() {
     assert_eq!(graph.packages.len(), 2);
     assert_eq!(graph.packages[0].deps[0].to_string(), "scheduler@0.25.0");
 }
+
+#[test]
+fn why_edge_name_strips_version_and_range() {
+    // Tên trần từ cạnh lock — hậu tố version/range không tham gia so khớp
+    assert_eq!(edge_name("leftpad"), "leftpad");
+    assert_eq!(edge_name("leftpad@1.3.0"), "leftpad");
+    assert_eq!(edge_name("leftpad@^1.3.0"), "leftpad");
+    assert_eq!(edge_name("@scope/pkg"), "@scope/pkg");
+    assert_eq!(edge_name("@scope/pkg@1.3.0"), "@scope/pkg");
+    assert_eq!(edge_name("  pad-core@2.0.0  "), "pad-core");
+}

@@ -41,7 +41,7 @@ const DEFAULT_REPO_URL: &str = "https://repo.maven.apache.org/maven2";
 #[derive(Debug, Clone)]
 pub struct MavenProtocol {
     repo_url: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
 }
 
 impl MavenProtocol {
@@ -50,7 +50,7 @@ impl MavenProtocol {
     pub fn new(repo_url: &str) -> Self {
         Self {
             repo_url: repo_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
         }
     }
 
@@ -97,7 +97,6 @@ impl MavenProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status().as_u16();
@@ -112,7 +111,6 @@ impl MavenProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -713,6 +711,15 @@ pub fn collect_pom_dependencies(pom: &str) -> (Vec<PomDependency>, Option<String
         .first()
         .map(|s| s.trim().to_string());
     let stripped = remove_element_blocks(pom, "dependencyManagement");
+    // Project graph = TOP-LEVEL <dependencies> only. Plugin <dependencies>
+    // (surefire/javadoc/site plugin deps), <reporting> and <profiles> are
+    // NEVER on the compile/runtime classpath — collecting them pulled
+    // plugin-only artifacts (e.g. surefire-junit47's lineage) into the
+    // graph and failed versionless downstream (doxia-module-xhtml).
+    // (Chỉ <dependencies> cấp cao nhất — dep của plugin không vào graph.)
+    let stripped = remove_element_blocks(&stripped, "build");
+    let stripped = remove_element_blocks(&stripped, "reporting");
+    let stripped = remove_element_blocks(&stripped, "profiles");
     let mut deps = Vec::new();
     for block in element_blocks(&stripped, "dependencies") {
         for dep_xml in element_blocks(block, "dependency") {
@@ -776,9 +783,7 @@ fn pom_direct_entries(block: &str) -> Vec<(String, String)> {
             break;
         }
         let after = &rest[start + 1..];
-        let end = after
-            .find(['>', ' ', '/'])
-            .unwrap_or(after.len());
+        let end = after.find(['>', ' ', '/']).unwrap_or(after.len());
         let tag = &after[..end];
         if tag.is_empty() || tag.starts_with('?') || tag.starts_with('!') {
             rest = &after[end.min(after.len())..];
@@ -962,5 +967,56 @@ mod tests {
         assert!(!maven_matches("[1.0,1.2.3)", &v));
         assert!(maven_matches("(1.0,]", &v));
         assert!(maven_matches("*", &v));
+    }
+
+    #[test]
+    fn plugin_reporting_profile_deps_never_enter_the_graph() {
+        // junit-style pom: plugin <dependencies> (surefire), <reporting>
+        // and <profiles> must not pollute the project graph — only the
+        // top-level <dependencies> count.
+        // (Dep của plugin/reporting/profile không vào graph.)
+        let pom = r#"<project>
+          <dependencies>
+            <dependency>
+              <groupId>com.example</groupId><artifactId>core</artifactId><version>1.0</version>
+            </dependency>
+          </dependencies>
+          <build>
+            <plugins>
+              <plugin>
+                <artifactId>surefire</artifactId>
+                <dependencies>
+                  <dependency>
+                    <groupId>org.apache.maven.surefire</groupId><artifactId>surefire-junit47</artifactId><version>${surefireVersion}</version>
+                  </dependency>
+                </dependencies>
+              </plugin>
+            </plugins>
+          </build>
+          <reporting>
+            <plugins>
+              <plugin>
+                <artifactId>site</artifactId>
+                <dependencies>
+                  <dependency>
+                    <groupId>org.apache.maven.doxia</groupId><artifactId>doxia-module-xhtml</artifactId>
+                  </dependency>
+                </dependencies>
+              </plugin>
+            </plugins>
+          </reporting>
+          <profiles>
+            <profile>
+              <dependencies>
+                <dependency>
+                  <groupId>com.example</groupId><artifactId>prof</artifactId><version>9.9</version>
+                </dependency>
+              </dependencies>
+            </profile>
+          </profiles>
+        </project>"#;
+        let (deps, _) = collect_pom_dependencies(pom);
+        assert_eq!(deps.len(), 1, "only the top-level dep counts: {deps:?}");
+        assert_eq!(deps[0].artifact.as_deref(), Some("core"));
     }
 }

@@ -227,17 +227,39 @@ pub(crate) fn write_pyproject_manifest(root: &Path, manifest: &Manifest) -> MgRe
     let deps = manifest
         .dependencies
         .iter()
-        .filter(|d| !d.range.is_star())
         .map(|dep| {
-            toml::Value::String(format!(
-                "{}>={}",
-                dep.name.as_str(),
-                dep.range
-                    .as_str()
-                    .trim_start_matches('^')
-                    .trim_start_matches('~')
-                    .trim_start_matches('=')
-            ))
+            // Star ranges are REAL pins-any-version deps (hand-written
+            // `dependencies = ["six"]` or `*`): serialize as the bare
+            // PEP 508 name — dropping them would silently delete a dep
+            // the user declared.
+            // (Range `*` là dep thật: ghi tên trần, không được rào mất.)
+            if dep.range.is_star() {
+                return toml::Value::String(dep.name.as_str().to_string());
+            }
+            let raw = dep.range.as_str().trim();
+            // Faithful operator mapping (mgc spelling → PEP 508): exact
+            // pins (`==`, mgc's own `=`, bare versions) serialize as
+            // `==` — never widened to `>=`. Only npm-isms (`^`, `~`,
+            // which PEP 508 lacks) coerce to a lower bound.
+            // (Ánh xạ operator trung thực: ghim exact giữ `==`.)
+            let bound = if let Some(v) = raw.strip_prefix("==").or_else(|| raw.strip_prefix('=')) {
+                format!("=={v}")
+            } else if let Some(v) = raw.strip_prefix("~=") {
+                format!("~={v}")
+            } else if raw.starts_with(">=") || raw.starts_with("<=") || raw.starts_with("!=") {
+                raw.to_string()
+            } else if let Some(v) = raw.strip_prefix('>') {
+                format!(">{v}")
+            } else if let Some(v) = raw.strip_prefix('<') {
+                format!("<{v}")
+            } else if let Some(v) = raw.strip_prefix('^').or_else(|| raw.strip_prefix('~')) {
+                format!(">={v}")
+            } else {
+                // Bare version = exact pin (mgc convention; PEP 508 has
+                // no bare form).
+                format!("=={raw}")
+            };
+            toml::Value::String(format!("{}{}", dep.name.as_str(), bound))
         })
         .collect();
     project.insert("dependencies".to_string(), toml::Value::Array(deps));

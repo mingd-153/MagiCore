@@ -47,6 +47,22 @@ pub const EV_WEB_ENGINE: &str =
 pub const EV_RN_GATE: &str =
     "dep_gate app/rn Unsupported cell + dep_gate_canary rn_* (no runner exists)";
 
+/// E2E-verified evidence (real tool spawns in sandbox, 2026-09-18).
+/// Statuses stay unchanged: E2E proves the spawn path works, it never
+/// promotes a record to `NativeEngine` (reserved for engine branches).
+/// (Căn cứ E2E đã verify bằng chạy thật — chỉ đổi evidence, giữ status.)
+pub const EV_E2E_APP_FLUTTER: &str = "E2E delegated: real `flutter pub add meta` (24 deps, pubspec meta ^1.19.0, package_config.json) + `flutter pub deps` list; gated + exec.log exit 0";
+pub const EV_E2E_APP_SWIFT: &str = "E2E delegated: real `swift package resolve` (swift-argument-parser 1.8.2 checkout); gated, exit 0";
+pub const EV_E2E_CLO_TERRAFORM: &str =
+    "E2E delegated: real `terraform` install spawn via clo lane; gated + audited, exit 0";
+pub const EV_E2E_HARDWARE: &str = "E2E template lane: create/add/install/list all exit 0 (optimizer.json/bench.json materialized); `mgc optimizer` applied profile.json + runtime envs on web+ai projects; `mgc bench` timed install; no package lifecycle by design";
+pub const EV_E2E_IOT_PIO: &str =
+    "E2E delegated: real `pio` add/remove/list spawns via iot lane; gated + audited, exit 0";
+pub const EV_E2E_IOT_WEST: &str =
+    "E2E delegated: real `west` install spawn via iot lane; gated + audited, exit 0";
+pub const EV_E2E_WEB_JS: &str = "scaffold + native install E2E in sandbox sweep (next build OK); status stays ScaffoldOnly (per-framework lifecycle unqualified)";
+pub const EV_E2E_WEB_BACKEND: &str = "scaffold + install E2E: actix 82 pkgs, gin 58, echo 24, fiber 24, django 5, flask 10, axum 30; fastapi scaffold + resolve only (sandbox CDN blocked install — transient)";
+
 /// Every wizard-selectable framework id, exactly once per core.
 /// (Mọi id framework wizard chọn được, đúng một lần mỗi core.)
 pub const RECORDS: &[FrameworkRecord] = &[
@@ -68,7 +84,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "app",
         framework: "flutter",
         status: FrameworkStatus::Delegated { tool: "flutter" },
-        evidence: EV_DEPGATE,
+        evidence: EV_E2E_APP_FLUTTER,
     },
     FrameworkRecord {
         core: "app",
@@ -80,7 +96,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "app",
         framework: "swift",
         status: FrameworkStatus::Delegated { tool: "swift" },
-        evidence: "dep_gate app/swift install+list cells + canary (add/remove/update: no runner)",
+        evidence: EV_E2E_APP_SWIFT,
     },
     FrameworkRecord {
         core: "app",
@@ -142,7 +158,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "clo",
         framework: "terraform",
         status: FrameworkStatus::Delegated { tool: "terraform" },
-        evidence: "dep_gate clo/terraform install cell (add/remove/update: no runner)",
+        evidence: EV_E2E_CLO_TERRAFORM,
     },
     FrameworkRecord {
         core: "clo",
@@ -192,13 +208,13 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "hardware",
         framework: "bench",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: "optimizer/bench template materialize + list (dep_gate ScaffoldOnly)",
+        evidence: EV_E2E_HARDWARE,
     },
     FrameworkRecord {
         core: "hardware",
         framework: "optimizer",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: "optimizer template materialize (no package lifecycle)",
+        evidence: EV_E2E_HARDWARE,
     },
     // ── iot ──
     FrameworkRecord {
@@ -211,13 +227,13 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "iot",
         framework: "platformio",
         status: FrameworkStatus::Delegated { tool: "pio" },
-        evidence: EV_DEPGATE,
+        evidence: EV_E2E_IOT_PIO,
     },
     FrameworkRecord {
         core: "iot",
         framework: "zephyr-arm",
         status: FrameworkStatus::Delegated { tool: "west" },
-        evidence: "lane framework id zephyr; dep_gate iot cell",
+        evidence: EV_E2E_IOT_WEST,
     },
     FrameworkRecord {
         core: "iot",
@@ -272,13 +288,13 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "lib",
         framework: "rust",
         status: FrameworkStatus::NativeEngine,
-        evidence: "install pipeline native; add/remove/update delegate to cargo (dep_gate)",
+        evidence: "install pipeline native E2E (rust serde_json 5 pkgs + cargo build true; python six 1.17.0 local index import 42; go uuid go.mod v1.6.0 + GOPROXY=off build true; protocols_* tests + dep_gate table); add/remove/update delegate to cargo (dep_gate)",
     },
     FrameworkRecord {
         core: "lib",
         framework: "python",
         status: FrameworkStatus::NativeEngine,
-        evidence: "install pipeline native; add/remove/update delegate to pip (dep_gate)",
+        evidence: "install pipeline native E2E (rust serde_json 5 pkgs + cargo build true; python six 1.17.0 local index import 42; go uuid go.mod v1.6.0 + GOPROXY=off build true; protocols_* tests + dep_gate table); add/remove/update delegate to pip (dep_gate)",
     },
     // ── web: base engine native; every named framework scaffold-only ──
     FrameworkRecord {
@@ -303,25 +319,25 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "actix-web",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
         framework: "angular",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
         framework: "astro",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
         framework: "axum",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
@@ -339,7 +355,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "django",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
@@ -363,37 +379,37 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "echo",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
         framework: "express",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
         framework: "fastapi",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
         framework: "fastify",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
         framework: "fiber",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
         framework: "flask",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
@@ -411,7 +427,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "gin",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_SCAFFOLD_WEB,
+        evidence: EV_E2E_WEB_BACKEND,
     },
     FrameworkRecord {
         core: "web",
@@ -423,7 +439,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "hono",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
@@ -447,19 +463,19 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "nestjs",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
         framework: "nextjs",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
         framework: "nuxt",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
@@ -483,7 +499,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "qwik",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
@@ -501,13 +517,13 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "react-vite",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
         framework: "remix",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
@@ -519,7 +535,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "solidjs",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
@@ -531,7 +547,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "sveltekit",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
@@ -543,7 +559,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "trpc",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
     FrameworkRecord {
         core: "web",
@@ -555,7 +571,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "web",
         framework: "vue-vite",
         status: FrameworkStatus::ScaffoldOnly,
-        evidence: EV_WIZARD,
+        evidence: EV_E2E_WEB_JS,
     },
 ];
 
@@ -619,11 +635,17 @@ mod tests {
             // Skip the display string "...", then read the id string.
             let Some(first) = rest.find('"') else { break };
             let after_first = &rest[first + 1..];
-            let Some(first_end) = after_first.find('"') else { break };
+            let Some(first_end) = after_first.find('"') else {
+                break;
+            };
             let after_display = &after_first[first_end + 1..];
-            let Some(second) = after_display.find('"') else { break };
+            let Some(second) = after_display.find('"') else {
+                break;
+            };
             let after_second = &after_display[second + 1..];
-            let Some(second_end) = after_second.find('"') else { break };
+            let Some(second_end) = after_second.find('"') else {
+                break;
+            };
             ids.push(after_second[..second_end].to_string());
             rest = &after_second[second_end + 1..];
         }
@@ -632,8 +654,7 @@ mod tests {
 
     #[test]
     fn every_wizard_answer_has_exactly_one_record() {
-        let wizard_dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/wizard");
+        let wizard_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/wizard");
         let mut missing = Vec::new();
         let mut counts: HashMap<(&str, &str), usize> = HashMap::new();
         for record in RECORDS {
@@ -718,8 +739,7 @@ mod tests {
                 for part in tool.split('/') {
                     if seen.insert((record.core, part)) {
                         assert!(
-                            crate::commands::dep_gate::DEPENDENCY_COMPAT_TOOLS
-                                .contains(&part),
+                            crate::commands::dep_gate::DEPENDENCY_COMPAT_TOOLS.contains(&part),
                             "{}:{} delegates to '{part}' outside the gate universe",
                             record.core,
                             record.framework

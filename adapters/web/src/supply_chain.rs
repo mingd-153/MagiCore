@@ -17,6 +17,7 @@ const DEFAULT_QUARANTINE_SECS: u64 = 86400;
 pub fn enforce_resolution_supply_chain_guards(
     resolutions: &[Resolution],
     metadata: &HashMap<String, Arc<PackageMetadata>>,
+    manifest: &mgc_types::Manifest,
 ) -> MgResult<()> {
     let store_min_age = configured_store_min_age();
     let block_new = env_truthy("MAGICORE_SECURITY_24H_BLOCK")
@@ -31,7 +32,7 @@ pub fn enforce_resolution_supply_chain_guards(
         enforce_publish_age(resolutions, metadata, min_age_secs)?;
     }
     if !allow_untrusted {
-        enforce_no_downgrade(resolutions)?;
+        enforce_no_downgrade(resolutions, manifest)?;
     }
 
     Ok(())
@@ -98,25 +99,73 @@ fn enforce_publish_age(
     Ok(())
 }
 
-fn enforce_no_downgrade(resolutions: &[Resolution]) -> MgResult<()> {
+fn enforce_no_downgrade(
+    resolutions: &[Resolution],
+    manifest: &mgc_types::Manifest,
+) -> MgResult<()> {
     let Ok(cwd) = std::env::current_dir() else {
         return Ok(());
     };
-    let layout = Layout::new(project_cache_dir(&cwd));
-    let Ok(db) = Database::open(&layout.db_path()) else {
-        return Ok(());
-    };
-    for resolution in resolutions {
-        let id = &resolution.package_id;
-        let old = db.latest_installed_version(id.name_str()).ok().flatten();
-        if let Some(old) = old {
-            let new_v = id.version();
-            if *new_v < old {
-                return Err(mgc_types::MgError::Other(format!(
-                    "🚨 SECURITY: Downgrade blocked for '{id}' — installed {old}, requested {new_v}.\n   \
-                     This can regress packages in the CAS store. Use MAGICORE_ALLOW_UNTRUSTED=1 to override."
-                )));
+    // Baseline = the PREVIOUS top-level pins from the project lockfile
+    // (only when that lock satisfies the current manifest — a stale or
+    // corrupt lock is not a baseline). The installed-versions DB is the
+    // WRONG baseline: it accumulates every nested transitive line, so a
+    // tree that legitimately contains two major lines (vue-router 4
+    // direct + vue-router 5 nested under a dependent) false-positives.
+    // With no satisfying lock there is no previous top level — nothing
+    // to regress from, so the guard passes (fresh installs cannot
+    // downgrade; registry freshness is the quarantine's job).
+    // (Baseline = pin top-level cũ trong lockfile, không phải max DB.)
+    let previous_top: std::collections::HashMap<String, mgc_types::Version> = (|| {
+        let lockfile = crate::lockfile::read_web_lockfile_checked(&cwd).ok()??;
+        if !crate::lockfile::lockfile_satisfies_manifest(&lockfile, manifest) {
+            return None;
+        }
+        let mut map = std::collections::HashMap::new();
+        for dep in manifest.all_dependencies() {
+            if let Some(lp) = lockfile
+                .packages
+                .iter()
+                .find(|p| p.name == dep.name.as_str())
+                && let Ok(version) = mgc_types::Version::parse(&lp.version)
+            {
+                map.insert(dep.name.as_str().to_string(), version);
             }
+        }
+        Some(map)
+    })()
+    .unwrap_or_default();
+    if previous_top.is_empty() {
+        return Ok(());
+    }
+    // Per DIRECT dep: the version that will link at top level is the MAX
+    // resolution satisfying the manifest range (npm semantics). Only THAT
+    // selection is compared against the previous top-level pin — a lower
+    // top selection is a genuine top-level regression and fails closed.
+    // (Mỗi dep trực tiếp: chỉ version max thỏa range mới so với pin cũ.)
+    for dep in manifest.all_dependencies() {
+        let name = dep.name.as_str();
+        let Some(baseline) = previous_top.get(name) else {
+            continue;
+        };
+        let top = resolutions
+            .iter()
+            .filter(|r| {
+                r.package_id.name_str() == name && dep.range.matches(r.package_id.version())
+            })
+            .max_by(|a, b| a.package_id.version().cmp(b.package_id.version()));
+        let Some(top) = top else {
+            return Err(mgc_types::MgError::Other(format!(
+                "🚨 SECURITY: no resolved version of direct dep '{name}' satisfies '{}' — refusing to link an out-of-range top level (fail-closed)",
+                dep.range.as_str()
+            )));
+        };
+        let new_v = top.package_id.version();
+        if *new_v < *baseline {
+            return Err(mgc_types::MgError::Other(format!(
+                "🚨 SECURITY: Downgrade blocked for '{name}' — previous top-level {baseline}, new top-level selection {new_v}.\n   \
+                 Use MAGICORE_ALLOW_UNTRUSTED=1 to override."
+            )));
         }
     }
     Ok(())

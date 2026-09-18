@@ -208,6 +208,53 @@ impl WebAdapter {
         versions
     }
 
+    /// True when a spec is a registry dist-tag (`latest`, `next`, …) rather
+    /// than semver: all-alphabetic words only. Anything with a digit or a
+    /// range operator keeps the semver path (unchanged behavior + errors).
+    /// (Nhận diện dist-tag: chỉ chữ cái mới là tag.)
+    fn is_dist_tag_spec(spec: &str) -> bool {
+        let s = spec.trim();
+        !s.is_empty() && s != "*" && s.chars().all(|c| c.is_ascii_alphabetic())
+    }
+    /// Pin dist-tag specs (`latest`, `next`, `beta`, …) through the
+    /// packument BEFORE solving: tags are registry aliases, not semver,
+    /// and the semver matcher rejects them ("no version matches
+    /// 'latest'"). Unknown tags fail closed listing available tags.
+    /// (Ghim dist-tag qua packument TRƯỚC khi solve — tag là alias
+    /// registry, không phải semver.)
+    async fn pin_dist_tags(
+        &self,
+        wanted: Vec<(PackageName, String)>,
+    ) -> MgResult<Vec<(PackageName, String)>> {
+        let mut out = Vec::with_capacity(wanted.len());
+        for (name, range) in wanted {
+            if !Self::is_dist_tag_spec(&range) {
+                out.push((name, range));
+                continue;
+            }
+            let meta = self.provider.metadata(&name).await.map_err(|e| {
+                mgc_types::MgError::Network(format!(
+                    "dist-tag '{range}' needs {} metadata: {e}",
+                    name.as_str()
+                ))
+            })?;
+            match meta.dist_tags.get(range.trim()) {
+                Some(pinned) => out.push((name, pinned.clone())),
+                None => {
+                    let mut known: Vec<&str> = meta.dist_tags.keys().map(String::as_str).collect();
+                    known.sort();
+                    known.truncate(10);
+                    return Err(mgc_types::MgError::Other(format!(
+                        "unknown dist-tag '{range}' for '{}' (known tags: {})",
+                        name.as_str(),
+                        known.join(", ")
+                    )));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     async fn infer_add_range(
         &self,
         name: &PackageName,
@@ -439,6 +486,7 @@ impl DependencyResolver for WebAdapter {
             })
             .collect();
         profile.mark("collect_wanted", started_at);
+        let wanted = self.pin_dist_tags(wanted).await?;
         if wanted.is_empty() {
             return Ok(ResolvedGraph::empty());
         }
@@ -589,7 +637,7 @@ impl DependencyResolver for WebAdapter {
             .collect();
         profile.mark("assemble_resolved_packages", package_started_at);
 
-        enforce_resolution_supply_chain_guards(&result.resolutions, &metadata)?;
+        enforce_resolution_supply_chain_guards(&result.resolutions, &metadata, manifest)?;
 
         // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
         if resolve_prefetch_enabled()

@@ -27,7 +27,7 @@ const DEFAULT_DOWNLOAD_BASE: &str = "https://crates.io/api/v1/crates";
 pub struct CratesProtocol {
     index_url: String,
     download_base: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
 }
 
 impl CratesProtocol {
@@ -43,7 +43,7 @@ impl CratesProtocol {
         Self {
             index_url: index_url.trim_end_matches('/').to_string(),
             download_base: download_base.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
         }
     }
 
@@ -75,7 +75,6 @@ impl CratesProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -95,7 +94,6 @@ impl CratesProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -199,11 +197,23 @@ impl RegistryProtocol for CratesProtocol {
         })?;
 
         let artifact_url = self.download_url_for(name, &entry.vers);
+        // The REAL sparse index carries a BARE 64-hex `cksum` (no
+        // scheme prefix) — an earlier revision only accepted a
+        // `sha256:`-prefixed value and dropped every genuine checksum.
+        // (Index thật mang `cksum` hex trần, không prefix.)
         let sha256 = entry
             .cksum
             .as_deref()
-            .and_then(|c| c.strip_prefix("sha256:"))
-            .map(str::to_string)
+            .map(str::trim)
+            .filter(|c| c.len() == 64 && c.chars().all(|ch| ch.is_ascii_hexdigit()))
+            .or_else(|| {
+                entry
+                    .cksum
+                    .as_deref()
+                    .and_then(|c| c.strip_prefix("sha256:"))
+                    .filter(|c| c.len() == 64 && c.chars().all(|ch| ch.is_ascii_hexdigit()))
+            })
+            .map(|c| c.to_ascii_lowercase())
             .unwrap_or_default();
 
         let mut resolved = ResolvedEntry {

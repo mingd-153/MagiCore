@@ -3068,3 +3068,18 @@ fn test_audit_parse_ignores_findings_field_from_registry() {
     assert_eq!(vulns.len(), 1);
     assert_eq!(vulns[0].package.version().to_string(), "4.17.12");
 }
+
+#[test]
+fn is_dist_tag_spec_tags_vs_semver() {
+    // Tag registry (chỉ chữ cái) — đi đường packument, không phải semver
+    assert!(WebAdapter::is_dist_tag_spec("latest"));
+    assert!(WebAdapter::is_dist_tag_spec("next"));
+    assert!(WebAdapter::is_dist_tag_spec("beta"));
+    // Semver/range/rỗng — giữ đường semver cũ (hành vi + lỗi không đổi)
+    assert!(!WebAdapter::is_dist_tag_spec("*"));
+    assert!(!WebAdapter::is_dist_tag_spec(""));
+    assert!(!WebAdapter::is_dist_tag_spec("^1.2.3"));
+    assert!(!WebAdapter::is_dist_tag_spec("1.2.3"));
+    assert!(!WebAdapter::is_dist_tag_spec(">=1.0.0 <2.0.0"));
+    assert!(!WebAdapter::is_dist_tag_spec("abc123"));
+}

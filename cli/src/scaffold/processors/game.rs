@@ -9,6 +9,13 @@ use super::{slugify, write_file};
 pub struct GameProcessor;
 
 impl GameProcessor {
+    /// Frameworks generated directly (the `_` arm is the bevy Cargo
+    /// template). Unknown ids keep the layer-required error.
+    /// (Framework tự sinh trực tiếp — id lạ vẫn fail rõ.)
+    pub fn supports(framework: &str) -> bool {
+        matches!(framework, "unity" | "godot" | "unreal" | "bevy")
+    }
+
     pub fn files(target: &Path, name: &str, framework: &str) -> Result<()> {
         match framework {
             "unity" => {

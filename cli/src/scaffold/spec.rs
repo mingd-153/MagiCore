@@ -33,6 +33,7 @@ pub enum CoreKind {
     Iot,
     Cicd,
     Cloud,
+    Hardware,
 }
 
 impl CoreKind {
@@ -46,6 +47,7 @@ impl CoreKind {
             CoreKind::Iot => "iot",
             CoreKind::Cicd => "cicd",
             CoreKind::Cloud => "cloud",
+            CoreKind::Hardware => "hardware",
         }
     }
 
@@ -59,6 +61,7 @@ impl CoreKind {
             "iot" => Some(CoreKind::Iot),
             "cicd" => Some(CoreKind::Cicd),
             "cloud" => Some(CoreKind::Cloud),
+            "hardware" => Some(CoreKind::Hardware),
             _ => None,
         }
     }

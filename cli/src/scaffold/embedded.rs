@@ -22,6 +22,20 @@ impl EmbeddedKernel {
         Self::kernel_map().contains_key(path)
     }
 
+    /// Embedded version of one layer (for cache freshness checks).
+    /// (Version embedded của một layer.)
+    pub fn layer_version(core: &str, name: &str) -> Option<&'static str> {
+        Self::kernel_map()
+            .get(&format!("{}/{}", core, name))
+            .map(|layer| layer.version)
+    }
+
+    /// Embedded version of one layer by full path.
+    /// (Version embedded của một layer theo full path.)
+    pub fn layer_version_path(path: &str) -> Option<&'static str> {
+        Self::kernel_map().get(path).map(|layer| layer.version)
+    }
+
     /// Extract embedded layer to target directory.
     pub fn extract_layer(core: &str, name: &str, target: &Path) -> Result<()> {
         let key = format!("{}/{}", core, name);
@@ -77,13 +91,15 @@ impl EmbeddedKernel {
             },
         );
 
-        // Web frontend: vanilla
+        // Web frontend: vanilla (1.1.0: + package.json/src/main.ts/
+        // tsconfig.json — the 1.0.0 tarball shipped index.html only, so
+        // scaffolds had no manifest and could never install).
         map.insert(
             "web/frontend/vanilla".to_string(),
             EmbeddedLayer {
                 name: "vanilla",
                 core: "web",
-                version: "1.0.0",
+                version: "1.1.0",
                 data: include_bytes!("../../embedded/web-frontend-vanilla.tar.gz"),
             },
         );

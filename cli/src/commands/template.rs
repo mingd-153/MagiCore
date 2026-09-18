@@ -279,15 +279,43 @@ pub async fn ensure_layer(
 
     let name_segment = segments.last().unwrap_or(&"unknown");
 
+    /// Legacy embedded-cache freshness: a `.mgc-embedded-version` marker
+    /// records which embedded version was extracted. Missing marker (caches
+    /// from before versioning) or version mismatch → re-extract, so template
+    /// updates are never shadowed by stale caches.
+    /// (Tươi cache embedded: marker version, lệch thì giải nén lại.)
+    fn embedded_cache_fresh(cache_target: &std::path::Path, version: Option<&str>) -> bool {
+        let marker = cache_target.join(".mgc-embedded-version");
+        let cached = std::fs::read_to_string(&marker)
+            .ok()
+            .map(|v| v.trim().to_string());
+        match (cached, version) {
+            (Some(cached), Some(version)) => cached == version,
+            _ => false,
+        }
+    }
+
+    /// Record the extracted embedded version in the cache (best-effort —
+    /// a missing marker just re-extracts next time).
+    /// (Ghi marker version embedded vào cache.)
+    fn stamp_embedded_cache(cache_target: &std::path::Path, version: Option<&str>) {
+        if let Some(version) = version {
+            let _ = std::fs::create_dir_all(cache_target);
+            let _ = std::fs::write(cache_target.join(".mgc-embedded-version"), version);
+        }
+    }
     // 1. Check embedded kernel first
     // Try full path first (web/shared/base), then short form (web/vanilla)
     if EmbeddedKernel::has_layer_path(rel) {
         // Extract embedded to legacy cache location so processor can find it
         let cache_target = crate::commands::template::templates_cache_dir().join(rel);
-        if !cache_target.exists() {
+        let version = EmbeddedKernel::layer_version_path(rel);
+        if !embedded_cache_fresh(&cache_target, version) {
+            let _ = std::fs::remove_dir_all(&cache_target);
             EmbeddedKernel::extract_layer_path(rel, &cache_target).map_err(|e| {
                 ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
             })?;
+            stamp_embedded_cache(&cache_target, version);
         }
         return Ok(ScaffoldResolveStatus::Embedded {
             layer: rel.to_string(),
@@ -298,10 +326,13 @@ pub async fn ensure_layer(
     if EmbeddedKernel::has_layer(core_str, base_name) {
         // Extract to cache
         let cache_target = crate::commands::template::templates_cache_dir().join(rel);
-        if !cache_target.exists() {
+        let version = EmbeddedKernel::layer_version(core_str, base_name);
+        if !embedded_cache_fresh(&cache_target, version) {
+            let _ = std::fs::remove_dir_all(&cache_target);
             EmbeddedKernel::extract_layer(core_str, base_name, &cache_target).map_err(|e| {
                 ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
             })?;
+            stamp_embedded_cache(&cache_target, version);
         }
         return Ok(ScaffoldResolveStatus::Embedded {
             layer: rel.to_string(),

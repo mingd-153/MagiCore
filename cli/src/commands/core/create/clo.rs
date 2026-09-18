@@ -22,15 +22,31 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
     }
     if let Some(fw) = config.frameworks.first() {
         // Phase 3: Handle typed result
-        match crate::commands::template::ensure_layer(&format!("clo/{fw}")).await {
+        // Layer namespace is `cloud/` (CoreKind::from_str_core knows
+        // "cloud", not the CLI alias "clo" — resolver maps Cloud →
+        // "cloud/..."; using "clo/" here fails every create-clo).
+        // (Namespace layer là `cloud/`, không phải alias CLI `clo`.)
+        match crate::commands::template::ensure_layer(&format!("cloud/{fw}")).await {
             Ok(status) if status.is_available() => {}
             Ok(_) => {
                 mgc_ui::warning(&format!(
-                    "Optional cloud layer 'clo/{}' not found, using fallback",
+                    "Optional cloud layer 'cloud/{}' not found, using fallback",
                     fw
                 ));
             }
-            Err(e) => anyhow::bail!("Required cloud template layer missing: {}", e),
+            Err(e) => {
+                // Built-in generator fallback — but ONLY for frameworks
+                // this core's processor actually generates; anything else
+                // keeps the honest layer-required error (no mislabeled scaffold).
+                // (Fallback generator nội bộ — chỉ framework processor hỗ trợ.)
+                if crate::scaffold::processors::clo::CloProcessor::supports(fw) {
+                    mgc_ui::warning(&format!(
+                        "Registry layer unavailable ({e}) — using built-in cloud generator",
+                    ));
+                } else {
+                    anyhow::bail!("Required cloud template layer missing: {}", e)
+                }
+            }
         }
     }
     super::scaffold_and_save_metadata(&config)?;

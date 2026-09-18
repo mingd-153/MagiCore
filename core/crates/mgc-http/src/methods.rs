@@ -169,6 +169,15 @@ impl Default for HttpClient {
     }
 }
 
+/// Opaque debug: the inner reqwest client / limiter / cache carry no
+/// stable debug form, and consumers (resolver protocols) derive Debug.
+/// (Debug mờ: client/limiter/cache trong không có dạng debug ổn định.)
+impl std::fmt::Debug for HttpClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpClient").finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 #[path = "test/methods_test.rs"]
 mod tests;

@@ -224,5 +224,6 @@ pub fn spec_to_layer_path(spec: &ScaffoldSpec) -> String {
         CoreKind::Iot => format!("iot/{}", spec.normalized_name),
         CoreKind::Cicd => format!("cicd/{}", spec.normalized_name),
         CoreKind::Cloud => format!("cloud/{}", spec.normalized_name),
+        CoreKind::Hardware => format!("hardware/{}", spec.normalized_name),
     }
 }

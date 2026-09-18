@@ -9,6 +9,22 @@ use super::{slugify, write_file};
 pub struct CloProcessor;
 
 impl CloProcessor {
+    /// Frameworks generated directly (the `_` arm is the Pulumi
+    /// template). Unknown ids keep the layer-required error.
+    /// (Framework tự sinh trực tiếp — id lạ vẫn fail rõ.)
+    pub fn supports(framework: &str) -> bool {
+        matches!(
+            framework,
+            "terraform"
+                | "terraform-gcp"
+                | "cdk"
+                | "cdk-typescript"
+                | "cloudflare"
+                | "lambda"
+                | "pulumi"
+        )
+    }
+
     pub fn files(target: &Path, name: &str, framework: &str) -> Result<()> {
         match framework {
             "terraform" | "terraform-gcp" => write_file(

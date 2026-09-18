@@ -23,6 +23,24 @@ impl OptimizerAdapter for PyTorchAdapter {
 
         // Standard PyTorch environment variables (documented & verifiable) — biến môi trường PyTorch chuẩn (đã chứng minh)
         // No unproven claims (ultra-compression, token pruning, etc.) — không có claims chưa chứng minh
+        // Accelerator lines are CONDITIONED on measured GPUs: the CUDA
+        // allocator knob only exists where an NVIDIA card was detected,
+        // the MPS fallback only where an Apple GPU was detected.
+        // Emitting them unconditionally would fake hardware that is not
+        // there. (Dòng accelerator có điều kiện theo GPU đo được.)
+        let mut accelerator = String::new();
+        if hw.has_gpu_vendor("nvidia") {
+            accelerator.push_str(
+                "# CUDA memory allocator tuning, NVIDIA GPU detected (PyTorch documented)\n\
+                 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\n",
+            );
+        }
+        if hw.has_gpu_vendor("apple") {
+            accelerator.push_str(
+                "# Apple GPU detected: allow MPS-op fallback to CPU (PyTorch documented)\n\
+                 PYTORCH_ENABLE_MPS_FALLBACK=1\n",
+            );
+        }
         files.push(OptimizedConfigFile {
             relative_path: ".mgc-optimizer/pytorch_runtime.env".to_string(),
             content: format!(
@@ -32,12 +50,11 @@ impl OptimizerAdapter for PyTorchAdapter {
                  MKL_NUM_THREADS={threads}\n\
                  TORCH_NUM_THREADS={threads}\n\
                  TOKENIZERS_PARALLELISM=true\n\
-                 # CUDA memory allocator tuning (PyTorch documented)\n\
-                 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\n",
+                 {accelerator}",
                 hw.profile
             ),
             description: format!(
-                "PyTorch compute thread pool ({threads} threads) & CUDA memory tuning"
+                "PyTorch compute thread pool ({threads} threads) & GPU-conditioned accelerator env"
             ),
         });
 

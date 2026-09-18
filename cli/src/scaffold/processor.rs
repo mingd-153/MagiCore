@@ -578,6 +578,9 @@ impl Scaffolder {
                 }
             }
             "lib" => super::processors::lib::LibProcessor::files(target, &name, &framework),
+            "hardware" => {
+                super::processors::hardware::HardwareProcessor::files(target, &name, &framework)
+            }
             other => Err(crate::error::unsupported_scaffold_core(other)),
         }
     }

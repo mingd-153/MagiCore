@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.1.0-rc.7] - 2026-09-19
+
+### Added
+- `mgc why` implemented: reverse-dependency lookup over v2/v3/v4 lockfiles (dependents, root, leftover, missing)
+- GPU detection (macOS/Linux/Windows) + measured GPU facts (`gpu.env`) + vendor-conditioned accelerator env (PyTorch/Candle)
+- Hardware core: `create/add/install/list-hardware` work end-to-end (optimizer/bench templates)
+- `create-clo/cdk`, `create-game/bevy`, `create-iot/esp32-rust` scaffolds work via built-in generators
+- npm dist-tag support (`latest`, `next`, …) in install/dlx resolution
+
+### Fixed
+- `create-clo` "Unknown core: clo" (layer namespace is `cloud/`)
+- `install-game`/`install-iot` delegated lanes died in mgc-native resolve; `add` tail skipped resolve-less adapters via probe
+- `install-web` PHP failed without HOME (hermetic project-scoped HOME + composer dirs)
+- `dlx` replaced PATH (broke interpreter shebangs), swallowed stdout, rejected `latest`
+- `patch verify` never passed (SRI prefix vs bare hex)
+- `migrate lock --to v4` rejected the documented spelling; `stage --dir` failed on relative paths
+- `install.ps1` / `install-from-gh.sh` built wrong artifact names (404 vs release contract)
+- NuGet test mock now mirrors live nuget.org (`@id` → catalog document)
+- Registry HTTP in mgc-resolver now goes through `mgc_http::HttpClient` (bounded timeouts + retries)
+- Wizard/GPU labels corrected to match implemented capability
+
 ### Changed
 - Test infrastructure improvements (E2E lifecycle tests honest verification)
 - CI workflow now triggers on feature/** branches

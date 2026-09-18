@@ -5,7 +5,14 @@
 //! `RegistrationsBaseUrl/3.6.0` (or Versioned) and `PackageBaseAddress/3.0.0`
 //! resources. Versions come from the flat container
 //! `{PackageBaseAddress}/{id-lower}/index.json`; the authoritative integrity
-//! hash lives in the registration's `catalogEntry.packageHash`
+//! hash lives in the CATALOG leaf (`catalogEntry.@id` → catalog document's
+//! `packageHash`, base64 SHA-512 of the nupkg bytes) — the registration
+//! projection does NOT carry it (verified against live nuget.org: zero of
+//! 84 newtonsoft.json leaves and zero serilog page leaves have the field).
+//! Pages without inline leaves are followed via their `@id` URLs.
+//! hash toàn vẹn chính thống nằm ở leaf CATALOG (`catalogEntry.@id` →
+//! document catalog) — projection registration KHÔNG mang nó. Page không
+//! có leaf inline được theo qua URL `@id`.
 //! (base64 SHA-512 of the nupkg bytes — verified with the same algorithm the
 //! server declares, fail-closed otherwise); `listed: false` entries are
 //! never selected. Dependencies live in the nuspec INSIDE the nupkg, but the
@@ -16,10 +23,9 @@
 //! Protocol v3: service index (`{index}/index.json`) công bố resource
 //! `RegistrationsBaseUrl/3.6.0` (hoặc Versioned) và `PackageBaseAddress/3.0.0`.
 //! Version lấy từ flat container `{PackageBaseAddress}/{id-lower}/index.json`;
-//! hash toàn vẹn chính thống nằm ở `catalogEntry.packageHash` của
-//! registration (base64 SHA-512 của byte nupkg — xác minh đúng thuật toán
-//! server khai báo, không đúng thì fail-closed); entry `listed: false` không
-//! bao giờ được chọn. Dep nằm trong nuspec BÊN TRONG nupkg, nhưng flat
+//! hash toàn vẹn chính thống nằm ở leaf CATALOG (`catalogEntry.@id` —
+//! base64 SHA-512 của byte nupkg; projection registration không mang nó);
+//! entry `listed: false` không bao giờ được chọn. Dep nằm trong nuspec BÊN TRONG nupkg, nhưng flat
 //! container cũng phục vụ `{PackageBaseAddress}/{id}/{version}/{id}.nuspec`
 //! — tải từ đó để resolve không cần xử lý zip. Selection phản chiếu
 //! minimum-version resolution của chính NuGet: version thấp nhất khớp và
@@ -41,7 +47,13 @@ const DEFAULT_INDEX_URL: &str = "https://api.nuget.org/v3/index.json";
 pub struct NuGetProtocol {
     registrations_base: String,
     package_base: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
+    /// Consumer target framework moniker (e.g. `net8.0` from the project's
+    /// `<TargetFramework>`) — selects ONE group from divergent multi-TFM
+    /// dependency sets. `None` (default) keeps the fail-closed no-merge
+    /// behavior.
+    /// (TFM của consumer — chọn MỘT group khi dep set phân kỳ.)
+    consumer_tfm: Option<String>,
 }
 
 impl NuGetProtocol {
@@ -51,8 +63,18 @@ impl NuGetProtocol {
         Self {
             registrations_base: registrations_base.trim_end_matches('/').to_string(),
             package_base: package_base.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
+            consumer_tfm: None,
         }
+    }
+
+    /// Pin the consumer target framework for multi-TFM group selection
+    /// (builder — chain after `with_bases` / `from_env`).
+    /// (Ghim TFM consumer để chọn group multi-TFM.)
+    pub fn with_consumer_tfm(mut self, tfm: &str) -> Self {
+        let tfm = tfm.trim();
+        self.consumer_tfm = (!tfm.is_empty()).then(|| tfm.to_string());
+        self
     }
 
     /// Build from environment: `MGC_NUGET_INDEX_URL` (service index whose
@@ -88,10 +110,9 @@ impl NuGetProtocol {
     /// Dò service index để lấy base registration + flat container (public:
     /// test và adapter dò index tường minh).
     pub async fn from_service_index(index_url: &str) -> MgResult<Self> {
-        let client = reqwest::Client::new();
+        let client = mgc_http::HttpClient::default();
         let resp = client
             .get(index_url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {index_url} failed: {e}")))?;
         let status = resp.status();
@@ -136,7 +157,6 @@ impl NuGetProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status().as_u16();
@@ -151,7 +171,6 @@ impl NuGetProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -204,6 +223,34 @@ impl NuGetProtocol {
             .map_err(|e| MgError::Other(format!("parse registration index failed: {e}")))?;
         let mut leaves = Vec::new();
         collect_leaves(&doc, &mut leaves);
+        // Paginated hives (most real packages: pages carry `@id` links and
+        // NO inline leaves) — follow each page URL and collect its leaves.
+        // Fail-closed on page fetch errors: a half-read index would resolve
+        // against an incomplete version set.
+        // (Hive phân trang (hầu hết package thật) — theo URL từng page.)
+        if let Some(pages) = doc.get("items").and_then(Value::as_array) {
+            for page in pages {
+                let has_inline = page
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| !items.is_empty());
+                if has_inline {
+                    continue;
+                }
+                let Some(page_url) = page.get("@id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let (page_status, page_body) = self.get_text(page_url).await?;
+                if !(200..300).contains(&page_status) {
+                    return Err(MgError::Network(format!(
+                        "GET {page_url} returned {page_status} — registration page unreadable, index incomplete (fail-closed)"
+                    )));
+                }
+                let page_doc: Value = serde_json::from_str(&page_body)
+                    .map_err(|e| MgError::Other(format!("parse registration page failed: {e}")))?;
+                collect_leaves(&page_doc, &mut leaves);
+            }
+        }
         Ok(leaves)
     }
 
@@ -359,17 +406,34 @@ impl RegistryProtocol for NuGetProtocol {
                 "{id} {version} is unlisted in the registration (fail-closed)"
             )));
         }
-        let package_hash = catalog
+        // Authoritative hash: the registration projection does NOT carry
+        // `packageHash` (live nuget.org omits it) — follow the leaf's
+        // catalog `@id` to the catalog document, which does.
+        // (Hash chính thống: theo `@id` catalog vì registration không có.)
+        let catalog_url = catalog.get("@id").and_then(Value::as_str).ok_or_else(|| {
+            MgError::Integrity(format!(
+                "{id} {version} catalogEntry has no @id — hash unreachable (fail-closed)"
+            ))
+        })?;
+        let (catalog_status, catalog_body) = self.get_text(catalog_url).await?;
+        if !(200..300).contains(&catalog_status) {
+            return Err(MgError::Network(format!(
+                "GET {catalog_url} returned {catalog_status} — catalog hash unreachable (fail-closed)"
+            )));
+        }
+        let catalog_doc: Value = serde_json::from_str(&catalog_body)
+            .map_err(|e| MgError::Other(format!("parse catalog leaf failed: {e}")))?;
+        let package_hash = catalog_doc
             .get("packageHash")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let algorithm = catalog
+        let algorithm = catalog_doc
             .get("packageHashAlgorithm")
             .and_then(Value::as_str)
             .unwrap_or_default();
         if !algorithm.eq_ignore_ascii_case("SHA512") || package_hash.is_empty() {
             return Err(MgError::Integrity(format!(
-                "{id} {version} registration hash algorithm '{algorithm}' is not SHA512 or the hash is empty — fail-closed"
+                "{id} {version} catalog hash algorithm '{algorithm}' is not SHA512 or the hash is empty — fail-closed"
             )));
         }
         base64::engine::general_purpose::STANDARD
@@ -448,15 +512,57 @@ impl RegistryProtocol for NuGetProtocol {
             dep_sets.sort();
             dep_sets.dedup();
             if dep_sets.len() > 1 {
-                return Err(MgError::Other(format!(
-                    "multi-target package {id} {version} has divergent dependency sets across frameworks ({}) — target-framework selection is required (fail-closed, no silent merge)",
-                    distinct_tfms.join(", ")
-                )));
+                // Divergent sets: with a consumer TFM select the NEAREST
+                // compatible group (its deps only); without one, fail
+                // closed — merging would silently build the wrong graph.
+                // (Set phân kỳ: có TFM consumer thì chọn group tương thích
+                // GẦN nhất; không có thì fail.)
+                if let Some(consumer) = self.consumer_tfm.as_deref() {
+                    let mut best: Option<(u64, Vec<(String, String)>, String)> = None;
+                    for (tfm, group_deps) in &grouped {
+                        let Some(t) = tfm.as_deref() else {
+                            continue;
+                        };
+                        if let Some(rank) = tfm_compat_rank(consumer, t)
+                            && best.as_ref().is_none_or(|(r, _, _)| rank > *r)
+                        {
+                            best = Some((rank, group_deps.clone(), t.to_string()));
+                        }
+                    }
+                    match best {
+                        Some((_, selected_deps, selected_tfm)) => {
+                            markers.push(format!("tfm-selected:{selected_tfm}"));
+                            deps.extend(selected_deps);
+                        }
+                        None => {
+                            return Err(MgError::Other(format!(
+                                "multi-target package {id} {version} has divergent dependency sets across frameworks ({}) — none compatible with consumer '{consumer}' (fail-closed)",
+                                distinct_tfms.join(", ")
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(MgError::Other(format!(
+                        "multi-target package {id} {version} has divergent dependency sets across frameworks ({}) — target-framework selection is required (fail-closed, no silent merge)",
+                        distinct_tfms.join(", ")
+                    )));
+                }
+            } else {
+                markers.push(format!("multi-tfm-identical:{}", distinct_tfms.join(",")));
             }
-            markers.push(format!("multi-tfm-identical:{}", distinct_tfms.join(",")));
-        }
-        for (_, group_deps) in &grouped {
-            deps.extend(group_deps.iter().cloned());
+            // A TFM selection above already extended `deps` with the ONE
+            // chosen group — extending again would merge every framework.
+            // (Đã chọn group thì không gộp thêm.)
+            let tfm_selected = markers.iter().any(|m| m.starts_with("tfm-selected:"));
+            if !tfm_selected {
+                for (_, group_deps) in &grouped {
+                    deps.extend(group_deps.iter().cloned());
+                }
+            }
+        } else {
+            for (_, group_deps) in &grouped {
+                deps.extend(group_deps.iter().cloned());
+            }
         }
 
         let artifact_url = self.nupkg_url(id, &version);
@@ -511,6 +617,118 @@ impl RegistryProtocol for NuGetProtocol {
 /// Đọc attribute `targetFramework` của khối `<group>`.
 fn group_tfm(group_xml: &str) -> Option<String> {
     tag_attr(group_xml, "targetFramework")
+}
+
+/// Framework family for TFM compatibility ranking.
+/// (Họ framework để xếp hạng tương thích TFM.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TfmFamily {
+    /// Modern .NET (`net5.0`–`net9.0`, plain `net8.0`).
+    Net,
+    /// .NET Framework (`net45`, `net472`, `net48`, long form).
+    NetFx,
+    /// .NET Core (`netcoreapp3.1`).
+    NetCore,
+    /// .NET Standard (`netstandard2.0`).
+    NetStandard,
+}
+
+/// Parse a short (or common long) TFM moniker into (family, version).
+/// Platform suffixes (`net6.0-android`) are stripped to the base TFM.
+/// (Parse moniker TFM thành (họ, version).)
+fn parse_tfm(moniker: &str) -> Option<(TfmFamily, Version)> {
+    let base = moniker
+        .split(['-', '+'])
+        .next()
+        .unwrap_or(moniker)
+        .trim()
+        .to_ascii_lowercase();
+    let base = base
+        .strip_prefix(".netframework")
+        .map(|v| format!("net{v}"))
+        .unwrap_or(base);
+    let base = base
+        .strip_prefix(".netstandard")
+        .map(|v| format!("netstandard{v}"))
+        .unwrap_or(base);
+    let base = base
+        .strip_prefix(".netcoreapp")
+        .map(|v| format!("netcoreapp{v}"))
+        .unwrap_or(base);
+    if let Some(v) = base.strip_prefix("netstandard") {
+        return Version::parse(&norm_tfm_version(v))
+            .ok()
+            .map(|ver| (TfmFamily::NetStandard, ver));
+    }
+    if let Some(v) = base.strip_prefix("netcoreapp") {
+        return Version::parse(&norm_tfm_version(v))
+            .ok()
+            .map(|ver| (TfmFamily::NetCore, ver));
+    }
+    if let Some(v) = base.strip_prefix("net") {
+        // `net48`/`net472` (no dots) are .NET Framework; dotted `net8.0`
+        // is modern .NET. (`net48` là Framework; `net8.0` là .NET mới.)
+        if v.contains('.') {
+            return Version::parse(&norm_tfm_version(v))
+                .ok()
+                .map(|ver| (TfmFamily::Net, ver));
+        }
+        let dotted = match v.len() {
+            2 => format!("{}.{}", &v[0..1], &v[1..2]),
+            3 => format!("{}.{}", &v[0..1], &v[1..3]),
+            _ => return None,
+        };
+        return Version::parse(&dotted)
+            .ok()
+            .map(|ver| (TfmFamily::NetFx, ver));
+    }
+    None
+}
+
+/// Normalize partial versions (`8` → `8.0.0`, `4.8` → `4.8.0`) for parsing.
+/// (Chuẩn hóa version thiếu phần.)
+fn norm_tfm_version(v: &str) -> String {
+    let parts: Vec<&str> = v.split('.').collect();
+    match parts.len() {
+        1 => format!("{}.0.0", parts[0]),
+        2 => format!("{}.{}.0", parts[0], parts[1]),
+        _ => v.to_string(),
+    }
+}
+
+/// Compatibility rank of a package `candidate` group for a `consumer` TFM
+/// (higher = better; `None` = incompatible). Rules mirror NuGet's own
+/// nearest-compatible selection, bounded to the four families above:
+/// exact match wins; same-family lower versions rank by version;
+/// netstandard candidates rank when within the consumer's supported
+/// ceiling (net5+/netcoreapp3.0+: 2.1; netcoreapp2.x/net472+: 2.0).
+/// (Xếp hạng tương thích group theo TFM consumer.)
+fn tfm_compat_rank(consumer: &str, candidate: &str) -> Option<u64> {
+    let (cfam, cver) = parse_tfm(consumer)?;
+    let (kfam, kver) = parse_tfm(candidate)?;
+    if cfam == kfam {
+        if kver == cver {
+            return Some(u64::MAX);
+        }
+        if kver < cver {
+            return Some(1_000_000 + kver.major * 10_000 + kver.minor * 100 + kver.patch);
+        }
+        return None;
+    }
+    if kfam == TfmFamily::NetStandard {
+        let ceiling: Version = match cfam {
+            TfmFamily::Net => Version::parse("2.1.0").ok()?,
+            TfmFamily::NetCore if cver >= Version::parse("3.0.0").ok()? => {
+                Version::parse("2.1.0").ok()?
+            }
+            TfmFamily::NetCore | TfmFamily::NetFx => Version::parse("2.0.0").ok()?,
+            TfmFamily::NetStandard => return None,
+        };
+        if kver <= ceiling {
+            return Some(500_000 + kver.major * 10_000 + kver.minor * 100 + kver.patch);
+        }
+    }
+    None
 }
 
 /// Read attribute `attr="…"` from the FIRST opening tag in `xml` (up to the

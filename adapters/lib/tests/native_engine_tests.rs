@@ -472,8 +472,19 @@ async fn lib_adapter_csproj_project_resolves_natively_via_env() {
     server
         .mock("GET", "/reg/demo.lib/index.json")
         .with_status(200)
+        // Live nuget.org registration leaves OMIT packageHash — the
+        // resolver must follow catalogEntry @id to the catalog document.
+        // (Registration thật không có packageHash — resolver phải theo @id.)
         .with_body(format!(
-            r#"{{"items":[{{"items":[{{"catalogEntry":{{"id":"Demo.Lib","version":"1.2.3","listed":true,"packageHashAlgorithm":"SHA512","packageHash":"{sha512_b64}"}}}}]}}]}}"#
+            r#"{{"items":[{{"items":[{{"catalogEntry":{{"@id":"{base}/catalog/demo.lib.1.2.3.json","id":"Demo.Lib","version":"1.2.3","listed":true}}}}]}}]}}"#
+        ))
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/catalog/demo.lib.1.2.3.json")
+        .with_status(200)
+        .with_body(format!(
+            "{{\"packageHash\":\"{sha512_b64}\",\"packageHashAlgorithm\":\"SHA512\"}}"
         ))
         .create_async()
         .await;

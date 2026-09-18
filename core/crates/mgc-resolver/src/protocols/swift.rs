@@ -43,7 +43,7 @@ use std::sync::Mutex;
 #[derive(Debug)]
 pub struct SwiftRegistryProtocol {
     registry_base: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
     // Resolved archives are cached so the install download never re-fetches
     // what resolve already pulled (resolve reads Package.swift from the zip).
     // (Archive đã resolve được cache để download lúc install không tải lại
@@ -100,7 +100,7 @@ impl SwiftRegistryProtocol {
     pub fn with_registry(registry_base: &str) -> Self {
         Self {
             registry_base: registry_base.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
             zip_cache: Mutex::new(HashMap::new()),
         }
     }
@@ -150,7 +150,6 @@ impl SwiftRegistryProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status().as_u16();
@@ -672,8 +671,8 @@ pub fn git_transport_allowed(
             "git dependencies are blocked by default — set MGC_GIT_DEPS=1 and MGC_GIT_HOSTS=<host>,... to opt in explicitly (in-process git transport is Phase E)".to_string(),
         ));
     }
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|_| MgError::Other(format!("unparseable git URL '{url}'")))?;
+    let parsed =
+        url::Url::parse(url).map_err(|_| MgError::Other(format!("unparseable git URL '{url}'")))?;
     if parsed.scheme() != "https" {
         return Err(MgError::Other(format!(
             "git URL scheme '{}' is blocked — only https:// (no file://, http://, ssh:) (fail-closed)",

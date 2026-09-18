@@ -194,7 +194,11 @@ fn python_lib_project(dir: &std::path::Path) {
         "name = \"canary-pylib\"\necosystem = \"lib\"\n[lib]\nlanguage = \"python\"\n",
     )
     .unwrap();
-    std::fs::write(dir.join("pyproject.toml"), "[project]\nname = \"canary-pylib\"\n").unwrap();
+    std::fs::write(
+        dir.join("pyproject.toml"),
+        "[project]\nname = \"canary-pylib\"\n",
+    )
+    .unwrap();
 }
 
 fn godot_game_project(dir: &std::path::Path) {
@@ -587,7 +591,11 @@ fn rn_add_hits_unsupported_rule_without_spawning() {
     let (code, stdout, stderr, marker) =
         run_mgc(&["add-app", "lodash"], project.path(), &sandbox, None);
     let output = format!("{stdout}{stderr}");
-    assert_ne!(code, Some(0), "React Native 'add-app' must fail closed:\n{output}");
+    assert_ne!(
+        code,
+        Some(0),
+        "React Native 'add-app' must fail closed:\n{output}"
+    );
     assert!(
         output.contains("rn"),
         "the failure must come from the app/rn rule (names the ecosystem):\n{output}"
@@ -659,8 +667,12 @@ fn go_remove_hits_unsupported_without_spawning() {
     go_lib_project(project.path());
     let sandbox = CanarySandbox::new("go");
 
-    let (code, stdout, stderr, marker) =
-        run_mgc(&["remove-lib", "example.com/mod"], project.path(), &sandbox, None);
+    let (code, stdout, stderr, marker) = run_mgc(
+        &["remove-lib", "example.com/mod"],
+        project.path(),
+        &sandbox,
+        None,
+    );
     let output = format!("{stdout}{stderr}");
     assert_ne!(code, Some(0), "go 'remove-lib' must fail closed:\n{output}");
     assert!(
@@ -681,15 +693,22 @@ fn java_add_hits_unsupported_without_spawning() {
     java_lib_project(project.path());
     let sandbox = CanarySandbox::new("mvn");
 
-    let (code, stdout, stderr, marker) =
-        run_mgc(&["add-lib", "com.example:demo"], project.path(), &sandbox, None);
+    let (code, stdout, stderr, marker) = run_mgc(
+        &["add-lib", "com.example:demo"],
+        project.path(),
+        &sandbox,
+        None,
+    );
     let output = format!("{stdout}{stderr}");
     assert_ne!(code, Some(0), "java 'add-lib' must fail closed:\n{output}");
     assert!(
         output.contains("unsupported"),
         "java add must answer Unsupported:\n{output}"
     );
-    assert!(marker.is_empty(), "NO spawn for unsupported java add:\n{marker}");
+    assert!(
+        marker.is_empty(),
+        "NO spawn for unsupported java add:\n{marker}"
+    );
 
     let (code, _, _, marker) = run_mgc(
         &["add-lib", "com.example:demo", "--compat-runtime", "mvn"],

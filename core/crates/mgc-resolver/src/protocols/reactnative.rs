@@ -276,14 +276,14 @@ pub struct VerifiedPodSpec {
 #[derive(Debug, Clone)]
 pub struct CocoaPodsProtocol {
     cdn: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
 }
 
 impl CocoaPodsProtocol {
     pub fn with_cdn(cdn: &str) -> Self {
         Self {
             cdn: cdn.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
         }
     }
 
@@ -323,7 +323,6 @@ impl CocoaPodsProtocol {
         let resp = self
             .client
             .get(&url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();

@@ -26,7 +26,7 @@ const DEFAULT_API_URL: &str = "https://pub.dev";
 #[derive(Debug, Clone)]
 pub struct PubProtocol {
     api_url: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
 }
 
 impl PubProtocol {
@@ -35,7 +35,7 @@ impl PubProtocol {
     pub fn new(api_url: &str) -> Self {
         Self {
             api_url: api_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
         }
     }
 
@@ -53,7 +53,6 @@ impl PubProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -166,7 +165,6 @@ impl RegistryProtocol for PubProtocol {
         let resp = self
             .client
             .get(&entry.artifact_url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {} failed: {e}", entry.artifact_url)))?;
         let status = resp.status();

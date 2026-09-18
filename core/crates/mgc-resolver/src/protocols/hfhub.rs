@@ -47,18 +47,26 @@ pub struct ModelResolution {
 
 pub struct HfHubProtocol {
     base_url: String,
-    client: reqwest::Client,
-    token: Option<String>,
+    client: mgc_http::HttpClient,
 }
 
 impl HfHubProtocol {
     /// Build with an explicit Hub base URL.
     /// Dựng với URL gốc Hub tường minh.
     pub fn new(base_url: &str) -> Self {
+        let token = std::env::var("MGC_HF_TOKEN").ok().filter(|v| !v.is_empty());
+        // Bearer auth rides the shared client (mgc_http applies it to
+        // every request) instead of per-request builders — one place to
+        // audit, same header on the wire.
+        // (Auth đi theo client chung thay vì từng request.)
+        let base_client = mgc_http::HttpClient::default();
+        let client = match &token {
+            Some(t) => base_client.with_auth("authorization", format!("Bearer {t}")),
+            None => base_client,
+        };
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
-            token: std::env::var("MGC_HF_TOKEN").ok().filter(|v| !v.is_empty()),
+            client,
         }
     }
 
@@ -112,12 +120,9 @@ impl HfHubProtocol {
             "{}/api/models/{model}/tree/{revision}?recursive=true",
             self.base_url
         );
-        let mut request = self.client.get(&url);
-        if let Some(token) = self.token.as_deref() {
-            request = request.bearer_auth(token);
-        }
-        let resp = request
-            .send()
+        let resp = self
+            .client
+            .get(&url)
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -193,12 +198,9 @@ impl HfHubProtocol {
     /// Download one locked file (auth header only when configured).
     /// Tải một file đã lock.
     pub async fn download_file(&self, file: &ModelFile) -> MgResult<Vec<u8>> {
-        let mut request = self.client.get(&file.url);
-        if let Some(token) = self.token.as_deref() {
-            request = request.bearer_auth(token);
-        }
-        let resp = request
-            .send()
+        let resp = self
+            .client
+            .get(&file.url)
             .await
             .map_err(|e| MgError::Network(format!("GET {} failed: {e}", file.url)))?;
         let status = resp.status();

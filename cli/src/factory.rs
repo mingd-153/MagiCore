@@ -27,7 +27,7 @@ pub fn available_cores() -> Vec<(&'static str, &'static str)> {
     #[cfg(feature = "hardware")]
     cores.push((
         "hardware",
-        "⚙️  Hardware (optimizer/bench — GPU/CPU acceleration)",
+        "⚙️  Hardware (optimizer/bench — CPU/RAM tuning)",
     ));
     cores
 }

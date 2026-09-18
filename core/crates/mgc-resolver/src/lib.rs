@@ -2,6 +2,11 @@
 //!
 //! Provides a `Resolver` with batch pipeline: prefetch → queue → resolve.
 //! Errors from registry/providers are propagated to callers (no silent skips).
+//!
+//! All registry HTTP goes through `mgc_http::HttpClient` (bounded
+//! timeouts + retries) — raw `reqwest` is banned here by the module
+//! hygiene gate (sys-mgc/14-module-map.md: no reqwest outside mgc-http).
+//! (Mọi HTTP registry qua `mgc_http::HttpClient` — cấm reqwest trực tiếp.)
 
 pub mod cache;
 pub mod graph;

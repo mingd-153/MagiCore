@@ -100,10 +100,51 @@ fn nuspec_body(id: &str) -> String {
     )
 }
 
-fn registration_body(id: &str, version: &str, nupkg_hash_b64: &str) -> String {
-    format!(
-        r#"{{"items":[{{"items":[{{"catalogEntry":{{"id":"{id}","version":"{version}","listed":true,"packageHashAlgorithm":"SHA512","packageHash":"{nupkg_hash_b64}"}}}}]}}]}}"#
-    )
+/// Genuine registration shape (verified against live nuget.org): the
+/// projection leaf carries NO packageHash — only `listed` + the catalog
+/// `@id`. The hash lives in the catalog document. The index is paginated
+/// (page link, no inline leaves) like most real packages. See
+/// `mock_registration` below for the 3-hop mock.
+/// (Dạng registration thật: leaf không có packageHash, chỉ có `@id`
+/// catalog; index phân trang.)
+fn catalog_body(nupkg_hash_b64: &str) -> String {
+    format!(r#"{{"packageHashAlgorithm":"SHA512","packageHash":"{nupkg_hash_b64}"}}"#)
+}
+
+/// Mock the genuine 3-hop registration shape: index (page link, no inline
+/// leaves) → page (leaf with catalog `@id`, no hash) → catalog (hash).
+/// (Mock đúng 3 hop thật: index → page → catalog.)
+async fn mock_registration(
+    server: &mut mockito::ServerGuard,
+    base: &str,
+    id_lower: &str,
+    id: &str,
+    version: &str,
+    sha512_b64: &str,
+    listed: bool,
+) {
+    server
+        .mock("GET", format!("/reg/{id_lower}/index.json").as_str())
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"items":[{{"@id":"{base}/reg/{id}/page.json","count":1}}]}}"#
+        ))
+        .create_async()
+        .await;
+    server
+        .mock("GET", format!("/reg/{id}/page.json").as_str())
+        .with_status(200)
+        .with_body(format!(
+            r#"{{"items":[{{"catalogEntry":{{"id":"{id}","version":"{version}","listed":{listed},"@id":"{base}/catalog/{id}/{version}.json"}}}}]}}"#
+        ))
+        .create_async()
+        .await;
+    server
+        .mock("GET", format!("/catalog/{id}/{version}.json").as_str())
+        .with_status(200)
+        .with_body(catalog_body(sha512_b64))
+        .create_async()
+        .await;
 }
 
 #[tokio::test]
@@ -134,12 +175,20 @@ async fn nuget_service_index_probe_and_full_resolve_verify_materialize() {
         .await;
     // Minimum-version selection: bare "13.0.3" = exact pin → 13.0.3.
     // (Resolve minimum-version: "13.0.3" trần = ghim chính xác → 13.0.3.)
-    server
-        .mock("GET", "/reg/demo.lib/index.json")
-        .with_status(200)
-        .with_body(registration_body("Demo.Lib", "13.0.3", &sha512_b64))
-        .create_async()
-        .await;
+    // Registration index is a page LINK (no inline leaves — the paginated
+    // shape most real packages have); the page leaf links the catalog doc
+    // that carries the hash.
+    // (Index registration là link page; hash nằm ở document catalog.)
+    mock_registration(
+        &mut server,
+        &base,
+        "demo.lib",
+        "Demo.Lib",
+        "13.0.3",
+        &sha512_b64,
+        true,
+    )
+    .await;
     server
         .mock("GET", "/flat/demo.lib/13.0.3/demo.lib.nuspec")
         .with_status(200)
@@ -242,12 +291,16 @@ async fn nuget_tampered_nupkg_fails_closed_and_unlisted_never_selected() {
         .with_body(r#"{"versions":["1.0.0"]}"#)
         .create_async()
         .await;
-    server
-        .mock("GET", "/reg/bad.pkg/index.json")
-        .with_status(200)
-        .with_body(registration_body("Bad.Pkg", "1.0.0", &sha512_b64))
-        .create_async()
-        .await;
+    mock_registration(
+        &mut server,
+        &base,
+        "bad.pkg",
+        "Bad.Pkg",
+        "1.0.0",
+        &sha512_b64,
+        true,
+    )
+    .await;
     server
         .mock("GET", "/flat/bad.pkg/1.0.0/bad.pkg.nuspec")
         .with_status(200)
@@ -260,14 +313,15 @@ async fn nuget_tampered_nupkg_fails_closed_and_unlisted_never_selected() {
     let err = protocol.verify(&entry, &nupkg).unwrap_err();
     assert!(matches!(err, mgc_types::MgError::Integrity(_)), "{err:?}");
 
-    // An unlisted-only version set fails closed on resolve.
+    // An unlisted-only version set fails closed on resolve (the page leaf
+    // flips to listed:false; the catalog is never consulted).
     // (Tập version chỉ toàn unlisted fail-closed khi resolve.)
-    let mut unlisted = registration_body("Bad.Pkg", "1.0.0", &sha512_b64);
-    unlisted = unlisted.replace("\"listed\":true", "\"listed\":false");
     let unlisted_mock = server
-        .mock("GET", "/reg/bad.pkg/index.json")
+        .mock("GET", "/reg/Bad.Pkg/page.json")
         .with_status(200)
-        .with_body(unlisted)
+        .with_body(format!(
+            r#"{{"items":[{{"catalogEntry":{{"id":"Bad.Pkg","version":"1.0.0","listed":false,"@id":"{base}/catalog/Bad.Pkg/1.0.0.json"}}}}]}}"#
+        ))
         .create_async()
         .await;
     let err = protocol.resolve("Bad.Pkg", "1.0.0").await.unwrap_err();
@@ -290,12 +344,16 @@ async fn nuget_minimum_version_selection_with_float_range() {
         .with_body(r#"{"versions":["1.0.5","1.9.0","2.0.0"]}"#)
         .create_async()
         .await;
-    server
-        .mock("GET", "/reg/float.pkg/index.json")
-        .with_status(200)
-        .with_body(registration_body("Float.Pkg", "1.0.5", &sha512_b64))
-        .create_async()
-        .await;
+    mock_registration(
+        &mut server,
+        &base,
+        "float.pkg",
+        "Float.Pkg",
+        "1.0.5",
+        &sha512_b64,
+        true,
+    )
+    .await;
     server
         .mock("GET", "/flat/float.pkg/1.0.5/float.pkg.nuspec")
         .with_status(200)
@@ -341,12 +399,16 @@ async fn resolve_nuspec(
         .with_body(r#"{"versions":["9.9.9"]}"#)
         .create_async()
         .await;
-    server
-        .mock("GET", "/reg/multi.tfm/index.json")
-        .with_status(200)
-        .with_body(registration_body("Multi.Tfm", "9.9.9", &sha512_b64))
-        .create_async()
-        .await;
+    mock_registration(
+        server,
+        &base,
+        "multi.tfm",
+        "Multi.Tfm",
+        "9.9.9",
+        &sha512_b64,
+        true,
+    )
+    .await;
     server
         .mock("GET", "/flat/multi.tfm/9.9.9/multi.tfm.nuspec")
         .with_status(200)

@@ -49,6 +49,7 @@ fn test_nodejs_adapter_generate() {
         cpu_cores: 8,
         total_memory_gb: 16,
         profile: SystemProfile::HighPerformance,
+        gpus: vec![],
     };
     let files = adapter.generate(&hw);
     assert_eq!(files.len(), 1);
@@ -73,6 +74,7 @@ fn test_deno_adapter_generate() {
         cpu_cores: 16,
         total_memory_gb: 32,
         profile: SystemProfile::HighPerformance,
+        gpus: vec![],
     };
     let files = adapter.generate(&hw);
     assert_eq!(files.len(), 1);
@@ -97,6 +99,7 @@ fn test_bun_adapter_generate() {
         cpu_cores: 8,
         total_memory_gb: 16,
         profile: SystemProfile::Standard,
+        gpus: vec![],
     };
     let files = adapter.generate(&hw);
     assert_eq!(files.len(), 1);
@@ -126,6 +129,7 @@ fn test_pytorch_adapter_generate() {
         cpu_cores: 16,
         total_memory_gb: 64,
         profile: SystemProfile::HighPerformance,
+        gpus: vec![],
     };
     let files = adapter.generate(&hw);
     assert!(files.len() >= 2); // runtime + docker (sharding removed in fix)
@@ -149,6 +153,7 @@ fn test_candle_adapter_generate() {
         cpu_cores: 10,
         total_memory_gb: 32,
         profile: SystemProfile::HighPerformance,
+        gpus: vec![],
     };
     let files = adapter.generate(&hw);
     assert_eq!(files.len(), 2); // runtime + cargo
@@ -174,6 +179,7 @@ fn test_go_ai_adapter_generate() {
         cpu_cores: 24,
         total_memory_gb: 128,
         profile: SystemProfile::HighPerformance,
+        gpus: vec![],
     };
     let files = adapter.generate(&hw);
     assert_eq!(files.len(), 2); // runtime + build
@@ -184,4 +190,72 @@ fn test_go_ai_adapter_generate() {
         files.iter().all(|file| !file.content.contains("${")),
         "generated env files must not contain shell expansion syntax"
     );
+}
+
+fn hw_with_gpus(gpus: Vec<crate::commands::optimizer::detect::GpuInfo>) -> HardwareInfo {
+    HardwareInfo {
+        os: "linux".to_string(),
+        arch: "x86_64".to_string(),
+        cpu_cores: 8,
+        total_memory_gb: 32,
+        profile: SystemProfile::HighPerformance,
+        gpus,
+    }
+}
+
+fn test_gpu(
+    name: &str,
+    vendor: Option<&str>,
+    vram_mb: Option<usize>,
+) -> crate::commands::optimizer::detect::GpuInfo {
+    crate::commands::optimizer::detect::GpuInfo {
+        name: name.to_string(),
+        vendor: vendor.map(str::to_string),
+        vram_mb,
+    }
+}
+
+#[test]
+fn test_pytorch_cuda_only_with_nvidia() {
+    let adapter = pytorch::PyTorchAdapter;
+    let nvidia_hw = hw_with_gpus(vec![test_gpu(
+        "NVIDIA GeForce RTX 4090",
+        Some("nvidia"),
+        Some(24564),
+    )]);
+    let content = adapter.generate(&nvidia_hw)[0].content.clone();
+    assert!(content.contains("PYTORCH_CUDA_ALLOC_CONF"));
+    assert!(!content.contains("PYTORCH_ENABLE_MPS_FALLBACK"));
+    // Không GPU — không dòng accelerator nào (không fake hardware)
+    let bare_hw = hw_with_gpus(vec![]);
+    let content = adapter.generate(&bare_hw)[0].content.clone();
+    assert!(!content.contains("PYTORCH_CUDA_ALLOC_CONF"));
+    assert!(!content.contains("PYTORCH_ENABLE_MPS_FALLBACK"));
+    // Apple GPU — MPS fallback, không CUDA
+    let apple_hw = hw_with_gpus(vec![test_gpu("Apple M2", Some("apple"), None)]);
+    let content = adapter.generate(&apple_hw)[0].content.clone();
+    assert!(content.contains("PYTORCH_ENABLE_MPS_FALLBACK=1"));
+    assert!(!content.contains("PYTORCH_CUDA_ALLOC_CONF"));
+}
+
+#[test]
+fn test_candle_cuda_only_with_nvidia() {
+    let adapter = candle::CandleAdapter;
+    let nvidia_hw = hw_with_gpus(vec![test_gpu("Tesla V100", Some("nvidia"), Some(16384))]);
+    let content = adapter.generate(&nvidia_hw)[0].content.clone();
+    assert!(content.contains("CANDLE_ENABLE_CUDA=auto"));
+    let bare_hw = hw_with_gpus(vec![]);
+    let content = adapter.generate(&bare_hw)[0].content.clone();
+    assert!(!content.contains("CANDLE_ENABLE_CUDA=auto"));
+    assert!(content.contains("omitted"));
+}
+
+#[test]
+fn test_has_gpu_vendor_empty_means_false() {
+    let hw = hw_with_gpus(vec![]);
+    assert!(!hw.has_gpu_vendor("nvidia"));
+    assert!(!hw.has_gpu_vendor("apple"));
+    let hw = hw_with_gpus(vec![test_gpu("Apple M2", Some("apple"), None)]);
+    assert!(hw.has_gpu_vendor("apple"));
+    assert!(!hw.has_gpu_vendor("nvidia"));
 }

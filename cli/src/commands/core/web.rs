@@ -82,6 +82,65 @@ fn project_root() -> Result<std::path::PathBuf> {
     Ok(root)
 }
 
+/// Non-JS backend language of a web project, when `package.json` is
+/// absent (create-web backend scaffolds: gin/echo/fiber → Go,
+/// axum/actix → Rust, fastapi/django/flask → Python, spring/quarkus →
+/// Java, dotnet-* → .NET). `None` = JS/TS lane owns it (or nothing
+/// detectable — current behavior runs and fails honestly downstream).
+/// Detected from manifest markers first, then mgc.toml frameworks[].
+/// (Ngôn ngữ backend non-JS của project web khi không có package.json.)
+#[cfg(feature = "lib")]
+fn web_backend_language(root: &Path) -> Option<mgc_lib_adapter::LibLanguage> {
+    use mgc_lib_adapter::LibLanguage;
+    if root.join("package.json").exists() {
+        return None;
+    }
+    if root.join("go.mod").exists() {
+        return Some(LibLanguage::Go);
+    }
+    if root.join("Cargo.toml").exists() {
+        return Some(LibLanguage::Rust);
+    }
+    if root.join("pyproject.toml").exists()
+        || root.join("setup.py").exists()
+        || root.join("requirements.txt").exists()
+    {
+        return Some(LibLanguage::Python);
+    }
+    if root.join("pom.xml").exists()
+        || root.join("build.gradle").exists()
+        || root.join("build.gradle.kts").exists()
+    {
+        return Some(LibLanguage::Java);
+    }
+    if std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|e| e.path().extension().is_some_and(|ext| ext == "csproj"))
+    {
+        return Some(LibLanguage::DotNet);
+    }
+    let mgc_toml = std::fs::read_to_string(root.join("mgc.toml")).ok()?;
+    let value: toml::Value = toml::from_str(&mgc_toml).ok()?;
+    let frameworks: Vec<&str> = value
+        .get("frameworks")
+        .and_then(|f| f.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    frameworks.into_iter().find_map(|framework| {
+        let base = framework.split('/').next_back().unwrap_or(framework);
+        match base {
+            "gin" | "echo" | "fiber" | "go" => Some(LibLanguage::Go),
+            "axum" | "actix-web" | "actix" | "rust" => Some(LibLanguage::Rust),
+            "fastapi" | "django" | "flask" | "python" => Some(LibLanguage::Python),
+            "spring-boot" | "spring" | "quarkus" | "java" => Some(LibLanguage::Java),
+            "dotnet-webapi" | "dotnet-minimal" | "dotnet" | "csharp" => Some(LibLanguage::DotNet),
+            _ => None,
+        }
+    })
+}
+
 fn web_adapter() -> Arc<dyn PackageAdapter> {
     let started_at = std::time::Instant::now();
     let registry_url = std::env::var("MAGICORE_WEB_REGISTRY_URL").ok();
@@ -109,6 +168,34 @@ pub async fn add(
 ) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // Non-JS backend (create-web gin/axum/django/... — no package.json):
+    // the lib lane owns this lifecycle (it gates + runs the real
+    // machinery). Routing here keeps ONE behavior for `add-web` on such
+    // projects instead of querying npm for Go/Rust/Python paths (HTTP
+    // 406 confusion). The gate inside records core `lib` — that IS the
+    // machinery executing.
+    // (Backend non-JS: giao cho lane lib.)
+    #[cfg(feature = "lib")]
+    if let Some(backend) = web_backend_language(&root) {
+        if !install {
+            return Err(crate::error::web_backend_flag_unsupported(
+                "--no-install",
+                backend.ecosystem(),
+            ));
+        }
+        return super::add::library::add(
+            packages,
+            version,
+            dev,
+            exact,
+            optional,
+            peer,
+            no_save,
+            global,
+            compat_runtime,
+        )
+        .await;
+    }
     // C0 ownership firewall (T0.3): web is native.
     // (Tường lửa C0: web native.)
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
@@ -141,6 +228,18 @@ pub async fn remove(
 ) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // Non-JS backend: the lib lane owns this lifecycle (see add()).
+    // (Backend non-JS: giao cho lane lib.)
+    #[cfg(feature = "lib")]
+    if let Some(backend) = web_backend_language(&root) {
+        if !install {
+            return Err(crate::error::web_backend_flag_unsupported(
+                "--no-install",
+                backend.ecosystem(),
+            ));
+        }
+        return super::remove::library::remove(packages, compat_runtime).await;
+    }
     // C0 ownership firewall (T0.3): web is native.
     // (Tường lửa C0: web native.)
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
@@ -166,6 +265,12 @@ pub async fn remove(
 pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // Non-JS backend: the lib lane owns this lifecycle (see add()).
+    // (Backend non-JS: giao cho lane lib.)
+    #[cfg(feature = "lib")]
+    if let Some(_backend) = web_backend_language(&root) {
+        return super::list::library::list(compat_runtime).await;
+    }
     // C0 ownership firewall (T0.3): web list is a native manifest read —
     // the explicit --compat-runtime flag is accepted for CLI uniformity
     // and ignored by the native engine (gate logs the notice).
@@ -198,6 +303,12 @@ pub async fn update(
 ) -> Result<()> {
     let started_at = std::time::Instant::now();
     let root = project_root()?;
+    // Non-JS backend: the lib lane owns this lifecycle (see add()).
+    // (Backend non-JS: giao cho lane lib.)
+    #[cfg(feature = "lib")]
+    if let Some(_backend) = web_backend_language(&root) {
+        return super::update::library::update(packages, install, compat_runtime).await;
+    }
     // C0 ownership firewall (T0.3): web is native.
     // (Tường lửa C0: web native.)
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
@@ -235,6 +346,42 @@ pub async fn install(
     // (Tường lửa C0: web native — gate ghi nhận và cảnh báo nếu compat
     // thừa.)
     let root = project_root()?;
+    // Non-JS backend: the lib lane owns this lifecycle (see add()).
+    // Web-pipeline-only flags have no meaning there — fail loudly.
+    // (Backend non-JS: giao cho lane lib; flag web-only thì fail rõ.)
+    #[cfg(feature = "lib")]
+    if let Some(backend) = web_backend_language(&root) {
+        let language = backend.ecosystem();
+        if frozen {
+            return Err(crate::error::web_backend_flag_unsupported(
+                "--frozen", language,
+            ));
+        }
+        if ignore_scripts {
+            return Err(crate::error::web_backend_flag_unsupported(
+                "--ignore-scripts",
+                language,
+            ));
+        }
+        if allow_scripts {
+            return Err(crate::error::web_backend_flag_unsupported(
+                "--allow-scripts",
+                language,
+            ));
+        }
+        if prefer_dedupe {
+            return Err(crate::error::web_backend_flag_unsupported(
+                "--prefer-dedupe",
+                language,
+            ));
+        }
+        if repair {
+            return Err(crate::error::web_backend_flag_unsupported(
+                "--repair", language,
+            ));
+        }
+        return super::install::library::install(packages, compat_runtime).await;
+    }
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
@@ -1512,6 +1659,30 @@ fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Resu
 
 fn native_install_env(project_root: &Path, program: &str) -> Result<Vec<(String, String)>> {
     let mut env = Vec::new();
+    // Hermetic HOME: clean-env spawns wipe $HOME, but some tools
+    // hard-require it (composer refuses to run without HOME or
+    // COMPOSER_HOME). Point it at project-scoped cache so cache writes
+    // stay inside .magicore instead of the user's real home.
+    // (HOME cách ly: tool đòi $HOME cũng chỉ thấy cache của project.)
+    let cache_home = project_root.join(".magicore").join("cache").join("home");
+    std::fs::create_dir_all(&cache_home)?;
+    env.push(("HOME".to_string(), cache_home.display().to_string()));
+    if program == "composer" {
+        let composer_home = project_root
+            .join(".magicore")
+            .join("cache")
+            .join("composer");
+        let composer_cache = composer_home.join("cache");
+        std::fs::create_dir_all(&composer_cache)?;
+        env.push((
+            "COMPOSER_HOME".to_string(),
+            composer_home.display().to_string(),
+        ));
+        env.push((
+            "COMPOSER_CACHE_DIR".to_string(),
+            composer_cache.display().to_string(),
+        ));
+    }
     if program == "go" {
         let go_root = project_root.join(".magicore").join("cache").join("go");
         let mod_cache = go_root.join("pkg").join("mod");
@@ -1917,6 +2088,12 @@ fn web_layer_has_scaffold_fallback(
     let framework = config.frameworks.first().map(String::as_str).unwrap_or("");
     let frontend_leaf = format!("web/frontend/{framework}");
     if rel == frontend_leaf {
+        return crate::scaffold::embedded_kernel::get_embedded_template("web", framework).is_some();
+    }
+    // All-in-one fullstack frameworks (remix) resolve under
+    // web/fullstack/all-in-one/* — same const template backs them.
+    // (Framework fullstack all-in-one dùng chung const template.)
+    if rel == format!("web/fullstack/all-in-one/{framework}") {
         return crate::scaffold::embedded_kernel::get_embedded_template("web", framework).is_some();
     }
 

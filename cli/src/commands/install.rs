@@ -332,16 +332,8 @@ async fn install_into_root(
         };
         let (core, ecosystem, framework): (&str, Option<&str>, Option<&str>) =
             match adapter.ecosystem() {
-                Ecosystem::Web => (
-                    "web",
-                    Some(crate::commands::dep_gate::eco::JS),
-                    None,
-                ),
-                Ecosystem::Ai => (
-                    "ai",
-                    Some(crate::commands::dep_gate::eco::PYTHON),
-                    None,
-                ),
+                Ecosystem::Web => ("web", Some(crate::commands::dep_gate::eco::JS), None),
+                Ecosystem::Ai => ("ai", Some(crate::commands::dep_gate::eco::PYTHON), None),
                 Ecosystem::App => ("app", app_eco, None),
                 Ecosystem::Lib => ("lib", lib_eco, None),
                 Ecosystem::Game => (

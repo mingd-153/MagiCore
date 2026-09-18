@@ -5,14 +5,29 @@
 use mgc_exec::prelude::*;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+// Monotonic per-process counter: two threads calling tmp_dir() in the SAME
+// clock tick used to share one dir (pid+nanos collide) while both run
+// `remove_dir_all` + fixed subpaths — a rare ENOENT flake under parallel
+// load. The counter alone makes collision structurally impossible within
+// the process (pid separates processes); no ThreadId — its Debug form
+// contains parens that break shell scripts embedding the path.
+// (Bộ đếm đơn điệu: đủ duy nhất trong process; không dùng ThreadId vì
+// ngoặc đơn phá shell script.)
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn tmp_dir() -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let d = std::env::temp_dir().join(format!("mgc-exec-test-{}-{nanos}", std::process::id()));
+    let uniq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let d = std::env::temp_dir().join(format!(
+        "mgc-exec-test-{}-{nanos}-{uniq}",
+        std::process::id()
+    ));
     let _ = fs::create_dir_all(&d);
     d
 }

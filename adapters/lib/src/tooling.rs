@@ -7,15 +7,84 @@ use mgc_types::{MgResult, PackageId, PackageName, Version, VersionRange};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn exec_tool(root: &Path, cmd: &str, args: &[String]) -> MgResult<()> {
+    // clean_env scrubs everything (no HOME/GOPATH/CARGO_HOME), so EVERY
+    // toolchain spawn gets the MINIMAL env it needs — redirected into the
+    // mgc shared store (never the user's home). Verified per tool by
+    // runtime E2E (go/cargo/pip); a tool absent here fails closed with
+    // tool-unavailable before env matters.
+    // (clean_env lột sạch env — mỗi spawn toolchain nhận env tối thiểu,
+    // chuyển vào store chung mgc.)
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
+        env: toolchain_env(cmd)?,
         ..Default::default()
     };
     mgc_exec::prelude::run(cmd, args, &opts)
         .map_err(|e| mgc_types::MgError::Other(e.to_string()))?;
     Ok(())
+}
+
+/// Minimal child env per toolchain, rooted at the mgc shared store.
+/// (Env tối thiểu mỗi toolchain, gốc tại store chung mgc.)
+fn toolchain_env(cmd: &str) -> MgResult<Vec<(String, String)>> {
+    if !matches!(cmd, "cargo" | "rustc" | "go" | "pip" | "pip3") {
+        return Ok(Vec::new());
+    }
+    let globals = mgc_platform::paths::GlobalPaths::new()
+        .map_err(|e| mgc_types::MgError::Other(format!("cannot resolve mgc home: {e}")))?;
+    let store = globals.store;
+    let mut env = Vec::new();
+    let dir = |path: PathBuf| -> MgResult<String> {
+        std::fs::create_dir_all(&path).map_err(|e| {
+            mgc_types::MgError::Other(format!("cannot create tool dir '{}': {e}", path.display()))
+        })?;
+        Ok(path.display().to_string())
+    };
+    match cmd {
+        // Cargo: CARGO_HOME redirects registry + git caches (same
+        // precedent as install/shared_store.rs measured runs).
+        "cargo" | "rustc" => {
+            let root = dir(store.join("cargo"))?;
+            env.push(("CARGO_HOME".to_string(), root));
+        }
+        // Go: explicit GOPATH/GOMODCACHE/GOCACHE (clean_env leaves go
+        // with "module cache not found" otherwise).
+        "go" => {
+            let root = store.join("go");
+            env.push(("GOPATH".to_string(), dir(root.join("gopath"))?));
+            env.push(("GOMODCACHE".to_string(), dir(root.join("modcache"))?));
+            env.push(("GOCACHE".to_string(), dir(root.join("gocache"))?));
+        }
+        // pip: cache dir only (config stays default; nothing is read
+        // from or written to the user's home).
+        "pip" | "pip3" => {
+            let root = dir(store.join("pypi"))?;
+            env.push(("PIP_CACHE_DIR".to_string(), root));
+        }
+        _ => {}
+    }
+    Ok(env)
+}
+
+/// Post-gate pip binary resolution: the gate already approved the pip
+/// owner (`pip` ~ `pip3` alias); this picks the binary that EXISTS for
+/// the real spawn — `pip` preferred, `pip3` fallback, else `pip` so a
+/// missing tool surfaces a clear spawn error. Filesystem lookup ONLY
+/// (no `--version` probe spawn), called strictly AFTER the gate.
+/// (Resolve binary pip SAU gate: chỉ lookup filesystem.)
+pub(crate) fn pip_binary() -> &'static str {
+    fn on_path(bin: &str) -> bool {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join(bin))
+            .any(|p| p.is_file())
+    }
+    if on_path("pip") || !on_path("pip3") {
+        "pip"
+    } else {
+        "pip3"
+    }
 }
 
 pub fn check_pip_allowed(root: &Path, name: &str) -> MgResult<()> {

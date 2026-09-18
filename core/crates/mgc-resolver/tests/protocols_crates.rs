@@ -18,10 +18,11 @@ async fn mock_server() -> Option<mockito::ServerGuard> {
     Some(mockito::Server::new_async().await)
 }
 
-/// Sparse-index NDJSON line for one crate version.
+/// Sparse-index NDJSON line for one crate version — genuine index shape
+/// (BARE 64-hex `cksum`, no scheme prefix, as served by index.crates.io).
 fn crate_line(name: &str, vers: &str, yanked: bool, cksum: &str, deps: &str) -> String {
     format!(
-        r#"{{"name":"{name}","vers":"{vers}","deps":[{deps}],"cksum":"sha256:{cksum}","features":{{}},"yanked":{yanked},"links":null}}"#
+        r#"{{"name":"{name}","vers":"{vers}","deps":[{deps}],"cksum":"{cksum}","features":{{}},"yanked":{yanked},"links":null}}"#
     )
 }
 

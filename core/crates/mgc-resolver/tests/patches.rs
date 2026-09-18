@@ -81,3 +81,19 @@ fn verify_patch_integrity_fail() {
     std::fs::write(&patch, "test content").unwrap();
     assert!(!verify_patch_integrity(&patch, "wrong").unwrap());
 }
+
+#[test]
+fn verify_patch_integrity_sri_prefixed() {
+    // `mgc patch add` records SRI form (`sha256-<hex>`) — verification
+    // must accept it (bare-hex-only comparison rejected every added patch).
+    let tmp = tempfile::tempdir().unwrap();
+    let patch = tmp.path().join("test.patch");
+    std::fs::write(&patch, "test content").unwrap();
+    let sha = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(b"test content");
+        format!("sha256-{}", hex::encode(h.finalize()))
+    };
+    assert!(verify_patch_integrity(&patch, &sha).unwrap());
+}

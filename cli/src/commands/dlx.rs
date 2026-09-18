@@ -70,7 +70,16 @@ pub async fn run(package: String, args: Vec<String>) -> Result<()> {
     mgc_ui::info(&format!("$ {} {}", bin_path.display(), args.join(" ")));
 
     let cwd = std::env::current_dir()?;
-    let bin_path_env = std::env::join_paths([bin_dir.clone()])?;
+    // Prepend (never replace): the package .bin dir comes first so the
+    // dlx'd binary wins, but the parent PATH stays so shebangs like
+    // `#!/usr/bin/env node` still resolve the real toolchain. Replacing
+    // PATH outright broke every .bin shim needing its interpreter.
+    // (Prepend PATH thay vì thay thế — shim vẫn tìm được interpreter.)
+    let mut paths = vec![bin_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let bin_path_env = std::env::join_paths(paths)?;
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(cwd.clone()),
         log_path: Some(cwd.join(".magicore").join("exec.log")),
@@ -81,7 +90,12 @@ pub async fn run(package: String, args: Vec<String>) -> Result<()> {
         )],
         ..Default::default()
     };
-    mgc_exec::prelude::run_project_binary(&bin_path, &args, &opts)?;
+    // Inherited stdio: a dlx'd binary is the user's foreground tool
+    // (like npx) — its output must stream, not vanish into a capture
+    // buffer. The spawn is still allowlisted + audited.
+    // (Stdio kế thừa: binary dlx là tool foreground của user — output
+    // phải chảy trực tiếp.)
+    mgc_exec::prelude::run_project_binary_inherited(&bin_path, &args, &opts)?;
 
     Ok(())
 }

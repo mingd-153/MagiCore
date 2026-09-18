@@ -21,11 +21,11 @@ if ($Package -ne "magicore" -and $Package -ne "magicore-web") {
     exit 1
 }
 
-# Detect Architecture
+# Detect Architecture (contract labels are lowercase: x64/arm64)
 $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLower()
 $ArchLabel = switch ($Arch) {
-    "x64"   { "X64" }
-    "arm64" { "ARM64" }
+    "x64"   { "x64" }
+    "arm64" { "arm64" }
     default { 
         Write-Error "Unsupported architecture: $Arch"
         exit 1
@@ -35,21 +35,31 @@ $ArchLabel = switch ($Arch) {
 Write-Host "Detected Platform: Windows ($ArchLabel)" -ForegroundColor Gray
 
 # Resolve Target Release URL
+# Asset names follow scripts/release-artifact-contract.sh (single source
+# of truth): {package}-{version}-{os}-{arch}.zip, all lowercase, version
+# WITHOUT the leading 'v' (e.g. magicore-1.1.0-rc.6-windows-x64.zip).
 if ($Version -eq "latest") {
     $ReleaseApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
     try {
         $ReleaseData = Invoke-RestMethod -Uri $ReleaseApiUrl -UseBasicParsing
         $Tag = $ReleaseData.tag_name
     } catch {
-        Write-Host "Warning: Could not fetch latest release, using fallback v1.1.0-rc.3"
-        $Tag = "v1.1.0-rc.3"
+        # Fail closed: never silently install a stale hardcoded version —
+        # pass -Version explicitly as the escape hatch.
+        Write-Error "Could not resolve the latest release from $ReleaseApiUrl. Re-run with an explicit -Version (e.g. -Version 1.1.0-rc.6)."
+        exit 1
     }
 } else {
     $Tag = $Version
 }
+$VersionNumber = if ($Tag) { $Tag.TrimStart("v") } else { "" }
+if ([string]::IsNullOrEmpty($VersionNumber) -or $VersionNumber -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
+    Write-Error "Invalid version: $Version (expected like 1.1.0-rc.6, with or without a leading 'v')."
+    exit 1
+}
 
-$ArchiveName = "$Package-Windows-$ArchLabel.zip"
-$DownloadUrl = "https://github.com/$Repo/releases/download/$Tag/$ArchiveName"
+$ArchiveName = "$Package-$VersionNumber-windows-$ArchLabel.zip"
+$DownloadUrl = "https://github.com/$Repo/releases/download/v$VersionNumber/$ArchiveName"
 $ChecksumUrl = "$DownloadUrl.sha256"
 
 $TempDir = [System.IO.Path]::GetTempPath()

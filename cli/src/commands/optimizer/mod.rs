@@ -30,6 +30,23 @@ pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<
         },
         hw.profile
     ));
+    if hw.gpus.is_empty() {
+        // Empty means "no GPU claimed" (none present or detection
+        // unavailable) — never upgraded to a claim downstream.
+        // (Rỗng nghĩa là "không claim GPU" — không suy diễn thêm.)
+        mgc_ui::info("Detected GPUs: none claimed on this machine");
+    } else {
+        let names: Vec<String> = hw
+            .gpus
+            .iter()
+            .map(|g| match (g.vendor.as_deref(), g.vram_mb) {
+                (Some(v), Some(mb)) => format!("{} [{} | {} MiB]", g.name, v, mb),
+                (Some(v), None) => format!("{} [{}]", g.name, v),
+                (None, _) => g.name.clone(),
+            })
+            .collect();
+        mgc_ui::info(&format!("Detected GPUs: {}", names.join("; ")));
+    }
 
     // Detect runtimes for this project — phát hiện runtimes cho project này
     let detected_runtimes = runtime_detect::detect_runtimes(project_root, core);

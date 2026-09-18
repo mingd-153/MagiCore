@@ -204,12 +204,12 @@ impl NpmDependencyProvider {
             return Err(e);
         }
 
-        for (alias_name, source_name) in alias_to_source {
-            if results.contains_key(&alias_name) {
+        for (alias_name, source_name) in &alias_to_source {
+            if results.contains_key(alias_name) {
                 continue;
             }
             if let Some(metadata) = source_results.get(source_name.as_str()) {
-                results.insert(alias_name, Arc::clone(metadata));
+                results.insert(alias_name.clone(), Arc::clone(metadata));
             }
         }
 
@@ -499,8 +499,16 @@ impl DependencyProvider for NpmDependencyProvider {
         let fetched_metadata = self.prefetch_resolution_metadata(&missing_names).await?;
 
         for package_id in preloaded {
+            // Results are keyed by ALIAS (the name edges request); fall
+            // back to the source name for unaliased packages. Looking up
+            // by source only broke every real npm: alias
+            // (e.g. `vite → @voidzero-dev/vite-plus-core` in Nuxt's tree).
+            // (Kết quả key theo ALIAS; fallback tên gốc.)
             let source_name = self.source_package_name(package_id.name());
-            let Some(meta) = fetched_metadata.get(source_name.as_str()) else {
+            let Some(meta) = fetched_metadata
+                .get(package_id.name_str())
+                .or_else(|| fetched_metadata.get(source_name.as_str()))
+            else {
                 return Err(DependencyError(format!(
                     "prefetch metadata missing result for '{}'",
                     package_id.name_str()

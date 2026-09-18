@@ -109,6 +109,10 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                                 "dev": {
                                     "type": "boolean",
                                     "description": "Add as devDependency"
+                                },
+                                "compat_runtime": {
+                                    "type": "string",
+                                    "description": "Explicit toolchain opt-in for delegated lanes (e.g. pip, cargo, go). Native lanes ignore it; delegated lanes FAIL CLOSED without it."
                                 }
                             },
                             "required": ["packages"]
@@ -288,6 +292,17 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                         .and_then(|d| d.as_bool())
                         .unwrap_or(false);
 
+                    // Delegated-lane opt-in (Native mode when absent —
+                    // delegated lanes fail closed naming the flag).
+                    // (Opt-in lane delegated.)
+                    let compat_runtime = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("compat_runtime"))
+                        .and_then(|c| c.as_str())
+                        .map(str::to_string);
+
                     if packages.is_empty() {
                         json!({
                             "content": [{
@@ -297,7 +312,9 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                             "isError": true
                         })
                     } else {
-                        // Call REAL add command
+                        // Call REAL add command (routed through CLI dispatch
+                        // so the C0 gate applies; compat None = Native
+                        // mode, delegated lanes fail closed).
                         match crate::commands::add::run_many(
                             packages.clone(),
                             None, // version
@@ -308,6 +325,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                             false, // no_save
                             false, // global
                             None,  // core: detect from project
+                            compat_runtime,
                         )
                         .await
                         {

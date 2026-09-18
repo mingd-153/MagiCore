@@ -42,7 +42,7 @@ const DEFAULT_SUM_URL: &str = "https://sum.golang.org";
 pub struct GoModProtocol {
     proxy_url: String,
     sum_url: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
 }
 
 /// Downloaded artifacts of one module version (zip + go.mod + .info).
@@ -67,7 +67,7 @@ impl GoModProtocol {
         Self {
             proxy_url: proxy_url.trim_end_matches('/').to_string(),
             sum_url: sum_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
         }
     }
 
@@ -89,7 +89,6 @@ impl GoModProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status().as_u16();
@@ -104,7 +103,6 @@ impl GoModProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -167,11 +165,14 @@ impl GoModProtocol {
     }
 
     /// Sumdb record for the zip: parse the lookup response and return the
-    /// `h1:` directory hash of the module zip (second whitespace token of
-    /// the record line whose first token is `{module}@{version}`).
+    /// `h1:` directory hash of the module zip. The REAL sumdb lookup body
+    /// is space-separated tokens — `<module> <version> <zip-h1>` on its
+    /// own line (the `/go.mod` line carries `<version>/go.mod` as its
+    /// second token and never matches). An earlier revision matched
+    /// `{module}@{version}` and rejected EVERY genuine response.
     /// Bản ghi sumdb cho zip: parse response lookup và trả directory hash
-    /// `h1:` của zip module (token thứ hai của dòng bản ghi có token đầu
-    /// là `{module}@{version}`).
+    /// `h1:` của zip module. Body sumdb thật là các token cách nhau bằng
+    /// dấu cách.
     async fn fetch_sumdb_ziphash(&self, module: &str, version: &str) -> MgResult<String> {
         let url = self.sum_lookup_url(module, version);
         let (status, body) = self.get_text(&url).await?;
@@ -180,24 +181,20 @@ impl GoModProtocol {
                 "sumdb lookup {module}@{version} returned {status} — artifact cannot be verified (fail-closed)"
             )));
         }
-        let prefix = format!("{module}@{version} ");
-        for line in body.lines().skip(1) {
-            if let Some(rest) = line.strip_prefix(&prefix) {
-                let zip_hash = rest
-                    .split_whitespace()
-                    .next()
-                    .ok_or_else(|| {
-                        MgError::Integrity(format!(
-                            "sumdb record for {module}@{version} has no zip hash"
-                        ))
-                    })?
-                    .to_string();
-                if !zip_hash.starts_with("h1:") {
-                    return Err(MgError::Integrity(format!(
-                        "sumdb zip hash for {module}@{version} is not an h1 hash: '{zip_hash}'"
-                    )));
+        for line in body.lines() {
+            let mut tokens = line.split_whitespace();
+            match (tokens.next(), tokens.next(), tokens.next()) {
+                (Some(record_module), Some(record_version), Some(zip_hash))
+                    if record_module == module && record_version == version =>
+                {
+                    if !zip_hash.starts_with("h1:") {
+                        return Err(MgError::Integrity(format!(
+                            "sumdb zip hash for {module}@{version} is not an h1 hash: '{zip_hash}'"
+                        )));
+                    }
+                    return Ok(zip_hash.to_string());
                 }
-                return Ok(zip_hash);
+                _ => {}
             }
         }
         Err(MgError::Integrity(format!(
@@ -251,65 +248,12 @@ impl GoModProtocol {
         )?;
         Ok(dir.join(format!("{version}.zip")))
     }
-}
-
-impl Default for GoModProtocol {
-    fn default() -> Self {
-        Self::from_env()
-    }
-}
-
-#[async_trait]
-impl RegistryProtocol for GoModProtocol {
-    async fn resolve(&self, name: &str, range: &str) -> MgResult<ResolvedEntry> {
-        let module = name.trim();
-        // Version list first; on a 404 fall back to `@latest` (modules with
-        // only one released version may have no cached list).
-        // (Danh sách version trước; 404 thì fallback `@latest` — module chỉ
-        // có một bản phát hành có thể chưa có list cache.)
-        let list_url = self.proxy_url_for(module, "list");
-        let (status, body) = self.get_text(&list_url).await?;
-        let mut best: Option<(Version, String)> = None;
-        if (200..300).contains(&status) {
-            for line in body.lines() {
-                let v = line.trim().trim_start_matches('v');
-                // Pseudo-versions (v0.0.0-<timestamp>-<rev>) are never
-                // selected — a registry release is required.
-                // (Pseudo-version không bao giờ được chọn — bắt buộc bản
-                // phát hành registry.)
-                if line.trim().starts_with("v0.0.0-") || v.is_empty() {
-                    continue;
-                }
-                let Ok(version) = Version::parse(v) else {
-                    continue;
-                };
-                if !go_matches(range, &version) {
-                    continue;
-                }
-                if best.as_ref().is_none_or(|(bv, _)| version > *bv) {
-                    best = Some((version, v.to_string()));
-                }
-            }
-        }
-        if best.is_none() {
-            let latest_url = self.proxy_url_for(module, "latest");
-            let (latest_status, latest_body) = self.get_text(&latest_url).await?;
-            if (200..300).contains(&latest_status) {
-                let latest: GoLatest = serde_json::from_str(&latest_body)
-                    .map_err(|e| MgError::Other(format!("parse go @latest failed: {e}")))?;
-                let v = latest.version.trim_start_matches('v').to_string();
-                if let Ok(version) = Version::parse(&v)
-                    && go_matches(range, &version)
-                {
-                    best = Some((version, v));
-                }
-            }
-        }
-        let (_, version) = best.ok_or_else(|| {
-            MgError::Other(format!(
-                "no version of module {module} matches range '{range}'"
-            ))
-        })?;
+    /// Resolve one KNOWN version end to end (artifact URL → .info time →
+    /// .mod graph → integrity). Shared by the list flow and the
+    /// exact-pin fast path; `version` is raw without a `v` prefix.
+    /// (Resolve một version ĐÃ BIẾT trọn vẹn.)
+    async fn resolve_version(&self, module: &str, version: &str) -> MgResult<ResolvedEntry> {
+        let version = version.to_string();
         let artifact_url = self.proxy_url_for(module, &format!("v{version}.zip"));
 
         let mut markers = Vec::new();
@@ -399,6 +343,109 @@ impl RegistryProtocol for GoModProtocol {
             sha256,
             extra_markers: markers,
         })
+    }
+
+    /// Bare exact pin from a range string (`1.2.3`, `=1.2.3`,
+    /// `v0.0.0-20161208181325-20d25e280405`) — anything with operators,
+    /// wildcards, commas, spaces or `||` is NOT exact. Returns the raw
+    /// version WITHOUT a `v` prefix, or `None`.
+    /// (Pin chính xác dạng trần từ chuỗi range.)
+    fn exact_pin_version(range: &str) -> Option<String> {
+        let mut raw = range.trim();
+        raw = raw.strip_prefix('=').unwrap_or(raw);
+        raw = raw.strip_prefix('v').unwrap_or(raw);
+        if raw.is_empty() || raw.contains([',', '|', ' ', '\t', '*', '<', '>', '^', '~', '=', '!'])
+        {
+            return None;
+        }
+        // Must parse (validates shape, pseudo-version pres included) —
+        // and re-serializing must not be needed since we keep it raw.
+        // (Phải parse được — giữ chuỗi thô.)
+        Version::parse(raw).ok()?;
+        Some(raw.to_string())
+    }
+
+    /// Does `{module}@v{version}` exist on the proxy (via its `.info`)?
+    /// 404/other non-2xx = absent (fall back to list flow), transport
+    /// errors propagate.
+    /// (Version ghim có tồn tại trên proxy không (qua `.info`)?)
+    async fn direct_pin_exists(&self, module: &str, version: &str) -> MgResult<bool> {
+        let url = self.proxy_url_for(module, &format!("v{version}.info"));
+        let (status, _) = self.get_text(&url).await?;
+        Ok((200..300).contains(&status))
+    }
+}
+
+impl Default for GoModProtocol {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+#[async_trait]
+impl RegistryProtocol for GoModProtocol {
+    async fn resolve(&self, name: &str, range: &str) -> MgResult<ResolvedEntry> {
+        let module = name.trim();
+        // Exact-pin fast path (mirrors `go get module@version`): a bare
+        // version (no operators/wildcards — including old-style
+        // pseudo-versions like `0.0.0-20161208181325-20d25e280405` that
+        // `@v/list` omits) is fetched DIRECTLY via `@v/<version>.info`
+        // instead of failing against an incomplete list. A 404 falls
+        // through to the list flow below.
+        // (Pin chính xác: tải trực tiếp `.info`, không qua list.)
+        if let Some(pinned) = Self::exact_pin_version(range)
+            && self.direct_pin_exists(module, &pinned).await?
+        {
+            return self.resolve_version(module, &pinned).await;
+        }
+        // Version list first; on a 404 fall back to `@latest` (modules with
+        // only one released version may have no cached list).
+        // (Danh sách version trước; 404 thì fallback `@latest` — module chỉ
+        // có một bản phát hành có thể chưa có list cache.)
+        let list_url = self.proxy_url_for(module, "list");
+        let (status, body) = self.get_text(&list_url).await?;
+        let mut best: Option<(Version, String)> = None;
+        if (200..300).contains(&status) {
+            for line in body.lines() {
+                let v = line.trim().trim_start_matches('v');
+                // Pseudo-versions (v0.0.0-<timestamp>-<rev>) are never
+                // selected — a registry release is required.
+                // (Pseudo-version không bao giờ được chọn — bắt buộc bản
+                // phát hành registry.)
+                if line.trim().starts_with("v0.0.0-") || v.is_empty() {
+                    continue;
+                }
+                let Ok(version) = Version::parse(v) else {
+                    continue;
+                };
+                if !go_matches(range, &version) {
+                    continue;
+                }
+                if best.as_ref().is_none_or(|(bv, _)| version > *bv) {
+                    best = Some((version, v.to_string()));
+                }
+            }
+        }
+        if best.is_none() {
+            let latest_url = self.proxy_url_for(module, "latest");
+            let (latest_status, latest_body) = self.get_text(&latest_url).await?;
+            if (200..300).contains(&latest_status) {
+                let latest: GoLatest = serde_json::from_str(&latest_body)
+                    .map_err(|e| MgError::Other(format!("parse go @latest failed: {e}")))?;
+                let v = latest.version.trim_start_matches('v').to_string();
+                if let Ok(version) = Version::parse(&v)
+                    && go_matches(range, &version)
+                {
+                    best = Some((version, v));
+                }
+            }
+        }
+        let (_, version) = best.ok_or_else(|| {
+            MgError::Other(format!(
+                "no version of module {module} matches range '{range}'"
+            ))
+        })?;
+        self.resolve_version(module, &version).await
     }
 
     async fn download(&self, entry: &ResolvedEntry) -> MgResult<Vec<u8>> {
@@ -661,8 +708,12 @@ fn push_require(file: &mut GoModFile, body: &str, indirect: bool) -> MgResult<()
             "go.mod require without version: '{body}'"
         )));
     };
+    // Quoted module paths are legal go.mod (`require "gopkg.in/check.v1" vX`
+    // — gopkg.in/yaml.v3 does this) — strip the quotes or every downstream
+    // URL carries them and 404s.
+    // (Path module có quote là hợp lệ trong go.mod — cắt quote.)
     file.requires.push(GoRequire {
-        path: path.to_string(),
+        path: path.trim_matches('"').to_string(),
         version: version.trim_start_matches('v').to_string(),
         indirect,
     });
@@ -693,10 +744,12 @@ fn push_replace(file: &mut GoModFile, body: &str) -> MgResult<()> {
     let new_version = new_parts
         .next()
         .map(|v| v.trim_start_matches('v').to_string());
+    // Quoted paths are legal go.mod — strip like push_require.
+    // (Path có quote là hợp lệ — cắt như push_require.)
     file.replaces.push(GoReplace {
-        old_path: old_path.to_string(),
+        old_path: old_path.trim_matches('"').to_string(),
         old_version,
-        new_path: new_path.to_string(),
+        new_path: new_path.trim_matches('"').to_string(),
         new_version,
     });
     Ok(())
@@ -713,7 +766,7 @@ fn push_exclude(file: &mut GoModFile, body: &str) -> MgResult<()> {
         )));
     };
     file.excludes.push((
-        path.to_string(),
+        path.trim_matches('"').to_string(),
         version.trim_start_matches('v').to_string(),
     ));
     Ok(())
@@ -736,6 +789,41 @@ struct GoLatest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quoted_require_paths_are_unquoted() {
+        // gopkg.in/yaml.v3 quotes its module paths — legal go.mod that
+        // must not leak quotes into registry URLs (404s).
+        // (Path có quote trong go.mod là hợp lệ — phải cắt quote.)
+        let pom = "module \"example.com/m\"\n\ngo 1.21\n\nrequire (\n\t\"gopkg.in/check.v1\" v0.0.0-20161208181325-20d25e280405\n)\n";
+        let file = parse_go_mod(pom).unwrap();
+        assert_eq!(file.requires.len(), 1);
+        assert_eq!(file.requires[0].path, "gopkg.in/check.v1");
+        assert_eq!(
+            file.requires[0].version,
+            "0.0.0-20161208181325-20d25e280405"
+        );
+    }
+
+    #[test]
+    fn exact_pin_version_accepts_bare_and_pseudo() {
+        assert_eq!(
+            GoModProtocol::exact_pin_version("1.2.3").as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            GoModProtocol::exact_pin_version("v0.0.0-20161208181325-20d25e280405").as_deref(),
+            Some("0.0.0-20161208181325-20d25e280405")
+        );
+        assert_eq!(
+            GoModProtocol::exact_pin_version("=2.0.0").as_deref(),
+            Some("2.0.0")
+        );
+        assert!(GoModProtocol::exact_pin_version("^1.2.3").is_none());
+        assert!(GoModProtocol::exact_pin_version(">=1.0.0").is_none());
+        assert!(GoModProtocol::exact_pin_version("*").is_none());
+        assert!(GoModProtocol::exact_pin_version("").is_none());
+    }
 
     #[test]
     fn go_mod_parse_blocks_and_directives() {

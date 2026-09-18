@@ -6,7 +6,7 @@ use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
 use mgc_types::{
     DependencySpec, Ecosystem, Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage,
-    Version, adapter::PreparedAdd,
+    Version, VersionRange, adapter::PreparedAdd,
 };
 use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info, style_cmd,
@@ -26,6 +26,77 @@ fn install_command_for_adapter(adapter: &dyn PackageAdapter) -> &'static str {
     }
 
     "mgc install"
+}
+
+/// Run the REAL toolchain add for a toolchain-owned manifest (go.mod,
+/// platformio.ini — the tool is the sole writer), then re-read the file.
+/// Fail closed when the tool reports success but the dep is absent from
+/// the re-read file — never report a phantom add.
+/// (Chạy add thật của toolchain rồi đọc lại file; tool báo xong mà file
+/// không có dep thì lỗi, không báo thêm giả.)
+#[allow(clippy::too_many_arguments)]
+async fn tool_add_real(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    name: &PackageName,
+    range: Option<&VersionRange>,
+    opts: AddOptions,
+    before: Option<&Manifest>,
+    after: &mut Option<Manifest>,
+    added_ids: &mut Vec<PackageId>,
+    added_packages: &mut Vec<AddedPackage>,
+    changed_any: &mut bool,
+    dev: bool,
+    optional: bool,
+    peer: bool,
+    group: &str,
+) -> Result<()> {
+    let mut real_opts = opts;
+    real_opts.no_save = false;
+    let pkg_id = adapter.add(root, name, range, real_opts).await?;
+    let fresh = adapter.parse_manifest(root).await?;
+    if !fresh
+        .all_dependencies()
+        .any(|d| d.name.as_str() == name.as_str())
+    {
+        return Err(crate::error::tool_manifest_mismatch(
+            name.as_str(),
+            adapter.name(),
+            "recorded",
+        ));
+    }
+    let was_present = before
+        .map(|m| {
+            m.all_dependencies()
+                .any(|d| d.name.as_str() == name.as_str())
+        })
+        .unwrap_or(false);
+    *after = Some(fresh);
+    if was_present {
+        info(&format!(
+            "  {} already present in {}, skipping",
+            name.as_str(),
+            group
+        ));
+        return Ok(());
+    }
+    *changed_any = true;
+    added_ids.push(pkg_id.clone());
+    added_packages.push(AddedPackage {
+        id: pkg_id.clone(),
+        dev,
+        optional,
+        peer,
+    });
+    info(&format!(
+        "  {}@{} added to {} (by {})",
+        pkg_id.name_str(),
+        pkg_id.version(),
+        group,
+        adapter.name()
+    ));
+    success(&format!("Added {}", name.as_str()));
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -58,6 +129,12 @@ pub async fn add(
         "dependencies"
     };
     mgc_ui::info(&format!("Adding {} package(s) to {}...", total, group));
+    // Toolchain-owned manifest (go.mod, platformio.ini — manifest_owned
+    // false): the provider tool is the SOLE writer, so booking the add in
+    // memory would fake a mutation the tool never sees. Run the REAL
+    // toolchain add and re-read the file instead.
+    // (Manifest do toolchain sở hữu: chạy add thật rồi đọc lại file.)
+    let toolchain_owned = !adapter.manifest_owned();
 
     let manifest_before_add = if !no_save {
         let started_at = std::time::Instant::now();
@@ -91,6 +168,27 @@ pub async fn add(
             no_save,
             global,
         };
+        if toolchain_owned && !no_save {
+            tool_add_real(
+                adapter,
+                root,
+                &name,
+                range.as_ref(),
+                opts,
+                manifest_before_add.as_ref(),
+                &mut manifest_after_add,
+                &mut added_ids,
+                &mut added_packages,
+                &mut changed_any,
+                dev,
+                optional,
+                peer,
+                group,
+            )
+            .await?;
+            spinner.finish_and_clear();
+            continue;
+        }
         let add_started_at = std::time::Instant::now();
         let PreparedAdd {
             id: pkg_id,
@@ -156,12 +254,18 @@ pub async fn add(
     }
 
     if !no_save {
-        if changed_any {
+        if changed_any && !toolchain_owned {
             if let Some(manifest) = manifest_after_add.as_ref() {
                 let write_started_at = std::time::Instant::now();
                 adapter.write_manifest(root, manifest).await?;
                 profile_install_mark("add_write_manifest", write_started_at);
             }
+        } else if changed_any {
+            // Toolchain-owned: the tool already rewrote its own file —
+            // mgc must NOT rewrite it (formatting/ownership belongs to
+            // the tool; the lib/go writer is a no-op by design).
+            // (Tool đã tự viết file của nó — mgc không viết lại.)
+            info("Manifest updated by the toolchain (mgc does not rewrite it).");
         } else {
             info("Manifest unchanged.");
         }
@@ -173,6 +277,19 @@ pub async fn add(
     }
 
     if !no_save && install {
+        // Toolchain-owned manifests (go.mod, platformio.ini, …) whose
+        // adapter has NO mgc resolver (probe fails: iot/game delegated
+        // lanes): the provider tool already installed during
+        // tool_add_real above — routing through the mgc-native install
+        // tail would die in resolve ("does not support 'resolve'").
+        // Lanes WITH a native resolver (lib Go) keep the normal tail so
+        // mgc.lock still gets written. Probe is network-free by contract.
+        // (Manifest do toolchain sở hữu mà adapter không có resolver:
+        // bỏ qua tail install của mgc — tool đã cài.)
+        if toolchain_owned && adapter.probe_dependency_resolver().is_err() {
+            info("Installed by the toolchain (mgc does not own this lifecycle).");
+            return Ok(());
+        }
         info("Installing added packages...");
         if !try_install_added_packages_from_lock(
             adapter,
@@ -205,6 +322,34 @@ pub async fn add(
     Ok(())
 }
 
+/// Run the REAL toolchain remove for a toolchain-owned manifest, then
+/// re-read and verify each dep is GONE. Fail closed on a phantom
+/// removal (tool ok, dep still present).
+/// (Chạy remove thật của toolchain rồi đọc lại verify đã mất.)
+async fn tool_remove_real(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    packages: Vec<String>,
+) -> Result<()> {
+    for package in &packages {
+        let name = PackageName::new(package)?;
+        adapter.remove(root, &name).await?;
+        let fresh = adapter.parse_manifest(root).await?;
+        if fresh
+            .all_dependencies()
+            .any(|d| d.name.as_str() == name.as_str())
+        {
+            return Err(crate::error::tool_manifest_mismatch(
+                name.as_str(),
+                adapter.name(),
+                "removed but still present",
+            ));
+        }
+        success(&format!("Removed {}", name.as_str()));
+    }
+    Ok(())
+}
+
 #[allow(dead_code)]
 pub async fn remove(
     adapter: &dyn PackageAdapter,
@@ -220,6 +365,15 @@ pub async fn remove(
     let parse_started_at = std::time::Instant::now();
     let mut manifest = adapter.parse_manifest(root).await?;
     profile_install_mark("remove_parse_manifest", parse_started_at);
+    // Toolchain-owned manifest (go.mod, platformio.ini): the provider
+    // tool is the SOLE writer — run the REAL toolchain remove per dep,
+    // re-read, and verify absence (fail closed on a phantom removal).
+    // Bookkeeping-only removal here would either fake success or die on
+    // the (correctly failing) mgc writer.
+    // (Manifest do toolchain sở hữu: chạy remove thật rồi đọc lại.)
+    if !adapter.manifest_owned() {
+        return tool_remove_real(adapter, root, packages).await;
+    }
     let mut removed_any = false;
     for package in &packages {
         let _ = PackageName::new(package)?;
@@ -817,7 +971,27 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
             let deps = package
                 .dependencies
                 .iter()
-                .map(|dependency| PackageId::parse(dependency))
+                .map(|dependency| {
+                    // npm-style `name@version` first; Go-style bare module
+                    // paths (`github.com/google/uuid`) resolve their
+                    // version from the same lock by name — a bare dep that
+                    // names nothing in the lock fails closed.
+                    // (`name@version` trước; path trần kiểu Go tra version
+                    // trong cùng lock.)
+                    if let Ok(id) = PackageId::parse(dependency) {
+                        return Ok::<PackageId, mgc_types::MgError>(id);
+                    }
+                    let target = lock.packages.iter().find(|p| p.name == *dependency)
+                        .ok_or_else(|| {
+                            mgc_types::MgError::Other(format!(
+                                "lockfile dependency '{dependency}' names no locked package (fail-closed)"
+                            ))
+                        })?;
+                    Ok(PackageId::new(
+                        mgc_types::PackageName::new(&target.name)?,
+                        mgc_types::Version::parse(&target.version)?,
+                    ))
+                })
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(ResolvedPackage {
                 id,
@@ -903,7 +1077,7 @@ pub async fn unlink(
     Ok(())
 }
 
-pub async fn why(adapter: &dyn PackageAdapter, root: &Path, _package: &str) -> Result<()> {
+pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Result<()> {
     if adapter.name() != "web" {
         return Err(crate::error::why_web_only());
     }
@@ -911,15 +1085,117 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, _package: &str) -> R
     if !lock_path.exists() {
         return Err(crate::error::lock_missing_install());
     }
-    // P0-4 (2026-09-15): `unimplemented!` here was a USER-REACHABLE panic —
-    // any `mgc why` against a v1 lockfile aborted the process. Fail closed
-    // with a typed error explaining the lockfile v2 migration instead.
-    // (P0-4: `unimplemented!` tại đây là panic CHẠM TỚI ĐƯỢC từ user —
-    // `mgc why` với lockfile v1 làm sập process. Fail-closed bằng typed
-    // error giải thích migration lockfile v2.)
-    //
-    // Issue #4: Reimplement with lockfile v2 schema (no pkg.direct field)
-    Err(crate::error::why_requires_lockfile_v2())
+    // Reverse-dependency lookup over the lockfile graph (v2/v3/v4): who
+    // pulls this package in. Replaces the old `unimplemented!()` stub
+    // (P0-4: a user-reachable panic) — Issue #4 closed by reading the
+    // edges the installer actually wrote instead of a `pkg.direct` field.
+    // (Tra cứu phụ thuộc ngược trên graph lockfile — thay stub panic cũ.)
+    let text = std::fs::read_to_string(&lock_path)?;
+    let version = toml::from_str::<toml::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("version")?.as_str().map(str::to_string))
+        .unwrap_or_default();
+    // (name, version, outgoing dep edges) in one shape for every schema.
+    type WhyNode = (String, String, Vec<String>);
+    let (nodes, roots): (Vec<WhyNode>, Vec<String>) = match version.as_str() {
+        "4" => {
+            let doc = mgc_lockfile::canonical::parse_v4_document(&text)
+                .map_err(|e| anyhow::anyhow!("parse mgc.lock v4 failed: {e}"))?;
+            let payload = doc.payload();
+            let nodes = payload
+                .packages
+                .iter()
+                .map(|p| {
+                    (
+                        p.key.name.clone(),
+                        p.key.version.clone(),
+                        p.edges.iter().map(|e| e.target_key.name.clone()).collect(),
+                    )
+                })
+                .collect();
+            let roots = payload
+                .root_dependencies
+                .iter()
+                .map(|e| edge_name(e))
+                .collect();
+            (nodes, roots)
+        }
+        _ => {
+            let lock = mgc_lockfile::parser::parse_lockfile(&text)
+                .map_err(|e| anyhow::anyhow!("parse mgc.lock failed: {e}"))?;
+            let nodes = lock
+                .packages
+                .iter()
+                .map(|p| {
+                    (
+                        p.name.clone(),
+                        p.version.clone(),
+                        p.dependencies.iter().map(|e| edge_name(e)).collect(),
+                    )
+                })
+                .collect();
+            let roots = lock
+                .root_dependencies
+                .iter()
+                .map(|e| edge_name(e))
+                .collect();
+            (nodes, roots)
+        }
+    };
+    let target = edge_name(package);
+    let target_node = nodes.iter().find(|(name, _, _)| name == &target);
+    let Some((_, target_version, _)) = target_node else {
+        return Err(crate::error::why_package_not_in_lock(package));
+    };
+    // Reverse BFS: dependents first, root last. Visited-set keeps cycles
+    // finite; depth + line caps keep output readable on huge graphs.
+    // (BFS ngược: dependent trước, root sau; visited-set chặn cycle.)
+    let mut dependents: Vec<&WhyNode> = nodes
+        .iter()
+        .filter(|(name, _, deps)| {
+            name.as_str() != target.as_str() && deps.iter().any(|d| d == &target)
+        })
+        .collect();
+    dependents.sort_by(|a, b| a.0.cmp(&b.0));
+    if dependents.is_empty() && !roots.iter().any(|r| r == &target) {
+        mgc_ui::info(&format!(
+            "{target}@{target_version} is locked but nothing in mgc.lock depends on it (likely a leftover pin — `mgc dedupe`/`prune` may drop it)."
+        ));
+        return Ok(());
+    }
+    let mut lines = vec![format!("{target}@{target_version} is required by:")];
+    for (name, version, _) in dependents.iter().take(20) {
+        lines.push(format!("  {name}@{version}"));
+    }
+    if dependents.len() > 20 {
+        lines.push(format!("  ... and {} more", dependents.len() - 20));
+    }
+    if roots.iter().any(|r| r == &target) {
+        lines.push("(project root — direct dependency)".to_string());
+    }
+    for line in &lines {
+        mgc_ui::info(line);
+    }
+    Ok(())
+}
+
+/// Bare package name from a lock edge (`name`, `name@1.2.3`, or
+/// `@scope/name@1.2.3`) — version/range suffixes never participate in
+/// identity matching.
+/// (Tên trần từ cạnh lock — hậu tố version không tham gia so khớp.)
+fn edge_name(edge: &str) -> String {
+    let edge = edge.trim();
+    if let Some(rest) = edge.strip_prefix('@') {
+        match rest.find('@') {
+            Some(idx) => format!("@{}", &rest[..idx]),
+            None => edge.to_string(),
+        }
+    } else {
+        match edge.find('@') {
+            Some(idx) => edge[..idx].to_string(),
+            None => edge.to_string(),
+        }
+    }
 }
 
 fn find_package_source(root: &Path, package: &str) -> Result<PathBuf> {
@@ -1257,6 +1533,23 @@ pub async fn materialize_template(root: &Path, framework: &str) -> anyhow::Resul
     let target_dir = root.join(framework);
     if target_dir.exists() {
         return Ok(()); // đã có — không ghi đè
+    }
+    // Hardware templates are code-generated by the hardware processor
+    // (optimizer.json / bench.json) — there is no registry layer to
+    // fetch, so resolve them directly instead of failing on a missing
+    // layer. Every other core keeps the layer gate below.
+    // (Template hardware do processor sinh trực tiếp — không qua layer.)
+    if matches!(framework, BENCH_PKG | OPTIMIZER_PKG) {
+        let config = crate::wizard::engine::ScaffoldConfig {
+            core: "hardware".to_string(),
+            sub_type: String::new(),
+            frameworks: vec![framework.to_string()],
+            project_name: target_dir.to_string_lossy().to_string(),
+            features: vec![],
+            template_dir: std::path::PathBuf::new(),
+        };
+        crate::scaffold::processor::Scaffolder::scaffold(&config)?;
+        return Ok(());
     }
     // Phase 3: Handle typed result - hardware không có fallback
     match crate::commands::template::ensure_layer(&format!("hardware/{framework}")).await {

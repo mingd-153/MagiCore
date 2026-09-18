@@ -396,6 +396,32 @@ fn publish_extracted_root(
     let mut last_err: Option<std::io::Error> = None;
     for _attempt in 0..PUBLISH_RACE_ATTEMPTS {
         if canonical_root.exists() {
+            // Same-digest racer already published a GOOD winner: keep it
+            // (dedup, no double-store) — NEVER remove-then-replace a root
+            // whose marker matches, because a concurrent install may be
+            // linking FROM it right now (ENOENT flake in
+            // `concurrent_same_digest_does_not_double_store`: the old code
+            // removed the winner another process had just published and
+            // was about to link).
+            // Full validation (MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE=1)
+            // ALSO requires the tree content to match — a marker alone
+            // cannot prove completeness (a crashed extract can leave a
+            // marked but file-incomplete root, which must be rebuilt).
+            // (Racer cùng digest đã publish winner ĐÚNG: giữ lại — KHÔNG
+            // bao giờ xóa root có marker khớp vì process khác có thể đang
+            // link TỪ nó. Full validation còn đòi nội dung cây khớp.)
+            let winner_matches = read_extracted_package_marker(canonical_root)
+                .ok()
+                .flatten()
+                .is_some_and(|marker| {
+                    extracted_marker_matches_fast(&marker, expected_marker)
+                        && extracted_marker_has_content_signature(&marker)
+                })
+                && (!extracted_cache_full_validation_enabled()
+                    || extracted_content_matches(canonical_root, expected_marker).unwrap_or(false));
+            if winner_matches {
+                return Ok(());
+            }
             match std::fs::remove_dir_all(canonical_root) {
                 Ok(()) => {}
                 // A racer removed it between our check and our remove —

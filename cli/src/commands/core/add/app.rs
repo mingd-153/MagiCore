@@ -65,12 +65,7 @@ pub async fn add(
     // table cell answers Unsupported for swift/kotlin/objc verbs without
     // runners). The manifest hint below is defensive fallback.
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    gate_react_native(
-        &root,
-        lang,
-        crate::commands::dep_gate::DepOp::Add,
-        &compat,
-    )?;
+    gate_react_native(&root, lang, crate::commands::dep_gate::DepOp::Add, &compat)?;
     let cmd_opt = tool_command(lang, "add");
     // C0 ownership firewall (T0.3): single control path.
     // (Tường lửa C0: đường điều khiển duy nhất.)

@@ -108,7 +108,9 @@ fn recursive_supported_includes_install_and_add() {
         offline: false,
         compat_runtime: None,
     }));
-    assert!(recursive_supported(&Commands::List { compat_runtime: None }));
+    assert!(recursive_supported(&Commands::List {
+        compat_runtime: None
+    }));
 }
 
 #[test]

@@ -17,11 +17,14 @@ thiserror = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 anyhow = { workspace = true }
-# Phase 2 native registry engines — HTTP + JSON/NDJSON + BLAKE3 CAS + tar.gz.
-# (Engine registry native Phase 2 — HTTP + JSON/NDJSON + BLAKE3 CAS + tar.gz.)
+# Phase 2 native registry engines — HTTP via mgc-http (the ONLY crate
+# allowed to own reqwest) + JSON/NDJSON + BLAKE3 CAS + tar.gz.
+# (Engine registry native Phase 2 — HTTP qua mgc-http (crate DUY NHẤT được
+# giữ reqwest) + JSON/NDJSON + BLAKE3 CAS + tar.gz.)
 serde = { workspace = true }
 serde_json = { workspace = true }
-reqwest = { workspace = true }
+mgc-http = { workspace = true }
+url = { workspace = true }
 blake3 = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }

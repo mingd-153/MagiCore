@@ -26,7 +26,7 @@ const DEFAULT_INDEX_URL: &str = "https://pypi.org";
 #[derive(Debug, Clone)]
 pub struct PypiProtocol {
     index_url: String,
-    client: reqwest::Client,
+    client: mgc_http::HttpClient,
 }
 
 impl PypiProtocol {
@@ -35,7 +35,7 @@ impl PypiProtocol {
     pub fn new(index_url: &str) -> Self {
         Self {
             index_url: index_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: mgc_http::HttpClient::default(),
         }
     }
 
@@ -53,7 +53,6 @@ impl PypiProtocol {
         let resp = self
             .client
             .get(url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {url} failed: {e}")))?;
         let status = resp.status();
@@ -123,26 +122,61 @@ impl RegistryProtocol for PypiProtocol {
         let doc: PypiJson = serde_json::from_str(&body)
             .map_err(|e| MgError::Other(format!("parse pypi json failed: {e}")))?;
 
-        let mut best: Option<(Version, Vec<PypiFile>)> = None;
-        for (ver_str, files) in &doc.releases {
-            // Empty file list = yanked/empty release → skip.
-            // (Danh sách file rỗng = release yanked/trống → bỏ.)
-            if files.is_empty() {
-                continue;
-            }
-            let Ok(version) = Version::parse(ver_str) else {
-                continue;
-            };
-            if !pep440_matches(range, &version) {
-                continue;
-            }
-            if best.as_ref().is_none_or(|(v, _)| version > *v) {
-                best = Some((version, files.clone()));
-            }
-        }
+        // Matching versions, newest first.
+        // (Các version khớp, mới nhất trước.)
+        let mut candidates: Vec<(Version, Vec<PypiFile>)> = doc
+            .releases
+            .iter()
+            .filter(|(ver_str, files)| {
+                !files.is_empty()
+                    && Version::parse(ver_str).is_ok_and(|v| pep440_matches(range, &v))
+            })
+            .filter_map(|(ver_str, files)| Version::parse(ver_str).ok().map(|v| (v, files.clone())))
+            .collect();
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
-        let (version, files) =
-            best.ok_or_else(|| MgError::Other(format!("no version of {name} matches '{range}'")))?;
+        // Consumer-Python gate (`MGC_PYTHON_VERSION`): a version whose
+        // `requires_python` excludes the consumer must not be selected
+        // (pip would skip it too — e.g. click 8.5.0 `>=3.10` on a 3.9
+        // interpreter). The first passing version wins; without the env,
+        // the newest match wins (historical behavior).
+        // (Cổng requires_python theo consumer.)
+        let consumer = consumer_python();
+        let (version, files) = match consumer {
+            None => candidates
+                .into_iter()
+                .next()
+                .ok_or_else(|| MgError::Other(format!("no version of {name} matches '{range}'")))?,
+            Some((major, minor)) => {
+                let mut selected: Option<(Version, Vec<PypiFile>)> = None;
+                let mut last_excluded: Option<String> = None;
+                for (candidate, candidate_files) in candidates {
+                    let version_url = format!("{}/pypi/{name}/{candidate}/json", self.index_url);
+                    let Ok(version_body) = self.get_text(&version_url).await else {
+                        continue;
+                    };
+                    let Ok(version_doc): Result<PypiJson, _> = serde_json::from_str(&version_body)
+                    else {
+                        continue;
+                    };
+                    let required = version_doc.info.requires_python.clone().unwrap_or_default();
+                    if required.trim().is_empty() || requires_python_allows(&required, major, minor)
+                    {
+                        selected = Some((candidate, candidate_files));
+                        break;
+                    }
+                    last_excluded = Some(format!("{candidate} requires {required}"));
+                }
+                selected.ok_or_else(|| {
+                    MgError::Other(format!(
+                        "no version of {name} matches '{range}' on Python {major}.{minor}{}",
+                        last_excluded
+                            .map(|e| format!(" (newest excluded: {e})"))
+                            .unwrap_or_default()
+                    ))
+                })?
+            }
+        };
         let file = select_file(&files)
             .ok_or_else(|| MgError::Other(format!("no downloadable file for {name} {version}")))?;
 
@@ -195,7 +229,6 @@ impl RegistryProtocol for PypiProtocol {
         let resp = self
             .client
             .get(&entry.artifact_url)
-            .send()
             .await
             .map_err(|e| MgError::Network(format!("GET {} failed: {e}", entry.artifact_url)))?;
         let status = resp.status();
@@ -257,7 +290,27 @@ fn wheel_tags(filename: &str) -> (String, String, String) {
 }
 
 fn wheel_platform_matches_host(filename: &str) -> bool {
-    let (_, _, plat) = wheel_tags(filename);
+    let (py, abi, plat) = wheel_tags(filename);
+    if !platform_matches_host(&plat) {
+        return false;
+    }
+    // Without a known consumer Python (`MGC_PYTHON_VERSION`), any
+    // platform-matching wheel is accepted (historical behavior) — the
+    // chosen ABI is recorded in markers + warned about at install so a
+    // cp310-on-3.9 style mismatch is never silent. With the env set,
+    // only ABI-compatible wheels pass (exact cpXY / abi3 floor /
+    // universal); the rest are skipped, never installed.
+    // (Không biết Python consumer thì nhận wheel khớp platform (cũ) +
+    // cảnh báo; có env thì lọc ABI chặt.)
+    let Some((major, minor)) = consumer_python() else {
+        return true;
+    };
+    abi_compatible(&py, &abi, major, minor)
+}
+
+/// OS/arch platform check (no Python involved).
+/// (Kiểm tra OS/arch.)
+fn platform_matches_host(plat: &str) -> bool {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
     if os == "macos" && arch == "aarch64" {
@@ -271,6 +324,172 @@ fn wheel_platform_matches_host(filename: &str) -> bool {
             && plat.ends_with("_aarch64");
     }
     false
+}
+
+/// Consumer Python from `MGC_PYTHON_VERSION` (`3.9`, `3.9.6`, `39` …).
+/// `None` = unknown (historical lenient behavior + warning).
+/// (Python consumer từ env `MGC_PYTHON_VERSION`.)
+fn consumer_python() -> Option<(u64, u64)> {
+    let raw = std::env::var("MGC_PYTHON_VERSION").ok()?;
+    let digits: String = raw
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let parts: Vec<&str> = digits.split('.').filter(|p| !p.is_empty()).collect();
+    match parts.as_slice() {
+        // `39` (no dot) = 3.9; `310` = 3.10 (first digit = major).
+        // (`39` không dấu chấm là 3.9.)
+        [single] if !single.contains('.') && single.len() >= 2 => {
+            let major: u64 = single[..1].parse().ok()?;
+            let minor: u64 = single[1..].parse().ok()?;
+            (major > 0).then_some((major, minor))
+        }
+        [major, minor, ..] => {
+            let major: u64 = major.parse().ok()?;
+            let minor: u64 = minor.parse().unwrap_or(0);
+            (major > 0).then_some((major, minor))
+        }
+        [major] => {
+            let major: u64 = major.parse().ok()?;
+            (major > 0).then_some((major, 0))
+        }
+        _ => None,
+    }
+}
+
+/// ABI compatibility of one wheel's `(py, abi)` tags against consumer
+/// `(major, minor)`: universal, exact cpXY, or abi3 at/above its floor
+/// (`cp37-abi3` runs on 3.7+).
+/// (Tương thích ABI của wheel với Python consumer.)
+fn abi_compatible(py: &str, abi: &str, major: u64, minor: u64) -> bool {
+    if abi == "none" {
+        // `py3-none-any` universal, or versioned pure-python (`cp39-none-any`).
+        return py.split('.').any(|tag| {
+            tag == "py3" || tag == format!("py{major}{minor}") || tag == format!("cp{major}{minor}")
+        });
+    }
+    if abi == "abi3" {
+        // Stable ABI: `cp37-abi3` needs consumer >= 3.7.
+        // (ABI ổn định: chạy trên mọi bản >= floor.)
+        for tag in py.split('.') {
+            if let Some(rest) = tag.strip_prefix("cp") {
+                let floor: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let (f_major, f_minor) = match floor.len() {
+                    0 => (0, 0),
+                    1 => (floor.parse().unwrap_or(0), 0),
+                    _ => (
+                        floor[..1].parse().unwrap_or(0),
+                        floor[1..].parse().unwrap_or(0),
+                    ),
+                };
+                if major > f_major || (major == f_major && minor >= f_minor) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    // Versioned ABI (`cp39`, `pp39`): exact match only.
+    // (ABI theo version: khớp chính xác.)
+    let want = format!("cp{major}{minor}");
+    py.split('.').any(|tag| {
+        let base = tag.split('_').next().unwrap_or(tag);
+        base == want
+    }) && abi == want
+}
+
+/// Does a `requires_python` specifier allow consumer `(major, minor)`?
+/// Comma = AND; operators `==` (with `.*`), `>=`, `<=`, `>`, `<`, `!=`,
+/// `~=` (compatible release). Unknown/empty parts fail closed (deny).
+/// (`requires_python` có cho consumer không? Không rõ → từ chối.)
+fn requires_python_allows(spec: &str, major: u64, minor: u64) -> bool {
+    fn parse_ver(text: &str) -> Option<(u64, u64, u64)> {
+        let text = text.trim().trim_end_matches(".*");
+        let mut parts = text.split('.');
+        let maj: u64 = parts.next()?.trim().parse().ok()?;
+        let min: u64 = parts.next().unwrap_or("0").trim().parse().ok()?;
+        let pat: u64 = parts.next().unwrap_or("0").trim().parse().ok()?;
+        Some((maj, min, pat))
+    }
+    let consumer = (major, minor, 0u64);
+    for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let (op, ver) = if let Some(v) = part.strip_prefix("==") {
+            ("==", v)
+        } else if let Some(v) = part.strip_prefix("~=") {
+            ("~=", v)
+        } else if let Some(v) = part.strip_prefix("!=") {
+            ("!=", v)
+        } else if let Some(v) = part.strip_prefix(">=") {
+            (">=", v)
+        } else if let Some(v) = part.strip_prefix("<=") {
+            ("<=", v)
+        } else if let Some(v) = part.strip_prefix('>') {
+            (">", v)
+        } else if let Some(v) = part.strip_prefix('<') {
+            ("<", v)
+        } else {
+            return false;
+        };
+        let wildcard = ver.trim().ends_with(".*");
+        let Some(target) = parse_ver(ver) else {
+            return false;
+        };
+        let ok = match op {
+            "==" => {
+                if wildcard {
+                    let prefix = ver.trim().trim_end_matches(".*").trim_end_matches('.');
+                    let want: Vec<u64> = prefix
+                        .split('.')
+                        .filter_map(|p| p.trim().parse().ok())
+                        .collect();
+                    let have = [consumer.0, consumer.1, consumer.2];
+                    !want.is_empty()
+                        && want.len() <= 3
+                        && want.iter().enumerate().all(|(i, w)| have[i] == *w)
+                } else {
+                    consumer == target
+                }
+            }
+            "!=" => {
+                if wildcard {
+                    let prefix = ver.trim().trim_end_matches(".*").trim_end_matches('.');
+                    let want: Vec<u64> = prefix
+                        .split('.')
+                        .filter_map(|p| p.trim().parse().ok())
+                        .collect();
+                    want.is_empty()
+                        || !(want.len() <= 3
+                            && want
+                                .iter()
+                                .enumerate()
+                                .all(|(i, w)| [consumer.0, consumer.1, consumer.2][i] == *w))
+                } else {
+                    consumer != target
+                }
+            }
+            ">=" => consumer >= target,
+            "<=" => consumer <= target,
+            ">" => consumer > target,
+            "<" => consumer < target,
+            "~=" => {
+                // Compatible release: >= V, == V.* (same prefix length).
+                // (Release tương thích.)
+                let dots = ver.trim().matches('.').count();
+                if dots == 0 {
+                    return false;
+                }
+                let prefix_len = dots;
+                let have = [consumer.0, consumer.1, consumer.2];
+                let want = [target.0, target.1, target.2];
+                consumer >= target && have[..prefix_len] == want[..prefix_len]
+            }
+            _ => return false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 /// PEP 440 subset matcher: `==`, `==x.y.*`, `>=`, `<=`, `>`, `<`, `!=`,
@@ -294,6 +513,12 @@ fn pep440_part(part: &str, version: &Version) -> bool {
         return true;
     }
     if let Some(p) = part.strip_prefix("==") {
+        return pep_eq(p, version);
+    }
+    // Single `=` is mgc's own exact-pin spelling (the orchestrator builds
+    // `=version` ranges from resolved ids) — treat as exact, never as
+    // no-match. (`=` đơn là cách ghim exact của mgc.)
+    if let Some(p) = part.strip_prefix('=') {
         return pep_eq(p, version);
     }
     if let Some(p) = part.strip_prefix("~=") {
@@ -421,6 +646,8 @@ struct PypiJson {
 struct PypiInfo {
     #[serde(default)]
     requires_dist: Option<Vec<String>>,
+    #[serde(default)]
+    requires_python: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -497,5 +724,60 @@ mod tests {
             wheel_tags("pkg-1.0-py3-none-any.whl"),
             ("py3".to_string(), "none".to_string(), "any".to_string())
         );
+    }
+
+    #[test]
+    fn abi_compatible_cases() {
+        // Universal + exact + abi3 floors.
+        // (Universal + exact + floor abi3.)
+        assert!(abi_compatible("py3", "none", 3, 9));
+        assert!(abi_compatible("cp39", "cp39", 3, 9));
+        assert!(!abi_compatible("cp310", "cp310", 3, 9));
+        assert!(abi_compatible("cp310", "cp310", 3, 10));
+        assert!(abi_compatible("cp37", "abi3", 3, 9));
+        assert!(abi_compatible("cp39", "abi3", 3, 9));
+        assert!(!abi_compatible("cp310", "abi3", 3, 9));
+        assert!(!abi_compatible("cp39", "cp39", 3, 10));
+        assert!(abi_compatible("py2.py3", "none", 3, 9));
+    }
+
+    #[test]
+    fn requires_python_allows_cases() {
+        assert!(requires_python_allows(">=3.9", 3, 9));
+        assert!(!requires_python_allows(">=3.10", 3, 9));
+        assert!(requires_python_allows(">=3.9,<4", 3, 9));
+        assert!(!requires_python_allows(">=3.9,<3.10", 3, 10));
+        assert!(requires_python_allows("==3.9.*", 3, 9));
+        assert!(!requires_python_allows("==3.9.*", 3, 10));
+        assert!(requires_python_allows("~=3.9", 3, 9));
+        assert!(requires_python_allows("~=3.9", 3, 12));
+        assert!(!requires_python_allows("~=3.9", 4, 0));
+        assert!(!requires_python_allows("!=3.9.*", 3, 9));
+        assert!(requires_python_allows("!=3.9.*", 3, 10));
+        assert!(!requires_python_allows("bogus", 3, 9));
+    }
+
+    #[test]
+    fn consumer_python_reads_env() {
+        // Serialized: env is process-global and tests run in threads.
+        // (Tuần tự hóa: env toàn process.)
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = SERIAL.lock().unwrap();
+        let old = std::env::var("MGC_PYTHON_VERSION").ok();
+        // SAFETY: test-only, held SERIAL, restored below before release.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("MGC_PYTHON_VERSION", "3.9");
+            assert_eq!(consumer_python(), Some((3, 9)));
+            std::env::set_var("MGC_PYTHON_VERSION", "310");
+            assert_eq!(consumer_python(), Some((3, 10)));
+            std::env::set_var("MGC_PYTHON_VERSION", "39");
+            assert_eq!(consumer_python(), Some((3, 9)));
+            std::env::remove_var("MGC_PYTHON_VERSION");
+            assert_eq!(consumer_python(), None);
+            if let Some(v) = old {
+                std::env::set_var("MGC_PYTHON_VERSION", v);
+            }
+        }
     }
 }

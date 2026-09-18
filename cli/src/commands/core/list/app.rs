@@ -14,12 +14,7 @@ pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     // command — the exact table cell answers Unsupported). The manifest
     // hint below is defensive fallback.
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    gate_react_native(
-        &root,
-        lang,
-        crate::commands::dep_gate::DepOp::List,
-        &compat,
-    )?;
+    gate_react_native(&root, lang, crate::commands::dep_gate::DepOp::List, &compat)?;
     let cmd_opt = tool_command(lang, "list");
     // C0 ownership firewall (T0.3): list spawns the provider tool — the
     // explicit --compat-runtime flag is REQUIRED (P0#3).

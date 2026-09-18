@@ -9,7 +9,7 @@ use crate::manifest::{
 use crate::native::engine::resolve_with_protocol;
 use crate::tooling::{
     cargo_lock_versions, check_pip_allowed, dist_info_versions, exec_tool, go_module_path,
-    placeholder_id, version_from_manifest,
+    pip_binary, placeholder_id, version_from_manifest,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -19,14 +19,15 @@ use mgc_resolver::protocols::{
 };
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
-    UpdatedPackage,
+    PreparedAdd, UpdatedPackage,
 };
 use mgc_types::capabilities::{
     ArtifactFetcher, AuditProvider, Capability, ContentStoreProvider, CoreIdent,
     DependencyResolver, LockfileProvider, ProjectDetector, ScaffoldProvider,
 };
 use mgc_types::{
-    Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version, VersionRange,
+    DependencySpec, Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version,
+    VersionRange,
 };
 use std::path::{Path, PathBuf};
 
@@ -51,6 +52,12 @@ pub struct LibAdapter {
     /// (Chỉ cho Java: project mang build manifest nào (detect lúc dựng, khi
     /// đã biết project root).)
     java_kind: JavaManifestKind,
+    /// .NET-only: the project's `<TargetFramework>` (first of
+    /// `<TargetFrameworks>`), read at construction for multi-TFM group
+    /// selection during native resolve. `None` = unknown → divergent
+    /// multi-TFM sets fail closed.
+    /// (Chỉ cho .NET: `<TargetFramework>` của project, đọc lúc dựng.)
+    dotnet_tfm: Option<String>,
     web: Option<mgc_web_adapter::WebAdapter>,
     /// Lock v3 entries produced by the native resolve — flushed to
     /// mgc.lock during install.
@@ -134,6 +141,7 @@ impl LibAdapter {
         Ok(Self {
             language,
             java_kind,
+            dotnet_tfm: read_dotnet_target_framework(root),
             web,
             pending_lock: std::sync::Mutex::new(Vec::new()),
         })
@@ -171,6 +179,41 @@ impl ProjectDetector for LibAdapter {
     }
 }
 
+/// Read the consumer target framework from the first `*.csproj` in
+/// `root` (`<TargetFramework>`, or the FIRST of `<TargetFrameworks>` with
+/// a loud warning — multi-target projects resolve against it). `None`
+/// when absent/unreadable (divergent multi-TFM sets then fail closed).
+/// Tag scan, no XML dependency (same technique as the nuspec parser).
+/// (Đọc `<TargetFramework>` từ csproj đầu tiên.)
+fn read_dotnet_target_framework(root: &Path) -> Option<String> {
+    let mut csprojs: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|ext| ext == "csproj"))
+        .collect();
+    csprojs.sort();
+    let content = std::fs::read_to_string(csprojs.first()?).ok()?;
+    let tag = |name: &str| -> Option<String> {
+        let open = format!("<{name}>");
+        let close = format!("</{name}>");
+        let start = content.find(&open)? + open.len();
+        let end = content[start..].find(&close)?;
+        Some(content[start..start + end].trim().to_string())
+    };
+    if let Some(single) = tag("TargetFramework").filter(|v| !v.is_empty()) {
+        return Some(single);
+    }
+    let multi = tag("TargetFrameworks").filter(|v| !v.is_empty())?;
+    let mut frameworks = multi.split(';').map(str::trim).filter(|v| !v.is_empty());
+    let first = frameworks.next()?.to_string();
+    if frameworks.next().is_some() {
+        eprintln!(
+            "WARNING: multi-target project ({multi}) — native resolve selects dependency groups for '{first}' only"
+        );
+    }
+    Some(first)
+}
+
 impl ScaffoldProvider for LibAdapter {
     /// Evidence: `mgc create-lib <language>` scaffold lane (CLI create
     /// commands). Dẫn chứng: lane scaffold `mgc create-lib <language>`.
@@ -183,6 +226,123 @@ impl ScaffoldProvider for LibAdapter {
 impl PackageAdapter for LibAdapter {
     fn capabilities(&self) -> &'static [Capability] {
         Self::CAPABILITIES
+    }
+
+    fn manifest_owned(&self) -> bool {
+        // go.mod is owned SOLELY by the go toolchain (mgc never rewrites
+        // it — see write_manifest): booking an add in memory would fake a
+        // mutation the tool never sees. All other lib manifests are
+        // mgc-written.
+        // (go.mod do toolchain go sở hữu DUY NHẤT — add phải chạy thật.)
+        if self.web.is_some() {
+            return true;
+        }
+        !matches!(self.language, LibLanguage::Go)
+    }
+
+    async fn prepare_add(
+        &self,
+        project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<PreparedAdd> {
+        // Resolve-first (C0 FIX2): the pyproject/Cargo writers cannot
+        // persist star ranges (every saved dep needs a bound), so booking
+        // an unpinned dep in memory faked a mutation the disk never saw.
+        // Resolve the real version natively FIRST; a resolve failure
+        // errors honestly instead of fake-adding.
+        // (Resolve-trước: writer không lưu được range `*`.)
+        let unpinned = range.as_ref().map(|r| r.is_star()).unwrap_or(true);
+        enum ResolveFirst {
+            Python,
+            Rust,
+        }
+        let resolve_first = if self.web.is_none() && unpinned {
+            match self.language {
+                LibLanguage::Python => Some(ResolveFirst::Python),
+                LibLanguage::Rust => Some(ResolveFirst::Rust),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(kind) = resolve_first {
+            let mut scratch = Manifest::new("scratch", Ecosystem::Lib);
+            scratch.add_dep(
+                DependencySpec::new(name.clone(), VersionRange::star()),
+                opts.dev,
+                opts.optional,
+                opts.peer,
+            );
+            let (protocol, tag, registry): (
+                Box<dyn mgc_resolver::protocols::RegistryProtocol>,
+                EcosystemTag,
+                &str,
+            ) = match kind {
+                ResolveFirst::Python => (
+                    Box::new(PypiProtocol::from_env()),
+                    EcosystemTag::Python,
+                    "pypi://pypi.org",
+                ),
+                ResolveFirst::Rust => (
+                    Box::new(CratesProtocol::from_env()),
+                    EcosystemTag::Rust,
+                    "crates://crates.io",
+                ),
+            };
+            let resolution =
+                resolve_with_protocol(protocol.as_ref(), tag, registry, &scratch).await?;
+            let resolved = resolution
+                .graph
+                .packages
+                .iter()
+                .find(|p| p.id.name_str() == name.as_str())
+                .ok_or_else(|| {
+                    mgc_types::MgError::Other(format!(
+                        "native resolve returned no entry for '{}' — refusing to book an unpinned dep",
+                        name.as_str()
+                    ))
+                })?;
+            // Python: `==` form (the pyproject writer trims it to a bare
+            // version and saves `name>=version`, which round-trips).
+            // Rust: bare version (the Cargo writer saves it verbatim —
+            // `serde_json = "1.0.140"`, caret-implied like `cargo add`).
+            // (Python dạng `==`, Rust version trần.)
+            let pinned = match kind {
+                ResolveFirst::Python => {
+                    VersionRange::parse(&format!("=={}", resolved.id.version()))?
+                }
+                ResolveFirst::Rust => VersionRange::parse(&resolved.id.version().to_string())?,
+            };
+            *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                resolution.lock_packages;
+            return Ok(PreparedAdd {
+                id: PackageId::new(name.clone(), resolved.id.version().clone()),
+                range: pinned,
+            });
+        }
+        // Every other lane keeps the default dry-run placeholder path.
+        // (Lane khác giữ path placeholder dry-run mặc định.)
+        let exact = opts.exact;
+        let mut dry_opts = opts;
+        dry_opts.no_save = true;
+        let id = self.add(project_root, name, range, dry_opts).await?;
+        let saved_range = match range {
+            Some(range) if exact => {
+                let raw = range
+                    .as_str()
+                    .trim_start_matches('^')
+                    .trim_start_matches('~');
+                VersionRange::parse(raw)?
+            }
+            Some(range) => range.clone(),
+            None => VersionRange::star(),
+        };
+        Ok(PreparedAdd {
+            id,
+            range: saved_range,
+        })
     }
 
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
@@ -447,7 +607,10 @@ impl DependencyResolver for LibAdapter {
             // registration (mgc-native, không spawn `dotnet restore` cho
             // resolve/fetch/install).)
             LibLanguage::DotNet => {
-                let protocol = NuGetProtocol::from_env().await;
+                let mut protocol = NuGetProtocol::from_env().await;
+                if let Some(tfm) = self.dotnet_tfm.as_deref() {
+                    protocol = protocol.with_consumer_tfm(tfm);
+                }
                 let resolution = resolve_with_protocol(
                     &protocol,
                     EcosystemTag::NuGet,
@@ -500,7 +663,7 @@ impl DependencyResolver for LibAdapter {
                 check_pip_allowed(project_root, name.as_str())?;
                 exec_tool(
                     project_root,
-                    "pip",
+                    pip_binary(),
                     &["install".to_string(), name.as_str().to_string()],
                 )?;
                 Ok(
@@ -564,7 +727,7 @@ impl DependencyResolver for LibAdapter {
                 check_pip_allowed(project_root, name.as_str())?;
                 exec_tool(
                     project_root,
-                    "pip",
+                    pip_binary(),
                     &[
                         "uninstall".to_string(),
                         "-y".to_string(),
@@ -632,7 +795,7 @@ impl DependencyResolver for LibAdapter {
                 if let Some(n) = name {
                     args.push(n.as_str().to_string());
                 }
-                exec_tool(project_root, "pip", &args)?;
+                exec_tool(project_root, pip_binary(), &args)?;
             }
             // Go: `go get -u` upgrades the named module (update-all is
             // refused — same honest constraint as pip).
@@ -723,8 +886,22 @@ impl ContentStoreProvider for LibAdapter {
     ) -> MgResult<InstallSummary> {
         // Use new install pipeline (install/mod.rs)
         // Dùng install pipeline mới (install/mod.rs)
-        let lock_packages =
+        let mut lock_packages =
             std::mem::take(&mut *self.pending_lock.lock().expect("lib pending lock poisoned"));
+        if lock_packages.is_empty() && !graph.packages.is_empty() {
+            // Lock-short-circuit installs never resolved in this process,
+            // so no markers were staged — read them from the project
+            // lockfile (it satisfied the manifest, else the graph would
+            // not come from it). Without this, hash-backed verifiers
+            // (go sumdb, nuget sha512, maven sha1) see no integrity
+            // source on every reinstall-from-lock.
+            // (Install từ lock không resolve: đọc marker từ lockfile.)
+            if let Ok(content) = std::fs::read_to_string(project_root.join("mgc.lock"))
+                && let Ok(locked) = mgc_lockfile::parser::parse_lockfile(&content)
+            {
+                lock_packages = locked.packages;
+            }
+        }
         crate::install::run_install(
             self.language,
             self.web.as_ref(),

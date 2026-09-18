@@ -43,7 +43,12 @@ pub async fn run(cmd: MigrateCmd) -> Result<()> {
 }
 
 async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
-    if to != "4" {
+    // Help text, error message, and module docs all say `--to v4` — accept
+    // the documented spelling (strip one leading 'v'); bare "4" keeps
+    // working. Rejecting the documented form was a self-contradiction.
+    // (Chấp nhận cả "v4" và "4" — tài liệu ghi v4.)
+    let normalized = to.strip_prefix('v').unwrap_or(to);
+    if normalized != "4" {
         return Err(crate::error::migrate_unknown_target(to));
     }
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;

@@ -51,15 +51,38 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
         adapter.add(&root, &name, None, opts).await?;
         spinner.finish_and_clear();
     }
-    shared::install_with_adapter(
-        &*adapter,
-        &root,
-        "mgc add",
-        false,
-        mgc_types::adapter::InstallOptions {
-            legacy_flat: false,
-            ..Default::default()
-        },
-    )
-    .await
+    // Delegated install (Bevy → `cargo fetch`): the game adapter has no
+    // mgc-native resolve — routing through install_with_adapter would die
+    // in prepare_install_execution with "does not support 'resolve'".
+    // Install straight into the adapter with an empty graph (the bevy
+    // engine ignores the graph; `cargo fetch` owns the lifecycle) and
+    // print the same honest summary footer.
+    // (Install ủy thác: gọi adapter trực tiếp với graph rỗng — engine
+    // bevy bỏ qua graph, `cargo fetch` sở hữu lifecycle.)
+    let started_at = std::time::Instant::now();
+    let mut summary = adapter
+        .install(
+            &mgc_types::adapter::ResolvedGraph::empty(),
+            &root,
+            mgc_types::adapter::InstallOptions {
+                legacy_flat: false,
+                ..Default::default()
+            },
+        )
+        .await?;
+    summary.duration_ms = started_at.elapsed().as_millis() as u64;
+    let cache_source = match summary.cache_mode {
+        mgc_types::adapter::InstallCacheMode::MgCStore => "shared mgc store",
+        mgc_types::adapter::InstallCacheMode::Delegated => "native toolchain cache",
+    };
+    mgc_ui::print_install_summary_source(
+        summary.added.len(),
+        summary.bytes_from_cache as usize,
+        summary.duration_ms,
+        "0 B",
+        Some(cache_source),
+    );
+    mgc_ui::blank_line();
+    mgc_ui::success("All dependencies installed");
+    Ok(())
 }

@@ -258,7 +258,11 @@ async fn go_sumdb_dirhash_fallback_verifies_and_fails_closed() {
         .mock("GET", "/lookup/example.com/sum@v0.1.0")
         .with_status(200)
         .with_body(format!(
-            "42\nexample.com/sum@v0.1.0 {h1} example.com/sum@v0.1.0/go.mod h1:AAAA=\n"
+            // Genuine sumdb lookup shape (space-separated tokens, one
+            // record per line, sig tail) — captured from sum.golang.org.
+            // (Dạng lookup sumdb thật: token cách dấu cách, mỗi bản ghi
+            // một dòng.)
+            "42\nexample.com/sum v0.1.0 {h1}\nexample.com/sum v0.1.0/go.mod h1:AAAA=\n\ngo.sum database tree\n99\nSIGNATURE=\n"
         ))
         .create_async()
         .await;

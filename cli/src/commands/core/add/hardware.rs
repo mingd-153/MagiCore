@@ -50,21 +50,11 @@ pub async fn add(
             mgc_ui::success(&format!("{pkg} scaffolded at ./{pkg}"));
         }
     }
-    let has_materialized_pkg = packages.iter().any(|pkg| pkg != OPTIMIZER_PKG);
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if has_materialized_pkg
-        && let Ok(adapter) =
-            crate::factory::create_adapter(&mgc_types::Ecosystem::Hardware, None, None)
-    {
-        shared::install_with_adapter(
-            &*adapter,
-            &root,
-            "mgc add-hardware",
-            false,
-            mgc_types::adapter::InstallOptions::default(),
-        )
-        .await?;
-    }
+    // There is deliberately NO trailing adapter install call: hardware
+    // has no dependency lifecycle (resolve/install are Unsupported by
+    // design), so materialization above IS the complete operation — the
+    // old tail failed AFTER materializing (side effects plus an error).
+    // (Cố ý KHÔNG gọi adapter install ở cuối — materialize ĐÃ là toàn bộ.)
     Ok(())
 }
 

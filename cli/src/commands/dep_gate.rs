@@ -248,11 +248,9 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("lib", Some(eco::JAVA | eco::DOTNET), DepOp::Add | DepOp::Remove | DepOp::Update) => {
             DepOwner::Unsupported
         }
-        (
-            "lib",
-            Some(eco::RUST | eco::PYTHON | eco::GO | eco::JAVA | eco::DOTNET),
-            _,
-        ) => DepOwner::Native,
+        ("lib", Some(eco::RUST | eco::PYTHON | eco::GO | eco::JAVA | eco::DOTNET), _) => {
+            DepOwner::Native
+        }
         // Lib list reads manifests/locks through the adapter — spawn-free
         // whatever the language, so it stays native even undeclared.
         ("lib", _, DepOp::List) => DepOwner::Native,
@@ -304,8 +302,15 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("game", Some(eco::BEVY), _) => DepOwner::Delegated { tools: &["cargo"] },
         // IoT frameworks own theirs (esp32-rust/cargo, pio, zephyr/west).
         // The ecosystem slot carries the detected framework id — the iot
-        // lane has no separate language layer.
-        ("iot", Some("esp32-rust" | "platformio" | "zephyr"), _) => DepOwner::Delegated {
+        // lane has no separate language layer. Zephyr add/remove have NO
+        // runner (the adapter answers an honest not-supported error —
+        // west.yml is hand-managed) — Unsupported, never a delegated
+        // promise.
+        ("iot", Some("esp32-rust" | "platformio"), _) => DepOwner::Delegated {
+            tools: &["cargo", "pio", "platformio", "west"],
+        },
+        ("iot", Some("zephyr"), DepOp::Add | DepOp::Remove) => DepOwner::Unsupported,
+        ("iot", Some("zephyr"), _) => DepOwner::Delegated {
             tools: &["cargo", "pio", "platformio", "west"],
         },
         // Cloud terraform: ONLY install runs (terraform init/get);
@@ -378,8 +383,24 @@ pub const DEPENDENCY_COMPAT_TOOLS: &[&str] = &[
 /// (Ngôn ngữ có thể tách sở hữu riêng, để JSON capabilities thấy đúng
 /// bảng tường lửa cưỡng chế — chỉ emit ngôn ngữ khác biệt.)
 pub const SPLIT_LANGUAGES: &[&str] = &[
-    "ts", "js", "rust", "python", "go", "java", "dotnet", "flutter", "swift", "kotlin", "objc",
-    "rn", "javascript", "bevy", "esp32-rust", "platformio", "zephyr", "terraform",
+    "ts",
+    "js",
+    "rust",
+    "python",
+    "go",
+    "java",
+    "dotnet",
+    "flutter",
+    "swift",
+    "kotlin",
+    "objc",
+    "rn",
+    "javascript",
+    "bevy",
+    "esp32-rust",
+    "platformio",
+    "zephyr",
+    "terraform",
 ];
 
 /// Same-tool alias equivalence for the gate's exact-match check: `pip`
@@ -393,10 +414,7 @@ fn same_tool(wanted: &str, actual: &str) -> bool {
     wanted == actual
         || matches!(
             (wanted, actual),
-            ("pip", "pip3")
-                | ("pip3", "pip")
-                | ("pio", "platformio")
-                | ("platformio", "pio")
+            ("pip", "pip3") | ("pip3", "pip") | ("pio", "platformio") | ("platformio", "pio")
         )
 }
 /// otherwise the `MGC_COMPAT_RUNTIME` env (same explicit opt-in semantics

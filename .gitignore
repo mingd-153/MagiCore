@@ -145,3 +145,6 @@ tools/*/docs/
 packaging/artifacts/
 
 .claude
+
+# Local registry serve runtime state (E2E creates this live)
+data/registry/

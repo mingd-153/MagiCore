@@ -9,6 +9,14 @@ use super::write_file;
 pub struct CicdProcessor;
 
 impl CicdProcessor {
+    /// Frameworks generated directly (the `_` arm is the generic
+    /// github-actions workflow). `aws`/`gcp` have no template — they keep
+    /// the layer-required error instead of a mislabeled workflow.
+    /// (aws/gcp chưa có template — fail rõ thay vì workflow sai nhãn.)
+    pub fn supports(framework: &str) -> bool {
+        matches!(framework, "argocd" | "cloudflare" | "github-actions")
+    }
+
     pub fn files(target: &Path, _name: &str, framework: &str) -> Result<()> {
         match framework {
             "argocd" => write_file(

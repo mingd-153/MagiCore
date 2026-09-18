@@ -382,6 +382,14 @@ pub fn why_requires_lockfile_v2() -> Error {
     )
 }
 
+/// `mgc why` target is absent from mgc.lock — nothing can depend on it.
+/// (Package hỏi `why` không có trong lock — không gì phụ thuộc nó.)
+pub fn why_package_not_in_lock(package: &str) -> Error {
+    anyhow!(
+        "`mgc why {package}`: '{package}' is not pinned in mgc.lock — nothing in this project can depend on it."
+    )
+}
+
 pub fn local_path_not_found(path: &std::path::Path) -> Error {
     anyhow!("local package path not found: {}", path.display())
 }
@@ -1224,5 +1232,25 @@ pub fn add_version_unsupported(core: &str, pinned: &str) -> Error {
 pub fn add_version_conflict(package: &str, pinned: &str) -> Error {
     anyhow!(
         "package '{package}' already carries a version spec and `--version {pinned}` was also given — use one or the other"
+    )
+}
+
+/// A web-pipeline-only flag was passed for a non-JS backend lane (the
+/// lib machinery it delegates to has no such concept) — failed loudly
+/// instead of silently dropping the flag.
+/// (Flag chỉ-dành-web pipeline dùng cho backend non-JS — fail rõ.)
+pub fn web_backend_flag_unsupported(flag: &str, language: &str) -> Error {
+    anyhow!(
+        "`{flag}` applies to the JavaScript pipeline only and is not supported for the {language} backend lane (managed by the lib toolchain machinery) — omit the flag"
+    )
+}
+
+/// The provider toolchain reported success but the re-read manifest does
+/// not reflect it (added dep absent / removed dep still present) — a
+/// phantom mutation is never reported.
+/// (Tool báo xong nhưng đọc lại file không khớp — không báo giả.)
+pub fn tool_manifest_mismatch(package: &str, adapter: &str, detail: &str) -> Error {
+    anyhow!(
+        "'{package}' was not {detail} by {adapter} after a successful toolchain run — the manifest was re-read; retry or manage it with the toolchain directly"
     )
 }
