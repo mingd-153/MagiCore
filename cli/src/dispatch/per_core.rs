@@ -172,6 +172,7 @@ pub fn command_to_dispatch(
         Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
         Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
         Commands::Docs { output } => Some(CommonCommand::Docs { output }),
+        Commands::Completion { shell } => Some(CommonCommand::Completion { shell }),
         Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
         Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
         Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),

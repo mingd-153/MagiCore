@@ -8,6 +8,7 @@ pub mod compat;
 #[cfg(test)]
 #[path = "compat_test.rs"]
 mod compat_test;
+pub mod completion;
 pub mod config;
 pub mod core;
 pub mod dedupe;

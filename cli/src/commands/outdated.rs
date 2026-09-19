@@ -48,25 +48,50 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
         let registry = mgc_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
 
         let mut outdated_pkgs: Vec<OutdatedPkg> = Vec::new();
+        let mut checked = 0usize;
+        let mut failed: Vec<String> = Vec::new();
 
         for dep in all_deps {
-            if let Ok(meta) = registry.fetch_metadata(dep.name.as_str()).await {
-                let latest = meta.dist_tags.get("latest");
-                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-                if let Some(latest_ver) = latest
-                    && let Ok(lv) = mgc_types::Version::parse(latest_ver)
-                    && !dep.range.matches(&lv)
-                {
-                    outdated_pkgs.push(OutdatedPkg {
-                        name: dep.name.to_string(),
-                        current: dep.range.to_string(),
-                        latest: latest_ver.to_string(),
-                        major: lv.major,
-                        minor: lv.minor,
-                        patch: lv.patch,
-                    });
+            match registry.fetch_metadata(dep.name.as_str()).await {
+                Ok(meta) => {
+                    checked += 1;
+                    let latest = meta.dist_tags.get("latest");
+                    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                    if let Some(latest_ver) = latest
+                        && let Ok(lv) = mgc_types::Version::parse(latest_ver)
+                        && !dep.range.matches(&lv)
+                    {
+                        outdated_pkgs.push(OutdatedPkg {
+                            name: dep.name.to_string(),
+                            current: dep.range.to_string(),
+                            latest: latest_ver.to_string(),
+                            major: lv.major,
+                            minor: lv.minor,
+                            patch: lv.patch,
+                        });
+                    }
+                }
+                Err(_) => {
+                    failed.push(dep.name.to_string());
                 }
             }
+        }
+
+        // Fail closed on total fetch failure: reporting "up to date" when
+        // NOTHING was checked is a lie (audit finding). Partial failures
+        // warn but still report what was checked.
+        // (Fetch fail hết → lỗi cứng, không báo "up to date" láo.)
+        if checked == 0 {
+            return Err(crate::error::outdated_no_registry_response(
+                failed.join(", "),
+            ));
+        }
+        if !failed.is_empty() {
+            mgc_ui::warning(&format!(
+                "could not check {} package(s) (registry unreachable): {}",
+                failed.len(),
+                failed.join(", ")
+            ));
         }
 
         if json {

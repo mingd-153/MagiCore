@@ -407,21 +407,43 @@ fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
         None => format!("{path}.{target}.gguf"),
     };
     // WARNING: TĨNH cho đường dẫn được chỉ định — KHÔNG dùng đường dẫn từ prompt
-    let py = std::process::Command::new("python3")
-        .args(["-c", "import llama_cpp; print('ok')"])
-        .output();
-    let python_ok = match py {
-        Ok(o) => o.status.success(),
-        Err(_) => false,
+    // Routed through mgc_exec (allowlist + audit + timeout) like every
+    // other toolchain spawn — raw Command bypasses the gate.
+    // (Chạy qua mgc_exec như mọi toolchain spawn khác.)
+    let probe_opts = mgc_exec::prelude::ExecOptions {
+        cwd: std::env::current_dir().ok(),
+        ..Default::default()
     };
+    let python_ok = mgc_exec::prelude::run(
+        "python3",
+        &[
+            "-c".to_string(),
+            "import llama_cpp; print('ok')".to_string(),
+        ],
+        &probe_opts,
+    )
+    .map(|r| r.exit_code == 0)
+    .unwrap_or(false);
     if !python_ok {
         return Err(crate::error::llama_cpp_missing());
     }
-    let status = std::process::Command::new("python3")
-        .args(["-m", "llama_cpp.quantize", path, &out, target])
-        .status()?;
-    if !status.success() {
-        return Err(crate::error::llama_quantize_failed(status.code()));
+    let run_opts = mgc_exec::prelude::ExecOptions {
+        cwd: std::env::current_dir().ok(),
+        ..Default::default()
+    };
+    let report = mgc_exec::prelude::run(
+        "python3",
+        &[
+            "-m".to_string(),
+            "llama_cpp.quantize".to_string(),
+            path.to_string(),
+            out.clone(),
+            target.to_string(),
+        ],
+        &run_opts,
+    )?;
+    if report.exit_code != 0 {
+        return Err(crate::error::llama_quantize_failed(Some(report.exit_code)));
     }
     println!("quantized: {} ({target})", out);
     println!("push to registry: mgc model push {out} --repo ai/<name> (compressed variant)");

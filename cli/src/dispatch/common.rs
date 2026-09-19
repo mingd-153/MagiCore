@@ -189,6 +189,7 @@ pub async fn dispatch_common(
         CommonCommand::Trust { cmd } => commands::trust::run(cmd).await,
         CommonCommand::Hooks { cmd } => commands::hooks::handle(cmd),
         CommonCommand::Docs { output } => commands::docs::handle(output),
+        CommonCommand::Completion { shell } => commands::completion::handle(shell),
         CommonCommand::Telemetry { cmd } => commands::telemetry::handle(cmd),
         CommonCommand::Network { cmd } => commands::network::handle(cmd),
         CommonCommand::Doctor { cmd } => commands::doctor::handle(cmd),

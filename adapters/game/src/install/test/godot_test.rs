@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
-//! Adapter tests
+//! Adapter tests — Godot lanes fail closed (no package manager, no
+//! automated editor download); a silent Ok would fake capability.
 
 use super::*;
 
@@ -11,20 +12,17 @@ fn tmp() -> TempDir {
 }
 
 #[tokio::test]
-async fn test_install_godot() {
+async fn test_install_godot_fails_closed() {
     let tmp = tmp();
-    let (packages, bytes, verified) = install_dependencies(tmp.path()).await.unwrap();
-
-    assert_eq!(packages.len(), 0);
-    assert_eq!(bytes, 0);
-    assert!(verified);
+    let err = install_dependencies(tmp.path()).await.unwrap_err();
+    assert!(err.to_string().contains("no dependency install step"));
 }
 
 #[tokio::test]
-async fn test_download_godot_binary() {
+async fn test_download_godot_binary_not_automated() {
     let tmp = tmp();
-    let binary = download_godot_binary("4.3.0", tmp.path()).await.unwrap();
-
-    assert!(binary.exists());
-    assert!(binary.to_string_lossy().contains("Godot_v4.3.0"));
+    let err = download_godot_binary("4.3.0", tmp.path())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not automated"));
 }

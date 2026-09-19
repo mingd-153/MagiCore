@@ -350,6 +350,11 @@ pub enum Commands {
         #[arg(short, long, help = "write docs to file (default: stdout)")]
         output: Option<std::path::PathBuf>,
     },
+    #[command(about = "Print shell completions (bash/zsh/fish/powershell/elvish)")]
+    Completion {
+        #[arg(help = "shell to generate completions for")]
+        shell: crate::commands::completion::CompletionShell,
+    },
     #[command(about = "Telemetry opt-in status/log (default OFF — sends nothing)")]
     Telemetry {
         #[command(subcommand)]

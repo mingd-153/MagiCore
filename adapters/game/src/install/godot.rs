@@ -1,42 +1,36 @@
 //! Godot engine binary management.
 
-use mgc_types::MgResult;
+use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
-/// Install Godot dependencies (no-op - editor manages assets)
-/// Godot không có PM chuẩn - assets managed by editor
+/// Install Godot dependencies — fail closed: Godot has no standard
+/// package manager (assets live in project.godot / are fetched
+/// manually), so a silent Ok no-op would fake an install that never
+/// happened. The adapter already rejects this path with the same
+/// guidance; this keeps the helper honest when called directly.
+/// (Godot không có PM chuẩn — fail-closed thay vì no-op im lặng.)
 pub async fn install_dependencies(_project_root: &Path) -> MgResult<(Vec<String>, u64, bool)> {
-    // Godot project không có dependency install như npm/cargo
-    // Assets/addons được quản lý trong project.godot hoặc tải manual
-    // mgc install cho godot = no-op
-
-    Ok((vec![], 0, true))
+    Err(MgError::Unsupported {
+        core: "game",
+        capability: "install",
+        guidance:
+            "Godot projects have no dependency install step; open the project in the Godot editor"
+                .to_string(),
+    })
 }
 
-/// Download Godot binary for specific version
+/// Download Godot binary for specific version — NOT automated (fail
+/// closed): writing an empty file and calling it a download fakes an
+/// artifact. Fetch it from https://github.com/godotengine/godot/releases
+/// (Godot_v{version}_linux.x86_64 / _macos.universal / _win64.exe).
+/// (Chưa tự động tải binary Godot — fail-closed thay vì ghi file rỗng.)
 pub async fn download_godot_binary(
-    version: &str,
-    target_dir: &Path,
+    _version: &str,
+    _target_dir: &Path,
 ) -> MgResult<std::path::PathBuf> {
-    // Stub: actual download từ https://github.com/godotengine/godot/releases
-    // Format: Godot_v{version}_linux.x86_64 / Godot_v{version}_macos.universal / Godot_v{version}_win64.exe
-
-    std::fs::create_dir_all(target_dir)?;
-
-    let binary_name = if cfg!(target_os = "macos") {
-        format!("Godot_v{}_macos.universal", version)
-    } else if cfg!(target_os = "windows") {
-        format!("Godot_v{}_win64.exe", version)
-    } else {
-        format!("Godot_v{}_linux.x86_64", version)
-    };
-
-    let binary_path = target_dir.join(&binary_name);
-
-    // Stub: create empty file for testing
-    std::fs::write(&binary_path, b"")?;
-
-    Ok(binary_path)
+    Err(MgError::Other(
+        "downloading the Godot editor binary is not automated — fetch it from https://github.com/godotengine/godot/releases".to_string(),
+    ))
 }
 
 #[cfg(test)]

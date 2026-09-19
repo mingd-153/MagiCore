@@ -143,6 +143,9 @@ pub enum CommonCommand {
     Docs {
         output: Option<std::path::PathBuf>,
     },
+    Completion {
+        shell: crate::commands::completion::CompletionShell,
+    },
     Telemetry {
         cmd: crate::commands::telemetry::TelemetryCmd,
     },

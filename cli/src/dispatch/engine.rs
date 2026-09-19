@@ -331,6 +331,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Trust { .. } => "trust",
         Commands::Hooks { .. } => "hooks",
         Commands::Docs { .. } => "docs",
+        Commands::Completion { .. } => "completion",
         Commands::Telemetry { .. } => "telemetry",
         Commands::Sbom { .. } => "sbom",
         Commands::Login { .. } => "login",

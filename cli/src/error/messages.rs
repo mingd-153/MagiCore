@@ -1199,6 +1199,15 @@ pub fn migrate_unknown_target(to: &str) -> Error {
     anyhow!("unknown migrate target '{to}' (only `--to v4` exists)")
 }
 
+/// `mgc outdated` checked nothing: every registry fetch failed, so any
+/// "up to date" verdict would be fabricated.
+/// (outdated không check được gì — fail cứng thay vì báo láo.)
+pub fn outdated_no_registry_response(failed: String) -> Error {
+    anyhow!(
+        "could not reach the registry for any dependency ({failed}) — refusing to report 'up to date' on zero evidence"
+    )
+}
+
 /// `mgc migrate lock` found no mgc.lock to migrate.
 pub fn migrate_no_lockfile(root: &std::path::Path) -> Error {
     anyhow!("no mgc.lock in '{}' — nothing to migrate", root.display())
