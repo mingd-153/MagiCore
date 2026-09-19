@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.1.0-rc.9] - 2026-09-19
+
+### Added
+- `mgc completion <bash|zsh|fish|powershell|elvish>` (shell completions from the real CLI schema)
+
+### Fixed
+- `outdated` no longer reports "up to date" when every registry fetch failed (hard error instead)
+- Godot install/download stubs returned fake success — now fail closed with guidance
+- `model quantize` python3 spawns routed through the mgc_exec gate (allowlist + audit + timeout)
+
 ## [1.1.0-rc.8] - 2026-09-19
 
 ### Fixed
