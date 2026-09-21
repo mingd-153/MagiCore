@@ -199,6 +199,21 @@ async fn build_iot(root: &Path) -> Result<()> {
 /// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
 /// full resolver — không wrapper PM); python → python -m build (fail-closed nếu thiếu module build).
 #[cfg(feature = "lib")]
+/// First `*.csproj` directly inside the project root (SDK-style layout).
+fn find_local_csproj(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("csproj") {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .next()
+}
+
 async fn build_lib(root: &Path) -> Result<()> {
     // Load optimizer env for lib runtime
     // Tải env optimizer cho runtime thư viện
@@ -225,6 +240,31 @@ async fn build_lib(root: &Path) -> Result<()> {
 
         return run_allowlisted_tool_with_env(root, python, &["-m", "build"], env_opt)
             .map_err(|e| crate::error::python_build_failed(&e));
+    }
+    // Go modules build through the go toolchain (mgc owns
+    // resolve/fetch/install; compilation stays toolchain territory,
+    // same split as the ai GoTensorFlow lane).
+    if root.join("go.mod").exists() {
+        if tool_unavailable("go") {
+            return Err(crate::error::build_toolchain_missing("go"));
+        }
+        info("Building go lib: go build ./...");
+        let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+        let env_opt = if env.is_empty() { None } else { Some(env) };
+        return run_allowlisted_tool_with_env(root, "go", &["build", "./..."], env_opt)
+            .map_err(|e| crate::error::go_build_failed(&e));
+    }
+    // .NET: dotnet SDK build (toolchain-gated; absent SDK fails closed
+    // with guidance instead of a false native claim).
+    if find_local_csproj(root).is_some() {
+        if tool_unavailable("dotnet") {
+            return Err(crate::error::build_toolchain_missing("dotnet"));
+        }
+        info("Building dotnet lib: dotnet build");
+        let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+        let env_opt = if env.is_empty() { None } else { Some(env) };
+        return run_allowlisted_tool_with_env(root, "dotnet", &["build"], env_opt)
+            .map_err(|e| crate::error::dotnet_build_failed(&e));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
     // Windows: tsc resolves via the tsc.cmd shim (npm-style .bin layout).

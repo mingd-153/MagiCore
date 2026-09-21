@@ -128,6 +128,16 @@ pub fn python_build_failed(e: &dyn std::fmt::Display) -> Error {
     anyhow!("python -m build failed: {e} — install `pip install build` in this project first")
 }
 
+/// go build ./... failed
+pub fn go_build_failed(e: &dyn std::fmt::Display) -> Error {
+    anyhow!("go build ./... failed: {e}")
+}
+
+/// dotnet build failed
+pub fn dotnet_build_failed(e: &dyn std::fmt::Display) -> Error {
+    anyhow!("dotnet build failed: {e} — install the .NET SDK first")
+}
+
 /// flash only supports esp32-rust currently
 pub fn flash_framework_unsupported(framework: &str) -> Error {
     anyhow!(
