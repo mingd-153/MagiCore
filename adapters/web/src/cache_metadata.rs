@@ -158,7 +158,14 @@ pub async fn load_metadata_by_name_with_fallback(
     shared_cache: Option<&SharedWebCache>,
 ) -> Result<Arc<native::npm_registry::PackageMetadata>, DependencyError> {
     let registry_url = registry.registry_url().to_string();
-    let cached = if let Some(shared_cache) = shared_cache {
+    // Age gate armed: stale disk cache may hold ABBREVIATED packuments
+    // (no `time` map) from pre-policy runs — reusing them would silently
+    // keep everything. Force a fresh FULL fetch; the fresh doc still
+    // overwrites the cache below.
+    // (Cổng tuổi bật: bỏ qua cache đĩa cũ thiếu time.)
+    let cached = if registry.age_gate_armed() {
+        None
+    } else if let Some(shared_cache) = shared_cache {
         shared_cache.read_metadata(package, &registry_url)?
     } else {
         None

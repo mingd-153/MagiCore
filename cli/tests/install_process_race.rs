@@ -589,7 +589,11 @@ fn doctor_repair_retires_covered_crashed_staging_and_respects_install_lock() {
         // `mgc --core web install` takes) across the repair run.
         // (Giữ install lock của project (cùng lock install lấy) xuyên
         // suốt lượt repair.)
-        let locks_root = mgc_store::default_store_root().join("locks");
+        let locks_root = project
+            .join(".magicore")
+            .join("cache")
+            .join("web")
+            .join("locks");
         let _lock_guard = mgc_store::ProjectInstallLock::acquire_at(&locks_root, &project_key)
             .expect("test must hold the install lock like a live install");
 

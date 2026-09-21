@@ -181,6 +181,16 @@ async fn finish_and_print(
         };
         eprintln!("WARN: {headline}");
         eprintln!("{detail}");
+        // A Partial report can still carry REAL findings (OSV fallback
+        // lanes scan direct pins while skipping the rest) — show what we
+        // know BEFORE the UNVERIFIED banner, never hide findings behind
+        // an incomplete status. Exit contract below is unchanged.
+        // Report Partial vẫn có thể mang finding THẬT — in những gì đã
+        // biết TRƯỚC banner UNVERIFIED, không giấu finding sau trạng thái
+        // chưa hoàn tất. Exit contract bên dưới giữ nguyên.
+        if !report.vulnerabilities.is_empty() {
+            print_report(report);
+        }
         eprintln!("  Audit NOT performed/complete — this run is UNVERIFIED, not clean.");
         if strict.enabled() {
             return Err(crate::error::audit_scanner_unavailable_strict(&headline));
@@ -278,6 +288,22 @@ impl StrictMode {
     }
 }
 
+/// Human-table labels per finding class (R4/F2): policy, provenance,
+/// and artifact rows must never masquerade as CVEs — the id line is
+/// labeled by what the row actually is.
+/// Nhãn bảng theo class: dòng phi-CVE không được giả dạng CVE.
+pub(crate) fn finding_table_labels(
+    class: mgc_types::adapter::FindingClass,
+) -> (&'static str, &'static str) {
+    use mgc_types::adapter::FindingClass;
+    match class {
+        FindingClass::Vulnerability => ("", "CVE"),
+        FindingClass::Policy => (" [policy]", "Policy rule"),
+        FindingClass::Provenance => (" [provenance]", "Provenance check"),
+        FindingClass::Artifact => (" [artifact]", "Artifact check"),
+    }
+}
+
 /// Render the typed report — shared across cores so every ecosystem gets
 /// the same table: package counts, per-finding severity, advisory links.
 /// Render report typed — dùng chung mọi core: mọi ecosystem cùng một bảng
@@ -300,9 +326,16 @@ pub(crate) fn print_report(report: &AuditReport) {
             _ => vuln.severity.normal(),
         };
         mgc_ui::blank_line();
-        println!("{} {} in {}", severity, vuln.title.bold(), vuln.package);
+        let (class_marker, id_label) = finding_table_labels(vuln.finding_class);
+        println!(
+            "{}{} {} in {}",
+            severity,
+            class_marker,
+            vuln.title.bold(),
+            vuln.package
+        );
         if !vuln.cve.is_empty() {
-            println!("  CVE: {}", vuln.cve);
+            println!("  {id_label}: {}", vuln.cve);
         }
         if let Some(patched) = &vuln.patched_versions {
             println!("  Patched versions: {}", patched);

@@ -255,3 +255,32 @@ fn lib_ts_build_fails_when_tsc_missing() {
     assert!(rt.block_on(super::build_lib(&tmp)).is_err());
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// ng must run WITHOUT --preserve-symlinks: the flags break beasties
+/// (critical-CSS inliner) DOM-module identity on mgc's store-backed tree
+/// (`document.documentElement?.setAttribute is not a function`), while the
+/// plain node invocation builds fine. RED-first for the ng opt-out.
+#[test]
+fn framework_build_script_maps_ng_without_preserve_symlinks() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin_dir = dir.path().join("node_modules/.bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(bin_dir.join("ng"), "").unwrap();
+
+    let ng = map_framework_build_script(dir.path(), &["ng", "build"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(ng.0, Path::new("node"));
+    let args =
+        ng.1.iter()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+    assert!(
+        !args
+            .iter()
+            .any(|a| a == "--preserve-symlinks" || a == "--preserve-symlinks-main"),
+        "ng must not carry preserve-symlinks flags, got: {args:?}"
+    );
+    assert!(args.iter().any(|a| a.contains("node_modules")));
+    assert_eq!(args.last().unwrap(), "build");
+}

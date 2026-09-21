@@ -9,7 +9,7 @@
 #![allow(clippy::unwrap_used)]
 
 use mgc_audit::output::cyclonedx::{CYCLONEDX_BOM_FORMAT, CYCLONEDX_SPEC_VERSION, to_cyclonedx};
-use mgc_types::adapter::{AuditReport, Vulnerability, VulnerabilitySeverity};
+use mgc_types::adapter::{AuditReport, FindingClass, Vulnerability, VulnerabilitySeverity};
 use mgc_types::{PackageId, PackageName, Version};
 
 /// Build one vulnerability row with full evidence stamp.
@@ -29,6 +29,7 @@ fn vuln(name: &str, version: &str, cve: &str, level: VulnerabilitySeverity) -> V
         scanner: None,
         ecosystem: None,
         evidence_at: None,
+        finding_class: FindingClass::Vulnerability,
     }
     .with_evidence("cargo-audit", "rust")
 }
@@ -279,4 +280,93 @@ fn cyclonedx_purl_ecosystem_mapping() {
     assert!(purls.contains(&"pkg:pypi/requests@2.19.0"));
     assert!(purls.contains(&"pkg:npm/lodash@4.17.20"));
     assert!(purls.contains(&"pkg:generic/mystery@1.0.0"));
+}
+
+#[test]
+fn cyclonedx_partial_report_emits_findings_with_unverified_marker() {
+    // P0/F3: a Partial report WITH findings (OSV fallback lanes) must
+    // emit every row — plus the UNVERIFIED tool property, never a
+    // fabricated empty-clean.
+    // Partial CÓ findings phải emit mọi dòng — kèm marker UNVERIFIED.
+    let report = AuditReport {
+        packages_audited: 5,
+        vulnerability_count: 1,
+        vulnerabilities: vec![vuln(
+            "golang.org/x/net",
+            "0.10.0",
+            "GHSA-test",
+            VulnerabilitySeverity::High,
+        )],
+        scanner_status: mgc_types::adapter::ScannerStatus::Partial {
+            scanned: 5,
+            skipped: 1,
+            reasons: vec!["direct-only coverage".to_string()],
+        },
+    };
+    let bom = to_cyclonedx(&report);
+    assert_eq!(bom.vulnerabilities.len(), 1, "Partial rows must survive");
+    assert_eq!(bom.components.len(), 1);
+    assert!(
+        bom.metadata.tools.components[0]
+            .properties
+            .iter()
+            .any(|p| p.name == "magicore:status" && p.value.contains("UNVERIFIED")),
+        "UNVERIFIED marker must ride along"
+    );
+}
+
+/// P1: every real ecosystem tag maps to a spec purl type (no silent
+/// `generic` for Maven/NuGet/Go/Pub/Swift), and Maven coordinates
+/// translate `:` to `/`.
+/// Mọi tag ecosystem thật map đúng purl type; tọa độ Maven đổi `:`→`/`.
+#[test]
+fn cyclonedx_purl_types_cover_all_scanner_ecosystems() {
+    use mgc_types::adapter::FindingClass;
+    let row = |eco: &str, name: &str| {
+        let mut v = vuln(name, "1.0.0", "CVE-0000-1", VulnerabilitySeverity::High);
+        v.ecosystem = Some(eco.to_string());
+        v.finding_class = FindingClass::Vulnerability;
+        v
+    };
+    let report = AuditReport {
+        packages_audited: 6,
+        vulnerability_count: 6,
+        vulnerabilities: vec![
+            row("Maven", "com.example:lib"),
+            row("NuGet", "Example.Lib"),
+            row("Go", "golang.org/x/net"),
+            row("Pub", "async"),
+            row("SwiftURL", "https://github.com/o/r.git"),
+            row("java", "com.example:other"),
+        ],
+        scanner_status: mgc_types::adapter::ScannerStatus::Available,
+    };
+    let bom = to_cyclonedx(&report);
+    let purls: Vec<&str> = bom.components.iter().map(|c| c.purl.as_str()).collect();
+    assert!(
+        purls
+            .iter()
+            .any(|p| p.starts_with("pkg:maven/com.example/lib@")),
+        "maven purl: {purls:?}"
+    );
+    assert!(
+        purls
+            .iter()
+            .any(|p| p.starts_with("pkg:nuget/Example.Lib@")),
+        "nuget purl: {purls:?}"
+    );
+    assert!(
+        purls
+            .iter()
+            .any(|p| p.starts_with("pkg:golang/golang.org/x/net@")),
+        "golang purl: {purls:?}"
+    );
+    assert!(
+        purls.iter().any(|p| p.starts_with("pkg:pub/async@")),
+        "pub purl: {purls:?}"
+    );
+    assert!(
+        !purls.iter().any(|p| p.starts_with("pkg:generic/")),
+        "no real lane may fall to generic: {purls:?}"
+    );
 }

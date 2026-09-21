@@ -326,6 +326,16 @@ impl PackageAdapter for CloudAdapter {
         Self::CAPABILITIES
     }
 
+    /// P0/F6: forward to the embedded web engine (TS delegate resolves
+    /// through it — its gate must arm from the same project).
+    /// (Chuyển cho web engine nhúng.)
+    fn arm_age_gate_for(&self, project_root: &std::path::Path) -> MgResult<()> {
+        if let Some(web) = &self.web {
+            web.arm_age_gate_for(project_root)?;
+        }
+        Ok(())
+    }
+
     fn set_dedupe_pref(&self, enabled: bool) {
         if let Some(web) = &self.web {
             web.set_dedupe_pref(enabled);

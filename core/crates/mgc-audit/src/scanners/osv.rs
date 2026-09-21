@@ -18,7 +18,10 @@
 //! Parser typed fail-closed: response không đúng shape là lỗi, không
 //! bao giờ bịa sạch.
 
-use mgc_types::adapter::{AuditReport, ScannerStatus, Vulnerability, VulnerabilitySeverity};
+use futures_util::stream::StreamExt;
+use mgc_types::adapter::{
+    AuditReport, FindingClass, ScannerStatus, Vulnerability, VulnerabilitySeverity,
+};
 use mgc_types::{MgError, MgResult, PackageId, PackageName, Version};
 use serde::Deserialize;
 use std::path::Path;
@@ -197,6 +200,7 @@ async fn query_pin(client: &mgc_http::HttpClient, pin: &OsvPin) -> MgResult<Vec<
                 scanner: None,
                 ecosystem: None,
                 evidence_at: None,
+                finding_class: FindingClass::Vulnerability,
             }
             .with_evidence("osv-dev-api", pin.ecosystem),
         );
@@ -242,6 +246,17 @@ fn truncate(text: &str, max_chars: usize) -> String {
     }
 }
 
+/// Max in-flight OSV queries (RULE §12: named const, not an inline
+/// literal) — bounded so a 500-pin solution cannot open 500 sockets at
+/// once, large enough that big projects stop paying per-pin latency.
+/// (Số query OSV đồng thời tối đa.)
+const OSV_QUERY_CONCURRENCY: usize = 8;
+
+/// One pin's query outcome: index-preserving success or the pin name +
+/// detail of the first failure (by pin order).
+/// Kết quả query một ghim (giữ index để sắp xếp lại).
+type OsvPinOutcome = Result<(usize, Vec<Vulnerability>), (usize, String, String)>;
+
 /// Query OSV for a set of pins; a network failure of ANY pin is a
 /// SCANNER FAILURE (fail-closed through the report status, never a
 /// hard error and never a partial-clean answer). The CLI finisher
@@ -250,6 +265,12 @@ fn truncate(text: &str, max_chars: usize) -> String {
 /// (fail-closed qua status report, không phải hard error, không phải
 /// trả lời sạch từng phần). Finisher CLI chuyển Failed thành lane
 /// UNVERIFIED trung thực (strict exit 2).
+///
+/// Queries run CONCURRENTLY (bounded): rows keep pin order (sorted by
+/// pin index after join), and the reported failure names the
+/// lowest-index failed pin — deterministic output for the same input.
+/// (Query đồng thời có giới hạn: dòng giữ đúng thứ tự ghim, lỗi báo
+/// theo ghim đầu tiên — all định với cùng input.)
 pub async fn audit_osv_pins(pins: &[OsvPin]) -> MgResult<AuditReport> {
     if pins.is_empty() {
         return Ok(AuditReport::clean(0));
@@ -273,13 +294,36 @@ pub async fn audit_osv_pins(pins: &[OsvPin]) -> MgResult<AuditReport> {
         ));
 
     let mut all = Vec::new();
-    for pin in pins {
-        match query_pin(&client, pin).await {
-            Ok(findings) => all.extend(findings),
-            Err(e) => {
+    // One client clone per in-flight query (HttpClient clones cheaply —
+    // shared transport underneath). Items are OWNED (cloned pins), never
+    // borrowed from the stream, so every future is self-contained and
+    // output order stays deterministic after the index sort.
+    // (Mỗi query một bản clone client; item owned để future tự chứa.)
+    let owned: Vec<(usize, OsvPin)> = pins.iter().cloned().enumerate().collect();
+    let mut outcomes: Vec<OsvPinOutcome> = futures_util::stream::iter(owned)
+        .map(|(index, pin)| {
+            let client = client.clone();
+            async move {
+                match query_pin(&client, &pin).await {
+                    Ok(findings) => Ok((index, findings)),
+                    Err(e) => Err((index, pin.name.clone(), e.to_string())),
+                }
+            }
+        })
+        .buffer_unordered(OSV_QUERY_CONCURRENCY)
+        .collect()
+        .await;
+    outcomes.sort_by_key(|r| match r {
+        Ok((index, _)) => *index,
+        Err((index, _, _)) => *index,
+    });
+    for outcome in outcomes {
+        match outcome {
+            Ok((_, findings)) => all.extend(findings),
+            Err((_, name, detail)) => {
                 return Ok(AuditReport::scanner_failed(
                     "osv-dev-api",
-                    format!("query for '{}' failed: {e}", pin.name),
+                    format!("query for '{name}' failed: {detail}"),
                 ));
             }
         }
@@ -471,8 +515,10 @@ fn osv_swifturl_name(location: &str) -> Option<String> {
 }
 
 /// Swift/SPM audit: Package.resolved → OSV `swift` ecosystem queries.
+/// Located via the shared bounded predicate (same scope the adapter
+/// gate sees — REVIEW F1).
 pub async fn audit_swift_spam(project_root: &Path) -> MgResult<AuditReport> {
-    let resolved_path = find_upwards(project_root, "Package.resolved");
+    let resolved_path = swift_resolved_path(project_root);
     let Some(path) = resolved_path else {
         return Ok(AuditReport::unsupported_ecosystem(
             "swift/swiftpm (no Package.resolved found — run swift package resolve first)",
@@ -507,20 +553,31 @@ pub async fn audit_swift_spam(project_root: &Path) -> MgResult<AuditReport> {
     Ok(report)
 }
 
-/// Search a file upwards from a root (Package.resolved lives in
-/// Package.resolved, xcodeproj/..., or DerivedData-adjacent spots).
-/// Tìm file theo chiều lên từ root.
-fn find_upwards(root: &Path, name: &str) -> Option<std::path::PathBuf> {
-    let mut current = root.to_path_buf();
-    loop {
-        let candidate = current.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if !current.pop() {
-            return None;
+/// Shared Package.resolved locator (R2'/R1 + REVIEW F1): adapters gate
+/// their swift step on THIS, the same search the scanner runs. Scope is
+/// deliberately bounded — project root, `ios/` (React Native layout),
+/// and exactly one parent level (audited from a project subdir). A
+/// filesystem-root walk would attribute ANOTHER scope's lockfile to this
+/// audit, so anything farther stays out (honest Unsupported, not a
+/// borrowed scan).
+/// Locator Package.resolved dùng chung: scope giới hạn chủ ý — root,
+/// `ios/`, và đúng một cấp cha. Đi xa hơn là lockfile của scope khác.
+pub fn swift_resolved_path(project_root: &Path) -> Option<std::path::PathBuf> {
+    let direct = project_root.join("Package.resolved");
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let ios = project_root.join("ios").join("Package.resolved");
+    if ios.is_file() {
+        return Some(ios);
+    }
+    if let Some(parent) = project_root.parent() {
+        let up = parent.join("Package.resolved");
+        if up.is_file() {
+            return Some(up);
         }
     }
+    None
 }
 
 // ---------------------------------------------------------------------------

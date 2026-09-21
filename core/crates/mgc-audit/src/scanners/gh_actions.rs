@@ -20,7 +20,7 @@
 //! thủ (không dependency yaml): workflow là shape do máy sinh và các
 //! kiểm tra khớp theo tiền tố `key:` đúng mức thụt lề thật.
 
-use mgc_types::adapter::{AuditReport, ScannerStatus};
+use mgc_types::adapter::{AuditReport, FindingClass, ScannerStatus};
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
@@ -213,6 +213,7 @@ fn build_report(scanned: usize, findings: Vec<WorkflowFinding>) -> AuditReport {
                 scanner: None,
                 ecosystem: None,
                 evidence_at: None,
+                finding_class: FindingClass::Policy,
             }
             .with_evidence("github-actions-policy", "cicd/github-actions"),
         );

@@ -282,3 +282,75 @@ jobs:
           scoop install magicore
           mgc --version
           Write-Host "MARKER scoop uninstall-reinstall complete"
+
+  verify-signed-manifest:
+    # P0/F7: the release manifest is the self-update trust anchor —
+    # verify its detached Ed25519 signature against the release signing
+    # key (derived pubkey, secret never leaves this job) and re-check
+    # one archive digest through the manifest binding. Unsigned
+    # (transitional) releases warn loudly instead of failing — the day
+    # the secret lands, unsigned stops being acceptable.
+    # Manifest là neo trust của self-update — verify chữ ký Ed25519
+    # (pubkey suy từ seed, secret không rời job) và kiểm lại một digest
+    # qua binding. Release unsigned (quá độ) thì cảnh báo rõ.
+    name: verify signed release manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MGC_RELEASE_SIGNING_KEY: ${{ secrets.MGC_RELEASE_SIGNING_KEY }}
+    steps:
+      - name: Download manifest + signature from the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p sig-verify && cd sig-verify
+          gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p "manifest.json" || true
+          gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p "manifest.json.sig" || true
+          ls -la
+
+      - name: Verify signature + binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd sig-verify
+          python3 - <<'PYEOF'
+          import hashlib, json, os, sys
+
+          if not os.path.isfile("manifest.json"):
+              print("::error::manifest.json missing from release assets")
+              sys.exit(1)
+          manifest_bytes = open("manifest.json", "rb").read()
+          manifest = json.loads(manifest_bytes)
+          tag_version = os.environ.get("TAG_VERSION", "").lstrip("v")
+          if tag_version and manifest.get("version") != tag_version:
+              print(f"::error::manifest version {manifest.get('version')} != tag {tag_version}")
+              sys.exit(1)
+          if not manifest.get("artifacts"):
+              print("::error::manifest carries zero artifacts")
+              sys.exit(1)
+          print(f"manifest: version={manifest['version']} artifacts={len(manifest['artifacts'])}")
+
+          seed_hex = os.environ.get("MGC_RELEASE_SIGNING_KEY", "").strip()
+          sig_path = "manifest.json.sig"
+          if not seed_hex or not os.path.isfile(sig_path):
+              print("::warning::unsigned/transitional release — signature NOT verified (sha256 transport checks only)")
+              sys.exit(0)
+          import subprocess
+          subprocess.run(["pip", "install", "--quiet", "cryptography"], check=True)
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+          seed = bytes.fromhex(seed_hex)
+          assert len(seed) == 32, "signing key must be 64 hex chars"
+          pubkey = Ed25519PrivateKey.from_private_bytes(seed).public_key()
+          sig_hex = open(sig_path).read().split()[0]
+          try:
+              pubkey.verify(bytes.fromhex(sig_hex), manifest_bytes)
+          except Exception as e:
+              print(f"::error::manifest signature INVALID: {e}")
+              sys.exit(1)
+          print("manifest signature VALID (Ed25519, key derived in-job)")
+          PYEOF
+        env:
+          TAG_VERSION: ${{ inputs.tag }}

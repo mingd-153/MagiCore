@@ -115,50 +115,22 @@ impl AuditProvider for AiAdapter {
     }
 
     async fn audit(&self, project_root: &Path) -> MgResult<AuditReport> {
-        // AI two-layer aggregate (Tech Lead 2026-09-09 §3): dependency
-        // audit (python/rust manifests when present) + model artifact
-        // audit (pickle/safetensors/weights) — one merged report.
-        // Aggregate hai lớp AI: dependency (manifest python/rust nếu có)
-        // + model artifact (pickle/safetensors/weights) — một report gộp.
+        // Dependency lanes (R1): shared constructors — the same
+        // detection rule every core uses. The python rule is the broad
+        // shared one (requirements variants, pylock, uv.lock,
+        // pyproject): recognized-but-unscannable manifests surface as
+        // the scanner's honest Failed, never a hidden skip.
+        // Lane dependency: constructor chung — cùng luật mọi core.
         let mut plan = mgc_audit::AuditPlan::new();
-
-        let requirements = project_root.join("requirements.txt");
-        if requirements.is_file() {
-            let root = project_root.to_path_buf();
-            plan.add_step(mgc_audit::ScanStep {
-                ecosystem: "python",
-                scanner: "pip-audit",
-                run: Box::new(move || {
-                    let root = root.clone();
-                    Box::pin(async move { mgc_audit::scanners::audit_python(&root).await })
-                }),
-            });
-        }
-        if project_root.join("Cargo.toml").is_file() {
-            let root = project_root.to_path_buf();
-            plan.add_step(mgc_audit::ScanStep {
-                ecosystem: "rust",
-                scanner: "cargo-audit",
-                run: Box::new(move || {
-                    let root = root.clone();
-                    Box::pin(async move { mgc_audit::scanners::audit_rust(&root).await })
-                }),
-            });
-        }
-        // Go dependency layer (P1 matrix row "AI Go govulncheck") — Go
-        // AI services join the same aggregate.
-        // Lớp dependency Go (P1 matrix "AI Go govulncheck") — service AI
-        // viết Go vào cùng aggregate.
-        if project_root.join("go.mod").is_file() {
-            let root = project_root.to_path_buf();
-            plan.add_step(mgc_audit::ScanStep {
-                ecosystem: "go",
-                scanner: "govulncheck",
-                run: Box::new(move || {
-                    let root = root.clone();
-                    Box::pin(async move { mgc_audit::scanners::audit_go(&root).await })
-                }),
-            });
+        for step in [
+            mgc_audit::python_step(project_root),
+            mgc_audit::rust_step(project_root),
+            mgc_audit::go_step(project_root),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            plan.add_step(step);
         }
 
         // Model artifact layer: scan the AI model directory conventions.
@@ -245,7 +217,7 @@ impl mgc_types::capabilities::ModelRuntimeProvider for AiAdapter {}
 /// nhất — mọi finding High/Critical của model thành dòng Vulnerability
 /// để aggregate và exit contract giữ một chuẩn.
 fn model_artifact_report(dir: &Path) -> MgResult<AuditReport> {
-    use mgc_types::adapter::{Vulnerability, VulnerabilitySeverity};
+    use mgc_types::adapter::{FindingClass, Vulnerability, VulnerabilitySeverity};
 
     let model = futures_util_replay(dir)?;
     let mut vulnerabilities = Vec::new();
@@ -277,6 +249,7 @@ fn model_artifact_report(dir: &Path) -> MgResult<AuditReport> {
                 scanner: None,
                 ecosystem: None,
                 evidence_at: None,
+                finding_class: FindingClass::Artifact,
             }
             .with_evidence("mgc-model-scanner", "model-artifact"),
         );

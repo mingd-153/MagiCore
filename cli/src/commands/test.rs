@@ -101,6 +101,28 @@ pub async fn test(
                 })
                 .unwrap_or_default();
         let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+        let mut env = env;
+
+        // Native python packages (mgc-owned wheels unpacked at install)
+        // must be importable under pytest/python — prepend their site
+        // dirs to PYTHONPATH. Absent lock/store yields nothing (never an
+        // error, never a silent venv). This is the run side of native
+        // python: `mgc test` sees what `mgc install-lib` fetched.
+        // (PYTHONPATH cho package python do mgc cài.)
+        if runner == "pytest" || runner == "python" || runner == "python3" {
+            let mut paths = mgc_lib_adapter::install::native_python_path_entries(project_root);
+            if !paths.is_empty() {
+                if let Some(cur) = std::env::var_os("PYTHONPATH") {
+                    paths.extend(std::env::split_paths(&cur));
+                }
+                if let Ok(joined) = std::env::join_paths(&paths) {
+                    env.push((
+                        "PYTHONPATH".to_string(),
+                        joined.to_string_lossy().to_string(),
+                    ));
+                }
+            }
+        }
 
         // P0-1: compat lane truyền runtime đã chọn (gate ở trên đã kiểm)
         // xuống mgc-exec để exemption shadow-path áp đúng runtime.

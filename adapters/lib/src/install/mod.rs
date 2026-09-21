@@ -170,6 +170,31 @@ async fn install_go_native(
     })
 }
 
+/// Importable site dirs for natively installed pure-python wheels, read
+/// from the project's mgc.lock (no re-resolve). Runners (pytest/python)
+/// prepend these to PYTHONPATH so `mgc test` sees mgc-owned packages —
+/// the run side of "run tại MGC". Missing lock/store/site dirs yield
+/// empty (never an error — non-native projects simply get no entries).
+/// (Site dir import được cho wheel pure-python đã cài native.)
+pub fn native_python_path_entries(project_root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(content) = std::fs::read_to_string(project_root.join("mgc.lock")) else {
+        return Vec::new();
+    };
+    let lockfile = mgc_lockfile::parser::parse_lockfile(&content)
+        .unwrap_or_else(|_| mgc_lockfile::Lockfile::new());
+    let Ok(store) = shared_store::SharedStoreRun::pypi() else {
+        return Vec::new();
+    };
+    let site = store.cache_root.join("wheels").join("site");
+    lockfile
+        .packages
+        .iter()
+        .filter(|p| p.ecosystem == mgc_lockfile::EcosystemTag::Python)
+        .map(|p| site.join(format!("{}-{}", p.name, p.version)))
+        .filter(|d| d.is_dir())
+        .collect()
+}
+
 /// Native Maven install: download each jar → verify sha256 (or the recorded
 /// sha1) → import to the mgc CAS (blake3) → download the POM → materialize
 /// into `{m2_root}/repository/{gpath}/{artifact}/{version}/` (`mvn -o`
@@ -327,6 +352,9 @@ async fn install_python_native(
             .import_bytes(&bytes)
             .map_err(|e| MgError::Store(e.to_string()))?;
         protocol.materialize(&entry, &bytes, &wheels_dir)?;
+        // Pure-python wheels additionally unpack into an importable site
+        // dir (compiled wheels honestly skip — the ABI warning above).
+        protocol.materialize_importable(&entry, &bytes, &wheels_dir)?;
         added.push(pkg.id.clone());
     }
 

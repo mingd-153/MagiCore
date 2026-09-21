@@ -42,7 +42,22 @@ pub fn command_to_dispatch(
         }),
         Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
         Commands::Audit { fix, format } => Some(CommonCommand::Audit { fix, format }),
-        Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
+        Commands::SelfUpdate {
+            version,
+            variant,
+            dry_run,
+            trust_root,
+            allow_unsigned,
+        } => Some(CommonCommand::SelfUpdate {
+            version,
+            variant,
+            dry_run,
+            trust_root,
+            allow_unsigned,
+        }),
+        Commands::SignRelease { manifest, key_hex } => {
+            Some(CommonCommand::SignRelease { manifest, key_hex })
+        }
         Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
         Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
         Commands::Import { dir } => Some(CommonCommand::Import { dir }),

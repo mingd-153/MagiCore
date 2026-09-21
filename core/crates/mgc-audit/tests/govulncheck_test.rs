@@ -7,6 +7,10 @@
 //! Test hợp đồng parser stream govulncheck: fixture khớp protocol
 //! Message chính thức — mỗi dòng một Message.
 #![allow(clippy::unwrap_used)]
+// Edition 2024 makes env::set_var unsafe — OSV override below is
+// test-only with save/restore.
+// (Set_var unsafe — override có lưu/phục hồi.)
+#![allow(unsafe_code)]
 
 use mgc_audit::scanners::parse_govulncheck_json;
 
@@ -314,4 +318,65 @@ fn lane_go_10_concurrent_streams_stay_independent() {
             );
         }
     });
+}
+
+/// R6 (native OSV fallback): without the govulncheck binary, go.mod
+/// require pins must ride a real OSV `Go` query — never ToolMissing.
+/// Dead endpoint keeps it hermetic: the fallback must EXIST (Failed
+/// naming osv-dev-api), proving pins reached a query.
+/// Không có binary govulncheck, ghim go.mod phải đi query OSV thật —
+/// không ToolMissing. Endpoint chết giữ hermetic: fallback phải TỒN
+/// TẠI (Failed nêu osv-dev-api).
+#[test]
+fn audit_go_without_tool_falls_back_to_osv_not_tool_missing() {
+    if which::which("govulncheck").is_ok() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("mgc-go-fallback-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("go.mod"),
+        "module example.com/x\n\ngo 1.21\n\nrequire golang.org/x/text v0.14.0\n",
+    )
+    .unwrap();
+
+    let saved = std::env::var("MGC_OSV_API_BASE").ok();
+    unsafe { std::env::set_var("MGC_OSV_API_BASE", "http://127.0.0.1:1/v1") };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let report = rt.block_on(mgc_audit::scanners::audit_go(&dir)).unwrap();
+    match saved {
+        Some(v) => unsafe { std::env::set_var("MGC_OSV_API_BASE", v) },
+        None => unsafe { std::env::remove_var("MGC_OSV_API_BASE") },
+    }
+    match &report.scanner_status {
+        mgc_types::adapter::ScannerStatus::Failed { scanner, .. } => {
+            assert_eq!(scanner, "osv-dev-api")
+        }
+        other => panic!("go.mod pins must reach the OSV fallback (Failed), got {other:?}"),
+    }
+}
+
+/// go.mod require parsing: block + single-line requires become Go pins;
+/// toolchain/replace/exclude lines are skipped honestly (recorded, never
+/// silently dropped into a clean count).
+/// Parse require go.mod: block + đơn dòng thành ghim Go; dòng
+/// toolchain/replace/exclude được skip có ghi nhận.
+#[test]
+fn read_go_mod_requires_parses_pins_and_skips_honestly() {
+    let raw = "module example.com/x\n\ngo 1.21\n\ntoolchain go1.21.0\n\nrequire (\n\tgolang.org/x/text v0.14.0\n\tgithub.com/foo/bar v1.2.3 // indirect\n)\n\nrequire github.com/baz v2.0.0\n\nreplace github.com/foo/bar => ../local\n\nexclude golang.org/x/text v0.13.0\n";
+    let (pins, skipped) = mgc_audit::scanners::read_go_mod_requires(raw);
+    assert_eq!(pins.len(), 3);
+    assert_eq!(pins[0].name, "golang.org/x/text");
+    assert_eq!(pins[0].version, "v0.14.0");
+    assert!(pins.iter().all(|p| p.ecosystem == "Go"));
+    assert!(
+        skipped
+            .iter()
+            .any(|s| s.contains("replace") || s.contains("exclude") || s.contains("toolchain")),
+        "non-require directives must be recorded as skipped, got: {skipped:?}"
+    );
 }

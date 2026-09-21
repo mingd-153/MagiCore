@@ -35,6 +35,7 @@ use mgc_resolver::protocols::reactnative::{
     collapse_gradle_pins, parse_gradle_lockfile, parse_podfile_lock, pod_root,
 };
 use mgc_resolver::protocols::{MavenProtocol, RegistryProtocol};
+use mgc_types::adapter::PackageAdapter;
 use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver, unsupported_capability};
 use mgc_types::{
     DependencySpec, Ecosystem, Manifest, MgError, MgResult, PackageId, PackageName, ResolvedGraph,
@@ -61,6 +62,10 @@ pub async fn resolve_rn_layers(manifest: &Manifest, project_root: &Path) -> MgRe
     // ── JS tier: web adapter (npm pipeline) ──
     let web = mgc_web_adapter::WebAdapter::new()
         .map_err(|e| MgError::Other(format!("web adapter construction failed: {e}")))?;
+    // P0/F6: arm from THIS operation's project (a fresh adapter starts
+    // unarmed — an RN project with [security] policy must still filter).
+    // (Nạp cổng tuổi từ project của operation này.)
+    web.arm_age_gate_for(project_root)?;
     let js_graph = DependencyResolver::resolve(&web, manifest).await?;
     graph.packages.extend(js_graph.packages);
 

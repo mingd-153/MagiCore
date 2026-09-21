@@ -10,6 +10,10 @@
 //! stamp (binary E2E nằm ở audit_cli_e2e).
 
 #![allow(clippy::unwrap_used)]
+// Edition 2024 makes env::set_var unsafe — OSV override below is
+// test-only with save/restore.
+// (Set_var unsafe — override có lưu/phục hồi.)
+#![allow(unsafe_code)]
 
 use mgc_audit::scanners::{audit_java, read_gradle_verification_metadata};
 
@@ -197,4 +201,102 @@ async fn lane_maven_10_audit_without_lock_reports_unsupported_with_remediation()
         other => panic!("expected UnsupportedEcosystem, got {other:?}"),
     }
     assert_eq!(report.vulnerability_count, 0);
+}
+
+/// P0/F4: Maven pom.xml is a first-class Java manifest — fixed-version
+/// dependencies become OSV Maven pins; property/versionless entries are
+/// skipped honestly (a full Maven model is out of scope for the line
+/// reader). pom.xml là manifest Java chính thức — version cố định thành
+/// ghim; version property/thiếu thì skip có ghi nhận.
+#[test]
+fn lane_maven_8_pom_xml_fixed_versions_become_pins() {
+    let pom = r#"<project>
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.9.10.8</version>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>prop-lib</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>nover-lib</artifactId>
+    </dependency>
+  </dependencies>
+</project>"#;
+    let (pins, skipped) = mgc_audit::scanners::read_pom_gavs(pom);
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0].name, "com.fasterxml.jackson.core:jackson-databind");
+    assert_eq!(pins[0].version, "2.9.10.8");
+    assert_eq!(pins[0].ecosystem, "Maven");
+    assert_eq!(
+        skipped.len(),
+        2,
+        "property + versionless must be recorded: {skipped:?}"
+    );
+}
+
+/// P0/F4: a pom-only project must reach a real OSV query (dead endpoint
+/// keeps it hermetic) — never the old "no gradle project" Unsupported.
+/// Project chỉ pom phải tới query OSV thật.
+#[test]
+fn lane_maven_9_pom_only_project_reaches_osv() {
+    let dir = std::env::temp_dir().join(format!("mgc-maven-pom-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("pom.xml"),
+        "<project><dependencies><dependency><groupId>com.example</groupId><artifactId>lib</artifactId><version>1.0</version></dependency></dependencies></project>\n",
+    )
+    .unwrap();
+    let saved = std::env::var("MGC_OSV_API_BASE").ok();
+    unsafe { std::env::set_var("MGC_OSV_API_BASE", "http://127.0.0.1:1/v1") };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let report = rt.block_on(mgc_audit::scanners::audit_java(&dir)).unwrap();
+    match saved {
+        Some(v) => unsafe { std::env::set_var("MGC_OSV_API_BASE", v) },
+        None => unsafe { std::env::remove_var("MGC_OSV_API_BASE") },
+    }
+    match &report.scanner_status {
+        mgc_types::adapter::ScannerStatus::Failed { scanner, .. } => {
+            assert_eq!(scanner, "osv-dev-api")
+        }
+        other => panic!("pom-only project must reach OSV (Failed), got {other:?}"),
+    }
+}
+
+/// REVIEW-v2: XML comments are not dependencies — a commented-out block
+/// must not become a pin (false positive); surrounding real deps still
+/// parse.
+/// Comment XML không phải dependency — block bị comment không thành
+/// ghim; dep thật xung quanh vẫn parse.
+#[test]
+fn lane_maven_10_commented_dependencies_never_become_pins() {
+    let pom = r#"<project>
+  <dependencies>
+    <!-- <dependency><groupId>com.evil</groupId><artifactId>ghost</artifactId><version>9.9</version></dependency> -->
+    <!--
+    <dependency>
+      <groupId>com.evil</groupId>
+      <artifactId>multiline-ghost</artifactId>
+      <version>9.9</version>
+    </dependency>
+    -->
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>real</artifactId>
+      <version>1.0</version>
+    </dependency>
+  </dependencies>
+</project>"#;
+    let (pins, _) = mgc_audit::scanners::read_pom_gavs(pom);
+    assert_eq!(pins.len(), 1, "only the real dep pins, got {pins:?}");
+    assert_eq!(pins[0].name, "com.example:real");
 }

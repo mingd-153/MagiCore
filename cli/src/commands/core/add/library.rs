@@ -60,9 +60,9 @@ pub async fn add(
     let root = project_root()?;
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     // C0 ownership firewall (T0.3): TypeScript rides the native web engine;
-    // every other lib language delegates to its toolchain (compat only).
-    // (Tường lửa C0: TypeScript đi engine web native; ngôn ngữ lib khác
-    // delegate toolchain.)
+    // rust/python/go Add run natively (resolve-first + mgc-side manifest
+    // edit, zero spawn); Remove/Update still delegate per dep_gate table.
+    // (Tường lửa C0: Add native cho rust/python/go.)
     let detected = mgc_lib_adapter::detect_language(&root);
     let language = detected.map(|lang| lang.ecosystem());
     // Actual tool the adapter WILL spawn (never None on a spawning

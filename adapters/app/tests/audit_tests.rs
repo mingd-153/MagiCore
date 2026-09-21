@@ -1,5 +1,10 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+// Edition 2024 makes env::set_var unsafe — the OSV override below is
+// test-only with save/restore; no other test in this binary reaches the
+// OSV network path (they end at unsupported/tool-missing first).
+// (Set_var unsafe — override có lưu/phục hồi; test khác không chạm mạng OSV.)
+#![allow(unsafe_code)]
 
 //! Audit module tests for app adapter.
 
@@ -77,7 +82,7 @@ async fn audit_kotlin_without_gradle_is_tool_missing() {
 }
 
 #[tokio::test]
-async fn audit_swift_not_implemented_is_unsupported_not_clean() {
+async fn audit_swift_without_lockfile_is_unsupported_not_clean() {
     let dir = tmp("swift-audit");
     std::fs::write(dir.join("Package.swift"), "// swift package\n").unwrap();
 
@@ -90,7 +95,7 @@ async fn audit_swift_not_implemented_is_unsupported_not_clean() {
 }
 
 #[tokio::test]
-async fn audit_cocoapods_not_implemented_is_unsupported_not_clean() {
+async fn audit_cocoapods_without_lockfile_is_unsupported_not_clean() {
     let dir = tmp("cocoapods-audit");
 
     let report = audit_cocoapods(&dir).await.unwrap();
@@ -413,4 +418,66 @@ fn pubspec_lock_malformed_does_not_panic() {
     let (pins, skipped) = read_pubspec_lock("sdks:\n  dart: '>=3.0.0'\n").unwrap();
     assert!(pins.is_empty());
     assert!(skipped.is_empty());
+}
+
+/// Gate/scanner parity (R2'): the adapter gate must see every
+/// Package.resolved the scanner itself would find — a resolved file in
+/// the PARENT dir (monorepo child audited from its subdir) must enter
+/// the plan, not vanish into an Unsupported empty-plan.
+/// Parity gate/scanner: gate phải thấy mọi Package.resolved mà scanner
+/// tìm được — file ở thư mục CHA phải vào plan.
+#[tokio::test]
+async fn audit_multi_finds_parent_package_resolved() {
+    let parent = tmp("multi-parent-resolved");
+    std::fs::write(
+        parent.join("Package.resolved"),
+        r#"{"pins":[{"identity":"SomePkg","location":"https://github.com/owner/repo.git","state":{"version":"1.0.0"}}],"version":2}"#,
+    )
+    .unwrap();
+    let child = parent.join("child");
+    std::fs::create_dir_all(&child).unwrap();
+
+    // Dead OSV endpoint: deterministic without network — the swift step
+    // must EXIST (Failed naming osv-dev-api), proving the gate saw the
+    // parent lockfile. Absent gate → UnsupportedEcosystem empty plan.
+    // Endpoint OSV chết: step swift phải TỒN TẠI (Failed nêu osv-dev-api)
+    // chứng minh gate thấy lockfile cha. Gate vắng → plan rỗng Unsupported.
+    let saved = std::env::var("MGC_OSV_API_BASE").ok();
+    unsafe { std::env::set_var("MGC_OSV_API_BASE", "http://127.0.0.1:1/v1") };
+    let report = audit_multi(&child).await.unwrap();
+    match saved {
+        Some(v) => unsafe { std::env::set_var("MGC_OSV_API_BASE", v) },
+        None => unsafe { std::env::remove_var("MGC_OSV_API_BASE") },
+    }
+    match &report.scanner_status {
+        ScannerStatus::Failed { scanner, .. } => assert_eq!(scanner, "osv-dev-api"),
+        other => panic!("parent Package.resolved must enter the plan (Failed), got {other:?}"),
+    }
+}
+
+/// Scope bound (REVIEW F1): the swift locator must not escape the
+/// project — a Package.resolved TWO levels up belongs to another scope
+/// and must not enter this audit's plan.
+/// Giới hạn scope: locator không được thoát project — resolved cách HAI
+/// cấp thuộc scope khác, không được vào plan.
+#[tokio::test]
+async fn audit_multi_ignores_grandparent_package_resolved() {
+    let grandparent = tmp("multi-grandparent-resolved");
+    std::fs::write(
+        grandparent.join("Package.resolved"),
+        r#"{"pins":[{"identity":"SomePkg","location":"https://github.com/owner/repo.git","state":{"version":"1.0.0"}}],"version":2}"#,
+    )
+    .unwrap();
+    let child = grandparent.join("mid").join("child");
+    std::fs::create_dir_all(&child).unwrap();
+
+    let report = audit_multi(&child).await.unwrap();
+    assert!(
+        matches!(
+            report.scanner_status,
+            ScannerStatus::UnsupportedEcosystem { .. }
+        ),
+        "grandparent lockfile must stay out of scope (empty plan), got {:?}",
+        report.scanner_status
+    );
 }

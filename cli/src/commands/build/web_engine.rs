@@ -315,9 +315,14 @@ pub(crate) fn map_framework_build_script(
             node_bin_args(root, "remix", &["vite:build"])?,
             vec![],
         ),
+        ["remix", "build"] => (
+            node_runner(),
+            node_bin_args(root, "remix", &["build"])?,
+            vec![],
+        ),
         ["ng", "build"] => (
             node_runner(),
-            node_bin_args(root, "ng", &["build"])?,
+            node_bin_args_plain(root, "ng", &["build"])?,
             vec![
                 (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
                 (OsString::from("CI"), OsString::from("1")),
@@ -438,6 +443,24 @@ pub(crate) fn node_bin_args(
     ];
     result.extend(args.iter().map(OsString::from));
     Ok(result)
+}
+
+/// Plain variant WITHOUT --preserve-symlinks*: beasties (Angular
+/// critical-CSS inliner) loads its DOM implementation twice under
+/// symlink-preserving resolution on store-backed trees, so the document
+/// and its elements come from different module copies
+/// (`document.documentElement?.setAttribute is not a function`). Realpath
+/// resolution unifies the copies — the same invocation npm/npx performs.
+/// Only frameworks proven broken under the flags may use this.
+/// (Biến thể không preserve-symlinks — chỉ framework đã chứng minh vỡ.)
+pub(crate) fn node_bin_args_plain(
+    project_root: &Path,
+    bin_name: &str,
+    args: &[&str],
+) -> Result<Vec<OsString>> {
+    let mut full = node_bin_args(project_root, bin_name, args)?;
+    full.retain(|arg| arg != "--preserve-symlinks" && arg != "--preserve-symlinks-main");
+    Ok(full)
 }
 
 pub(crate) fn prepend_path(local_bin: &Path) -> Result<OsString> {

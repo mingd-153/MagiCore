@@ -88,6 +88,46 @@ impl PypiProtocol {
         Ok(dest)
     }
 
+    /// Unpack a PURE-PYTHON wheel into `{wheels_dir}/site/<name>-<version>/`
+    /// for importable use. Compiled wheels (versioned ABI tag) return None —
+    /// unpacking them would fake an install the interpreter cannot load
+    /// (the ABI warning stays the honest signal).
+    /// (Bung wheel pure-python thành site dir import được.)
+    pub fn materialize_importable(
+        &self,
+        entry: &ResolvedEntry,
+        bytes: &[u8],
+        wheels_dir: &Path,
+    ) -> MgResult<Option<PathBuf>> {
+        let filename = entry
+            .artifact_url
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("artifact");
+        if !Self::is_pure_wheel_filename(filename) {
+            return Ok(None);
+        }
+        let site = wheels_dir
+            .join("site")
+            .join(format!("{}-{}", entry.name, entry.version));
+        super::zip_reader::extract_zip(bytes, &site)?;
+        Ok(Some(site))
+    }
+
+    /// Pure-python wheel tags: `{py}-none-any` with a py2/py3 interpreter
+    /// tag (compound `py2.py3` included).
+    fn is_pure_wheel_filename(filename: &str) -> bool {
+        let stem = filename.strip_suffix(".whl").unwrap_or(filename);
+        let mut parts = stem.rsplit('-');
+        let platform = parts.next().unwrap_or("");
+        let abi = parts.next().unwrap_or("");
+        let py = parts.next().unwrap_or("");
+        platform == "any"
+            && abi == "none"
+            && (py == "py" || py.starts_with("py2") || py.starts_with("py3"))
+    }
+
     /// Export a `requirements.lock` (`--require-hashes`) body for offline
     /// `pip install -r` — pinned, hash-carrying, no re-resolve.
     /// Xuất body `requirements.lock` (`--require-hashes`) cho `pip install -r`
@@ -779,5 +819,111 @@ mod tests {
                 std::env::set_var("MGC_PYTHON_VERSION", v);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod importable_tests {
+    use super::*;
+
+    /// Minimal stored-method zip builder (no compression dependency).
+    fn stored_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for (name, data) in files {
+            let offset = out.len() as u32;
+            let crc = super::super::zip_reader::crc32(data);
+            let n = name.len() as u16;
+            out.extend_from_slice(b"PK\x03\x04");
+            out.extend_from_slice(&20u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // stored
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&crc.to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&n.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(data);
+            central.extend_from_slice(b"PK\x01\x02");
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&crc.to_le_bytes());
+            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            central.extend_from_slice(&n.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name.as_bytes());
+        }
+        let cd_offset = out.len() as u32;
+        out.extend_from_slice(&central);
+        let cd_size = central.len() as u32;
+        out.extend_from_slice(b"PK\x05\x06");
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    fn entry_for(url: &str) -> ResolvedEntry {
+        ResolvedEntry {
+            name: "six".to_string(),
+            version: "1.17.0".to_string(),
+            deps: Vec::new(),
+            artifact_url: url.to_string(),
+            sha256: String::new(),
+            extra_markers: Vec::new(),
+        }
+    }
+
+    /// Pure-python wheels unpack into an importable site dir.
+    #[test]
+    fn materialize_importable_unpacks_pure_wheel() {
+        let wheel = stored_zip(&[
+            ("six.py", b"__version__ = '1.17.0'\n"),
+            ("six-1.17.0.dist-info/METADATA", b"Name: six\n"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let site = PypiProtocol::new("https://pypi.org")
+            .materialize_importable(
+                &entry_for("https://files.pythonhosted.org/x/six-1.17.0-py2.py3-none-any.whl"),
+                &wheel,
+                dir.path(),
+            )
+            .unwrap()
+            .expect("pure wheel must unpack");
+        assert!(site.join("six.py").exists(), "six.py importable");
+    }
+
+    /// Compiled wheels are NOT unpacked (ABI policy) — None, honestly.
+    #[test]
+    fn materialize_importable_skips_compiled_wheel() {
+        let wheel = stored_zip(&[("x.so", b"fake")]);
+        let dir = tempfile::tempdir().unwrap();
+        let site = PypiProtocol::new("https://pypi.org")
+            .materialize_importable(
+                &entry_for(
+                    "https://files.pythonhosted.org/x/x-1.0-cp39-cp39-manylinux1_x86_64.whl",
+                ),
+                &wheel,
+                dir.path(),
+            )
+            .unwrap();
+        assert!(site.is_none(), "compiled wheel must not unpack");
     }
 }

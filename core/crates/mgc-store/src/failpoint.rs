@@ -26,6 +26,7 @@ const KNOWN_PHASES: &[&str] = &[
     "after-cas-publish",
     "before-materialize",
     "after-materialize",
+    "before-rollback-restore",
     "before-promote",
     "after-generation-flip",
     "before-commit",

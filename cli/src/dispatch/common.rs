@@ -78,7 +78,18 @@ pub async fn dispatch_common(
         CommonCommand::Audit { fix, format } => {
             commands::audit::run(core, fix, format.as_deref()).await
         }
-        CommonCommand::SelfUpdate => commands::self_update::run().await,
+        CommonCommand::SelfUpdate {
+            version,
+            variant,
+            dry_run,
+            trust_root,
+            allow_unsigned,
+        } => {
+            commands::self_update::run(version, variant, dry_run, trust_root, allow_unsigned).await
+        }
+        CommonCommand::SignRelease { manifest, key_hex } => {
+            commands::sign_release::run(manifest, key_hex)
+        }
         CommonCommand::Run {
             script,
             args,

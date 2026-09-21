@@ -1,6 +1,6 @@
 //! `audit.rs` — Security audits, supply-chain checks, and advisory query execution for WebAdapter.
 
-use mgc_types::adapter::{AuditReport, Vulnerability, VulnerabilitySeverity};
+use mgc_types::adapter::{AuditReport, FindingClass, Vulnerability, VulnerabilitySeverity};
 use mgc_types::{DependencySpec, MgError, MgResult, PackageId, PackageName, Version, VersionRange};
 use std::path::Path;
 
@@ -402,6 +402,7 @@ fn build_findings_for_advisory(
                 scanner: None,
                 ecosystem: None,
                 evidence_at: None,
+                finding_class: FindingClass::Vulnerability,
             }
             .with_evidence("npm-bulk-advisory", "web/javascript"),
         );

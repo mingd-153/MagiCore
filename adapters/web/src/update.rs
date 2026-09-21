@@ -67,6 +67,12 @@ pub async fn run_update(
 ) -> MgResult<Vec<UpdatedPackage>> {
     let mut manifest = parse_manifest(project_root)?;
     let _registry = native::npm_registry::NpmRegistry::new(registry_url);
+    // P0/F6: arm this operation's provider from its project root
+    // (fail-closed on broken config); the provider fans the armed flag
+    // out to its registry client for full-packument fetches.
+    // (Nạp cổng tuổi từ project của operation này.)
+    let policy = crate::WebAdapter::load_age_policy_for(project_root)?;
+    provider.set_age_policy(policy);
     let lockfile = read_web_lockfile_checked(project_root)?;
     let mut updated = Vec::new();
 
@@ -95,6 +101,20 @@ pub async fn run_update(
                     dep.name.as_str()
                 ))
             })?;
+            // Age gate on the update target: a too-young (or unstamped)
+            // latest is SKIPPED with a loud warning — failing the whole
+            // update over one quarantined package would block unrelated
+            // upgrades, but silence would be a bypass.
+            // (Latest quá trẻ thì bỏ qua kèm cảnh báo rõ.)
+            if let Err(reason) =
+                crate::provider::check_pinned_version(&dep.name, &metadata, &latest, policy)
+            {
+                eprintln!(
+                    "[magicore] update: skipping '{}': {reason}",
+                    dep.name.as_str()
+                );
+                continue;
+            }
 
             let latest_version = Version::parse(&latest)?;
             if dep.range.matches(&latest_version) {

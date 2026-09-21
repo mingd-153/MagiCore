@@ -438,3 +438,34 @@ fn wildcard_compound_range_gte_lte() {
     assert!(!range.matches(&v("21.9.9")));
     assert!(!range.matches(&v("25.0.0")));
 }
+
+/// Caret ranges follow semver 0.x rules: ^0.25.0 means >=0.25.0 <0.26.0
+/// (the old code accepted ANY 0.y >= 0.25, resolving vite's esbuild
+/// ^0.25.0 to 0.28.2 and breaking real builds).
+/// Caret tuân semver 0.x: ^0.25.0 là >=0.25.0 <0.26.0.
+#[test]
+fn range_caret_zero_minor_bounds_minor() {
+    let range = VersionRange::parse("^0.25.0").unwrap();
+    assert!(range.matches(&v("0.25.0")));
+    assert!(range.matches(&v("0.25.9")));
+    assert!(!range.matches(&v("0.28.2")), "^0.25.0 must reject 0.28.2");
+    assert!(!range.matches(&v("0.24.9")));
+    assert!(!range.matches(&v("1.0.0")));
+}
+
+#[test]
+fn range_caret_major_bounds_major() {
+    let range = VersionRange::parse("^1.2.3").unwrap();
+    assert!(range.matches(&v("1.2.3")));
+    assert!(range.matches(&v("1.9.0")));
+    assert!(!range.matches(&v("2.0.0")));
+    assert!(!range.matches(&v("1.2.2")));
+}
+
+#[test]
+fn range_caret_zero_zero_is_exact_patch() {
+    let range = VersionRange::parse("^0.0.3").unwrap();
+    assert!(range.matches(&v("0.0.3")));
+    assert!(!range.matches(&v("0.0.4")), "^0.0.3 must reject 0.0.4");
+    assert!(!range.matches(&v("0.1.0")));
+}

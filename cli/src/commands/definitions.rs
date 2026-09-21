@@ -57,7 +57,48 @@ pub enum Commands {
         format: Option<String>,
     },
     #[command(about = "Update MagiCore CLI to the latest version")]
-    SelfUpdate,
+    SelfUpdate {
+        #[arg(
+            long,
+            help = "target version (default: latest release), with or without leading 'v'"
+        )]
+        version: Option<String>,
+        #[arg(
+            long,
+            help = "release variant: magicore|magicore-web|all (default: detected from this binary)"
+        )]
+        variant: Option<String>,
+        #[arg(
+            long,
+            help = "print what would be downloaded without changing anything"
+        )]
+        dry_run: bool,
+        #[arg(
+            long = "trust-root",
+            help = "hex Ed25519 pubkey pinning the release manifest (repeatable); or MGC_RELEASE_TRUST_ROOTS"
+        )]
+        trust_root: Vec<String>,
+        #[arg(
+            long = "allow-unsigned",
+            help = "explicit opt-in to a sha256-only update with NO provenance (refused when any trust root is configured; loud warning)"
+        )]
+        allow_unsigned: bool,
+    },
+    #[command(
+        about = "Sign a release manifest with the Ed25519 release key (ring backend, no network)"
+    )]
+    SignRelease {
+        #[arg(
+            long,
+            help = "manifest file to sign (default: manifest.json); writes <manifest>.sig"
+        )]
+        manifest: Option<String>,
+        #[arg(
+            long = "key-hex",
+            help = "64-hex-char Ed25519 seed (default: MGC_RELEASE_SIGNING_KEY)"
+        )]
+        key_hex: Option<String>,
+    },
     #[command(about = "Read/write configuration (.npmrc)", alias = "c")]
     Config {
         #[command(subcommand)]

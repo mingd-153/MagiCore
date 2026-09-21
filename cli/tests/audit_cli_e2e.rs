@@ -855,9 +855,7 @@ fn vulnerable_dotnet_project(dir: &std::path::Path) {
             "  \"version\": 1,\n",
             "  \"dependencies\": {\n",
             "    \"net8.0\": {\n",
-            "      \"dependencies\": {\n",
-            "        \"Newtonsoft.Json\": {\"type\": \"Direct\", \"version\": \"12.0.2\"}\n",
-            "      }\n",
+            "      \"Newtonsoft.Json\": {\"type\": \"Direct\", \"requested\": \"[12.0.2, )\", \"resolved\": \"12.0.2\", \"contentHash\": \"x=\"}\n",
             "    }\n",
             "  }\n",
             "}\n",
@@ -879,9 +877,7 @@ fn clean_dotnet_project(dir: &std::path::Path) {
             "  \"version\": 1,\n",
             "  \"dependencies\": {\n",
             "    \"net8.0\": {\n",
-            "      \"dependencies\": {\n",
-            "        \"Serilog\": {\"type\": \"Direct\", \"version\": \"3.1.1\"}\n",
-            "      }\n",
+            "      \"Serilog\": {\"type\": \"Direct\", \"requested\": \"[3.1.1, )\", \"resolved\": \"3.1.1\", \"contentHash\": \"x=\"}\n",
             "    }\n",
             "  }\n",
             "}\n",
@@ -1530,5 +1526,125 @@ fn audit_web_mock_registry_down_strict_exits_2() {
     assert!(
         text.contains("UNVERIFIED"),
         "the unverified state must be loud:\n{text}"
+    );
+}
+
+/// Run `mgc audit --format <fmt>` and return (exit_code, output).
+/// Chạy `mgc audit --format` với format bất kỳ.
+fn run_mgc_audit_format(mgc: &str, cwd: &std::path::Path, fmt: &str) -> (Option<i32>, String) {
+    let mut cmd = Command::new(mgc);
+    cmd.args(["audit", "--format", fmt]).current_dir(cwd);
+    let out = cmd.output().expect("failed to spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code(), text)
+}
+
+/// P0/F7: every output format must carry the SAME vulnerable fixture
+/// rows — table, json, sarif, cyclonedx (json already covered by the
+/// lane tests above; this pins the other three).
+/// Mọi format output phải mang cùng dòng vulnerable — table, sarif,
+/// cyclonedx.
+#[test]
+fn audit_vulnerable_fixture_reaches_sarif_format() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_dotnet_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit_format(&mgc, sandbox.path(), "sarif");
+    assert_eq!(
+        code,
+        Some(1),
+        "sarif run must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("GHSA-5crp") && output.contains("\"results\""),
+        "sarif must carry the finding as a result:\n{output}"
+    );
+}
+
+#[test]
+fn audit_vulnerable_fixture_reaches_cyclonedx_format() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_dotnet_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit_format(&mgc, sandbox.path(), "cyclonedx");
+    assert_eq!(
+        code,
+        Some(1),
+        "cyclonedx run must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("GHSA-5crp") && output.contains("magicore:finding_class"),
+        "cyclonedx must carry the finding + class property:\n{output}"
+    );
+}
+
+#[test]
+fn audit_vulnerable_fixture_reaches_table_format() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    vulnerable_dotnet_project(sandbox.path());
+
+    let (code, output) = run_mgc_audit_format(&mgc, sandbox.path(), "table");
+    assert_eq!(
+        code,
+        Some(1),
+        "table run must exit 1, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("Newtonsoft.Json") && output.contains("CVE:"),
+        "table must render the finding with its CVE label:\n{output}"
+    );
+}
+
+/// P0-4: a pom-only scan is direct-deps-only coverage — it must report
+/// Partial (never Available-clean), even when OSV returns zero findings
+/// for the pins. Uses fake coordinates (deterministic empty OSV answer).
+/// Scan pom-only luôn Partial dù OSV trả 0 finding.
+#[test]
+fn audit_lib_java_pom_only_is_partial_never_available() {
+    if !osv_reachable() {
+        return;
+    }
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"java-pom-partial\"\necosystem = \"lib\"\n\n[lib]\nlanguage = \"java\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("pom.xml"),
+        "<project><dependencies><dependency><groupId>com.example</groupId><artifactId>no-such-lib</artifactId><version>1.0</version></dependency></dependencies></project>\n",
+    )
+    .unwrap();
+
+    let (code, output) = run_mgc_audit_json(&mgc, sandbox.path(), None);
+    assert_eq!(
+        code,
+        Some(0),
+        "partial local run exits 0, got {code:?}:\n{output}"
+    );
+    assert!(
+        output.contains("\"scanner_status\": \"partial\""),
+        "pom-only scan must be partial, got:\n{output}"
+    );
+    assert!(
+        output.contains("direct dependencies only"),
+        "partial reasons must name the coverage limit:\n{output}"
     );
 }

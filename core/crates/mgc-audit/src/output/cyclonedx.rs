@@ -17,14 +17,27 @@ pub const CYCLONEDX_SPEC_VERSION: &str = "1.5";
 pub const CYCLONEDX_BOM_FORMAT: &str = "CycloneDX";
 
 /// Mapping table from package ecosystem tag to purl type prefix
-/// (RULE §12: one central table, not scattered literals).
+/// (RULE §12: one central table, not scattered literals). Covers every
+/// ecosystem tag the scanners actually stamp (P1: Maven/NuGet/Go/Pub
+/// findings used to fall through to `generic`, useless for downstream
+/// tooling).
 /// Bảng map tag ecosystem → tiền tố purl (RULE §12: một bảng tập trung,
-/// không rải literal).
+/// không rải literal). Phủ mọi tag scanner thật sự gắn.
 const PURL_TYPES: &[(&str, &str)] = &[
     ("rust", "cargo"),
     ("python", "pypi"),
     ("web/javascript", "npm"),
     ("kotlin", "maven"),
+    ("java", "maven"),
+    ("Maven", "maven"),
+    ("dotnet", "nuget"),
+    ("NuGet", "nuget"),
+    ("go", "golang"),
+    ("Go", "golang"),
+    ("Pub", "pub"),
+    ("flutter", "pub"),
+    ("SwiftURL", "swift"),
+    ("swift", "swift"),
     ("model-artifact", "generic"),
 ];
 
@@ -143,26 +156,43 @@ fn purl_type_for(ecosystem: Option<&str>) -> &'static str {
 }
 
 /// Component bom-ref: `purl:<type>/<name>@<version>` — stable within one
-/// report render, unique per affected package.
+/// report render, unique per affected package. Maven `group:artifact`
+/// names become `group/artifact` per the purl spec.
 /// Bom-ref component: `purl:<type>/<name>@<version>` — ổn định trong một
 /// lần render, duy nhất theo từng package dính.
 fn component_bom_ref(v: &Vulnerability) -> String {
     format!(
         "purl:{}/{}@{}",
         purl_type_for(v.ecosystem.as_deref()),
-        v.package.name().as_str(),
+        purl_name(v),
         v.package.version()
     )
 }
 
-/// Build a CycloneDX Vulnerable BOM from an audit report. Non-Available
-/// states yield a BOM with ZERO vulnerabilities PLUS an UNVERIFIED
-/// property on the tool — honest, never a fabricated empty-clean.
-/// Dựng Vulnerable BOM CycloneDX từ report. Trạng thái non-Available cho
-/// BOM 0 vulnerability kèm property UNVERIFIED trên tool — trung thực,
-/// không bịa sạch rỗng.
+/// Human/package name as it appears in components: Maven coordinates
+/// translate `:` to `/`; everything else passes through untouched.
+/// Tên package trong component: tọa độ Maven đổi `:` thành `/`.
+fn purl_name(v: &Vulnerability) -> String {
+    let name = v.package.name().as_str().to_string();
+    match purl_type_for(v.ecosystem.as_deref()) {
+        "maven" => name.replacen(':', "/", 1),
+        _ => name,
+    }
+}
+
+/// Build a CycloneDX Vulnerable BOM from an audit report. Scan results
+/// are emitted for Available AND Partial reports (P0/F3: incomplete
+/// coverage must not delete rows — the Go OSV fallback and java/dotnet
+/// skipped lanes report Partial WITH real findings). ToolMissing,
+/// UnsupportedEcosystem, and Failed never ran a scan, so their rows (if
+/// any were ever attached) are not evidence and stay suppressed. The
+/// UNVERIFIED tool property still marks every non-Available render.
+/// Dựng BOM từ report. Kết quả scan được emit cho Available VÀ Partial;
+/// các trạng thái chưa từng chạy scan thì không emit.
 pub fn to_cyclonedx(report: &AuditReport) -> CycloneDxBom {
     let verified = matches!(report.scanner_status, ScannerStatus::Available);
+    let ran_scan = verified || matches!(report.scanner_status, ScannerStatus::Partial { .. });
+    let emit = ran_scan && !report.vulnerabilities.is_empty();
 
     // Deterministic serial from the report CONTENTS — the same report
     // renders the same serial (reproducible output for CI diffing). It
@@ -182,12 +212,13 @@ pub fn to_cyclonedx(report: &AuditReport) -> CycloneDxBom {
     let mut components: Vec<CycloneDxComponent> = Vec::new();
     let mut vulnerabilities: Vec<CycloneDxVulnerability> = Vec::new();
 
-    if verified {
+    if emit {
         for v in &report.vulnerabilities {
             let bom_ref = component_bom_ref(v);
             let purl_type = purl_type_for(v.ecosystem.as_deref());
             let name = v.package.name().as_str();
             let version = v.package.version().to_string();
+            let purl_name = purl_name(v);
 
             // One component per affected package — dedupe on bom-ref.
             // Một component cho mỗi package dính — khử trùng theo bom-ref.
@@ -197,7 +228,7 @@ pub fn to_cyclonedx(report: &AuditReport) -> CycloneDxBom {
                     bom_ref: bom_ref.clone(),
                     name: name.to_string(),
                     version: version.clone(),
-                    purl: format!("pkg:{purl_type}/{name}@{version}"),
+                    purl: format!("pkg:{purl_type}/{purl_name}@{version}"),
                 });
             }
 
@@ -222,6 +253,10 @@ pub fn to_cyclonedx(report: &AuditReport) -> CycloneDxBom {
                     CycloneDxProperty {
                         name: "magicore:evidence_at".to_string(),
                         value: v.evidence_at.clone().unwrap_or_default(),
+                    },
+                    CycloneDxProperty {
+                        name: "magicore:finding_class".to_string(),
+                        value: v.finding_class.as_str().to_string(),
                     },
                 ],
             });

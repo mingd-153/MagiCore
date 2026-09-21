@@ -4,7 +4,8 @@
 use crate::language::{LibLanguage, detect_language, manifest_is_lib};
 use crate::manifest::{
     parse_cargo_manifest, parse_csproj_manifest, parse_go_mod_manifest, parse_maven_manifest,
-    parse_pyproject_manifest, write_cargo_manifest, write_pyproject_manifest,
+    parse_pyproject_manifest, write_cargo_manifest, write_go_mod_manifest,
+    write_pyproject_manifest,
 };
 use crate::native::engine::resolve_with_protocol;
 use crate::tooling::{
@@ -228,16 +229,21 @@ impl PackageAdapter for LibAdapter {
         Self::CAPABILITIES
     }
 
-    fn manifest_owned(&self) -> bool {
-        // go.mod is owned SOLELY by the go toolchain (mgc never rewrites
-        // it — see write_manifest): booking an add in memory would fake a
-        // mutation the tool never sees. All other lib manifests are
-        // mgc-written.
-        // (go.mod do toolchain go sở hữu DUY NHẤT — add phải chạy thật.)
-        if self.web.is_some() {
-            return true;
+    /// P0/F6: forward to the embedded web engine (TS delegate resolves
+    /// through it — its gate must arm from the same project).
+    /// (Chuyển cho web engine nhúng.)
+    fn arm_age_gate_for(&self, project_root: &std::path::Path) -> MgResult<()> {
+        if let Some(web) = &self.web {
+            web.arm_age_gate_for(project_root)?;
         }
-        !matches!(self.language, LibLanguage::Go)
+        Ok(())
+    }
+
+    fn manifest_owned(&self) -> bool {
+        // Every lib manifest is mgc-written — including go.mod (native add
+        // owns the require set; replace/exclude directives are preserved).
+        // (Mọi manifest lib do mgc viết — gồm go.mod.)
+        true
     }
 
     async fn prepare_add(
@@ -247,30 +253,37 @@ impl PackageAdapter for LibAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PreparedAdd> {
-        // Resolve-first (C0 FIX2): the pyproject/Cargo writers cannot
-        // persist star ranges (every saved dep needs a bound), so booking
-        // an unpinned dep in memory faked a mutation the disk never saw.
-        // Resolve the real version natively FIRST; a resolve failure
-        // errors honestly instead of fake-adding.
-        // (Resolve-trước: writer không lưu được range `*`.)
-        let unpinned = range.as_ref().map(|r| r.is_star()).unwrap_or(true);
+        // Resolve-first (C0 FIX2 + native-add): the pyproject/Cargo writers
+        // cannot persist star ranges (every saved dep needs a bound), so
+        // booking an unpinned dep in memory faked a mutation the disk never
+        // saw. Resolve the real version natively FIRST for EVERY range —
+        // star or explicit — so no path reaches the toolchain-spawning
+        // `add()` below on native-owned lanes; a resolve failure errors
+        // honestly instead of fake-adding or silently spawning.
+        // (Resolve-trước mọi range: không path nào chạm toolchain.)
         enum ResolveFirst {
             Python,
             Rust,
+            Go,
         }
-        let resolve_first = if self.web.is_none() && unpinned {
+        let resolve_first = if self.web.is_none() {
             match self.language {
                 LibLanguage::Python => Some(ResolveFirst::Python),
                 LibLanguage::Rust => Some(ResolveFirst::Rust),
+                LibLanguage::Go => Some(ResolveFirst::Go),
                 _ => None,
             }
         } else {
             None
         };
         if let Some(kind) = resolve_first {
+            // Scratch carries the REQUESTED range (star when the user gave
+            // none) — the engine selects within it; the saved range stays
+            // pinned only when the request was unpinned.
+            let wanted: VersionRange = range.cloned().unwrap_or_else(VersionRange::star);
             let mut scratch = Manifest::new("scratch", Ecosystem::Lib);
             scratch.add_dep(
-                DependencySpec::new(name.clone(), VersionRange::star()),
+                DependencySpec::new(name.clone(), wanted.clone()),
                 opts.dev,
                 opts.optional,
                 opts.peer,
@@ -290,6 +303,11 @@ impl PackageAdapter for LibAdapter {
                     EcosystemTag::Rust,
                     "crates://crates.io",
                 ),
+                ResolveFirst::Go => (
+                    Box::new(GoModProtocol::from_env()),
+                    EcosystemTag::Go,
+                    "go://proxy.golang.org",
+                ),
             };
             let resolution =
                 resolve_with_protocol(protocol.as_ref(), tag, registry, &scratch).await?;
@@ -300,7 +318,7 @@ impl PackageAdapter for LibAdapter {
                 .find(|p| p.id.name_str() == name.as_str())
                 .ok_or_else(|| {
                     mgc_types::MgError::Other(format!(
-                        "native resolve returned no entry for '{}' — refusing to book an unpinned dep",
+                        "native resolve returned no entry for '{}' — refusing to book an unresolved dep",
                         name.as_str()
                     ))
                 })?;
@@ -308,12 +326,21 @@ impl PackageAdapter for LibAdapter {
             // version and saves `name>=version`, which round-trips).
             // Rust: bare version (the Cargo writer saves it verbatim —
             // `serde_json = "1.0.140"`, caret-implied like `cargo add`).
-            // (Python dạng `==`, Rust version trần.)
+            // Go: bare version (the go.mod writer v-prefixes it —
+            // `require module v1.6.0`, like `go get`).
+            // (Python dạng `==`, Rust/Go version trần.)
+            // Star requests save the resolved pin (writers cannot persist
+            // `*`); explicit requests keep the user's range — the resolved
+            // version still flows into the id + pending lock below.
+            let unpinned = wanted.is_star();
             let pinned = match kind {
-                ResolveFirst::Python => {
+                ResolveFirst::Python if unpinned => {
                     VersionRange::parse(&format!("=={}", resolved.id.version()))?
                 }
-                ResolveFirst::Rust => VersionRange::parse(&resolved.id.version().to_string())?,
+                ResolveFirst::Rust | ResolveFirst::Go if unpinned => {
+                    VersionRange::parse(&resolved.id.version().to_string())?
+                }
+                _ => wanted,
             };
             *self.pending_lock.lock().expect("lib pending lock poisoned") =
                 resolution.lock_packages;
@@ -477,9 +504,10 @@ impl LockfileProvider for LibAdapter {
         match self.language {
             LibLanguage::Rust => write_cargo_manifest(project_root, manifest),
             LibLanguage::Python => write_pyproject_manifest(project_root, manifest),
-            // Never rewrite go.mod — the go toolchain is the sole owner.
-            // Không bao giờ viết lại go.mod — go toolchain là chủ duy nhất.
-            LibLanguage::Go => Ok(()),
+            // mgc owns the go.mod require set (native add) — every other
+            // directive is preserved verbatim by the writer.
+            // (mgc sở hữu require go.mod — directive khác giữ nguyên.)
+            LibLanguage::Go => write_go_mod_manifest(project_root, manifest),
             // Gradle/NuGet own their lockfiles — never rewritten by mgc.
             // Gradle/NuGet sở hữu lockfile của chúng — mgc không viết lại.
             LibLanguage::Java | LibLanguage::DotNet => Ok(()),

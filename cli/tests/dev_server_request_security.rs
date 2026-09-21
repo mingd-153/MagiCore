@@ -33,10 +33,12 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// Await server readiness on the dynamic port (bounded poll).
-/// (Chờ server sẵn sàng trên port động — poll có chặn trên.)
+/// Await server readiness on the dynamic port (bounded poll: 10s —
+///
+/// full-workspace parallel runs can starve a 5s budget and flake).
+/// (Chờ server sẵn sàng — poll 10s vì chạy song song full suite đói CPU.)
 async fn wait_ready(port: u16) {
-    for _ in 0..100 {
+    for _ in 0..200 {
         if reqwest::get(format!("http://127.0.0.1:{port}/"))
             .await
             .is_ok()

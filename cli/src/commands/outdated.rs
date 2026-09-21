@@ -25,6 +25,10 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
     {
         let ctx = ProjectContext::load_with_core(core)?;
         let adapter = ctx.adapter();
+        // P0/F6: arm the age gate from THIS operation's project (broken
+        // config fails here, not silently unfiltered).
+        adapter.arm_age_gate_for(ctx.root())?;
+        let policy = mgc_web_adapter::WebAdapter::load_age_policy_for(ctx.root())?;
 
         let manifest = adapter.parse_manifest(ctx.root()).await?;
         let all_deps: Vec<_> = manifest.all_dependencies().collect();
@@ -46,6 +50,7 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
         }
 
         let registry = mgc_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
+        registry.set_age_gate_armed(policy.is_some_and(|p| p.cutoff_hours > 0));
 
         let mut outdated_pkgs: Vec<OutdatedPkg> = Vec::new();
         let mut checked = 0usize;
@@ -55,10 +60,32 @@ async fn outdated_web(core: Option<&str>, json: bool) -> Result<()> {
             match registry.fetch_metadata(dep.name.as_str()).await {
                 Ok(meta) => {
                     checked += 1;
+                    // Resolve the reported "latest" through the age gate:
+                    // suggesting a quarantined newest as the update target
+                    // would route users around the policy. When the
+                    // registry newest is excluded, fall back to the newest
+                    // ELIGIBLE version (or skip when none qualifies).
+                    // (Latest báo cáo cũng qua cổng tuổi.)
                     let latest = meta.dist_tags.get("latest");
+                    let latest_ver: Option<String> = match latest {
+                        Some(candidate)
+                            if mgc_web_adapter::provider::check_pinned_version(
+                                &dep.name, &meta, candidate, policy,
+                            )
+                            .is_ok() =>
+                        {
+                            Some(candidate.clone())
+                        }
+                        _ => match mgc_web_adapter::provider::eligible_versions(
+                            &dep.name, &meta, policy,
+                        ) {
+                            Ok(eligible) => eligible.into_iter().max().map(|v| v.to_string()),
+                            Err(_) => None,
+                        },
+                    };
                     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-                    if let Some(latest_ver) = latest
-                        && let Ok(lv) = mgc_types::Version::parse(latest_ver)
+                    if let Some(latest_ver) = latest_ver
+                        && let Ok(lv) = mgc_types::Version::parse(&latest_ver)
                         && !dep.range.matches(&lv)
                     {
                         outdated_pkgs.push(OutdatedPkg {

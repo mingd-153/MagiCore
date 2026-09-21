@@ -555,7 +555,20 @@ export default defineConfig({ plugins: [sveltekit()] });
             "browser": "src/main.ts",
             "polyfills": ["zone.js"],
             "tsConfig": "tsconfig.app.json",
-            "styles": ["src/styles.css"]
+            "styles": ["src/styles.css"],
+            "ssr": false
+          },
+          "configurations": {
+            "production": {
+              "optimization": true,
+              "outputHashing": "all",
+              "sourceMap": false,
+              "namedChunks": false,
+              "aot": true,
+              "extractLicenses": true,
+              "vendorChunk": false,
+              "buildOptimizer": true
+            }
           }
         },
         "serve": {
@@ -585,8 +598,12 @@ export default defineConfig({ plugins: [sveltekit()] });
                 path: "tsconfig.app.json",
                 content: r#"{
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": true, "types": [] },
-  "include": ["src/**/*.ts"]
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [],
+    "isolatedModules": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }"#,
             },
             EmbeddedFile {
@@ -859,18 +876,19 @@ const project = "{{PROJECT_NAME}}";
   "type": "module",
   "scripts": {
     "dev": "remix dev --port 4315",
-    "build": "remix build",
+    "build": "remix vite:build",
     "start": "remix-serve ./build/server/index.js"
   },
   "dependencies": {
-    "@remix-run/node": "^2.15.0",
-    "@remix-run/react": "^2.15.0",
-    "@remix-run/serve": "^2.15.0",
+    "@remix-run/node": "^2.17.0",
+    "@remix-run/react": "^2.17.0",
+    "@remix-run/serve": "^2.17.0",
+    "isbot": "^4.4.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
   "devDependencies": {
-    "@remix-run/dev": "^2.15.0",
+    "@remix-run/dev": "^2.17.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "typescript": "^5.7.2",

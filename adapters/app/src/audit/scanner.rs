@@ -11,8 +11,8 @@
 //! tệ hơn unavailable trung thực.
 
 use mgc_types::adapter::{
-    AuditReport, DependencyHealthReport, OutdatedDependency, ScannerStatus, Vulnerability,
-    VulnerabilitySeverity,
+    AuditReport, DependencyHealthReport, FindingClass, OutdatedDependency, ScannerStatus,
+    Vulnerability, VulnerabilitySeverity,
 };
 use mgc_types::{MgError, MgResult, PackageId, PackageName, Version};
 use serde::Deserialize;
@@ -351,6 +351,7 @@ pub(crate) fn parse_owasp_dependency_check_json(raw: &str) -> MgResult<AuditRepo
                     scanner: None,
                     ecosystem: None,
                     evidence_at: None,
+                    finding_class: FindingClass::Vulnerability,
                 }
                 .with_evidence("owasp-dependency-check", "kotlin/jvm"),
             );
@@ -497,7 +498,11 @@ pub async fn audit_multi(project_root: &Path) -> MgResult<AuditReport> {
     // with Pods merges iOS findings into the same aggregate.
     // Lane iOS: SPM + CocoaPods — app React Native có Pods gộp finding
     // iOS vào cùng aggregate.
-    if find_swift_resolved(project_root).is_some() {
+    // Gate parity (R2'): the gate uses the scanner's own locator — every
+    // Package.resolved the scanner would find enters the plan.
+    // Parity gate: gate dùng đúng locator của scanner — mọi
+    // Package.resolved scanner tìm được đều vào plan.
+    if mgc_audit::scanners::swift_resolved_path(project_root).is_some() {
         let root = project_root.to_path_buf();
         plan.add_step(mgc_audit::ScanStep {
             ecosystem: "swift",
@@ -522,22 +527,11 @@ pub async fn audit_multi(project_root: &Path) -> MgResult<AuditReport> {
 
     if plan.is_empty() {
         return Ok(AuditReport::unsupported_ecosystem(
-            "app/multi (no recognized app manifest found: pubspec.yaml, build.gradle)",
+            "app/multi (no recognized app manifest found: pubspec.yaml, build.gradle(.kts), Package.resolved, Podfile.lock, mgc/bun/deno.lock)",
         ));
     }
 
     plan.execute().await
-}
-
-fn find_swift_resolved(project_root: &Path) -> Option<std::path::PathBuf> {
-    let candidates = [
-        "Package.resolved".to_string(),
-        "ios/Package.resolved".to_string(),
-    ];
-    candidates
-        .iter()
-        .map(|c| project_root.join(c))
-        .find(|p| p.is_file())
 }
 
 /// JS dependencies of an RN/multi app via the npm Bulk Advisory flow

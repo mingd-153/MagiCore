@@ -223,25 +223,24 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // Lib TypeScript rides the embedded web engine end to end.
         ("lib", Some(eco::TS), _) => DepOwner::Native,
         // Lib protocol languages: the native pipeline owns install and
-        // every stage EXCEPT the mutating verbs below, which spawn the
+        // every stage — AND the Add verb (resolve-first via the native
+        // registry engine + mgc-side manifest edit: pyproject/Cargo/go.mod
+        // writers; zero toolchain spawn). Remove/Update still spawn the
         // provider toolchain for real (verified per arm against
         // adapters/lib/src/adapter.rs).
-        ("lib", Some(eco::RUST), DepOp::Add | DepOp::Remove | DepOp::Update) => {
+        // (Add native cho rust/python/go — resolve engine + writer mgc-side.)
+        ("lib", Some(eco::RUST), DepOp::Remove | DepOp::Update) => {
             DepOwner::Delegated { tools: &["cargo"] }
         }
-        // Python edits spawn PIP for real (adapter hardcodes pip) — `uv`
-        // is NOT in the set: a uv opt-in running pip would break the
-        // flag==process contract.
-        ("lib", Some(eco::PYTHON), DepOp::Add | DepOp::Remove | DepOp::Update) => {
-            DepOwner::Delegated {
-                tools: &["pip", "pip3"],
-            }
-        }
-        // Go: `go get` / `go get -u` spawn for real; removal has NO
-        // runner (honest manual `go mod tidy` step) — Unsupported.
-        ("lib", Some(eco::GO), DepOp::Add | DepOp::Update) => {
-            DepOwner::Delegated { tools: &["go"] }
-        }
+        // Python edits are mgc-side (pyproject writer) — only Remove/Update
+        // still spawn pip for real.
+        ("lib", Some(eco::PYTHON), DepOp::Remove | DepOp::Update) => DepOwner::Delegated {
+            tools: &["pip", "pip3"],
+        },
+        // Go: mgc owns go.mod requires (native add); Update still spawns
+        // `go get -u` for real; removal has NO runner (honest manual
+        // `go mod tidy` step) — Unsupported.
+        ("lib", Some(eco::GO), DepOp::Update) => DepOwner::Delegated { tools: &["go"] },
         ("lib", Some(eco::GO), DepOp::Remove) => DepOwner::Unsupported,
         // Java/.NET: add/remove/update have NO runner (honest manual
         // gradle/dotnet steps) — Unsupported until a real runner exists.

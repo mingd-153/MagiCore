@@ -53,11 +53,24 @@ pub fn aggregate_reports(reports: Vec<(String, AuditReport)>) -> AuditReport {
                 scanned += 1;
             }
             ScannerStatus::Partial {
+                scanned: scanned_n,
                 skipped: skipped_n,
                 reasons: r,
-                ..
             } => {
                 all_unsupported = false;
+                // P0/F3: a Partial step keeps its REAL findings and its
+                // scanned packages — incomplete coverage must never delete
+                // rows (the Go OSV fallback and java/dotnet skipped lanes
+                // report Partial WITH vulnerabilities by design).
+                // Step Partial giữ findings thật + package đã scan —
+                // phủ chưa đủ không được xóa dòng.
+                packages_audited += report.packages_audited;
+                vulnerabilities.extend(report.vulnerabilities.iter().cloned());
+                // P1: Partial steps contribute their scanned count too —
+                // the aggregate must never claim scanned: 0 while rows
+                // prove packages were scanned.
+                // Step Partial cũng cộng số đã scan của nó.
+                scanned += scanned_n;
                 skipped += skipped_n;
                 reasons.extend(r.iter().cloned());
             }

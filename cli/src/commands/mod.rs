@@ -42,6 +42,7 @@ pub mod run;
 pub mod sbom;
 pub mod search;
 pub mod self_update;
+pub mod sign_release;
 pub mod start;
 pub mod start_config;
 pub mod store;

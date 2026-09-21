@@ -1263,3 +1263,65 @@ pub fn tool_manifest_mismatch(package: &str, adapter: &str, detail: &str) -> Err
         "'{package}' was not {detail} by {adapter} after a successful toolchain run — the manifest was re-read; retry or manage it with the toolchain directly"
     )
 }
+
+/// self-update: explicit version failed validation (anchored semver).
+/// (Version self-update không hợp lệ.)
+pub fn self_update_invalid_version(version: &str) -> Error {
+    anyhow!("invalid version: {version} (expected like 1.1.0-rc.9, with or without a leading 'v')")
+}
+
+/// self-update: unknown release variant.
+/// (Variant release không biết.)
+pub fn self_update_unsupported_variant(variant: &str) -> Error {
+    anyhow!("unsupported variant: {variant} (magicore|magicore-web)")
+}
+
+/// self-update: host platform outside the release matrix.
+/// (Nền tảng máy không trong ma trận release.)
+pub fn self_update_unsupported_host(detail: &str) -> Error {
+    anyhow!("unsupported {detail} for self-update (linux/macos/windows on x64/arm64 only)")
+}
+
+/// self-update: checksum mismatch — abort before extract/swap.
+/// (Checksum lệch — dừng trước mọi bước sau.)
+pub fn self_update_checksum_mismatch(archive: &str, expected: &str, actual: &str) -> Error {
+    anyhow!("checksum mismatch for {archive}: expected {expected}, got {actual}")
+}
+
+/// self-update: archive contains no mgc binary.
+/// (Archive không chứa binary mgc.)
+pub fn self_update_no_binary(archive: &str) -> Error {
+    anyhow!("archive {archive} contains no mgc binary")
+}
+
+/// self-update: download failed or over quota.
+/// (Tải thất bại hoặc quá quota.)
+pub fn self_update_download_failed(url: &str, detail: &str) -> Error {
+    anyhow!("download {url} failed: {detail}")
+}
+
+/// self-update: new binary failed its launch probe or reported the
+/// wrong version — previous version restored.
+/// (Binary mới fail probe — đã rollback.)
+pub fn self_update_probe_failed(detail: &str) -> Error {
+    anyhow!("new binary failed verification ({detail}) — previous version restored")
+}
+
+/// self-update: release manifest is missing, malformed, or does not
+/// bind this exact artifact.
+/// (Manifest release thiếu/sai/không khớp artifact.)
+pub fn self_update_manifest_invalid(detail: &str) -> Error {
+    anyhow!("release manifest rejected: {detail}")
+}
+
+/// self-update: signature verification failed against configured trust roots.
+/// (Chữ ký manifest không verify được.)
+pub fn self_update_signature_invalid(detail: &str) -> Error {
+    anyhow!("release manifest signature invalid: {detail}")
+}
+
+/// self-update: unsigned fallback refused — fail-closed provenance.
+/// (Từ chối đường unsigned — provenance fail-closed.)
+pub fn self_update_unsigned_refused(detail: &str) -> Error {
+    anyhow!("unsigned self-update refused: {detail}")
+}

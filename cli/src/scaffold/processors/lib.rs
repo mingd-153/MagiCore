@@ -58,6 +58,55 @@ impl LibProcessor {
                         "\"\"\"Scaffold smoke test: the package imports.\"\"\"\n\nimport importlib\n\n\ndef test_package_imports() -> None:\n    module = importlib.import_module(\"{package}\")\n    assert module.__all__ == []\n"
                     ),
                 )?;
+                // src-layout needs src/ on sys.path — a local conftest.py
+                // does it explicitly (no `pip install -e`, no PYTHONPATH
+                // hacks), so `mgc test` passes on the native lane too.
+                // (conftest.py đưa src/ vào sys.path cho lane native.)
+                write_file(
+                    &target.join("tests").join("conftest.py"),
+                    "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).resolve().parent.parent / \"src\"))\n",
+                )?;
+            }
+            "go" => {
+                // Native lane needs a module line (detect_language +
+                // go.mod writer); ship a compiling package with its own
+                // test so `go test` proves the scaffold (P0 convention).
+                write_file(
+                    &target.join("go.mod"),
+                    &format!("module {}\n\ngo 1.21\n", slugify(name)),
+                )?;
+                let package = slugify(name).replace('-', "_");
+                write_file(
+                    &target.join("hello.go"),
+                    &format!(
+                        "package {package}\n\n// Hello proves the scaffold compiles.\nfunc Hello() string {{\n\treturn \"hello from MagiCore\"\n}}\n",
+                    ),
+                )?;
+                write_file(
+                    &target.join("hello_test.go"),
+                    &format!(
+                        "package {package}\n\nimport \"testing\"\n\nfunc TestHello(t *testing.T) {{\n\tif Hello() != \"hello from MagiCore\" {{\n\t\tt.Fatal(\"scaffold greeting mismatch\")\n\t}}\n}}\n",
+                    ),
+                )?;
+            }
+            "dotnet" => {
+                // SDK-style csproj so NuGet audit/add lanes detect the
+                // project (dotnet SDK itself stays external).
+                write_file(
+                    &target.join(format!("{}.csproj", slugify(name))),
+                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n\n</Project>\n",
+                )?;
+            }
+            "java" => {
+                // Minimal pom.xml so the Maven audit/resolve lanes detect
+                // the project (Maven plugins stay external).
+                write_file(
+                    &target.join("pom.xml"),
+                    &format!(
+                        "<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.magicore</groupId>\n  <artifactId>{}</artifactId>\n  <version>0.1.0</version>\n  <properties>\n    <maven.compiler.source>17</maven.compiler.source>\n    <maven.compiler.target>17</maven.compiler.target>\n  </properties>\n</project>\n",
+                        slugify(name)
+                    ),
+                )?;
             }
             _ => {
                 write_file(
@@ -107,5 +156,61 @@ mod tests {
         assert!(config.contains("\"outDir\": \"dist\""));
         assert!(config.contains("\"declaration\": true"));
         assert!(config.contains("\"strict\": true"));
+    }
+}
+
+#[cfg(test)]
+mod fidelity_tests {
+    use super::LibProcessor;
+
+    /// `create-lib go` must scaffold Go files (not the rust fallback) —
+    /// go.mod with a module line so detect_language + native add work.
+    #[test]
+    fn go_scaffold_emits_go_mod_not_cargo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        LibProcessor::files(temp.path(), "demo-lib", "go").expect("go scaffold");
+        assert!(
+            !temp.path().join("Cargo.toml").exists(),
+            "go scaffold must not contain Cargo.toml"
+        );
+        let gomod = std::fs::read_to_string(temp.path().join("go.mod")).expect("go.mod exists");
+        assert!(gomod.contains("module demo-lib"), "module line: {gomod}");
+    }
+
+    /// `create-lib dotnet` must scaffold a .csproj (not the rust fallback)
+    /// so NuGet audit/add lanes detect the project.
+    #[test]
+    fn dotnet_scaffold_emits_csproj_not_cargo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        LibProcessor::files(temp.path(), "demo-lib", "dotnet").expect("dotnet scaffold");
+        assert!(
+            !temp.path().join("Cargo.toml").exists(),
+            "dotnet scaffold must not contain Cargo.toml"
+        );
+        assert!(
+            temp.path().join("demo-lib.csproj").exists(),
+            "csproj must exist"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fidelity_java_test {
+    use super::LibProcessor;
+
+    /// `create-lib java` must scaffold a pom.xml (not the rust fallback).
+    #[test]
+    fn java_scaffold_emits_pom_not_cargo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        LibProcessor::files(temp.path(), "demo-lib", "java").expect("java scaffold");
+        assert!(
+            !temp.path().join("Cargo.toml").exists(),
+            "java scaffold must not contain Cargo.toml"
+        );
+        let pom = std::fs::read_to_string(temp.path().join("pom.xml")).expect("pom exists");
+        assert!(
+            pom.contains("<artifactId>demo-lib</artifactId>"),
+            "coords: {pom}"
+        );
     }
 }

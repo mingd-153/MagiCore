@@ -17,60 +17,36 @@
 //! cargo-audit THẬT; project chỉ Unity thì giữ UnsupportedEcosystem
 //! (không bao giờ bịa sạch).
 
-use crate::contract::ScanStep;
 use crate::engine::AuditPlan;
 use mgc_types::MgResult;
 use mgc_types::adapter::AuditReport;
 use std::path::Path;
 
 /// Build an AuditPlan covering every SHARED-SCANNER-recognized manifest
-/// in the project: Cargo.toml (cargo-audit), requirements/pylock
-/// (pip-audit), go.mod (govulncheck). Adapters for the extended cores
-/// call this instead of hand-rolling detection — one dispatch table,
-/// every core gets the same lanes.
-/// Dựng AuditPlan phủ mọi manifest được scanner chung nhận diện:
-/// Cargo.toml (cargo-audit), requirements/pylock (pip-audit), go.mod
-/// (govulncheck). Adapter của core mở rộng gọi hàm này thay vì tự dò —
-/// một bảng dispatch, mọi core cùng lane.
+/// in the project — one dispatch table, every core gets the same lanes
+/// (R1: built on the shared constructors in `crate::detect`, never
+/// hand-rolled file checks).
+/// Dựng AuditPlan phủ mọi manifest được scanner chung nhận diện — một
+/// bảng dispatch trên constructor chung, không tự kiểm file.
 pub fn plan_for_shared_manifests(project_root: &Path) -> MgResult<AuditPlan<'static>> {
     let mut plan = AuditPlan::new();
 
-    if project_root.join("Cargo.toml").is_file() {
-        let root = project_root.to_path_buf();
-        plan.add_step(ScanStep {
-            ecosystem: "rust",
-            scanner: "cargo-audit",
-            run: Box::new(move || {
-                let root = root.clone();
-                Box::pin(async move { crate::scanners::audit_rust(&root).await })
-            }),
-        });
-    }
-    if crate::scanners::find_requirements_file(project_root).is_some()
-        || crate::scanners::find_pylock_file(project_root).is_some()
-        || project_root.join("uv.lock").is_file()
-        || project_root.join("pyproject.toml").is_file()
+    for step in [
+        crate::detect::rust_step(project_root),
+        crate::detect::python_step(project_root),
+        crate::detect::go_step(project_root),
+        // P0/F4: JVM + .NET join the shared plan — a Bevy game with a
+        // Gradle sidecar and a cloud repo with a .sln get real OSV scans,
+        // not silent skips.
+        // JVM + .NET vào plan chung — sidecar Gradle / .sln được scan
+        // OSV thật.
+        crate::detect::java_step(project_root),
+        crate::detect::dotnet_step(project_root),
+    ]
+    .into_iter()
+    .flatten()
     {
-        let root = project_root.to_path_buf();
-        plan.add_step(ScanStep {
-            ecosystem: "python",
-            scanner: "pip-audit",
-            run: Box::new(move || {
-                let root = root.clone();
-                Box::pin(async move { crate::scanners::audit_python(&root).await })
-            }),
-        });
-    }
-    if project_root.join("go.mod").is_file() {
-        let root = project_root.to_path_buf();
-        plan.add_step(ScanStep {
-            ecosystem: "go",
-            scanner: "govulncheck",
-            run: Box::new(move || {
-                let root = root.clone();
-                Box::pin(async move { crate::scanners::audit_go(&root).await })
-            }),
-        });
+        plan.add_step(step);
     }
 
     Ok(plan)

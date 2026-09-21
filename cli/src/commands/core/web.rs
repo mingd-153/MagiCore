@@ -148,6 +148,8 @@ fn web_adapter() -> Arc<dyn PackageAdapter> {
     let adapter =
         crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())
             .expect("web adapter always available in web core build");
+    // NOTE: mgc.toml [security] min-release-age is armed inside
+    // WebAdapter::build (single point for every lane) — nothing to do here.
     web_command_profile_mark("web_adapter", started_at);
     adapter
 }

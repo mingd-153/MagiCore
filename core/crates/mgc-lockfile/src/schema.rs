@@ -430,6 +430,14 @@ impl Lockfile {
         self.packages.iter().find(|p| p.name == name)
     }
 
+    /// Every same-named package (multi-version locks are legitimate —
+    /// a peer edge may resolve another version; frozen checks must
+    /// any-match, never trust first-match order).
+    /// (Mọi package cùng tên — lock đa-version hợp lệ.)
+    pub fn get_packages(&self, name: &str) -> impl Iterator<Item = &Package> {
+        self.packages.iter().filter(move |p| p.name == name)
+    }
+
     /// Check if lockfile is signed — Kiểm tra lockfile đã ký chưa
     pub fn is_signed(&self) -> bool {
         self.metadata.signer.is_some()

@@ -82,16 +82,17 @@ fn store_db_for(project_root: &Path) -> Result<PathBuf> {
 /// → <store>/locks/), NOT under the project cache — the lock must be
 /// shared by every process touching the same store DB, and the doctor's
 /// project_root keys (lease.project_root) are store-layout roots.
-/// Mirrors ProjectInstallLock::locks_root() so `acquire_at` probes the
-/// SAME lock file the install actually takes.
-/// (Thư mục locks cho GC của doctor (P2-1): install lock nằm dưới root
-/// store USER mặc định (Database::project_install_lock → <store>/locks/)
-/// KHÔNG phải cache project — lock phải dùng chung bởi mọi process chạm
-/// cùng store DB, và project_root của doctor (lease.project_root) là
-/// root layout store. Phản chiếu ProjectInstallLock::locks_root() để
-/// acquire_at thăm đúng file lock mà install thật sự lấy.)
-fn locks_dir_for(_project_root: &Path) -> std::path::PathBuf {
-    mgc_store::default_store_root().join("locks")
+/// Mirrors the install lock location: per-PROJECT locks under the web
+/// cache layout (NOT the user-global store), so `acquire_at` probes the
+/// SAME lock file the install actually takes — on every machine,
+/// including locked-HOME environments.
+/// (Thư mục locks cho GC của doctor: theo project, khớp install thật.)
+fn locks_dir_for(project_root: &Path) -> std::path::PathBuf {
+    project_root
+        .join(".magicore")
+        .join("cache")
+        .join("web")
+        .join("locks")
 }
 
 fn vstore_root_for(project_root: &Path) -> PathBuf {

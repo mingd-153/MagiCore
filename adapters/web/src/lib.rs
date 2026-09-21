@@ -56,6 +56,10 @@ pub mod update;
 mod tests;
 
 #[cfg(test)]
+#[path = "test/script_policy_tests.rs"]
+mod script_policy_tests;
+
+#[cfg(test)]
 #[path = "test/audit_lane_test.rs"]
 mod audit_lane_test;
 
@@ -165,6 +169,11 @@ impl WebAdapter {
         fallbacks: Vec<(String, Option<String>)>,
         shared_cache: Option<SharedWebCache>,
     ) -> Self {
+        // NOTE (P0/F6): the age gate is armed PER OPERATION from that
+        // operation's project (see `arm_age_gate_for`) — never once per
+        // process from the cwd. A fresh adapter starts unarmed (no
+        // filtering = historical behavior) until its first operation.
+        // (Cổng tuổi nạp theo từng operation, không phải một lần cwd.)
         let provider = Arc::new(NpmDependencyProvider::new_with_chain(
             &registry_url,
             token,
@@ -196,6 +205,50 @@ impl WebAdapter {
     pub fn with_store(mut self, store: ContentStore) -> Self {
         self.store = Some(store);
         self
+    }
+
+    /// Load mgc.toml `[security]` age policy for ONE project (P0/F6).
+    /// Missing file/table/fields = Ok(None) (no filtering, historical
+    /// behavior) — but a PRESENT, broken file or wrongly-typed field is
+    /// a hard Err (fail-closed: a swallowed `.ok()` here once let a
+    /// believed-active deny vanish). Tolerates minimal mgc.toml files
+    /// (no name/ecosystem) by parsing the `[security]` table only.
+    /// (Nạp policy tuổi cho một project — file hỏng thì lỗi cứng.)
+    pub fn load_age_policy_for(
+        project_root: &std::path::Path,
+    ) -> mgc_types::MgResult<Option<crate::provider::AgePolicy>> {
+        use mgc_types::MgError;
+        let path = project_root.join("mgc.toml");
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| MgError::Other(format!("cannot read {}: {e}", path.display())))?;
+        let value: toml::Value = text
+            .parse()
+            .map_err(|e| MgError::Other(format!("invalid TOML in {}: {e}", path.display())))?;
+        let Some(table) = value.get("security") else {
+            return Ok(None);
+        };
+        let security: mgc_config::project::SecurityConfig =
+            serde_json::from_value(serde_json::to_value(table).map_err(|e| {
+                MgError::Other(format!(
+                    "invalid [security] table in {}: {e}",
+                    path.display()
+                ))
+            })?)
+            .map_err(|e| {
+                MgError::Other(format!(
+                    "invalid [security] table in {}: {e}",
+                    path.display()
+                ))
+            })?;
+        Ok(security
+            .min_age_for_ecosystem("web")
+            .map(|cutoff_hours| crate::provider::AgePolicy {
+                cutoff_hours,
+                allow_missing_time: security.allow_missing_time.unwrap_or(false),
+            }))
     }
 
     pub fn metadata_versions(metadata: &native::npm_registry::PackageMetadata) -> Vec<Version> {
@@ -239,7 +292,20 @@ impl WebAdapter {
                 ))
             })?;
             match meta.dist_tags.get(range.trim()) {
-                Some(pinned) => out.push((name, pinned.clone())),
+                Some(pinned) => {
+                    // A pinned tag is an explicit version choice — it must
+                    // still satisfy the age gate (a young `latest` fails
+                    // here instead of sneaking past semver matching).
+                    // (Version ghim từ tag vẫn phải qua cổng tuổi.)
+                    crate::provider::check_pinned_version(
+                        &name,
+                        &meta,
+                        pinned,
+                        self.provider.age_policy(),
+                    )
+                    .map_err(mgc_types::MgError::Other)?;
+                    out.push((name, pinned.clone()))
+                }
                 None => {
                     let mut known: Vec<&str> = meta.dist_tags.keys().map(String::as_str).collect();
                     known.sort();
@@ -302,12 +368,27 @@ impl WebAdapter {
             .await
             .map_err(|err| mgc_types::MgError::Network(err.to_string()))?;
 
-        preferred_registry_version(&metadata).ok_or_else(|| {
-            mgc_types::MgError::Other(format!(
-                "unable to infer latest version for '{}'",
-                name.as_str()
-            ))
-        })
+        preferred_registry_version(&metadata)
+            .ok_or_else(|| {
+                mgc_types::MgError::Other(format!(
+                    "unable to infer latest version for '{}'",
+                    name.as_str()
+                ))
+            })
+            .and_then(|latest| {
+                // An inferred `latest` is an explicit choice — it must pass
+                // the age gate like any pin (a young latest fails here, not
+                // downstream as "no version matches").
+                // (Latest suy ra cũng phải qua cổng tuổi.)
+                crate::provider::check_pinned_version(
+                    name,
+                    &metadata,
+                    &latest,
+                    self.provider.age_policy(),
+                )
+                .map_err(mgc_types::MgError::Other)?;
+                Ok(latest)
+            })
     }
 
     pub fn preferred_saved_range(current: &VersionRange, latest: &str) -> MgResult<VersionRange> {
@@ -387,6 +468,15 @@ impl PackageAdapter for WebAdapter {
         Self::CAPABILITIES
     }
 
+    /// P0/F6: arm per operation from that operation's project root
+    /// (overwrites — no first-writer-wins across projects).
+    /// (Nạp cổng tuổi theo từng operation từ root project của nó.)
+    fn arm_age_gate_for(&self, project_root: &std::path::Path) -> mgc_types::MgResult<()> {
+        let policy = Self::load_age_policy_for(project_root)?;
+        self.provider.set_age_policy(policy);
+        Ok(())
+    }
+
     fn set_dedupe_pref(&self, enabled: bool) {
         self.dedupe_pref
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
@@ -432,6 +522,8 @@ impl PackageAdapter for WebAdapter {
     }
 
     async fn audit_fix(&self, project_root: &Path, vulnerable: &[PackageId]) -> MgResult<usize> {
+        // P0/F6: the re-resolve inside the fix rides the same gate.
+        self.arm_age_gate_for(project_root)?;
         run_audit_fix(project_root, vulnerable, |m| async move {
             self.resolve(&m).await
         })
@@ -616,13 +708,36 @@ impl DependencyResolver for WebAdapter {
                         .and_then(|ver_meta| ver_meta.peer_dependencies.as_ref())
                         .map(|peers| {
                             peers
-                                .keys()
-                                .filter_map(|peer_name| {
+                                .iter()
+                                .filter_map(|(peer_name, peer_range)| {
+                                    // Peer edges carry ranges too — an
+                                    // unfiltered max here picks versions
+                                    // the peer never allowed (same family
+                                    // as the 0.x-caret bug: constrain, then
+                                    // max). Unparsable ranges fall back to
+                                    // max (never fail a peer on syntax).
+                                    // (Peer cũng lọc theo range rồi mới max.)
+                                    let constraint =
+                                        mgc_types::VersionRange::parse(peer_range).ok()?;
                                     resolution_index.get(peer_name.as_str()).and_then(
                                         |candidates| {
                                             candidates
                                                 .iter()
-                                                .max_by(|a, b| a.version.cmp(&b.version))
+                                                .filter(|c| {
+                                                    constraint.matches(c.package_id.version())
+                                                })
+                                                .max_by(|a, b| {
+                                                    a.package_id
+                                                        .version()
+                                                        .cmp(b.package_id.version())
+                                                })
+                                                .or_else(|| {
+                                                    candidates.iter().max_by(|a, b| {
+                                                        a.package_id
+                                                            .version()
+                                                            .cmp(b.package_id.version())
+                                                    })
+                                                })
                                         },
                                     )
                                 })
@@ -669,6 +784,8 @@ impl DependencyResolver for WebAdapter {
         opts: AddOptions,
     ) -> MgResult<PackageId> {
         let mut manifest = self.parse_manifest(project_root).await?;
+        // P0/F6: arm from this operation's project before any resolve.
+        self.arm_age_gate_for(project_root)?;
         let inferred = self.infer_add_range(name, range, opts.exact).await?;
 
         let mut spec = DependencySpec::new(name.clone(), inferred.clone());
@@ -810,70 +927,24 @@ impl AuditProvider for WebAdapter {
             }),
         });
 
-        if project_root.join("Cargo.toml").is_file() {
-            let root = project_root.to_path_buf();
-            plan.add_step(mgc_audit::ScanStep {
-                ecosystem: "rust",
-                scanner: "cargo-audit",
-                run: Box::new(move || {
-                    let root = root.clone();
-                    Box::pin(async move { mgc_audit::scanners::audit_rust(&root).await })
-                }),
-            });
-        }
-        if project_root.join("requirements.txt").is_file() {
-            let root = project_root.to_path_buf();
-            plan.add_step(mgc_audit::ScanStep {
-                ecosystem: "python",
-                scanner: "pip-audit",
-                run: Box::new(move || {
-                    let root = root.clone();
-                    Box::pin(async move { mgc_audit::scanners::audit_python(&root).await })
-                }),
-            });
-        }
-        if project_root.join("go.mod").is_file() {
-            // Go sidecar: govulncheck via the shared scanner (P1 matrix
-            // row "Web Go") — a real scan, not an unsupported stub.
-            // Sidecar Go: govulncheck qua scanner chung — scan thật,
-            // không còn stub unsupported.
-            let root = project_root.to_path_buf();
-            plan.add_step(mgc_audit::ScanStep {
-                ecosystem: "go",
-                scanner: "govulncheck",
-                run: Box::new(move || {
-                    let root = root.clone();
-                    Box::pin(async move { mgc_audit::scanners::audit_go(&root).await })
-                }),
-            });
-        }
-        for lang_file in ["build.gradle", "build.gradle.kts", "*.csproj"] {
-            let present = if lang_file.starts_with('*') {
-                std::fs::read_dir(project_root)
-                    .map(|it| {
-                        it.filter_map(|e| e.ok()).any(|e| {
-                            e.file_name()
-                                .to_str()
-                                .is_some_and(|n| n.ends_with(lang_file.trim_start_matches('*')))
-                        })
-                    })
-                    .unwrap_or(false)
-            } else {
-                project_root.join(lang_file).is_file()
-            };
-            if present {
-                plan.add_step(mgc_audit::ScanStep {
-                    ecosystem: "web-multi-pending",
-                    scanner: "not-implemented",
-                    run: Box::new(|| {
-                        Box::pin(async move {
-                            Ok(mgc_types::adapter::AuditReport::unsupported_ecosystem(
-                                "web sidecar manifest (gradle/csproj) — scanner not implemented yet",
-                            ))
-                        })
-                    }),
-                });
-            }
+        // Sidecar lanes (R1): shared constructors — one detection rule
+        // per manifest, the same rule every core uses. The python rule is
+        // the broad shared one (requirements variants, pylock, uv.lock,
+        // pyproject): a recognized-but-unscannable manifest surfaces as
+        // the scanner's honest Failed, never a hidden skip.
+        // Lane sidecar: constructor chung — một manifest một luật, mọi
+        // core giống nhau.
+        for step in [
+            mgc_audit::rust_step(project_root),
+            mgc_audit::python_step(project_root),
+            mgc_audit::go_step(project_root),
+            mgc_audit::java_step(project_root),
+            mgc_audit::dotnet_step(project_root),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            plan.add_step(step);
         }
 
         // WASM provenance lane (P2 2026-09-10 matrix row "Web Rust/WASM"):

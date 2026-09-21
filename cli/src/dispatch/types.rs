@@ -32,7 +32,17 @@ pub enum CommonCommand {
         fix: bool,
         format: Option<String>,
     },
-    SelfUpdate,
+    SelfUpdate {
+        version: Option<String>,
+        variant: Option<String>,
+        dry_run: bool,
+        trust_root: Vec<String>,
+        allow_unsigned: bool,
+    },
+    SignRelease {
+        manifest: Option<String>,
+        key_hex: Option<String>,
+    },
     Config {
         cmd: crate::commands::config::ConfigCmd,
         local: bool,

@@ -164,6 +164,41 @@ impl std::fmt::Display for VulnerabilitySeverity {
     }
 }
 
+/// Finding class — WHAT KIND of result a Vulnerability row carries (R4).
+/// CVE/advisory rows are `Vulnerability`; policy violations (CI workflow
+/// rules), provenance/integrity verdicts, and artifact scans (model
+/// weights) get their own class so consumers never mistake a policy note
+/// for a CVE. Defaults to `Vulnerability` so legacy payloads without the
+/// field keep their meaning (backward compatible).
+/// Loại finding — dòng Vulnerability mang KẾT QUẢ gì. Mặc định
+/// `Vulnerability` để payload cũ thiếu field vẫn đúng nghĩa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FindingClass {
+    #[default]
+    Vulnerability,
+    Policy,
+    Provenance,
+    Artifact,
+}
+
+impl FindingClass {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vulnerability => "vulnerability",
+            Self::Policy => "policy",
+            Self::Provenance => "provenance",
+            Self::Artifact => "artifact",
+        }
+    }
+}
+
+impl std::fmt::Display for FindingClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Vulnerability {
     pub package: PackageId,
@@ -189,6 +224,10 @@ pub struct Vulnerability {
     /// Thời điểm scanner quan sát finding (RFC 3339).
     #[serde(default)]
     pub evidence_at: Option<String>,
+    /// Finding class (R4) — defaults to Vulnerability for legacy payloads.
+    /// Loại finding — payload cũ thiếu field thì về Vulnerability.
+    #[serde(default)]
+    pub finding_class: FindingClass,
 }
 
 impl Vulnerability {
@@ -486,6 +525,16 @@ pub trait PackageAdapter:
         true
     }
 
+    /// Arm this operation's security policy from its project root
+    /// (P0/F6). Called by orchestrators BEFORE resolve on every
+    /// operation that knows its project. Default: no-op (cores without
+    /// per-project gates keep compiling and behaving identically).
+    /// (Nạp policy bảo mật của operation từ root project của nó —
+    /// mặc định không làm gì.)
+    fn arm_age_gate_for(&self, _project_root: &Path) -> MgResult<()> {
+        Ok(())
+    }
+
     async fn prepare_add(
         &self,
         project_root: &Path,
@@ -517,11 +566,13 @@ pub trait PackageAdapter:
     /// T5 audit --fix: re-resolve the given vulnerable packages to a newer
     /// version and rewrite the lockfile ONLY when re-resolution succeeds
     /// (fail-closed — a failed resolve leaves manifest + lockfile untouched).
-    /// Returns the number of packages bumped. Default: unsupported.
+    /// Returns the number of packages bumped. Default: unsupported — names
+    /// the core so callers know what to ask for (R5).
     async fn audit_fix(&self, _project_root: &Path, _vulnerable: &[PackageId]) -> MgResult<usize> {
-        Err(MgError::Other(
-            "audit --fix is not supported for this core".to_string(),
-        ))
+        Err(MgError::Other(format!(
+            "audit --fix is not supported for the '{}' core — bump the vulnerable packages manually and re-run `mgc audit`",
+            self.core_id(),
+        )))
     }
 
     /// Enable dedupe preference (reuse installed versions) for the next resolve.

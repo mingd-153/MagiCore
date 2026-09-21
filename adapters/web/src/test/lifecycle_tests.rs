@@ -151,3 +151,19 @@ fn lifecycle_rejects_rival_runtime_supply_chain_spawn_f_a() {
         );
     }
 }
+
+#[test]
+fn lifecycle_failing_script_is_an_error_not_a_warning() {
+    // A lifecycle script that RUNS but exits non-zero must fail the
+    // caller: install treats this Err as fatal (npm parity — a red
+    // postinstall is never a green install).
+    // (Script chạy nhưng exit lỗi phải là Err.)
+    let project = tempfile::tempdir().unwrap();
+    let package = tempfile::tempdir().unwrap();
+    write_package_script(package.path(), "node -e \"process.exit(1)\"");
+    let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("failed"),
+        "unexpected error: {err}"
+    );
+}

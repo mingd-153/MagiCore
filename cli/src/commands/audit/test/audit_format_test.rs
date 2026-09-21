@@ -55,3 +55,29 @@ fn machine_formats_flagged_not_table() {
     }
     assert!(!OutputFormat::Table.is_machine());
 }
+
+/// R4/F2: non-CVE rows must be labeled by what they are — a policy
+/// finding printed as "CVE:" would mislead triage.
+/// Dòng phi-CVE phải ghi nhãn đúng bản chất — finding policy mà in
+/// "CVE:" sẽ gây hiểu lầm.
+#[test]
+fn finding_table_labels_never_masquerade_as_cve() {
+    use crate::commands::audit::finding_table_labels;
+    use mgc_types::adapter::FindingClass;
+    assert_eq!(
+        finding_table_labels(FindingClass::Vulnerability),
+        ("", "CVE")
+    );
+    assert_eq!(
+        finding_table_labels(FindingClass::Policy),
+        (" [policy]", "Policy rule")
+    );
+    assert_eq!(
+        finding_table_labels(FindingClass::Provenance),
+        (" [provenance]", "Provenance check")
+    );
+    assert_eq!(
+        finding_table_labels(FindingClass::Artifact),
+        (" [artifact]", "Artifact check")
+    );
+}

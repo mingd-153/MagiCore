@@ -4,6 +4,19 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Accept header for packument fetches: abbreviated (small) normally,
+/// FULL document when this client's age gate is armed (abbreviated docs
+/// omit the `time` map the gate needs — fetching abbreviated under an
+/// armed gate would silently keep everything).
+/// (Header Accept: full doc khi cổng tuổi bật.)
+fn metadata_accept_header(armed: bool) -> &'static str {
+    if armed {
+        "application/json"
+    } else {
+        "application/vnd.npm.install-v1+json"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageMetadata {
     pub name: String,
@@ -44,6 +57,11 @@ pub struct NpmRegistry {
     /// tiếp khi primary 404/network/5xx — KHÔNG fallback khi 401/403 (auth
     /// fail = fail-closed, không leak package từ registry khác).
     fallbacks: Vec<(String, Option<String>)>,
+    /// Per-client age-gate fetch mode (P0/F6): armed by the owning
+    /// provider per operation — full packuments + no stale abbreviated
+    /// cache. Never a process global.
+    /// (Chế độ fetch theo cổng tuổi — riêng từng client.)
+    age_armed: std::sync::atomic::AtomicBool,
 }
 
 pub enum DownloadedTarball {
@@ -138,6 +156,7 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token: None,
             fallbacks: Vec::new(),
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -146,6 +165,7 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token,
             fallbacks: Vec::new(),
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -159,7 +179,22 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token,
             fallbacks,
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Arm/disarm full-packument fetch mode for this client (called by
+    /// the owning provider when it (re-)arms its age policy).
+    /// (Bật/tắt chế độ fetch full doc cho client này.)
+    pub fn set_age_gate_armed(&self, armed: bool) {
+        self.age_armed
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Full packuments when armed (abbreviated docs omit `time`).
+    /// (Full doc khi cổng tuổi bật.)
+    pub fn age_gate_armed(&self) -> bool {
+        self.age_armed.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn chain(&self) -> Vec<(String, Option<String>)> {
@@ -200,6 +235,7 @@ impl NpmRegistry {
         let client = global_http_client();
         let chain = self.chain();
         let mut last_err: Option<anyhow::Error> = None;
+        let accept = metadata_accept_header(self.age_gate_armed());
 
         for (url, token) in chain {
             let endpoint = format!("{}/{}", url.trim_end_matches('/'), package);
@@ -216,7 +252,7 @@ impl NpmRegistry {
                         resp_future
                     };
                     let resp = req
-                        .header("Accept", "application/vnd.npm.install-v1+json")
+                        .header("Accept", accept)
                         .send()
                         .await?
                         .error_for_status()?;
@@ -257,9 +293,10 @@ impl NpmRegistry {
         let etag_owned = etag.map(|s| s.to_string());
 
         with_retry("metadata-conditional", package, move || {
+            let accept = metadata_accept_header(self.age_gate_armed());
             let mut req = self
                 .with_auth(global_http_client().get(&url), &url)
-                .header("Accept", "application/vnd.npm.install-v1+json");
+                .header("Accept", accept);
             if let Some(ref etag_val) = etag_owned {
                 req = req.header("If-None-Match", etag_val);
             }

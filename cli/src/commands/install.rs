@@ -374,6 +374,8 @@ async fn install_into_root(
         (graph, true)
     } else {
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
+        // P0/F6: arm the age gate from THIS operation's project.
+        adapter.arm_age_gate_for(project_root)?;
         let graph = adapter.resolve(&manifest).await?;
         spinner.finish_and_clear();
         (graph, false)

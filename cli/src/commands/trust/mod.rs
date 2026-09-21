@@ -5,6 +5,7 @@ pub mod approve;
 pub mod deny;
 pub mod init;
 pub mod list;
+pub mod pending;
 pub mod policy;
 pub mod prune;
 pub mod sign;
@@ -58,6 +59,9 @@ pub enum TrustCmd {
 
     /// Prune stale trust policies
     Prune,
+
+    /// List installed packages with lifecycle scripts but no policy yet
+    Pending,
 }
 
 /// Execute trust command — Thực thi lệnh trust
@@ -70,6 +74,7 @@ pub fn execute(cmd: TrustCmd) -> anyhow::Result<()> {
         TrustCmd::Approve { package } => approve::execute(&package),
         TrustCmd::Deny { package } => deny::execute(&package),
         TrustCmd::Prune => prune::execute(),
+        TrustCmd::Pending => pending::execute(),
     }
 }
 

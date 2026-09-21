@@ -26,6 +26,28 @@ pub struct LifecycleRunner;
 
 impl LifecycleRunner {
     pub fn run_scripts(pkg_dir: &Path, project_root: &Path) -> MgResult<()> {
+        // Test-only deterministic failure injector (transaction E2E):
+        // MGC_LIFECYCLE_FAIL_PACKAGES names package dirs (comma-separated,
+        // "*" matches all) whose scripts must FAIL before running anything.
+        // No side effects — the test proves transaction boundaries, not
+        // script behavior. Env-gated like failpoints: whoever controls the
+        // process environment already controls the process.
+        // (Móc lỗi deterministic chỉ-cho-test cho E2E transaction.)
+        if let Ok(filter) = std::env::var("MGC_LIFECYCLE_FAIL_PACKAGES") {
+            let dir_name = pkg_dir
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if filter
+                .split(',')
+                .map(str::trim)
+                .any(|f| f == "*" || f == dir_name)
+            {
+                return Err(MgError::Other(format!(
+                    "lifecycle injected failure for '{dir_name}' (MGC_LIFECYCLE_FAIL_PACKAGES)"
+                )));
+            }
+        }
         let package_json = pkg_dir.join("package.json");
         if !package_json.exists() {
             return Ok(());

@@ -16,17 +16,17 @@ pub mod terraform;
 
 pub use bun_deno::{BunDenoRead, NpmPin, read_bun_lock, read_deno_lock, read_js_lockfiles};
 pub use dart::{audit_flutter_osv, read_pubspec_lock};
-pub use dotnet::{audit_dotnet, read_packages_lock};
+pub use dotnet::{audit_dotnet, collect_dotnet_pins, read_packages_lock, read_solution_projects};
 pub use gh_actions::{WorkflowFinding, audit_github_actions, scan_workflow_text};
-pub use govulncheck::{audit_go, parse_govulncheck_json};
-pub use maven::{audit_java, read_gradle_verification_metadata};
+pub use govulncheck::{audit_go, parse_govulncheck_json, read_go_mod_requires};
+pub use maven::{audit_java, read_gradle_verification_metadata, read_pom_gavs};
 pub use osv::{
     OsvPin, audit_cocoapods_osv, audit_osv_pins, audit_swift_spam, read_podfile_lock,
-    read_swift_resolved,
+    read_swift_resolved, swift_resolved_path,
 };
 pub use terraform::{audit_terraform_lock, parse_terraform_lock};
 
-use mgc_types::adapter::{AuditReport, Vulnerability, VulnerabilitySeverity};
+use mgc_types::adapter::{AuditReport, FindingClass, Vulnerability, VulnerabilitySeverity};
 use mgc_types::{MgError, MgResult};
 use serde::Deserialize;
 use std::path::Path;
@@ -201,6 +201,7 @@ pub fn parse_cargo_audit_json(json: &str) -> MgResult<CargoAuditParse> {
                 scanner: None,
                 ecosystem: None,
                 evidence_at: None,
+                finding_class: FindingClass::Vulnerability,
             }
             .with_evidence("cargo-audit", "rust"),
         );
@@ -426,6 +427,7 @@ pub fn parse_pip_audit_json(json: &str) -> MgResult<PipAuditParse> {
                     scanner: None,
                     ecosystem: None,
                     evidence_at: None,
+                    finding_class: FindingClass::Vulnerability,
                 }
                 .with_evidence("pip-audit", "python"),
             );

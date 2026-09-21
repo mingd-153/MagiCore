@@ -377,9 +377,10 @@ fn lib_install_native_proceeds_without_spawning_cargo() {
 }
 
 #[test]
-fn lib_add_native_refuses_without_spawning_cargo() {
-    // Lib add delegates (cargo add) — native mode must refuse before any
-    // spawn; compat opens the documented lane.
+fn lib_add_native_runs_inside_mgc_without_spawning_cargo() {
+    // Native add (resolve-first via crates.io + mgc-side Cargo edit) —
+    // the toolchain NEVER spawns; the canary proves it. (Policy flip:
+    // rust/python/go Add are mgc-native; Remove/Update still delegate.)
     let project = TempDir::new().unwrap();
     rust_lib_project(project.path());
     let sandbox = CanarySandbox::new("cargo");
@@ -387,18 +388,19 @@ fn lib_add_native_refuses_without_spawning_cargo() {
     let (code, stdout, stderr, marker) =
         run_mgc(&["add-lib", "serde"], project.path(), &sandbox, None);
     let output = format!("{stdout}{stderr}");
-    assert_ne!(
+    assert_eq!(
         code,
         Some(0),
-        "native 'add-lib' (rust) must refuse the delegated lane:\n{output}"
+        "native 'add-lib' (rust) must succeed inside mgc:\n{output}"
     );
     assert!(
         marker.is_empty(),
         "cargo canary must NEVER fire under native 'add-lib':\n{marker}"
     );
+    let cargo = std::fs::read_to_string(project.path().join("Cargo.toml")).unwrap();
     assert!(
-        output.contains("--compat-runtime"),
-        "refusal must name the escape hatch:\n{output}"
+        cargo.contains("serde"),
+        "Cargo.toml must pin serde (mgc-side edit):\n{cargo}"
     );
 }
 

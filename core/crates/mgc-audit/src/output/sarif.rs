@@ -88,8 +88,9 @@ pub fn to_sarif(report: &AuditReport) -> SarifLog {
             },
             message: SarifMessage {
                 text: format!(
-                    "{} in {} (scanner: {}, evidence: {})",
+                    "{} [{}] in {} (scanner: {}, evidence: {})",
                     v.title,
+                    v.finding_class,
                     v.package,
                     v.scanner.as_deref().unwrap_or("unknown"),
                     v.evidence_at.as_deref().unwrap_or("not-stamped"),

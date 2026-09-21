@@ -3083,3 +3083,208 @@ fn is_dist_tag_spec_tags_vs_semver() {
     assert!(!WebAdapter::is_dist_tag_spec(">=1.0.0 <2.0.0"));
     assert!(!WebAdapter::is_dist_tag_spec("abc123"));
 }
+
+#[test]
+fn age_gate_parses_npm_time_and_filters() {
+    use crate::native::npm_registry::{PackageMetadata, VersionInfo};
+    use crate::provider::{AgePolicy, eligible_versions, parse_npm_time};
+    use mgc_types::PackageName;
+    // 2020-01-01T00:00:00Z == 1577836800 (known anchor).
+    assert_eq!(parse_npm_time("2020-01-01T00:00:00.000Z"), Some(1577836800));
+    assert_eq!(parse_npm_time("2020-01-01T00:00:00Z"), Some(1577836800));
+    assert_eq!(parse_npm_time("garbage"), None);
+    assert_eq!(parse_npm_time("2020-13-01T00:00:00Z"), None);
+    fn version_info(version: &str) -> VersionInfo {
+        VersionInfo {
+            version: version.to_string(),
+            dependencies: None,
+            dev_dependencies: None,
+            peer_dependencies: None,
+            optional_dependencies: None,
+            os: None,
+            cpu: None,
+            dist: None,
+        }
+    }
+    let mut versions = std::collections::HashMap::new();
+    versions.insert("1.0.0".to_string(), version_info("1.0.0"));
+    versions.insert("2.0.0".to_string(), version_info("2.0.0"));
+    let mut time = std::collections::HashMap::new();
+    time.insert("1.0.0".to_string(), "2020-01-01T00:00:00.000Z".to_string());
+    time.insert("2.0.0".to_string(), "2100-01-01T00:00:00.000Z".to_string());
+    let meta = PackageMetadata {
+        name: "x".to_string(),
+        description: None,
+        versions,
+        dist_tags: std::collections::HashMap::new(),
+        time,
+    };
+    let package = PackageName::new("x").unwrap();
+    let policy = AgePolicy {
+        cutoff_hours: 10000,
+        allow_missing_time: false,
+    };
+    // No policy: historical behavior (everything).
+    let kept = eligible_versions(&package, &meta, None).unwrap();
+    assert_eq!(kept.len(), 2);
+    // Policy: old version survives, future version excluded.
+    let kept = eligible_versions(&package, &meta, Some(policy)).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].to_string(), "1.0.0");
+    // Missing timestamps are REJECTED by default (fail-closed)...
+    let mut meta_unstamped = meta.clone();
+    meta_unstamped.time.clear();
+    let err = eligible_versions(&package, &meta_unstamped, Some(policy)).unwrap_err();
+    assert!(err.contains("unstamped"));
+    // ...unless the explicit private-registry escape hatch is set.
+    let policy = AgePolicy {
+        allow_missing_time: true,
+        ..policy
+    };
+    let kept = eligible_versions(&package, &meta_unstamped, Some(policy)).unwrap();
+    assert_eq!(kept.len(), 2);
+}
+
+/// R3: gradle sidecar must ride the SHARED OSV-maven lane — a
+/// verification-metadata.xml pin must reach a real query, never the old
+/// "scanner not implemented" stub. Dead OSV endpoint keeps it hermetic:
+/// the java step must EXIST (Failed naming osv-dev-api).
+/// Sidecar gradle phải đi lane OSV-maven CHUNG — ghim phải tới query
+/// thật, không còn stub. Endpoint chết giữ hermetic: step java phải TỒN
+/// TẠI (Failed nêu osv-dev-api).
+#[tokio::test]
+async fn test_audit_gradle_sidecar_uses_shared_osv_maven_lane() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        r#"{"name":"w","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("build.gradle"), "// empty\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("gradle")).unwrap();
+    std::fs::write(
+        dir.path().join("gradle").join("verification-metadata.xml"),
+        "<verification-metadata>\n<dependency group=\"com.example\" name=\"lib\" version=\"1.0\"/>\n</verification-metadata>\n",
+    )
+    .unwrap();
+
+    let saved = std::env::var("MGC_OSV_API_BASE").ok();
+    unsafe { std::env::set_var("MGC_OSV_API_BASE", "http://127.0.0.1:1/v1") };
+    let adapter = WebAdapter::new().unwrap();
+    let report = mgc_types::capabilities::AuditProvider::audit(&adapter, dir.path())
+        .await
+        .unwrap();
+    match saved {
+        Some(v) => unsafe { std::env::set_var("MGC_OSV_API_BASE", v) },
+        None => unsafe { std::env::remove_var("MGC_OSV_API_BASE") },
+    }
+    match &report.scanner_status {
+        mgc_types::adapter::ScannerStatus::Failed { scanner, .. } => {
+            assert_eq!(scanner, "osv-dev-api")
+        }
+        other => panic!("gradle sidecar must reach the shared OSV lane (Failed), got {other:?}"),
+    }
+}
+
+/// R3 dotnet side: a bare .csproj (no packages.lock.json) must surface
+/// the shared lane's honest Unsupported (with remediation), never the
+/// old "not implemented" stub and never a fake clean.
+/// Csproj đơn lẻ phải ra Unsupported trung thực của lane chung (kèm
+/// hướng dẫn), không stub cũ, không sạch giả.
+#[tokio::test]
+async fn test_audit_csproj_sidecar_unsupported_with_remediation() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        r#"{"name":"w","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("app.csproj"), "<Project/>\n").unwrap();
+
+    let adapter = WebAdapter::new().unwrap();
+    let report = mgc_types::capabilities::AuditProvider::audit(&adapter, dir.path())
+        .await
+        .unwrap();
+    match &report.scanner_status {
+        mgc_types::adapter::ScannerStatus::Partial { reasons, .. } => assert!(
+            reasons.iter().any(|r| r.contains("packages.lock.json")),
+            "dotnet lane must explain the missing lockfile, got: {reasons:?}"
+        ),
+        other => {
+            panic!("bare csproj must aggregate Partial (unsupported dotnet lane), got {other:?}")
+        }
+    }
+}
+
+/// P0/F6-RED: age policy loads PER PROJECT (not process-cwd-global) and
+/// broken config fails closed — never a swallowed `.ok()`.
+/// Policy tuổi nạp theo project, config hỏng fail-closed.
+#[tokio::test]
+async fn test_age_policy_loader_is_per_project_and_fail_closed() {
+    use crate::provider::AgePolicy;
+    let good = tempfile::tempdir().unwrap();
+    std::fs::write(
+        good.path().join("mgc.toml"),
+        "name = \"g\"\n[security]\nmin_release_age = 100\n",
+    )
+    .unwrap();
+    let policy = crate::WebAdapter::load_age_policy_for(good.path()).unwrap();
+    assert_eq!(
+        policy,
+        Some(AgePolicy {
+            cutoff_hours: 100,
+            allow_missing_time: false
+        }),
+        "project policy must load with its own cutoff"
+    );
+
+    // Broken TOML → Err (fail-closed), not silent None.
+    let broken = tempfile::tempdir().unwrap();
+    std::fs::write(
+        broken.path().join("mgc.toml"),
+        "[security\nmin_release_age = \n",
+    )
+    .unwrap();
+    assert!(
+        crate::WebAdapter::load_age_policy_for(broken.path()).is_err(),
+        "broken mgc.toml must fail closed"
+    );
+
+    // Wrong-typed field → Err, not silent None.
+    let wrongtype = tempfile::tempdir().unwrap();
+    std::fs::write(
+        wrongtype.path().join("mgc.toml"),
+        "name = \"w\"\n[security]\nmin_release_age = \"tomorrow\"\n",
+    )
+    .unwrap();
+    assert!(
+        crate::WebAdapter::load_age_policy_for(wrongtype.path()).is_err(),
+        "wrong-typed min_release_age must fail closed"
+    );
+
+    // Missing file → Ok(None) (historical no-filtering behavior).
+    let bare = tempfile::tempdir().unwrap();
+    assert!(
+        crate::WebAdapter::load_age_policy_for(bare.path())
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// P0/F6-RED: two provider instances hold INDEPENDENT policies (no
+/// process-global first-wins) — multi-project processes arm per
+/// operation.
+/// Hai provider giữ policy ĐỘC LẬP (không global first-wins).
+#[test]
+fn test_age_policy_is_per_provider_instance() {
+    use crate::provider::{AgePolicy, NpmDependencyProvider};
+    let strict = NpmDependencyProvider::new("https://example.invalid", None, None);
+    let plain = NpmDependencyProvider::new("https://example.invalid", None, None);
+    strict.set_age_policy(Some(AgePolicy {
+        cutoff_hours: 1_000_000,
+        allow_missing_time: false,
+    }));
+    plain.set_age_policy(None);
+    assert!(strict.age_gate_armed_for_test());
+    assert!(!plain.age_gate_armed_for_test());
+}

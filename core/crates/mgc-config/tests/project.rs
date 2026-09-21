@@ -385,3 +385,85 @@ fn security_config_parses_unsigned_escape_list() {
         Some(vec!["python".to_string()])
     );
 }
+
+#[test]
+fn script_decision_deny_wins_from_either_source() {
+    use mgc_config::project::{ScriptVerdict, ScriptsPolicy, decide_scripts};
+    // Regression: a file allow must NEVER override a DB deny (this drift
+    // shipped once — install ran scripts the DB explicitly denied).
+    // (Hồi quy: file allow không bao giờ ghi đè DB deny.)
+    let file = ScriptsPolicy {
+        policy: None,
+        allow: vec!["evil-pkg".to_string()],
+        deny: vec![],
+    };
+    assert!(matches!(
+        decide_scripts("evil-pkg", "1.0.0", Some(&file), Some("denied"), false),
+        ScriptVerdict::Deny("mgc trust deny")
+    ));
+    // File deny beats DB approve.
+    let file = ScriptsPolicy {
+        policy: None,
+        allow: vec![],
+        deny: vec!["evil-pkg@1.0.0".to_string()],
+    };
+    assert!(matches!(
+        decide_scripts("evil-pkg", "1.0.0", Some(&file), Some("approved"), false),
+        ScriptVerdict::Deny("mgc.toml [scripts] deny")
+    ));
+    // File allow with no DB opinion allows.
+    let file = ScriptsPolicy {
+        policy: None,
+        allow: vec!["nice-pkg".to_string()],
+        deny: vec![],
+    };
+    assert!(matches!(
+        decide_scripts("nice-pkg", "2.0.0", Some(&file), None, false),
+        ScriptVerdict::Allow(_)
+    ));
+    // Nothing anywhere + blanket off = undecided (caller maps to
+    // skip-with-hint on install, pending-review on trust pending).
+    assert!(matches!(
+        decide_scripts("plain-pkg", "1.0.0", None, None, false),
+        ScriptVerdict::Undecided
+    ));
+    // Blanket on preserves historical default-allow.
+    assert!(matches!(
+        decide_scripts("plain-pkg", "1.0.0", None, None, true),
+        ScriptVerdict::Allow(_)
+    ));
+    // Default-deny policy file denies unlisted packages.
+    let file = ScriptsPolicy {
+        policy: Some("deny".to_string()),
+        allow: vec![],
+        deny: vec![],
+    };
+    assert!(matches!(
+        decide_scripts("plain-pkg", "1.0.0", Some(&file), None, true),
+        ScriptVerdict::Deny(_)
+    ));
+}
+
+#[test]
+fn lib_scaffold_maps_go_dotnet_java_languages() {
+    for (framework, language) in [
+        ("go", "go"),
+        ("golang", "go"),
+        ("dotnet", "dotnet"),
+        ("java", "java"),
+    ] {
+        let cfg = ProjectConfig::from_scaffold(
+            "demo",
+            "lib",
+            "",
+            vec![framework.to_string()],
+            "",
+            vec![],
+        );
+        assert_eq!(
+            cfg.lib.unwrap().language,
+            language,
+            "framework {framework} must map to language {language}"
+        );
+    }
+}

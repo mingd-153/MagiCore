@@ -115,3 +115,28 @@ fn test_signature_file_roundtrip() {
 
     assert_eq!(sig, parsed);
 }
+
+/// Multi-version locks are legitimate (a peer edge may resolve the same
+/// name to another version, e.g. typescript 5.9.x direct + 6.0.3 peer).
+/// Name lookup must expose EVERY same-named package so callers (frozen
+/// check) can any-match instead of trusting first-match order.
+/// (Lock đa-version hợp lệ — lookup phải trả mọi package cùng tên.)
+#[test]
+fn test_get_packages_returns_every_same_named_package() {
+    let mut lockfile = Lockfile::new();
+    for version in ["5.9.3", "6.0.3"] {
+        lockfile.add_package(Package::new(
+            "typescript".to_string(),
+            version.to_string(),
+            format!("https://registry.npmjs.org/typescript/-/typescript-{version}.tgz"),
+            "blake3-abc123".to_string(),
+        ));
+    }
+    let versions: Vec<&str> = lockfile
+        .get_packages("typescript")
+        .map(|p| p.version.as_str())
+        .collect();
+    assert_eq!(versions.len(), 2, "both instances must surface");
+    assert!(versions.contains(&"5.9.3") && versions.contains(&"6.0.3"));
+    assert!(lockfile.get_packages("missing").next().is_none());
+}

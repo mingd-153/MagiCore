@@ -86,6 +86,16 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
             .is_ok(),
             "lib[{lang}] resolve is native"
         );
+    }
+    // Native Add (resolve-first + mgc-side manifest edit, zero spawn):
+    // rust/python/go run inside mgc — only java/dotnet stay fail-closed.
+    for lang in [eco::RUST, eco::PYTHON, eco::GO] {
+        assert!(
+            gate(&ctx("lib", Some(lang), DepOp::Add), None, &native(), None).is_ok(),
+            "lib[{lang}] add is native (no toolchain spawn)"
+        );
+    }
+    for lang in [eco::JAVA, eco::DOTNET] {
         assert!(
             gate(&ctx("lib", Some(lang), DepOp::Add), None, &native(), None).is_err(),
             "lib[{lang}] add must fail closed without compat"
@@ -112,8 +122,22 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         .is_ok(),
         "pip~pip3 alias: same owner"
     );
+    // Native Add ignores compat flags (native engine always runs) — a uv
+    // opt-in on a native lane is a no-op info, never a spawn and never a
+    // wrong-tool error. The flag==process contract now lives on the still-
+    // delegated verbs (Remove/Update).
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::PYTHON), DepOp::Add),
+            Some("pip"),
+            &explicit("uv"),
+            None
+        )
+        .is_ok(),
+        "compat on native add is ignored (native always runs)"
+    );
     let err = gate(
-        &ctx("lib", Some(eco::PYTHON), DepOp::Add),
+        &ctx("lib", Some(eco::PYTHON), DepOp::Remove),
         Some("pip"),
         &explicit("uv"),
         None,
@@ -123,7 +147,8 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     // The mismatch names BOTH sides (flag uv, process pip).
     assert!(err.to_string().contains("'uv'"), "{err}");
     assert!(err.to_string().contains("'pip'"), "{err}");
-    // Per-language tool sets: a rust project cannot opt in with uv.
+    // Per-language tool sets: native Add ignores any opt-in; delegated
+    // Remove still enforces exact ownership.
     assert!(
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
@@ -136,6 +161,16 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     assert!(
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
+            Some("cargo"),
+            &explicit("uv"),
+            None
+        )
+        .is_ok(),
+        "compat on native add is ignored"
+    );
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::RUST), DepOp::Remove),
             Some("cargo"),
             &explicit("uv"),
             None
@@ -541,16 +576,24 @@ fn capabilities_json_carries_dep_gate_ownership() {
     let lib_languages = dependency_ownership("lib")["languages"].clone();
     assert_eq!(lib_languages["ts"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["rust"]["install"]["owner"], "mgc-native");
-    assert_eq!(lib_languages["rust"]["add"]["owner"], "delegated");
-    // Capability snapshot vs REAL runners: python edits spawn pip only
-    // (uv excluded); go remove / java add have no runner (unsupported).
+    assert_eq!(lib_languages["rust"]["add"]["owner"], "mgc-native");
+    // Capability snapshot vs REAL runners: native Add carries no tools;
+    // python Remove still spawns pip only (uv excluded); go remove /
+    // java add have no runner (unsupported).
+    assert_eq!(
+        lib_languages["python"]["add"]["owner"],
+        "mgc-native"
+    );
     assert_eq!(
         lib_languages["python"]["add"]["tools"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        lib_languages["python"]["remove"]["tools"],
         serde_json::json!(["pip", "pip3"])
     );
-    assert_eq!(lib_languages["python"]["add"]["owner"], "delegated");
     assert_eq!(lib_languages["go"]["remove"]["owner"], "unsupported");
-    assert_eq!(lib_languages["go"]["add"]["owner"], "delegated");
+    assert_eq!(lib_languages["go"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["java"]["add"]["owner"], "unsupported");
     assert_eq!(lib_languages["java"]["install"]["owner"], "mgc-native");
     assert_eq!(lib_languages["dotnet"]["update"]["owner"], "unsupported");

@@ -1159,3 +1159,386 @@ fn test_scaffold_success_leaves_no_staging_sibling() {
         "no staging siblings may remain, found: {siblings:?}"
     );
 }
+
+/// Remix template ships vite.config.ts with the vite plugin, so its
+/// build script MUST be the vite-based compiler (`remix vite:build`) —
+/// the classic `remix build` fails with "Missing output for entry
+/// point" on this layout (proven live: fw-remix E2E).
+/// Template remix có vite plugin thì script build phải là vite-based.
+#[test]
+fn test_remix_template_build_script_is_vite_based() {
+    let files = crate::scaffold::embedded_kernel::get_embedded_template("web", "remix")
+        .expect("remix embedded template exists");
+    let pkg = files
+        .iter()
+        .find(|f| f.path == "package.json")
+        .expect("remix template has package.json");
+    let value: serde_json::Value =
+        serde_json::from_str(pkg.content).expect("template package.json parses");
+    assert_eq!(
+        value
+            .pointer("/scripts/build")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+        "remix vite:build",
+        "vite-plugin template must not use the classic compiler"
+    );
+    assert!(
+        files.iter().any(|f| f.path == "vite.config.ts"),
+        "vite plugin config present (why vite:build is required)"
+    );
+}
+
+/// Embedded template ids with npm dependencies (mirrors the
+/// ("web", ..) arms of embedded_kernel::get_embedded_template).
+/// (ID template nhúng có dependency npm.)
+const FRESHNESS_TEMPLATES: &[&str] = &[
+    "react",
+    "react-vite",
+    "vue",
+    "vue-vite",
+    "express",
+    "axum",
+    "fastapi",
+    "nextjs",
+    "nuxt",
+    "sveltekit",
+    "angular",
+    "solidjs",
+    "qwik",
+    "astro",
+    "remix",
+    "actix-web",
+    "gin",
+    "echo",
+    "fiber",
+    "django",
+    "flask",
+];
+
+/// Migration backlog: (framework, dep, pairing reason). A dep whose
+/// template major lags the registry latest major MUST be listed here —
+/// unlisted lag FAILS the gate. As migrations land, entries are REMOVED
+/// (never edited into silence).
+/// (Tồn đọng migration: dep lag major phải có mặt kèm lý do.)
+const FRESHNESS_BACKLOG: &[(&str, &str, &str)] = &[
+    // Angular 19 stack: compiler/cli/core + TS ~5.6 are COUPLED —
+    // Angular 20+ requires TS 5.8+/6 + zone 0.16 + new build
+    // pipeline; bump = full template migration + E2E. Tracked, not silent.
+    (
+        "angular",
+        "@angular-devkit/build-angular",
+        "coupled Angular 19 stack; needs 20+ migration",
+    ),
+    (
+        "angular",
+        "@angular/cli",
+        "coupled Angular 19 stack; needs 20+ migration",
+    ),
+    (
+        "angular",
+        "@angular/common",
+        "coupled Angular 19 stack; needs 20+ migration",
+    ),
+    (
+        "angular",
+        "@angular/compiler",
+        "coupled Angular 19 stack; needs 20+ migration",
+    ),
+    (
+        "angular",
+        "@angular/compiler-cli",
+        "coupled Angular 19 stack; needs 20+ migration",
+    ),
+    (
+        "angular",
+        "@angular/core",
+        "coupled Angular 19 stack; needs 20+ migration",
+    ),
+    (
+        "angular",
+        "@angular/platform-browser",
+        "coupled Angular 19 stack; needs 20+ migration",
+    ),
+    (
+        "angular",
+        "typescript",
+        "TS ~5.6 required by Angular 19; rides the Angular migration",
+    ),
+    // Vite 6 line: templates pin the 6.x plugin set (plugin-react 4,
+    // plugin-vue 5); vite 7/8 + plugin majors need per-template build
+    // E2E before bump.
+    (
+        "react",
+        "@vitejs/plugin-react",
+        "vite 6 plugin set; bump with vite major + build E2E",
+    ),
+    (
+        "react",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "react",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+    (
+        "react-vite",
+        "@vitejs/plugin-react",
+        "vite 6 plugin set; bump with vite major + build E2E",
+    ),
+    (
+        "react-vite",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "react-vite",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+    (
+        "vue-vite",
+        "@vitejs/plugin-vue",
+        "vite 6 plugin set; bump with vite major + build E2E",
+    ),
+    (
+        "vue-vite",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "vue-vite",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+    (
+        "vue-vite",
+        "vue-tsc",
+        "tsc 2 pairs vue 3.5 template; 3 needs tsc E2E",
+    ),
+    (
+        "vue",
+        "@vitejs/plugin-vue",
+        "vite 6 plugin set; bump with vite major + build E2E",
+    ),
+    (
+        "vue",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "vue",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+    (
+        "vue",
+        "vue-tsc",
+        "tsc 2 pairs vue 3.5 template; 3 needs tsc E2E",
+    ),
+    (
+        "solidjs",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "solidjs",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+    (
+        "sveltekit",
+        "@sveltejs/adapter-auto",
+        "adapter 3 pairs kit 2 early era; 7 needs kit-compat + build E2E",
+    ),
+    (
+        "sveltekit",
+        "@sveltejs/vite-plugin-svelte",
+        "plugin 4 pairs vite 6; 7 needs build E2E",
+    ),
+    (
+        "sveltekit",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "sveltekit",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+    (
+        "qwik",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "qwik",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+    // Astro 5 + Next 15 + Nuxt 3: framework-major migrations (config/
+    // codemod level), each needs its template E2E green before bump.
+    ("astro", "astro", "framework major migration + E2E"),
+    (
+        "astro",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "nextjs",
+        "@types/node",
+        "types major; bump with template build E2E",
+    ),
+    ("nextjs", "next", "framework major migration + E2E"),
+    (
+        "nextjs",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    ("nuxt", "nuxt", "framework major migration + E2E"),
+    (
+        "nuxt",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "nuxt",
+        "vue-router",
+        "router 5 needs compat E2E with vue 3 template",
+    ),
+    (
+        "express",
+        "@types/node",
+        "types major; bump with template build E2E",
+    ),
+    (
+        "express",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    // Remix 2 line: react 18 + types 18 PAIRED (Remix 2 supports React
+    // 18); isbot 4 verified by green build E2E (5.x unevaluated).
+    (
+        "remix",
+        "@types/react",
+        "paired with React 18 (Remix 2 line)",
+    ),
+    (
+        "remix",
+        "@types/react-dom",
+        "paired with React 18 (Remix 2 line)",
+    ),
+    (
+        "remix",
+        "isbot",
+        "4.x verified by green build E2E; 5.x unevaluated",
+    ),
+    ("remix", "react", "paired React 18 (Remix 2 line)"),
+    ("remix", "react-dom", "paired React 18 (Remix 2 line)"),
+    (
+        "remix",
+        "typescript",
+        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
+    ),
+    (
+        "remix",
+        "vite",
+        "vite 6 line; 7/8 needs per-template build E2E",
+    ),
+];
+
+fn template_major(range: &str) -> Option<u64> {
+    let t = range.trim_start_matches(['^', '~', '>', '<', '=', ' ']);
+    t.split('.').next()?.parse().ok()
+}
+
+async fn npm_latest_major(name: &str) -> Option<u64> {
+    let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
+    let body: serde_json::Value = reqwest::get(&url).await.ok()?.json().await.ok()?;
+    body.pointer("/dist-tags/latest")?
+        .as_str()?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Template freshness gate (P0-bonus): every embedded npm dep either
+/// tracks the registry latest major or sits in FRESHNESS_BACKLOG with
+/// its pairing reason. Offline → loud skip (the gate needs connect;
+/// "connect thì sao" = it runs, below).
+/// (Cổng tươi template: dep lag major mà không trong backlog thì FAIL.
+/// Offline thì skip ồn ào.)
+#[tokio::test]
+async fn test_embedded_template_dep_majors_track_latest() {
+    // Probe connectivity first: offline machines skip LOUDLY (not silently).
+    // (Mất mạng thì skip ồn ào.)
+    if npm_latest_major("react").await.is_none() {
+        eprintln!("SKIP template freshness: registry unreachable (offline)");
+        return;
+    }
+    let mut lags = Vec::new();
+    for fw in FRESHNESS_TEMPLATES {
+        let files = crate::scaffold::embedded_kernel::get_embedded_template("web", fw)
+            .unwrap_or_else(|| panic!("embedded template missing: {fw}"));
+        for f in &files {
+            if !f.path.ends_with("package.json") {
+                continue;
+            }
+            let pkg: serde_json::Value =
+                serde_json::from_str(f.content).expect("template package.json parses");
+            for section in ["dependencies", "devDependencies"] {
+                let Some(deps) = pkg.get(section).and_then(|v| v.as_object()) else {
+                    continue;
+                };
+                for (name, ver) in deps {
+                    let ver = ver.as_str().unwrap_or("");
+                    let Some(tmajor) = template_major(ver) else {
+                        continue;
+                    };
+                    // Exact pins (no range operator) freeze versions — banned.
+                    if !ver.starts_with(['^', '~', '>', '<']) {
+                        lags.push(format!("{fw}:{name} exact pin {ver} (ranges only)"));
+                        continue;
+                    }
+                    let Some(latest) = npm_latest_major(name).await else {
+                        continue;
+                    };
+                    if tmajor < latest {
+                        lags.push(format!("{fw}:{name} template ^{tmajor} vs latest {latest}"));
+                    }
+                }
+            }
+        }
+    }
+    // Unlisted lag = lag without a backlog entry → FAIL.
+    // (Lag không trong backlog thì FAIL.)
+    let unlisted: Vec<_> = lags
+        .iter()
+        .filter(|u| {
+            !FRESHNESS_BACKLOG.iter().any(|(b_fw, b_dep, _)| {
+                u.starts_with(&format!("{b_fw}:{b_dep} "))
+                    || u.starts_with(&format!("{b_fw}:{b_dep} exact"))
+            })
+        })
+        .collect();
+    // Second pass: every backlog entry must reference a REAL lag (no
+    // stale entries hiding resolved migrations).
+    for (fw, dep, _reason) in FRESHNESS_BACKLOG {
+        assert!(
+            lags.iter().any(|u| u.starts_with(&format!("{fw}:{dep} "))),
+            "stale backlog entry (already current): {fw}:{dep}"
+        );
+    }
+    assert!(
+        unlisted.is_empty(),
+        "template majors lagging latest without backlog entry:\n{}",
+        unlisted
+            .iter()
+            .map(|u| u.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

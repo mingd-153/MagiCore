@@ -227,7 +227,20 @@ fn match_single_range(range: &str, version: &Version) -> bool {
         return version == &target;
     }
     if let Some(target) = range.strip_prefix('^').and_then(|s| Version::parse(s).ok()) {
-        return version.major == target.major && version >= &target;
+        // Caret follows semver 0.x rules: ^1.2.3 := >=1.2.3 <2.0.0,
+        // ^0.2.3 := >=0.2.3 <0.3.0, ^0.0.3 := =0.0.3. The old
+        // major-only check accepted e.g. 0.28.2 for ^0.25.0.
+        // (Caret đúng semver 0.x.)
+        if target.major > 0 {
+            return version.major == target.major && version >= &target;
+        }
+        if target.minor > 0 {
+            return version.major == 0 && version.minor == target.minor && version >= &target;
+        }
+        return version.major == 0
+            && version.minor == 0
+            && version.patch == target.patch
+            && version >= &target;
     }
     if let Some(target) = range.strip_prefix('~').and_then(|s| Version::parse(s).ok()) {
         return version.major == target.major
