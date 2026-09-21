@@ -307,30 +307,31 @@ fn ai_install_dry_run_needs_no_compat() {
 }
 
 #[test]
-fn app_install_native_refuses_without_spawning_flutter() {
+fn app_install_native_runs_inside_mgc_without_spawning_flutter() {
+    // Native flutter install (pubspec → pub.dev → mgc.lock) — the
+    // toolchain NEVER spawns; the canary proves it. (Policy flip:
+    // flutter Install is mgc-native; Add/Remove/Update still delegate.)
     let project = TempDir::new().unwrap();
     flutter_project(project.path());
     let sandbox = CanarySandbox::new("flutter");
 
     let (code, stdout, stderr, marker) = run_mgc(&["install-app"], project.path(), &sandbox, None);
     let output = format!("{stdout}{stderr}");
-    assert_ne!(
+    assert_eq!(
         code,
         Some(0),
-        "native 'install-app' must refuse the delegated lane:\n{output}"
+        "native 'install-app' must succeed inside mgc:\n{output}"
     );
     assert!(
         marker.is_empty(),
         "flutter canary must NEVER fire under native 'install-app':\n{marker}"
     );
-    assert!(
-        output.contains("--compat-runtime"),
-        "refusal must name the escape hatch:\n{output}"
-    );
 }
 
 #[test]
-fn app_install_compat_spawns_flutter_through_the_gate() {
+fn app_install_compat_flag_is_ignored_on_the_native_lane() {
+    // Compat opt-in on a native lane is a no-op info (native always
+    // runs) — never a flutter spawn.
     let project = TempDir::new().unwrap();
     flutter_project(project.path());
     let sandbox = CanarySandbox::new("flutter");
@@ -342,15 +343,11 @@ fn app_install_compat_spawns_flutter_through_the_gate() {
         Some(("MGC_COMPAT_RUNTIME", "flutter")),
     );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(code, Some(0), "compat install-app must proceed:\n{output}");
+    assert_eq!(code, Some(0), "native install-app must proceed:\n{output}");
     assert!(
-        marker.contains("flutter"),
-        "compat must actually spawn flutter through the gate:\n{}",
+        marker.is_empty(),
+        "compat on the native lane must NOT spawn flutter:\n{}",
         sandbox.marker_text()
-    );
-    assert!(
-        output.contains("COMPATIBILITY MODE"),
-        "every compat spawn must warn loudly:\n{output}"
     );
 }
 #[test]

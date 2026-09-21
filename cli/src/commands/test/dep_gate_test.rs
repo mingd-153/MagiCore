@@ -236,7 +236,9 @@ fn ai_python_delegated_unknown_ecosystem_unsupported() {
         )
         .is_ok()
     );
-    // uv vs pip still mismatches (different owners).
+    // uv vs pip on the NATIVE install/add lanes: compat is ignored
+    // (native always runs) — no mismatch error. The flag==process
+    // contract lives on the still-delegated ai verbs (Remove).
     assert!(
         gate(
             &ctx("ai", Some(eco::PYTHON), DepOp::Install),
@@ -244,7 +246,28 @@ fn ai_python_delegated_unknown_ecosystem_unsupported() {
             &explicit("pip"),
             None
         )
-        .is_err()
+        .is_ok(),
+        "compat on native ai install is ignored"
+    );
+    assert!(
+        gate(
+            &ctx("ai", Some(eco::PYTHON), DepOp::Add),
+            Some("uv"),
+            &explicit("pip"),
+            None
+        )
+        .is_ok(),
+        "compat on native ai add is ignored"
+    );
+    assert!(
+        gate(
+            &ctx("ai", Some(eco::PYTHON), DepOp::Remove),
+            Some("uv"),
+            &explicit("pip"),
+            None
+        )
+        .is_err(),
+        "uv vs pip still mismatches on delegated ai remove"
     );
     // Undetected ai ecosystem never defaults open.
     assert!(gate(&ctx("ai", None, DepOp::Install), None, &native(), None).is_err());
@@ -277,6 +300,7 @@ fn app_rn_unsupported_flutter_delegated_unknown_unsupported() {
         )
         .is_ok()
     );
+    // Native flutter install ignores compat (native always runs).
     assert!(
         gate(
             &ctx("app", Some(eco::FLUTTER), DepOp::Install),
@@ -284,7 +308,8 @@ fn app_rn_unsupported_flutter_delegated_unknown_unsupported() {
             &native(),
             None
         )
-        .is_err()
+        .is_ok(),
+        "flutter install is native (no toolchain spawn)"
     );
     // Undetected app ecosystem never falls back to generic-delegated.
     assert!(gate(&ctx("app", None, DepOp::Install), None, &native(), None).is_err());
@@ -363,9 +388,7 @@ fn game_iot_clo_need_declared_ecosystem() {
 #[test]
 fn delegated_lane_fails_closed_without_compat() {
     for (core, eco, op) in [
-        ("ai", Some(eco::PYTHON), DepOp::Install),
-        ("ai", Some(eco::PYTHON), DepOp::Add),
-        ("app", Some(eco::FLUTTER), DepOp::Install),
+        ("ai", Some(eco::PYTHON), DepOp::Remove),
         ("game", Some(eco::BEVY), DepOp::Add),
         ("iot", Some("esp32-rust"), DepOp::Update),
         ("clo", Some(eco::TERRAFORM), DepOp::Install),
@@ -381,8 +404,30 @@ fn delegated_lane_fails_closed_without_compat() {
 
 #[test]
 fn compat_with_wrong_tool_stays_closed() {
+    // Native install/add ignore any opt-in; delegated ai Remove still
+    // enforces exact ownership.
+    assert!(
+        gate(
+            &ctx("ai", Some(eco::PYTHON), DepOp::Install),
+            Some("uv"),
+            &explicit("cargo"),
+            None
+        )
+        .is_ok(),
+        "compat on native ai install is ignored"
+    );
+    assert!(
+        gate(
+            &ctx("ai", Some(eco::PYTHON), DepOp::Add),
+            Some("uv"),
+            &explicit("cargo"),
+            None
+        )
+        .is_ok(),
+        "compat on native ai add is ignored"
+    );
     let err = gate(
-        &ctx("ai", Some(eco::PYTHON), DepOp::Install),
+        &ctx("ai", Some(eco::PYTHON), DepOp::Remove),
         Some("uv"),
         &explicit("cargo"),
         None,
@@ -434,8 +479,8 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
 
 #[test]
 fn app_exact_verbs_match_real_runners() {
-    // Reviewer table: flutter every verb delegated; swift/kotlin
-    // install+list delegated; objc install only; everything else
+    // Reviewer table: flutter install native, every other flutter verb
+    // delegated; swift/kotlin install+list delegated; objc install only; everything else
     // Unsupported — including under compat.
     assert!(
         gate(
@@ -566,7 +611,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     let ai = &dependency_ownership("ai")["operations"];
     assert_eq!(ai["install"]["owner"], "unsupported");
     let ai_languages = dependency_ownership("ai")["languages"].clone();
-    assert_eq!(ai_languages["python"]["install"]["owner"], "delegated");
+    assert_eq!(ai_languages["python"]["install"]["owner"], "mgc-native");
     let hardware = &dependency_ownership("hardware")["operations"];
     assert_eq!(hardware["install"]["owner"], "unsupported");
     // Splitting cores expose per-ecosystem overrides that differ from the
@@ -602,7 +647,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     if let Some(rn) = app_languages.get("rn") {
         assert_eq!(rn["install"]["owner"], "unsupported");
     }
-    assert_eq!(app_languages["flutter"]["install"]["owner"], "delegated");
+    assert_eq!(app_languages["flutter"]["install"]["owner"], "mgc-native");
     // Exact app verbs: swift/kotlin add unsupported, objc list
     // unsupported, objc install delegated.
     assert_eq!(app_languages["swift"]["add"]["owner"], "unsupported");

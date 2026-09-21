@@ -88,6 +88,53 @@ fn install_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
     }
 }
 
+/// Native flutter install: pubspec → pub.dev → mgc.lock, no toolchain.
+/// (Install flutter native, không spawn toolchain.)
+pub async fn install_flutter_native(
+    root: &std::path::Path,
+    packages: Vec<String>,
+    dry_run: bool,
+    compat_runtime: Option<String>,
+) -> Result<()> {
+    if !packages.is_empty() {
+        return Err(crate::error::install_app_packages_use_add(&packages));
+    }
+    if dry_run {
+        mgc_ui::info(
+            "[dry-run] would run: native flutter install (resolve pub.dev, write mgc.lock)",
+        );
+        return Ok(());
+    }
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        &crate::commands::dep_gate::DepContext::new(
+            "app",
+            Some(mgc_app_adapter::AppLanguage::Flutter.ecosystem()),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Install,
+        ),
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
+    let adapter =
+        mgc_app_adapter::adapter_for(root).ok_or_else(crate::error::app_project_not_detected)?;
+    let adapter: std::sync::Arc<dyn mgc_types::adapter::PackageAdapter> =
+        std::sync::Arc::new(adapter);
+    crate::commands::core::shared::install_with_adapter(
+        &*adapter,
+        root,
+        "mgc add",
+        false,
+        mgc_types::adapter::InstallOptions {
+            legacy_flat: false,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
 /// Lệnh dev theo language — Q20 (flutter run / gradle run / swift run).
 ///
 /// DELEGATED: these commands run the native toolchains for real (mgc dev
@@ -202,6 +249,13 @@ pub async fn install(
     }
     if matches!(lang, mgc_app_adapter::AppLanguage::ObjC) {
         return install_objc(&root, dry_run, compat_runtime).await;
+    }
+    // Flutter installs natively (pubspec parse → pub.dev resolve → verified
+    // fetch → mgc.lock + pub cache; zero `flutter` spawn). The native
+    // pipeline is the SAME shape as lib (parse/resolve/install/lock).
+    // (Flutter install native qua adapter.)
+    if lang == mgc_app_adapter::AppLanguage::Flutter {
+        return install_flutter_native(&root, packages, dry_run, compat_runtime).await;
     }
 
     // install_command is PURE (zero spawn) — resolve before the gate so

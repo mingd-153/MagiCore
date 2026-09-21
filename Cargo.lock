@@ -2569,6 +2569,7 @@ dependencies = [
  "futures-util",
  "mgc-exec",
  "mgc-http",
+ "mgc-lockfile",
  "mgc-types",
  "reqwest 0.12.28",
  "serde",

@@ -259,6 +259,8 @@ impl DependencyResolver for AppAdapter {
                 let resolution =
                     resolve_with_protocol(&protocol, EcosystemTag::Dart, "pub://pub.dev", manifest)
                         .await?;
+                *self.pending_lock.lock().expect("app pending lock poisoned") =
+                    resolution.lock_packages;
                 Ok(resolution.graph)
             }
             // Native SwiftPM engine (Phase 2): registry-scope/name packages

@@ -17,6 +17,7 @@ description = "Shared audit engine: plan execution, aggregation, policy, evidenc
 
 [dependencies]
 mgc-types = { workspace = true }
+mgc-lockfile = { workspace = true }
 mgc-exec = { workspace = true }
 # Shared HTTP transport (RULE §8 — no direct reqwest in audit).
 # HTTP transport dùng chung (RULE §8 — không reqwest trực tiếp).

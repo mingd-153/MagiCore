@@ -332,30 +332,14 @@ LANES = [
         "core": "ai",
         "language": "python",
         "scaffold": ["create-ai", "python-agent", "test-ai"],
-        # mgc install (ai) is FAIL-CLOSED: it requires uv.lock or
-        # requirements.lock (05 §5). The lane locks with uv FIRST (the
-        # provisioned tool the workflow installs), then runs the real
-        # install — no skip, no environment-unverified marker.
-        # mgc install (ai) FAIL-CLOSED: cần uv.lock hoặc
-        # requirements.lock (05 §5). Lane lock bằng uv TRƯỚC (tool được
-        # workflow provision), rồi chạy install thật — không skip,
-        # không marker environment-unverified.
+        # Native (mgc.lock, no uv.lock): the lane adds a REAL direct
+        # dependency (markerlib) via `mgc add-ai` (native PyPI
+        # resolve-first + mgc-side pyproject edit) BEFORE install, so the
+        # lockfile carries a genuine resolve + hash and `mgc install-ai`
+        # must actually materialize it — no uv pre-steps, no uv.lock.
+        # (Native: thêm dep thật bằng `mgc add-ai`, không uv.)
         "pre_steps": [
-            "lock_with_uv",
-            # REAL dependency fixture (P0-mới-2, Tech Lead vòng-6/7): the
-            # template ships deps = [], so a bare `uv lock` + `uv sync`
-            # locks and installs ZERO packages — an exit-0 that proves
-            # NOTHING about installing a real dependency graph. The lane
-            # now adds a real direct dependency (markerlib) via `uv add`
-            # BEFORE locking, so the lockfile carries a real resolve +
-            # hash and `mgc install` must actually materialize it.
-            # Fixture dependency THẬT (P0-mới-2): template ship deps = []
-            # nên `uv lock` + `uv sync` trần lock + cài KHÔNG package nào
-            # — exit-0 không chứng minh gì về cài dependency graph thật.
-            # Lane giờ thêm dependency trực tiếp thật (markerlib) qua
-            # `uv add` TRƯỚC khi lock, để lockfile mang resolve + hash
-            # thật và `mgc install` phải materialize nó.
-            "uv_add_real_dependency",
+            "mgc_add_real_dependency",
             # pytest runs `mgc test`; `build` runs `python -m build`.
             # Both are provisioned BEFORE the lifecycle so the lane
             # never skips on a missing tool.
@@ -371,31 +355,24 @@ LANES = [
         ],
         "delegated": [],
         # AI lane: the scaffold itself ships NO dependency set — the
-        # install dimension is proven against a lane-injected fixture,
-        # so the honest dimension name records that boundary
-        # (install-command-empty-project until the template itself ships
-        # real deps — Tech Lead P0-mới-2).
+        # install dimension is proven against a lane-injected fixture
+        # (added via `mgc add-ai`, native).
         # Lane AI: scaffold không kèm dependency — dimension install
-        # được chứng minh trên fixture lane tự thêm, nên tên dimension
-        # trung thực ghi rõ biên đó (install-command-empty-project tới
-        # khi template tự ship dependency thật — P0-mới-2).
+        # được chứng minh trên fixture lane tự thêm (qua `mgc add-ai`).
         "required_dims": ["create", "install", "test", "build"],
         "install_dim_name": "install-command-empty-project",
-        "native_pm_delegated": ["install"],
-        # uv locks + resolves + installs (the lane pre-locks with uv) —
-        # managed delegation, never native (P0-D).
-        # (uv lock + resolve + install (lane lock trước bằng uv) — ủy
-        # quyền có quản lý, không bao giờ native (P0-D).)
-        "install_owner": "managed-delegation",
-        # P0-D: uv owns the ai/python dependency lifecycle — delegated.
-        # (P0-D: uv giữ lifecycle dependency của ai/python — delegated.)
-        "dependency_owner": "delegated",
+        # Native PyPI engine owns resolve/fetch/install (mgc.lock) —
+        # managed-delegation record retired with the uv pre-steps.
+        # (Engine PyPI native giữ resolve/fetch/install.)
+        "install_owner": "native-engine",
+        # mgc owns the ai/python dependency lifecycle (native).
+        "dependency_owner": "mgc-native",
         "owner_by_operation": {
-            "resolve": "uv",
-            "lock": "uv",
-            "fetch": "uv",
-            "store": "magicore-managed-uv-cache",
-            "materialize": "uv",
+            "resolve": "mgc",                # PyPI JSON API engine resolves
+            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                  # mgc downloads wheels
+            "store": "magicore-shared-cas",  # verified CAS import
+            "materialize": "mgc",            # unpacked site dirs for import
         },
     },
     {
@@ -407,28 +384,22 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
-        # C0 (T0.3, 2026-09-17): the invoked install lane runs
-        # `flutter pub get` for real — delegated, never mgc-native, even
-        # though a native pub.dev resolve engine exists (unwired to the
-        # lane; Phase C). The C0 firewall refuses this lane without an
-        # explicit --compat-runtime opt-in.
-        # (C0: lane install gọi `flutter pub get` thật — delegated, không
-        # bao giờ mgc-native, dù engine resolve pub.dev native tồn tại
-        # (chưa nối vào lane; Phase C).)
+        # Native (mgc.lock, no uv.lock): install runs the shared PyPI
+        # engine (parse → resolve → verified fetch → mgc.lock); test and
+        # build run under mgc's own exec. No uv anywhere on this lane.
+        # (Native: install qua engine PyPI, không uv.)
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        "install_owner": "plain-delegation",
-        # P0-D/T0.4: flutter owns the app/flutter dependency lifecycle
-        # (lane spawns `flutter pub get`; C0-gated).
-        # (P0-D/T0.4: flutter giữ lifecycle dependency app/flutter.)
-        "dependency_owner": "delegated",
-        "note": "lane delegates to `flutter pub get` (C0-gated); native pub.dev resolve engine exists but is unwired to the lane (Phase C)",
+        "install_owner": "native-engine",
+        # mgc owns the app/flutter dependency lifecycle (native).
+        "dependency_owner": "mgc-native",
+        "note": "native pub.dev engine owns resolve/fetch/install (mgc.lock + pub cache); test/build run under mgc exec",
         "owner_by_operation": {
-            "resolve": "flutter",            # lane runs `flutter pub get`
-            "lock": "flutter",               # pubspec.lock owned by flutter
-            "fetch": "flutter",              # flutter downloads the archive
-            "store": "flutter-pub-cache",    # no shared mgc CAS on this lane
-            "materialize": "flutter",        # flutter writes .dart_tool
+            "resolve": "mgc",                # pub.dev JSON API engine resolves
+            "lock": "mgc",                   # mgc.lock v3 (native-resolve)
+            "fetch": "mgc",                  # mgc downloads archives
+            "store": "magicore-shared-cas",  # verified CAS import
+            "materialize": "mgc",            # pub cache layout for offline builds
         },
     },
     # ===== Phase 2 native app lanes (2026-09-16) — evidence-only until
@@ -1838,58 +1809,35 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         dims["detect"] = STATUS_NATIVE
 
     for step in lane.get("pre_steps", []):
-        # Non-mgc preparation (e.g. `uv lock` for the fail-closed ai
-        # install): runs the tool named here INSIDE the project BEFORE
-        # the lifecycle steps. A failing prep is a FAILED lane prep —
-        # recorded, never skipped (the workflow provisions the tool,
-        # so a missing tool is a provisioning bug, not a pass).
-        # Chuẩn bị ngoài mgc (vd `uv lock` cho install ai fail-closed):
-        # chạy tool trong project TRƯỚC các bước lifecycle. Prep fail là
-        # lane prep FAILED — ghi lại, không skip (workflow provision
-        # tool nên thiếu tool là lỗi provision, không phải pass).
+        # Lane preparation INSIDE the project BEFORE the lifecycle steps
+        # (mgc subcommands or provisioned tools). A failing prep is a
+        # FAILED lane prep — recorded, never skipped.
+        # Chuẩn bị lane TRONG project TRƯỚC các bước lifecycle. Prep fail
+        # là lane prep FAILED — ghi lại, không skip.
         if dims.get("create") != STATUS_NATIVE:
             break
-        if step == "lock_with_uv":
+        if step == "mgc_add_real_dependency":
+            # Inject a REAL direct dependency through mgc itself BEFORE
+            # install: `mgc add-ai markerlib` (native PyPI resolve-first +
+            # mgc-side pyproject edit) so mgc.lock carries a genuine
+            # resolve + hash and `mgc install-ai` must materialize a real
+            # package. No uv anywhere — an exit-0 with zero packages
+            # proves nothing. A failure here is a network/product problem
+            # recorded honestly.
+            # (Bơm dependency THẬT bằng `mgc add-ai`, không uv.)
             try:
                 proc = subprocess.run(
-                    ["uv", "lock"], capture_output=True, text=True,
+                    [mgc_bin, "add-ai", "markerlib"], capture_output=True, text=True,
                     cwd=os.path.join(sandbox, project_dir), timeout=timeout_s,
                 )
             except FileNotFoundError:
-                _fail("pre_step 'lock_with_uv' requires uv on PATH — provision it first")
+                _fail("pre_step 'mgc_add_real_dependency' requires the mgc binary — provisioning bug")
             except subprocess.TimeoutExpired:
-                _fail(f"uv lock prep timed out after {timeout_s}s")
+                _fail(f"mgc add-ai prep timed out after {timeout_s}s")
             if proc.returncode != 0:
                 dims["install"] = "failed"
                 detail["install_output"] = (
-                    "uv lock prep failed: "
-                    + (proc.stdout or "") + (proc.stderr or "")
-                )[-2000:]
-        elif step == "uv_add_real_dependency":
-            # P0-mới-2: inject a REAL direct dependency BEFORE locking so
-            # the lockfile carries a genuine resolve + hash and `uv sync`
-            # inside `mgc install` must materialize a real package — an
-            # empty deps=[] lock proves nothing. `uv add` also runs a
-            # resolve itself, so a failure here is a provisioning/network
-            # problem recorded honestly.
-            # (P0-mới-2: bơm dependency trực tiếp THẬT trước khi lock để
-            # lockfile mang resolve + hash thật và `uv sync` bên trong
-            # `mgc install` phải materialize package thật — lock deps=[]
-            # rỗng không chứng minh gì. `uv add` tự chạy resolve, nên fail
-            # ở đây là lỗi provision/network, ghi trung thực.)
-            try:
-                proc = subprocess.run(
-                    ["uv", "add", "markerlib"], capture_output=True, text=True,
-                    cwd=os.path.join(sandbox, project_dir), timeout=timeout_s,
-                )
-            except FileNotFoundError:
-                _fail("pre_step 'uv_add_real_dependency' requires uv on PATH — provision it first")
-            except subprocess.TimeoutExpired:
-                _fail(f"uv add prep timed out after {timeout_s}s")
-            if proc.returncode != 0:
-                dims["install"] = "failed"
-                detail["install_output"] = (
-                    "uv add (real dependency fixture) failed: "
+                    "mgc add-ai (real dependency fixture) failed: "
                     + (proc.stdout or "") + (proc.stderr or "")
                 )[-2000:]
         elif step == "provision_py_build_tools":

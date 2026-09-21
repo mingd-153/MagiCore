@@ -162,11 +162,8 @@ jobs:
         shell: bash
         run: |
           cd test-ai-app
-          # mgc install (AI) is fail-closed: it requires uv.lock or
-          # requirements.lock to exist. Generate the lock with uv (retried
-          # against pypi.org runner-side DNS flakes), then install.
-          # mgc install AI fail-closed: cần uv.lock/requirements.lock — tạo
-          # lock bằng uv (retry chống mất DNS pypi trên runner) rồi install.
+          # Provision test/build tools (environment setup, not
+          # delegation): pytest for `mgc test`, build for `python -m build`.
           pip_ok=false
           for i in 1 2 3 4 5; do
             if python -m pip install build pytest; then pip_ok=true; break; fi
@@ -177,23 +174,14 @@ jobs:
             echo "pip install failed after 5 attempts" >&2
             exit 1
           fi
-          uv_ok=false
-          for i in 1 2 3 4 5; do
-            if uv lock; then uv_ok=true; break; fi
-            echo "uv lock failed (attempt $i) — retrying in 30s"
-            sleep 30
-          done
-          if [[ "$uv_ok" != true ]]; then
-            echo "uv lock failed after 5 attempts" >&2
-            exit 1
-          fi
-          test -f uv.lock || test -f requirements.lock
-          # C0: the AI lane is toolchain-delegated — the compat opt-in is
-          # explicit here (never a CI-added bypass to "make it green").
-          # (C0: lane AI delegate — opt-in compat tường minh.)
+          # Native lane (mgc.lock, no uv.lock): add a REAL dependency
+          # through mgc itself so install must materialize a real
+          # package — an empty graph proves nothing. No uv anywhere.
+          # (Lane native: thêm dep thật bằng mgc, không uv.)
+          "$MGC_PARENT_BIN" add-ai markerlib
           install_ok=false
           for i in 1 2 3; do
-            if "$MGC_PARENT_BIN" install --compat-runtime uv; then install_ok=true; break; fi
+            if "$MGC_PARENT_BIN" install; then install_ok=true; break; fi
             echo "mgc AI install failed (attempt $i) — retrying transient registry/DNS failure in 20s"
             sleep 20
           done
@@ -201,6 +189,7 @@ jobs:
             echo "mgc AI install failed after 3 attempts" >&2
             exit 1
           fi
+          test -f mgc.lock
 
       - name: Test and build AI project
         shell: bash
@@ -273,15 +262,17 @@ jobs:
         shell: bash
         run: |
           cd test_app
-          # C0: the App lane is toolchain-delegated — explicit opt-in
-          # (flutter). This run is COMPATIBILITY evidence only.
-          # (C0: lane App delegate — opt-in tường minh.)
-          "$MGC_PARENT_BIN" install --compat-runtime flutter
+          # Native lane (mgc.lock, no pubspec.lock): install runs the
+          # pub.dev engine inside mgc — no `flutter` spawn, no compat
+          # flag. Expects mgc.lock, never pubspec.lock.
+          # (Lane native: install qua engine mgc, không flutter.)
+          "$MGC_PARENT_BIN" install
 
       - name: Verify lockfile
         shell: bash
         run: |
-          test -f test_app/pubspec.lock
+          test -f test_app/mgc.lock
+          test ! -f test_app/pubspec.lock
 
       - name: Run tests
         shell: bash

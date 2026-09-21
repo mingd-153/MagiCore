@@ -222,3 +222,30 @@ fn pip_audit_broken_json_still_fails_closed() {
     let broken = "[{\"name\": 123"; // truncated mid-body — must fail
     assert!(parse_pip_audit_json(broken).is_err());
 }
+
+/// mgc.lock-first (no-bypass rule): python pins owned by mgc audit
+/// straight from mgc.lock — no pip-audit spawn, no foreign lockfile.
+/// (Ưu tiên mgc.lock: pin python từ mgc.lock, không spawn pip-audit.)
+#[test]
+fn mgc_lock_python_pins_extract_without_spawning() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        "version = \"3\"\n\n[metadata]\ngenerated_at = \"x\"\ngenerator = \"t\"\nlockfile_hash = \"\"\n\n[[package]]\nname = \"six\"\nversion = \"1.17.0\"\nresolved = \"https://x/six.whl\"\nintegrity = \"sha256-abc\"\necosystem = \"python\"\n",
+    )
+    .unwrap();
+    let pins = mgc_audit::scanners::python_pins_from_mgc_lock(dir.path());
+    assert_eq!(pins.len(), 1, "one python pin, got {pins:?}");
+    assert_eq!(pins[0].name, "six");
+    assert_eq!(pins[0].version, "1.17.0");
+    // Non-python entries never leak into the python audit.
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        "version = \"3\"\n\n[metadata]\ngenerated_at = \"x\"\ngenerator = \"t\"\nlockfile_hash = \"\"\n\n[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\nresolved = \"https://x\"\nintegrity = \"sha256-x\"\necosystem = \"npm\"\n",
+    )
+    .unwrap();
+    assert!(
+        mgc_audit::scanners::python_pins_from_mgc_lock(dir.path()).is_empty(),
+        "npm entries must not surface as python pins"
+    );
+}

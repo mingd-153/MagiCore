@@ -616,6 +616,29 @@ pub fn find_pylock_file(project_root: &Path) -> Option<String> {
 ///   audit environment ngoài không chứng minh gì cho project này.
 /// - không có gì → Failed kèm hướng dẫn thật.
 ///
+/// Python pins owned by mgc itself, read straight from mgc.lock (no
+/// pip-audit spawn, no foreign lockfile). Non-python entries never leak
+/// in. Empty when no mgc.lock or no python pins — callers fall through
+/// to the legacy foreign-lockfile routing below.
+/// (Pin python từ mgc.lock — không spawn, không lock ngoài.)
+pub fn python_pins_from_mgc_lock(project_root: &Path) -> Vec<osv::OsvPin> {
+    let Ok(content) = std::fs::read_to_string(project_root.join("mgc.lock")) else {
+        return Vec::new();
+    };
+    let lockfile = mgc_lockfile::parser::parse_lockfile(&content)
+        .unwrap_or_else(|_| mgc_lockfile::Lockfile::new());
+    lockfile
+        .packages
+        .iter()
+        .filter(|p| p.ecosystem == mgc_lockfile::EcosystemTag::Python)
+        .map(|p| osv::OsvPin {
+            name: p.name.clone(),
+            version: p.version.clone(),
+            ecosystem: "PyPI",
+        })
+        .collect()
+}
+
 /// DELEGATED: advisory evaluation runs inside the external `pip-audit`
 /// binary (not the MGC advisory engine) until the native OSV-based
 /// evaluation lands — audit-via-tool, never claimed as native.
@@ -623,6 +646,15 @@ pub fn find_pylock_file(project_root: &Path) -> Option<String> {
 /// (không phải engine advisory của MGC) cho tới khi cơ chế đánh giá native
 /// qua OSV xong — audit qua tool, không bao giờ tính là native.
 pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
+    // mgc.lock FIRST (no-bypass rule): pins owned by mgc audit natively
+    // through OSV — no pip-audit spawn, no foreign lockfile. Only when
+    // mgc holds no python pins do we fall through to the legacy routing
+    // (requirements/pylock/uv/pyproject) below.
+    // (mgc.lock TRƯỚC: pin của mgc audit native qua OSV.)
+    let owned = python_pins_from_mgc_lock(project_root);
+    if !owned.is_empty() {
+        return osv::audit_osv_pins(&owned).await;
+    }
     if which::which("pip-audit").is_err() {
         return Ok(AuditReport::tool_missing(
             "pip-audit",

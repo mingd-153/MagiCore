@@ -1204,6 +1204,14 @@ pub fn install_lib_packages_use_add(packages: &[String]) -> Error {
     )
 }
 
+/// `install-app` takes no packages — same split as install-lib.
+pub fn install_app_packages_use_add(packages: &[String]) -> Error {
+    anyhow!(
+        "`install-app` takes no packages (got {:?}) — install replays the existing graph/lock through the native pipeline; add packages with `mgc add-app <package>`",
+        packages
+    )
+}
+
 /// `mgc migrate` does not know this target (only `--to v4` exists).
 pub fn migrate_unknown_target(to: &str) -> Error {
     anyhow!("unknown migrate target '{to}' (only `--to v4` exists)")

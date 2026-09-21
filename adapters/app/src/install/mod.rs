@@ -27,7 +27,11 @@ pub async fn run_install(
     match language {
         // Flutter: native pub.dev engine (Phase 2) — no `flutter pub get`
         // spawn for resolve/fetch/install.
-        AppLanguage::Flutter => install_flutter_native(graph).await,
+        AppLanguage::Flutter => {
+            let summary = install_flutter_native(graph).await?;
+            write_canonical_lock(project_root, lock_packages)?;
+            Ok(summary)
+        }
 
         // Kotlin/Android: gradle sync
         AppLanguage::Kotlin => install_kotlin(project_root, opts).await,
