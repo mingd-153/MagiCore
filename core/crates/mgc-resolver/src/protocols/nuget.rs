@@ -275,6 +275,28 @@ impl NuGetProtocol {
         let nupkg_name = format!("{}.{}.nupkg", entry.name, entry.version);
         std::fs::write(dir.join(&nupkg_name), nupkg_bytes)?;
         super::zip_reader::extract_zip(nupkg_bytes, &dir)?;
+        // NuGet on-disk convention lowercases the id: the nuspec inside a
+        // nupkg keeps author case (`Demo.Lib.nuspec`) but the global-packages
+        // layout reads `<lower-id>.nuspec` — normalize so Linux checkouts
+        // see the same file Windows does (case-sensitivity parity).
+        // (Chuẩn on-disk của NuGet viết thường id.)
+        let want_nuspec = dir.join(format!("{}.nuspec", entry.name.to_lowercase()));
+        if !want_nuspec.is_file() {
+            let have: Vec<_> = std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension()
+                        .and_then(|x| x.to_str())
+                        .is_some_and(|x| x.eq_ignore_ascii_case("nuspec"))
+                })
+                .collect();
+            if let [single] = have.as_slice() {
+                let _ = std::fs::rename(single, &want_nuspec);
+            }
+        }
         let sha512 = Sha512::digest(nupkg_bytes);
         std::fs::write(
             dir.join(format!("{nupkg_name}.sha512")),

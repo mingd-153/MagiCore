@@ -66,6 +66,7 @@ fn trust_roots_merge_flag_and_env() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn stage_rejects_symlink_named_mgc() {
     // Archive chứa symlink tên mgc trỏ ra ngoài — phải từ chối (spawn
