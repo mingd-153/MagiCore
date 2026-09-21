@@ -178,6 +178,9 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
+        # No delegated lifecycle steps (native install; test/build run
+        # under mgc's own exec, same precedent as lib/python).
+        "delegated": [],
         # Phase 2 native (2026-09-16): the GoMod proxy engine
         # (protocols/go.rs) resolves/downloads/verifies modules — install
         # is mgc-owned now; go toolchain remains for build/test only.
@@ -204,6 +207,9 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
+        # No delegated lifecycle steps (native install; test/build run
+        # under mgc's own exec, same precedent as lib/python).
+        "delegated": [],
         # Phase 2 native (2026-09-16): the Maven engine (protocols/maven.rs)
         # resolves POM graphs and verifies jars (sha256/sha1) — install is
         # mgc-owned for pom.xml projects; gradle stays a build-lane tool.
@@ -230,6 +236,9 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
+        # No delegated lifecycle steps (native install; test/build run
+        # under mgc's own exec, same precedent as lib/python).
+        "delegated": [],
         # Phase 2 native (2026-09-16): the NuGet v3 engine
         # (protocols/nuget.rs) resolves flat-container versions and
         # verifies SHA-512 nupkgs — install is mgc-owned.
@@ -1931,7 +1940,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         if rc != 0:
             dims[step] = STATUS_FAILED
             detail[f"{step}_output"] = out[-2000:]
-        elif step == "install" or step in lane["delegated"]:
+        elif step == "install" or step in lane.get("delegated", []):
             # Success follows the OWNER taxonomy: an install (or delegated
             # step) success records exactly who owns it — native-engine
             # lanes record native-pass, managed stays managed, plain stays
