@@ -1633,7 +1633,7 @@ fn audit_lib_java_pom_only_is_partial_never_available() {
     )
     .unwrap();
 
-    let (code, output) = run_mgc_audit_json(&mgc, sandbox.path(), None);
+    let (code, output) = run_mgc_audit_json(&mgc, sandbox.path(), Some(false));
     assert_eq!(
         code,
         Some(0),

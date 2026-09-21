@@ -269,11 +269,13 @@ struct StrictMode(bool);
 
 impl StrictMode {
     fn from_env() -> Self {
-        let forced = std::env::var("MGC_AUDIT_STRICT")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-        if forced {
-            return Self(true);
+        // Explicit beats implicit: a SET MGC_AUDIT_STRICT always decides
+        // ("1"/"true" strict, anything else — including "0" — open), so
+        // tests and operators can force the open lane anywhere. Only an
+        // UNSET variable falls back to the CI-runner default.
+        // (Tường minh thắng ngầm định: SET là quyết, chỉ UNSET mới theo CI.)
+        if let Ok(v) = std::env::var("MGC_AUDIT_STRICT") {
+            return Self(v == "1" || v.to_lowercase() == "true");
         }
         // CI runners export CI=true — strict is the safe default there.
         // CI runner export CI=true — strict là mặc định an toàn ở đó.
