@@ -196,10 +196,9 @@ async fn build_iot(root: &Path) -> Result<()> {
     Err(crate::error::no_framework_detected("iot", root))
 }
 
-/// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
-/// full resolver — không wrapper PM); python → python -m build (fail-closed nếu thiếu module build).
-#[cfg(feature = "lib")]
 /// First `*.csproj` directly inside the project root (SDK-style layout).
+/// (File `*.csproj` đầu tiên ngay trong root project.)
+#[cfg(feature = "lib")]
 fn find_local_csproj(root: &std::path::Path) -> Option<std::path::PathBuf> {
     std::fs::read_dir(root)
         .ok()?
@@ -214,6 +213,9 @@ fn find_local_csproj(root: &std::path::Path) -> Option<std::path::PathBuf> {
         .next()
 }
 
+/// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
+/// full resolver — không wrapper PM); python → python -m build (fail-closed nếu thiếu module build).
+#[cfg(feature = "lib")]
 async fn build_lib(root: &Path) -> Result<()> {
     // Load optimizer env for lib runtime
     // Tải env optimizer cho runtime thư viện

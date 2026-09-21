@@ -109,17 +109,22 @@ pub async fn test(
         // error, never a silent venv). This is the run side of native
         // python: `mgc test` sees what `mgc install-lib` fetched.
         // (PYTHONPATH cho package python do mgc cài.)
-        if runner == "pytest" || runner == "python" || runner == "python3" {
-            let mut paths = mgc_lib_adapter::install::native_python_path_entries(project_root);
-            if !paths.is_empty() {
-                if let Some(cur) = std::env::var_os("PYTHONPATH") {
-                    paths.extend(std::env::split_paths(&cur));
-                }
-                if let Ok(joined) = std::env::join_paths(&paths) {
-                    env.push((
-                        "PYTHONPATH".to_string(),
-                        joined.to_string_lossy().to_string(),
-                    ));
+        // lib-gated: single-core builds (e.g. web-only) have no
+        // mgc-lib-adapter dependency — the block vanishes there.
+        #[cfg(feature = "lib")]
+        {
+            if runner == "pytest" || runner == "python" || runner == "python3" {
+                let mut paths = mgc_lib_adapter::install::native_python_path_entries(project_root);
+                if !paths.is_empty() {
+                    if let Some(cur) = std::env::var_os("PYTHONPATH") {
+                        paths.extend(std::env::split_paths(&cur));
+                    }
+                    if let Ok(joined) = std::env::join_paths(&paths) {
+                        env.push((
+                            "PYTHONPATH".to_string(),
+                            joined.to_string_lossy().to_string(),
+                        ));
+                    }
                 }
             }
         }

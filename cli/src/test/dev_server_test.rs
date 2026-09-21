@@ -247,6 +247,7 @@ fn canonical_compile_options_ok(root: &std::path::Path, source: &std::path::Path
 /// (Tsconfig fail-closed: tsconfig TỒN TẠI nhưng không đọc được (chmod
 /// 000) phải FAIL options — không gộp vào "absent" và không
 /// poison-rồi-biên-dịch. Bỏ qua khi chmod không hiệu lực (Windows/root).)
+#[cfg(unix)]
 #[test]
 fn unreadable_tsconfig_fails_options_fail_closed() {
     let tmp = tempdir().unwrap();

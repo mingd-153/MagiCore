@@ -167,11 +167,16 @@ pub fn collect_dotnet_pins(project_root: &Path) -> MgResult<(Vec<OsvPin>, Vec<St
         for rel in &projects {
             // Join, then canonicalize: symlinks/.. must resolve INSIDE
             // the project root, else the entry is refused (recorded).
-            // (Chuẩn hóa path: thoát root thì từ chối có ghi nhận.)
-            let csproj = project_root.join(rel);
+            // Windows solutions record paths in whatever case
+            // ("a\\A.csproj" vs disk "a/a.csproj") while Linux checkouts
+            // are case-sensitive — resolve case-insensitively so a
+            // Windows-authored .sln audits the same everywhere.
+            // (Chuẩn hóa path: thoát root thì từ chối có ghi nhận.
+            // Resolve không phân biệt hoa thường cho .sln từ Windows.)
+            let csproj = resolve_project_path(project_root, rel);
             let inside = csproj
-                .canonicalize()
-                .ok()
+                .as_deref()
+                .and_then(|p| p.canonicalize().ok())
                 .filter(|abs| abs.starts_with(canonical_root(project_root)));
             let Some(csproj_abs) =
                 inside.filter(|abs| abs.extension().and_then(|e| e.to_str()) == Some("csproj"))
@@ -239,6 +244,33 @@ fn canonical_root(project_root: &Path) -> std::path::PathBuf {
         .unwrap_or_else(|_| project_root.to_path_buf())
 }
 
+/// Resolve an sln-relative project path, tolerating Windows case drift
+/// (`A.csproj` on disk as `a.csproj`). Exact hit first (zero cost on
+/// matching systems); otherwise walk components matching directory
+/// entries case-insensitively. Returns None when unresolvable — callers
+/// refuse with a recorded skip, never a silent drop.
+/// (Resolve path project, chịu case drift của Windows.)
+fn resolve_project_path(project_root: &Path, rel: &str) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let direct = project_root.join(rel);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let mut current = project_root.to_path_buf();
+    for comp in std::path::Path::new(rel).components() {
+        let want = match comp {
+            Component::Normal(part) => part.to_string_lossy().to_lowercase(),
+            _ => return None,
+        };
+        let hit = std::fs::read_dir(&current)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().to_lowercase() == want)?;
+        current = hit.path();
+    }
+    current.is_file().then_some(current)
+}
+
 /// Every `*.sln` at the project root (unsorted — callers sort for
 /// determinism).
 /// Mọi `*.sln` ở root.
@@ -294,4 +326,23 @@ pub fn read_solution_projects(raw: &str) -> Vec<String> {
         }
     }
     projects
+}
+
+#[cfg(test)]
+mod case_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    /// Windows case drift: sln says `A.csproj`, disk has `a.csproj` —
+    /// must resolve on case-sensitive filesystems too (Linux CI).
+    #[test]
+    fn resolve_project_path_tolerates_case_drift() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a").join("a.csproj"), "<Project/>\n").unwrap();
+        let hit = resolve_project_path(dir.path(), "a/A.csproj").expect("case drift resolves");
+        assert!(hit.is_file());
+        assert!(resolve_project_path(dir.path(), "a/missing.csproj").is_none());
+        assert!(resolve_project_path(dir.path(), "../escape.csproj").is_none());
+    }
 }
