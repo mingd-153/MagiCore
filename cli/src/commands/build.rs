@@ -501,12 +501,26 @@ pub(crate) fn tool_unavailable(tool: &str) -> bool {
         });
 
     std::env::split_paths(&path).all(|directory| {
+        let directory = directory.as_path();
         if directory.join(tool).is_file() {
             return false;
         }
-        !extensions
-            .iter()
-            .any(|extension| directory.join(format!("{tool}{extension}")).is_file())
+        !extensions.iter().any(|extension| {
+            let candidate = directory.join(format!("{tool}{extension}"));
+            if candidate.is_file() {
+                return true;
+            }
+            // Windows PATHEXT matching is case-insensitive (a `.bat`
+            // shim satisfies `.BAT`) — honor that on case-sensitive
+            // filesystems too, or Linux checkouts miss what Windows sees.
+            // (PATHEXT Windows không phân biệt hoa thường.)
+            let want = format!("{tool}{extension}").to_lowercase();
+            std::fs::read_dir(directory)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok())
+                .any(|entry| entry.file_name().to_string_lossy().to_lowercase() == want)
+        })
     })
 }
 
