@@ -350,6 +350,8 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 /// đọc dòng), ghi rõ trong reasons. Muốn chính xác symbol-level vẫn cần
 /// tool thật.
 pub async fn audit_go(project_root: &Path) -> MgResult<AuditReport> {
+    // DELEGATED: the audit spawns the toolchain-owned govulncheck scanner
+    // for real (source mode); missing binary falls back to native OSV.
     if !project_root.join("go.mod").is_file() {
         return Ok(AuditReport::scanner_failed(
             "govulncheck",
@@ -472,6 +474,8 @@ pub fn read_go_mod_requires(raw: &str) -> (Vec<OsvPin>, Vec<String>) {
 /// Fallback OSV khi thiếu binary: query ghim require trực tiếp, ghi rõ
 /// giới hạn direct-only. Không có ghim nào → vẫn cần tool (ToolMissing).
 async fn audit_go_osv_fallback(project_root: &Path) -> MgResult<AuditReport> {
+    // DELEGATED: names the toolchain-owned scanner in ToolMissing guidance
+    // only — this fallback never spawns it (native OSV query instead).
     let raw = std::fs::read_to_string(project_root.join("go.mod"))
         .map_err(|e| MgError::Other(format!("read go.mod: {e}")))?;
     let (pins, mut skipped) = read_go_mod_requires(&raw);

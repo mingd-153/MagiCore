@@ -40,7 +40,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 use tempfile::TempDir;
 
 fn find_mgc_binary() -> String {
@@ -335,7 +335,7 @@ fn enospc_on_the_store_volume_fails_clean_and_recovers() {
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn make_tarball() -> Vec<u8> {
     let package_json = serde_json::json!({
         "name": "is-odd",

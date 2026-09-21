@@ -80,6 +80,8 @@ pub(crate) fn pip_binary() -> &'static str {
             .map(|dir| dir.join(bin))
             .any(|p| p.is_file())
     }
+    // DELEGATED: owner-name probe for the delegated pip lane (Remove/Update
+    // spawn this owner for real); the probe itself never spawns.
     if on_path("pip") || !on_path("pip3") {
         "pip"
     } else {

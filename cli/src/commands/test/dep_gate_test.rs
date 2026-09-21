@@ -580,10 +580,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     // Capability snapshot vs REAL runners: native Add carries no tools;
     // python Remove still spawns pip only (uv excluded); go remove /
     // java add have no runner (unsupported).
-    assert_eq!(
-        lib_languages["python"]["add"]["owner"],
-        "mgc-native"
-    );
+    assert_eq!(lib_languages["python"]["add"]["owner"], "mgc-native");
     assert_eq!(
         lib_languages["python"]["add"]["tools"],
         serde_json::json!([])
