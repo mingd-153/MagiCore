@@ -494,8 +494,8 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
 
 #[test]
 fn app_exact_verbs_match_real_runners() {
-    // Reviewer table: flutter install + update native; add/remove
-    // delegated; swift/kotlin install+list delegated; objc install only; everything else
+    // Reviewer table: flutter install + update and swift/kotlin update
+    // native; add/remove delegated; swift/kotlin install+list delegated; objc install only; everything else
     // Unsupported — including under compat.
     assert!(
         gate(
@@ -667,6 +667,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(app_languages["flutter"]["install"]["owner"], "mgc-native");
     assert_eq!(app_languages["flutter"]["update"]["owner"], "mgc-native");
     assert_eq!(app_languages["swift"]["update"]["owner"], "mgc-native");
+    assert_eq!(app_languages["kotlin"]["update"]["owner"], "mgc-native");
     // Exact app verbs: swift/kotlin add unsupported, objc list
     // unsupported, objc install delegated.
     assert_eq!(app_languages["swift"]["add"]["owner"], "unsupported");

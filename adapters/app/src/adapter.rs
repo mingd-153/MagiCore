@@ -71,6 +71,72 @@ impl AppAdapter {
     /// partial silent pass).
     /// (Update Swift native: resolve latest + sửa Package.swift +
     /// verify bằng quét lại.)
+    /// Native Kotlin update through the version catalog
+    /// (`gradle/libs.versions.toml`): resolve each target to latest
+    /// through Maven Central, bump the catalog (ref values or inline
+    /// literals), verify by re-parse. No install tail — install stays
+    /// delegated-gradle (the user builds with the toolchain). Projects
+    /// without a catalog fail closed with guidance (never a silent
+    /// partial pass, never a guessed DSL edit).
+    /// (Update Kotlin native qua version catalog.)
+    pub async fn update_kotlin_native(
+        &self,
+        project_root: &Path,
+        packages: &[String],
+    ) -> MgResult<Vec<(String, String, String)>> {
+        use crate::manifest::gradle::{bump_catalog_pin, parse_version_catalog};
+        use mgc_resolver::protocols::MavenProtocol;
+        let entries = parse_version_catalog(project_root).ok_or_else(|| {
+            MgError::Other(
+                "kotlin update needs gradle/libs.versions.toml — plain build.gradle scripts are programs, not safely editable manifests (declare versions in a catalog for native update, or run gradle with --compat-runtime)"
+                    .to_string(),
+            )
+        })?;
+        let targets: Vec<(String, String)> = if packages.is_empty() {
+            entries
+                .iter()
+                .map(|e| (format!("{}:{}", e.group, e.artifact), e.version.clone()))
+                .collect()
+        } else {
+            let mut out = Vec::new();
+            for name in packages {
+                // Accept `group:artifact` or bare artifact (unambiguous only).
+                let hits: Vec<_> = entries
+                    .iter()
+                    .filter(|e| {
+                        format!("{}:{}", e.group, e.artifact) == *name || e.artifact == *name
+                    })
+                    .collect();
+                if hits.len() != 1 {
+                    return Err(MgError::Other(format!(
+                        "cannot update '{name}': {} catalog match(es) — use group:artifact",
+                        hits.len()
+                    )));
+                }
+                out.push((
+                    format!("{}:{}", hits[0].group, hits[0].artifact),
+                    hits[0].version.clone(),
+                ));
+            }
+            out
+        };
+        let protocol = MavenProtocol::from_env();
+        let mut updated = Vec::new();
+        for (coord, from) in &targets {
+            let entry = protocol.resolve(coord, "*").await.map_err(|e| {
+                MgError::Other(format!("kotlin resolve-latest for '{coord}' failed: {e}"))
+            })?;
+            let latest = entry.version.clone();
+            if *latest == *from {
+                continue;
+            }
+            let (group, artifact) = coord.split_once(':').unwrap_or(("", ""));
+            bump_catalog_pin(project_root, group, artifact, &latest)?;
+            updated.push((coord.clone(), from.clone(), latest));
+        }
+        Ok(updated)
+    }
+
     pub async fn update_swift_native(
         &self,
         project_root: &Path,

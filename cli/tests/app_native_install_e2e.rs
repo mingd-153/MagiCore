@@ -424,3 +424,78 @@ fn swift_update_native_against_local_registry() {
         "mgc.lock must record 1.1.0:\n{lock}"
     );
 }
+
+fn kotlin_catalog_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"nativekotlin\"\necosystem = \"app\"\n[app]\nlanguage = \"kotlin\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("settings.gradle.kts"),
+        "rootProject.name = \"nativekotlin\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("gradle")).unwrap();
+    std::fs::write(
+        dir.join("gradle/libs.versions.toml"),
+        "[versions]\nlang3 = \"3.12.0\"\n\n[libraries]\ncommons-lang3 = { module = \"org.apache.commons:commons-lang3\", version.ref = \"lang3\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("build.gradle.kts"),
+        "plugins { kotlin(\"jvm\") version \"2.0.0\" }\ndependencies {\n    implementation(libs.commons.lang3)\n}\n",
+    )
+    .unwrap();
+}
+
+/// Kotlin native update through the version catalog (no JVM, no gradle
+/// spawn — pure TOML + Maven Central resolve). canary-shims the whole
+/// toolchain set to prove it.
+#[test]
+fn kotlin_update_native_through_catalog() {
+    let project = TempDir::new().unwrap();
+    kotlin_catalog_project(project.path());
+    let sandbox = NoSpawnSandbox::multi(&[
+        "gradle",
+        "java",
+        "kotlinc",
+        "flutter",
+        "dart",
+        "swift",
+        "pod",
+        "xcodebuild",
+    ]);
+
+    let (code, stdout, stderr) = sandbox.run_mgc(&["update-app", "commons-lang3"], project.path());
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(
+        code,
+        Some(0),
+        "native kotlin update must succeed:\n{output}"
+    );
+    let catalog =
+        std::fs::read_to_string(project.path().join("gradle/libs.versions.toml")).unwrap();
+    assert!(
+        !catalog.contains("3.12.0"),
+        "old pin must be gone:\n{catalog}"
+    );
+    // Latest commons-lang3 as resolved live (floats with the registry
+    // by design — the bump fn itself fails closed unless the re-parse
+    // reads the new pin back).
+    let bumped = catalog
+        .lines()
+        .find(|l| l.trim_start().starts_with("lang3"))
+        .unwrap_or_default()
+        .to_string();
+    let version = bumped.split('"').nth(1).unwrap_or_default().to_string();
+    assert!(
+        !version.is_empty() && version != "3.12.0",
+        "ref must point past 3.12.0, got {version:?}:\n{catalog}"
+    );
+    assert!(
+        sandbox.marker_text().is_empty(),
+        "ZERO toolchain spawn allowed, got:\n{}",
+        sandbox.marker_text()
+    );
+}

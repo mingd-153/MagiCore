@@ -290,11 +290,12 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("app", Some(eco::SWIFT), _) => DepOwner::Delegated {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
         },
-        // App Kotlin: install + list runners exist; add/remove/update have
-        // NO command — Unsupported.
-        ("app", Some(eco::KOTLIN), DepOp::Add | DepOp::Remove | DepOp::Update) => {
-            DepOwner::Unsupported
-        }
+        // App Kotlin update runs natively through the version catalog
+        // (resolve-latest + bump + re-parse verify, zero `gradle`
+        // spawn). No install tail (install stays delegated-gradle).
+        // (Kotlin update native qua version catalog.)
+        ("app", Some(eco::KOTLIN), DepOp::Update) => DepOwner::Native,
+        ("app", Some(eco::KOTLIN), DepOp::Add | DepOp::Remove) => DepOwner::Unsupported,
         ("app", Some(eco::KOTLIN), _) => DepOwner::Delegated {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
         },
