@@ -1021,3 +1021,50 @@ fn matrix_native_remove_game_iot() {
         "serde_json",
     );
 }
+
+#[test]
+fn matrix_remove_rolls_back_manifest_when_install_fails() {
+    // Atomic remove: manifest edited, then install tail hits a dead
+    // registry → the op fails AND the manifest is restored (never a
+    // half-state where the dep is dropped but lock/store still carry it).
+    let project = TempDir::new().unwrap();
+    let (f, b) = python_manifest();
+    // Fixture carries TWO deps so remove has work and rollback is visible.
+    lib_project(
+        project.path(),
+        "python",
+        f,
+        "[project]\nname = \"m\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"six==1.17.0\", \"attrs==23.1.0\"]\n",
+    );
+    let _ = b;
+    let sandbox = MatrixSandbox::new();
+    let (code, out) = sandbox.run(&["install-lib"], project.path());
+    assert_eq!(code, Some(0), "warm install must succeed:\n{out}");
+    let before = std::fs::read_to_string(project.path().join("pyproject.toml")).unwrap();
+    assert!(
+        before.contains("attrs"),
+        "fixture must carry attrs:\n{before}"
+    );
+    // Break the artifact fetch (dead host in the lock URL) with a cold
+    // store: the install tail must fail at fetch, triggering rollback.
+    // (Lock short-circuit skips resolve, so killing the index alone is
+    // not enough — the fetch itself must fail.)
+    let lock_path = project.path().join("mgc.lock");
+    let lock_body = std::fs::read_to_string(&lock_path).unwrap();
+    let broken = lock_body.replacen("https://files.pythonhosted.org", "http://127.0.0.1:1", 1);
+    assert_ne!(lock_body, broken, "fixture must actually break");
+    std::fs::write(&lock_path, broken).unwrap();
+    let cold = MatrixSandbox::new();
+    let (code, out) = cold.run(&["remove-lib", "attrs"], project.path());
+    assert_ne!(
+        code,
+        Some(0),
+        "remove whose install tail hits a dead registry must fail:\n{out}"
+    );
+    let after = std::fs::read_to_string(project.path().join("pyproject.toml")).unwrap();
+    assert!(
+        after.contains("attrs"),
+        "rolled-back manifest must still carry attrs:\n{after}"
+    );
+    cold.assert_no_spawn("atomic remove-lib");
+}

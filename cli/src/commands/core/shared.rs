@@ -365,6 +365,12 @@ pub async fn remove(
     let parse_started_at = std::time::Instant::now();
     let mut manifest = adapter.parse_manifest(root).await?;
     profile_install_mark("remove_parse_manifest", parse_started_at);
+    // Atomicity snapshot: the PRE-EDIT manifest, so a failed install tail
+    // below can roll the file back (never a half-state where the manifest
+    // dropped the dep but lock/store still carry it). Must clone BEFORE
+    // the remove loop mutates `manifest`.
+    // (Snapshot TRƯỚC khi sửa — rollback mới đúng.)
+    let manifest_before = manifest.clone();
     // Toolchain-owned manifest (go.mod, platformio.ini): the provider
     // tool is the SOLE writer — run the REAL toolchain remove per dep,
     // re-read, and verify absence (fail closed on a phantom removal).
@@ -408,7 +414,7 @@ pub async fn remove(
         info("Using mgc.lock for remaining dependency graph.");
         let started_at = std::time::Instant::now();
         let spinner = create_spinner("  Linking packages...");
-        let mut summary = adapter
+        let install_result = adapter
             .install(
                 &graph,
                 root,
@@ -417,8 +423,12 @@ pub async fn remove(
                     ..Default::default()
                 },
             )
-            .await?;
+            .await;
         spinner.finish_and_clear();
+        let mut summary = match install_result {
+            Ok(summary) => summary,
+            Err(e) => return rollback_remove_manifest(adapter, root, &manifest_before, e).await,
+        };
         summary.duration_ms = started_at.elapsed().as_millis() as u64;
         // Cache-source label (B-series honesty) — see install_with_adapter.
         // Nhãn nguồn cache (B-series) — xem install_with_adapter.
@@ -437,7 +447,7 @@ pub async fn remove(
         success("All dependencies installed");
         return Ok(());
     }
-    install_with_adapter(
+    match install_with_adapter(
         adapter,
         root,
         install_command_for_adapter(adapter),
@@ -447,8 +457,32 @@ pub async fn remove(
             ..Default::default()
         },
     )
-    .await?;
-    Ok(())
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(e) => rollback_remove_manifest(adapter, root, &manifest_before, e).await,
+    }
+}
+
+/// Roll a failed remove-install back: rewrite the pre-edit manifest so
+/// the project never sits in a half-state (manifest dropped the dep
+/// while lock/store still carry it). The restore itself is best-effort —
+/// if it fails, BOTH errors surface (original first).
+/// (Rollback manifest khi install sau remove lỗi.)
+async fn rollback_remove_manifest(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    manifest_before: &Manifest,
+    install_error: impl std::fmt::Display,
+) -> Result<()> {
+    if let Err(restore_error) = adapter.write_manifest(root, manifest_before).await {
+        mgc_ui::warning(&format!(
+            "remove rollback failed to restore the manifest: {restore_error:#} (project may be half-updated — re-add the package and retry)"
+        ));
+    } else {
+        mgc_ui::info("remove rolled back: manifest restored (install failed, nothing changed)");
+    }
+    Err(anyhow::anyhow!("{install_error:#}"))
 }
 
 #[derive(Debug, Clone)]
