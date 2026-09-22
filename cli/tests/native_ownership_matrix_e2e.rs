@@ -1054,6 +1054,11 @@ fn matrix_remove_rolls_back_manifest_when_install_fails() {
     let broken = lock_body.replacen("https://files.pythonhosted.org", "http://127.0.0.1:1", 1);
     assert_ne!(lock_body, broken, "fixture must actually break");
     std::fs::write(&lock_path, broken).unwrap();
+    // Re-snapshot AFTER tampering: the rollback must restore exactly
+    // this (tampered) lock byte-identical — the tail must not rewrite it
+    // on its way to failing.
+    // (Chụp lại lock SAU khi phá — rollback phải trả đúng từng byte.)
+    let lock_bytes_before = std::fs::read(&lock_path).unwrap();
     let cold = MatrixSandbox::new();
     let (code, out) = cold.run(&["remove-lib", "attrs"], project.path());
     assert_ne!(
@@ -1065,6 +1070,11 @@ fn matrix_remove_rolls_back_manifest_when_install_fails() {
     assert!(
         after.contains("attrs"),
         "rolled-back manifest must still carry attrs:\n{after}"
+    );
+    let lock_bytes_after = std::fs::read(project.path().join("mgc.lock")).unwrap();
+    assert_eq!(
+        lock_bytes_after, lock_bytes_before,
+        "rolled-back lock must be byte-identical (tail must not rewrite it on failure)"
     );
     cold.assert_no_spawn("atomic remove-lib");
 }

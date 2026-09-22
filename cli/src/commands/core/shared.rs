@@ -362,15 +362,23 @@ pub async fn remove(
         return Err(crate::error::too_many_packages(packages.len(), "remove"));
     }
     info(&format!("Removing {} package(s)...", packages.len()));
+    // Crash recovery first: a previous remove may have died (SIGKILL)
+    // between the manifest write and the install tail — its journal
+    // restores manifest+lock before this op proceeds.
+    // (Phục hồi journal của lần remove chết dở trước — nếu có.)
+    recover_interrupted_remove(adapter, root).await?;
     let parse_started_at = std::time::Instant::now();
     let mut manifest = adapter.parse_manifest(root).await?;
     profile_install_mark("remove_parse_manifest", parse_started_at);
-    // Atomicity snapshot: the PRE-EDIT manifest, so a failed install tail
-    // below can roll the file back (never a half-state where the manifest
-    // dropped the dep but lock/store still carry it). Must clone BEFORE
-    // the remove loop mutates `manifest`.
-    // (Snapshot TRƯỚC khi sửa — rollback mới đúng.)
-    let manifest_before = manifest.clone();
+    // Best-effort rollback scope (NOT full store-level atomicity — the
+    // install tail re-resolves instead of using the pruned graph, and
+    // store/cache additions are additive-only): snapshot the manifest
+    // struct + mgc.lock bytes BEFORE the edit, and stage a crash journal
+    // so a failure below (or a SIGKILL before the tail finishes) can
+    // restore both files. Must capture BEFORE the remove loop mutates.
+    // (Snapshot + journal TRƯỚC khi sửa — rollback/journal phục hồi cả
+    // manifest lẫn lock; store/cache chỉ thêm, không xóa.)
+    let snapshot = RemoveSnapshot::capture(&manifest, root)?;
     // Toolchain-owned manifest (go.mod, platformio.ini): the provider
     // tool is the SOLE writer — run the REAL toolchain remove per dep,
     // re-read, and verify absence (fail closed on a phantom removal).
@@ -398,6 +406,10 @@ pub async fn remove(
         return Ok(());
     }
     let write_started_at = std::time::Instant::now();
+    // Commit point: journal first (crash before this line mutated
+    // nothing), then the manifest write.
+    // (Ghi journal trước — crash trước dòng này chưa sửa gì.)
+    write_remove_journal(root, &packages, &snapshot)?;
     adapter.write_manifest(root, &manifest).await?;
     profile_install_mark("remove_write_manifest", write_started_at);
     if !install {
@@ -405,6 +417,7 @@ pub async fn remove(
             "Run '{}' to update lockfile and node_modules",
             style_cmd(install_command_for_adapter(adapter))
         ));
+        clear_remove_journal(root);
         return Ok(());
     }
     info("Re-installing dependency graph...");
@@ -427,7 +440,7 @@ pub async fn remove(
         spinner.finish_and_clear();
         let mut summary = match install_result {
             Ok(summary) => summary,
-            Err(e) => return rollback_remove_manifest(adapter, root, &manifest_before, e).await,
+            Err(e) => return rollback_remove_manifest(adapter, root, &snapshot, e).await,
         };
         summary.duration_ms = started_at.elapsed().as_millis() as u64;
         // Cache-source label (B-series honesty) — see install_with_adapter.
@@ -445,6 +458,7 @@ pub async fn remove(
         );
         mgc_ui::blank_line();
         success("All dependencies installed");
+        clear_remove_journal(root);
         return Ok(());
     }
     match install_with_adapter(
@@ -459,27 +473,206 @@ pub async fn remove(
     )
     .await
     {
-        Ok(()) => Ok(()),
-        Err(e) => rollback_remove_manifest(adapter, root, &manifest_before, e).await,
+        Ok(()) => {
+            clear_remove_journal(root);
+            Ok(())
+        }
+        Err(e) => rollback_remove_manifest(adapter, root, &snapshot, e).await,
     }
 }
 
-/// Roll a failed remove-install back: rewrite the pre-edit manifest so
-/// the project never sits in a half-state (manifest dropped the dep
-/// while lock/store still carry it). BOTH errors propagate: the restore
-/// failure is folded INTO the returned error (never warning-only), so
-/// CI/API callers can see the project may be half-updated.
-/// (Rollback manifest khi install sau remove lỗi — LỖI RESTORE ĐI KÈM
-/// TRONG ERROR TRẢ VỀ, không nuốt.)
+/// Pre-edit state for one remove operation: the parsed manifest plus the
+/// raw mgc.lock bytes (None when no lock existed). The manifest restores
+/// SEMANTICALLY (writers normalize formatting, so byte-identity is
+/// impossible); the mgc-owned lock restores BYTE-IDENTICAL.
+/// (Snapshot trước sửa: manifest theo nghĩa + lock theo byte.)
+struct RemoveSnapshot {
+    manifest: Manifest,
+    lock_bytes: Option<Vec<u8>>,
+}
+
+impl RemoveSnapshot {
+    fn capture(manifest: &Manifest, root: &Path) -> Result<Self> {
+        let lock_path = root.join("mgc.lock");
+        let lock_bytes = match std::fs::read(&lock_path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "remove cannot snapshot '{}': {e:#}",
+                    lock_path.display()
+                ))
+            }
+        };
+        Ok(Self {
+            manifest: manifest.clone(),
+            lock_bytes,
+        })
+    }
+}
+
+/// Sorted dependency names of a manifest — semantic equality for
+/// restore verification (formatting may legitimately change).
+/// (Tên dep đã sắp xếp — so bằng nghĩa khi verify restore.)
+fn manifest_dep_names(manifest: &Manifest) -> Vec<String> {
+    let mut names: Vec<String> = manifest
+        .all_dependencies()
+        .map(|dep| dep.name.as_str().to_string())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn remove_journal_dir(root: &Path) -> std::path::PathBuf {
+    root.join(".magicore").join("journal").join("remove")
+}
+
+/// Stage the crash journal (commit point is the manifest write AFTER
+/// this returns): lock backup, manifest backup, then journal.json LAST —
+/// recovery only acts when journal.json parses, so a crash mid-stage
+/// provably mutated nothing yet.
+/// (Ghi journal: journal.json CUỐI — crash giữa chừng chưa sửa gì.)
+fn write_remove_journal(root: &Path, packages: &[String], snapshot: &RemoveSnapshot) -> Result<()> {
+    let dir = remove_journal_dir(root);
+    std::fs::create_dir_all(&dir)?;
+    if let Some(bytes) = &snapshot.lock_bytes {
+        std::fs::write(dir.join("mgc.lock.bak"), bytes)?;
+    }
+    let manifest_json = serde_json::to_string_pretty(&snapshot.manifest)?;
+    std::fs::write(dir.join("manifest.json"), manifest_json)?;
+    let journal = serde_json::json!({
+        "pid": std::process::id(),
+        "packages": packages,
+        "lock_existed": snapshot.lock_bytes.is_some(),
+    });
+    // Atomic commit marker: tmp + rename so a half-written journal.json
+    // never parses.
+    // (Marker nguyên tử: tmp + rename — journal dở không parse được.)
+    let tmp = dir.join("journal.json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&journal)?)?;
+    std::fs::rename(&tmp, dir.join("journal.json"))?;
+    Ok(())
+}
+
+/// Best-effort journal cleanup after success (a leftover journal only
+/// causes a harmless same-state restore on the next run).
+/// (Dọn journal sau thành công — sót cũng vô hại.)
+fn clear_remove_journal(root: &Path) {
+    if let Err(e) = std::fs::remove_dir_all(remove_journal_dir(root)) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            mgc_ui::warning(&format!("remove journal cleanup failed: {e:#}"));
+        }
+    }
+}
+
+/// Restore manifest + lock from a snapshot, VERIFIED: manifest by
+/// re-parse semantic equality, lock byte-identical (or absence
+/// restored). Any mismatch is an error — a silent almost-restore is
+/// worse than a loud failure.
+/// (Phục hồi CÓ VERIFY: manifest theo nghĩa, lock theo byte.)
+async fn restore_remove_snapshot(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    snapshot: &RemoveSnapshot,
+) -> Result<()> {
+    adapter.write_manifest(root, &snapshot.manifest).await?;
+    let reparsed = adapter.parse_manifest(root).await?;
+    if manifest_dep_names(&reparsed) != manifest_dep_names(&snapshot.manifest) {
+        return Err(anyhow::anyhow!(
+            "manifest restore verify failed: re-parsed deps {:?} != snapshot {:?}",
+            manifest_dep_names(&reparsed),
+            manifest_dep_names(&snapshot.manifest)
+        ));
+    }
+    let lock_path = root.join("mgc.lock");
+    match &snapshot.lock_bytes {
+        Some(bytes) => {
+            std::fs::write(&lock_path, bytes)?;
+            let back = std::fs::read(&lock_path)?;
+            if back != *bytes {
+                return Err(anyhow::anyhow!(
+                    "lock restore verify failed: re-read bytes differ from snapshot"
+                ));
+            }
+        }
+        None => {
+            if lock_path.exists() {
+                std::fs::remove_file(&lock_path)?;
+            }
+            if lock_path.exists() {
+                return Err(anyhow::anyhow!(
+                    "lock restore verify failed: lock should be absent but still exists"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Recover a remove interrupted by a crash: if a COMMITTED journal
+/// (journal.json parses) from another process exists, restore its
+/// backups, verify, and clear it. Own in-flight journal (same pid) is
+/// skipped — the running op owns it. Missing journal = nothing to do.
+/// (Phục hồi remove chết dở do crash — journal của tiến trình khác.)
+async fn recover_interrupted_remove(adapter: &dyn PackageAdapter, root: &Path) -> Result<()> {
+    let dir = remove_journal_dir(root);
+    let journal_path = dir.join("journal.json");
+    let raw = match std::fs::read_to_string(&journal_path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "cannot read remove journal '{}': {e:#}",
+                journal_path.display()
+            ))
+        }
+    };
+    let journal: serde_json::Value = serde_json::from_str(&raw)?;
+    if journal.get("pid").and_then(|pid| pid.as_u64()) == Some(u64::from(std::process::id())) {
+        return Ok(());
+    }
+    let manifest_raw = std::fs::read_to_string(dir.join("manifest.json"))?;
+    let manifest: Manifest = serde_json::from_str(&manifest_raw)?;
+    let lock_existed = journal.get("lock_existed").and_then(|v| v.as_bool());
+    let lock_bytes = match lock_existed {
+        Some(true) => Some(std::fs::read(dir.join("mgc.lock.bak"))?),
+        _ => None,
+    };
+    let snapshot = RemoveSnapshot {
+        manifest,
+        lock_bytes,
+    };
+    restore_remove_snapshot(adapter, root, &snapshot).await?;
+    clear_remove_journal(root);
+    mgc_ui::warning(
+        "recovered an interrupted remove (crash journal): manifest and lock restored — re-run the command if needed",
+    );
+    Ok(())
+}
+
+/// Roll a failed remove-install back: restore manifest + lock from the
+/// pre-edit snapshot (verified), clear the journal, and return the
+/// install error. If the restore itself fails the journal is KEPT for
+/// the next run's recovery, and BOTH errors propagate in one combined
+/// error (P0: warning-only would hide a half-updated project).
+/// Honest scope: manifest+lock files are restored; store/cache additions
+/// made before the failure are additive-only and stay (the log says so —
+/// "nothing changed" would be a lie).
+/// (Rollback manifest+lock CÓ VERIFY; restore lỗi thì GIỮ journal +
+/// gộp cả 2 lỗi trả về.)
 async fn rollback_remove_manifest(
     adapter: &dyn PackageAdapter,
     root: &Path,
-    manifest_before: &Manifest,
+    snapshot: &RemoveSnapshot,
     install_error: impl std::fmt::Display,
 ) -> Result<()> {
-    match adapter.write_manifest(root, manifest_before).await {
+    match restore_remove_snapshot(adapter, root, snapshot).await {
         Ok(()) => {
-            mgc_ui::info("remove rolled back: manifest restored (install failed)");
+            clear_remove_journal(root);
+            mgc_ui::info(
+                "remove rolled back: manifest and lock restored (install failed; store/cache additions, if any, are additive-only)",
+            );
             Err(anyhow::anyhow!("{install_error:#}"))
         }
         Err(restore_error) => Err(combine_rollback_errors(install_error, restore_error)),
@@ -745,6 +938,10 @@ pub async fn install_with_adapter(
     frozen: bool,
     opts: mgc_types::adapter::InstallOptions,
 ) -> Result<()> {
+    // A crashed remove may have left a committed journal behind — recover
+    // before installing over it (skips our own in-flight journal by pid).
+    // (Phục hồi journal remove chết dở trước khi install đè lên.)
+    recover_interrupted_remove(adapter, root).await?;
     let command_started_at = std::time::Instant::now();
     let InstallExecution {
         graph,

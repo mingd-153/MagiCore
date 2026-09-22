@@ -132,3 +132,58 @@ fn rollback_error_carries_both_install_and_restore_failures() {
         "must flag possible half-updated state: {msg}"
     );
 }
+
+#[tokio::test]
+async fn interrupted_remove_journal_recovers_manifest_and_lock() {
+    // Hermetic crash-recovery test (NO registry): stage a journal, then
+    // simulate post-crash drift with a FOREIGN pid — recover must
+    // restore the manifest semantically and the lock byte-identical,
+    // then clear the journal.
+    // (Test phục hồi crash không cần mạng: journal pid lạ + file drift.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"m\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"six==1.17.0\", \"attrs==23.1.0\"]\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("mgc.lock"), "LOCK-BEFORE").unwrap();
+    let adapter = mgc_lib_adapter::adapter_for(root, None, None)
+        .unwrap()
+        .expect("pyproject must detect a python lib adapter");
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot = RemoveSnapshot::capture(&manifest, root).unwrap();
+    write_remove_journal(root, &["attrs".to_string()], &snapshot).unwrap();
+    // Simulate a crash in ANOTHER process: foreign pid + drifted files.
+    // (Giả crash tiến trình khác: pid lạ + file đã lệch.)
+    let journal_path = root.join(".magicore/journal/remove/journal.json");
+    let mut journal: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&journal_path).unwrap()).unwrap();
+    journal["pid"] = serde_json::json!(u64::from(std::process::id()) + 1_000_000);
+    std::fs::write(&journal_path, serde_json::to_string_pretty(&journal).unwrap()).unwrap();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"m\"\nversion = \"0.1.0\"\ndependencies = []\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("mgc.lock"), "LOCK-DRIFTED").unwrap();
+
+    recover_interrupted_remove(&adapter, root).await.unwrap();
+
+    let after = adapter.parse_manifest(root).await.unwrap();
+    let names = manifest_dep_names(&after);
+    assert!(names.contains(&"six".to_string()), "six restored: {names:?}");
+    assert!(
+        names.contains(&"attrs".to_string()),
+        "attrs restored: {names:?}"
+    );
+    assert_eq!(
+        std::fs::read(root.join("mgc.lock")).unwrap(),
+        b"LOCK-BEFORE",
+        "lock must restore byte-identical"
+    );
+    assert!(
+        !journal_path.exists(),
+        "journal must be cleared after recovery"
+    );
+}
