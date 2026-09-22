@@ -932,3 +932,140 @@ fn swift_install_compat_runs_real_toolchain() {
         "swift must have resolved (Package.resolved or .build):\n{text}"
     );
 }
+
+fn kotlin_gradle_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-kotlin\"\necosystem = \"app\"\n[app]\nlanguage = \"kotlin\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("settings.gradle.kts"),
+        "rootProject.name = \"canary\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("build.gradle.kts"),
+        "plugins { kotlin(\"jvm\") version \"2.0.0\" }\ndependencies {\n    implementation(\"org.apache.commons:commons-lang3:3.14.0\")\n}\n",
+    )
+    .unwrap();
+}
+
+fn objc_pod_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-objc\"\necosystem = \"app\"\n[app]\nlanguage = \"objc\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Podfile"),
+        "platform :ios, '17.0'\ntarget 'canary' do\n  pod 'Alamofire', '5.9.1'\nend\n",
+    )
+    .unwrap();
+}
+
+fn tool_present(tool: &str) -> bool {
+    std::process::Command::new(tool)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Honest delegated lane, proven with the REAL toolchain: explicit
+/// compat opens `gradle dependencies`, which must succeed. Skipped
+/// where gradle/JVM is absent (env-gated).
+#[test]
+fn kotlin_install_compat_runs_real_toolchain() {
+    if !tool_present("gradle") {
+        eprintln!("SKIP: gradle/JVM absent");
+        return;
+    }
+    let project = TempDir::new().unwrap();
+    kotlin_gradle_project(project.path());
+
+    let out = std::process::Command::new(mgc_binary())
+        .args(["install-app", "--compat-runtime", "gradle"])
+        .current_dir(project.path())
+        .env_remove("MGC_COMPAT_RUNTIME")
+        .output()
+        .expect("spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "compat gradle install must succeed:\n{text}"
+    );
+}
+
+/// Same contract for CocoaPods: explicit compat opens `pod install`.
+/// Skipped where pod is absent.
+#[test]
+fn objc_install_compat_runs_real_toolchain() {
+    if !tool_present("pod") {
+        eprintln!("SKIP: cocoapods absent");
+        return;
+    }
+    let project = TempDir::new().unwrap();
+    objc_pod_project(project.path());
+
+    let out = std::process::Command::new(mgc_binary())
+        .args(["install-app", "--compat-runtime", "pod"])
+        .current_dir(project.path())
+        .env_remove("MGC_COMPAT_RUNTIME")
+        .output()
+        .expect("spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "compat pod install must succeed:\n{text}"
+    );
+}
+
+fn terraform_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-clo\"\necosystem = \"clo\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.tf"),
+        "terraform {\n  required_version = \">= 1.0\"\n}\n",
+    )
+    .unwrap();
+}
+
+/// Honest delegated lane with the REAL toolchain: explicit compat
+/// opens `terraform init`. Skipped where terraform is absent.
+#[test]
+fn clo_install_compat_runs_real_toolchain() {
+    if !tool_present("terraform") {
+        eprintln!("SKIP: terraform absent");
+        return;
+    }
+    let project = TempDir::new().unwrap();
+    terraform_project(project.path());
+
+    let out = std::process::Command::new(mgc_binary())
+        .args(["install-clo", "--compat-runtime", "terraform"])
+        .current_dir(project.path())
+        .env_remove("MGC_COMPAT_RUNTIME")
+        .output()
+        .expect("spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "compat terraform install must succeed:\n{text}"
+    );
+}

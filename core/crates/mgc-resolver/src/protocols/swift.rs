@@ -1118,6 +1118,29 @@ pub fn parse_dump_package(json: &str) -> MgResult<Vec<SwiftDep>> {
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
+        // New shape (Swift 5.7+, what real toolchains emit):
+        // `{"registry": [{"identity": ..., "requirement": {...}}]}` and
+        // `{"remote": [{"url": ..., ...}]}`.
+        if let Some(items) = dep.get("registry").and_then(Value::as_array) {
+            for item in items {
+                let identity = item
+                    .get("identity")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let requirement = dump_requirement(item.get("requirement"));
+                push_dump_dep(&mut deps, "registry", identity, requirement);
+            }
+            continue;
+        }
+        if let Some(items) = dep.get("remote").and_then(Value::as_array) {
+            for item in items {
+                let url = item.get("url").and_then(Value::as_str).unwrap_or_default();
+                let requirement = dump_requirement(item.get("requirement"));
+                push_dump_dep(&mut deps, "remote", url, requirement);
+            }
+            continue;
+        }
+        // Legacy shape: `{"source": ["registry"|"remote", target, req]}`.
         let Some(source) = dep.get("source").and_then(Value::as_array) else {
             continue;
         };
@@ -1126,35 +1149,41 @@ pub fn parse_dump_package(json: &str) -> MgResult<Vec<SwiftDep>> {
         };
         let target = source.get(1).and_then(Value::as_str).unwrap_or_default();
         let requirement = dump_requirement(source.get(2));
-        if requirement.is_none() {
-            // Unmappable requirement — honest skip (cannot pin
-            // deterministically).
-            // (Requirement không ánh xạ được — skip trung thực (không ghim
-            // tất định được).)
-            eprintln!(
-                "WARNING: dump-package dependency '{target}' has an unmappable requirement — skipped"
-            );
-            continue;
-        }
-        match kind {
-            "registry" => deps.push(SwiftDep::Registry {
-                identity: target.to_string(),
-                requirement: requirement.unwrap_or_default(),
-            }),
-            "remote" => deps.push(SwiftDep::Git {
-                url: target.to_string(),
-                requirement: requirement.unwrap_or_default(),
-            }),
-            // local/editing deps are toolchain-owned paths — never resolved
-            // against a registry.
-            // (dep local/editing là path do toolchain giữ — không bao giờ
-            // resolve qua registry.)
-            other => eprintln!(
-                "WARNING: dump-package dependency '{target}' source '{other}' is not registry-resolvable — skipped"
-            ),
-        }
+        push_dump_dep(&mut deps, kind, target, requirement);
     }
     Ok(deps)
+}
+
+/// Push one dump-package dep (shared by the new registry/remote shapes
+/// and the legacy source-array shape).
+fn push_dump_dep(deps: &mut Vec<SwiftDep>, kind: &str, target: &str, requirement: Option<String>) {
+    let Some(requirement) = requirement else {
+        // Unmappable requirement — honest skip (cannot pin
+        // deterministically).
+        // (Requirement không ánh xạ được — skip trung thực (không ghim
+        // tất định được).)
+        eprintln!(
+            "WARNING: dump-package dependency '{target}' has an unmappable requirement — skipped"
+        );
+        return;
+    };
+    match kind {
+        "registry" => deps.push(SwiftDep::Registry {
+            identity: target.to_string(),
+            requirement,
+        }),
+        "remote" => deps.push(SwiftDep::Git {
+            url: target.to_string(),
+            requirement,
+        }),
+        // local/editing deps are toolchain-owned paths — never resolved
+        // against a registry.
+        // (dep local/editing là path do toolchain giữ — không bao giờ
+        // resolve qua registry.)
+        other => eprintln!(
+            "WARNING: dump-package dependency '{target}' source '{other}' is not registry-resolvable — skipped"
+        ),
+    }
 }
 
 /// Requirement object from dump-package → graph range string. `None` = the
@@ -1169,8 +1198,17 @@ fn dump_requirement(value: Option<&Value>) -> Option<String> {
     if let Some(ranges) = value.get("ranges").and_then(Value::as_array) {
         let parts: Vec<String> = ranges
             .iter()
-            .filter_map(Value::as_str)
-            .map(|r| format!("range:{}", r.trim()))
+            .filter_map(|r| {
+                // String form (`"1.0.0..<2.0.0"`) or bound objects
+                // (`{"lowerBound": "1.0.0", "upperBound": "2.0.0"}` —
+                // the shape real `dump-package` emits).
+                if let Some(s) = r.as_str() {
+                    return Some(format!("range:{}", s.trim()));
+                }
+                let lo = r.get("lowerBound").and_then(Value::as_str)?;
+                let hi = r.get("upperBound").and_then(Value::as_str)?;
+                Some(format!("range:{lo}..<{hi}"))
+            })
             .collect();
         if !parts.is_empty() {
             return Some(parts.join("||"));
@@ -1178,6 +1216,22 @@ fn dump_requirement(value: Option<&Value>) -> Option<String> {
     }
     if let Some(r) = value.get("range").and_then(Value::as_str) {
         return Some(format!("range:{}", r.trim()));
+    }
+    // Singular `range` holding bound objects (the shape real
+    // `dump-package` emits: `"range": [{"lowerBound": "1.0.0",
+    // "upperBound": "2.0.0"}]`).
+    if let Some(arr) = value.get("range").and_then(Value::as_array) {
+        let parts: Vec<String> = arr
+            .iter()
+            .filter_map(|r| {
+                let lo = r.get("lowerBound").and_then(Value::as_str)?;
+                let hi = r.get("upperBound").and_then(Value::as_str)?;
+                Some(format!("range:{lo}..<{hi}"))
+            })
+            .collect();
+        if !parts.is_empty() {
+            return Some(parts.join("||"));
+        }
     }
     if let Some(v) = value.get("exact").and_then(Value::as_str) {
         return Some(format!("exact:{v}"));
@@ -1480,5 +1534,210 @@ let package = Package(
             p.registry_url_for("scope/lib", "1.0.0.zip"),
             "http://127.0.0.1:1/scope/lib/1.0.0.zip"
         );
+    }
+}
+
+/// Bump a `from:`/`exact:` requirement in Package.swift text to a new
+/// version, returning the edited text. Matches by registry identity
+/// (`scope.name` or edge form `scope/name`) or git URL tail. Branch,
+/// revision, range and minor requirements are NOT bumpable (honest
+/// `None`, never a guess); multiple matches are ambiguous (`None`);
+/// the result is verified by re-scan before returning.
+/// (Nâng version requirement trong Package.swift, verify bằng quét lại.)
+pub fn bump_swift_requirement(text: &str, dep_key: &str, new_version: &str) -> Option<String> {
+    let key = dep_key.trim().to_lowercase();
+    // Collect (call_start, call_end, body) spans like the parser.
+    let mut calls: Vec<(usize, usize, String)> = Vec::new();
+    let mut rest = text;
+    let mut base = 0;
+    while let Some(pos) = rest.find(".package") {
+        let after_marker = &rest[pos + ".package".len()..];
+        if !after_marker.starts_with('(') {
+            rest = after_marker;
+            base += pos + ".package".len();
+            continue;
+        }
+        let after = &after_marker[1..];
+        let Some(close) = balanced_close(after) else {
+            break;
+        };
+        let body = after[..close].to_string();
+        let start = base + pos;
+        calls.push((start, base + pos + ".package".len() + 1 + close + 1, body));
+        rest = &after[close + 1..];
+        base += pos + ".package".len() + 1 + close + 1;
+    }
+    let mut hit: Option<(usize, usize, String)> = None;
+    for (start, end, body) in &calls {
+        if !call_matches_key(body, &key) {
+            continue;
+        }
+        // Exactly one bumpable match allowed.
+        if hit.is_some() {
+            return None;
+        }
+        // Only `from:` / `exact:` carry a bumpable version.
+        let needle = if body.contains("from:") {
+            "from:"
+        } else if body.contains("exact:") {
+            "exact:"
+        } else {
+            return None;
+        };
+        let rel = body.find(needle)?;
+        let after_needle = &body[rel + needle.len()..];
+        let qstart = after_needle.find('"')? + 1;
+        let qend = after_needle[qstart..].find('"')?;
+        let mut new_body = body.clone();
+        new_body.replace_range(
+            rel + needle.len() + qstart..rel + needle.len() + qstart + qend,
+            new_version,
+        );
+        hit = Some((*start, *end, new_body));
+    }
+    let (start, end, new_body) = hit?;
+    let mut out = text.to_string();
+    // Re-wrap: the span covers `.package(<body>)` but new_body is the
+    // inner body only — dropping the wrapper would corrupt the source
+    // (and the re-scan below would rightfully reject it).
+    out.replace_range(start..end, &format!(".package({new_body})"));
+    // Verify by re-scan: exactly one call matches the key and its
+    // parsed requirement encodes the new version (proves the edit
+    // landed on the requirement, not on coincidental text).
+    let mut verified = false;
+    let mut rest = out.as_str();
+    while let Some(pos) = rest.find(".package") {
+        let after_marker = &rest[pos + ".package".len()..];
+        if !after_marker.starts_with('(') {
+            rest = after_marker;
+            continue;
+        }
+        let after = &after_marker[1..];
+        let Some(close) = balanced_close(after) else {
+            break;
+        };
+        let body = &after[..close];
+        if call_matches_key(body, &key) {
+            let req = extract_requirement(body);
+            let pins_new =
+                req == format!("from:{new_version}") || req == format!("exact:{new_version}");
+            if !pins_new || verified {
+                return None;
+            }
+            verified = true;
+        }
+        rest = &after[close + 1..];
+    }
+    verified.then_some(out)
+}
+
+/// Scheme-less `host/owner/repo` tail of a git URL (`.git` trimmed,
+/// lowercased) for dep-key matching.
+/// (Đuôi host/owner/repo của URL git để khớp dep.)
+fn git_tail(url: &str) -> String {
+    let no_scheme = url.split("://").last().unwrap_or(url);
+    no_scheme
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_lowercase()
+}
+
+/// Does a `.package(...)` call body match a dep key? Identity
+/// (`scope.name`, either dot or slash form) or git URL (full tail or
+/// owner/repo suffix).
+fn call_matches_key(body: &str, key: &str) -> bool {
+    if let Some(id) = quoted_after(body, "id:") {
+        let id = id.to_lowercase();
+        return id == key || id.replace('.', "/") == key;
+    }
+    if let Some(url) = quoted_after(body, "url:") {
+        let tail = git_tail(&url);
+        return tail == key || tail.ends_with(&format!("/{key}"));
+    }
+    false
+}
+
+#[cfg(test)]
+mod bump_tests {
+    use super::*;
+
+    const PKG: &str = concat!(
+        "// swift-tools-version: 5.9\n",
+        "import PackageDescription\n\n",
+        "let package = Package(\n",
+        "    name: \"demo\",\n",
+        "    dependencies: [\n",
+        "        .package(id: \"scope.lib\", from: \"1.0.0\"),\n",
+        "        .package(url: \"https://github.com/example/other.git\", exact: \"2.0.0\"),\n",
+        "        .package(url: \"https://github.com/example/pinned.git\", branch: \"main\"),\n",
+        "    ],\n",
+        ")\n",
+    );
+
+    #[test]
+    fn bump_registry_from_requirement() {
+        let out = bump_swift_requirement(PKG, "scope.lib", "1.1.0").expect("bump works");
+        assert!(out.contains("from: \"1.1.0\""), "version bumped:\n{out}");
+        assert!(!out.contains("from: \"1.0.0\""), "old pin gone:\n{out}");
+        // Re-scan verifies the new pin (no toolchain needed).
+        let deps = parse_swift_package_deps(&out);
+        let hit = deps
+            .iter()
+            .find(|d| d.dep_name() == "scope/lib")
+            .expect("re-scan finds dep");
+        assert!(
+            hit.requirement_text().contains("1.1.0"),
+            "re-scan sees bump"
+        );
+    }
+
+    #[test]
+    fn bump_git_exact_requirement() {
+        let out = bump_swift_requirement(PKG, "example/other", "2.1.0").expect("bump works");
+        assert!(out.contains("exact: \"2.1.0\""), "exact bumped:\n{out}");
+    }
+
+    #[test]
+    fn bump_refuses_branch_and_unknown() {
+        // Branch pins have no version to bump — honest None, never a guess.
+        assert!(bump_swift_requirement(PKG, "example/pinned", "9.9.9").is_none());
+        assert!(bump_swift_requirement(PKG, "scope.missing", "1.0.0").is_none());
+    }
+}
+
+#[cfg(test)]
+mod dump_shape_tests {
+    use super::*;
+
+    /// Real `swift package dump-package` shape (registry dep with a
+    /// lowerBound/upperBound range object) must parse to a usable dep.
+    #[test]
+    fn dump_registry_range_object_parses() {
+        let doc = r#"{"dependencies":[{"source":["registry","scope.lib",{"range":[{"lowerBound":"1.0.0","upperBound":"2.0.0"}]}]}]}"#;
+        let deps = parse_dump_package(doc).unwrap();
+        assert_eq!(deps.len(), 1, "dep must parse");
+        assert_eq!(deps[0].dep_name(), "scope/lib");
+        assert!(
+            deps[0].requirement_text().contains("1.0.0"),
+            "range carries bounds: {}",
+            deps[0].requirement_text()
+        );
+    }
+}
+
+#[cfg(test)]
+mod dump_e2e_shape_tests {
+    use super::*;
+
+    /// Full realistic dump-package document (registry dep, range object,
+    /// traits array) must yield a usable dep — this is the exact shape
+    /// `swift package dump-package` emits.
+    #[test]
+    fn full_dump_document_yields_dep() {
+        let doc = r#"{"dependencies":[{"registry":[{"identity":"scope.lib","productFilter":null,"requirement":{"range":[{"lowerBound":"1.0.0","upperBound":"2.0.0"}]},"traits":[{"name":"default"}]}]}]}"#;
+        let deps = parse_dump_package(doc).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].dep_name(), "scope/lib");
+        assert!(deps[0].requirement_text().contains("1.0.0"));
     }
 }

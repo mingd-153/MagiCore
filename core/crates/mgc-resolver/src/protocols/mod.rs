@@ -40,6 +40,7 @@ pub use reactnative::{
     RN_TIER_MARKER_PREFIX,
 };
 pub use swift::SwiftRegistryProtocol;
+pub use swift::bump_swift_requirement;
 
 use async_trait::async_trait;
 use mgc_types::{MgError, MgResult};

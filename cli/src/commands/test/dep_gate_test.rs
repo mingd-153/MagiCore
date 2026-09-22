@@ -666,6 +666,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     }
     assert_eq!(app_languages["flutter"]["install"]["owner"], "mgc-native");
     assert_eq!(app_languages["flutter"]["update"]["owner"], "mgc-native");
+    assert_eq!(app_languages["swift"]["update"]["owner"], "mgc-native");
     // Exact app verbs: swift/kotlin add unsupported, objc list
     // unsupported, objc install delegated.
     assert_eq!(app_languages["swift"]["add"]["owner"], "unsupported");

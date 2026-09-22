@@ -35,6 +35,51 @@ pub async fn update(
             .ok_or_else(crate::error::app_project_not_detected)?;
         return crate::commands::core::shared::native_update(&adapter, &root, packages, true).await;
     }
+    // Swift updates natively for registry pins (resolve-latest +
+    // Package.swift text bump verified by re-scan + native install
+    // tail). Git/branch pins report honest skips; an unconfigured
+    // registry fails the op closed (never a silent partial pass).
+    // (Swift update native cho pin registry.)
+    if lang == mgc_app_adapter::AppLanguage::Swift {
+        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+        crate::commands::dep_gate::gate(
+            &crate::commands::dep_gate::DepContext::new(
+                "app",
+                Some(lang.ecosystem()),
+                None,
+                None,
+                crate::commands::dep_gate::DepOp::Update,
+            ),
+            None,
+            &compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
+        let adapter = mgc_app_adapter::adapter_for(&root)
+            .ok_or_else(crate::error::app_project_not_detected)?;
+        let (updated, skipped) = adapter.update_swift_native(&root, &packages).await?;
+        for (name, from, to) in &updated {
+            mgc_ui::info(&format!("  {name}: {from} → {to}"));
+        }
+        for (name, reason) in &skipped {
+            mgc_ui::info(&format!("  {name}: skipped ({reason})"));
+        }
+        if updated.is_empty() {
+            mgc_ui::info("All packages are up to date");
+            return Ok(());
+        }
+        mgc_ui::success(&format!("Updated {} package(s)", updated.len()));
+        return crate::commands::core::shared::install_with_adapter(
+            &adapter,
+            &root,
+            "mgc add",
+            false,
+            mgc_types::adapter::InstallOptions {
+                legacy_flat: false,
+                ..Default::default()
+            },
+        )
+        .await;
+    }
     // tool_command is PURE (zero spawn). Order: React Native gates first
     // (P0#2), then gate with the resolved tool (None when the verb has no
     // command — the exact table cell answers Unsupported). The manifest

@@ -280,11 +280,13 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("app", Some(eco::FLUTTER), _) => DepOwner::Delegated {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
         },
-        // App Swift: install + list runners exist; add/remove/update have
-        // NO command — Unsupported (never a delegated promise).
-        ("app", Some(eco::SWIFT), DepOp::Add | DepOp::Remove | DepOp::Update) => {
-            DepOwner::Unsupported
-        }
+        // App Swift install + list runners exist; add/remove have NO
+        // command — Unsupported (never a delegated promise). Update runs
+        // natively for registry pins (resolve-latest + Package.swift text
+        // bump verified by re-scan); git/branch pins report honest skips.
+        // (Swift update native cho pin registry.)
+        ("app", Some(eco::SWIFT), DepOp::Add | DepOp::Remove) => DepOwner::Unsupported,
+        ("app", Some(eco::SWIFT), DepOp::Update) => DepOwner::Native,
         ("app", Some(eco::SWIFT), _) => DepOwner::Delegated {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
         },

@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use mgc_lib_adapter::native::engine::resolve_with_protocol;
 use mgc_lockfile::EcosystemTag;
 use mgc_resolver::protocols::PubProtocol;
+use mgc_resolver::protocols::RegistryProtocol;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     PreparedAdd,
@@ -59,6 +60,75 @@ impl AppAdapter {
             project_root: PathBuf::new(),
             pending_lock: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Native Swift update: resolve each target to latest through the
+    /// SwiftPM registry, bump the `from:`/`exact:` requirement in
+    /// Package.swift text, and verify by re-scan (no toolchain needed
+    /// for the edit itself). Returns `(updated, skipped)` with honest
+    /// skip reasons — git/branch/revision/range pins are not bumpable;
+    /// an unconfigured registry fails the whole op closed (never a
+    /// partial silent pass).
+    /// (Update Swift native: resolve latest + sửa Package.swift +
+    /// verify bằng quét lại.)
+    pub async fn update_swift_native(
+        &self,
+        project_root: &Path,
+        packages: &[String],
+    ) -> MgResult<(Vec<(String, String, String)>, Vec<(String, String)>)> {
+        use mgc_resolver::protocols::bump_swift_requirement;
+        let path = project_root.join("Package.swift");
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| MgError::Other(format!("read Package.swift: {e}")))?;
+        // Targets: named packages must exist in the manifest; empty
+        // means every registry-bumpable dep.
+        let manifest = self.parse_manifest(project_root).await?;
+        let targets: Vec<String> = if packages.is_empty() {
+            manifest
+                .all_dependencies()
+                .map(|d| d.name.as_str().to_string())
+                .collect()
+        } else {
+            for name in packages {
+                if manifest.find_dep(name).is_none() {
+                    return Err(MgError::Other(format!(
+                        "cannot update '{name}': not in the project manifest — add it first"
+                    )));
+                }
+            }
+            packages.to_vec()
+        };
+        let protocol = mgc_resolver::protocols::SwiftRegistryProtocol::from_env();
+        let mut current = text;
+        let mut updated = Vec::new();
+        let mut skipped = Vec::new();
+        for name in &targets {
+            // Latest through the registry (fail-closed without config).
+            let entry = protocol.resolve(name, "*").await.map_err(|e| {
+                MgError::Other(format!("swift resolve-latest for '{name}' failed: {e}"))
+            })?;
+            let latest = entry.version.clone();
+            match bump_swift_requirement(&current, name, &latest) {
+                Some(next) => {
+                    // from-version for the report: previous pin in text.
+                    let from = manifest
+                        .find_dep(name)
+                        .and_then(|d| d.range.satisfying_version().map(|v| v.to_string()))
+                        .unwrap_or_else(|| "?".to_string());
+                    current = next;
+                    updated.push((name.clone(), from, latest));
+                }
+                None => skipped.push((
+                    name.clone(),
+                    "not a registry from:/exact: pin (branch/revision/range/git or ambiguous) — left untouched".to_string(),
+                )),
+            }
+        }
+        if !updated.is_empty() {
+            std::fs::write(&path, &current)
+                .map_err(|e| MgError::Other(format!("write Package.swift: {e}")))?;
+        }
+        Ok((updated, skipped))
     }
 
     /// Capability manifest (Global Gate 1) — code-reality notes:
