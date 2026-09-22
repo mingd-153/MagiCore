@@ -62,6 +62,106 @@ impl AppAdapter {
         }
     }
 
+    /// Native Swift remove: delete the dependency call from
+    /// Package.swift text, verified by re-scan (exactly one fewer
+    /// matching call). Unknown or ambiguous keys fail closed.
+    /// (Xóa dependency Swift, verify bằng quét lại.)
+    pub fn remove_swift_native(
+        &self,
+        project_root: &Path,
+        packages: &[String],
+    ) -> MgResult<Vec<String>> {
+        use mgc_resolver::protocols::remove_swift_requirement;
+        let path = project_root.join("Package.swift");
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| MgError::Other(format!("read Package.swift: {e}")))?;
+        let mut current = text;
+        let mut removed = Vec::new();
+        for name in packages {
+            match remove_swift_requirement(&current, name) {
+                Some(next) => {
+                    current = next;
+                    removed.push(name.clone());
+                }
+                None => {
+                    return Err(MgError::Other(format!(
+                        "cannot remove '{name}': no single matching dependency call in Package.swift (fail-closed)"
+                    )));
+                }
+            }
+        }
+        if !removed.is_empty() {
+            std::fs::write(&path, &current)
+                .map_err(|e| MgError::Other(format!("write Package.swift: {e}")))?;
+        }
+        Ok(removed)
+    }
+
+    /// Native Kotlin remove: delete the catalog entry, verified by
+    /// re-parse. Unknown aliases fail closed.
+    /// (Xóa entry catalog Kotlin, verify bằng đọc lại.)
+    pub fn remove_kotlin_native(
+        &self,
+        project_root: &Path,
+        packages: &[String],
+    ) -> MgResult<Vec<String>> {
+        use crate::manifest::gradle::parse_version_catalog;
+        let entries = parse_version_catalog(project_root).ok_or_else(|| {
+            MgError::Other(
+                "kotlin remove needs gradle/libs.versions.toml — plain build.gradle scripts are programs, not safely editable manifests"
+                    .to_string(),
+            )
+        })?;
+        // Map requested names (alias or group:artifact) to entries.
+        let mut targets: Vec<(String, String, String)> = Vec::new();
+        for name in packages {
+            let hits: Vec<_> = entries
+                .iter()
+                .filter(|e| e.alias == *name || format!("{}:{}", e.group, e.artifact) == *name)
+                .collect();
+            if hits.len() != 1 {
+                return Err(MgError::Other(format!(
+                    "cannot remove '{name}': {} catalog match(es) — use the alias or group:artifact",
+                    hits.len()
+                )));
+            }
+            targets.push((
+                hits[0].alias.clone(),
+                hits[0].group.clone(),
+                hits[0].artifact.clone(),
+            ));
+        }
+        // Rewrite the catalog without the targets, verify by re-parse.
+        let path = project_root.join("gradle/libs.versions.toml");
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| MgError::Other(format!("read libs.versions.toml: {e}")))?;
+        let mut doc: toml::Value = toml::from_str(&content)
+            .map_err(|e| MgError::Other(format!("parse libs.versions.toml: {e}")))?;
+        let libraries = doc
+            .get_mut("libraries")
+            .and_then(|v| v.as_table_mut())
+            .ok_or_else(|| MgError::Other("catalog has no [libraries] table".to_string()))?;
+        for (alias, _, _) in &targets {
+            libraries.remove(alias);
+        }
+        let next = toml::to_string_pretty(&doc)
+            .map_err(|e| MgError::Other(format!("serialize libs.versions.toml: {e}")))?;
+        std::fs::write(&path, &next)
+            .map_err(|e| MgError::Other(format!("write libs.versions.toml: {e}")))?;
+        let again = parse_version_catalog(project_root).unwrap_or_default();
+        for (alias, group, artifact) in &targets {
+            if again
+                .iter()
+                .any(|e| &e.alias == alias || (e.group == *group && e.artifact == *artifact))
+            {
+                return Err(MgError::Other(format!(
+                    "catalog removal did not stick for '{alias}' (fail-closed)"
+                )));
+            }
+        }
+        Ok(targets.into_iter().map(|(a, _, _)| a).collect())
+    }
+
     /// Native Kotlin update through the version catalog
     /// (`gradle/libs.versions.toml`): resolve each target to latest
     /// through Maven Central, bump the catalog (ref values or inline

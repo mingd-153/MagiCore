@@ -1657,6 +1657,58 @@ fn call_matches_key(body: &str, key: &str) -> bool {
     false
 }
 
+/// Remove one dependency call from Package.swift text, returning the
+/// edited text. Matches by registry identity (dot or slash form) or git
+/// URL tail. Unknown keys and ambiguous (multiple) matches yield `None`;
+/// the result is verified by re-scan (exactly one fewer matching call).
+/// (Xóa dependency khỏi Package.swift, verify bằng quét lại.)
+pub fn remove_swift_requirement(text: &str, dep_key: &str) -> Option<String> {
+    let key = dep_key.trim().to_lowercase();
+    // Collect call spans.
+    let mut calls: Vec<(usize, usize)> = Vec::new();
+    let mut rest = text;
+    let mut base = 0;
+    while let Some(pos) = rest.find(".package") {
+        let after_marker = &rest[pos + ".package".len()..];
+        if !after_marker.starts_with('(') {
+            rest = after_marker;
+            base += pos + ".package".len();
+            continue;
+        }
+        let after = &after_marker[1..];
+        let Some(close) = balanced_close(after) else {
+            break;
+        };
+        calls.push((base + pos, base + pos + ".package".len() + 1 + close + 1));
+        rest = &after[close + 1..];
+        base += pos + ".package".len() + 1 + close + 1;
+    }
+    let mut hits = Vec::new();
+    for (start, end) in &calls {
+        let body = &text[start + ".package(".len()..*end - 1];
+        if call_matches_key(body, &key) {
+            hits.push((*start, *end));
+        }
+    }
+    if hits.len() != 1 {
+        return None;
+    }
+    let (start, end) = hits[0];
+    let mut out = text.to_string();
+    out.replace_range(start..end, "");
+    // Hygiene: collapse the leftover blank line, then verify.
+    while out.contains(",\n\n") {
+        out = out.replacen(",\n\n", ",\n", 1);
+    }
+    let re = parse_swift_package_deps(&out);
+    if re.iter().any(|d| {
+        d.dep_name().to_lowercase() == key || d.dep_name().to_lowercase().replace('.', "/") == key
+    }) {
+        return None;
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod bump_tests {
     use super::*;
@@ -1739,5 +1791,45 @@ mod dump_e2e_shape_tests {
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].dep_name(), "scope/lib");
         assert!(deps[0].requirement_text().contains("1.0.0"));
+    }
+}
+
+#[cfg(test)]
+mod remove_tests {
+    use super::*;
+
+    const PKG: &str = concat!(
+        "// swift-tools-version: 5.9\n",
+        "import PackageDescription\n\n",
+        "let package = Package(\n",
+        "    name: \"demo\",\n",
+        "    dependencies: [\n",
+        "        .package(id: \"scope.lib\", from: \"1.0.0\"),\n",
+        "        .package(url: \"https://github.com/example/other.git\", exact: \"2.0.0\"),\n",
+        "    ],\n",
+        ")\n",
+    );
+
+    #[test]
+    fn remove_registry_call() {
+        let out = remove_swift_requirement(PKG, "scope.lib").expect("remove works");
+        assert!(!out.contains("scope.lib"), "dep gone:\n{out}");
+        assert!(out.contains("example/other"), "other survives:\n{out}");
+        // Re-scan proves exactly one removal.
+        let deps = parse_swift_package_deps(&out);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].dep_name(), "github.com/example/other");
+    }
+
+    #[test]
+    fn remove_git_call_by_tail() {
+        let out = remove_swift_requirement(PKG, "example/other").expect("remove works");
+        assert!(!out.contains("other.git"), "dep gone");
+        assert!(out.contains("scope.lib"), "other survives");
+    }
+
+    #[test]
+    fn remove_unknown_is_none() {
+        assert!(remove_swift_requirement(PKG, "scope.missing").is_none());
     }
 }

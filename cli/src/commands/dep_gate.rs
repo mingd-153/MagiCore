@@ -275,17 +275,21 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // spawn). Add/Remove still spawn the provider toolchain for real.
         // (Flutter install/update native; add/remove vẫn delegate.)
         ("app", Some(eco::FLUTTER), DepOp::Install | DepOp::Update) => DepOwner::Native,
+        // App Flutter/Swift/Kotlin remove runs natively (manifest text
+        // edits verified by re-parse/re-scan, zero toolchain spawn).
+        // Other languages keep the legacy delegated path below.
+        // (Remove native cho flutter/swift/kotlin.)
+        ("app", Some(eco::FLUTTER | eco::SWIFT | eco::KOTLIN), DepOp::Remove) => DepOwner::Native,
         // App Flutter: provider toolchain owns every OTHER verb
-        // (tool_command implements add/remove/list/update).
+        // (tool_command implements add/list).
         ("app", Some(eco::FLUTTER), _) => DepOwner::Delegated {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
         },
-        // App Swift install + list runners exist; add/remove have NO
-        // command — Unsupported (never a delegated promise). Update runs
-        // natively for registry pins (resolve-latest + Package.swift text
-        // bump verified by re-scan); git/branch pins report honest skips.
-        // (Swift update native cho pin registry.)
-        ("app", Some(eco::SWIFT), DepOp::Add | DepOp::Remove) => DepOwner::Unsupported,
+        // App Swift install + list runners exist; add has NO command —
+        // Unsupported (never a delegated promise). Remove/Update run
+        // natively (Package.swift text edits verified by re-scan).
+        // (Swift remove/update native.)
+        ("app", Some(eco::SWIFT), DepOp::Add) => DepOwner::Unsupported,
         ("app", Some(eco::SWIFT), DepOp::Update) => DepOwner::Native,
         ("app", Some(eco::SWIFT), _) => DepOwner::Delegated {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
@@ -295,7 +299,7 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // spawn). No install tail (install stays delegated-gradle).
         // (Kotlin update native qua version catalog.)
         ("app", Some(eco::KOTLIN), DepOp::Update) => DepOwner::Native,
-        ("app", Some(eco::KOTLIN), DepOp::Add | DepOp::Remove) => DepOwner::Unsupported,
+        ("app", Some(eco::KOTLIN), DepOp::Add) => DepOwner::Unsupported,
         ("app", Some(eco::KOTLIN), _) => DepOwner::Delegated {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
         },
@@ -309,16 +313,20 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // (shared crates engine → mgc.lock, zero `cargo` spawn). Other
         // engines stay as below.
         // (Bevy có Cargo.toml thì native.)
-        ("game", Some(eco::BEVY), DepOp::Install | DepOp::Add | DepOp::Update) => DepOwner::Native,
-        // Game bevy lane: cargo owns the graph.
-        ("game", Some(eco::BEVY), _) => DepOwner::Delegated { tools: &["cargo"] },
-        // IoT esp32-rust with a Cargo.toml installs/adds/updates natively
-        // (shared crates engine → mgc.lock, zero `cargo` spawn). Other
-        // frameworks stay as below.
-        // (esp32-rust có Cargo.toml thì native.)
-        ("iot", Some("esp32-rust"), DepOp::Install | DepOp::Add | DepOp::Update) => {
+        ("game", Some(eco::BEVY), DepOp::Install | DepOp::Add | DepOp::Update | DepOp::Remove) => {
             DepOwner::Native
         }
+        // Game bevy lane: cargo owns the graph.
+        ("game", Some(eco::BEVY), _) => DepOwner::Delegated { tools: &["cargo"] },
+        // IoT esp32-rust with a Cargo.toml installs/adds/updates/removes
+        // natively (shared crates engine → mgc.lock, zero `cargo`
+        // spawn). Other frameworks stay as below.
+        // (esp32-rust có Cargo.toml thì native.)
+        (
+            "iot",
+            Some("esp32-rust"),
+            DepOp::Install | DepOp::Add | DepOp::Update | DepOp::Remove,
+        ) => DepOwner::Native,
         // IoT frameworks own theirs (esp32-rust/cargo, pio, zephyr/west).
         // The ecosystem slot carries the detected framework id — the iot
         // lane has no separate language layer. Zephyr add/remove have NO

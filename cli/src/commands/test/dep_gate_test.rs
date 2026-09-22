@@ -451,7 +451,7 @@ fn compat_with_wrong_tool_stays_closed() {
     .unwrap_err();
     assert!(err.to_string().contains("does not own"), "{err}");
     let err = gate(
-        &ctx("game", Some(eco::BEVY), DepOp::Remove),
+        &ctx("clo", Some(eco::TERRAFORM), DepOp::Install),
         None,
         &explicit("uv"),
         None,
@@ -473,7 +473,6 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
             // (lib is fully native now — only Update/unsupported cells of
             // other cores left.)
             ("app", Some(eco::SWIFT), DepOp::Add),
-            ("app", Some(eco::KOTLIN), DepOp::Remove),
             ("app", Some(eco::OBJC), DepOp::List),
             ("app", Some(eco::OBJC), DepOp::Add),
             // Terraform runs install only; add/remove/update have no runner.
@@ -672,7 +671,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     // unsupported, objc install delegated.
     assert_eq!(app_languages["swift"]["add"]["owner"], "unsupported");
     assert_eq!(app_languages["swift"]["install"]["owner"], "delegated");
-    assert_eq!(app_languages["kotlin"]["remove"]["owner"], "unsupported");
+    assert_eq!(app_languages["kotlin"]["remove"]["owner"], "mgc-native");
     assert_eq!(app_languages["kotlin"]["list"]["owner"], "delegated");
     assert_eq!(app_languages["objc"]["list"]["owner"], "unsupported");
     assert_eq!(app_languages["objc"]["install"]["owner"], "delegated");

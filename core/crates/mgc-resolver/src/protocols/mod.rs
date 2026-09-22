@@ -41,6 +41,7 @@ pub use reactnative::{
 };
 pub use swift::SwiftRegistryProtocol;
 pub use swift::bump_swift_requirement;
+pub use swift::remove_swift_requirement;
 
 use async_trait::async_trait;
 use mgc_types::{MgError, MgResult};

@@ -415,6 +415,34 @@ fn native_remove_cell(
     sandbox.assert_no_spawn(&remove_cmd.join(" "));
 }
 
+/// Native remove on a fixture that already carries the dep.
+fn native_remove_only(
+    setup: fn(&std::path::Path),
+    remove_cmd: &[&str],
+    manifest_file: &str,
+    pin: &str,
+) {
+    let project = TempDir::new().unwrap();
+    setup(project.path());
+    let sandbox = MatrixSandbox::new();
+    let body_before = std::fs::read_to_string(project.path().join(manifest_file)).unwrap();
+    assert!(
+        body_before.contains(pin),
+        "fixture must carry {pin}:
+{body_before}"
+    );
+    let (code, out) = sandbox.run(remove_cmd, project.path());
+    assert_eq!(
+        code,
+        Some(0),
+        "{} must succeed:\n{out}",
+        remove_cmd.join(" ")
+    );
+    let body = std::fs::read_to_string(project.path().join(manifest_file)).unwrap();
+    assert!(!body.contains(pin), "manifest must drop {pin}:\n{body}");
+    sandbox.assert_no_spawn(&remove_cmd.join(" "));
+}
+
 #[test]
 fn matrix_native_remove_all_lanes() {
     let py = |d: &std::path::Path| {
@@ -869,5 +897,127 @@ fn matrix_native_update_game_iot() {
         &["update-iot", "serde_json"],
         "Cargo.toml",
         "1.0.100",
+    );
+}
+
+fn flutter_with_meta(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"app\"\n[app]\nlanguage = \"flutter\"\n",
+    );
+    write(
+        dir,
+        "pubspec.yaml",
+        "name: m\nenvironment:\n  sdk: \">=3.0.0 <4.0.0\"\ndependencies:\n  flutter:\n    sdk: flutter\n  meta: ^1.12.0\n",
+    );
+}
+
+fn swift_with_dep(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"app\"\n[app]\nlanguage = \"swift\"\n",
+    );
+    write(
+        dir,
+        "Package.swift",
+        concat!(
+            "// swift-tools-version: 5.9\n",
+            "import PackageDescription\n\n",
+            "let package = Package(\n",
+            "    name: \"m\",\n",
+            "    dependencies: [\n",
+            "        .package(id: \"scope.lib\", from: \"1.0.0\"),\n",
+            "    ],\n",
+            ")\n",
+        ),
+    );
+}
+
+fn kotlin_with_dep(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"app\"\n[app]\nlanguage = \"kotlin\"\n",
+    );
+    write(dir, "settings.gradle.kts", "rootProject.name = \"m\"\n");
+    std::fs::create_dir_all(dir.join("gradle")).unwrap();
+    std::fs::create_dir_all(dir.join("gradle")).unwrap();
+    write(
+        dir,
+        "gradle/libs.versions.toml",
+        "[versions]\nlang3 = \"3.14.0\"\n\n[libraries]\ncommons-lang3 = { module = \"org.apache.commons:commons-lang3\", version.ref = \"lang3\" }\n",
+    );
+    write(
+        dir,
+        "build.gradle.kts",
+        "plugins { kotlin(\"jvm\") version \"2.0.0\" }\ndependencies {\n    implementation(libs.commons.lang3)\n}\n",
+    );
+}
+
+fn bevy_with_dep(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"game\"\n[game]\nengine = \"bevy\"\n",
+    );
+    write(
+        dir,
+        "Cargo.toml",
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde_json = \"1.0.100\"\n",
+    );
+}
+
+fn esp32_with_dep(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"iot\"\n[iot]\nframework = \"esp32-rust\"\n",
+    );
+    write(
+        dir,
+        "Cargo.toml",
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde_json = \"1.0.100\"\n",
+    );
+}
+
+#[test]
+fn matrix_native_remove_flutter_swift_kotlin() {
+    // Fixtures ship WITH the dep (add covered elsewhere); remove must
+    // drop it with zero spawn.
+    native_remove_only(
+        flutter_with_meta,
+        &["remove-app", "meta"],
+        "pubspec.yaml",
+        "meta",
+    );
+    native_remove_only(
+        swift_with_dep,
+        &["remove-app", "scope/lib"],
+        "Package.swift",
+        "scope.lib",
+    );
+    native_remove_only(
+        kotlin_with_dep,
+        &["remove-app", "commons-lang3"],
+        "gradle/libs.versions.toml",
+        "commons-lang3",
+    );
+}
+
+#[test]
+fn matrix_native_remove_game_iot() {
+    native_remove_only(
+        bevy_with_dep,
+        &["remove-game", "serde_json"],
+        "Cargo.toml",
+        "serde_json",
+    );
+    native_remove_only(
+        esp32_with_dep,
+        &["remove-iot", "serde_json"],
+        "Cargo.toml",
+        "serde_json",
     );
 }
