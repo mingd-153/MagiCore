@@ -448,16 +448,16 @@ pub async fn install(
         }
 
         if !web_targets.is_empty() {
-            install_monorepo_targets(
-                &adapter,
-                &web_targets,
+            install_monorepo_targets(MonorepoInstallParams {
+                adapter: Arc::clone(&adapter),
+                targets: web_targets.clone(),
                 frozen,
                 ignore_scripts,
                 allow_scripts,
                 prefer_dedupe,
                 repair,
                 compat_open,
-            )
+            })
             .await?;
             link_monorepo_workspace_packages(&root, &web_targets)?;
             write_monorepo_root_lockfile(&root, &web_targets)?;
@@ -777,20 +777,22 @@ fn read_workspace_package_manifest(project_root: &Path) -> Result<WorkspacePacka
     })
 }
 
-async fn install_monorepo_targets(
-    adapter: &Arc<dyn PackageAdapter>,
-    targets: &[PathBuf],
+struct MonorepoInstallParams {
+    adapter: Arc<dyn PackageAdapter>,
+    targets: Vec<PathBuf>,
     frozen: bool,
     ignore_scripts: bool,
     allow_scripts: bool,
     prefer_dedupe: bool,
     repair: bool,
     compat_open: bool,
-) -> Result<()> {
+}
+
+async fn install_monorepo_targets(params: MonorepoInstallParams) -> Result<()> {
     let mut native_targets = Vec::new();
     let mut package_targets = Vec::new();
 
-    for target in targets {
+    for target in &params.targets {
         if target.join("package.json").exists() {
             package_targets.push(target.clone());
         } else {
@@ -810,7 +812,7 @@ async fn install_monorepo_targets(
             let mut join_set = tokio::task::JoinSet::new();
             for &node_index in level {
                 let node = graph.nodes[node_index].clone();
-                let adapter = Arc::clone(adapter);
+                let adapter = Arc::clone(&params.adapter);
                 let semaphore = Arc::clone(&semaphore);
                 join_set.spawn(async move {
                     let _permit = semaphore
@@ -821,11 +823,11 @@ async fn install_monorepo_targets(
                     install_web_target_quiet(
                         adapter.as_ref(),
                         &node.path,
-                        frozen,
-                        ignore_scripts,
-                        allow_scripts,
-                        prefer_dedupe,
-                        repair,
+                        params.frozen,
+                        params.ignore_scripts,
+                        params.allow_scripts,
+                        params.prefer_dedupe,
+                        params.repair,
                     )
                     .await?;
                     Ok::<PathBuf, anyhow::Error>(node.path)
@@ -838,7 +840,7 @@ async fn install_monorepo_targets(
     }
 
     for target in native_targets {
-        native_install_target(&target, compat_open)?;
+        native_install_target(&target, params.compat_open)?;
     }
 
     Ok(())
