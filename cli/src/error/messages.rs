@@ -1287,6 +1287,17 @@ pub fn web_backend_flag_unsupported(flag: &str, language: &str) -> Error {
     )
 }
 
+/// Monorepo member has no package.json and needs explicit compat opt-in
+/// to delegate to its toolchain (go mod tidy / pip / cargo / mvn / composer).
+/// (Thành viên monorepo không có package.json — cần opt-in compat tường minh
+/// mới được delegate sang toolchain.)
+pub fn monorepo_native_install_needs_compat(project_root: &std::path::Path) -> Error {
+    anyhow!(
+        "monorepo member '{}' has no package.json; install would delegate to its toolchain — pass --compat-runtime=<runtime> or set MGC_COMPAT_RUNTIME to opt in (explicit only, never auto)",
+        project_root.display()
+    )
+}
+
 /// The provider toolchain reported success but the re-read manifest does
 /// not reflect it (added dep absent / removed dep still present) — a
 /// phantom mutation is never reported.

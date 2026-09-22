@@ -395,6 +395,10 @@ pub async fn install(
     let adapter: Arc<dyn PackageAdapter> = web_adapter();
     let targets = install_targets(&root)?;
 
+    // Compat gate for monorepo native (non-package.json) members.
+    let compat_open = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())
+        .is_ok_and(|c| c.is_compat());
+
     // Dedupe opt-in (02 §2.1): CLI flag OR mgc.toml [dedupe] prefer = true.
     let mut dedupe_enabled = prefer_dedupe;
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
@@ -452,6 +456,7 @@ pub async fn install(
                 allow_scripts,
                 prefer_dedupe,
                 repair,
+                compat_open,
             )
             .await?;
             link_monorepo_workspace_packages(&root, &web_targets)?;
@@ -490,7 +495,7 @@ pub async fn install(
                 )
                 .await?;
             } else {
-                native_install_target(target)?;
+                native_install_target(target, compat_open)?;
             }
         }
     }
@@ -780,6 +785,7 @@ async fn install_monorepo_targets(
     allow_scripts: bool,
     prefer_dedupe: bool,
     repair: bool,
+    compat_open: bool,
 ) -> Result<()> {
     let mut native_targets = Vec::new();
     let mut package_targets = Vec::new();
@@ -832,7 +838,7 @@ async fn install_monorepo_targets(
     }
 
     for target in native_targets {
-        native_install_target(&target)?;
+        native_install_target(&target, compat_open)?;
     }
 
     Ok(())
@@ -1591,7 +1597,22 @@ fn native_venv_executable(project_root: &Path, bin_name: &str) -> PathBuf {
     project_root.join(".venv").join("bin").join(bin_name)
 }
 
-fn native_install_target(project_root: &Path) -> Result<()> {
+fn native_install_target(project_root: &Path, compat_open: bool) -> Result<()> {
+    // Default-blocked (P0 bypass fix): these spawns ARE dependency
+    // installs owned by external toolchains — allowed only behind an
+    // explicit compat opt-in (same contract as dep_gate). Without it,
+    // fail closed with guidance instead of silently delegating (a
+    // non-package.json monorepo member must never trigger invisible
+    // `go mod tidy` / `pip install` runs).
+    // (Chặn mặc định: spawn toolchain chỉ khi opt-in tường minh.)
+    if !compat_open {
+        return Err(crate::error::monorepo_native_install_needs_compat(
+            project_root,
+        ));
+    }
+    mgc_ui::warning(
+        "COMPATIBILITY MODE: monorepo member install delegates to its toolchain — this is NOT the native MagiCore engine path.",
+    );
     if project_root.join("go.mod").exists() {
         info(&format!(
             "Installing native Go dependencies in {}",
