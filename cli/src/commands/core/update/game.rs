@@ -34,11 +34,20 @@ pub async fn update(
         )?;
         let lib_adapter = crate::factory::create_adapter(&mgc_types::Ecosystem::Lib, None, None)
             .map_err(|e| anyhow::anyhow!("game native update needs the lib Cargo engine: {e}"))?;
+        // Mutation gateway: direct native_update callers hold the writer
+        // lock themselves (shared::update is bypassed here by design).
+        // (Gọi native trực tiếp thì tự giữ lock writer.)
+        let write_lock = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+            &root,
+            crate::commands::core::shared::writer_lock_timeout(&root),
+        )
+        .map_err(|e| anyhow::anyhow!("update cannot acquire the project writer lock: {e}"))?;
         return crate::commands::core::shared::native_update(
             &*lib_adapter,
             &root,
             packages,
             install,
+            &write_lock,
         )
         .await;
     }

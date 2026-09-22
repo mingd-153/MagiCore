@@ -33,7 +33,7 @@ fn install_command_for_adapter(adapter: &dyn PackageAdapter) -> &'static str {
 /// else 30s (mirrors migrate). A live holder is never robbed — timeout
 /// surfaces LockBusy, never last-writer-wins.
 /// (Timeout lock writer: config hoặc 30s — không cướp holder sống.)
-fn writer_lock_timeout(root: &Path) -> std::time::Duration {
+pub(crate) fn writer_lock_timeout(root: &Path) -> std::time::Duration {
     let ms = mgc_config::project::ProjectConfig::load(root)
         .ok()
         .flatten()
@@ -133,6 +133,13 @@ pub async fn add(
     if packages.len() > MAX_PACKAGES {
         return Err(crate::error::too_many_packages(packages.len(), "add"));
     }
+    // Mutation gateway (P0): the manifest write below and the install
+    // tail must not interleave with a concurrent remove/update/install
+    // on the same project — hold the writer lock for the whole op
+    // (resolves included), same contract as remove.
+    // (Add cũng giữ lock writer xuyên suốt — không đan xen remove/update.)
+    let write_lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root))
+        .map_err(|e| anyhow::anyhow!("add cannot acquire the project writer lock: {e}"))?;
     let total = packages.len();
     let group = if peer {
         "peerDependencies"
@@ -314,7 +321,7 @@ pub async fn add(
         )
         .await?
         {
-            install_with_adapter(
+            install_with_adapter_locked(
                 adapter,
                 root,
                 install_command_for_adapter(adapter),
@@ -324,6 +331,7 @@ pub async fn add(
                     force_install: added_ids,
                     ..Default::default()
                 },
+                &write_lock,
             )
             .await?;
         }
@@ -552,6 +560,20 @@ fn refuse_project_link(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Read a project file ONLY after refusing link-swaps (P0: recovery
+/// must never follow a planted symlink — validate first, read second).
+/// (Đọc file SAU khi chống link — không bao giờ đọc trước.)
+fn read_project_file(path: &Path) -> Result<Vec<u8>> {
+    refuse_project_link(path)?;
+    std::fs::read(path).map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))
+}
+
+fn read_project_string(path: &Path) -> Result<String> {
+    refuse_project_link(path)?;
+    std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))
+}
+
 /// Canonical digest of a manifest for restore verification: project
 /// name+version plus EVERY dependency with group, range and flags,
 /// sorted. Name-only comparison would bless a restore that changed
@@ -597,7 +619,55 @@ fn remove_journal_dir(root: &Path) -> std::path::PathBuf {
     root.join(".magicore").join("journal").join("remove")
 }
 
-/// Durable atomic file write inside the project: symlink refusal,
+/// Typed, versioned remove journal (P0: free-form JSON is FORBIDDEN —
+/// a "valid but wrong-schema" journal must fail closed with artifacts
+/// preserved, never silently delete-and-pretend-completed).
+/// Required fields have NO defaults: a missing `lock_existed` or a
+/// misspelled `state` is corruption, not "completed".
+/// (Journal typed có version — sai schema là hỏng, không đoán.)
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveJournal {
+    /// Schema version — must be 1; anything else fails closed.
+    v: u32,
+    /// Staging process id (diagnostic + own-in-flight skip only).
+    pid: u64,
+    packages: Vec<String>,
+    /// REQUIRED: whether mgc.lock existed at snapshot time. Absence of
+    /// this field must NEVER read as "no lock" (that misread could
+    /// delete a real lockfile).
+    lock_existed: bool,
+    state: JournalState,
+}
+
+/// Journal lifecycle: only InProgress journals from another process may
+/// restore; Completed journals are delete-only.
+/// (Chỉ InProgress của pid khác mới được restore.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum JournalState {
+    InProgress,
+    Completed,
+}
+
+const REMOVE_JOURNAL_SCHEMA: u32 = 1;
+
+fn parse_remove_journal(raw: &str, journal_path: &Path) -> Result<RemoveJournal> {
+    let journal: RemoveJournal = serde_json::from_str(raw).map_err(|e| {
+        anyhow::anyhow!(
+            "corrupt remove journal '{}': {e:#} (artifacts preserved — refusing to guess; inspect or delete it manually)",
+            journal_path.display()
+        )
+    })?;
+    if journal.v != REMOVE_JOURNAL_SCHEMA {
+        return Err(anyhow::anyhow!(
+            "unsupported remove journal schema v{} in '{}' (this binary reads v{REMOVE_JOURNAL_SCHEMA}; artifacts preserved)",
+            journal.v,
+            journal_path.display()
+        ));
+    }
+    Ok(journal)
+}
 /// create_new temp (never overwrite blindly), O_NOFOLLOW on unix, fsync
 /// file + parent dir, atomic rename. Mirrors mgc-lockfile atomic semantics.
 /// (Ghi file nguyên tử + bền: chống symlink, tmp create_new, fsync.)
@@ -699,12 +769,13 @@ fn write_remove_journal(
     }
     let manifest_json = serde_json::to_string_pretty(&snapshot.manifest)?;
     atomic_write_file(&dir, "manifest.json", manifest_json.as_bytes())?;
-    let journal = serde_json::json!({
-        "pid": std::process::id(),
-        "packages": packages,
-        "lock_existed": snapshot.lock_bytes.is_some(),
-        "state": "in_progress",
-    });
+    let journal = RemoveJournal {
+        v: REMOVE_JOURNAL_SCHEMA,
+        pid: u64::from(std::process::id()),
+        packages: packages.to_vec(),
+        lock_existed: snapshot.lock_bytes.is_some(),
+        state: JournalState::InProgress,
+    };
     atomic_write_file(
         &dir,
         "journal.json",
@@ -720,9 +791,9 @@ fn write_remove_journal(
 /// (Đánh dấu completed TRƯỚC khi xóa — dọn sót không được rollback.)
 fn mark_journal_completed(root: &Path, _lock: &ProjectWriteLock) -> Result<()> {
     let dir = remove_journal_dir(root);
-    let raw = std::fs::read_to_string(dir.join("journal.json"))?;
-    let mut journal: serde_json::Value = serde_json::from_str(&raw)?;
-    journal["state"] = serde_json::json!("completed");
+    let journal_path = dir.join("journal.json");
+    let mut journal = parse_remove_journal(&read_project_string(&journal_path)?, &journal_path)?;
+    journal.state = JournalState::Completed;
     atomic_write_file(
         &dir,
         "journal.json",
@@ -825,39 +896,40 @@ async fn recover_interrupted_remove(
 ) -> Result<()> {
     let dir = remove_journal_dir(root);
     let journal_path = dir.join("journal.json");
-    let raw = match std::fs::read_to_string(&journal_path) {
-        Ok(raw) => raw,
+    // Existence probe WITHOUT following links: truly absent ⇒ no-op.
+    // A present-but-unreadable path (dangling link, permissions, race)
+    // falls through to the refusing read below, which fails closed.
+    // (Probe không theo link: không có thì thôi; còn lại đọc có chống.)
+    match std::fs::symlink_metadata(&journal_path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => {
             return Err(anyhow::anyhow!(
-                "cannot read remove journal '{}': {e:#}",
+                "cannot stat remove journal '{}': {e:#}",
                 journal_path.display()
             ));
         }
-    };
-    let journal: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
-        anyhow::anyhow!(
-            "corrupt remove journal '{}': {e:#} (refusing to guess — inspect or delete it manually)",
-            journal_path.display()
-        )
-    })?;
-    if journal.get("state").and_then(|state| state.as_str()) != Some("in_progress") {
+        Ok(_) => {}
+    }
+    let raw = read_project_string(&journal_path)?;
+    let journal = parse_remove_journal(&raw, &journal_path)?;
+    if journal.state != JournalState::InProgress {
         clear_remove_journal(root, lock);
         return Ok(());
     }
-    if journal.get("pid").and_then(|pid| pid.as_u64()) == Some(u64::from(std::process::id())) {
+    if journal.pid == u64::from(std::process::id()) {
         return Ok(());
     }
-    refuse_project_link(&dir.join("manifest.json"))?;
-    let manifest_raw = std::fs::read_to_string(dir.join("manifest.json"))?;
-    let manifest: Manifest = serde_json::from_str(&manifest_raw)?;
-    let lock_existed = journal.get("lock_existed").and_then(|v| v.as_bool());
-    let lock_bytes = match lock_existed {
-        Some(true) => {
-            refuse_project_link(&dir.join("mgc.lock.bak"))?;
-            Some(std::fs::read(dir.join("mgc.lock.bak"))?)
-        }
-        _ => None,
+    let manifest_raw = read_project_string(&dir.join("manifest.json"))?;
+    let manifest: Manifest = serde_json::from_str(&manifest_raw).map_err(|e| {
+        anyhow::anyhow!(
+            "corrupt remove journal backup '{}': {e:#} (artifacts preserved — refusing to guess)",
+            dir.join("manifest.json").display()
+        )
+    })?;
+    let lock_bytes = if journal.lock_existed {
+        Some(read_project_file(&dir.join("mgc.lock.bak"))?)
+    } else {
+        None
     };
     let snapshot = RemoveSnapshot {
         manifest,
@@ -977,6 +1049,7 @@ pub(crate) async fn native_update(
     root: &Path,
     packages: Vec<String>,
     install: bool,
+    write_lock: &ProjectWriteLock,
 ) -> Result<()> {
     let mut manifest = adapter.parse_manifest(root).await?;
     let targets: Vec<(String, String, bool, bool, bool)> = if packages.is_empty() {
@@ -1070,7 +1143,7 @@ pub(crate) async fn native_update(
     success(&format!("Updated {} package(s)", updated.len()));
     if install {
         info("Installing updated packages...");
-        install_with_adapter(
+        install_with_adapter_locked(
             adapter,
             root,
             install_command_for_adapter(adapter),
@@ -1079,6 +1152,7 @@ pub(crate) async fn native_update(
                 incremental: true,
                 ..Default::default()
             },
+            write_lock,
         )
         .await?;
     } else {
@@ -1096,12 +1170,18 @@ pub async fn update(
     packages: Vec<String>,
     install: bool,
 ) -> Result<()> {
+    // Mutation gateway (P0): same contract as add/remove — the manifest
+    // writes below (native or toolchain-spawned) and the install tails
+    // run under one writer lock.
+    // (Update cũng giữ lock writer xuyên suốt.)
+    let write_lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root))
+        .map_err(|e| anyhow::anyhow!("update cannot acquire the project writer lock: {e}"))?;
     // Native update (resolve-latest + mgc-side manifest edit + native
     // install tail, zero spawn) for adapters that own the whole lane.
     // Legacy adapter.update (toolchain spawn) below stays for the rest.
     // (Update native cho adapter sở hữu lane.)
     if adapter.supports_native_update() {
-        return native_update(adapter, root, packages, install).await;
+        return native_update(adapter, root, packages, install, &write_lock).await;
     }
     if packages.is_empty() {
         let spinner = create_spinner("  Resolving latest versions...");
@@ -1119,7 +1199,7 @@ pub async fn update(
             success(&format!("Updated {} package(s)", updated.len()));
             if install {
                 info("Installing updated packages...");
-                install_with_adapter(
+                install_with_adapter_locked(
                     adapter,
                     root,
                     install_command_for_adapter(adapter),
@@ -1128,6 +1208,7 @@ pub async fn update(
                         incremental: true,
                         ..Default::default()
                     },
+                    &write_lock,
                 )
                 .await?;
             } else {
@@ -1153,7 +1234,7 @@ pub async fn update(
         success("Update complete");
         if install {
             info("Installing updated packages...");
-            install_with_adapter(
+            install_with_adapter_locked(
                 adapter,
                 root,
                 install_command_for_adapter(adapter),
@@ -1162,6 +1243,7 @@ pub async fn update(
                     incremental: true,
                     ..Default::default()
                 },
+                &write_lock,
             )
             .await?;
         } else {

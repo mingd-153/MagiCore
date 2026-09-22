@@ -40,15 +40,15 @@ impl ProjectWriteLock {
     /// (Acquire lock OS độc quyền, chờ tối đa `timeout`. Hết timeout →
     /// `LockBusy`, không reclaim, không ghi đè mù.)
     pub fn acquire(project_root: &Path, timeout: Duration) -> LockfileResult<Self> {
-        let guard_path = Self::guard_path_for(project_root);
-        if let Some(parent) = guard_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                LockfileError::WriteFailed(format!(
-                    "cannot create lock dir '{}': {e}",
-                    parent.display()
-                ))
-            })?;
-        }
+        let magicore = project_root.join(".magicore");
+        // Link check BEFORE any create: create_dir_all through a swapped
+        // parent would plant the guard outside the project. The trust
+        // boundary is `.magicore` itself — project_root ancestors (e.g.
+        // symlinked checkouts, /tmp on macOS) are the operator's own
+        // filesystem and stay allowed.
+        // (Chống symlink TRƯỚC khi tạo — boundary là `.magicore`.)
+        Self::ensure_real_dir(&magicore)?;
+        let guard_path = magicore.join(WRITE_LOCK_FILE);
         Self::refuse_link_swap(&guard_path)?;
         let mut options = std::fs::OpenOptions::new();
         options.read(true).write(true).create(true);
@@ -98,6 +98,42 @@ impl ProjectWriteLock {
     /// Diagnostic path (never an ownership input).
     pub fn guard_path(&self) -> &Path {
         &self.guard_path
+    }
+
+    /// Ensure a directory exists and is NOT a link-swap: refuse
+    /// symlink/junction/reparse points, refuse non-directories, create
+    /// (single level — the caller secures parents top-down first).
+    /// (Thư mục thật, không link — tạo một cấp sau khi cha đã sạch.)
+    fn ensure_real_dir(dir: &Path) -> LockfileResult<()> {
+        match std::fs::symlink_metadata(dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(dir).map_err(|e| {
+                    LockfileError::WriteFailed(format!(
+                        "cannot create dir '{}': {e}",
+                        dir.display()
+                    ))
+                })
+            }
+            Err(e) => Err(LockfileError::WriteFailed(format!(
+                "cannot stat dir '{}': {e}",
+                dir.display()
+            ))),
+            Ok(meta) => {
+                if path_is_link_or_reparse(dir) {
+                    return Err(LockfileError::WriteFailed(format!(
+                        "refusing link-swapped dir '{}'",
+                        dir.display()
+                    )));
+                }
+                if !meta.file_type().is_dir() {
+                    return Err(LockfileError::WriteFailed(format!(
+                        "path '{}' is not a directory",
+                        dir.display()
+                    )));
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Refuse symlink/junction/reparse-point guard files: a swapped guard

@@ -65,8 +65,22 @@ pub async fn update(
         )?;
         let adapter = crate::factory::create_adapter(&mgc_types::Ecosystem::Lib, None, None)
             .map_err(|e| anyhow::anyhow!("ai native update needs the lib PyPI engine: {e}"))?;
-        return crate::commands::core::shared::native_update(&*adapter, &root, packages, install)
-            .await;
+        // Mutation gateway: direct native_update callers hold the writer
+        // lock themselves (shared::update is bypassed here by design).
+        // (Gọi native trực tiếp thì tự giữ lock writer.)
+        let write_lock = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+            &root,
+            crate::commands::core::shared::writer_lock_timeout(&root),
+        )
+        .map_err(|e| anyhow::anyhow!("update cannot acquire the project writer lock: {e}"))?;
+        return crate::commands::core::shared::native_update(
+            &*adapter,
+            &root,
+            packages,
+            install,
+            &write_lock,
+        )
+        .await;
     }
     let tool = shared::ai_pick_tool(&root);
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;

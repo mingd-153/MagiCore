@@ -368,3 +368,63 @@ fn canonical_digest_distinguishes_ranges_groups_and_project() {
         "identical manifests share the digest"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_journal_file_is_never_followed() {
+    // journal.json là symlink trỏ ra ngoài: recovery từ chối, artifact
+    // giữ nguyên (Item 2 — đọc sau khi chống, không trước).
+    // (Symlinked journal.json is refused, never followed.)
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot = RemoveSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    write_remove_journal(root, &["attrs".to_string()], &snapshot, &write_lock).unwrap();
+    // Swap journal.json for a link to an "in_progress" journal outside
+    // the project — a naive read-then-validate would restore from it.
+    // (Tráo journal.json bằng link ra ngoài — đọc ngây thơ sẽ dính.)
+    let journal_path = root.join(".magicore/journal/remove/journal.json");
+    let outside = tempfile::tempdir().unwrap();
+    let evil = outside.path().join("evil.json");
+    std::fs::write(
+        &evil,
+        r#"{"v":1,"pid":999999,"packages":[],"lock_existed":false,"state":"in_progress"}"#,
+    )
+    .unwrap();
+    std::fs::remove_file(&journal_path).unwrap();
+    symlink(&evil, &journal_path).unwrap();
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("symlinked journal.json must be refused");
+    // Nothing followed the link: project files intact, outside untouched
+    // beyond our own setup write.
+    // (Không theo link: file project nguyên, ngoài không bị động.)
+    assert_eq!(
+        std::fs::read(root.join("mgc.lock")).unwrap(),
+        b"LOCK-BEFORE"
+    );
+    let after = adapter.parse_manifest(root).await.unwrap();
+    assert_eq!(
+        manifest_canonical_digest(&after),
+        manifest_canonical_digest(&manifest)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_magicore_parent_is_refused() {
+    // .magicore là symlink: acquire lock và staging journal đều từ chối
+    // (Item 4 — parent gap đã đóng).
+    // (Symlinked .magicore is refused by lock acquire and journal write.)
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let outside = tempfile::tempdir().unwrap();
+    symlink(outside.path(), root.join(".magicore")).unwrap();
+    mgc_lockfile::project_lock::ProjectWriteLock::acquire(root, std::time::Duration::from_secs(5))
+        .expect_err("symlinked .magicore must refuse the writer lock");
+}
