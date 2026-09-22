@@ -18,7 +18,7 @@
 
 **Core strength:** Web package management (npm/pnpm-compatible workflow, see status labels below) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 
-> **🚧 Beta Release:** `v1.1.0-RC` is a **Public Alpha / Technology Preview** — NOT yet a drop-in pnpm/Bun/Deno replacement (see the honest [status labels](#-known-limitations-v110-rc-roadmap) and [Benchmark status](benchmark/BENCHMARK_STATUS.md) before comparing). Multi-language cores (ai/app/lib) have partial support. **Native package managers** (Maven, CocoaPods, pub.dev) are P2 features. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
+> **🚧 Beta Release:** `v1.1.0-RC` is a **Public Alpha / Technology Preview** — NOT yet a drop-in pnpm/Bun/Deno replacement (see the honest [status labels](#-known-limitations-v110-rc-roadmap) and [Benchmark status](benchmark/BENCHMARK_STATUS.md) before comparing). Web JS/TS plus native install/add/audit slices for Python, Rust, Go, .NET, Java-pom and Flutter work through mgc.lock; remove/update and some lanes stay toolchain-delegated or unsupported. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
 
 ---
 
@@ -313,18 +313,19 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 
 **Core Runtime Status** (labels: VALIDATED = CI-proven on the release binary; EXPERIMENTAL = works in source-build CI lanes; UNVERIFIED = no CI evidence; INVALIDATED = evidence withdrawn):
 - ⚠️ **Web** (npm/yarn/pnpm-compatible workflow) - Public Alpha: install/test/build verified in CI; dev/run/audit proven only on source builds, not yet on the distributed release archive; NOT a pnpm replacement until parity data exists
-- ⚠️ **AI** (Python) - Experimental (create + install verified, test/build/run untested in CI)
-- ⚠️ **App** (Flutter/React Native) - Experimental (requires Flutter SDK)
-- ⚠️ **Lib** (Rust/Go) - Experimental (basic support)
+- ⚠️ **AI** (Python) - Experimental: pyproject projects install/add/audit natively through mgc (mgc.lock, zero uv/pip spawn); uv.lock-only projects stay explicit-compat delegated
+- ⚠️ **App** (Flutter) - Experimental: install natively through mgc (pub.dev resolve, mgc.lock, zero flutter spawn); add/remove/update still toolchain-delegated; build/test run the Flutter SDK
+- ⚠️ **Lib** (Rust/Python/Go/.NET/Java-pom) - Experimental: add/install/audit natively through mgc (mgc.lock, zero toolchain spawn); remove/update still delegated or unsupported; builds run the language toolchain
+- ⚠️ **Lib** (Java-Gradle), Swift/Kotlin/ObjC/RN, Game, IoT, Cloud - toolchain-delegated or Unsupported (honest fail-closed, explicit compat only)
 - ℹ️ Multi-core orchestration in active development
 
 **Shared Store Status** (honest labels, 2026-09-12):
 - ✅ Cargo: mgc-owned shared registry store (`~/.magicore/store/cargo`) — cross-project byte reuse PROVEN by CI integration test (two projects, one download)
-- ✅ PyPI (lib/python + ai/python): shared uv/pip cache root (`~/.magicore/store/pypi`)
+- ✅ PyPI (lib/python + ai/python): native fetch/unpack into the mgc store (`~/.magicore/store/pypi`); uv.lock workflows keep their uv cache, explicitly delegated
 - ✅ Web/npm: mgc CAS content store (MgCStore) — CI-proven
-- ⚠️ Go: delegated to the go module cache (Q9 delegation by design)
-- ⚠️ Java/Maven + .NET/NuGet: not yet installed through mgc (P2)
-- ℹ️ The shared store reuses each toolchain's NATIVE cache layout inside the mgc-owned directory — one download serves many projects; bytes stay toolchain-readable
+- ✅ Go: native proxy fetch + sumdb/ziphash verify + CAS + download-cache materialization (`GOPROXY=off` readable)
+- ✅ Java/Maven + .NET/NuGet: native resolve/fetch/verify + CAS + local-repo/global-packages materialization (remove/update still unsupported)
+- ℹ️ Builds/Tests that need a compiler or SDK (cargo build, go test, dotnet build, flutter) run that toolchain — mgc owns resolve→lock→fetch→verify→CAS→materialize→audit, never the compiler
 
 **Testing Status**:
 - ✅ Unit tests: PASS

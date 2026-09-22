@@ -310,17 +310,18 @@ fn lane_dotnet_11_solution_escape_refused() {
 /// Mọi solution ở root đều được đọc — hai sln gộp cả hai lock.
 #[test]
 fn lane_dotnet_12_second_solution_is_a_lane() {
-    let dir = std::env::temp_dir().join(format!("mgc-dotnet-multi-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    // Hermetic TempDir (never PID-shared): parallel tests in one process
+    // must not share temp state (sign_release race family).
+    let dir = tempfile::tempdir().unwrap();
     for proj in ["a", "b"] {
-        std::fs::create_dir_all(dir.join(proj)).unwrap();
+        std::fs::create_dir_all(dir.path().join(proj)).unwrap();
         std::fs::write(
-            dir.join(proj).join(format!("{proj}.csproj")),
+            dir.path().join(proj).join(format!("{proj}.csproj")),
             "<Project/>\n",
         )
         .unwrap();
         std::fs::write(
-            dir.join(proj).join("packages.lock.json"),
+            dir.path().join(proj).join("packages.lock.json"),
             format!(
                 "{{\"version\":1,\"dependencies\":{{\"net8.0\":{{\"{proj}.Lib\":{{\"type\":\"Direct\",\"resolved\":\"1.0\",\"contentHash\":\"x=\"}}}}}}}}"
             ),
@@ -328,19 +329,19 @@ fn lane_dotnet_12_second_solution_is_a_lane() {
         .unwrap();
     }
     std::fs::write(
-        dir.join("one.sln"),
+        dir.path().join("one.sln"),
         "Microsoft Visual Studio Solution File, Format Version 12.00\nProject(\"{F}\") = \"A\", \"a\\A.csproj\", \"{G}\"\nEndProject\nGlobal\nEndGlobal\n",
     )
     .unwrap();
     std::fs::write(
-        dir.join("two.sln"),
+        dir.path().join("two.sln"),
         "Microsoft Visual Studio Solution File, Format Version 12.00\nProject(\"{F}\") = \"B\", \"b\\B.csproj\", \"{G}\"\nEndProject\nGlobal\nEndGlobal\n",
     )
     .unwrap();
     // Hermetic: collect pins directly (no network) — both solutions
     // must contribute.
     // Hermetic: gom ghim trực tiếp — cả hai solution đều phải góp.
-    let (pins, _, recognized) = mgc_audit::scanners::collect_dotnet_pins(&dir).unwrap();
+    let (pins, _, recognized) = mgc_audit::scanners::collect_dotnet_pins(dir.path()).unwrap();
     assert!(recognized, "two solutions = recognized");
     assert_eq!(pins.len(), 2, "both solutions' locks must yield pins");
     assert!(pins.iter().any(|p| p.name == "a.Lib"));

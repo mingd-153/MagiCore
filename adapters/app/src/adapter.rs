@@ -249,7 +249,23 @@ impl DependencyResolver for AppAdapter {
     /// Swift resolve qua engine SwiftPM native (Phase 2); ngôn ngữ app
     /// khác vẫn do toolchain giữ (gradle/pod) và fail-closed.
     fn probe_dependency_resolver(&self) -> MgResult<()> {
-        Ok(())
+        // Executable per-language truth (not a blanket claim): native
+        // engines resolve Flutter/Swift/RN; Kotlin/ObjC/Multi fail closed
+        // here exactly as resolve() does below.
+        // (Probe theo language, khớp resolve() bên dưới.)
+        match self.language {
+            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => Ok(()),
+            AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
+                Err(mgc_types::MgError::Unsupported {
+                    core: "app",
+                    capability: "resolve",
+                    guidance: format!(
+                        "{} has no native resolve engine; dependency resolution is owned by its toolchain",
+                        self.language.as_str()
+                    ),
+                })
+            }
+        }
     }
 
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {

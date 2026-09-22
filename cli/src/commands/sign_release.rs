@@ -89,23 +89,25 @@ fn hex_to_seed(hex_str: &str) -> Result<[u8; 32]> {
 mod tests {
     use super::*;
 
-    fn tmp() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("mgc-sign-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    // Per-test hermetic tempdir (TempDir nonce, auto-cleaned): the old
+    // PID-shared dir raced when tests ran in parallel threads of one
+    // process (one test's remove_dir_all wiped another's manifest mid-run
+    // → flaky CI red). Never share temp state between tests.
+    // (Tempdir riêng mỗi test — dir chung theo PID race khi chạy song song.)
+    fn tmp() -> tempfile::TempDir {
+        tempfile::TempDir::new().expect("test tempdir")
     }
 
     #[test]
     fn sign_is_deterministic_and_self_verified() {
         let dir = tmp();
-        let manifest = dir.join("manifest.json");
+        let manifest = dir.path().join("manifest.json");
         std::fs::write(&manifest, b"{\"version\":\"9.9.9\"}").unwrap();
         let key = "0".repeat(64);
         run(Some(manifest.display().to_string()), Some(key.to_string())).unwrap();
-        let sig1 = std::fs::read_to_string(dir.join("manifest.json.sig")).unwrap();
+        let sig1 = std::fs::read_to_string(dir.path().join("manifest.json.sig")).unwrap();
         run(Some(manifest.display().to_string()), Some(key.to_string())).unwrap();
-        let sig2 = std::fs::read_to_string(dir.join("manifest.json.sig")).unwrap();
+        let sig2 = std::fs::read_to_string(dir.path().join("manifest.json.sig")).unwrap();
         assert_eq!(sig1, sig2, "Ed25519 signing is deterministic");
         assert_eq!(sig1.len(), 128 + 1, "64-byte hex + newline");
     }
@@ -113,7 +115,7 @@ mod tests {
     #[test]
     fn bad_key_shapes_fail_closed() {
         let dir = tmp();
-        let manifest = dir.join("manifest.json");
+        let manifest = dir.path().join("manifest.json");
         std::fs::write(&manifest, b"{}").unwrap();
         assert!(run(Some(manifest.display().to_string()), Some("zz".to_string())).is_err());
         assert!(
@@ -138,12 +140,12 @@ mod tests {
         // transitional path hermetically.
         // (Không chạm env: None tường minh + require=false.)
         let dir = tmp();
-        let manifest = dir.join("manifest.json");
+        let manifest = dir.path().join("manifest.json");
         std::fs::write(&manifest, b"{}").unwrap();
         let out = run_with_key(&manifest.display().to_string(), None, false);
         assert!(out.is_ok(), "transitional unsigned path warns but exits 0");
         assert!(
-            !dir.join("manifest.json.sig").exists(),
+            !dir.path().join("manifest.json.sig").exists(),
             "no .sig file on the unsigned path"
         );
         assert!(
