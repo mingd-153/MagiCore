@@ -1130,8 +1130,13 @@ fn read_checked_lockfile(project_root: &Path) -> Result<Option<Lockfile>> {
     mgc_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
-#[allow(dead_code)]
-fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
+/// Single lock-vs-manifest matcher (any-match): multi-version locks are
+/// legitimate (a peer edge may resolve another version), so the manifest
+/// range passes when ANY same-named instance satisfies it — first-match
+/// order must never decide. All install/remove/frozen paths share this
+/// one function so the predicate cannot drift between copies.
+/// (Matcher duy nhất — mọi đường install/remove/frozen dùng chung.)
+pub(crate) fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
     // Any-match over same-named packages: multi-version locks are
     // legitimate (a peer edge may resolve another version), so the
     // manifest range passes when ANY instance satisfies it — first-match

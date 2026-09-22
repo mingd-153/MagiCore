@@ -396,6 +396,10 @@ pub async fn install(
     let targets = install_targets(&root)?;
 
     // Compat gate for monorepo native (non-package.json) members.
+    // NOTE: an INVALID --compat-runtime value already errored at the
+    // dep_gate above, so `false` here strictly means "no opt-in given"
+    // (never "invalid value swallowed").
+    // (Giá trị compat sai đã lỗi ở gate trên — false ở đây = không opt-in.)
     let compat_open = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())
         .is_ok_and(|c| c.is_compat());
 

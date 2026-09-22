@@ -3,7 +3,7 @@ use anyhow::{Result, bail};
 use mgc_cache::PackageCache;
 use mgc_lockfile::Lockfile;
 use mgc_types::adapter::{AddOptions, PreparedAdd};
-use mgc_types::{DependencySpec, Manifest, PackageId, ResolvedGraph, ResolvedPackage, Version};
+use mgc_types::{DependencySpec, Manifest, PackageId, ResolvedGraph, ResolvedPackage};
 use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info, style_cmd,
     success,
@@ -590,7 +590,7 @@ fn load_locked_graph(
         return Ok(None);
     }
 
-    if !lock_matches_manifest(&lock, manifest) {
+    if !crate::commands::core::shared::lock_matches_manifest(&lock, manifest) {
         return Ok(None);
     }
 
@@ -599,18 +599,6 @@ fn load_locked_graph(
 
 fn read_checked_lockfile(project_root: &std::path::Path) -> Result<Option<Lockfile>> {
     mgc_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
-}
-
-fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
-    // Any-match over same-named packages (mirrors core/shared.rs):
-    // multi-version locks are legitimate, so the manifest range passes
-    // when ANY instance satisfies it — first-match order must never
-    // decide (frozen false-mismatch family).
-    manifest.all_dependencies().all(|dependency| {
-        lock.get_packages(dependency.name.as_str())
-            .filter_map(|package| Version::parse(&package.version).ok())
-            .any(|version| dependency.range.matches(&version))
-    })
 }
 
 fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {

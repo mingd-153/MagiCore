@@ -3,6 +3,7 @@
 //! Tests for install command validation
 
 use super::*;
+use crate::commands::core::shared::lock_matches_manifest;
 use mgc_crypto::keyring::KeyPair;
 use mgc_lockfile::Package;
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
