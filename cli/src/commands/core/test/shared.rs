@@ -160,7 +160,11 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     let mut journal: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&journal_path).unwrap()).unwrap();
     journal["pid"] = serde_json::json!(u64::from(std::process::id()) + 1_000_000);
-    std::fs::write(&journal_path, serde_json::to_string_pretty(&journal).unwrap()).unwrap();
+    std::fs::write(
+        &journal_path,
+        serde_json::to_string_pretty(&journal).unwrap(),
+    )
+    .unwrap();
     std::fs::write(
         root.join("pyproject.toml"),
         "[project]\nname = \"m\"\nversion = \"0.1.0\"\ndependencies = []\n",
@@ -172,7 +176,10 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
 
     let after = adapter.parse_manifest(root).await.unwrap();
     let names = manifest_dep_names(&after);
-    assert!(names.contains(&"six".to_string()), "six restored: {names:?}");
+    assert!(
+        names.contains(&"six".to_string()),
+        "six restored: {names:?}"
+    );
     assert!(
         names.contains(&"attrs".to_string()),
         "attrs restored: {names:?}"

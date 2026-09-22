@@ -1615,8 +1615,7 @@ fn required_compat_tool(project_root: &Path) -> Option<&'static str> {
         Some("cargo")
     } else if project_root.join("pom.xml").exists() {
         Some("mvn")
-    } else if project_root.join("composer.json").exists() || project_root.join("artisan").exists()
-    {
+    } else if project_root.join("composer.json").exists() || project_root.join("artisan").exists() {
         Some("composer")
     } else {
         None
@@ -1636,10 +1635,14 @@ fn compat_install_target(
     let tool = required_compat_tool(project_root);
     let allowed = tool.is_some_and(|t| compat.allows(t));
     if !allowed {
+        let have_opt_in = match compat {
+            crate::commands::compat::CompatMode::Native => "native (no opt-in)".to_string(),
+            crate::commands::compat::CompatMode::Explicit(t) => t.clone(),
+        };
         return Err(crate::error::monorepo_compat_tool_denied(
             project_root,
             tool,
-            compat,
+            &have_opt_in,
         ));
     }
     let tool = tool.expect("allowed implies a known member kind");

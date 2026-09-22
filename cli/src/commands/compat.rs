@@ -82,12 +82,6 @@ impl CompatMode {
         }
     }
 
-    /// True when in compat mode (not Native).
-    /// Đúng khi ở chế độ compat (không phải Native).
-    pub fn is_compat(&self) -> bool {
-        !matches!(self, Self::Native)
-    }
-
     /// The loud warning every compat spawn must print (RULE §11: escape
     /// hatches announce themselves).
     /// Cảnh báo lớn mỗi lần spawn compat phải in (RULE §11: escape

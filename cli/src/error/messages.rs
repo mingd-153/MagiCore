@@ -1290,24 +1290,21 @@ pub fn web_backend_flag_unsupported(flag: &str, language: &str) -> Error {
 /// Monorepo member has no package.json and its toolchain was NOT opted
 /// into: pass exactly `--compat-runtime=<tool>` for the member kind
 /// (go/pip/cargo/mvn/composer) — one flag never opens every toolchain.
+/// NOTE: takes the pre-formatted opt-in description (not CompatMode) so
+/// this module stays includable from integration tests without the full
+/// command tree.
 /// (Thành viên monorepo không có package.json — phải opt-in ĐÚNG tool;
 /// một flag không mở mọi toolchain.)
 pub fn monorepo_compat_tool_denied(
     project_root: &std::path::Path,
     tool: Option<&str>,
-    compat: &crate::commands::compat::CompatMode,
+    have_opt_in: &str,
 ) -> Error {
     match tool {
-        Some(tool) => {
-            let have = match compat {
-                crate::commands::compat::CompatMode::Native => "native (no opt-in)".to_string(),
-                crate::commands::compat::CompatMode::Explicit(t) => t.clone(),
-            };
-            anyhow!(
-                "monorepo member '{}' needs its '{tool}' toolchain, but the invocation opted into '{have}' — pass --compat-runtime={tool} (explicit only, never auto)",
-                project_root.display(),
-            )
-        }
+        Some(tool) => anyhow!(
+            "monorepo member '{}' needs its '{tool}' toolchain, but the invocation opted into '{have_opt_in}' — pass --compat-runtime={tool} (explicit only, never auto)",
+            project_root.display(),
+        ),
         None => anyhow!(
             "monorepo member '{}' has no package.json and no recognized toolchain manifest (go.mod/requirements.txt/Cargo.toml/pom.xml/composer.json) — nothing to delegate to",
             project_root.display()

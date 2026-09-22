@@ -70,15 +70,16 @@ fn compat_gate_opens_only_the_matching_tool() {
     let cargo_member = tempfile::tempdir().unwrap();
     std::fs::write(cargo_member.path().join("Cargo.toml"), "[package]\n").unwrap();
     // Wrong tool → denied (would spawn `cargo fetch`, not go).
-    let err = compat_install_target(
-        cargo_member.path(),
-        &CompatMode::Explicit("go".to_string()),
-    )
-    .expect_err("cargo member with --compat-runtime=go must fail closed");
+    let err = compat_install_target(cargo_member.path(), &CompatMode::Explicit("go".to_string()))
+        .expect_err("cargo member with --compat-runtime=go must fail closed");
     let msg = format!("{err:#}");
-    assert!(msg.contains("--compat-runtime=cargo"), "must name the required tool: {msg}");
+    assert!(
+        msg.contains("--compat-runtime=cargo"),
+        "must name the required tool: {msg}"
+    );
     // Native (no opt-in) → denied.
-    compat_install_target(cargo_member.path(), &CompatMode::Native).expect_err("native must fail closed");
+    compat_install_target(cargo_member.path(), &CompatMode::Native)
+        .expect_err("native must fail closed");
     // Unknown member kind → denied even WITH an opt-in.
     let empty = tempfile::tempdir().unwrap();
     compat_install_target(empty.path(), &CompatMode::Explicit("cargo".to_string()))

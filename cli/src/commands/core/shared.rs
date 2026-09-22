@@ -501,7 +501,7 @@ impl RemoveSnapshot {
                 return Err(anyhow::anyhow!(
                     "remove cannot snapshot '{}': {e:#}",
                     lock_path.display()
-                ))
+                ));
             }
         };
         Ok(Self {
@@ -559,10 +559,11 @@ fn write_remove_journal(root: &Path, packages: &[String], snapshot: &RemoveSnaps
 /// causes a harmless same-state restore on the next run).
 /// (Dọn journal sau thành công — sót cũng vô hại.)
 fn clear_remove_journal(root: &Path) {
-    if let Err(e) = std::fs::remove_dir_all(remove_journal_dir(root)) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            mgc_ui::warning(&format!("remove journal cleanup failed: {e:#}"));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Err(e) = std::fs::remove_dir_all(remove_journal_dir(root))
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        mgc_ui::warning(&format!("remove journal cleanup failed: {e:#}"));
     }
 }
 
@@ -625,7 +626,7 @@ async fn recover_interrupted_remove(adapter: &dyn PackageAdapter, root: &Path) -
             return Err(anyhow::anyhow!(
                 "cannot read remove journal '{}': {e:#}",
                 journal_path.display()
-            ))
+            ));
         }
     };
     let journal: serde_json::Value = serde_json::from_str(&raw)?;
@@ -675,7 +676,19 @@ async fn rollback_remove_manifest(
             );
             Err(anyhow::anyhow!("{install_error:#}"))
         }
-        Err(restore_error) => Err(combine_rollback_errors(install_error, restore_error)),
+        Err(restore_error) => {
+            // Journal is KEPT (not cleared) so the next run's recovery can
+            // retry the restore — point the operator at it.
+            // (GIỮ journal để lần chạy sau phục hồi — chỉ rõ đường dẫn.)
+            let journal = remove_journal_dir(root);
+            Err(combine_rollback_errors(
+                install_error,
+                format!(
+                    "{restore_error:#} (crash journal kept at '{}' — fix the cause, then re-run to recover)",
+                    journal.display()
+                ),
+            ))
+        }
     }
 }
 
