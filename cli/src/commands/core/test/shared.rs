@@ -151,9 +151,10 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     let adapter = mgc_lib_adapter::adapter_for(root, None, None)
         .unwrap()
         .expect("pyproject must detect a python lib adapter");
+    let write_lock = ProjectWriteLock::acquire(root, std::time::Duration::from_secs(30)).unwrap();
     let manifest = adapter.parse_manifest(root).await.unwrap();
-    let snapshot = RemoveSnapshot::capture(&manifest, root).unwrap();
-    write_remove_journal(root, &["attrs".to_string()], &snapshot).unwrap();
+    let snapshot = RemoveSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    write_remove_journal(root, &["attrs".to_string()], &snapshot, &write_lock).unwrap();
     // Simulate a crash in ANOTHER process: foreign pid + drifted files.
     // (Giả crash tiến trình khác: pid lạ + file đã lệch.)
     let journal_path = root.join(".magicore/journal/remove/journal.json");
@@ -172,17 +173,15 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     .unwrap();
     std::fs::write(root.join("mgc.lock"), "LOCK-DRIFTED").unwrap();
 
-    recover_interrupted_remove(&adapter, root).await.unwrap();
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .unwrap();
 
     let after = adapter.parse_manifest(root).await.unwrap();
-    let names = manifest_dep_names(&after);
-    assert!(
-        names.contains(&"six".to_string()),
-        "six restored: {names:?}"
-    );
-    assert!(
-        names.contains(&"attrs".to_string()),
-        "attrs restored: {names:?}"
+    assert_eq!(
+        manifest_canonical_digest(&after),
+        manifest_canonical_digest(&manifest),
+        "manifest must restore to the same canonical digest (project, groups, ranges, flags)"
     );
     assert_eq!(
         std::fs::read(root.join("mgc.lock")).unwrap(),
@@ -192,5 +191,180 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     assert!(
         !journal_path.exists(),
         "journal must be cleared after recovery"
+    );
+}
+
+fn python_fixture(root: &std::path::Path) {
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"m\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"six==1.17.0\", \"attrs==23.1.0\"]\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("mgc.lock"), "LOCK-BEFORE").unwrap();
+}
+
+fn test_adapter_and_lock(
+    root: &std::path::Path,
+) -> (
+    mgc_lib_adapter::LibAdapter,
+    mgc_lockfile::project_lock::ProjectWriteLock,
+) {
+    let adapter = mgc_lib_adapter::adapter_for(root, None, None)
+        .unwrap()
+        .expect("pyproject must detect a python lib adapter");
+    let lock = ProjectWriteLock::acquire(root, std::time::Duration::from_secs(30)).unwrap();
+    (adapter, lock)
+}
+
+#[tokio::test]
+async fn completed_journal_deletes_without_restoring() {
+    // P0-A: a stale COMPLETED journal (success + failed cleanup) must
+    // NEVER roll back — recovery only deletes it, files stay untouched.
+    // (Journal completed sót: chỉ xóa, không restore.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot = RemoveSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    write_remove_journal(root, &["attrs".to_string()], &snapshot, &write_lock).unwrap();
+    // Op "succeeded" elsewhere, then cleanup failed: flip to completed
+    // with a FOREIGN pid (as if staged by the dead process)…
+    // (Giả op đã xong ở process khác: completed + pid lạ.)
+    let journal_path = root.join(".magicore/journal/remove/journal.json");
+    let mut journal: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&journal_path).unwrap()).unwrap();
+    journal["pid"] = serde_json::json!(u64::from(std::process::id()) + 1_000_000);
+    journal["state"] = serde_json::json!("completed");
+    std::fs::write(
+        &journal_path,
+        serde_json::to_string_pretty(&journal).unwrap(),
+    )
+    .unwrap();
+    // …then the world drifts (new successful state). Recovery must NOT
+    // resurrect the removed dep.
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"m\"\nversion = \"0.1.0\"\ndependencies = [\"six==1.17.0\"]\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("mgc.lock"), "LOCK-NEW-STATE").unwrap();
+
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .unwrap();
+
+    assert!(!journal_path.exists(), "completed journal must be deleted");
+    let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+    assert!(
+        !after.contains("attrs"),
+        "removed dep must NOT be resurrected: {after}"
+    );
+    assert_eq!(
+        std::fs::read(root.join("mgc.lock")).unwrap(),
+        b"LOCK-NEW-STATE",
+        "lock must stay untouched"
+    );
+}
+
+#[tokio::test]
+async fn corrupt_journal_fails_closed() {
+    // Journal hỏng: không đoán — lỗi fail-closed.
+    // (Corrupt journal fails closed, never guesses.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let journal_dir = root.join(".magicore/journal/remove");
+    std::fs::create_dir_all(&journal_dir).unwrap();
+    std::fs::write(journal_dir.join("journal.json"), "{not json").unwrap();
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("corrupt journal must fail closed");
+}
+
+#[tokio::test]
+async fn missing_journal_is_a_noop() {
+    // Không có journal: không làm gì.
+    // (Missing journal is a no-op.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(root.join("mgc.lock")).unwrap(),
+        b"LOCK-BEFORE"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_journal_dir_is_refused() {
+    // Journal dir là symlink: từ chối, không ghi ra ngoài project.
+    // (Symlinked journal dir is refused, never followed.)
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot = RemoveSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let journal_parent = root.join(".magicore/journal");
+    std::fs::create_dir_all(&journal_parent).unwrap();
+    symlink(outside.path(), journal_parent.join("remove")).unwrap();
+    write_remove_journal(root, &["attrs".to_string()], &snapshot, &write_lock)
+        .expect_err("symlinked journal dir must be refused");
+    assert!(
+        !outside.path().join("journal.json").exists(),
+        "nothing must be written outside the project"
+    );
+}
+
+#[test]
+fn canonical_digest_distinguishes_ranges_groups_and_project() {
+    // P0-D: digest phải bắt range/group/project — không chỉ tên.
+    // (Digest must catch range/group/project drift, not just names.)
+    use mgc_types::{DependencySpec, Ecosystem, Manifest, PackageName, VersionRange};
+    let mut base = Manifest::new("m", Ecosystem::Lib);
+    base.add_dep(
+        DependencySpec::new(
+            PackageName::new("six").unwrap(),
+            VersionRange::parse("==1.17.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let digest = manifest_canonical_digest(&base);
+    let mut bumped = base.clone();
+    bumped.dependencies[0].range = VersionRange::parse("==1.18.0").unwrap();
+    assert_ne!(
+        manifest_canonical_digest(&bumped),
+        digest,
+        "range change must alter the digest"
+    );
+    let mut regrouped = base.clone();
+    let spec = regrouped.dependencies.pop().unwrap();
+    regrouped.dev_dependencies.push(spec);
+    assert_ne!(
+        manifest_canonical_digest(&regrouped),
+        digest,
+        "group change must alter the digest"
+    );
+    let mut renamed = base.clone();
+    renamed.name = "other".to_string();
+    assert_ne!(
+        manifest_canonical_digest(&renamed),
+        digest,
+        "project rename must alter the digest"
+    );
+    assert_eq!(
+        manifest_canonical_digest(&base.clone()),
+        digest,
+        "identical manifests share the digest"
     );
 }

@@ -85,3 +85,27 @@ fn compat_gate_opens_only_the_matching_tool() {
     compat_install_target(empty.path(), &CompatMode::Explicit("cargo".to_string()))
         .expect_err("unknown member must fail closed");
 }
+
+#[test]
+fn compat_decision_allows_match_and_pip3_alias() {
+    // Decision thuần (không spawn): đúng tool → Ok; pip3 mở nhánh pip
+    // (alias đã ghi nhận); sai tool/Native → Err.
+    // (Pure decision: match → Ok; pip3 ⇒ pip alias; else Err.)
+    use super::compat_gate_decision;
+    use crate::commands::compat::CompatMode;
+    let pip_member = tempfile::tempdir().unwrap();
+    std::fs::write(pip_member.path().join("requirements.txt"), "six==1.17.0\n").unwrap();
+    assert_eq!(
+        compat_gate_decision(pip_member.path(), &CompatMode::Explicit("pip".to_string())).unwrap(),
+        "pip"
+    );
+    assert_eq!(
+        compat_gate_decision(pip_member.path(), &CompatMode::Explicit("pip3".to_string())).unwrap(),
+        "pip",
+        "documented pip3 alias must open the pip branch"
+    );
+    compat_gate_decision(pip_member.path(), &CompatMode::Explicit("uv".to_string()))
+        .expect_err("uv must not open the pip branch");
+    compat_gate_decision(pip_member.path(), &CompatMode::Native)
+        .expect_err("native must stay closed");
+}

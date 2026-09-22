@@ -1622,6 +1622,53 @@ fn required_compat_tool(project_root: &Path) -> Option<&'static str> {
     }
 }
 
+/// Exact executables a compat branch spawns (owner contract — the gate
+/// authorizes the TOOL, this names what the tool runs; no hidden extra
+/// spawns beyond this list).
+/// (Liệt kê đúng executable mỗi nhánh spawn — hợp đồng owner.)
+fn tool_spawn_desc(tool: &str) -> &'static str {
+    match tool {
+        "go" => "go mod tidy",
+        "pip" => "python3 -m venv (local env provisioning) + pip install -r requirements.txt",
+        "cargo" => "cargo fetch",
+        "mvn" => "mvn dependency:go-offline",
+        "composer" => "composer install",
+        _ => "unknown toolchain command",
+    }
+}
+
+/// Does this compat mode authorize this tool? Exact match, plus the
+/// documented `pip3 ⇒ pip` alias (same installer family; the spawn still
+/// runs `pip`, and the warning says so).
+/// (Đúng tool hoặc alias pip3⇒pip đã ghi nhận.)
+fn tool_authorized(compat: &crate::commands::compat::CompatMode, tool: &str) -> bool {
+    compat.allows(tool) || (tool == "pip" && compat.allows("pip3"))
+}
+
+/// Pure gate decision (no spawn): Ok(tool) when the invocation opted
+/// into EXACTLY the member's tool, else a fail-closed denial naming the
+/// required flag. Unit-tested allow+deny+alias+unknown (the spawner
+/// below adds no further logic).
+/// (Quyết định gate thuần — test được mà không spawn.)
+fn compat_gate_decision(
+    project_root: &Path,
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<&'static str> {
+    let tool = required_compat_tool(project_root);
+    if tool.is_some_and(|t| tool_authorized(compat, t)) {
+        return Ok(tool.expect("authorized implies a known member kind"));
+    }
+    let have_opt_in = match compat {
+        crate::commands::compat::CompatMode::Native => "native (no opt-in)".to_string(),
+        crate::commands::compat::CompatMode::Explicit(t) => t.clone(),
+    };
+    Err(crate::error::monorepo_compat_tool_denied(
+        project_root,
+        tool,
+        &have_opt_in,
+    ))
+}
+
 fn compat_install_target(
     project_root: &Path,
     compat: &crate::commands::compat::CompatMode,
@@ -1632,22 +1679,10 @@ fn compat_install_target(
     // opens Cargo members, not Go/Python ones). Without the matching
     // opt-in, fail closed with guidance instead of silently delegating.
     // (Gate theo từng tool: chỉ đúng tool được spawn mới chạy.)
-    let tool = required_compat_tool(project_root);
-    let allowed = tool.is_some_and(|t| compat.allows(t));
-    if !allowed {
-        let have_opt_in = match compat {
-            crate::commands::compat::CompatMode::Native => "native (no opt-in)".to_string(),
-            crate::commands::compat::CompatMode::Explicit(t) => t.clone(),
-        };
-        return Err(crate::error::monorepo_compat_tool_denied(
-            project_root,
-            tool,
-            &have_opt_in,
-        ));
-    }
-    let tool = tool.expect("allowed implies a known member kind");
+    let tool = compat_gate_decision(project_root, compat)?;
     mgc_ui::warning(&format!(
-        "COMPATIBILITY MODE: delegating to `{tool}` for {} — this is NOT the native MagiCore engine path (owner: {tool} toolchain).",
+        "COMPATIBILITY MODE: delegating to `{}` for {} — this is NOT the native MagiCore engine path (owner: {tool} toolchain).",
+        tool_spawn_desc(tool),
         project_root.display()
     ));
     if project_root.join("go.mod").exists() {

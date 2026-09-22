@@ -130,6 +130,27 @@ impl ProjectWriteLock {
     }
 }
 
+/// True when the path is a symlink (all platforms) or a Windows
+/// reparse point (junction/mount). Shared by journal/backup/lock writers
+/// so every project writer refuses link-swapped paths the same way.
+/// (Có phải symlink/reparse point không — mọi writer dùng chung.)
+pub fn path_is_link_or_reparse(path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        windows_reparse_point(path)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// True when the path carries FILE_ATTRIBUTE_REPARSE_POINT (junctions,
 /// mount points, and non-symlink reparse data).
 #[cfg(windows)]
