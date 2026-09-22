@@ -466,23 +466,39 @@ pub async fn remove(
 
 /// Roll a failed remove-install back: rewrite the pre-edit manifest so
 /// the project never sits in a half-state (manifest dropped the dep
-/// while lock/store still carry it). The restore itself is best-effort —
-/// if it fails, BOTH errors surface (original first).
-/// (Rollback manifest khi install sau remove lỗi.)
+/// while lock/store still carry it). BOTH errors propagate: the restore
+/// failure is folded INTO the returned error (never warning-only), so
+/// CI/API callers can see the project may be half-updated.
+/// (Rollback manifest khi install sau remove lỗi — LỖI RESTORE ĐI KÈM
+/// TRONG ERROR TRẢ VỀ, không nuốt.)
 async fn rollback_remove_manifest(
     adapter: &dyn PackageAdapter,
     root: &Path,
     manifest_before: &Manifest,
     install_error: impl std::fmt::Display,
 ) -> Result<()> {
-    if let Err(restore_error) = adapter.write_manifest(root, manifest_before).await {
-        mgc_ui::warning(&format!(
-            "remove rollback failed to restore the manifest: {restore_error:#} (project may be half-updated — re-add the package and retry)"
-        ));
-    } else {
-        mgc_ui::info("remove rolled back: manifest restored (install failed, nothing changed)");
+    match adapter.write_manifest(root, manifest_before).await {
+        Ok(()) => {
+            mgc_ui::info("remove rolled back: manifest restored (install failed)");
+            Err(anyhow::anyhow!("{install_error:#}"))
+        }
+        Err(restore_error) => Err(combine_rollback_errors(install_error, restore_error)),
     }
-    Err(anyhow::anyhow!("{install_error:#}"))
+}
+
+/// Combine the install failure with a failed manifest restore into ONE
+/// error carrying both (P0: a warning-only restore failure is invisible
+/// to CI/API callers). Pure — unit-tested.
+/// (Gộp 2 lỗi thành một — hàm thuần, có unit test.)
+fn combine_rollback_errors(
+    install_error: impl std::fmt::Display,
+    restore_error: impl std::fmt::Display,
+) -> anyhow::Error {
+    anyhow::anyhow!(
+        "remove failed: {install_error:#} — AND the manifest rollback also failed: {restore_error:#} \
+         (project may be half-updated: manifest dropped the dependency while lock/store still carry it — \
+         re-add the package and retry)"
+    )
 }
 
 #[derive(Debug, Clone)]

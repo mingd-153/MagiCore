@@ -111,3 +111,24 @@ fn why_edge_name_strips_version_and_range() {
     assert_eq!(edge_name("@scope/pkg@1.3.0"), "@scope/pkg");
     assert_eq!(edge_name("  pad-core@2.0.0  "), "pad-core");
 }
+
+#[test]
+fn rollback_error_carries_both_install_and_restore_failures() {
+    // P0: restore failure must propagate INSIDE the returned error —
+    // warning-only would hide a half-updated project from CI/API.
+    // (Lỗi restore phải nằm trong error trả về — warning là nuốt lỗi.)
+    let err = combine_rollback_errors("fetch broke: connection refused", "disk read-only");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("fetch broke: connection refused"),
+        "install error must surface: {msg}"
+    );
+    assert!(
+        msg.contains("disk read-only"),
+        "restore error must surface: {msg}"
+    );
+    assert!(
+        msg.contains("half-updated"),
+        "must flag possible half-updated state: {msg}"
+    );
+}
