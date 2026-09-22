@@ -828,9 +828,10 @@ fn lib_remove_native_ignores_compat_without_spawning() {
 }
 
 #[test]
-fn lib_update_compat_opens_delegated_bridge_with_spawn() {
-    // Update stays delegated: explicit --compat-runtime opens the
-    // bridge (spawn happens, loudly announced).
+fn lib_update_native_ignores_compat_without_spawning() {
+    // Update runs natively (resolve-latest + rewrite) — even explicit
+    // compat spawns nothing. The legacy bridge proof lives on the
+    // remaining delegated lanes (ai/game/iot).
     let project = TempDir::new().unwrap();
     python_lib_project(project.path());
     std::fs::write(
@@ -838,7 +839,6 @@ fn lib_update_compat_opens_delegated_bridge_with_spawn() {
         "[project]\nname = \"canary-pylib\"\ndependencies = [\"six==1.17.0\"]\n",
     )
     .unwrap();
-    // Allowlist six for the delegated toolchain (fail-closed otherwise).
     std::fs::write(
         project.path().join("mgc.toml"),
         "name = \"canary-pylib\"\necosystem = \"lib\"\n[lib]\nlanguage = \"python\"\npip_allowed_packages = [\"six\"]\n",
@@ -856,15 +856,11 @@ fn lib_update_compat_opens_delegated_bridge_with_spawn() {
     assert_eq!(
         code,
         Some(0),
-        "compat update-lib must proceed through the gate:\n{output}"
+        "native update-lib must proceed:\n{output}"
     );
     assert!(
-        marker.contains("pip"),
-        "compat MUST spawn pip through the gate (bridge is real):\n{}",
+        marker.is_empty(),
+        "compat on the native lane must NOT spawn pip:\n{}",
         sandbox.marker_text()
-    );
-    assert!(
-        output.contains("COMPATIBILITY MODE"),
-        "every compat spawn must warn loudly:\n{output}"
     );
 }

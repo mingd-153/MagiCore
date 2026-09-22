@@ -222,24 +222,16 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("web", Some(eco::JS | eco::TS | "javascript" | "typescript"), _) => DepOwner::Native,
         // Lib TypeScript rides the embedded web engine end to end.
         ("lib", Some(eco::TS), _) => DepOwner::Native,
-        // Lib Remove runs natively on mgc-written manifests (in-memory
-        // edit + writer, zero spawn — verified: even explicit compat
-        // spawns nothing); gradle projects fail closed in write_manifest.
-        // Update still spawns the provider toolchain (delegated).
-        // (Remove native; Update vẫn delegate.)
+        // Lib Remove AND Update run natively on mgc-written manifests
+        // (remove: in-memory edit + writer; update: resolve-latest +
+        // rewrite + native install tail; zero spawn — gradle projects
+        // fail closed in write_manifest/prepare_add).
+        // (Remove/Update native.)
         (
             "lib",
             Some(eco::RUST | eco::PYTHON | eco::GO | eco::DOTNET | eco::JAVA),
-            DepOp::Remove,
+            DepOp::Remove | DepOp::Update,
         ) => DepOwner::Native,
-        ("lib", Some(eco::RUST), DepOp::Update) => DepOwner::Delegated { tools: &["cargo"] },
-        // Python Update still spawns pip for real.
-        ("lib", Some(eco::PYTHON), DepOp::Update) => DepOwner::Delegated {
-            tools: &["pip", "pip3"],
-        },
-        // Go: mgc owns go.mod requires (native add/remove); Update still
-        // spawns `go get -u` for real.
-        ("lib", Some(eco::GO), DepOp::Update) => DepOwner::Delegated { tools: &["go"] },
         // .NET Add/Remove run natively (NuGet resolve-first + mgc-side
         // csproj edit, zero `dotnet` spawn); Update has NO runner —
         // Unsupported. Java Add/Remove run natively for pom.xml projects
@@ -248,9 +240,7 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // Java Update stays Unsupported.
         // (Add/Remove .NET/Java-pom native.)
         ("lib", Some(eco::DOTNET), DepOp::Add) => DepOwner::Native,
-        ("lib", Some(eco::DOTNET), DepOp::Update) => DepOwner::Unsupported,
         ("lib", Some(eco::JAVA), DepOp::Add) => DepOwner::Native,
-        ("lib", Some(eco::JAVA), DepOp::Update) => DepOwner::Unsupported,
         ("lib", Some(eco::RUST | eco::PYTHON | eco::GO | eco::JAVA | eco::DOTNET), _) => {
             DepOwner::Native
         }

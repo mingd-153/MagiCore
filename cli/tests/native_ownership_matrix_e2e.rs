@@ -476,33 +476,18 @@ fn matrix_native_remove_all_lanes() {
 
 #[test]
 fn matrix_default_blocked_cells_refuse_silently_spawn_free() {
-    // Update stays delegated everywhere — without compat it must refuse
-    // AND spawn nothing.
-    let py = |d: &std::path::Path| {
-        let (f, b) = python_manifest();
-        lib_project(d, "python", f, &b);
+    // ai Update stays delegated — without compat it must refuse AND
+    // spawn nothing. (All lib verbs are native now.)
+    let ai = |d: &std::path::Path| {
+        write(
+            d,
+            "mgc.toml",
+            "name = \"m\"\necosystem = \"ai\"\n[ai]\nframework = \"python-agent\"\n",
+        );
+        let (_, b) = python_manifest();
+        write(d, "pyproject.toml", &b);
     };
-    blocked_cell(py, &["update-lib", "six"]);
-    let rs = |d: &std::path::Path| {
-        let (f, b) = rust_manifest();
-        lib_project(d, "rust", f, &b);
-    };
-    blocked_cell(rs, &["update-lib", "serde_json"]);
-    let go = |d: &std::path::Path| {
-        let (f, b) = go_manifest();
-        lib_project(d, "go", f, &b);
-    };
-    blocked_cell(go, &["update-lib", "github.com/google/uuid"]);
-    let net = |d: &std::path::Path| {
-        let (f, b) = dotnet_manifest();
-        lib_project(d, "dotnet", f, &b);
-    };
-    blocked_cell(net, &["update-lib", "Newtonsoft.Json"]);
-    let java = |d: &std::path::Path| {
-        let (f, b) = java_manifest();
-        lib_project(d, "java", f, &b);
-    };
-    blocked_cell(java, &["update-lib", "org.apache.commons:commons-lang3"]);
+    blocked_cell(ai, &["update-ai", "six"]);
 }
 
 #[test]
@@ -613,4 +598,112 @@ fn matrix_tampered_integrity_fails_verification() {
         "failure must name integrity:\n{out}"
     );
     sandbox.assert_no_spawn("tampered install-lib");
+}
+
+/// Native update cell: outdated pin bumps to latest with zero spawn.
+fn native_update_cell(
+    setup: fn(&std::path::Path),
+    update_cmd: &[&str],
+    manifest_file: &str,
+    old_pin: &str,
+) {
+    let project = TempDir::new().unwrap();
+    setup(project.path());
+    let sandbox = MatrixSandbox::new();
+    let (code, out) = sandbox.run(update_cmd, project.path());
+    assert_eq!(
+        code,
+        Some(0),
+        "{} must succeed:\n{out}",
+        update_cmd.join(" ")
+    );
+    let body = std::fs::read_to_string(project.path().join(manifest_file)).unwrap();
+    assert!(
+        !body.contains(old_pin),
+        "manifest must drop outdated pin {old_pin}:\n{body}"
+    );
+    sandbox.assert_no_spawn(&update_cmd.join(" "));
+}
+
+fn outdated_python(dir: &std::path::Path) {
+    lib_project(
+        dir,
+        "python",
+        "pyproject.toml",
+        "[project]\nname = \"m\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"six==1.15.0\"]\n",
+    );
+}
+
+fn outdated_rust(dir: &std::path::Path) {
+    lib_project(
+        dir,
+        "rust",
+        "Cargo.toml",
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde_json = \"1.0.100\"\n",
+    );
+}
+
+fn outdated_go(dir: &std::path::Path) {
+    lib_project(
+        dir,
+        "go",
+        "go.mod",
+        "module m\n\ngo 1.21\n\nrequire github.com/google/uuid v1.0.0\n",
+    );
+}
+
+fn outdated_dotnet(dir: &std::path::Path) {
+    lib_project(
+        dir,
+        "dotnet",
+        "m.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.1\" />\n  </ItemGroup>\n</Project>\n",
+    );
+}
+
+fn outdated_java(dir: &std::path::Path) {
+    lib_project(
+        dir,
+        "java",
+        "pom.xml",
+        "<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>m</artifactId>\n  <version>0.1.0</version>\n  <dependencies>\n    <dependency>\n      <groupId>org.apache.commons</groupId>\n      <artifactId>commons-lang3</artifactId>\n      <version>3.12.0</version>\n    </dependency>\n  </dependencies>\n</project>\n",
+    );
+}
+
+#[test]
+fn matrix_native_update_python_rust() {
+    native_update_cell(
+        outdated_python,
+        &["update-lib", "six"],
+        "pyproject.toml",
+        "1.15.0",
+    );
+    native_update_cell(
+        outdated_rust,
+        &["update-lib", "serde_json"],
+        "Cargo.toml",
+        "1.0.100",
+    );
+}
+
+#[test]
+fn matrix_native_update_go_dotnet_java() {
+    native_update_cell(
+        outdated_go,
+        &["update-lib", "github.com/google/uuid"],
+        "go.mod",
+        "v1.0.0",
+    );
+    native_update_cell(
+        outdated_dotnet,
+        &["update-lib", "Newtonsoft.Json"],
+        "m.csproj",
+        "13.0.1",
+    );
+    native_update_cell(
+        outdated_java,
+        &["update-lib", "org.apache.commons:commons-lang3"],
+        "pom.xml",
+        "3.12.0",
+    );
 }

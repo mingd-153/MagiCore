@@ -1221,6 +1221,12 @@ pub fn install_app_packages_use_add(packages: &[String]) -> Error {
     )
 }
 
+/// `update` of a package the manifest does not declare — fail loudly
+/// instead of adding it silently (add and update stay separate verbs).
+pub fn update_unknown_package(name: &str) -> Error {
+    anyhow!("cannot update '{name}': not in the project manifest — add it first with `mgc add`")
+}
+
 /// `mgc migrate` does not know this target (only `--to v4` exists).
 pub fn migrate_unknown_target(to: &str) -> Error {
     anyhow!("unknown migrate target '{to}' (only `--to v4` exists)")

@@ -479,14 +479,144 @@ pub async fn list(adapter: &dyn PackageAdapter, root: &Path) -> Result<()> {
 }
 
 #[allow(dead_code)]
+/// Native update: re-resolve each target to latest (star range through
+/// prepare_add — the same resolve-first path as add), rewrite the pins
+/// mgc-side, then run the native install tail. Unknown package names
+/// fail loudly (never silently skipped); unchanged versions are reported
+/// and skipped without rewriting.
+/// (Update native: resolve latest + viết lại pin + install.)
+async fn native_update(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    packages: Vec<String>,
+    install: bool,
+) -> Result<()> {
+    let mut manifest = adapter.parse_manifest(root).await?;
+    let targets: Vec<(String, String, bool, bool, bool)> = if packages.is_empty() {
+        manifest
+            .all_dependencies()
+            .map(|d| {
+                let current = d
+                    .range
+                    .satisfying_version()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| d.range.to_string());
+                (
+                    d.name.as_str().to_string(),
+                    current,
+                    d.dev,
+                    d.optional,
+                    d.peer,
+                )
+            })
+            .collect()
+    } else {
+        let mut out = Vec::new();
+        for name in &packages {
+            let Some(dep) = manifest.find_dep(name) else {
+                return Err(crate::error::update_unknown_package(name));
+            };
+            let current = dep
+                .range
+                .satisfying_version()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| dep.range.to_string());
+            out.push((
+                dep.name.as_str().to_string(),
+                current,
+                dep.dev,
+                dep.optional,
+                dep.peer,
+            ));
+        }
+        out
+    };
+    if targets.is_empty() {
+        info("No dependencies to update.");
+        return Ok(());
+    }
+    let mut updated: Vec<mgc_types::adapter::UpdatedPackage> = Vec::new();
+    for (name, from, dev, optional, peer) in &targets {
+        let pkg_name = PackageName::new(name)?;
+        let spinner = create_spinner(&format!("  Updating {}...", name));
+        let prepared = adapter
+            .prepare_add(
+                root,
+                &pkg_name,
+                None,
+                AddOptions {
+                    dev: *dev,
+                    optional: *optional,
+                    peer: *peer,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        spinner.finish_and_clear();
+        let to = prepared.id.version().to_string();
+        if to == *from {
+            info(&format!("  {name} already latest ({from})"));
+            continue;
+        }
+        let mut spec = DependencySpec::new(pkg_name, prepared.range);
+        spec.dev = *dev;
+        spec.optional = *optional;
+        spec.peer = *peer;
+        manifest.add_dep(spec, *dev, *optional, *peer);
+        updated.push(mgc_types::adapter::UpdatedPackage {
+            name: name.clone(),
+            from_version: from.clone(),
+            to_version: to,
+        });
+    }
+    if updated.is_empty() {
+        info("All packages are up to date");
+        return Ok(());
+    }
+    adapter.write_manifest(root, &manifest).await?;
+    for pkg in &updated {
+        info(&format!(
+            "  {}: {} → {}",
+            pkg.name, pkg.from_version, pkg.to_version
+        ));
+    }
+    success(&format!("Updated {} package(s)", updated.len()));
+    if install {
+        info("Installing updated packages...");
+        install_with_adapter(
+            adapter,
+            root,
+            install_command_for_adapter(adapter),
+            false,
+            mgc_types::adapter::InstallOptions {
+                incremental: true,
+                ..Default::default()
+            },
+        )
+        .await?;
+    } else {
+        info(&format!(
+            "Run '{}' to install updates",
+            style_cmd(install_command_for_adapter(adapter))
+        ));
+    }
+    Ok(())
+}
+
 pub async fn update(
     adapter: &dyn PackageAdapter,
     root: &Path,
     packages: Vec<String>,
     install: bool,
 ) -> Result<()> {
+    // Native update (resolve-latest + mgc-side manifest edit + native
+    // install tail, zero spawn) for adapters that own the whole lane.
+    // Legacy adapter.update (toolchain spawn) below stays for the rest.
+    // (Update native cho adapter sở hữu lane.)
+    if adapter.supports_native_update() {
+        return native_update(adapter, root, packages, install).await;
+    }
     if packages.is_empty() {
-        info("Checking for outdated packages...");
         let spinner = create_spinner("  Resolving latest versions...");
         let updated = adapter.update(root, None).await?;
         spinner.finish_and_clear();

@@ -525,6 +525,15 @@ pub trait PackageAdapter:
         true
     }
 
+    /// Can mgc-native update run on this adapter (resolve-latest +
+    /// mgc-side manifest edit + native install, zero toolchain spawn)?
+    /// `true` requires prepare_add + a round-tripping writer for every
+    /// savable range. Default `false` (legacy adapter.update path).
+    /// (Adapter này update native được không? Mặc định không.)
+    fn supports_native_update(&self) -> bool {
+        false
+    }
+
     /// Arm this operation's security policy from its project root
     /// (P0/F6). Called by orchestrators BEFORE resolve on every
     /// operation that knows its project. Default: no-op (cores without

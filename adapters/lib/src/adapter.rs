@@ -246,6 +246,14 @@ impl PackageAdapter for LibAdapter {
         true
     }
 
+    fn supports_native_update(&self) -> bool {
+        // prepare_add resolves every range natively for py/rs/go/dotnet/
+        // java-pom (gradle fails closed inside), and every writer
+        // round-trips pins (add + prune covered by manifest tests).
+        // (Mọi lane lib update native được.)
+        true
+    }
+
     async fn prepare_add(
         &self,
         project_root: &Path,

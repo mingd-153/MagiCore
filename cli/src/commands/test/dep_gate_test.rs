@@ -120,8 +120,9 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     );
     // Native Add ignores compat flags (native engine always runs) — a uv
     // opt-in on a native lane is a no-op info, never a spawn and never a
-    // wrong-tool error. The flag==process contract now lives on the still-
-    // delegated verbs (Remove/Update).
+    // wrong-tool error. All lib verbs are native now; the flag==process
+    // contract lives on the remaining delegated cores (ai Add/Remove,
+    // game/iot lanes).
     assert!(
         gate(
             &ctx("lib", Some(eco::PYTHON), DepOp::Add),
@@ -132,8 +133,8 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         .is_ok(),
         "compat on native add is ignored (native always runs)"
     );
-    // Native Remove ignores any opt-in; the flag==process contract
-    // lives on the still-delegated Update verb.
+    // Native Remove/Update ignore any opt-in (the last delegated verb
+    // is gone for lib).
     assert!(
         gate(
             &ctx("lib", Some(eco::PYTHON), DepOp::Remove),
@@ -144,19 +145,18 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         .is_ok(),
         "compat on native remove is ignored"
     );
-    let err = gate(
-        &ctx("lib", Some(eco::PYTHON), DepOp::Update),
-        Some("pip"),
-        &explicit("uv"),
-        None,
-    )
-    .unwrap_err();
-    assert!(err.to_string().contains("does not own"), "{err}");
-    // The mismatch names BOTH sides (flag uv, process pip).
-    assert!(err.to_string().contains("'uv'"), "{err}");
-    assert!(err.to_string().contains("'pip'"), "{err}");
-    // Per-language tool sets: native Add/Remove ignore any opt-in; the
-    // flag==process contract lives on delegated Update.
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::PYTHON), DepOp::Update),
+            Some("pip"),
+            &explicit("uv"),
+            None
+        )
+        .is_ok(),
+        "compat on native update is ignored"
+    );
+    // Per-language tool sets: native Add/Remove/Update ignore any
+    // opt-in (no delegated lib verbs left).
     assert!(
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
@@ -199,14 +199,14 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
             "lib[go] remove is native"
         );
     }
-    // Java update has NO runner; Remove runs natively on pom projects
-    // (gradle fails closed in write_manifest with pom.xml guidance).
-    for lang in [eco::JAVA] {
+    // Java/DOTNET Update run natively (resolve-latest + rewrite); gradle
+    // projects fail closed in prepare_add/write_manifest.
+    for lang in [eco::JAVA, eco::DOTNET] {
         for op in [DepOp::Update] {
             for mode in [native(), explicit("mvn"), explicit("dotnet")] {
                 assert!(
-                    gate(&ctx("lib", Some(lang), op), None, &mode, None).is_err(),
-                    "lib[{lang}] {} must stay Unsupported",
+                    gate(&ctx("lib", Some(lang), op), None, &mode, None).is_ok(),
+                    "lib[{lang}] {} is native",
                     op.as_str()
                 );
             }
@@ -215,8 +215,8 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     for op in [DepOp::Update] {
         for mode in [native(), explicit("dotnet")] {
             assert!(
-                gate(&ctx("lib", Some(eco::DOTNET), op), None, &mode, None).is_err(),
-                "lib[dotnet] {} must stay Unsupported",
+                gate(&ctx("lib", Some(eco::DOTNET), op), None, &mode, None).is_ok(),
+                "lib[dotnet] {} is native",
                 op.as_str()
             );
         }
@@ -472,8 +472,8 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
             ("app", Some(eco::RN), DepOp::Install),
             ("lib", None, DepOp::Install),
             // Exact cells without runners (never Delegated promises).
-            // (lib Remove went native — only Update/unsupported cells left.)
-            ("lib", Some(eco::DOTNET), DepOp::Update),
+            // (lib is fully native now — only Update/unsupported cells of
+            // other cores left.)
             ("app", Some(eco::SWIFT), DepOp::Add),
             ("app", Some(eco::KOTLIN), DepOp::Remove),
             ("app", Some(eco::OBJC), DepOp::List),
@@ -656,7 +656,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(lib_languages["go"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["java"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["java"]["install"]["owner"], "mgc-native");
-    assert_eq!(lib_languages["dotnet"]["update"]["owner"], "unsupported");
+    assert_eq!(lib_languages["dotnet"]["update"]["owner"], "mgc-native");
     let app_languages = dependency_ownership("app")["languages"].clone();
     // "rn" is omitted when identical to the (unsupported) base row — the
     // languages map carries ONLY differing ecosystems. When present it
