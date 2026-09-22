@@ -1199,8 +1199,13 @@ fn build_dev_launch(
         ["vite"] | ["vite", "dev"] => {
             let mut args = Vec::new();
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
+            // The vite program is NEVER executed — run_single_dev_target
+            // routes vite launches to MgDevServer (native Rust). Resolving
+            // the binary here would demand node_modules for a file mgc
+            // never runs, so the program stays an unresolved marker.
+            // (Program vite không bao giờ chạy — MgDevServer chạy thay.)
             Ok(DevLaunch {
-                program: resolve_local_bin(project_root, "vite")?,
+                program: PathBuf::from("vite"),
                 args,
                 envs: base_envs,
             })
@@ -1209,7 +1214,7 @@ fn build_dev_launch(
             let mut args: Vec<OsString> = rest.iter().map(OsString::from).collect();
             append_dev_endpoint_args(&mut args, "--host", "--port", host, port);
             Ok(DevLaunch {
-                program: resolve_local_bin(project_root, "vite")?,
+                program: PathBuf::from("vite"),
                 args,
                 envs: base_envs,
             })
