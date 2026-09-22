@@ -395,13 +395,11 @@ pub async fn install(
     let adapter: Arc<dyn PackageAdapter> = web_adapter();
     let targets = install_targets(&root)?;
 
-    // Compat gate for monorepo native (non-package.json) members.
-    // NOTE: an INVALID --compat-runtime value already errored at the
-    // dep_gate above, so `false` here strictly means "no opt-in given"
-    // (never "invalid value swallowed").
-    // (Giá trị compat sai đã lỗi ở gate trên — false ở đây = không opt-in.)
-    let compat_open = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())
-        .is_ok_and(|c| c.is_compat());
+    // Compat gate for monorepo native (non-package.json) members: the
+    // `compat` resolved for the dep_gate above travels down (not a
+    // bool) so each toolchain branch opens ONLY for its exact tool —
+    // one flag never opens every branch.
+    // (Dùng lại compat của gate — mỗi nhánh chỉ mở đúng tool của nó.)
 
     // Dedupe opt-in (02 §2.1): CLI flag OR mgc.toml [dedupe] prefer = true.
     let mut dedupe_enabled = prefer_dedupe;
@@ -460,7 +458,7 @@ pub async fn install(
                 allow_scripts,
                 prefer_dedupe,
                 repair,
-                compat_open,
+                compat: compat.clone(),
             })
             .await?;
             link_monorepo_workspace_packages(&root, &web_targets)?;
@@ -499,7 +497,7 @@ pub async fn install(
                 )
                 .await?;
             } else {
-                native_install_target(target, compat_open)?;
+                compat_install_target(target, &compat)?;
             }
         }
     }
@@ -789,7 +787,7 @@ struct MonorepoInstallParams {
     allow_scripts: bool,
     prefer_dedupe: bool,
     repair: bool,
-    compat_open: bool,
+    compat: crate::commands::compat::CompatMode,
 }
 
 async fn install_monorepo_targets(params: MonorepoInstallParams) -> Result<()> {
@@ -844,7 +842,7 @@ async fn install_monorepo_targets(params: MonorepoInstallParams) -> Result<()> {
     }
 
     for target in native_targets {
-        native_install_target(&target, params.compat_open)?;
+        compat_install_target(&target, &params.compat)?;
     }
 
     Ok(())
@@ -1603,25 +1601,55 @@ fn native_venv_executable(project_root: &Path, bin_name: &str) -> PathBuf {
     project_root.join(".venv").join("bin").join(bin_name)
 }
 
-fn native_install_target(project_root: &Path, compat_open: bool) -> Result<()> {
-    // Default-blocked (P0 bypass fix): these spawns ARE dependency
-    // installs owned by external toolchains — allowed only behind an
-    // explicit compat opt-in (same contract as dep_gate). Without it,
-    // fail closed with guidance instead of silently delegating (a
-    // non-package.json monorepo member must never trigger invisible
-    // `go mod tidy` / `pip install` runs).
-    // (Chặn mặc định: spawn toolchain chỉ khi opt-in tường minh.)
-    if !compat_open {
-        return Err(crate::error::monorepo_native_install_needs_compat(
+/// Which compat tool owns a non-package.json monorepo member (pure —
+/// unit-tested)? The mapping is HARD: each member kind opens with exactly
+/// the tool that will be spawned, never a sibling (`pip3`/`uv` do NOT
+/// open the pip branch — the spawn runs `pip`, so only `pip` opens it).
+/// (Map cứng member → tool: chỉ đúng tool được spawn mới mở được nhánh.)
+fn required_compat_tool(project_root: &Path) -> Option<&'static str> {
+    if project_root.join("go.mod").exists() {
+        Some("go")
+    } else if project_root.join("requirements.txt").exists() {
+        Some("pip")
+    } else if project_root.join("Cargo.toml").exists() {
+        Some("cargo")
+    } else if project_root.join("pom.xml").exists() {
+        Some("mvn")
+    } else if project_root.join("composer.json").exists() || project_root.join("artisan").exists()
+    {
+        Some("composer")
+    } else {
+        None
+    }
+}
+
+fn compat_install_target(
+    project_root: &Path,
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<()> {
+    // Per-tool compat gate (P0): a delegated toolchain install runs ONLY
+    // when the invocation opted into EXACTLY the tool about to spawn —
+    // one valid flag never opens every branch (`--compat-runtime=cargo`
+    // opens Cargo members, not Go/Python ones). Without the matching
+    // opt-in, fail closed with guidance instead of silently delegating.
+    // (Gate theo từng tool: chỉ đúng tool được spawn mới chạy.)
+    let tool = required_compat_tool(project_root);
+    let allowed = tool.is_some_and(|t| compat.allows(t));
+    if !allowed {
+        return Err(crate::error::monorepo_compat_tool_denied(
             project_root,
+            tool,
+            compat,
         ));
     }
-    mgc_ui::warning(
-        "COMPATIBILITY MODE: monorepo member install delegates to its toolchain — this is NOT the native MagiCore engine path.",
-    );
+    let tool = tool.expect("allowed implies a known member kind");
+    mgc_ui::warning(&format!(
+        "COMPATIBILITY MODE: delegating to `{tool}` for {} — this is NOT the native MagiCore engine path (owner: {tool} toolchain).",
+        project_root.display()
+    ));
     if project_root.join("go.mod").exists() {
         info(&format!(
-            "Installing native Go dependencies in {}",
+            "Delegating to `go mod tidy` in {} under explicit compatibility mode",
             project_root.display()
         ));
         return run_native_install(project_root, "go", &["mod", "tidy"]);
@@ -1629,7 +1657,7 @@ fn native_install_target(project_root: &Path, compat_open: bool) -> Result<()> {
 
     if project_root.join("requirements.txt").exists() {
         info(&format!(
-            "Installing native Python dependencies in {}",
+            "Delegating to `pip install -r requirements.txt` in {} under explicit compatibility mode",
             project_root.display()
         ));
         run_native_install(project_root, "python3", &["-m", "venv", ".venv"])?;
@@ -1642,7 +1670,7 @@ fn native_install_target(project_root: &Path, compat_open: bool) -> Result<()> {
 
     if project_root.join("Cargo.toml").exists() {
         info(&format!(
-            "Fetching native Rust dependencies in {}",
+            "Delegating to `cargo fetch` in {} under explicit compatibility mode",
             project_root.display()
         ));
         return run_native_install(project_root, "cargo", &["fetch"]);
@@ -1650,7 +1678,7 @@ fn native_install_target(project_root: &Path, compat_open: bool) -> Result<()> {
 
     if project_root.join("pom.xml").exists() {
         info(&format!(
-            "Fetching native Maven dependencies in {}",
+            "Delegating to `mvn dependency:go-offline` in {} under explicit compatibility mode",
             project_root.display()
         ));
         return run_native_install(
@@ -1662,7 +1690,7 @@ fn native_install_target(project_root: &Path, compat_open: bool) -> Result<()> {
 
     if project_root.join("composer.json").exists() || project_root.join("artisan").exists() {
         info(&format!(
-            "Installing native PHP dependencies in {}",
+            "Delegating to `composer install` in {} under explicit compatibility mode",
             project_root.display()
         ));
         return run_native_install(project_root, "composer", &["install"]);

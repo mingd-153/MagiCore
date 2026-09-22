@@ -1287,15 +1287,32 @@ pub fn web_backend_flag_unsupported(flag: &str, language: &str) -> Error {
     )
 }
 
-/// Monorepo member has no package.json and needs explicit compat opt-in
-/// to delegate to its toolchain (go mod tidy / pip / cargo / mvn / composer).
-/// (Thành viên monorepo không có package.json — cần opt-in compat tường minh
-/// mới được delegate sang toolchain.)
-pub fn monorepo_native_install_needs_compat(project_root: &std::path::Path) -> Error {
-    anyhow!(
-        "monorepo member '{}' has no package.json; install would delegate to its toolchain — pass --compat-runtime=<runtime> or set MGC_COMPAT_RUNTIME to opt in (explicit only, never auto)",
-        project_root.display()
-    )
+/// Monorepo member has no package.json and its toolchain was NOT opted
+/// into: pass exactly `--compat-runtime=<tool>` for the member kind
+/// (go/pip/cargo/mvn/composer) — one flag never opens every toolchain.
+/// (Thành viên monorepo không có package.json — phải opt-in ĐÚNG tool;
+/// một flag không mở mọi toolchain.)
+pub fn monorepo_compat_tool_denied(
+    project_root: &std::path::Path,
+    tool: Option<&str>,
+    compat: &crate::commands::compat::CompatMode,
+) -> Error {
+    match tool {
+        Some(tool) => {
+            let have = match compat {
+                crate::commands::compat::CompatMode::Native => "native (no opt-in)".to_string(),
+                crate::commands::compat::CompatMode::Explicit(t) => t.clone(),
+            };
+            anyhow!(
+                "monorepo member '{}' needs its '{tool}' toolchain, but the invocation opted into '{have}' — pass --compat-runtime={tool} (explicit only, never auto)",
+                project_root.display(),
+            )
+        }
+        None => anyhow!(
+            "monorepo member '{}' has no package.json and no recognized toolchain manifest (go.mod/requirements.txt/Cargo.toml/pom.xml/composer.json) — nothing to delegate to",
+            project_root.display()
+        ),
+    }
 }
 
 /// The provider toolchain reported success but the re-read manifest does

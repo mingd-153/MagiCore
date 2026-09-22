@@ -392,6 +392,7 @@ pub const DEPENDENCY_COMPAT_TOOLS: &[&str] = &[
     "pio",
     "platformio",
     "west",
+    "composer",
     "npm",
     "pnpm",
     "yarn",
