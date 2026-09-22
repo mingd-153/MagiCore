@@ -112,7 +112,104 @@ impl PypiProtocol {
             .join("site")
             .join(format!("{}-{}", entry.name, entry.version));
         super::zip_reader::extract_zip(bytes, &site)?;
+        // RECORD verification (PEP 376): every extracted file must match
+        // its recorded sha256 + size. Whole-file sha256 (checked at
+        // download) proves the bytes came from the registry; RECORD
+        // proves the extracted tree matches the wheel's own manifest —
+        // a corrupted/truncated unzip fails closed here, never imports.
+        // (Xác minh RECORD: mọi file giải nén phải khớp hash + size.)
+        Self::verify_wheel_record_dir(&site)?;
         Ok(Some(site))
+    }
+
+    /// Verify an unpacked wheel tree against its `*.dist-info/RECORD`
+    /// (PEP 376): every listed file must exist with matching sha256
+    /// (base64url, `sha256=` scheme) and byte size. The RECORD row itself
+    /// carries empty hash/size (self-reference). Missing RECORD, missing
+    /// files, hash or size mismatches all fail closed.
+    /// (Xác minh cây wheel đã giải nén theo RECORD.)
+    fn verify_wheel_record_dir(site: &Path) -> MgResult<()> {
+        use sha2::{Digest, Sha256};
+        let record = std::fs::read_dir(site)
+            .map_err(|e| MgError::Other(format!("read unpacked wheel: {e}")))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| {
+                p.is_dir()
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.ends_with(".dist-info"))
+            })
+            .and_then(|d| {
+                let r = d.join("RECORD");
+                r.is_file().then_some(r)
+            })
+            .ok_or_else(|| {
+                MgError::Integrity(
+                    "unpacked wheel has no dist-info/RECORD (fail-closed)".to_string(),
+                )
+            })?;
+        let body = std::fs::read_to_string(&record)
+            .map_err(|e| MgError::Other(format!("read RECORD: {e}")))?;
+        // base64url engine (RECORD uses url-safe alphabet, no padding).
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        for (lineno, line) in body.lines().enumerate() {
+            let line = line.trim().trim_end_matches('\r');
+            if line.is_empty() {
+                continue;
+            }
+            let mut cols = line.splitn(3, ',');
+            let (Some(rel), hash, size) = (cols.next(), cols.next(), cols.next()) else {
+                return Err(MgError::Integrity(format!(
+                    "malformed RECORD line {} (fail-closed)",
+                    lineno + 1
+                )));
+            };
+            // Path traversal inside RECORD is an attack — refuse.
+            if rel.contains("..") || rel.starts_with('/') || rel.starts_with('\\') {
+                return Err(MgError::Integrity(format!(
+                    "RECORD entry escapes the wheel: '{rel}' (fail-closed)"
+                )));
+            }
+            let path = site.join(rel);
+            let data = std::fs::read(&path).map_err(|_| {
+                MgError::Integrity(format!("RECORD lists missing file '{rel}' (fail-closed)"))
+            })?;
+            match hash {
+                // The RECORD row itself.
+                None | Some("") => continue,
+                Some(h) => {
+                    let digest = h.strip_prefix("sha256=").ok_or_else(|| {
+                        MgError::Integrity(format!(
+                            "unsupported RECORD hash scheme for '{rel}' (fail-closed)"
+                        ))
+                    })?;
+                    let mut hasher = Sha256::new();
+                    hasher.update(&data);
+                    let actual = b64.encode(hasher.finalize());
+                    // Compare unpadded both sides (registries vary).
+                    if actual.trim_end_matches('=') != digest.trim_end_matches('=') {
+                        return Err(MgError::Integrity(format!(
+                            "RECORD hash mismatch for '{rel}' (fail-closed)"
+                        )));
+                    }
+                    if let Some(expected_size) = size {
+                        let expected_size: u64 = expected_size.trim().parse().map_err(|_| {
+                            MgError::Integrity(format!(
+                                "malformed RECORD size for '{rel}' (fail-closed)"
+                            ))
+                        })?;
+                        if data.len() as u64 != expected_size {
+                            return Err(MgError::Integrity(format!(
+                                "RECORD size mismatch for '{rel}' (fail-closed)"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Pure-python wheel tags: `{py}-none-any` with a py2/py3 interpreter
@@ -901,12 +998,26 @@ mod importable_tests {
         }
     }
 
-    /// Pure-python wheels unpack into an importable site dir.
+    /// Pure-python wheels unpack into an importable site dir (RECORD
+    /// verified — a tampered member fails the unpack, not the import).
     #[test]
     fn materialize_importable_unpacks_pure_wheel() {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let six_py = b"__version__ = '1.17.0'\n";
+        let meta = b"Name: six\n";
+        let record_body = format!(
+            "six.py,sha256={},{}\nsix-1.17.0.dist-info/METADATA,sha256={},{}\nsix-1.17.0.dist-info/RECORD,,\n",
+            b64.encode(Sha256::digest(six_py)),
+            six_py.len(),
+            b64.encode(Sha256::digest(meta)),
+            meta.len(),
+        );
         let wheel = stored_zip(&[
-            ("six.py", b"__version__ = '1.17.0'\n"),
-            ("six-1.17.0.dist-info/METADATA", b"Name: six\n"),
+            ("six.py", six_py.as_slice()),
+            ("six-1.17.0.dist-info/METADATA", meta.as_slice()),
+            ("six-1.17.0.dist-info/RECORD", record_body.as_bytes()),
         ]);
         let dir = tempfile::tempdir().unwrap();
         let site = PypiProtocol::new("https://pypi.org")
@@ -918,6 +1029,33 @@ mod importable_tests {
             .unwrap()
             .expect("pure wheel must unpack");
         assert!(site.join("six.py").exists(), "six.py importable");
+    }
+
+    /// A wheel whose member was tampered after RECORD was written must
+    /// fail the unpack (fail-closed, never imports).
+    #[test]
+    fn materialize_importable_rejects_tampered_member() {
+        let wheel = stored_zip(&[
+            ("six.py", b"EVIL = True\n".as_slice()),
+            ("six-1.17.0.dist-info/METADATA", b"Name: six\n".as_slice()),
+            // RECORD claims the ORIGINAL bytes (stale content hash).
+            (
+                "six-1.17.0.dist-info/RECORD",
+                b"six.py,sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,23\nsix-1.17.0.dist-info/METADATA,sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB,11\nsix-1.17.0.dist-info/RECORD,,\n".as_slice(),
+            ),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let err = PypiProtocol::new("https://pypi.org")
+            .materialize_importable(
+                &entry_for("https://files.pythonhosted.org/x/six-1.17.0-py2.py3-none-any.whl"),
+                &wheel,
+                dir.path(),
+            )
+            .expect_err("tampered member must fail");
+        assert!(
+            err.to_string().contains("RECORD"),
+            "failure must name RECORD: {err}"
+        );
     }
 
     /// Compiled wheels are NOT unpacked (ABI policy) — None, honestly.

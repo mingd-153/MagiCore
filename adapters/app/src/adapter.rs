@@ -62,15 +62,6 @@ impl AppAdapter {
         }
     }
 
-    /// Native Swift update: resolve each target to latest through the
-    /// SwiftPM registry, bump the `from:`/`exact:` requirement in
-    /// Package.swift text, and verify by re-scan (no toolchain needed
-    /// for the edit itself). Returns `(updated, skipped)` with honest
-    /// skip reasons — git/branch/revision/range pins are not bumpable;
-    /// an unconfigured registry fails the whole op closed (never a
-    /// partial silent pass).
-    /// (Update Swift native: resolve latest + sửa Package.swift +
-    /// verify bằng quét lại.)
     /// Native Kotlin update through the version catalog
     /// (`gradle/libs.versions.toml`): resolve each target to latest
     /// through Maven Central, bump the catalog (ref values or inline
@@ -137,6 +128,15 @@ impl AppAdapter {
         Ok(updated)
     }
 
+    /// Native Swift update: resolve each target to latest through the
+    /// SwiftPM registry, bump the `from:`/`exact:` requirement in
+    /// Package.swift text, and verify by re-scan (no toolchain needed
+    /// for the edit itself). Returns `(updated, skipped)` with honest
+    /// skip reasons — git/branch/revision/range pins are not bumpable;
+    /// an unconfigured registry fails the whole op closed (never a
+    /// partial silent pass).
+    /// (Update Swift native: resolve latest + sửa Package.swift +
+    /// verify bằng quét lại.)
     pub async fn update_swift_native(
         &self,
         project_root: &Path,
@@ -198,36 +198,29 @@ impl AppAdapter {
     }
 
     /// Capability manifest (Global Gate 1) — code-reality notes:
-    /// - ProjectDetector: `detect_language`/`manifest_is_app` — real.
-    /// - ScaffoldProvider: `mgc create-app` CLI lane — real.
-    /// - LifecycleRunner: install orchestrates the provider toolchain
-    ///   lifecycle (flutter pub get / gradle / spm) — real.
-    /// - ContentStoreProvider: `crate::install::run_install` (adapter.rs
-    ///   install) is REAL for all app languages — claimed (delegated to
-    ///   the native toolchain caches, honest mgc orchestration).
-    /// - LockfileProvider: per-language manifest writers
-    ///   (crate::manifest::write_manifest) are real — claimed.
-    /// - AuditProvider: per-language scanner dispatch — real.
-    ///
-    /// DependencyResolver/ArtifactFetcher are NOT claimed: resolution and
-    /// downloads are owned by flutter/gradle/swift, and the previous
-    /// resolve/fetch stubs returned empty no-ops.
-    /// Bảng capability (Global Gate 1) — ghi chú theo code thật.
-    pub const CAPABILITIES: &'static [Capability] = &[
+    /// per-language truth, never a core-level blanket (a blanket
+    /// DependencyResolver claim overclaims for Kotlin/ObjC, which fail
+    /// closed). `CAPABILITIES` (used by `mgc capabilities`) is the BASE
+    /// set every language shares; the instance method below adds
+    /// DependencyResolver exactly for Flutter/Swift/RN, and the
+    /// capabilities test enforces both directions.
+    pub const CAPABILITIES: &'static [Capability] = Self::CAPABILITIES_BASE;
+
+    const CAPABILITIES_BASE: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
         Capability::LifecycleRunner,
         Capability::ContentStoreProvider,
         Capability::LockfileProvider,
         Capability::AuditProvider,
-        // Phase 2 native engines — Flutter (pub.dev), Swift (SwiftPM
-        // registry + git deps) and React Native (layered JS/Android/iOS)
-        // resolve/fetch/install are mgc-native; the remaining app
-        // languages stay toolchain-owned.
-        // (Engine native Phase 2 — resolve/fetch/install của Flutter
-        // (pub.dev), Swift (SwiftPM registry + dep git) và React Native
-        // (phân tầng JS/Android/iOS) là mgc-native; các ngôn ngữ app còn
-        // lại vẫn do toolchain giữ.)
+    ];
+    const CAPABILITIES_RESOLVER: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::LifecycleRunner,
+        Capability::ContentStoreProvider,
+        Capability::LockfileProvider,
+        Capability::AuditProvider,
         Capability::DependencyResolver,
     ];
 }
@@ -350,7 +343,13 @@ impl AuditProvider for AppAdapter {
 #[async_trait]
 impl PackageAdapter for AppAdapter {
     fn capabilities(&self) -> &'static [Capability] {
-        Self::CAPABILITIES
+        // Per-language truth: only lanes with a native resolver claim it.
+        match self.language {
+            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => {
+                Self::CAPABILITIES_RESOLVER
+            }
+            AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => Self::CAPABILITIES_BASE,
+        }
     }
 
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
