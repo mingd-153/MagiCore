@@ -485,7 +485,7 @@ pub async fn list(adapter: &dyn PackageAdapter, root: &Path) -> Result<()> {
 /// fail loudly (never silently skipped); unchanged versions are reported
 /// and skipped without rewriting.
 /// (Update native: resolve latest + viết lại pin + install.)
-async fn native_update(
+pub(crate) async fn native_update(
     adapter: &dyn PackageAdapter,
     root: &Path,
     packages: Vec<String>,

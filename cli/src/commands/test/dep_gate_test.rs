@@ -496,7 +496,7 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
 
 #[test]
 fn app_exact_verbs_match_real_runners() {
-    // Reviewer table: flutter install native, every other flutter verb
+    // Reviewer table: flutter install + update native; add/remove
     // delegated; swift/kotlin install+list delegated; objc install only; everything else
     // Unsupported — including under compat.
     assert!(
@@ -629,6 +629,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(ai["install"]["owner"], "unsupported");
     let ai_languages = dependency_ownership("ai")["languages"].clone();
     assert_eq!(ai_languages["python"]["install"]["owner"], "mgc-native");
+    assert_eq!(ai_languages["python"]["update"]["owner"], "mgc-native");
     let hardware = &dependency_ownership("hardware")["operations"];
     assert_eq!(hardware["install"]["owner"], "unsupported");
     // Splitting cores expose per-ecosystem overrides that differ from the
@@ -666,6 +667,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
         assert_eq!(rn["install"]["owner"], "unsupported");
     }
     assert_eq!(app_languages["flutter"]["install"]["owner"], "mgc-native");
+    assert_eq!(app_languages["flutter"]["update"]["owner"], "mgc-native");
     // Exact app verbs: swift/kotlin add unsupported, objc list
     // unsupported, objc install delegated.
     assert_eq!(app_languages["swift"]["add"]["owner"], "unsupported");

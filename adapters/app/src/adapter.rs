@@ -17,12 +17,14 @@ use mgc_lib_adapter::native::engine::resolve_with_protocol;
 use mgc_lockfile::EcosystemTag;
 use mgc_resolver::protocols::PubProtocol;
 use mgc_types::adapter::{
-    AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
+    AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
+    PreparedAdd,
 };
 use mgc_types::capabilities::{
     AuditProvider, Capability, ContentStoreProvider, CoreIdent, DependencyResolver,
     LifecycleRunner, LockfileProvider, ProjectDetector, ScaffoldProvider,
 };
+use mgc_types::{DependencySpec, MgError, PackageName, VersionRange};
 use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, ResolvedGraph, Version};
 use std::path::{Path, PathBuf};
 
@@ -217,6 +219,63 @@ impl PackageAdapter for AppAdapter {
 
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
         crate::manifest::parse_manifest(self.language, project_root)
+    }
+
+    fn supports_native_update(&self) -> bool {
+        // Only Flutter owns the full native round-trip (resolve-first +
+        // pubspec writer); other languages fail closed in prepare_add.
+        matches!(self.language, AppLanguage::Flutter)
+    }
+
+    async fn prepare_add(
+        &self,
+        project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<PreparedAdd> {
+        let AppLanguage::Flutter = self.language else {
+            return Err(MgError::Other(format!(
+                "native prepare-add is flutter-only; {:?} stays toolchain-owned",
+                self.language
+            )));
+        };
+        let _ = project_root;
+        // Resolve-first (same contract as lib): the pubspec writer cannot
+        // persist `*`, so resolve the real version natively FIRST for
+        // every range; failures error honestly instead of fake-adding.
+        let wanted = range.cloned().unwrap_or_else(VersionRange::star);
+        let mut scratch = Manifest::new("scratch", Ecosystem::App);
+        scratch.add_dep(
+            DependencySpec::new(name.clone(), wanted.clone()),
+            opts.dev,
+            opts.optional,
+            opts.peer,
+        );
+        let protocol = PubProtocol::from_env();
+        let resolution =
+            resolve_with_protocol(&protocol, EcosystemTag::Dart, "pub://pub.dev", &scratch).await?;
+        let resolved = resolution
+            .graph
+            .packages
+            .iter()
+            .find(|p| p.id.name_str() == name.as_str())
+            .ok_or_else(|| {
+                MgError::Other(format!(
+                    "native resolve returned no entry for '{}' — refusing to book an unresolved dep",
+                    name.as_str()
+                ))
+            })?;
+        let pinned = if wanted.is_star() {
+            VersionRange::parse(&resolved.id.version().to_string())?
+        } else {
+            wanted
+        };
+        *self.pending_lock.lock().expect("app pending lock poisoned") = resolution.lock_packages;
+        Ok(PreparedAdd {
+            id: PackageId::new(name.clone(), resolved.id.version().clone()),
+            range: pinned,
+        })
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {

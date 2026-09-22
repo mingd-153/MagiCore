@@ -252,11 +252,12 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // still require declared ecosystems; list cannot spawn by
         // construction, verified by the delegation audit.)
         ("game" | "iot" | "clo", _, DepOp::List) => DepOwner::Native,
-        // AI Python with a pyproject.toml adds natively too (resolve-first
-        // + mgc-side pyproject edit, same engine as install). uv.lock /
-        // requirements-only projects keep the legacy delegated Add.
-        // (AI python có pyproject thì add native.)
-        ("ai", Some(eco::PYTHON), DepOp::Install | DepOp::Add) => DepOwner::Native,
+        // AI Python with a pyproject.toml updates natively too
+        // (resolve-latest + mgc-side edit, same engine as install).
+        // uv.lock/requirements-only projects keep the legacy delegated
+        // Update (manual compat enforcement in the lane).
+        // (AI python có pyproject thì update native.)
+        ("ai", Some(eco::PYTHON), DepOp::Install | DepOp::Add | DepOp::Update) => DepOwner::Native,
         // AI Python every OTHER verb (add/remove/update/list) still runs
         // the provider toolchain (`uv pip list` spawns for list).
         ("ai", Some(eco::PYTHON), _) => DepOwner::Delegated {
@@ -269,11 +270,11 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // lane gọi lỗi trước mọi spawn, nên không có lifecycle install nào
         // để hỗ trợ.)
         ("app", Some(eco::RN), _) => DepOwner::Unsupported,
-        // App Flutter install runs natively (pubspec → pub.dev resolve →
-        // verified fetch → mgc.lock + pub cache; zero `flutter` spawn).
-        // Add/Remove/Update still spawn the provider toolchain for real.
-        // (Flutter install native; add/remove/update vẫn delegate.)
-        ("app", Some(eco::FLUTTER), DepOp::Install) => DepOwner::Native,
+        // App Flutter install AND update run natively (pubspec → pub.dev
+        // resolve → verified fetch → mgc.lock + pub cache; zero `flutter`
+        // spawn). Add/Remove still spawn the provider toolchain for real.
+        // (Flutter install/update native; add/remove vẫn delegate.)
+        ("app", Some(eco::FLUTTER), DepOp::Install | DepOp::Update) => DepOwner::Native,
         // App Flutter: provider toolchain owns every OTHER verb
         // (tool_command implements add/remove/list/update).
         ("app", Some(eco::FLUTTER), _) => DepOwner::Delegated {

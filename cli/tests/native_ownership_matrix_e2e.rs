@@ -707,3 +707,45 @@ fn matrix_native_update_go_dotnet_java() {
         "3.12.0",
     );
 }
+
+fn outdated_flutter(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"app\"\n[app]\nlanguage = \"flutter\"\n",
+    );
+    write(
+        dir,
+        "pubspec.yaml",
+        "name: m\nenvironment:\n  sdk: \">=3.0.0 <4.0.0\"\ndependencies:\n  meta: 1.9.1\n",
+    );
+}
+
+fn outdated_ai(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"ai\"\n[ai]\nframework = \"python-agent\"\n",
+    );
+    write(
+        dir,
+        "pyproject.toml",
+        "[project]\nname = \"m\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"six==1.15.0\"]\n",
+    );
+}
+
+#[test]
+fn matrix_native_update_flutter_ai() {
+    native_update_cell(
+        outdated_flutter,
+        &["update-app", "meta"],
+        "pubspec.yaml",
+        "1.9.1",
+    );
+    native_update_cell(
+        outdated_ai,
+        &["update-ai", "six"],
+        "pyproject.toml",
+        "1.15.0",
+    );
+}

@@ -853,11 +853,7 @@ fn lib_update_native_ignores_compat_without_spawning() {
         Some(("MGC_COMPAT_RUNTIME", "pip")),
     );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(
-        code,
-        Some(0),
-        "native update-lib must proceed:\n{output}"
-    );
+    assert_eq!(code, Some(0), "native update-lib must proceed:\n{output}");
     assert!(
         marker.is_empty(),
         "compat on the native lane must NOT spawn pip:\n{}",

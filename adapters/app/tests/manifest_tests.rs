@@ -86,3 +86,48 @@ fn parse_multi_detects_flutter() {
     let manifest = parse_manifest(AppLanguage::Multi, &dir).unwrap();
     assert_eq!(manifest.name, "multiapp");
 }
+
+/// pubspec writer round-trip: pins written v-implied-^, SDK + project
+/// keys preserved, dev deps kept separate, re-parse stable.
+#[test]
+fn write_pubspec_pins_and_round_trips() {
+    use mgc_app_adapter::manifest::{parse_manifest, write_manifest};
+    use mgc_types::{DependencySpec, Ecosystem, Manifest, PackageName, VersionRange};
+
+    let dir = tmp("flutter-write");
+    std::fs::write(
+        dir.join("pubspec.yaml"),
+        "name: myapp\ndescription: keep me\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\n",
+    )
+    .unwrap();
+    let mut manifest = Manifest::new("myapp", Ecosystem::App);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("meta").unwrap(),
+            VersionRange::parse("1.12.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    write_manifest(AppLanguage::Flutter, &dir, &manifest).unwrap();
+    let body = std::fs::read_to_string(dir.join("pubspec.yaml")).unwrap();
+    assert!(
+        body.contains("meta") && body.contains("1.12.0"),
+        "pin written: {body}"
+    );
+    assert!(
+        body.contains("description: keep me"),
+        "other keys survive: {body}"
+    );
+    assert!(
+        body.contains("sdk: flutter"),
+        "SDK pseudo-dep survives: {body}"
+    );
+    let again = parse_manifest(AppLanguage::Flutter, &dir).unwrap();
+    let dep = again.find_dep("meta").expect("re-parse finds meta");
+    assert_eq!(
+        dep.range.satisfying_version().map(|v| v.to_string()),
+        Some("1.12.0".to_string())
+    );
+}
