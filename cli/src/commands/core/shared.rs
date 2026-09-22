@@ -43,6 +43,59 @@ pub(crate) fn writer_lock_timeout(root: &Path) -> std::time::Duration {
     std::time::Duration::from_millis(ms)
 }
 
+/// In-process mutation flag (P0): set while THIS process owns a staged
+/// journal. Recovery skips when set (nested same-process entry — the
+/// stage step fails it closed). Cross-process staleness is decided by
+/// the lock + journal state, NEVER by pid (pids get reused after a
+/// crash). The on-disk pid is diagnostic only.
+/// (Cờ mutation trong process — recovery không bao giờ tin pid trên đĩa.)
+static MUTATION_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Single mutation gateway (P0): EVERY manifest/lock mutation
+/// (add/remove/update/install) MUST enter here — acquire the writer lock,
+/// recover a stale journal, return the guard. Direct lock acquisition
+/// that forgets recovery is a bug; the compiler cannot check it, so this
+/// one function is the only sanctioned entry.
+/// (Cổng mutation duy nhất: acquire + recovery — mọi lane qua đây.)
+pub(crate) async fn begin_dependency_mutation(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    op: &str,
+) -> Result<ProjectWriteLock> {
+    let write_lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root))
+        .map_err(|e| anyhow::anyhow!("{op} cannot acquire the project writer lock: {e}"))?;
+    recover_interrupted_remove(adapter, root, &write_lock).await?;
+    Ok(write_lock)
+}
+
+/// Migrate-side guard (no adapter available there): refuse to migrate
+/// over an unrestored remove journal instead of paving over it. A
+/// completed journal is only deleted; anything else fails closed.
+/// (Migrate không đè lên journal chưa phục hồi — lỗi chứ không đoán.)
+pub(crate) fn ensure_no_pending_remove_journal(root: &Path, lock: &ProjectWriteLock) -> Result<()> {
+    let journal_path = remove_journal_dir(root).join("journal.json");
+    match std::fs::symlink_metadata(&journal_path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "cannot stat remove journal '{}': {e:#}",
+                journal_path.display()
+            ));
+        }
+        Ok(_) => {}
+    }
+    let journal = parse_mutation_journal(&read_project_string(&journal_path)?, &journal_path)?;
+    if journal.state != JournalState::InProgress {
+        clear_mutation_journal(root, lock);
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(
+        "refusing to migrate with an unrestored remove journal (staged by pid {}, op '{}'): run the interrupted remove/install first so it recovers, then migrate",
+        journal.pid,
+        journal.op,
+    ))
+}
+
 /// Run the REAL toolchain add for a toolchain-owned manifest (go.mod,
 /// platformio.ini — the tool is the sole writer), then re-read the file.
 /// Fail closed when the tool reports success but the dep is absent from
@@ -136,10 +189,10 @@ pub async fn add(
     // Mutation gateway (P0): the manifest write below and the install
     // tail must not interleave with a concurrent remove/update/install
     // on the same project — hold the writer lock for the whole op
-    // (resolves included), same contract as remove.
-    // (Add cũng giữ lock writer xuyên suốt — không đan xen remove/update.)
-    let write_lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root))
-        .map_err(|e| anyhow::anyhow!("add cannot acquire the project writer lock: {e}"))?;
+    // (resolves included), and recover any stale journal FIRST so this
+    // op never builds on unrestored state.
+    // (Add qua gateway — lock + recovery trước mọi mutation.)
+    let write_lock = begin_dependency_mutation(adapter, root, "add").await?;
     let total = packages.len();
     let group = if peer {
         "peerDependencies"
@@ -167,6 +220,20 @@ pub async fn add(
         None
     };
     let mut manifest_after_add = manifest_before_add.clone();
+    // Pre-image for the add journal (P0-3): captured under the gateway
+    // lock before any resolve/write. Staged only when mgc actually
+    // rewrites an owned manifest (toolchain-owned files are the tool's
+    // transactional domain — mgc must not roll them back).
+    // (Snapshot pre-image cho journal add — chỉ stage khi mgc tự viết.)
+    let add_snapshot = if !no_save && !toolchain_owned {
+        manifest_before_add
+            .as_ref()
+            .map(|manifest| MutationSnapshot::capture(manifest, root, &write_lock))
+            .transpose()?
+    } else {
+        None
+    };
+    let mut add_journaled = false;
     let mut added_ids = Vec::new();
     let mut added_packages = Vec::new();
     let mut changed_any = false;
@@ -278,9 +345,25 @@ pub async fn add(
     if !no_save {
         if changed_any && !toolchain_owned {
             if let Some(manifest) = manifest_after_add.as_ref() {
+                if let Some(snapshot) = add_snapshot.as_ref() {
+                    stage_mutation_journal(
+                        root,
+                        "add",
+                        &added_packages
+                            .iter()
+                            .map(|added| added.id.name_str().to_string())
+                            .collect::<Vec<_>>(),
+                        snapshot,
+                        &write_lock,
+                    )?;
+                    add_journaled = true;
+                }
                 let write_started_at = std::time::Instant::now();
                 adapter.write_manifest(root, manifest).await?;
                 profile_install_mark("add_write_manifest", write_started_at);
+                if add_journaled {
+                    record_post_image(root, manifest, &write_lock)?;
+                }
             }
         } else if changed_any {
             // Toolchain-owned: the tool already rewrote its own file —
@@ -313,29 +396,49 @@ pub async fn add(
             return Ok(());
         }
         info("Installing added packages...");
-        if !try_install_added_packages_from_lock(
-            adapter,
-            root,
-            manifest_before_add.as_ref(),
-            &added_packages,
-        )
-        .await?
-        {
-            install_with_adapter_locked(
+        let tail: Result<()> = async {
+            if !try_install_added_packages_from_lock(
                 adapter,
                 root,
-                install_command_for_adapter(adapter),
-                false,
-                InstallOptions {
-                    incremental: true,
-                    force_install: added_ids,
-                    ..Default::default()
-                },
-                &write_lock,
+                manifest_before_add.as_ref(),
+                &added_packages,
             )
-            .await?;
+            .await?
+            {
+                install_with_adapter_locked(
+                    adapter,
+                    root,
+                    install_command_for_adapter(adapter),
+                    false,
+                    InstallOptions {
+                        incremental: true,
+                        force_install: added_ids,
+                        ..Default::default()
+                    },
+                    &write_lock,
+                )
+                .await?;
+            }
+            Ok(())
+        }
+        .await;
+        match tail {
+            Ok(()) => {
+                if add_journaled {
+                    finish_mutation_journal(root, &write_lock)?;
+                }
+            }
+            Err(e) => {
+                if let Some(snapshot) = add_snapshot.as_ref() {
+                    return rollback_mutation(adapter, root, "add", snapshot, e, &write_lock).await;
+                }
+                return Err(e);
+            }
         }
     } else if !no_save {
+        if add_journaled {
+            finish_mutation_journal(root, &write_lock)?;
+        }
         info(&format!(
             "Run '{}' to update lockfile and node_modules",
             style_cmd(install_command_for_adapter(adapter))
@@ -385,19 +488,10 @@ pub async fn remove(
         return Err(crate::error::too_many_packages(packages.len(), "remove"));
     }
     info(&format!("Removing {} package(s)...", packages.len()));
-    // Exclusive writer lock for the WHOLE op (P0): recovery, snapshot,
-    // journal, manifest+lock writes and the install tail all run under
-    // one OS-backed guard — two processes can never interleave backups,
-    // journals, restores or deletes. Same-process re-entry is impossible
-    // (the tail uses the _locked variant below, never re-acquiring).
-    // (Lock writer xuyên suốt op — hai process không bao giờ đan xen.)
-    let write_lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root))
-        .map_err(|e| anyhow::anyhow!("remove cannot acquire the project writer lock: {e}"))?;
-    // Crash recovery first: a previous remove may have died (SIGKILL)
-    // between the manifest write and the install tail — its journal
-    // restores manifest+lock before this op proceeds.
-    // (Phục hồi journal của lần remove chết dở trước — nếu có.)
-    recover_interrupted_remove(adapter, root, &write_lock).await?;
+    // Single mutation gateway: lock + stale-journal recovery. Direct
+    // lock acquisition that forgets recovery is a bug (P0).
+    // (Qua cổng gateway duy nhất — không tự acquire rồi quên recovery.)
+    let write_lock = begin_dependency_mutation(adapter, root, "remove").await?;
     let parse_started_at = std::time::Instant::now();
     let mut manifest = adapter.parse_manifest(root).await?;
     profile_install_mark("remove_parse_manifest", parse_started_at);
@@ -409,7 +503,7 @@ pub async fn remove(
     // restore both files. Must capture BEFORE the remove loop mutates.
     // (Snapshot + journal TRƯỚC khi sửa — rollback/journal phục hồi cả
     // manifest lẫn lock; store/cache chỉ thêm, không xóa.)
-    let snapshot = RemoveSnapshot::capture(&manifest, root, &write_lock)?;
+    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock)?;
     // Toolchain-owned manifest (go.mod, platformio.ini): the provider
     // tool is the SOLE writer — run the REAL toolchain remove per dep,
     // re-read, and verify absence (fail closed on a phantom removal).
@@ -440,18 +534,31 @@ pub async fn remove(
     // Commit point: journal first (crash before this line mutated
     // nothing), then the manifest write.
     // (Ghi journal trước — crash trước dòng này chưa sửa gì.)
-    write_remove_journal(root, &packages, &snapshot, &write_lock)?;
+    stage_mutation_journal(root, "remove", &packages, &snapshot, &write_lock)?;
     adapter.write_manifest(root, &manifest).await?;
     profile_install_mark("remove_write_manifest", write_started_at);
+    // Post-image recorded AFTER the write lands (recovery needs it to
+    // distinguish crash-before-write from crash-after-write).
+    // (Ghi post-image sau khi write xong.)
+    record_post_image(root, &manifest, &write_lock)?;
     if !install {
         info(&format!(
             "Run '{}' to update lockfile and node_modules",
             style_cmd(install_command_for_adapter(adapter))
         ));
-        finish_remove_journal(root, &write_lock)?;
+        finish_mutation_journal(root, &write_lock)?;
         return Ok(());
     }
     info("Re-installing dependency graph...");
+    // Test-only delay hook (precedent: MGC_LOCK_FAILPOINT): lets E2E
+    // SIGKILL the process deterministically mid-tail. Production cost is
+    // one env read when unset; never set it outside tests.
+    // (Hook delay chỉ-cho-test — E2E SIGKILL đúng giữa tail.)
+    if let Ok(ms) = std::env::var("MGC_REMOVE_TAIL_DELAY_MS")
+        && let Ok(ms) = ms.parse::<u64>()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
     // Issue #4: load_pruned_locked_graph disabled - restore after lockfile v2 migration complete
     let graph = None;
     if let Some(graph) = graph {
@@ -472,7 +579,7 @@ pub async fn remove(
         let mut summary = match install_result {
             Ok(summary) => summary,
             Err(e) => {
-                return rollback_remove_manifest(adapter, root, &snapshot, e, &write_lock).await;
+                return rollback_mutation(adapter, root, "remove", &snapshot, e, &write_lock).await;
             }
         };
         summary.duration_ms = started_at.elapsed().as_millis() as u64;
@@ -491,7 +598,7 @@ pub async fn remove(
         );
         mgc_ui::blank_line();
         success("All dependencies installed");
-        finish_remove_journal(root, &write_lock)?;
+        finish_mutation_journal(root, &write_lock)?;
         return Ok(());
     }
     match install_with_adapter_locked(
@@ -508,10 +615,10 @@ pub async fn remove(
     .await
     {
         Ok(()) => {
-            finish_remove_journal(root, &write_lock)?;
+            finish_mutation_journal(root, &write_lock)?;
             Ok(())
         }
-        Err(e) => rollback_remove_manifest(adapter, root, &snapshot, e, &write_lock).await,
+        Err(e) => rollback_mutation(adapter, root, "remove", &snapshot, e, &write_lock).await,
     }
 }
 
@@ -520,12 +627,12 @@ pub async fn remove(
 /// SEMANTICALLY (writers normalize formatting, so byte-identity is
 /// impossible); the mgc-owned lock restores BYTE-IDENTICAL.
 /// (Snapshot trước sửa: manifest theo nghĩa + lock theo byte.)
-struct RemoveSnapshot {
+struct MutationSnapshot {
     manifest: Manifest,
     lock_bytes: Option<Vec<u8>>,
 }
 
-impl RemoveSnapshot {
+impl MutationSnapshot {
     fn capture(manifest: &Manifest, root: &Path, _lock: &ProjectWriteLock) -> Result<Self> {
         let lock_path = root.join("mgc.lock");
         refuse_project_link(&lock_path)?;
@@ -563,13 +670,63 @@ fn refuse_project_link(path: &Path) -> Result<()> {
 /// Read a project file ONLY after refusing link-swaps (P0: recovery
 /// must never follow a planted symlink — validate first, read second).
 /// (Đọc file SAU khi chống link — không bao giờ đọc trước.)
+/// Read a project file ONLY after refusing link-swaps, and (on unix)
+/// opening with O_NOFOLLOW so a final-component swap between the check
+/// and the open still fails instead of redirecting the read. Residual
+/// window: a parent-dir swap in the same instant by an attacker who can
+/// already rewrite project files directly — full dirfd chaining is
+/// tracked as hardening follow-up, not a correctness dependency.
+/// (Đọc sau khi chống link + O_NOFOLLOW lúc mở.)
 fn read_project_file(path: &Path) -> Result<Vec<u8>> {
     refuse_project_link(path)?;
+    read_project_bytes(path)
+}
+
+/// Open a file for reading with O_NOFOLLOW (unix): a planted
+/// final-component symlink fails the open instead of redirecting.
+/// (Mở đọc có O_NOFOLLOW.)
+#[cfg(unix)]
+fn open_nofollow_read(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("cannot open '{}': {e:#}", path.display()))
+}
+
+#[cfg(unix)]
+fn read_project_bytes(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = open_nofollow_read(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))?;
+    Ok(bytes)
+}
+
+#[cfg(not(unix))]
+fn read_project_bytes(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))
 }
 
 fn read_project_string(path: &Path) -> Result<String> {
     refuse_project_link(path)?;
+    read_project_text(path)
+}
+
+#[cfg(unix)]
+fn read_project_text(path: &Path) -> Result<String> {
+    use std::io::Read;
+    let mut content = String::new();
+    open_nofollow_read(path)?
+        .read_to_string(&mut content)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))?;
+    Ok(content)
+}
+
+#[cfg(not(unix))]
+fn read_project_text(path: &Path) -> Result<String> {
     std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))
 }
@@ -619,24 +776,36 @@ fn remove_journal_dir(root: &Path) -> std::path::PathBuf {
     root.join(".magicore").join("journal").join("remove")
 }
 
-/// Typed, versioned remove journal (P0: free-form JSON is FORBIDDEN —
+/// Typed, versioned mutation journal (P0: free-form JSON is FORBIDDEN —
 /// a "valid but wrong-schema" journal must fail closed with artifacts
 /// preserved, never silently delete-and-pretend-completed).
 /// Required fields have NO defaults: a missing `lock_existed` or a
-/// misspelled `state` is corruption, not "completed".
-/// (Journal typed có version — sai schema là hỏng, không đoán.)
+/// misspelled `state` is corruption, not "completed". Covers remove AND
+/// add/update tails (one transaction protocol for every manifest+lock
+/// mutation — a lock alone is serialization, not atomicity).
+/// (Journal typed có version cho mọi mutation — sai schema là hỏng.)
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RemoveJournal {
+struct MutationJournal {
     /// Schema version — must be 1; anything else fails closed.
     v: u32,
-    /// Staging process id (diagnostic + own-in-flight skip only).
+    /// Mutation kind: "remove" | "add" | "update" (diagnostic + routing).
+    op: String,
+    /// Staging process id — DIAGNOSTIC ONLY, never a recovery authority
+    /// (pids get reused after a crash; see MUTATION_ACTIVE).
     pid: u64,
     packages: Vec<String>,
     /// REQUIRED: whether mgc.lock existed at snapshot time. Absence of
     /// this field must NEVER read as "no lock" (that misread could
     /// delete a real lockfile).
     lock_existed: bool,
+    /// Canonical manifest digest BEFORE the edit (conflict baseline).
+    pre_digest: Vec<String>,
+    /// Canonical manifest digest AFTER the edit (None until the write
+    /// lands). Recovery restores pre only when current matches pre or
+    /// post — anything else means newer user edits that must NOT be
+    /// overwritten.
+    post_digest: Option<Vec<String>>,
     state: JournalState,
 }
 
@@ -650,18 +819,18 @@ enum JournalState {
     Completed,
 }
 
-const REMOVE_JOURNAL_SCHEMA: u32 = 1;
+const MUTATION_JOURNAL_SCHEMA: u32 = 1;
 
-fn parse_remove_journal(raw: &str, journal_path: &Path) -> Result<RemoveJournal> {
-    let journal: RemoveJournal = serde_json::from_str(raw).map_err(|e| {
+fn parse_mutation_journal(raw: &str, journal_path: &Path) -> Result<MutationJournal> {
+    let journal: MutationJournal = serde_json::from_str(raw).map_err(|e| {
         anyhow::anyhow!(
-            "corrupt remove journal '{}': {e:#} (artifacts preserved — refusing to guess; inspect or delete it manually)",
+            "corrupt mutation journal '{}': {e:#} (artifacts preserved — refusing to guess; inspect or delete it manually)",
             journal_path.display()
         )
     })?;
-    if journal.v != REMOVE_JOURNAL_SCHEMA {
+    if journal.v != MUTATION_JOURNAL_SCHEMA {
         return Err(anyhow::anyhow!(
-            "unsupported remove journal schema v{} in '{}' (this binary reads v{REMOVE_JOURNAL_SCHEMA}; artifacts preserved)",
+            "unsupported mutation journal schema v{} in '{}' (this binary reads v{MUTATION_JOURNAL_SCHEMA}; artifacts preserved)",
             journal.v,
             journal_path.display()
         ));
@@ -733,16 +902,17 @@ fn remove_journal_file(dir: &Path, name: &str) -> Result<()> {
 /// this returns): refuse swapped paths, drop pre-commit garbage from an
 /// older crash (journal.json absent ⇒ nothing was ever mutated), then
 /// lock backup, manifest backup, then journal.json LAST with
-/// state=in_progress — recovery only acts on a parsed in_progress
-/// journal, so a crash mid-stage provably mutated nothing yet. A
-/// leftover journal.json here means a NESTED remove in this process —
-/// fail closed instead of destroying the outer op's backups.
-/// (Ghi journal bền vững, state=in_progress; journal cũ còn marker là
-/// remove lồng nhau — lỗi chứ không ghi đè.)
-fn write_remove_journal(
+/// state=in_progress + pre-edit digest — recovery only acts on a parsed
+/// in_progress journal, so a crash mid-stage provably mutated nothing
+/// yet. A leftover journal.json here means a NESTED mutation in this
+/// process — fail closed instead of destroying the outer op's backups.
+/// Sets MUTATION_ACTIVE (cleared when the op's ownership ends).
+/// (Ghi journal bền vững cho mọi op; journal cũ còn marker là lồng nhau.)
+fn stage_mutation_journal(
     root: &Path,
+    op: &str,
     packages: &[String],
-    snapshot: &RemoveSnapshot,
+    snapshot: &MutationSnapshot,
     _lock: &ProjectWriteLock,
 ) -> Result<()> {
     let dir = remove_journal_dir(root);
@@ -756,7 +926,7 @@ fn write_remove_journal(
     refuse_project_link(&dir)?;
     if dir.join("journal.json").exists() {
         return Err(anyhow::anyhow!(
-            "nested remove detected: '{}' already staged (same-process re-entry would destroy the outer backup)",
+            "nested mutation detected: '{}' already staged (same-process re-entry would destroy the outer backup)",
             dir.join("journal.json").display()
         ));
     }
@@ -769,13 +939,35 @@ fn write_remove_journal(
     }
     let manifest_json = serde_json::to_string_pretty(&snapshot.manifest)?;
     atomic_write_file(&dir, "manifest.json", manifest_json.as_bytes())?;
-    let journal = RemoveJournal {
-        v: REMOVE_JOURNAL_SCHEMA,
+    let journal = MutationJournal {
+        v: MUTATION_JOURNAL_SCHEMA,
+        op: op.to_string(),
         pid: u64::from(std::process::id()),
         packages: packages.to_vec(),
         lock_existed: snapshot.lock_bytes.is_some(),
+        pre_digest: manifest_canonical_digest(&snapshot.manifest),
+        post_digest: None,
         state: JournalState::InProgress,
     };
+    atomic_write_file(
+        &dir,
+        "journal.json",
+        serde_json::to_string_pretty(&journal)?.as_bytes(),
+    )?;
+    MUTATION_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+/// Record the post-edit image after the manifest write lands: recovery
+/// can then tell "crash before write" (current == pre), "crash after
+/// write" (current == post) and "someone else mutated since" (neither —
+/// fail closed, never overwrite user edits).
+/// (Ghi post-image sau khi sửa manifest — recovery phân biệt 3 trạng thái.)
+fn record_post_image(root: &Path, manifest: &Manifest, _lock: &ProjectWriteLock) -> Result<()> {
+    let dir = remove_journal_dir(root);
+    let journal_path = dir.join("journal.json");
+    let mut journal = parse_mutation_journal(&read_project_string(&journal_path)?, &journal_path)?;
+    journal.post_digest = Some(manifest_canonical_digest(manifest));
     atomic_write_file(
         &dir,
         "journal.json",
@@ -792,7 +984,7 @@ fn write_remove_journal(
 fn mark_journal_completed(root: &Path, _lock: &ProjectWriteLock) -> Result<()> {
     let dir = remove_journal_dir(root);
     let journal_path = dir.join("journal.json");
-    let mut journal = parse_remove_journal(&read_project_string(&journal_path)?, &journal_path)?;
+    let mut journal = parse_mutation_journal(&read_project_string(&journal_path)?, &journal_path)?;
     journal.state = JournalState::Completed;
     atomic_write_file(
         &dir,
@@ -806,23 +998,27 @@ fn mark_journal_completed(root: &Path, _lock: &ProjectWriteLock) -> Result<()> {
 /// A mark failure fails the op LOUDLY: leaving an in_progress journal
 /// behind a success would let the next run roll back a finished op.
 /// (Vô hiệu rồi xóa khi thành công — đánh dấu lỗi thì báo lỗi.)
-fn finish_remove_journal(root: &Path, lock: &ProjectWriteLock) -> Result<()> {
+fn finish_mutation_journal(root: &Path, lock: &ProjectWriteLock) -> Result<()> {
     mark_journal_completed(root, lock)?;
-    clear_remove_journal(root, lock);
+    clear_mutation_journal(root, lock);
     Ok(())
 }
 
 /// Best-effort journal-dir deletion, only ever called AFTER
 /// mark_journal_completed: a leftover dir is state=completed and can
 /// never trigger a restore — delete failure degrades to a warning plus
-/// a same-state delete retry next run, never a rollback.
-/// (Chỉ xóa sau khi completed — sót cũng không rollback.)
-fn clear_remove_journal(root: &Path, _lock: &ProjectWriteLock) {
+/// a same-state delete retry next run, never a rollback. Also releases
+/// this process's mutation ownership flag (every ownership end funnels
+/// through here, except the keep-journal restore-failure path which
+/// clears it explicitly).
+/// (Chỉ xóa sau khi completed + nhả cờ mutation.)
+fn clear_mutation_journal(root: &Path, _lock: &ProjectWriteLock) {
+    MUTATION_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
     if let Err(e) = std::fs::remove_dir_all(remove_journal_dir(root))
         && e.kind() != std::io::ErrorKind::NotFound
     {
-        mgc_ui::warning(&format!("remove journal cleanup failed: {e:#}"));
+        mgc_ui::warning(&format!("mutation journal cleanup failed: {e:#}"));
     }
 }
 
@@ -833,10 +1029,10 @@ fn clear_remove_journal(root: &Path, _lock: &ProjectWriteLock) {
 /// Any mismatch is an error — a silent almost-restore is worse than a
 /// loud failure.
 /// (Phục hồi CÓ VERIFY: manifest digest chuẩn, lock nguyên tử đúng byte.)
-async fn restore_remove_snapshot(
+async fn restore_mutation_snapshot(
     adapter: &dyn PackageAdapter,
     root: &Path,
-    snapshot: &RemoveSnapshot,
+    snapshot: &MutationSnapshot,
     lock: &ProjectWriteLock,
 ) -> Result<()> {
     adapter.write_manifest(root, &snapshot.manifest).await?;
@@ -880,15 +1076,12 @@ async fn restore_remove_snapshot(
     Ok(())
 }
 
-/// Recover a remove interrupted by a crash. State machine: missing
-/// journal.json means nothing was ever committed (no-op); a completed
-/// journal means the op finished so only the stale dir is DELETED
-/// (cleanup NEVER regains rollback rights — P0); an in_progress journal
-/// from ANOTHER pid triggers verified restore then clear (own in-flight
-/// journal, same pid, is skipped); corrupt journal.json or missing
-/// backups fail closed instead of guessing.
-/// (Máy trạng thái journal: chỉ in_progress của pid khác mới restore;
-/// completed chỉ xóa; hỏng thì lỗi.)
+/// Recover a mutation interrupted by a crash. Authority is the LOCK +
+/// journal STATE, never the on-disk pid (pids get reused after a crash;
+/// the pid field is diagnostic only). Only pre/post manifest states may
+/// be restored — anything else fails closed instead of overwriting newer
+/// edits. Completed journals are only deleted, corrupt ones error out.
+/// (Phục hồi: tin lock+state, không tin pid; manifest lạ thì lỗi.)
 async fn recover_interrupted_remove(
     adapter: &dyn PackageAdapter,
     root: &Path,
@@ -911,18 +1104,23 @@ async fn recover_interrupted_remove(
         Ok(_) => {}
     }
     let raw = read_project_string(&journal_path)?;
-    let journal = parse_remove_journal(&raw, &journal_path)?;
+    let journal = parse_mutation_journal(&raw, &journal_path)?;
     if journal.state != JournalState::InProgress {
-        clear_remove_journal(root, lock);
+        clear_mutation_journal(root, lock);
         return Ok(());
     }
-    if journal.pid == u64::from(std::process::id()) {
+    if MUTATION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        // Our own staged journal, same process: the running op owns it —
+        // recovery must not touch it (the stage step already fails
+        // nested entry closed). Cross-process staleness is decided by
+        // the lock + journal state, NEVER by pid (pids get reused).
+        // (Journal của chính process đang chạy — bỏ qua; không tin pid.)
         return Ok(());
     }
     let manifest_raw = read_project_string(&dir.join("manifest.json"))?;
     let manifest: Manifest = serde_json::from_str(&manifest_raw).map_err(|e| {
         anyhow::anyhow!(
-            "corrupt remove journal backup '{}': {e:#} (artifacts preserved — refusing to guess)",
+            "corrupt mutation journal backup '{}': {e:#} (artifacts preserved — refusing to guess)",
             dir.join("manifest.json").display()
         )
     })?;
@@ -931,37 +1129,55 @@ async fn recover_interrupted_remove(
     } else {
         None
     };
-    let snapshot = RemoveSnapshot {
+    // Conflict detection: only pre/post states may be restored. A
+    // current digest matching NEITHER means newer edits landed after the
+    // crash (user edit, another tool) — overwriting them would destroy
+    // work, so fail closed and ask for manual resolution.
+    // (Manifest hiện lạ → có sửa đổi mới hơn — lỗi, không ghi đè.)
+    let current = manifest_canonical_digest(&adapter.parse_manifest(root).await?);
+    let at_pre = current == manifest_canonical_digest(&manifest);
+    let at_post = journal
+        .post_digest
+        .as_ref()
+        .is_some_and(|post| current == *post);
+    if !at_pre && !at_post {
+        return Err(anyhow::anyhow!(
+            "interrupted '{}' op left a journal, but the current manifest matches neither its pre- nor post-image (newer edits since the crash?) — refusing to overwrite; resolve manually (journal at '{}')",
+            journal.op,
+            dir.display(),
+        ));
+    }
+    let snapshot = MutationSnapshot {
         manifest,
         lock_bytes,
     };
-    restore_remove_snapshot(adapter, root, &snapshot, lock).await?;
+    restore_mutation_snapshot(adapter, root, &snapshot, lock).await?;
     mark_journal_completed(root, lock)?;
-    clear_remove_journal(root, lock);
+    clear_mutation_journal(root, lock);
     mgc_ui::warning(
-        "recovered an interrupted remove (crash journal): manifest and lock restored — re-run the command if needed",
+        "recovered an interrupted mutation (crash journal): manifest and lock restored — re-run the command if needed",
     );
     Ok(())
 }
 
-/// Roll a failed remove-install back: restore manifest + lock from the
-/// pre-edit snapshot (verified), clear the journal, and return the
-/// install error. If the restore itself fails the journal is KEPT for
+/// Roll a failed mutation tail back: restore manifest + lock from the
+/// pre-edit snapshot (verified), disarm + clear the journal, and return
+/// the tail error. If the restore itself fails the journal is KEPT for
 /// the next run's recovery, and BOTH errors propagate in one combined
-/// error (P0: warning-only would hide a half-updated project).
+/// error (warning-only would hide a half-updated project).
 /// Honest scope: manifest+lock files are restored; store/cache additions
-/// made before the failure are additive-only and stay (the log says so —
-/// "nothing changed" would be a lie).
-/// (Rollback manifest+lock CÓ VERIFY; restore lỗi thì GIỮ journal +
-/// gộp cả 2 lỗi trả về.)
-async fn rollback_remove_manifest(
+/// made before the failure are additive-only and stay.
+/// (Rollback manifest+lock CÓ VERIFY cho mọi op; restore lỗi thì GIỮ
+/// journal + gộp cả 2 lỗi trả về.)
+async fn rollback_mutation(
     adapter: &dyn PackageAdapter,
     root: &Path,
-    snapshot: &RemoveSnapshot,
-    install_error: impl std::fmt::Display,
+    op: &str,
+    snapshot: &MutationSnapshot,
+    tail_error: impl std::fmt::Display,
     lock: &ProjectWriteLock,
 ) -> Result<()> {
-    match restore_remove_snapshot(adapter, root, snapshot, lock).await {
+    match restore_mutation_snapshot(adapter, root, snapshot, lock).await {
         Ok(()) => {
             // Disarm BEFORE clearing: even if the delete below fails or
             // the process dies here, the journal is completed and can
@@ -969,23 +1185,25 @@ async fn rollback_remove_manifest(
             // (Vô hiệu TRƯỚC khi xóa — journal completed không rollback.)
             if let Err(e) = mark_journal_completed(root, lock) {
                 return Err(combine_rollback_errors(
-                    install_error,
-                    format!("rollback restored files but disarming the journal failed: {e:#}"),
+                    tail_error,
+                    format!("{op} rollback restored files but disarming the journal failed: {e:#}"),
                 ));
             }
-            clear_remove_journal(root, lock);
-            mgc_ui::info(
-                "remove rolled back: manifest and lock restored (install failed; store/cache additions, if any, are additive-only)",
-            );
-            Err(anyhow::anyhow!("{install_error:#}"))
+            clear_mutation_journal(root, lock);
+            mgc_ui::info(&format!(
+                "{op} rolled back: manifest and lock restored (tail failed; store/cache additions, if any, are additive-only)",
+            ));
+            Err(anyhow::anyhow!("{tail_error:#}"))
         }
         Err(restore_error) => {
             // Journal is KEPT (not cleared) so the next run's recovery can
-            // retry the restore — point the operator at it.
-            // (GIỮ journal để lần chạy sau phục hồi — chỉ rõ đường dẫn.)
+            // retry the restore — point the operator at it. Ownership flag
+            // is released: this op is over, the next run must recover.
+            // (GIỮ journal để lần chạy sau phục hồi + nhả cờ ownership.)
+            MUTATION_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
             let journal = remove_journal_dir(root);
             Err(combine_rollback_errors(
-                install_error,
+                tail_error,
                 format!(
                     "{restore_error:#} (crash journal kept at '{}' — fix the cause, then re-run to recover)",
                     journal.display()
@@ -1044,7 +1262,21 @@ pub async fn list(adapter: &dyn PackageAdapter, root: &Path) -> Result<()> {
 /// fail loudly (never silently skipped); unchanged versions are reported
 /// and skipped without rewriting.
 /// (Update native: resolve latest + viết lại pin + install.)
+/// Direct-lane entry: enters the mutation gateway, then runs the locked
+/// body. Lane files MUST call this (never self-acquire: forgetting
+/// recovery is a bug).
+/// (Lane gọi hàm này — gateway nằm trong, không tự acquire.)
 pub(crate) async fn native_update(
+    adapter: &dyn PackageAdapter,
+    root: &Path,
+    packages: Vec<String>,
+    install: bool,
+) -> Result<()> {
+    let write_lock = begin_dependency_mutation(adapter, root, "update").await?;
+    native_update_locked(adapter, root, packages, install, &write_lock).await
+}
+
+pub(crate) async fn native_update_locked(
     adapter: &dyn PackageAdapter,
     root: &Path,
     packages: Vec<String>,
@@ -1052,6 +1284,11 @@ pub(crate) async fn native_update(
     write_lock: &ProjectWriteLock,
 ) -> Result<()> {
     let mut manifest = adapter.parse_manifest(root).await?;
+    // Pre-image for the update journal (P0-3): staged only when mgc
+    // owns the manifest rewrite (toolchain-owned files stay in the
+    // tool's transactional domain).
+    // (Snapshot pre-image cho journal update.)
+    let update_snapshot = MutationSnapshot::capture(&manifest, root, write_lock)?;
     let targets: Vec<(String, String, bool, bool, bool)> = if packages.is_empty() {
         manifest
             .all_dependencies()
@@ -1133,7 +1370,16 @@ pub(crate) async fn native_update(
         info("All packages are up to date");
         return Ok(());
     }
+    let update_journaled = if adapter.manifest_owned() {
+        stage_mutation_journal(root, "update", &packages, &update_snapshot, write_lock)?;
+        true
+    } else {
+        false
+    };
     adapter.write_manifest(root, &manifest).await?;
+    if update_journaled {
+        record_post_image(root, &manifest, write_lock)?;
+    }
     for pkg in &updated {
         info(&format!(
             "  {}: {} → {}",
@@ -1143,7 +1389,7 @@ pub(crate) async fn native_update(
     success(&format!("Updated {} package(s)", updated.len()));
     if install {
         info("Installing updated packages...");
-        install_with_adapter_locked(
+        match install_with_adapter_locked(
             adapter,
             root,
             install_command_for_adapter(adapter),
@@ -1154,8 +1400,32 @@ pub(crate) async fn native_update(
             },
             write_lock,
         )
-        .await?;
+        .await
+        {
+            Ok(()) => {
+                if update_journaled {
+                    finish_mutation_journal(root, write_lock)?;
+                }
+            }
+            Err(e) => {
+                if update_journaled {
+                    return rollback_mutation(
+                        adapter,
+                        root,
+                        "update",
+                        &update_snapshot,
+                        e,
+                        write_lock,
+                    )
+                    .await;
+                }
+                return Err(e);
+            }
+        }
     } else {
+        if update_journaled {
+            finish_mutation_journal(root, write_lock)?;
+        }
         info(&format!(
             "Run '{}' to install updates",
             style_cmd(install_command_for_adapter(adapter))
@@ -1172,16 +1442,15 @@ pub async fn update(
 ) -> Result<()> {
     // Mutation gateway (P0): same contract as add/remove — the manifest
     // writes below (native or toolchain-spawned) and the install tails
-    // run under one writer lock.
-    // (Update cũng giữ lock writer xuyên suốt.)
-    let write_lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root))
-        .map_err(|e| anyhow::anyhow!("update cannot acquire the project writer lock: {e}"))?;
+    // run under one writer lock, AFTER stale-journal recovery.
+    // (Update qua gateway — lock + recovery trước mọi mutation.)
+    let write_lock = begin_dependency_mutation(adapter, root, "update").await?;
     // Native update (resolve-latest + mgc-side manifest edit + native
     // install tail, zero spawn) for adapters that own the whole lane.
     // Legacy adapter.update (toolchain spawn) below stays for the rest.
     // (Update native cho adapter sở hữu lane.)
     if adapter.supports_native_update() {
-        return native_update(adapter, root, packages, install, &write_lock).await;
+        return native_update_locked(adapter, root, packages, install, &write_lock).await;
     }
     if packages.is_empty() {
         let spinner = create_spinner("  Resolving latest versions...");
@@ -1266,11 +1535,11 @@ pub async fn install_with_adapter(
 ) -> Result<()> {
     // Every standalone install runs under the writer lock (P0): the
     // crash-journal recovery below must never race a concurrent remove.
-    // Callers already holding the guard (remove's tail) use the _locked
-    // variant — the OS lock is not same-process re-entrant.
-    // (Install độc lập cũng giữ lock — tail của remove dùng bản locked.)
-    let write_lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root))
-        .map_err(|e| anyhow::anyhow!("install cannot acquire the project writer lock: {e}"))?;
+    // Callers already holding the guard (mutation tails) use the _locked
+    // variant — the OS lock is not same-process re-entrant. Recovery runs
+    // inside, so installs never build on unrestored state.
+    // (Install độc lập qua gateway — lock + recovery.)
+    let write_lock = begin_dependency_mutation(adapter, root, "install").await?;
     install_with_adapter_locked(adapter, root, add_cmd, frozen, opts, &write_lock).await
 }
 

@@ -88,6 +88,10 @@ async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
         &root,
         Duration::from_millis(acquire_timeout_ms(&root)),
     )?;
+    // Mutation gateway parity: never migrate over an unrestored mutation
+    // journal (P0) — recover first via remove/install, then migrate.
+    // (Không migrate đè lên journal chưa phục hồi.)
+    crate::commands::core::shared::ensure_no_pending_remove_journal(&root, &guard)?;
     mgc_lockfile::atomic::atomic_write_locked(
         &guard,
         &lock_path,
