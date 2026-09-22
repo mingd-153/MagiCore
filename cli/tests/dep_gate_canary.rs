@@ -686,8 +686,9 @@ fn go_remove_hits_unsupported_without_spawning() {
 
 #[test]
 fn java_add_hits_unsupported_without_spawning() {
-    // Java add has no runner (manual gradle step): Unsupported, and
-    // compat (mvn) must not open it either.
+    // Java-pom add resolves natively; fake coordinates fail the resolve
+    // honestly (no runner to delegate to, no spawn anywhere). Gradle
+    // projects stay Unsupported (see java_gradle_add_* tests).
     let project = TempDir::new().unwrap();
     java_lib_project(project.path());
     let sandbox = CanarySandbox::new("mvn");
@@ -699,15 +700,12 @@ fn java_add_hits_unsupported_without_spawning() {
         None,
     );
     let output = format!("{stdout}{stderr}");
-    assert_ne!(code, Some(0), "java 'add-lib' must fail closed:\n{output}");
-    assert!(
-        output.contains("unsupported"),
-        "java add must answer Unsupported:\n{output}"
+    assert_ne!(
+        code,
+        Some(0),
+        "java 'add-lib' with fake coordinates must fail the resolve honestly:\n{output}"
     );
-    assert!(
-        marker.is_empty(),
-        "NO spawn for unsupported java add:\n{marker}"
-    );
+    assert!(marker.is_empty(), "NO spawn for failed java add:\n{marker}");
 
     let (code, _, _, marker) = run_mgc(
         &["add-lib", "com.example:demo", "--compat-runtime", "mvn"],
@@ -757,4 +755,43 @@ fn godot_install_hits_unsupported_without_spawning() {
         "godot install must answer Unsupported:\n{output}"
     );
     assert!(marker.is_empty(), "cargo canary must NEVER fire:\n{marker}");
+}
+
+fn java_gradle_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-gradle\"\necosystem = \"lib\"\n[lib]\nlanguage = \"java\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
+}
+
+#[test]
+fn java_gradle_add_fails_closed_with_pom_guidance_without_spawning() {
+    // Gradle scripts are programs, not manifests: native add must refuse
+    // with pom.xml guidance (never a fake-booked mutation, never a spawn).
+    let project = TempDir::new().unwrap();
+    java_gradle_project(project.path());
+    let sandbox = CanarySandbox::multi(&["mvn", "gradle", "java"]);
+
+    let (code, stdout, stderr, marker) = run_mgc(
+        &["add-lib", "org.apache.commons:commons-lang3"],
+        project.path(),
+        &sandbox,
+        None,
+    );
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "gradle 'add-lib' must fail closed:\n{output}"
+    );
+    assert!(
+        output.contains("pom.xml"),
+        "refusal must guide to pom.xml:\n{output}"
+    );
+    assert!(
+        marker.is_empty(),
+        "NO spawn for refused gradle add:\n{marker}"
+    );
 }

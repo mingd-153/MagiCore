@@ -242,11 +242,17 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // `go mod tidy` step) — Unsupported.
         ("lib", Some(eco::GO), DepOp::Update) => DepOwner::Delegated { tools: &["go"] },
         ("lib", Some(eco::GO), DepOp::Remove) => DepOwner::Unsupported,
-        // Java/.NET: add/remove/update have NO runner (honest manual
-        // gradle/dotnet steps) — Unsupported until a real runner exists.
-        ("lib", Some(eco::JAVA | eco::DOTNET), DepOp::Add | DepOp::Remove | DepOp::Update) => {
-            DepOwner::Unsupported
-        }
+        // .NET Add runs natively (NuGet resolve-first + mgc-side csproj
+        // edit, zero `dotnet` spawn); Remove/Update have NO runner —
+        // Unsupported. Java Add runs natively for pom.xml projects
+        // (Maven resolve-first + mgc-side pom edit); gradle projects fail
+        // closed inside prepare_add (scripts are programs). Java
+        // Remove/Update stay Unsupported.
+        // (Add .NET/Java-pom native; remove/update và Java-gradle giữ nguyên.)
+        ("lib", Some(eco::DOTNET), DepOp::Add) => DepOwner::Native,
+        ("lib", Some(eco::DOTNET), DepOp::Remove | DepOp::Update) => DepOwner::Unsupported,
+        ("lib", Some(eco::JAVA), DepOp::Add) => DepOwner::Native,
+        ("lib", Some(eco::JAVA), DepOp::Remove | DepOp::Update) => DepOwner::Unsupported,
         ("lib", Some(eco::RUST | eco::PYTHON | eco::GO | eco::JAVA | eco::DOTNET), _) => {
             DepOwner::Native
         }

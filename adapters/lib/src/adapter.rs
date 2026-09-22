@@ -4,8 +4,8 @@
 use crate::language::{LibLanguage, detect_language, manifest_is_lib};
 use crate::manifest::{
     parse_cargo_manifest, parse_csproj_manifest, parse_go_mod_manifest, parse_maven_manifest,
-    parse_pyproject_manifest, write_cargo_manifest, write_go_mod_manifest,
-    write_pyproject_manifest,
+    parse_pyproject_manifest, write_cargo_manifest, write_csproj_manifest, write_go_mod_manifest,
+    write_pom_manifest, write_pyproject_manifest,
 };
 use crate::native::engine::resolve_with_protocol;
 use crate::tooling::{
@@ -265,12 +265,27 @@ impl PackageAdapter for LibAdapter {
             Python,
             Rust,
             Go,
+            DotNet,
+            JavaPom,
         }
         let resolve_first = if self.web.is_none() {
             match self.language {
                 LibLanguage::Python => Some(ResolveFirst::Python),
                 LibLanguage::Rust => Some(ResolveFirst::Rust),
                 LibLanguage::Go => Some(ResolveFirst::Go),
+                LibLanguage::DotNet => Some(ResolveFirst::DotNet),
+                // pom.xml is natively owned; gradle scripts are programs —
+                // fail closed instead of booking a mutation the disk never
+                // sees (write_manifest is a no-op there by design).
+                LibLanguage::Java => match self.java_kind {
+                    JavaManifestKind::Pom => Some(ResolveFirst::JavaPom),
+                    JavaManifestKind::Gradle | JavaManifestKind::None => {
+                        return Err(mgc_types::MgError::Other(
+                            "java add needs a pom.xml — gradle build scripts are programs, not parseable manifests (declare dependencies in a pom.xml for native add)"
+                                .to_string(),
+                        ));
+                    }
+                },
                 _ => None,
             }
         } else {
@@ -308,6 +323,24 @@ impl PackageAdapter for LibAdapter {
                     EcosystemTag::Go,
                     "go://proxy.golang.org",
                 ),
+                ResolveFirst::DotNet => {
+                    // Async constructor (service-index probe) — build
+                    // before boxing.
+                    let mut proto = NuGetProtocol::from_env().await;
+                    if let Some(tfm) = self.dotnet_tfm.as_deref() {
+                        proto = proto.with_consumer_tfm(tfm);
+                    }
+                    (
+                        Box::new(proto),
+                        EcosystemTag::NuGet,
+                        "nuget://api.nuget.org",
+                    )
+                }
+                ResolveFirst::JavaPom => (
+                    Box::new(MavenProtocol::from_env()),
+                    EcosystemTag::Maven,
+                    "maven://repo.maven.apache.org",
+                ),
             };
             let resolution =
                 resolve_with_protocol(protocol.as_ref(), tag, registry, &scratch).await?;
@@ -337,7 +370,12 @@ impl PackageAdapter for LibAdapter {
                 ResolveFirst::Python if unpinned => {
                     VersionRange::parse(&format!("=={}", resolved.id.version()))?
                 }
-                ResolveFirst::Rust | ResolveFirst::Go if unpinned => {
+                ResolveFirst::Rust
+                | ResolveFirst::Go
+                | ResolveFirst::DotNet
+                | ResolveFirst::JavaPom
+                    if unpinned =>
+                {
                     VersionRange::parse(&resolved.id.version().to_string())?
                 }
                 _ => wanted,
@@ -508,9 +546,18 @@ impl LockfileProvider for LibAdapter {
             // directive is preserved verbatim by the writer.
             // (mgc sở hữu require go.mod — directive khác giữ nguyên.)
             LibLanguage::Go => write_go_mod_manifest(project_root, manifest),
-            // Gradle/NuGet own their lockfiles — never rewritten by mgc.
-            // Gradle/NuGet sở hữu lockfile của chúng — mgc không viết lại.
-            LibLanguage::Java | LibLanguage::DotNet => Ok(()),
+            // mgc owns csproj PackageReferences (native add) — the rest
+            // of the project file is preserved verbatim by the writer.
+            // (mgc sở hữu PackageReference — phần còn lại giữ nguyên.)
+            LibLanguage::DotNet => write_csproj_manifest(project_root, manifest),
+            // mgc owns pom.xml dependencies (native add) — but ONLY for
+            // pom projects; gradle build scripts are programs and stay
+            // read-only (fail-closed downstream).
+            // (mgc sở hữu dependency pom.xml — gradle chỉ đọc.)
+            LibLanguage::Java => match self.java_kind {
+                JavaManifestKind::Pom => write_pom_manifest(project_root, manifest),
+                JavaManifestKind::Gradle | JavaManifestKind::None => Ok(()),
+            },
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }

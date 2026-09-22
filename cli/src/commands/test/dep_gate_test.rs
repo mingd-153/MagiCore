@@ -88,17 +88,13 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         );
     }
     // Native Add (resolve-first + mgc-side manifest edit, zero spawn):
-    // rust/python/go run inside mgc — only java/dotnet stay fail-closed.
-    for lang in [eco::RUST, eco::PYTHON, eco::GO] {
+    // rust/python/go/dotnet + java-pom run inside mgc. Gradle projects
+    // fail closed inside prepare_add (scripts are programs) — the gate
+    // stays Native, the failure carries the pom.xml guidance.
+    for lang in [eco::RUST, eco::PYTHON, eco::GO, eco::DOTNET, eco::JAVA] {
         assert!(
             gate(&ctx("lib", Some(lang), DepOp::Add), None, &native(), None).is_ok(),
             "lib[{lang}] add is native (no toolchain spawn)"
-        );
-    }
-    for lang in [eco::JAVA, eco::DOTNET] {
-        assert!(
-            gate(&ctx("lib", Some(lang), DepOp::Add), None, &native(), None).is_err(),
-            "lib[{lang}] add must fail closed without compat"
         );
     }
     // Exact actual-tool matching: python runs PIP — a uv opt-in is a
@@ -191,9 +187,11 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
             "lib[go] remove must stay Unsupported"
         );
     }
-    // Java/.NET add/remove/update have NO runner (manual gradle/dotnet).
-    for lang in [eco::JAVA, eco::DOTNET] {
-        for op in [DepOp::Add, DepOp::Remove, DepOp::Update] {
+    // Java remove/update have NO runner (prepare_add fails gradle
+    // projects closed with pom.xml guidance; the gate stays Native for
+    // Add so pom projects flow through).
+    for lang in [eco::JAVA] {
+        for op in [DepOp::Remove, DepOp::Update] {
             for mode in [native(), explicit("mvn"), explicit("dotnet")] {
                 assert!(
                     gate(&ctx("lib", Some(lang), op), None, &mode, None).is_err(),
@@ -201,6 +199,15 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
                     op.as_str()
                 );
             }
+        }
+    }
+    for op in [DepOp::Remove, DepOp::Update] {
+        for mode in [native(), explicit("dotnet")] {
+            assert!(
+                gate(&ctx("lib", Some(eco::DOTNET), op), None, &mode, None).is_err(),
+                "lib[dotnet] {} must stay Unsupported",
+                op.as_str()
+            );
         }
     }
     // Undetected lib language: pipeline ops fail closed (P1 wildcard fix).
@@ -455,7 +462,7 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
             ("lib", None, DepOp::Install),
             // Exact cells without runners (never Delegated promises).
             ("lib", Some(eco::GO), DepOp::Remove),
-            ("lib", Some(eco::JAVA), DepOp::Add),
+            ("lib", Some(eco::JAVA), DepOp::Remove),
             ("lib", Some(eco::DOTNET), DepOp::Update),
             ("app", Some(eco::SWIFT), DepOp::Add),
             ("app", Some(eco::KOTLIN), DepOp::Remove),
@@ -623,8 +630,8 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(lib_languages["rust"]["install"]["owner"], "mgc-native");
     assert_eq!(lib_languages["rust"]["add"]["owner"], "mgc-native");
     // Capability snapshot vs REAL runners: native Add carries no tools;
-    // python Remove still spawns pip only (uv excluded); go remove /
-    // java add have no runner (unsupported).
+    // python Remove still spawns pip only (uv excluded); go remove has
+    // no runner (unsupported).
     assert_eq!(lib_languages["python"]["add"]["owner"], "mgc-native");
     assert_eq!(
         lib_languages["python"]["add"]["tools"],
@@ -636,7 +643,7 @@ fn capabilities_json_carries_dep_gate_ownership() {
     );
     assert_eq!(lib_languages["go"]["remove"]["owner"], "unsupported");
     assert_eq!(lib_languages["go"]["add"]["owner"], "mgc-native");
-    assert_eq!(lib_languages["java"]["add"]["owner"], "unsupported");
+    assert_eq!(lib_languages["java"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["java"]["install"]["owner"], "mgc-native");
     assert_eq!(lib_languages["dotnet"]["update"]["owner"], "unsupported");
     let app_languages = dependency_ownership("app")["languages"].clone();

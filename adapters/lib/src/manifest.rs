@@ -1,6 +1,7 @@
 //! Manifest parsing and writing for library projects.
 //! Tách logic Cargo/Python manifest để adapter chính dễ maintain và mở rộng.
 
+use crate::language::find_csproj;
 use mgc_types::{DependencySpec, Ecosystem, Manifest, MgResult, PackageName, VersionRange};
 use std::path::Path;
 
@@ -57,6 +58,230 @@ pub(crate) fn parse_maven_manifest(root: &Path) -> MgResult<Manifest> {
 
 pub(crate) fn write_cargo_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
     mgc_adapter_base::cargo_manifest::write_manifest(root, manifest)
+}
+
+/// Write pom.xml dependency pins from the manifest (native add). mgc owns
+/// the compile/runtime `<dependency>` entries: each manifest dep becomes
+/// (or updates) a block inside top-level `<dependencies>` (created when
+/// absent). dependencyManagement/profiles/plugins are never touched.
+/// A non-exact range fails closed — callers pin via resolve-first.
+/// (Ghi dependency pom.xml từ manifest.)
+pub(crate) fn write_pom_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
+    let path = root.join("pom.xml");
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| mgc_types::MgError::Other(format!("read pom.xml: {e}")))?;
+    let mut pins: Vec<(String, String, String)> = Vec::new();
+    for dep in manifest.all_dependencies() {
+        let version = dep
+            .range
+            .satisfying_version()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| dep.range.to_string());
+        let clean = version.trim_start_matches(['=', 'v', ' ']);
+        mgc_types::Version::parse(clean).map_err(|_| {
+            mgc_types::MgError::Other(format!(
+                "pom writer needs an exact version for '{}', got '{}' — resolve-first must pin before save",
+                dep.name.as_str(),
+                dep.range
+            ))
+        })?;
+        let mut parts = dep.name.as_str().splitn(2, ':');
+        let (group, artifact) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+        if group.is_empty() || artifact.is_empty() {
+            return Err(mgc_types::MgError::Other(format!(
+                "pom writer needs group:artifact coordinates, got '{}'",
+                dep.name.as_str()
+            )));
+        }
+        pins.push((group.to_string(), artifact.to_string(), clean.to_string()));
+    }
+    pins.sort();
+    pins.dedup();
+    let mut out = content;
+    for (group, artifact, version) in &pins {
+        out = upsert_pom_dependency(&out, group, artifact, version)?;
+    }
+    std::fs::write(&path, out)
+        .map_err(|e| mgc_types::MgError::Other(format!("write {}: {e}", path.display())))?;
+    Ok(())
+}
+
+/// Insert or update one dependency inside the TOP-LEVEL `<dependencies>`
+/// block (a direct child of `<project>` — dependencyManagement, profiles
+/// and plugin blocks are never touched). Creates the block when absent.
+fn upsert_pom_dependency(
+    content: &str,
+    group: &str,
+    artifact: &str,
+    version: &str,
+) -> MgResult<String> {
+    let entry = render_pom_dependency(group, artifact, version);
+    // Locate the top-level <dependencies> span by tag-depth tracking
+    // (dependencyManagement nests its own <dependencies> deeper).
+    let mut depth = 0usize;
+    let mut top_start: Option<usize> = None;
+    let mut top_end: Option<usize> = None;
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            if content[i..].starts_with("</") {
+                let end = content[i..].find('>').map(|p| i + p).unwrap_or(bytes.len());
+                let tag = content[i + 2..end].trim().to_string();
+                if tag == "dependencies" && depth == 2 && top_start.is_some() && top_end.is_none() {
+                    top_end = Some(end + 1);
+                }
+                if !tag.starts_with('?') {
+                    depth = depth.saturating_sub(1);
+                }
+                i = end + 1;
+                continue;
+            }
+            if content[i..].starts_with("<!--") {
+                let end = content[i..]
+                    .find("-->")
+                    .map(|p| i + p + 3)
+                    .unwrap_or(bytes.len());
+                i = end;
+                continue;
+            }
+            let end = content[i..].find('>').map(|p| i + p).unwrap_or(bytes.len());
+            let mut tag = content[i + 1..end].trim().to_string();
+            let self_close = tag.ends_with('/');
+            if self_close {
+                tag = tag.trim_end_matches('/').trim().to_string();
+            }
+            let name = tag.split_whitespace().next().unwrap_or("").to_string();
+            if name == "dependencies" && depth == 1 && top_start.is_none() {
+                top_start = Some(i);
+            }
+            if !self_close && !name.starts_with('?') && !name.starts_with('!') {
+                depth += 1;
+            }
+            i = end + 1;
+            continue;
+        }
+        i += 1;
+    }
+    if let (Some(s), Some(e)) = (top_start, top_end) {
+        let mut block = content[s..e].to_string();
+        let mut search_from = 0;
+        let mut replaced = false;
+        while let Some(rel) = block[search_from..].find("<dependency>") {
+            let ds = search_from + rel;
+            let Some(de) = block[ds..]
+                .find("</dependency>")
+                .map(|p| ds + p + "</dependency>".len())
+            else {
+                break;
+            };
+            let chunk = &block[ds..de];
+            if chunk.contains(&format!("<groupId>{group}</groupId>"))
+                && chunk.contains(&format!("<artifactId>{artifact}</artifactId>"))
+            {
+                block.replace_range(ds..de, entry.trim_end());
+                replaced = true;
+                break;
+            }
+            search_from = de;
+        }
+        if !replaced {
+            block = block.replacen("</dependencies>", &format!("{entry}</dependencies>"), 1);
+        }
+        let mut out = content.to_string();
+        out.replace_range(s..e, &block);
+        return Ok(out);
+    }
+    if content.contains("</project>") {
+        return Ok(content.replacen(
+            "</project>",
+            &format!("  <dependencies>\n{entry}  </dependencies>\n</project>"),
+            1,
+        ));
+    }
+    Err(mgc_types::MgError::Other(
+        "pom.xml has no </project> root — refusing to write".to_string(),
+    ))
+}
+
+fn render_pom_dependency(group: &str, artifact: &str, version: &str) -> String {
+    format!(
+        "    <dependency>\n      <groupId>{group}</groupId>\n      <artifactId>{artifact}</artifactId>\n      <version>{version}</version>\n    </dependency>\n"
+    )
+}
+
+/// Write csproj PackageReference pins from the manifest (native add).
+/// mgc owns the references: each manifest dep becomes (or updates)
+/// `<PackageReference Include="id" Version="x" />` inside an ItemGroup
+/// (created when absent). Everything else is preserved verbatim.
+/// A non-exact range fails closed — callers pin via resolve-first.
+/// (Ghi PackageReference csproj từ manifest.)
+pub(crate) fn write_csproj_manifest(root: &Path, manifest: &Manifest) -> MgResult<()> {
+    let path = find_csproj(root).ok_or_else(|| {
+        mgc_types::MgError::Other(
+            "no .csproj found — scaffold one with `mgc create-lib dotnet`".to_string(),
+        )
+    })?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| mgc_types::MgError::Other(format!("read {}: {e}", path.display())))?;
+    let mut pins: Vec<(String, String)> = Vec::new();
+    for dep in manifest.all_dependencies() {
+        let version = dep
+            .range
+            .satisfying_version()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| dep.range.to_string());
+        let clean = version.trim_start_matches(['=', 'v', ' ']);
+        mgc_types::Version::parse(clean).map_err(|_| {
+            mgc_types::MgError::Other(format!(
+                "csproj writer needs an exact version for '{}', got '{}' — resolve-first must pin before save",
+                dep.name.as_str(),
+                dep.range
+            ))
+        })?;
+        pins.push((dep.name.as_str().to_string(), clean.to_string()));
+    }
+    pins.sort();
+    pins.dedup();
+    let mut out = content;
+    for (name, version) in &pins {
+        let escaped = name.replace('&', "&amp;").replace('"', "&quot;");
+        // Update in place when the reference already exists (any version).
+        let mut replaced = false;
+        for line in out.lines() {
+            let t = line.trim();
+            if t.starts_with("<PackageReference") && t.contains(&format!("Include=\"{escaped}\"")) {
+                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                let replacement = format!(
+                    "{indent}<PackageReference Include=\"{escaped}\" Version=\"{version}\" />"
+                );
+                out = out.replacen(line, &replacement, 1);
+                replaced = true;
+                break;
+            }
+        }
+        if replaced {
+            continue;
+        }
+        let entry =
+            format!("    <PackageReference Include=\"{escaped}\" Version=\"{version}\" />\n");
+        if out.contains("</ItemGroup>") {
+            out = out.replacen("</ItemGroup>", &format!("{entry}</ItemGroup>"), 1);
+        } else if out.contains("</Project>") {
+            out = out.replacen(
+                "</Project>",
+                &format!("  <ItemGroup>\n{entry}  </ItemGroup>\n</Project>"),
+                1,
+            );
+        } else {
+            return Err(mgc_types::MgError::Other(
+                "csproj has no </Project> root — refusing to write".to_string(),
+            ));
+        }
+    }
+    std::fs::write(&path, out)
+        .map_err(|e| mgc_types::MgError::Other(format!("write {}: {e}", path.display())))?;
+    Ok(())
 }
 
 /// Write go.mod require pins from the manifest for native add.

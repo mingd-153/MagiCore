@@ -82,7 +82,19 @@ impl HmrManager {
                             })
                         });
                         if signal {
-                            version.fetch_add(1, Ordering::SeqCst);
+                            let n = version.fetch_add(1, Ordering::SeqCst) + 1;
+                            // Observable rebuild (vite parity): log every
+                            // applied edit to STDOUT so operators — and
+                            // health probes — see the watcher working.
+                            // Silent rebuilds look dead from outside.
+                            // (Log rebuild ra stdout như vite.)
+                            let files = event
+                                .paths
+                                .iter()
+                                .map(|p| p.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            println!("[MgDevServer] hmr update {files} (version {n})");
                             let _ = tx.send(HmrEvent::Reload);
                         }
                     }

@@ -252,3 +252,120 @@ fn go_add_lib_runs_inside_mgc_without_spawning_go() {
         sandbox.marker_text()
     );
 }
+
+fn dotnet_lib_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"nativelib\"\necosystem = \"lib\"\n[lib]\nlanguage = \"dotnet\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("nativelib.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn dotnet_add_lib_runs_inside_mgc_without_spawning_dotnet() {
+    let project = TempDir::new().unwrap();
+    dotnet_lib_project(project.path());
+    // No dotnet SDK on this machine on purpose: any toolchain spawn
+    // would fail loudly instead of passing silently.
+    let sandbox = NoSpawnSandbox::multi(&["dotnet"]);
+
+    let (code, stdout, stderr) = sandbox.run_mgc(&["add-lib", "Newtonsoft.Json"], project.path());
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(
+        code,
+        Some(0),
+        "native dotnet `add-lib Newtonsoft.Json` must succeed:\n{output}"
+    );
+    let csproj = std::fs::read_to_string(project.path().join("nativelib.csproj")).unwrap();
+    assert!(
+        csproj.contains("Newtonsoft.Json"),
+        "csproj must pin Newtonsoft.Json (mgc-side edit):\n{csproj}"
+    );
+    assert!(
+        sandbox.marker_text().is_empty(),
+        "ZERO toolchain spawn allowed, got:\n{}",
+        sandbox.marker_text()
+    );
+    let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap_or_default();
+    assert!(
+        lock.contains("Newtonsoft.Json"),
+        "mgc.lock must record Newtonsoft.Json:\n{lock}"
+    );
+    let (code, stdout, stderr) = sandbox.run_mgc(&["install-lib"], project.path());
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(
+        code,
+        Some(0),
+        "native dotnet `install-lib` must succeed:\n{output}"
+    );
+    assert!(
+        sandbox.marker_text().is_empty(),
+        "ZERO toolchain spawn during install, got:\n{}",
+        sandbox.marker_text()
+    );
+}
+
+fn java_lib_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"nativelib\"\necosystem = \"lib\"\n[lib]\nlanguage = \"java\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("pom.xml"),
+        "<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>nativelib</artifactId>\n  <version>0.1.0</version>\n</project>\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn java_add_lib_runs_inside_mgc_without_spawning_maven() {
+    let project = TempDir::new().unwrap();
+    java_lib_project(project.path());
+    // mvn EXISTS on this machine: the canary shim shadows it, so any
+    // spawn is recorded instead of running for real.
+    let sandbox = NoSpawnSandbox::multi(&["mvn", "java", "gradle"]);
+
+    let (code, stdout, stderr) = sandbox.run_mgc(
+        &["add-lib", "org.apache.commons:commons-lang3"],
+        project.path(),
+    );
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(
+        code,
+        Some(0),
+        "native java `add-lib commons-lang3` must succeed:\n{output}"
+    );
+    let pom = std::fs::read_to_string(project.path().join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("commons-lang3"),
+        "pom.xml must pin commons-lang3 (mgc-side edit):\n{pom}"
+    );
+    assert!(
+        sandbox.marker_text().is_empty(),
+        "ZERO toolchain spawn allowed, got:\n{}",
+        sandbox.marker_text()
+    );
+    let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap_or_default();
+    assert!(
+        lock.contains("commons-lang3"),
+        "mgc.lock must record commons-lang3:\n{lock}"
+    );
+    let (code, stdout, stderr) = sandbox.run_mgc(&["install-lib"], project.path());
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(
+        code,
+        Some(0),
+        "native java `install-lib` must succeed:\n{output}"
+    );
+    assert!(
+        sandbox.marker_text().is_empty(),
+        "ZERO toolchain spawn during install, got:\n{}",
+        sandbox.marker_text()
+    );
+}
