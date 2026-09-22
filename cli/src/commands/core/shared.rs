@@ -666,6 +666,12 @@ pub(crate) async fn prepare_install_execution(
     } else {
         if frozen {
             let cmd = install_command_for_adapter(adapter);
+            // Tamper/mismatch (lock present but not matching) fails
+            // LOUDLY — silently re-resolving would bless a tampered lock
+            // and rewrite it. Missing lock is a different error.
+            if root.join("mgc.lock").is_file() {
+                return Err(crate::error::frozen_lock_mismatch(cmd));
+            }
             return Err(crate::error::frozen_lock_missing(cmd));
         }
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));

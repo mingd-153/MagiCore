@@ -244,6 +244,7 @@ pub enum CoreCommand {
         packages: Vec<String>,
         dry_run: bool,
         compat_runtime: Option<String>,
+        frozen: bool,
     },
     InstallClo {
         packages: Vec<String>,
@@ -263,10 +264,12 @@ pub enum CoreCommand {
         packages: Vec<String>,
         dry_run: bool,
         compat_runtime: Option<String>,
+        frozen: bool,
     },
     InstallLib {
         packages: Vec<String>,
         compat_runtime: Option<String>,
+        frozen: bool,
     },
     InstallHardware {
         packages: Vec<String>,

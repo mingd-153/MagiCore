@@ -659,9 +659,9 @@ fn install_lib_with_packages_fails_closed_without_spawning_pip() {
 }
 
 #[test]
-fn go_remove_hits_unsupported_without_spawning() {
-    // Go removal has no runner (manual `go mod tidy`): the lane must fail
-    // Unsupported before the adapter — even under compat.
+fn go_remove_native_succeeds_without_spawning() {
+    // Go remove runs natively on the mgc-written go.mod (no runner
+    // needed, no spawn): removing an absent dep is a clean no-op.
     let project = TempDir::new().unwrap();
     go_lib_project(project.path());
     let sandbox = CanarySandbox::new("go");
@@ -673,10 +673,10 @@ fn go_remove_hits_unsupported_without_spawning() {
         None,
     );
     let output = format!("{stdout}{stderr}");
-    assert_ne!(code, Some(0), "go 'remove-lib' must fail closed:\n{output}");
-    assert!(
-        output.contains("unsupported"),
-        "go remove must answer Unsupported:\n{output}"
+    assert_eq!(
+        code,
+        Some(0),
+        "go 'remove-lib' of an absent dep succeeds natively (nothing to do):\n{output}"
     );
     assert!(
         marker.is_empty(),
@@ -793,5 +793,78 @@ fn java_gradle_add_fails_closed_with_pom_guidance_without_spawning() {
     assert!(
         marker.is_empty(),
         "NO spawn for refused gradle add:\n{marker}"
+    );
+}
+
+#[test]
+fn lib_remove_native_ignores_compat_without_spawning() {
+    // Remove runs natively on mgc-written manifests — even explicit
+    // compat spawns nothing (native always runs). The legacy bridge
+    // proof lives on update (still delegated).
+    let project = TempDir::new().unwrap();
+    python_lib_project(project.path());
+    std::fs::write(
+        project.path().join("pyproject.toml"),
+        "[project]\nname = \"canary-pylib\"\ndependencies = [\"six==1.17.0\"]\n",
+    )
+    .unwrap();
+    let sandbox = CanarySandbox::multi(&["pip", "pip3"]);
+
+    let (code, stdout, stderr, marker) = run_mgc(
+        &["remove-lib", "six"],
+        project.path(),
+        &sandbox,
+        Some(("MGC_COMPAT_RUNTIME", "pip")),
+    );
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0), "native remove-lib must proceed:\n{output}");
+    assert!(
+        marker.is_empty(),
+        "compat on the native lane must NOT spawn pip:\n{}",
+        sandbox.marker_text()
+    );
+    let body = std::fs::read_to_string(project.path().join("pyproject.toml")).unwrap();
+    assert!(!body.contains("six"), "manifest must drop six:\n{body}");
+}
+
+#[test]
+fn lib_update_compat_opens_delegated_bridge_with_spawn() {
+    // Update stays delegated: explicit --compat-runtime opens the
+    // bridge (spawn happens, loudly announced).
+    let project = TempDir::new().unwrap();
+    python_lib_project(project.path());
+    std::fs::write(
+        project.path().join("pyproject.toml"),
+        "[project]\nname = \"canary-pylib\"\ndependencies = [\"six==1.17.0\"]\n",
+    )
+    .unwrap();
+    // Allowlist six for the delegated toolchain (fail-closed otherwise).
+    std::fs::write(
+        project.path().join("mgc.toml"),
+        "name = \"canary-pylib\"\necosystem = \"lib\"\n[lib]\nlanguage = \"python\"\npip_allowed_packages = [\"six\"]\n",
+    )
+    .unwrap();
+    let sandbox = CanarySandbox::multi(&["pip", "pip3"]);
+
+    let (code, stdout, stderr, marker) = run_mgc(
+        &["update-lib", "six"],
+        project.path(),
+        &sandbox,
+        Some(("MGC_COMPAT_RUNTIME", "pip")),
+    );
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(
+        code,
+        Some(0),
+        "compat update-lib must proceed through the gate:\n{output}"
+    );
+    assert!(
+        marker.contains("pip"),
+        "compat MUST spawn pip through the gate (bridge is real):\n{}",
+        sandbox.marker_text()
+    );
+    assert!(
+        output.contains("COMPATIBILITY MODE"),
+        "every compat spawn must warn loudly:\n{output}"
     );
 }

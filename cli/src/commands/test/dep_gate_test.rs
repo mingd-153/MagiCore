@@ -132,8 +132,20 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         .is_ok(),
         "compat on native add is ignored (native always runs)"
     );
+    // Native Remove ignores any opt-in; the flag==process contract
+    // lives on the still-delegated Update verb.
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::PYTHON), DepOp::Remove),
+            Some("pip"),
+            &explicit("uv"),
+            None
+        )
+        .is_ok(),
+        "compat on native remove is ignored"
+    );
     let err = gate(
-        &ctx("lib", Some(eco::PYTHON), DepOp::Remove),
+        &ctx("lib", Some(eco::PYTHON), DepOp::Update),
         Some("pip"),
         &explicit("uv"),
         None,
@@ -143,8 +155,8 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     // The mismatch names BOTH sides (flag uv, process pip).
     assert!(err.to_string().contains("'uv'"), "{err}");
     assert!(err.to_string().contains("'pip'"), "{err}");
-    // Per-language tool sets: native Add ignores any opt-in; delegated
-    // Remove still enforces exact ownership.
+    // Per-language tool sets: native Add/Remove ignore any opt-in; the
+    // flag==process contract lives on delegated Update.
     assert!(
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
@@ -171,10 +183,10 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
             &explicit("uv"),
             None
         )
-        .is_err()
+        .is_ok(),
+        "compat on native remove is ignored"
     );
-    // Go removal has NO runner (manual `go mod tidy`): Unsupported even
-    // under compat — compat cannot open what does not exist.
+    // Go remove runs natively on the mgc-written go.mod.
     for mode in [native(), explicit("go")] {
         assert!(
             gate(
@@ -183,15 +195,14 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
                 &mode,
                 None
             )
-            .is_err(),
-            "lib[go] remove must stay Unsupported"
+            .is_ok(),
+            "lib[go] remove is native"
         );
     }
-    // Java remove/update have NO runner (prepare_add fails gradle
-    // projects closed with pom.xml guidance; the gate stays Native for
-    // Add so pom projects flow through).
+    // Java update has NO runner; Remove runs natively on pom projects
+    // (gradle fails closed in write_manifest with pom.xml guidance).
     for lang in [eco::JAVA] {
-        for op in [DepOp::Remove, DepOp::Update] {
+        for op in [DepOp::Update] {
             for mode in [native(), explicit("mvn"), explicit("dotnet")] {
                 assert!(
                     gate(&ctx("lib", Some(lang), op), None, &mode, None).is_err(),
@@ -201,7 +212,7 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
             }
         }
     }
-    for op in [DepOp::Remove, DepOp::Update] {
+    for op in [DepOp::Update] {
         for mode in [native(), explicit("dotnet")] {
             assert!(
                 gate(&ctx("lib", Some(eco::DOTNET), op), None, &mode, None).is_err(),
@@ -461,8 +472,7 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
             ("app", Some(eco::RN), DepOp::Install),
             ("lib", None, DepOp::Install),
             // Exact cells without runners (never Delegated promises).
-            ("lib", Some(eco::GO), DepOp::Remove),
-            ("lib", Some(eco::JAVA), DepOp::Remove),
+            // (lib Remove went native — only Update/unsupported cells left.)
             ("lib", Some(eco::DOTNET), DepOp::Update),
             ("app", Some(eco::SWIFT), DepOp::Add),
             ("app", Some(eco::KOTLIN), DepOp::Remove),
@@ -637,11 +647,12 @@ fn capabilities_json_carries_dep_gate_ownership() {
         lib_languages["python"]["add"]["tools"],
         serde_json::json!([])
     );
+    assert_eq!(lib_languages["python"]["remove"]["owner"], "mgc-native");
     assert_eq!(
         lib_languages["python"]["remove"]["tools"],
-        serde_json::json!(["pip", "pip3"])
+        serde_json::json!([])
     );
-    assert_eq!(lib_languages["go"]["remove"]["owner"], "unsupported");
+    assert_eq!(lib_languages["go"]["remove"]["owner"], "mgc-native");
     assert_eq!(lib_languages["go"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["java"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["java"]["install"]["owner"], "mgc-native");

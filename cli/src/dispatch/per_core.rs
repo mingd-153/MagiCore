@@ -294,10 +294,12 @@ pub fn command_to_dispatch(
             packages,
             dry_run,
             compat_runtime,
+            frozen,
         } => Some(CoreCommand::InstallAi {
             packages,
             dry_run,
             compat_runtime,
+            frozen,
         }),
         Commands::InstallClo {
             packages,
@@ -325,17 +327,21 @@ pub fn command_to_dispatch(
         Commands::InstallApp {
             packages,
             compat_runtime,
+            frozen,
         } => Some(CoreCommand::InstallApp {
             packages,
             dry_run: false,
             compat_runtime,
+            frozen,
         }),
         Commands::InstallLib {
             packages,
             compat_runtime,
+            frozen,
         } => Some(CoreCommand::InstallLib {
             packages,
             compat_runtime,
+            frozen,
         }),
         Commands::InstallHardware {
             packages,

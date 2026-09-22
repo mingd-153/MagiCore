@@ -314,6 +314,15 @@ pub fn frozen_lock_missing(cmd: &str) -> Error {
     )
 }
 
+/// Frozen install with a PRESENT but mismatching lockfile — a possible
+/// tamper, never silently re-resolved.
+pub fn frozen_lock_mismatch(cmd: &str) -> Error {
+    anyhow!(
+        "--frozen: mgc.lock exists but does not match the manifest (drift or tamper) — refusing to re-resolve.\n\
+         Run '{cmd}' without --frozen to regenerate after reviewing the diff."
+    )
+}
+
 pub fn audit_strict_web_only(name: &str) -> Error {
     anyhow!(
         "--audit-strict is only implemented for the web core right now; refusing to claim policy parity for '{name}'"

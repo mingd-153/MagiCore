@@ -42,6 +42,7 @@ pub fn bare_core_command(
                 packages,
                 dry_run,
                 compat_runtime,
+                frozen,
             },
             "clo" => CoreCommand::InstallClo {
                 packages,
@@ -61,10 +62,12 @@ pub fn bare_core_command(
                 packages,
                 dry_run,
                 compat_runtime,
+                frozen,
             },
             "lib" => CoreCommand::InstallLib {
                 packages,
                 compat_runtime,
+                frozen,
             },
             other => return Err(crate::error::unknown_core(other)),
         }),

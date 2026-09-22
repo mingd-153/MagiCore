@@ -8,6 +8,7 @@ pub async fn install(
     packages: Vec<String>,
     dry_run: bool,
     compat_runtime: Option<String>,
+    frozen: bool,
 ) -> Result<()> {
     let root = shared::ai_project_root()?;
     if !packages.is_empty() {
@@ -23,7 +24,7 @@ pub async fn install(
     // delegated lane below (explicit compat).
     // (Lane native: pyproject → pipeline PyPI native, không spawn uv/pip.)
     if root.join("pyproject.toml").is_file() {
-        return install_python_native(&root, dry_run, compat_runtime).await;
+        return install_python_native(&root, dry_run, compat_runtime, frozen).await;
     }
     let (tool, args) = ai_install_command(&root)?;
     if dry_run {
@@ -122,6 +123,7 @@ async fn install_python_native(
     root: &std::path::Path,
     dry_run: bool,
     compat_runtime: Option<String>,
+    frozen: bool,
 ) -> Result<()> {
     if dry_run {
         mgc_ui::info(
@@ -148,7 +150,7 @@ async fn install_python_native(
         &*adapter,
         root,
         "mgc add",
-        false,
+        frozen,
         mgc_types::adapter::InstallOptions {
             legacy_flat: false,
             ..Default::default()

@@ -373,6 +373,15 @@ async fn install_into_root(
         info("Using mgc.lock for install state.");
         (graph, true)
     } else {
+        // Frozen mode fails LOUDLY on mismatch (mirrors core/shared.rs):
+        // silently re-resolving would bless a tampered lock and rewrite
+        // it. Missing lock vs mismatched lock get distinct errors.
+        if frozen {
+            if project_root.join("mgc.lock").is_file() {
+                return Err(crate::error::frozen_lock_mismatch("install"));
+            }
+            return Err(crate::error::frozen_lock_missing("install"));
+        }
         let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
         // P0/F6: arm the age gate from THIS operation's project.
         adapter.arm_age_gate_for(project_root)?;
@@ -593,10 +602,14 @@ fn read_checked_lockfile(project_root: &std::path::Path) -> Result<Option<Lockfi
 }
 
 fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> bool {
+    // Any-match over same-named packages (mirrors core/shared.rs):
+    // multi-version locks are legitimate, so the manifest range passes
+    // when ANY instance satisfies it — first-match order must never
+    // decide (frozen false-mismatch family).
     manifest.all_dependencies().all(|dependency| {
-        lock.get_package(dependency.name.as_str())
-            .and_then(|package| Version::parse(&package.version).ok())
-            .is_some_and(|version| dependency.range.matches(&version))
+        lock.get_packages(dependency.name.as_str())
+            .filter_map(|package| Version::parse(&package.version).ok())
+            .any(|version| dependency.range.matches(&version))
     })
 }
 

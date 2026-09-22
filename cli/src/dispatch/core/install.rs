@@ -55,7 +55,8 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             packages,
             dry_run,
             compat_runtime,
-        } => commands::core::install::ai::install(packages, dry_run, compat_runtime).await,
+            frozen,
+        } => commands::core::install::ai::install(packages, dry_run, compat_runtime, frozen).await,
         #[cfg(not(feature = "ai"))]
         CoreCommand::InstallAi { .. } => Err(crate::error::core_not_in_build("ai")),
         #[cfg(feature = "clo")]
@@ -86,14 +87,16 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             packages,
             dry_run,
             compat_runtime,
-        } => commands::core::install::app::install(packages, dry_run, compat_runtime).await,
+            frozen,
+        } => commands::core::install::app::install(packages, dry_run, compat_runtime, frozen).await,
         #[cfg(not(feature = "app"))]
         CoreCommand::InstallApp { .. } => Err(crate::error::core_not_in_build("app")),
         #[cfg(feature = "lib")]
         CoreCommand::InstallLib {
             packages,
             compat_runtime,
-        } => commands::core::install::library::install(packages, compat_runtime).await,
+            frozen,
+        } => commands::core::install::library::install(packages, compat_runtime, frozen).await,
         #[cfg(not(feature = "lib"))]
         CoreCommand::InstallLib { .. } => Err(crate::error::core_not_in_build("lib")),
         #[cfg(feature = "hardware")]

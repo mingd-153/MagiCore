@@ -552,11 +552,14 @@ impl LockfileProvider for LibAdapter {
             LibLanguage::DotNet => write_csproj_manifest(project_root, manifest),
             // mgc owns pom.xml dependencies (native add) — but ONLY for
             // pom projects; gradle build scripts are programs and stay
-            // read-only (fail-closed downstream).
-            // (mgc sở hữu dependency pom.xml — gradle chỉ đọc.)
+            // read-only: fail closed instead of reporting a phantom
+            // write (a silent Ok here would fake remove success).
+            // (mgc sở hữu dependency pom.xml — gradle chỉ đọc, fail rõ.)
             LibLanguage::Java => match self.java_kind {
                 JavaManifestKind::Pom => write_pom_manifest(project_root, manifest),
-                JavaManifestKind::Gradle | JavaManifestKind::None => Ok(()),
+                JavaManifestKind::Gradle | JavaManifestKind::None => Err(mgc_types::MgError::Other(
+                    "refusing to write: gradle build scripts are programs, not manifests (declare dependencies in a pom.xml for mgc-managed edits)".to_string(),
+                )),
             },
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }

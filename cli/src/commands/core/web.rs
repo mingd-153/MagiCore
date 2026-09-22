@@ -354,11 +354,6 @@ pub async fn install(
     #[cfg(feature = "lib")]
     if let Some(backend) = web_backend_language(&root) {
         let language = backend.ecosystem();
-        if frozen {
-            return Err(crate::error::web_backend_flag_unsupported(
-                "--frozen", language,
-            ));
-        }
         if ignore_scripts {
             return Err(crate::error::web_backend_flag_unsupported(
                 "--ignore-scripts",
@@ -382,7 +377,7 @@ pub async fn install(
                 "--repair", language,
             ));
         }
-        return super::install::library::install(packages, compat_runtime).await;
+        return super::install::library::install(packages, compat_runtime, frozen).await;
     }
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(

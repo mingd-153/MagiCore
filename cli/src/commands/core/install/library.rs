@@ -45,7 +45,11 @@ use std::sync::Arc;
 
 use crate::commands::core::shared;
 
-pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
+pub async fn install(
+    packages: Vec<String>,
+    compat_runtime: Option<String>,
+    frozen: bool,
+) -> Result<()> {
     let root = project_root()?;
     // P0 install/add split: `install-lib` NEVER adds packages — it replays
     // the existing graph/lock through the native pipeline. Package args
@@ -80,7 +84,7 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
         &*adapter,
         &root,
         "mgc add",
-        false,
+        frozen,
         mgc_types::adapter::InstallOptions {
             legacy_flat: false,
             ..Default::default()

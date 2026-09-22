@@ -222,37 +222,35 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("web", Some(eco::JS | eco::TS | "javascript" | "typescript"), _) => DepOwner::Native,
         // Lib TypeScript rides the embedded web engine end to end.
         ("lib", Some(eco::TS), _) => DepOwner::Native,
-        // Lib protocol languages: the native pipeline owns install and
-        // every stage — AND the Add verb (resolve-first via the native
-        // registry engine + mgc-side manifest edit: pyproject/Cargo/go.mod
-        // writers; zero toolchain spawn). Remove/Update still spawn the
-        // provider toolchain for real (verified per arm against
-        // adapters/lib/src/adapter.rs).
-        // (Add native cho rust/python/go — resolve engine + writer mgc-side.)
-        ("lib", Some(eco::RUST), DepOp::Remove | DepOp::Update) => {
-            DepOwner::Delegated { tools: &["cargo"] }
-        }
-        // Python edits are mgc-side (pyproject writer) — only Remove/Update
-        // still spawn pip for real.
-        ("lib", Some(eco::PYTHON), DepOp::Remove | DepOp::Update) => DepOwner::Delegated {
+        // Lib Remove runs natively on mgc-written manifests (in-memory
+        // edit + writer, zero spawn — verified: even explicit compat
+        // spawns nothing); gradle projects fail closed in write_manifest.
+        // Update still spawns the provider toolchain (delegated).
+        // (Remove native; Update vẫn delegate.)
+        (
+            "lib",
+            Some(eco::RUST | eco::PYTHON | eco::GO | eco::DOTNET | eco::JAVA),
+            DepOp::Remove,
+        ) => DepOwner::Native,
+        ("lib", Some(eco::RUST), DepOp::Update) => DepOwner::Delegated { tools: &["cargo"] },
+        // Python Update still spawns pip for real.
+        ("lib", Some(eco::PYTHON), DepOp::Update) => DepOwner::Delegated {
             tools: &["pip", "pip3"],
         },
-        // Go: mgc owns go.mod requires (native add); Update still spawns
-        // `go get -u` for real; removal has NO runner (honest manual
-        // `go mod tidy` step) — Unsupported.
+        // Go: mgc owns go.mod requires (native add/remove); Update still
+        // spawns `go get -u` for real.
         ("lib", Some(eco::GO), DepOp::Update) => DepOwner::Delegated { tools: &["go"] },
-        ("lib", Some(eco::GO), DepOp::Remove) => DepOwner::Unsupported,
-        // .NET Add runs natively (NuGet resolve-first + mgc-side csproj
-        // edit, zero `dotnet` spawn); Remove/Update have NO runner —
-        // Unsupported. Java Add runs natively for pom.xml projects
+        // .NET Add/Remove run natively (NuGet resolve-first + mgc-side
+        // csproj edit, zero `dotnet` spawn); Update has NO runner —
+        // Unsupported. Java Add/Remove run natively for pom.xml projects
         // (Maven resolve-first + mgc-side pom edit); gradle projects fail
-        // closed inside prepare_add (scripts are programs). Java
-        // Remove/Update stay Unsupported.
-        // (Add .NET/Java-pom native; remove/update và Java-gradle giữ nguyên.)
+        // closed inside prepare_add/write_manifest (scripts are programs).
+        // Java Update stays Unsupported.
+        // (Add/Remove .NET/Java-pom native.)
         ("lib", Some(eco::DOTNET), DepOp::Add) => DepOwner::Native,
-        ("lib", Some(eco::DOTNET), DepOp::Remove | DepOp::Update) => DepOwner::Unsupported,
+        ("lib", Some(eco::DOTNET), DepOp::Update) => DepOwner::Unsupported,
         ("lib", Some(eco::JAVA), DepOp::Add) => DepOwner::Native,
-        ("lib", Some(eco::JAVA), DepOp::Remove | DepOp::Update) => DepOwner::Unsupported,
+        ("lib", Some(eco::JAVA), DepOp::Update) => DepOwner::Unsupported,
         ("lib", Some(eco::RUST | eco::PYTHON | eco::GO | eco::JAVA | eco::DOTNET), _) => {
             DepOwner::Native
         }

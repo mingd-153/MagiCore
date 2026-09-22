@@ -101,9 +101,89 @@ pub(crate) fn write_pom_manifest(root: &Path, manifest: &Manifest) -> MgResult<(
     for (group, artifact, version) in &pins {
         out = upsert_pom_dependency(&out, group, artifact, version)?;
     }
+    // Prune stale top-level pins (remove honesty): dependency blocks
+    // whose G:A is NOT in the manifest are deleted. A remove that leaves
+    // the pin behind is a lie.
+    // (Xóa dependency không còn trong manifest.)
+    out = prune_pom_dependencies(&out, &pins);
     std::fs::write(&path, out)
         .map_err(|e| mgc_types::MgError::Other(format!("write {}: {e}", path.display())))?;
     Ok(())
+}
+
+/// Drop top-level `<dependency>` blocks whose group:artifact is absent
+/// from `pins`. Other blocks (dependencyManagement, plugins, profiles)
+/// are never touched.
+fn prune_pom_dependencies(content: &str, pins: &[(String, String, String)]) -> String {
+    // Collect top-level <dependency> spans with the same depth walk as
+    // upsert (duplicated walk for clarity over cleverness).
+    let mut spans: Vec<(usize, usize, String, String)> = Vec::new();
+    let bytes = content.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            if content[i..].starts_with("</") {
+                let end = content[i..].find('>').map(|p| i + p).unwrap_or(bytes.len());
+                depth = depth.saturating_sub(1);
+                i = end + 1;
+                continue;
+            }
+            if content[i..].starts_with("<!--") {
+                let end = content[i..]
+                    .find("-->")
+                    .map(|p| i + p + 3)
+                    .unwrap_or(bytes.len());
+                i = end;
+                continue;
+            }
+            let end = content[i..].find('>').map(|p| i + p).unwrap_or(bytes.len());
+            let tag = content[i + 1..end].trim().to_string();
+            let name = tag.split_whitespace().next().unwrap_or("").to_string();
+            if name == "dependency"
+                && depth == 2
+                && let Some(fe) = content[end..]
+                    .find("</dependency>")
+                    .map(|p| end + p + "</dependency>".len())
+            {
+                let chunk = &content[i..fe];
+                let g = chunk
+                    .split("<groupId>")
+                    .nth(1)
+                    .and_then(|s| s.split("</groupId>").next())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let a = chunk
+                    .split("<artifactId>")
+                    .nth(1)
+                    .and_then(|s| s.split("</artifactId>").next())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                spans.push((i, fe, g, a));
+                i = fe;
+                continue;
+            }
+            if !tag.ends_with('/') && !name.starts_with('?') && !name.starts_with('!') {
+                depth += 1;
+            }
+            i = end + 1;
+            continue;
+        }
+        i += 1;
+    }
+    let mut out = content.to_string();
+    for (s, e, g, a) in spans.iter().rev() {
+        if !pins.iter().any(|(pg, pa, _)| pg == g && pa == a) {
+            out.replace_range(*s..*e, "");
+        }
+    }
+    // Collapse triple blank lines left by removals (cosmetic only).
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out
 }
 
 /// Insert or update one dependency inside the TOP-LEVEL `<dependencies>`
@@ -210,6 +290,56 @@ fn render_pom_dependency(group: &str, artifact: &str, version: &str) -> String {
     )
 }
 
+/// Drop `<PackageReference>` elements (single- or multi-line) whose
+/// `Include` id is absent from `keep`. Anything else is preserved byte
+/// for byte, including comments and whitespace.
+fn prune_csproj_references(content: &str, keep: &std::collections::HashSet<&str>) -> String {
+    fn kept(element: &str, keep: &std::collections::HashSet<&str>) -> bool {
+        keep.iter().any(|id| {
+            element.contains(&format!("Include=\"{id}\""))
+                || element.contains(&format!("Include='{id}'"))
+        })
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find("<PackageReference") {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let tag_end = tail.find('>').map(|p| p + 1);
+        let Some(tag_end) = tag_end else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let opening = &tail[..tag_end];
+        let element_end = if opening.ends_with("/>") {
+            tag_end
+        } else if let Some(fe) = tail
+            .find("</PackageReference>")
+            .map(|p| p + "</PackageReference>".len())
+        {
+            fe
+        } else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let element = &tail[..element_end];
+        if kept(element, keep) {
+            out.push_str(element);
+            rest = &tail[element_end..];
+        } else {
+            // Dropped: swallow one following newline so no blank line
+            // litters the ItemGroup.
+            rest = tail[element_end..]
+                .strip_prefix('\n')
+                .unwrap_or(&tail[element_end..]);
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Write csproj PackageReference pins from the manifest (native add).
 /// mgc owns the references: each manifest dep becomes (or updates)
 /// `<PackageReference Include="id" Version="x" />` inside an ItemGroup
@@ -243,7 +373,12 @@ pub(crate) fn write_csproj_manifest(root: &Path, manifest: &Manifest) -> MgResul
     }
     pins.sort();
     pins.dedup();
-    let mut out = content;
+    // Prune stale references first (remove honesty): any PackageReference
+    // whose id is NOT in the manifest is deleted — single-line and
+    // multi-line forms. A remove that leaves the file behind is a lie.
+    // (Xóa reference không còn trong manifest.)
+    let keep: std::collections::HashSet<&str> = pins.iter().map(|(n, _)| n.as_str()).collect();
+    let mut out = prune_csproj_references(&content, &keep);
     for (name, version) in &pins {
         let escaped = name.replace('&', "&amp;").replace('"', "&quot;");
         // Update in place when the reference already exists (any version).

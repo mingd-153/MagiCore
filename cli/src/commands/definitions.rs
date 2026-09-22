@@ -696,6 +696,10 @@ pub enum Commands {
             help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
         )]
         compat_runtime: Option<String>,
+        /// Frozen mode: fail if mgc.lock is missing or does not match
+        /// (never silently re-resolve).
+        #[arg(long, help = "Fail if the lockfile is missing or stale")]
+        frozen: bool,
     },
     #[command(
         name = "install-clo",
@@ -760,6 +764,10 @@ pub enum Commands {
             help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
         )]
         compat_runtime: Option<String>,
+        /// Frozen mode: fail if mgc.lock is missing or does not match
+        /// (never silently re-resolve).
+        #[arg(long, help = "Fail if the lockfile is missing or stale")]
+        frozen: bool,
     },
     #[command(
         name = "install-lib",
@@ -776,6 +784,10 @@ pub enum Commands {
             help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
         )]
         compat_runtime: Option<String>,
+        /// Frozen mode: fail if mgc.lock is missing or does not match
+        /// (never silently re-resolve).
+        #[arg(long, help = "Fail if the lockfile is missing or stale")]
+        frozen: bool,
     },
     #[command(
         name = "install-hardware",

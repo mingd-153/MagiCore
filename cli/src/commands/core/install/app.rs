@@ -95,6 +95,7 @@ pub async fn install_flutter_native(
     packages: Vec<String>,
     dry_run: bool,
     compat_runtime: Option<String>,
+    frozen: bool,
 ) -> Result<()> {
     if !packages.is_empty() {
         return Err(crate::error::install_app_packages_use_add(&packages));
@@ -126,7 +127,7 @@ pub async fn install_flutter_native(
         &*adapter,
         root,
         "mgc add",
-        false,
+        frozen,
         mgc_types::adapter::InstallOptions {
             legacy_flat: false,
             ..Default::default()
@@ -236,6 +237,7 @@ pub async fn install(
     packages: Vec<String>,
     dry_run: bool,
     compat_runtime: Option<String>,
+    frozen: bool,
 ) -> Result<()> {
     let root = project_root()?;
     let lang = language(&root)?;
@@ -255,7 +257,7 @@ pub async fn install(
     // pipeline is the SAME shape as lib (parse/resolve/install/lock).
     // (Flutter install native qua adapter.)
     if lang == mgc_app_adapter::AppLanguage::Flutter {
-        return install_flutter_native(&root, packages, dry_run, compat_runtime).await;
+        return install_flutter_native(&root, packages, dry_run, compat_runtime, frozen).await;
     }
 
     // install_command is PURE (zero spawn) — resolve before the gate so
