@@ -15,6 +15,54 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
     // manager), never a post-gate adapter error.
     // (Context gate đầy đủ: engine id detect được.)
     let engine = mgc_game_adapter::adapter_for(&root).map(|a| a.engine());
+    // Native lane (mgc.lock, no Cargo.lock): bevy projects resolve
+    // through the NATIVE crates engine (same as lib/rust) — zero `cargo`
+    // spawn. Other engines keep the legacy delegated path below.
+    // (Lane native: bevy + Cargo.toml → engine crates native.)
+    if engine == Some("bevy") && root.join("Cargo.toml").is_file() {
+        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+        crate::commands::dep_gate::gate(
+            &crate::commands::dep_gate::DepContext::new(
+                "game",
+                Some("bevy"),
+                Some("bevy"),
+                None,
+                crate::commands::dep_gate::DepOp::Install,
+            ),
+            None,
+            &compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
+        let lib_adapter = crate::factory::create_adapter(&mgc_types::Ecosystem::Lib, None, None)
+            .map_err(|e| anyhow::anyhow!("game native install needs the lib Cargo engine: {e}"))?;
+        if !packages.is_empty() {
+            crate::commands::core::shared::add(
+                &*lib_adapter,
+                &root,
+                packages,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
+            .await?;
+        }
+        return crate::commands::core::shared::install_with_adapter(
+            &*lib_adapter,
+            &root,
+            "mgc add",
+            false,
+            mgc_types::adapter::InstallOptions {
+                legacy_flat: false,
+                ..Default::default()
+            },
+        )
+        .await;
+    }
     // C0 ownership firewall (T0.3): the game install lane routes to the
     // adapter, whose engines delegate (Bevy → cargo).
     // (Tường lửa C0: lane install game gọi adapter, engine trong đó

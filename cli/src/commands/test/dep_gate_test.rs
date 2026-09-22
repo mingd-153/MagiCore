@@ -407,7 +407,6 @@ fn game_iot_clo_need_declared_ecosystem() {
 fn delegated_lane_fails_closed_without_compat() {
     for (core, eco, op) in [
         ("ai", Some(eco::PYTHON), DepOp::Remove),
-        ("game", Some(eco::BEVY), DepOp::Add),
         ("iot", Some("esp32-rust"), DepOp::Update),
         ("clo", Some(eco::TERRAFORM), DepOp::Install),
     ] {
@@ -453,7 +452,7 @@ fn compat_with_wrong_tool_stays_closed() {
     .unwrap_err();
     assert!(err.to_string().contains("does not own"), "{err}");
     let err = gate(
-        &ctx("game", Some(eco::BEVY), DepOp::Install),
+        &ctx("game", Some(eco::BEVY), DepOp::Remove),
         None,
         &explicit("uv"),
         None,

@@ -749,3 +749,83 @@ fn matrix_native_update_flutter_ai() {
         "1.15.0",
     );
 }
+
+fn bevy_project(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"game\"\n[game]\nengine = \"bevy\"\n",
+    );
+    write(
+        dir,
+        "Cargo.toml",
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+    );
+}
+
+fn esp32_project(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"iot\"\n[iot]\nframework = \"esp32-rust\"\n",
+    );
+    write(
+        dir,
+        "Cargo.toml",
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+    )
+}
+
+#[test]
+fn matrix_game_bevy_add_install_native() {
+    let project = TempDir::new().unwrap();
+    bevy_project(project.path());
+    let sandbox = MatrixSandbox::new();
+    let (code, out) = sandbox.run(&["add-game", "serde_json"], project.path());
+    assert_eq!(code, Some(0), "native bevy `add-game` must succeed:\n{out}");
+    let body = std::fs::read_to_string(project.path().join("Cargo.toml")).unwrap();
+    assert!(
+        body.contains("serde_json"),
+        "Cargo.toml must pin serde_json:\n{body}"
+    );
+    sandbox.assert_no_spawn("add-game");
+    let (code, out) = sandbox.run(&["install-game"], project.path());
+    assert_eq!(
+        code,
+        Some(0),
+        "native bevy `install-game` must succeed:\n{out}"
+    );
+    sandbox.assert_no_spawn("install-game");
+    let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap_or_default();
+    assert!(
+        lock.contains("serde_json"),
+        "mgc.lock must record serde_json:\n{lock}"
+    );
+}
+
+#[test]
+fn matrix_iot_esp32_add_install_native() {
+    let project = TempDir::new().unwrap();
+    esp32_project(project.path());
+    let sandbox = MatrixSandbox::new();
+    let (code, out) = sandbox.run(&["add-iot", "serde_json"], project.path());
+    assert_eq!(code, Some(0), "native esp32 `add-iot` must succeed:\n{out}");
+    let body = std::fs::read_to_string(project.path().join("Cargo.toml")).unwrap();
+    assert!(
+        body.contains("serde_json"),
+        "Cargo.toml must pin serde_json:\n{body}"
+    );
+    sandbox.assert_no_spawn("add-iot");
+    let (code, out) = sandbox.run(&["install-iot"], project.path());
+    assert_eq!(
+        code,
+        Some(0),
+        "native esp32 `install-iot` must succeed:\n{out}"
+    );
+    sandbox.assert_no_spawn("install-iot");
+    let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap_or_default();
+    assert!(
+        lock.contains("serde_json"),
+        "mgc.lock must record serde_json:\n{lock}"
+    );
+}

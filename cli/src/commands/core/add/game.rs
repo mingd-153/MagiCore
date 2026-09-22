@@ -45,6 +45,44 @@ pub async fn add(
         return Ok(());
     }
 
+    // Native lane (mgc.lock, no Cargo.lock): a bevy project IS a Cargo
+    // project — deps resolve through the NATIVE crates engine (same as
+    // lib/rust) with zero `cargo` spawn. Other engines keep the legacy
+    // delegated path below.
+    // (Lane native: bevy + Cargo.toml → engine crates native.)
+    let engine = mgc_game_adapter::adapter_for(&root).map(|a| a.engine());
+    if engine == Some("bevy") && root.join("Cargo.toml").is_file() {
+        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+        crate::commands::dep_gate::gate(
+            &crate::commands::dep_gate::DepContext::new(
+                "game",
+                Some("bevy"),
+                Some("bevy"),
+                None,
+                crate::commands::dep_gate::DepOp::Add,
+            ),
+            None,
+            &compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
+        let lib_adapter = crate::factory::create_adapter(&mgc_types::Ecosystem::Lib, None, None)
+            .map_err(|e| anyhow::anyhow!("game native add needs the lib Cargo engine: {e}"))?;
+        return shared::add(
+            &*lib_adapter,
+            &root,
+            adapter_pkgs,
+            version,
+            dev,
+            exact,
+            optional,
+            peer,
+            no_save,
+            true,
+            global,
+        )
+        .await;
+    }
+
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     // Full gate context: detected engine id (non-bevy hits Unsupported).
     let engine = mgc_game_adapter::adapter_for(&root).map(|a| a.engine());

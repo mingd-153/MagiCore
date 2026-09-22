@@ -30,6 +30,55 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
     let iot = mgc_iot_adapter::adapter_for(&root);
     let framework = iot.as_ref().map(|a| a.framework());
     let target_owned = iot.as_ref().and_then(|a| a.target(&root));
+    // Native lane (mgc.lock, no Cargo.lock): esp32-rust projects ARE
+    // Cargo projects — deps resolve through the NATIVE crates engine
+    // (same as lib/rust) with zero `cargo` spawn. Other frameworks keep
+    // the legacy delegated path below.
+    // (Lane native: esp32-rust + Cargo.toml → engine crates native.)
+    if framework == Some("esp32-rust") && root.join("Cargo.toml").is_file() {
+        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+        crate::commands::dep_gate::gate(
+            &crate::commands::dep_gate::DepContext::new(
+                "iot",
+                Some("esp32-rust"),
+                Some("esp32-rust"),
+                target_owned.as_deref(),
+                crate::commands::dep_gate::DepOp::Install,
+            ),
+            None,
+            &compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
+        let lib_adapter = crate::factory::create_adapter(&mgc_types::Ecosystem::Lib, None, None)
+            .map_err(|e| anyhow::anyhow!("iot native install needs the lib Cargo engine: {e}"))?;
+        if !packages.is_empty() {
+            crate::commands::core::shared::add(
+                &*lib_adapter,
+                &root,
+                packages,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
+            .await?;
+        }
+        return crate::commands::core::shared::install_with_adapter(
+            &*lib_adapter,
+            &root,
+            "mgc add",
+            false,
+            mgc_types::adapter::InstallOptions {
+                legacy_flat: false,
+                ..Default::default()
+            },
+        )
+        .await;
+    }
     // C0 ownership firewall (T0.3): the IoT install lane routes to the
     // adapter, whose frameworks delegate (cargo/pio/west).
     // (Tường lửa C0: lane install IoT gọi adapter, framework trong đó

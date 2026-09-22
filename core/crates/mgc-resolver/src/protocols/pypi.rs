@@ -240,6 +240,9 @@ impl RegistryProtocol for PypiProtocol {
 
         let mut deps = Vec::new();
         if let Some(requires) = version_doc.info.requires_dist {
+            // Environment markers evaluated once per resolve (same
+            // consumer for the whole graph — no per-dep env reads).
+            let consumer = consumer_python();
             for spec in requires {
                 let Some((dep_name, dep_range, marker)) = parse_pep508(&spec) else {
                     continue;
@@ -249,6 +252,13 @@ impl RegistryProtocol for PypiProtocol {
                     continue;
                 }
                 if let Some(m) = marker {
+                    // Certainly-excluded environments skip the dep (pip
+                    // would never install it); everything else is kept
+                    // with the marker recorded.
+                    if marker_applies(&m, consumer) == Some(false) {
+                        markers.push(format!("marker-excluded:{m}"));
+                        continue;
+                    }
                     markers.push(format!("marker:{m}"));
                 }
                 deps.push((dep_name, dep_range));
@@ -925,5 +935,288 @@ mod importable_tests {
             )
             .unwrap();
         assert!(site.is_none(), "compiled wheel must not unpack");
+    }
+}
+
+/// Evaluate a PEP 508 environment marker against this machine.
+///
+/// Returns `Some(false)` ONLY when the marker certainly excludes us (the
+/// dep is skipped, like pip would); `Some(true)`/`None` keep it.
+/// `extra == ...` always yields `None` (extras are handled by opt-in,
+/// never by exclusion here). Unknown variables, operators, parenthesized
+/// groups, and version comparisons without a known consumer all yield
+/// `None` — include honestly, never exclude on a guess.
+/// (Đánh giá marker môi trường PEP 508 — chỉ loại khi chắc chắn.)
+fn marker_applies(marker: &str, consumer: Option<(u64, u64)>) -> Option<bool> {
+    eval_marker_or(marker.trim(), consumer)
+}
+
+fn eval_marker_or(expr: &str, consumer: Option<(u64, u64)>) -> Option<bool> {
+    // Top-level `or` split (no paren support — parens yield None below).
+    let mut out = Some(false);
+    for part in split_top_level(expr, "or") {
+        match eval_marker_and(part.trim(), consumer) {
+            Some(true) => return Some(true),
+            None => out = None,
+            Some(false) => {}
+        }
+    }
+    out
+}
+
+fn eval_marker_and(expr: &str, consumer: Option<(u64, u64)>) -> Option<bool> {
+    let mut out = Some(true);
+    for part in split_top_level(expr, "and") {
+        match eval_marker_atom(part.trim(), consumer) {
+            Some(false) => return Some(false),
+            None => out = None,
+            Some(true) => {}
+        }
+    }
+    out
+}
+
+/// Split on a top-level keyword (ignores quoted contents; bails to a
+/// single chunk on any parenthesis — unhandled groups stay unknown).
+fn split_top_level<'a>(expr: &'a str, keyword: &str) -> Vec<&'a str> {
+    if expr.contains('(') || expr.contains(')') {
+        return vec![expr];
+    }
+    let mut parts = Vec::new();
+    let mut depth_quote: Option<char> = None;
+    let mut current_start = 0;
+    let bytes = expr.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if let Some(q) = depth_quote {
+            if c == q {
+                depth_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            depth_quote = Some(c);
+            i += 1;
+            continue;
+        }
+        if (c.is_whitespace() || i == 0)
+            && expr[i..].starts_with(keyword)
+            && expr[i + keyword.len()..]
+                .chars()
+                .next()
+                .is_none_or(|n| n.is_whitespace() || n == '\'' || n == '"')
+            && (i == 0 || expr[..i].chars().last().is_none_or(|p| p.is_whitespace()))
+        {
+            parts.push(expr[current_start..i].trim());
+            i += keyword.len();
+            current_start = i;
+            continue;
+        }
+        i += 1;
+    }
+    parts.push(expr[current_start..].trim());
+    parts.into_iter().filter(|p| !p.is_empty()).collect()
+}
+
+fn unquote(s: &str) -> String {
+    let t = s.trim();
+    if t.len() >= 2
+        && ((t.starts_with('\'') && t.ends_with('\'')) || (t.starts_with('"') && t.ends_with('"')))
+    {
+        t[1..t.len() - 1].to_string()
+    } else {
+        t.to_string()
+    }
+}
+
+fn eval_marker_atom(expr: &str, consumer: Option<(u64, u64)>) -> Option<bool> {
+    // (operator, full literal incl. padding). Longest-first so `===`
+    // beats `==` and `not in` beats `in`; padded word-ops cannot match
+    // inside identifiers.
+    const OPS: &[(&str, &str)] = &[
+        ("===", "==="),
+        ("not in", " not in "),
+        ("==", "=="),
+        ("!=", "!="),
+        (">=", ">="),
+        ("<=", "<="),
+        (">", ">"),
+        ("<", "<"),
+        ("in", " in "),
+    ];
+    let mut matched: Option<(&str, usize, usize)> = None;
+    for (name, lit) in OPS {
+        if let Some(pos) = expr.find(lit) {
+            let cur_len = matched.map(|(_, _, l)| l).unwrap_or(0);
+            if lit.len() >= cur_len {
+                matched = Some((name, pos, lit.len()));
+            }
+        }
+    }
+    let (op, pos, len) = matched?;
+    let var = expr[..pos].trim();
+    let val = unquote(expr[pos + len..].trim());
+    if op == "in" || op == "not in" {
+        // Evaluated against version lists in pip; a literal right side
+        // is unhandled — unknown.
+        return None;
+    }
+    match var {
+        "extra" => None,
+        "python_version" | "python_full_version" => {
+            let (major, minor) = consumer?;
+            eval_version_cmp(op, &val, major, minor)
+        }
+        "sys_platform" => eval_str_cmp(op, &val, current_sys_platform()),
+        "os_name" => eval_str_cmp(op, &val, if cfg!(windows) { "nt" } else { "posix" }),
+        "platform_system" => eval_str_cmp(
+            op,
+            &val,
+            if cfg!(windows) {
+                "Windows"
+            } else if cfg!(target_os = "macos") {
+                "Darwin"
+            } else {
+                "Linux"
+            },
+        ),
+        "platform_machine" => eval_str_cmp(op, &val, std::env::consts::ARCH),
+        _ => None,
+    }
+}
+
+fn current_sys_platform() -> &'static str {
+    if cfg!(windows) {
+        "win32"
+    } else if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "linux"
+    }
+}
+
+fn eval_str_cmp(op: &str, expected: &str, actual: &str) -> Option<bool> {
+    match op {
+        "==" => Some(actual == expected),
+        "!=" => Some(actual != expected),
+        _ => None,
+    }
+}
+
+/// Compare a (major, minor) consumer against a marker version (`3.9`,
+/// `3.9.*`, `39`?). `.*` suffix = prefix match (PEP 440 wildcard).
+fn eval_version_cmp(op: &str, expected: &str, major: u64, minor: u64) -> Option<bool> {
+    let exp = expected.trim();
+    let (prefix_match, exp) = match exp.strip_suffix(".*") {
+        Some(p) => (true, p),
+        None => (false, exp),
+    };
+    let parts: Vec<&str> = exp.split('.').collect();
+    let (emajor, eminor): (u64, Option<u64>) = match parts.as_slice() {
+        [maj] => (maj.parse().ok()?, None),
+        [maj, min, ..] => (maj.parse().ok()?, min.parse().ok()),
+        _ => return None,
+    };
+    if prefix_match {
+        // `== 3.9.*`: major must equal; minor compared only when given.
+        let major_eq = major == emajor;
+        let minor_eq = eminor.is_none_or(|m| minor == m);
+        return match op {
+            "==" => Some(major_eq && minor_eq),
+            "!=" => Some(!(major_eq && minor_eq)),
+            _ => None,
+        };
+    }
+    let eminor = eminor?;
+    let ord = (major, minor).cmp(&(emajor, eminor));
+    match op {
+        "==" => Some(ord == std::cmp::Ordering::Equal),
+        "!=" => Some(ord != std::cmp::Ordering::Equal),
+        ">" => Some(ord == std::cmp::Ordering::Greater),
+        ">=" => Some(ord != std::cmp::Ordering::Less),
+        "<" => Some(ord == std::cmp::Ordering::Less),
+        "<=" => Some(ord != std::cmp::Ordering::Greater),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod marker_tests {
+    use super::*;
+
+    #[test]
+    fn sys_platform_markers_evaluate() {
+        // This machine's platform must match itself and reject others.
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(marker_applies("sys_platform == 'linux'", None), Some(true));
+            assert_eq!(
+                marker_applies("sys_platform == 'darwin'", None),
+                Some(false)
+            );
+            assert_eq!(marker_applies("sys_platform == 'win32'", None), Some(false));
+            assert_eq!(marker_applies("os_name == 'posix'", None), Some(true));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(marker_applies("sys_platform == 'darwin'", None), Some(true));
+            assert_eq!(marker_applies("sys_platform == 'linux'", None), Some(false));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(marker_applies("sys_platform == 'win32'", None), Some(true));
+            assert_eq!(marker_applies("os_name == 'nt'", None), Some(true));
+        }
+        assert_eq!(marker_applies("extra == 'foo'", None), None);
+        // No consumer configured: version grounds never exclude.
+        assert_eq!(marker_applies("python_version < '3.0'", None), None);
+        assert_eq!(marker_applies("python_version > '3.99'", None), None);
+        // Consumer 3.9: version grounds decide.
+        assert_eq!(
+            marker_applies("python_version < '3.10'", Some((3, 9))),
+            Some(true)
+        );
+        assert_eq!(
+            marker_applies("python_version >= '3.10'", Some((3, 9))),
+            Some(false)
+        );
+        assert_eq!(
+            marker_applies("python_version == '3.9.*'", Some((3, 9))),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn python_version_markers_need_consumer() {
+        // Without MGC_PYTHON_VERSION the version is unknown — never
+        // exclude on version grounds alone.
+        assert_eq!(marker_applies("python_version < '3.0'", None), None);
+    }
+
+    #[test]
+    fn compound_markers_compose() {
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(
+                marker_applies(
+                    "sys_platform == 'darwin' and python_version > '3.99'",
+                    Some((3, 9))
+                ),
+                Some(false)
+            );
+            assert_eq!(
+                marker_applies(
+                    "sys_platform == 'linux' and python_version > '3.99'",
+                    Some((3, 9))
+                ),
+                None
+            );
+            assert_eq!(
+                marker_applies("sys_platform == 'darwin' or sys_platform == 'linux'", None),
+                Some(true)
+            );
+        }
     }
 }
