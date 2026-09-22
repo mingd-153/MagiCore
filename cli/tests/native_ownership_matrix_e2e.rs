@@ -829,3 +829,45 @@ fn matrix_iot_esp32_add_install_native() {
         "mgc.lock must record serde_json:\n{lock}"
     );
 }
+
+fn outdated_bevy(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"game\"\n[game]\nengine = \"bevy\"\n",
+    );
+    write(
+        dir,
+        "Cargo.toml",
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde_json = \"1.0.100\"\n",
+    );
+}
+
+fn outdated_esp32(dir: &std::path::Path) {
+    write(
+        dir,
+        "mgc.toml",
+        "name = \"m\"\necosystem = \"iot\"\n[iot]\nframework = \"esp32-rust\"\n",
+    );
+    write(
+        dir,
+        "Cargo.toml",
+        "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde_json = \"1.0.100\"\n",
+    );
+}
+
+#[test]
+fn matrix_native_update_game_iot() {
+    native_update_cell(
+        outdated_bevy,
+        &["update-game", "serde_json"],
+        "Cargo.toml",
+        "1.0.100",
+    );
+    native_update_cell(
+        outdated_esp32,
+        &["update-iot", "serde_json"],
+        "Cargo.toml",
+        "1.0.100",
+    );
+}

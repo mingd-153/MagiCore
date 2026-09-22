@@ -407,7 +407,6 @@ fn game_iot_clo_need_declared_ecosystem() {
 fn delegated_lane_fails_closed_without_compat() {
     for (core, eco, op) in [
         ("ai", Some(eco::PYTHON), DepOp::Remove),
-        ("iot", Some("esp32-rust"), DepOp::Update),
         ("clo", Some(eco::TERRAFORM), DepOp::Install),
     ] {
         let err = gate(&ctx(core, eco, op), None, &native(), None).unwrap_err();

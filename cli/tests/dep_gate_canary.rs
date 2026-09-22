@@ -860,3 +860,75 @@ fn lib_update_native_ignores_compat_without_spawning() {
         sandbox.marker_text()
     );
 }
+
+fn swift_package_project(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"canary-swift\"\necosystem = \"app\"\n[app]\nlanguage = \"swift\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Package.swift"),
+        concat!(
+            "// swift-tools-version: 5.9\n",
+            "import PackageDescription\n\n",
+            "let package = Package(\n",
+            "    name: \"canary-swift\",\n",
+            "    dependencies: [\n",
+            "        .package(url: \"https://github.com/apple/swift-argument-parser\", from: \"1.5.0\"),\n",
+            "    ],\n",
+            "    targets: [\n",
+            "        .executableTarget(name: \"canary-swift\", dependencies: [\n",
+            "            .product(name: \"ArgumentParser\", package: \"swift-argument-parser\"),\n",
+            "        ]),\n",
+            "    ]\n",
+            ")\n",
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("Sources").join("canary-swift")).unwrap();
+    std::fs::write(
+        dir.join("Sources").join("canary-swift").join("main.swift"),
+        "import ArgumentParser\nprint(\"ok\")\n",
+    )
+    .unwrap();
+}
+
+/// Honest delegated lane, proven with the REAL toolchain: explicit
+/// compat opens `swift package resolve`, which must succeed. Skipped
+/// where swift is absent (env-gated, like npm parity).
+#[test]
+fn swift_install_compat_runs_real_toolchain() {
+    let probe = std::process::Command::new("swift")
+        .arg("--version")
+        .output();
+    if probe.is_err() || !probe.map(|o| o.status.success()).unwrap_or(false) {
+        eprintln!("SKIP: swift toolchain absent");
+        return;
+    }
+    let project = TempDir::new().unwrap();
+    swift_package_project(project.path());
+
+    // No canary shims here on purpose: this test PROVES the delegated
+    // lane runs the real tool (the canary files above prove the
+    // opposite for native lanes).
+    let out = std::process::Command::new(mgc_binary())
+        .args(["install-app", "--compat-runtime", "swift"])
+        .current_dir(project.path())
+        .env_remove("MGC_COMPAT_RUNTIME")
+        .output()
+        .expect("spawn mgc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "compat swift install must succeed:\n{text}"
+    );
+    assert!(
+        project.path().join("Package.resolved").is_file() || project.path().join(".build").exists(),
+        "swift must have resolved (Package.resolved or .build):\n{text}"
+    );
+}

@@ -302,18 +302,20 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
             tools: &["flutter", "gradle", "swift", "xcodebuild", "pod"],
         },
         ("app", Some(eco::OBJC), _) => DepOwner::Unsupported,
-        // Game bevy with a Cargo.toml installs/adds natively (shared
-        // crates engine → mgc.lock, zero `cargo` spawn). Other engines
-        // stay as below.
+        // Game bevy with a Cargo.toml installs/adds/updates natively
+        // (shared crates engine → mgc.lock, zero `cargo` spawn). Other
+        // engines stay as below.
         // (Bevy có Cargo.toml thì native.)
-        ("game", Some(eco::BEVY), DepOp::Install | DepOp::Add) => DepOwner::Native,
+        ("game", Some(eco::BEVY), DepOp::Install | DepOp::Add | DepOp::Update) => DepOwner::Native,
         // Game bevy lane: cargo owns the graph.
         ("game", Some(eco::BEVY), _) => DepOwner::Delegated { tools: &["cargo"] },
-        // IoT esp32-rust with a Cargo.toml installs/adds natively
+        // IoT esp32-rust with a Cargo.toml installs/adds/updates natively
         // (shared crates engine → mgc.lock, zero `cargo` spawn). Other
         // frameworks stay as below.
         // (esp32-rust có Cargo.toml thì native.)
-        ("iot", Some("esp32-rust"), DepOp::Install | DepOp::Add) => DepOwner::Native,
+        ("iot", Some("esp32-rust"), DepOp::Install | DepOp::Add | DepOp::Update) => {
+            DepOwner::Native
+        }
         // IoT frameworks own theirs (esp32-rust/cargo, pio, zephyr/west).
         // The ecosystem slot carries the detected framework id — the iot
         // lane has no separate language layer. Zephyr add/remove have NO
