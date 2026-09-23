@@ -135,7 +135,6 @@ fn rollback_error_carries_both_install_and_restore_failures() {
 
 #[tokio::test]
 async fn interrupted_remove_journal_recovers_manifest_and_lock() {
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     // Hermetic crash-recovery test (NO registry): stage a journal, run
     // the op's own write + post-image, then "crash" — a fresh process
     // (flag dead, pid ignored) must restore the pre-image manifest
@@ -157,7 +156,7 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
     stage_mutation_journal(
         root,
-        "remove",
+        MutationOperation::Remove,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -176,9 +175,8 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     std::fs::write(root.join("mgc.lock"), "LOCK-DRIFTED").unwrap();
     let drifted = adapter.parse_manifest(root).await.unwrap();
     record_post_image(root, &drifted, &write_lock).unwrap();
-    let journal_path = root.join(".magicore/journal/remove/journal.json");
+    let journal_path = root.join(".magicore/journal/dependency-mutation/journal.json");
 
-    fresh_process_after_crash();
     recover_interrupted_remove(&adapter, root, &write_lock)
         .await
         .unwrap();
@@ -209,20 +207,6 @@ fn python_fixture(root: &std::path::Path) {
     std::fs::write(root.join("mgc.lock"), "LOCK-BEFORE").unwrap();
 }
 
-/// Emulate a FRESH process after a crash: the in-memory ownership flag
-/// dies with the process — a new process must recover staged journals
-/// regardless of the on-disk pid (P0: pid reuse).
-/// (Giả process mới sau crash — cờ ownership đã chết cùng process cũ.)
-fn fresh_process_after_crash() {
-    MUTATION_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
-}
-
-/// Serializes the journal tests: they share the process-global
-/// MUTATION_ACTIVE flag (like the real single-op CLI process), so they
-/// must not overlap each other.
-/// (Test journal chạy nối tiếp — chung cờ toàn cục như process thật.)
-static JOURNAL_TEST_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 fn test_adapter_and_lock(
     root: &std::path::Path,
 ) -> (
@@ -238,7 +222,6 @@ fn test_adapter_and_lock(
 
 #[tokio::test]
 async fn completed_journal_deletes_without_restoring() {
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     // P0-A: a stale COMPLETED journal (success + failed cleanup) must
     // NEVER roll back — recovery only deletes it, files stay untouched.
     // (Journal completed sót: chỉ xóa, không restore.)
@@ -250,7 +233,7 @@ async fn completed_journal_deletes_without_restoring() {
     let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
     stage_mutation_journal(
         root,
-        "remove",
+        MutationOperation::Remove,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -259,7 +242,7 @@ async fn completed_journal_deletes_without_restoring() {
     // Op "succeeded" elsewhere, then cleanup failed: flip to completed
     // with a FOREIGN pid (as if staged by the dead process)…
     // (Giả op đã xong ở process khác: completed + pid lạ.)
-    let journal_path = root.join(".magicore/journal/remove/journal.json");
+    let journal_path = root.join(".magicore/journal/dependency-mutation/journal.json");
     let mut journal: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&journal_path).unwrap()).unwrap();
     journal["pid"] = serde_json::json!(u64::from(std::process::id()) + 1_000_000);
@@ -278,7 +261,6 @@ async fn completed_journal_deletes_without_restoring() {
     .unwrap();
     std::fs::write(root.join("mgc.lock"), "LOCK-NEW-STATE").unwrap();
 
-    fresh_process_after_crash();
     recover_interrupted_remove(&adapter, root, &write_lock)
         .await
         .unwrap();
@@ -298,17 +280,15 @@ async fn completed_journal_deletes_without_restoring() {
 
 #[tokio::test]
 async fn corrupt_journal_fails_closed() {
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     // Journal hỏng: không đoán — lỗi fail-closed.
     // (Corrupt journal fails closed, never guesses.)
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     python_fixture(root);
     let (adapter, write_lock) = test_adapter_and_lock(root);
-    let journal_dir = root.join(".magicore/journal/remove");
+    let journal_dir = root.join(".magicore/journal/dependency-mutation");
     std::fs::create_dir_all(&journal_dir).unwrap();
     std::fs::write(journal_dir.join("journal.json"), "{not json").unwrap();
-    fresh_process_after_crash();
     recover_interrupted_remove(&adapter, root, &write_lock)
         .await
         .expect_err("corrupt journal must fail closed");
@@ -316,14 +296,12 @@ async fn corrupt_journal_fails_closed() {
 
 #[tokio::test]
 async fn missing_journal_is_a_noop() {
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     // Không có journal: không làm gì.
     // (Missing journal is a no-op.)
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     python_fixture(root);
     let (adapter, write_lock) = test_adapter_and_lock(root);
-    fresh_process_after_crash();
     recover_interrupted_remove(&adapter, root, &write_lock)
         .await
         .unwrap();
@@ -336,7 +314,6 @@ async fn missing_journal_is_a_noop() {
 #[cfg(unix)]
 #[tokio::test]
 async fn symlinked_journal_dir_is_refused() {
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     // Journal dir là symlink: từ chối, không ghi ra ngoài project.
     // (Symlinked journal dir is refused, never followed.)
     use std::os::unix::fs::symlink;
@@ -349,10 +326,10 @@ async fn symlinked_journal_dir_is_refused() {
     let outside = tempfile::tempdir().unwrap();
     let journal_parent = root.join(".magicore/journal");
     std::fs::create_dir_all(&journal_parent).unwrap();
-    symlink(outside.path(), journal_parent.join("remove")).unwrap();
+    symlink(outside.path(), journal_parent.join("dependency-mutation")).unwrap();
     stage_mutation_journal(
         root,
-        "remove",
+        MutationOperation::Remove,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -412,7 +389,6 @@ fn canonical_digest_distinguishes_ranges_groups_and_project() {
 #[cfg(unix)]
 #[tokio::test]
 async fn symlinked_journal_file_is_never_followed() {
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     // journal.json là symlink trỏ ra ngoài: recovery từ chối, artifact
     // giữ nguyên (Item 2 — đọc sau khi chống, không trước).
     // (Symlinked journal.json is refused, never followed.)
@@ -425,7 +401,7 @@ async fn symlinked_journal_file_is_never_followed() {
     let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
     stage_mutation_journal(
         root,
-        "remove",
+        MutationOperation::Remove,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -434,7 +410,7 @@ async fn symlinked_journal_file_is_never_followed() {
     // Swap journal.json for a link to an "in_progress" journal outside
     // the project — a naive read-then-validate would restore from it.
     // (Tráo journal.json bằng link ra ngoài — đọc ngây thơ sẽ dính.)
-    let journal_path = root.join(".magicore/journal/remove/journal.json");
+    let journal_path = root.join(".magicore/journal/dependency-mutation/journal.json");
     let outside = tempfile::tempdir().unwrap();
     let evil = outside.path().join("evil.json");
     std::fs::write(
@@ -444,7 +420,6 @@ async fn symlinked_journal_file_is_never_followed() {
     .unwrap();
     std::fs::remove_file(&journal_path).unwrap();
     symlink(&evil, &journal_path).unwrap();
-    fresh_process_after_crash();
     recover_interrupted_remove(&adapter, root, &write_lock)
         .await
         .expect_err("symlinked journal.json must be refused");
@@ -483,7 +458,6 @@ async fn user_edit_after_crash_fails_closed() {
     // User sửa manifest sau crash (không khớp pre/post): recovery LỖI,
     // không ghi đè việc của user; artifact giữ nguyên.
     // (Post-crash user edits fail closed — never overwritten.)
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     python_fixture(root);
@@ -492,7 +466,7 @@ async fn user_edit_after_crash_fails_closed() {
     let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
     stage_mutation_journal(
         root,
-        "remove",
+        MutationOperation::Remove,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -508,7 +482,6 @@ async fn user_edit_after_crash_fails_closed() {
     )
     .unwrap();
 
-    fresh_process_after_crash();
     recover_interrupted_remove(&adapter, root, &write_lock)
         .await
         .expect_err("user edits after crash must fail closed");
@@ -524,7 +497,6 @@ async fn missing_manifest_backup_fails_closed() {
     // Journal in_progress nhưng mất backup: lỗi, không đoán từ manifest
     // hiện tại (pre-image đã mất).
     // (Missing backup fails closed — the pre-image is gone.)
-    let _serial = JOURNAL_TEST_SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     python_fixture(root);
@@ -533,16 +505,139 @@ async fn missing_manifest_backup_fails_closed() {
     let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
     stage_mutation_journal(
         root,
-        "remove",
+        MutationOperation::Remove,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
     )
     .unwrap();
-    std::fs::remove_file(root.join(".magicore/journal/remove/manifest.json")).unwrap();
+    std::fs::remove_file(root.join(".magicore/journal/dependency-mutation/manifest.json")).unwrap();
 
-    fresh_process_after_crash();
     recover_interrupted_remove(&adapter, root, &write_lock)
         .await
         .expect_err("missing backup must fail closed");
+}
+
+#[tokio::test]
+async fn staged_journal_in_project_a_never_blocks_project_b() {
+    // P0-2: không còn cờ global — project A giữ journal đang mở, project
+    // B vẫn stage/post/finish bình thường trong CÙNG process (MCP,
+    // monorepo, test runner). Lock OS riêng từng project nên không chặn nhau.
+    // (An open journal in A never affects B in the same process.)
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    python_fixture(dir_a.path());
+    python_fixture(dir_b.path());
+    let (adapter_a, lock_a) = test_adapter_and_lock(dir_a.path());
+    let (adapter_b, lock_b) = test_adapter_and_lock(dir_b.path());
+    let manifest_a = adapter_a.parse_manifest(dir_a.path()).await.unwrap();
+    let snapshot_a = MutationSnapshot::capture(&manifest_a, dir_a.path(), &lock_a).unwrap();
+    // A stages and HOLDS (guard + journal stay alive).
+    // (A stage rồi giữ — không finish.)
+    stage_mutation_journal(
+        dir_a.path(),
+        MutationOperation::Remove,
+        &["attrs".to_string()],
+        &snapshot_a,
+        &lock_a,
+    )
+    .unwrap();
+    // B runs a full stage → post → finish cycle unaffected.
+    // (B chạy trọn vòng không ảnh hưởng.)
+    let manifest_b = adapter_b.parse_manifest(dir_b.path()).await.unwrap();
+    let snapshot_b = MutationSnapshot::capture(&manifest_b, dir_b.path(), &lock_b).unwrap();
+    stage_mutation_journal(
+        dir_b.path(),
+        MutationOperation::Remove,
+        &["attrs".to_string()],
+        &snapshot_b,
+        &lock_b,
+    )
+    .unwrap();
+    record_post_image(dir_b.path(), &manifest_b, &lock_b).unwrap();
+    finish_mutation_journal(dir_b.path(), &lock_b).unwrap();
+    assert!(
+        !dir_b
+            .path()
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "B's journal must clear"
+    );
+    assert!(
+        dir_a
+            .path()
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "A's held journal must be untouched by B"
+    );
+    drop(lock_a);
+}
+
+#[tokio::test]
+async fn aborted_task_leaves_recoverable_journal() {
+    // Hủy task giữa mutation (panic/cancel): guard rớt theo future,
+    // lock OS tự nhả, journal ở lại cho gateway entry sau (không còn
+    // ownership in-memory nào để leak).
+    // (Aborted task leaves a recoverable journal, no leaked ownership.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    python_fixture(&root);
+    let root_clone = root.clone();
+    let handle = tokio::spawn(async move {
+        let adapter = mgc_lib_adapter::adapter_for(&root_clone, None, None)
+            .unwrap()
+            .expect("adapter");
+        // Full gateway entry (acquire + recover), then stage, then hang
+        // forever mid-mutation — the abort below simulates SIGKILL.
+        // (Entry gateway thật rồi treo giữa mutation — abort giả SIGKILL.)
+        let guard = begin_dependency_mutation(&adapter, &root_clone, MutationOperation::Remove)
+            .await
+            .unwrap();
+        let manifest = adapter.parse_manifest(&root_clone).await.unwrap();
+        let snapshot = MutationSnapshot::capture(&manifest, &root_clone, &guard).unwrap();
+        stage_mutation_journal(
+            &root_clone,
+            MutationOperation::Remove,
+            &["attrs".to_string()],
+            &snapshot,
+            &guard,
+        )
+        .unwrap();
+        futures_util::future::pending::<()>().await;
+        #[allow(unreachable_code)]
+        drop(guard);
+    });
+    // Let the task stage, then abort it mid-mutation.
+    // (Cho task stage xong rồi hủy giữa chừng.)
+    let mut staged = false;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        if root
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists()
+        {
+            staged = true;
+            break;
+        }
+    }
+    assert!(staged, "task must stage before abort");
+    handle.abort();
+    let _ = handle.await;
+
+    // A fresh gateway entry acquires (lock auto-released on abort),
+    // recovers the staged journal (current == pre: nothing was written),
+    // and proceeds — journal gone afterwards.
+    // (Entry mới acquire, phục hồi journal dở, rồi đi tiếp.)
+    let adapter = mgc_lib_adapter::adapter_for(&root, None, None)
+        .unwrap()
+        .expect("adapter");
+    begin_dependency_mutation(&adapter, &root, MutationOperation::Remove)
+        .await
+        .expect("fresh entry must acquire and recover after abort");
+    assert!(
+        !root
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "aborted op's journal must be recoverable by the next entry"
+    );
 }

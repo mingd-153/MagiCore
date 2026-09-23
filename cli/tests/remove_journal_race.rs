@@ -224,7 +224,7 @@ fn concurrent_removes_serialize_without_journal_corruption() {
     );
     assert!(
         !project
-            .join(".magicore/journal/remove/journal.json")
+            .join(".magicore/journal/dependency-mutation/journal.json")
             .exists(),
         "no stale journal may survive two serialized removes"
     );
@@ -358,7 +358,7 @@ fn concurrent_remove_and_add_converge() {
     );
     assert!(
         !project
-            .join(".magicore/journal/remove/journal.json")
+            .join(".magicore/journal/dependency-mutation/journal.json")
             .exists(),
         "no stale journal may survive serialized mutations"
     );
@@ -425,7 +425,7 @@ fn concurrent_updates_serialize_without_loss() {
     }
     assert!(
         !project
-            .join(".magicore/journal/remove/journal.json")
+            .join(".magicore/journal/dependency-mutation/journal.json")
             .exists(),
         "no stale journal may survive serialized updates"
     );
@@ -472,7 +472,7 @@ fn sigkilled_remove_recovers_before_next_mutation() {
     assert!(warm.wait().unwrap().success(), "warm add must succeed");
 
     // Start a remove WITH install tail, then SIGKILL it mid-flight.
-    // MGC_REMOVE_TAIL_DELAY_MS parks the victim in its tail so the kill
+    // MGC_MUTATION_TAIL_DELAY_MS parks the victim in its tail so the kill
     // deterministically lands after the manifest write + post-image.
     // (Delay hook giữ victim ở tail — kill trúng chắc sau khi đã ghi.)
     let victim_out = std::fs::File::create(log_dir.join("victim.out")).unwrap();
@@ -487,7 +487,7 @@ fn sigkilled_remove_recovers_before_next_mutation() {
         .env("MAGICORE_WEB_REGISTRY_URL", &fixture.url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", &fixture.url)
         .env("MGC_CACHE_DIR", project.join(".magicore"))
-        .env("MGC_REMOVE_TAIL_DELAY_MS", "8000")
+        .env("MGC_MUTATION_TAIL_DELAY_MS", "8000")
         .stdout(victim_out)
         .stderr(victim_err);
     let mut child = victim.spawn().unwrap();
@@ -536,8 +536,306 @@ fn sigkilled_remove_recovers_before_next_mutation() {
     assert_eq!(parsed["name"], "race");
     assert!(
         !project
-            .join(".magicore/journal/remove/journal.json")
+            .join(".magicore/journal/dependency-mutation/journal.json")
             .exists(),
         "no journal may survive the recovery"
+    );
+}
+
+fn generic_install_cmd(
+    mgc: &str,
+    project: &Path,
+    package: &str,
+    registry_url: &str,
+    log_dir: &Path,
+    tag: &str,
+    extra_env: &[(&str, &str)],
+) -> Command {
+    let stdout = std::fs::File::create(log_dir.join(format!("{tag}.out"))).unwrap();
+    let stderr = std::fs::File::create(log_dir.join(format!("{tag}.err"))).unwrap();
+    // `bench <pkg>` routes through the GENERIC install_into_root
+    // mutation path (manifest edit + journal + tail) — install::run is
+    // otherwise reachable via MCP/benchmark programmatic callers.
+    // (bench đi install generic — đường bypass cũ.)
+    let mut cmd = Command::new(mgc);
+    cmd.arg("bench")
+        .arg(package)
+        .current_dir(project)
+        .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
+        .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url)
+        .env("MGC_CACHE_DIR", project.join(".magicore"))
+        .stdout(stdout)
+        .stderr(stderr);
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    cmd
+}
+
+#[test]
+fn generic_install_races_remove_without_loss() {
+    // P0-1: generic `install B` (manifest mutation qua install_into_root)
+    // đua với `remove A` — gateway serialize, cuối hội tụ: có B mất A,
+    // không journal sót.
+    // (Generic install races remove — both serialize, state converges.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("site");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("package.json"),
+        r#"{ "name": "race", "version": "1.0.0", "dependencies": { "mgc-race-alpha": "9.9.9" } }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let fixture = NpmFixture::new(&[("mgc-race-alpha", "9.9.9"), ("mgc-race-beta", "9.9.9")]);
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let mut installing = generic_install_cmd(
+        &mgc,
+        &project,
+        "mgc-race-beta",
+        &fixture.url,
+        &log_dir,
+        "ginst",
+        &[],
+    )
+    .spawn()
+    .unwrap();
+    let mut removing = remove_cmd(&mgc, &project, "mgc-race-alpha", &log_dir, "rm")
+        .spawn()
+        .unwrap();
+    let install_status = installing.wait().unwrap();
+    let rm_status = removing.wait().unwrap();
+    assert!(
+        install_status.success(),
+        "generic install must succeed:\n{}",
+        read_log(&log_dir, "ginst", "err")
+    );
+    assert!(
+        rm_status.success(),
+        "remove must succeed:\n{}",
+        read_log(&log_dir, "rm", "err")
+    );
+
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        manifest.contains("mgc-race-beta"),
+        "installed dep must land:\n{manifest}"
+    );
+    assert!(
+        !manifest.contains("mgc-race-alpha"),
+        "removed dep must stay removed:\n{manifest}"
+    );
+    assert!(
+        !project
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "no stale journal may survive serialized mutations"
+    );
+    for tag in ["ginst", "rm"] {
+        assert_no_phantom_recovery(&log_dir, tag);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sigkilled_generic_install_recovers_before_next_mutation() {
+    // SIGKILL generic install giữa tail: op sau phục hồi (current==post
+    // → về pre) rồi thành công; manifest cuối = pre + tail mới, journal hết.
+    // (SIGKILL generic install mid-tail — next op recovers, then lands.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("site");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("package.json"),
+        r#"{ "name": "race", "version": "1.0.0", "dependencies": { "mgc-race-alpha": "9.9.9" } }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let fixture = NpmFixture::new(&[("mgc-race-alpha", "9.9.9"), ("mgc-race-beta", "9.9.9")]);
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let mut victim = generic_install_cmd(
+        &mgc,
+        &project,
+        "mgc-race-beta",
+        &fixture.url,
+        &log_dir,
+        "victim",
+        &[("MGC_MUTATION_TAIL_DELAY_MS", "8000")],
+    )
+    .spawn()
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let _ = Command::new("kill")
+        .arg("-9")
+        .arg(victim.id().to_string())
+        .status();
+    let victim_status = victim.wait().unwrap();
+    assert!(
+        !victim_status.success(),
+        "SIGKILLed install must not report success"
+    );
+    // The kill landed post-stage: a live in_progress journal must exist
+    // right now (recovery has not run yet — this op is next).
+    // (Kill trúng sau stage: journal in_progress còn đó.)
+    assert!(
+        project
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "killed mid-tail install must leave its staged journal behind"
+    );
+
+    // Next op: gateway recovery restores the pre-image (alpha only),
+    // then its own work lands.
+    // (Op sau: recovery về pre rồi làm việc của nó.)
+    let mut adding = add_cmd(
+        &mgc,
+        &project,
+        "mgc-race-beta",
+        &fixture.url,
+        &log_dir,
+        "after",
+    )
+    .spawn()
+    .unwrap();
+    let add_status = adding.wait().unwrap();
+    assert!(
+        add_status.success(),
+        "add after SIGKILL must succeed:\n{}",
+        read_log(&log_dir, "after", "err")
+    );
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        manifest.contains("mgc-race-beta"),
+        "added dep must land:\n{manifest}"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(parsed["name"], "race");
+    assert!(
+        !project
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "no journal may survive the recovery"
+    );
+}
+
+#[test]
+fn fault_injection_after_manifest_write_rolls_back() {
+    // MGC_MUTATION_FAILPOINT=after-manifest-write trên remove --no-install
+    // (hermetic, không registry): op lỗi, manifest về pre (còn dep),
+    // journal dọn sạch, error nêu fault.
+    // (Fault injection rolls back — manifest restored, journal cleared.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("site");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("package.json"),
+        r#"{ "name": "race", "version": "1.0.0", "dependencies": { "is-odd": "3.0.1" } }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let stdout = std::fs::File::create(log_dir.join("fault.out")).unwrap();
+    let stderr = std::fs::File::create(log_dir.join("fault.err")).unwrap();
+    let status = Command::new(&mgc)
+        .arg("--core")
+        .arg("web")
+        .arg("remove")
+        .arg("is-odd")
+        .arg("--no-install")
+        .current_dir(&project)
+        .env("MGC_CACHE_DIR", project.join(".magicore"))
+        .env("MGC_MUTATION_FAILPOINT", "after-manifest-write")
+        .stdout(stdout)
+        .stderr(stderr)
+        .status()
+        .unwrap();
+    assert!(!status.success(), "injected fault must fail the op");
+    let log = read_log(&log_dir, "fault", "out") + &read_log(&log_dir, "fault", "err");
+    assert!(
+        log.contains("MGC_MUTATION_FAILPOINT"),
+        "error must name the injected fault:\n{log}"
+    );
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        manifest.contains("is-odd"),
+        "rolled-back manifest must still carry the dep:\n{manifest}"
+    );
+    assert!(
+        !project
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "journal must be disarmed and cleared after rollback"
+    );
+}
+
+#[test]
+fn fault_injection_journal_complete_keeps_journal_then_recovers() {
+    // journal-complete lỗi: op lỗi + journal GIỮ in_progress; chạy lại
+    // sạch → recovery (current==post) + thành công + hết journal.
+    // (Failed disarm keeps the journal — a clean re-run recovers.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("site");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("package.json"),
+        r#"{ "name": "race", "version": "1.0.0", "dependencies": { "is-odd": "3.0.1" } }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let run_remove = |tag: &str, failpoint: Option<&str>| -> std::process::ExitStatus {
+        let stdout = std::fs::File::create(log_dir.join(format!("{tag}.out"))).unwrap();
+        let stderr = std::fs::File::create(log_dir.join(format!("{tag}.err"))).unwrap();
+        let mut cmd = Command::new(&mgc);
+        cmd.arg("--core")
+            .arg("web")
+            .arg("remove")
+            .arg("is-odd")
+            .arg("--no-install")
+            .current_dir(&project)
+            .env("MGC_CACHE_DIR", project.join(".magicore"))
+            .stdout(stdout)
+            .stderr(stderr);
+        if let Some(phase) = failpoint {
+            cmd.env("MGC_MUTATION_FAILPOINT", phase);
+        }
+        cmd.status().unwrap()
+    };
+    let first = run_remove("fault", Some("journal-complete"));
+    assert!(!first.success(), "disarm fault must fail the op");
+    assert!(
+        project
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "journal must be KEPT when disarming fails"
+    );
+    let second = run_remove("clean", None);
+    assert!(
+        second.success(),
+        "clean re-run must recover and succeed:\n{}",
+        read_log(&log_dir, "clean", "err")
+    );
+    assert!(
+        !project
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "journal must be gone after recovery"
+    );
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        !manifest.contains("is-odd"),
+        "recovered re-run completes the removal:\n{manifest}"
     );
 }

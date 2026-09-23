@@ -235,7 +235,18 @@ async fn install_into_root(
         return Err(crate::error::too_many_packages(packages.len(), "install"));
     }
 
-    let started_at = std::time::Instant::now();
+    // Mutation gateway (P0-1): the generic path mutates the manifest
+    // below (packages loop + write) and MUST NOT bypass lock, recovery,
+    // journal and rollback like the per-core lanes get. MCP, benchmark,
+    // workspace and monorepo installs all funnel through here.
+    // (Install generic qua gateway — hết bypass.)
+    let write_lock = crate::commands::core::shared::begin_dependency_mutation(
+        adapter,
+        project_root,
+        crate::commands::core::shared::MutationOperation::Install,
+    )
+    .await?;
+
     let add_cmd = match adapter.name() {
         "web" => "mgc add".to_string(),
         other => format!("mgc add-{other}"),
@@ -244,6 +255,20 @@ async fn install_into_root(
     let spinner = create_spinner("  Reading project manifest...");
     let mut manifest = adapter.parse_manifest(project_root).await?;
     spinner.finish_and_clear();
+
+    // Pre-image for the install journal (P0-1): staged only when mgc
+    // actually rewrites an owned manifest below.
+    // (Snapshot pre-image cho journal install.)
+    let install_snapshot = if !packages.is_empty() && adapter.manifest_owned() {
+        Some(crate::commands::core::shared::MutationSnapshot::capture(
+            &manifest,
+            project_root,
+            &write_lock,
+        )?)
+    } else {
+        None
+    };
+    let mut install_journaled = false;
 
     if !packages.is_empty() {
         for package in packages {
@@ -268,7 +293,43 @@ async fn install_into_root(
             manifest.add_dep(saved_spec, false, false, false);
         }
 
-        adapter.write_manifest(project_root, &manifest).await?;
+        // Journaled write (P0-1): same transaction protocol as the
+        // per-core lanes — stage, write, post-image, all rollback-routed.
+        // Unjournaled (toolchain-owned manifest) keeps legacy behavior.
+        // (Ghi có journal như lane per-core.)
+        if let Some(snapshot) = install_snapshot.as_ref() {
+            use crate::commands::core::shared as core_shared;
+            core_shared::stage_mutation_journal(
+                project_root,
+                core_shared::MutationOperation::Install,
+                packages,
+                snapshot,
+                &write_lock,
+            )?;
+            core_shared::journaled_step(
+                adapter,
+                project_root,
+                core_shared::MutationOperation::Install,
+                snapshot,
+                &write_lock,
+                "after-manifest-write",
+                adapter.write_manifest(project_root, &manifest),
+            )
+            .await?;
+            core_shared::journaled_step(
+                adapter,
+                project_root,
+                core_shared::MutationOperation::Install,
+                snapshot,
+                &write_lock,
+                "after-post-image",
+                async { core_shared::record_post_image(project_root, &manifest, &write_lock) },
+            )
+            .await?;
+            install_journaled = true;
+        } else {
+            adapter.write_manifest(project_root, &manifest).await?;
+        }
     }
 
     let all_deps: Vec<_> = manifest.all_dependencies().collect();
@@ -278,9 +339,70 @@ async fn install_into_root(
             "Use '{} <package>' to add dependencies.",
             style_cmd(&add_cmd)
         ));
+        if install_journaled {
+            crate::commands::core::shared::finish_mutation_journal(project_root, &write_lock)?;
+        }
         return Ok(());
     }
 
+    // Resolve + materialize + hooks under the result boundary (P0-1):
+    // every tail error rolls back to the pre-image when journaled.
+    // (Tail qua rollback khi có journal.)
+    match install_resolve_and_materialize(
+        adapter,
+        project_root,
+        &manifest,
+        frozen,
+        ignore_scripts,
+        allow_scripts,
+        offline,
+    )
+    .await
+    {
+        Ok(()) => {
+            if install_journaled {
+                crate::commands::core::shared::finish_mutation_journal(project_root, &write_lock)?;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if let Some(snapshot) = install_snapshot.as_ref() {
+                return crate::commands::core::shared::rollback_mutation(
+                    adapter,
+                    project_root,
+                    crate::commands::core::shared::MutationOperation::Install,
+                    snapshot,
+                    e,
+                    &write_lock,
+                )
+                .await;
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Generic-path resolve + materialize + hooks tail (P0-1): runs under
+/// the caller's writer guard; every error after the manifest commit
+/// point routes through rollback there. Test-only tail delay hook
+/// (MGC_MUTATION_TAIL_DELAY_MS) parks SIGKILL E2E mid-tail.
+/// (Tail resolve+install+hooks của generic path — lỗi là rollback.)
+#[allow(clippy::too_many_arguments)]
+async fn install_resolve_and_materialize(
+    adapter: &dyn mgc_types::adapter::PackageAdapter,
+    project_root: &Path,
+    manifest: &Manifest,
+    frozen: bool,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+    offline: bool,
+) -> Result<()> {
+    if let Ok(ms) = std::env::var("MGC_MUTATION_TAIL_DELAY_MS")
+        && let Ok(ms) = ms.parse::<u64>()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+    let started_at = std::time::Instant::now();
     // C0 ownership firewall (T0.3): the adapter path serves MCP +
     // workspace/monorepo installs — it passes the same gate as the
     // per-core lanes (tool set comes from the owner table: adapter-routed
@@ -367,28 +489,28 @@ async fn install_into_root(
         }
     }
 
-    let (graph, used_lockfile) = if let Some(graph) =
-        load_locked_graph(project_root, adapter.name(), &manifest)?
-    {
-        info("Using mgc.lock for install state.");
-        (graph, true)
-    } else {
-        // Frozen mode fails LOUDLY on mismatch (mirrors core/shared.rs):
-        // silently re-resolving would bless a tampered lock and rewrite
-        // it. Missing lock vs mismatched lock get distinct errors.
-        if frozen {
-            if project_root.join("mgc.lock").is_file() {
-                return Err(crate::error::frozen_lock_mismatch("install"));
+    let (graph, used_lockfile) =
+        if let Some(graph) = load_locked_graph(project_root, adapter.name(), manifest)? {
+            info("Using mgc.lock for install state.");
+            (graph, true)
+        } else {
+            // Frozen mode fails LOUDLY on mismatch (mirrors core/shared.rs):
+            // silently re-resolving would bless a tampered lock and rewrite
+            // it. Missing lock vs mismatched lock get distinct errors.
+            if frozen {
+                if project_root.join("mgc.lock").is_file() {
+                    return Err(crate::error::frozen_lock_mismatch("install"));
+                }
+                return Err(crate::error::frozen_lock_missing("install"));
             }
-            return Err(crate::error::frozen_lock_missing("install"));
-        }
-        let spinner = create_spinner(&format!("  Resolving {} dependencies...", all_deps.len()));
-        // P0/F6: arm the age gate from THIS operation's project.
-        adapter.arm_age_gate_for(project_root)?;
-        let graph = adapter.resolve(&manifest).await?;
-        spinner.finish_and_clear();
-        (graph, false)
-    };
+            let dep_count = manifest.all_dependencies().count();
+            let spinner = create_spinner(&format!("  Resolving {dep_count} dependencies..."));
+            // P0/F6: arm the age gate from THIS operation's project.
+            adapter.arm_age_gate_for(project_root)?;
+            let graph = adapter.resolve(manifest).await?;
+            spinner.finish_and_clear();
+            (graph, false)
+        };
 
     let resolve_bar = create_progress_bar(graph.len() as u64, "Resolving...");
     if used_lockfile {

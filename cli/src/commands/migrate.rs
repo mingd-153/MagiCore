@@ -56,6 +56,20 @@ async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
         .map(|d| mgc_config::project::ProjectConfig::find_project_root(&d).unwrap_or(d))
         .unwrap_or(cwd);
     let root = mgc_config::project::ProjectConfig::find_project_root(&root).unwrap_or(root);
+    // Writer lock FIRST (P0): computing the migrated bytes from a stale
+    // pre-lock read lets a concurrent mutation's lock update get
+    // overwritten (lost update). Journal check, read, migrate and write
+    // all run inside the critical section.
+    // (Lock trước, đọc sau — không migrate từ snapshot cũ.)
+    let guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+        &root,
+        Duration::from_millis(acquire_timeout_ms(&root)),
+    )
+    .map_err(|e| anyhow::anyhow!("migrate cannot acquire the project writer lock: {e}"))?;
+    // Mutation gateway parity: never migrate over an unrestored mutation
+    // journal (P0) — recover first via remove/install, then migrate.
+    // (Không migrate đè lên journal chưa phục hồi.)
+    crate::commands::core::shared::ensure_no_pending_remove_journal(&root, &guard)?;
     let lock_path = root.join("mgc.lock");
     if !lock_path.exists() {
         return Err(crate::error::migrate_no_lockfile(&root));
@@ -84,14 +98,6 @@ async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
     v4.metadata.generator = format!("mgc/{} (migrated v3->v4)", env!("CARGO_PKG_VERSION"));
     v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
     let bytes = mgc_lockfile::canonical::write_v4_document(&v4)?;
-    let guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
-        &root,
-        Duration::from_millis(acquire_timeout_ms(&root)),
-    )?;
-    // Mutation gateway parity: never migrate over an unrestored mutation
-    // journal (P0) — recover first via remove/install, then migrate.
-    // (Không migrate đè lên journal chưa phục hồi.)
-    crate::commands::core::shared::ensure_no_pending_remove_journal(&root, &guard)?;
     mgc_lockfile::atomic::atomic_write_locked(
         &guard,
         &lock_path,

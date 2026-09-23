@@ -426,13 +426,28 @@ pub async fn install(
             // }
         }
     }
-
-    for pkg in &packages {
-        let spinner = mgc_ui::create_spinner(&format!("  Adding {}...", pkg));
-        let name = mgc_types::PackageName::new(pkg)?;
-        let opts = mgc_types::adapter::AddOptions::default();
-        adapter.add(&root, &name, None, opts).await?;
-        spinner.finish_and_clear();
+    // Root-manifest package adds go through the shared mutation
+    // gateway (P0-1): adapter.add() here would parse → edit → write the
+    // manifest with no lock, no recovery, no journal — the exact generic
+    // bypass, racing concurrent mutations. shared::add resolves +
+    // rewrites identically, under lock + journal; install=false leaves
+    // the install tail to this lane's own flow below.
+    // (Add root manifest qua gateway chung — không adapter.add trực tiếp.)
+    if !packages.is_empty() {
+        shared::add(
+            adapter.as_ref(),
+            &root,
+            packages.clone(),
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .await?;
     }
 
     let project_mode = detect_project_mode(&root)?;
