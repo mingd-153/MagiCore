@@ -313,3 +313,33 @@ fn toolchain_owned_packages_rejected_before_adapter_calls() {
     // (Không packages thì qua — đường install thuần.)
     reject_toolchain_owned_packages(&adapter, &[]).unwrap();
 }
+
+#[cfg(feature = "game")]
+#[test]
+fn game_owner_preflight_bevy_passes_godot_fails() {
+    // P1-1: preflight dùng engine detect thật — bevy qua gate Native,
+    // godot rớt catch-all Unsupported (không bao giờ đánh giá bằng
+    // ownership của Bevy).
+    // (Preflight uses the detected engine — godot fails closed.)
+    let bevy = tempdir().unwrap();
+    std::fs::write(
+        bevy.path().join("mgc.toml"),
+        "name = \"g\"\necosystem = \"game\"\n[game]\nengine = \"bevy\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        bevy.path().join("Cargo.toml"),
+        "[package]\nname = \"g\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let bevy_adapter =
+        mgc_game_adapter::adapter_for(bevy.path()).expect("bevy must detect a game adapter");
+    validate_install_owner(&bevy_adapter, bevy.path()).unwrap();
+
+    let godot = tempdir().unwrap();
+    std::fs::write(godot.path().join("project.godot"), "; godot\n").unwrap();
+    let godot_adapter =
+        mgc_game_adapter::adapter_for(godot.path()).expect("godot must detect a game adapter");
+    validate_install_owner(&godot_adapter, godot.path())
+        .expect_err("godot must fail the ownership gate (Unsupported, never Bevy's cell)");
+}

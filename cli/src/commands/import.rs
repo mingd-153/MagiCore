@@ -40,6 +40,15 @@ pub async fn run(project_dir: Option<PathBuf>) -> Result<()> {
     }
     let lock_path = root.join("mgc.lock");
 
+    // Writer lock around the lock write + post-write verification
+    // (static-gate finding): lock rewrites serialize with mutations.
+    // (Lock writer quanh ghi lock.)
+    let _guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+        &root,
+        crate::commands::core::shared::writer_lock_timeout(&root),
+    )
+    .map_err(|e| anyhow::anyhow!("import cannot acquire the project writer lock: {e}"))?;
+
     let signed = match mgc_lockfile::sign_lockfile_with_default_key(&mut lockfile, &lock_path) {
         Ok(()) => true,
         Err(e) => {

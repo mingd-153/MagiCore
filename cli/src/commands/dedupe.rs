@@ -152,6 +152,15 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     };
 
     if merged > 0 && !args.dry_run {
+        // Writer lock around the lock rewrite + build verification
+        // (static-gate finding): a concurrent mutation must not
+        // interleave with the merge commit or its rollback.
+        // (Lock writer quanh ghi lock + verify build.)
+        let _guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+            &project_root,
+            crate::commands::core::shared::writer_lock_timeout(&project_root),
+        )
+        .map_err(|e| anyhow::anyhow!("dedupe cannot acquire the project writer lock: {e}"))?;
         // Verify runtime build before committing the merge (02 §5.2).
         let backup = lock_content.clone();
         let lock_path = project_root.join("mgc.lock");

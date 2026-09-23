@@ -957,3 +957,128 @@ fn generic_install_disarm_failure_rolls_back() {
         "no journal may survive"
     );
 }
+
+#[test]
+fn generic_install_after_complete_failure_rolls_back() {
+    // after-complete lỗi SAU khi completed đã persist: op lỗi, rollback
+    // về pre ngay (manifest + lock), journal completed sót; rerun sạch
+    // xóa journal rồi thành công.
+    // (after-complete fault: immediate rollback, completed journal kept,
+    // clean re-run recovers.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("site");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("package.json"),
+        r#"{ "name": "race", "version": "1.0.0", "dependencies": { "mgc-race-alpha": "9.9.9" } }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let fixture = NpmFixture::new(&[("mgc-race-alpha", "9.9.9"), ("mgc-race-beta", "9.9.9")]);
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let run_bench = |tag: &str, failpoint: Option<&str>| -> std::process::ExitStatus {
+        let mut cmd = generic_install_cmd(
+            &mgc,
+            &project,
+            "mgc-race-beta",
+            &fixture.url,
+            &log_dir,
+            tag,
+            &[],
+        );
+        if let Some(phase) = failpoint {
+            cmd.env("MGC_MUTATION_FAILPOINT", phase);
+        }
+        cmd.status().unwrap()
+    };
+    let journal = || project.join(".magicore/journal/dependency-mutation/journal.json");
+    let first = run_bench("fault", Some("after-complete"));
+    assert!(!first.success(), "after-complete fault must fail the op");
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        !manifest.contains("mgc-race-beta"),
+        "rolled back to pre-image immediately:\n{manifest}"
+    );
+    assert!(journal().exists(), "completed journal must be kept");
+    let second = run_bench("clean", None);
+    assert!(
+        second.success(),
+        "clean re-run must delete the completed journal and succeed:\n{}",
+        read_log(&log_dir, "clean", "err")
+    );
+    assert!(!journal().exists(), "journal must be gone");
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        manifest.contains("mgc-race-beta"),
+        "re-run lands:\n{manifest}"
+    );
+}
+
+#[test]
+fn generic_install_before_cleanup_failure_succeeds_with_lingering_journal() {
+    // before-cleanup lỗi: op THÀNH CÔNG (mọi thứ đã commit) nhưng journal
+    // completed sót + warning; rerun xóa rồi thành công.
+    // (Cleanup fault: success with a lingering completed journal.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("site");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("package.json"),
+        r#"{ "name": "race", "version": "1.0.0", "dependencies": { "mgc-race-alpha": "9.9.9" } }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let fixture = NpmFixture::new(&[("mgc-race-alpha", "9.9.9"), ("mgc-race-beta", "9.9.9")]);
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let mut first = generic_install_cmd(
+        &mgc,
+        &project,
+        "mgc-race-beta",
+        &fixture.url,
+        &log_dir,
+        "fault",
+        &[("MGC_MUTATION_FAILPOINT", "before-cleanup")],
+    )
+    .spawn()
+    .unwrap();
+    assert!(
+        first.wait().unwrap().success(),
+        "cleanup fault must not fail the committed op:\n{}",
+        read_log(&log_dir, "fault", "err")
+    );
+    let log = read_log(&log_dir, "fault", "out") + &read_log(&log_dir, "fault", "err");
+    assert!(
+        log.contains("before-cleanup"),
+        "must warn about the skipped cleanup:\n{log}"
+    );
+    let journal = project.join(".magicore/journal/dependency-mutation/journal.json");
+    assert!(journal.exists(), "completed journal lingers");
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        manifest.contains("mgc-race-beta"),
+        "work landed:\n{manifest}"
+    );
+
+    let mut second = generic_install_cmd(
+        &mgc,
+        &project,
+        "mgc-race-beta",
+        &fixture.url,
+        &log_dir,
+        "clean",
+        &[],
+    )
+    .spawn()
+    .unwrap();
+    assert!(second.wait().unwrap().success(), "re-run must succeed");
+    assert!(
+        !journal.exists(),
+        "re-run deletes the stale completed journal"
+    );
+}

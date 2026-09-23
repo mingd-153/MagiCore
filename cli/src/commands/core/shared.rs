@@ -953,6 +953,7 @@ pub(crate) enum MutationOperation {
     Remove,
     Update,
     Install,
+    AuditFix,
 }
 
 impl MutationOperation {
@@ -962,6 +963,7 @@ impl MutationOperation {
             MutationOperation::Remove => "remove",
             MutationOperation::Update => "update",
             MutationOperation::Install => "install",
+            MutationOperation::AuditFix => "audit-fix",
         }
     }
 }
@@ -1068,7 +1070,24 @@ fn parse_mutation_journal(raw: &str, journal_path: &Path) -> Result<MutationJour
 /// file + parent dir, atomic rename. Mirrors mgc-lockfile atomic semantics.
 /// (Ghi file nguyên tử + bền: chống symlink, tmp create_new, fsync.)
 fn atomic_write_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
-    refuse_project_link(dir)?;
+    atomic_write_file_checked(dir, name, bytes, true)
+}
+
+/// Checked variant: `check_dir_link` refuses a swapped parent directory.
+/// Journal paths always check; the project root itself may legitimately
+/// be a symlinked checkout, so direct project-file writes skip the dir
+/// check (the temp file still gets O_NOFOLLOW + create_new, the commit
+/// is still an atomic rename).
+/// (Biến thể có/không chống link thư mục cha.)
+fn atomic_write_file_checked(
+    dir: &Path,
+    name: &str,
+    bytes: &[u8],
+    check_dir_link: bool,
+) -> Result<()> {
+    if check_dir_link {
+        refuse_project_link(dir)?;
+    }
     let dest = dir.join(name);
     refuse_project_link(&dest)?;
     let tmp = dir.join(format!(
@@ -2694,10 +2713,21 @@ pub async fn game_optimizer_template(root: &Path) -> Result<()> {
 /// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
 #[cfg(feature = "game")]
 fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
+    // Serialized idempotent edit (P0-3-adjacent): the mgc-optimizer path
+    // dep is insert-if-missing (convergent — re-running after a crash
+    // reaches the same bytes), written atomically (tmp + rename, no torn
+    // file), under the writer lock (no cross-process interleave). No
+    // journal: there is no pre-image to restore beyond re-running this
+    // same idempotent step.
+    // (Sửa idempotent có lock + atomic — crash chạy lại hội tụ.)
+    let _lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root)).map_err(|e| {
+        anyhow::anyhow!("optimizer hook cannot acquire the project writer lock: {e}")
+    })?;
     let manifest = root.join("Cargo.toml");
     if !manifest.exists() {
         return Ok(());
     }
+    refuse_project_link(&manifest)?;
     let content = std::fs::read_to_string(&manifest)?;
     let mut v: toml::Value = toml::from_str(&content)?;
     let deps = v["dependencies"]
@@ -2713,7 +2743,12 @@ fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
             toml::Value::String("./optimizer".to_string()),
         )])),
     );
-    std::fs::write(&manifest, toml::to_string_pretty(&v)?)?;
+    atomic_write_file_checked(
+        root,
+        "Cargo.toml",
+        toml::to_string_pretty(&v)?.as_bytes(),
+        false,
+    )?;
     Ok(())
 }
 
