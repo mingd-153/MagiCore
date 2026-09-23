@@ -533,8 +533,12 @@ impl PackageAdapter for WebAdapter {
     async fn audit_fix(&self, project_root: &Path, vulnerable: &[PackageId]) -> MgResult<usize> {
         // P0/F6: the re-resolve inside the fix rides the same gate.
         self.arm_age_gate_for(project_root)?;
+        // Fresh resolve (never the lockfile short-circuit): the locked
+        // graph pins the vulnerable version — reusing it would "fix"
+        // nothing and certify the vuln.
+        // (Resolve tươi — short-circuit sẽ ghim version dính lỗ hổng.)
         run_audit_fix(project_root, vulnerable, |m| async move {
-            self.resolve(&m).await
+            self.resolve_fresh(&m).await
         })
         .await
     }
@@ -555,13 +559,12 @@ impl LockfileProvider for WebAdapter {
     }
 }
 
-#[async_trait]
-impl DependencyResolver for WebAdapter {
-    fn probe_dependency_resolver(&self) -> MgResult<()> {
-        Ok(())
-    }
-
-    async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+impl WebAdapter {
+    async fn resolve_inner(
+        &self,
+        manifest: &Manifest,
+        allow_shortcircuit: bool,
+    ) -> MgResult<ResolvedGraph> {
         // Phase tracing for CI diagnosability — điểm vào resolve (stderr).
         eprintln!(
             "[magicore:debug] resolve:packages={}",
@@ -592,8 +595,13 @@ impl DependencyResolver for WebAdapter {
             return Ok(ResolvedGraph::empty());
         }
 
+        // Lockfile short-circuit (skipped by resolve_fresh): a satisfying
+        // lock reuses its graph instead of re-solving. Bumper flows must
+        // never take it — the locked version is exactly what they escape.
+        // (Short-circuit lockfile — bumper không bao giờ đi đường này.)
         // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-        if let Some(lockfile) = read_web_lockfile_checked(Path::new("."))?
+        if allow_shortcircuit
+            && let Some(lockfile) = read_web_lockfile_checked(Path::new("."))?
             && lockfile_satisfies_manifest(&lockfile, manifest)
             && let Ok(Some(graph)) = build_graph_from_lockfile(&lockfile, manifest)
         {
@@ -783,6 +791,25 @@ impl DependencyResolver for WebAdapter {
         profile.mark("write_resolution_cache", started_at);
         profile.flush(started_at.elapsed().as_millis() as u64);
         Ok(graph)
+    }
+}
+
+#[async_trait]
+impl DependencyResolver for WebAdapter {
+    fn probe_dependency_resolver(&self) -> MgResult<()> {
+        Ok(())
+    }
+
+    async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        self.resolve_inner(manifest, true).await
+    }
+
+    /// Fresh resolve for bumpers (audit --fix): skips the lockfile
+    /// short-circuit so a locked vulnerable version can never pin the
+    /// re-resolve. Shared cache still applies (keyed by manifest).
+    /// (Resolve tươi cho bumper — bỏ qua short-circuit lockfile.)
+    async fn resolve_fresh(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        self.resolve_inner(manifest, false).await
     }
 
     async fn add(

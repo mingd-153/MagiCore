@@ -56,7 +56,7 @@ fn pytorch_env_reaches_real_child_process() {
         cpu_cores: 4,
         arch: "x86_64".to_string(),
         os: "macos".to_string(),
-        total_memory_gb: 16,
+        total_memory_gb: Some(16),
         profile: SystemProfile::Standard,
         gpus: vec![],
     };

@@ -34,6 +34,7 @@ def is_test_path(rel, basename):
         "/test/" in "/" + rel + "/"
         or "/tests/" in "/" + rel + "/"
         or "/benches/" in "/" + rel + "/"
+        or ("/bin/" in "/" + rel + "/" and basename.startswith("bench_"))
         or basename.startswith("test_")
         or basename.endswith("_test.rs")
     )
@@ -117,19 +118,117 @@ ALLOWLIST = {
     ("adapters/app/src/install/mod.rs", "run_install"): (
         {"lock-write"}, "engine canonical-lock writer",
     ),
+    ("adapters/app/src/install/mod.rs", "write_canonical_lock"): (
+        {"lock-write", "manifest-file-write"}, "engine lock writer",
+    ),
     ("adapters/lib/src/install/mod.rs", "run_install"): (
         {"lock-write"}, "engine canonical-lock writer",
+    ),
+    ("adapters/lib/src/install/mod.rs", "write_canonical_lock"): (
+        {"lock-write", "manifest-file-write"}, "engine lock writer",
+    ),
+    ("adapters/web/src/install/mod.rs", "run_install"): (
+        {"lock-write", "manifest-file-write"},
+        "engine lock writer + staging/scratch tree management under CLI gateway",
+    ),
+    ("adapters/web/src/install/mod.rs", "restore_prior_lock_result"): (
+        {"manifest-file-write"}, "lock bytes restore helper (verified by callers)",
+    ),
+    ("adapters/web/src/lockfile.rs", "write_web_lockfile_with_state"): (
+        {"manifest-write", "manifest-file-write"}, "engine lock writer",
+    ),
+    ("adapters/web/src/cache_prune.rs", "prune_old_package_dirs_under"): (
+        {"manifest-file-write"}, "stale package-dir pruning (age-gated)",
+    ),
+    ("adapters/web/src/install/extract.rs", "ensure_extracted_package_root_with_marker"): (
+        {"manifest-file-write"}, "extract staging management",
+    ),
+    # --- delegation wrappers (forward to the owned engine; no direct IO) ---
+    ("adapters/cloud/src/adapter.rs", "DependencyResolver::add"): (
+        {"adapter-mutation"}, "forwards to the embedded web engine",
+    ),
+    ("adapters/cloud/src/adapter.rs", "DependencyResolver::remove"): (
+        {"adapter-mutation"}, "forwards to the embedded web engine",
+    ),
+    ("adapters/cloud/src/adapter.rs", "DependencyResolver::update"): (
+        {"adapter-mutation"}, "forwards to the embedded web engine",
+    ),
+    ("adapters/lib/src/adapter.rs", "CoreIdent::prepare_add"): (
+        {"adapter-mutation"}, "default dry-run probe via own add",
+    ),
+    ("adapters/lib/src/adapter.rs", "DependencyResolver::add"): (
+        {"adapter-mutation"}, "forwards to the embedded web engine",
+    ),
+    ("adapters/lib/src/adapter.rs", "DependencyResolver::remove"): (
+        {"adapter-mutation"}, "forwards to the embedded web engine",
+    ),
+    ("adapters/lib/src/adapter.rs", "DependencyResolver::update"): (
+        {"adapter-mutation"}, "forwards to the embedded web engine",
+    ),
+    ("core/crates/mgc-types/src/adapter.rs", "prepare_add"): (
+        {"adapter-mutation"}, "trait default dry-run probe via own add",
     ),
     ("adapters/web/src/audit.rs", "run_audit_fix"): (
         {"lock-write"}, "engine implementation; CLI entry is gateway+journaled",
     ),
-    ("adapters/web/src/install/mod.rs", "run_install"): (
-        {"lock-write"}, "engine lock writer under CLI gateway",
-    ),
+
     ("core/crates/mgc-lockfile/src/writer.rs", "sign_and_write_lockfile"): (
         {"lock-write"}, "lockfile primitive (called under callers' guards)",
     ),
     # --- engine-internal manifest writers (the engine, not a bypass) ---
+    ("adapters/app/src/adapter.rs", "AppAdapter::remove_swift_native"): (
+        {"manifest-file-write"}, "engine writer under CLI gateway (app remove lane)",
+    ),
+    ("adapters/app/src/adapter.rs", "AppAdapter::remove_kotlin_native"): (
+        {"manifest-file-write"}, "engine writer under CLI gateway (app remove lane)",
+    ),
+    ("adapters/app/src/adapter.rs", "AppAdapter::update_swift_native"): (
+        {"manifest-file-write"}, "engine writer under CLI gateway (app update lane)",
+    ),
+    ("adapters/app/src/manifest/flutter.rs", "write_pubspec"): (
+        {"manifest-file-write"}, "engine manifest writer",
+    ),
+    ("adapters/app/src/manifest/gradle.rs", "bump_catalog_pin"): (
+        {"manifest-file-write"}, "engine manifest writer",
+    ),
+    ("adapters/app/src/install/mod.rs", "write_canonical_lock"): (
+        {"lock-write", "manifest-file-write"}, "engine lock writer",
+    ),
+    ("adapters/lib/src/install/mod.rs", "run_install"): (
+        {"lock-write"}, "engine canonical-lock writer",
+    ),
+    ("adapters/lib/src/manifest.rs", "write_pom_manifest"): (
+        {"manifest-file-write"}, "engine manifest writer",
+    ),
+    ("adapters/lib/src/manifest.rs", "write_csproj_manifest"): (
+        {"manifest-file-write"}, "engine manifest writer",
+    ),
+    ("adapters/lib/src/manifest.rs", "write_go_mod_manifest"): (
+        {"manifest-file-write"}, "engine manifest writer",
+    ),
+    ("adapters/lib/src/manifest.rs", "write_pyproject_manifest"): (
+        {"manifest-file-write"}, "engine manifest writer",
+    ),
+    # --- link/staging/scratch management (not manifest content) ---
+    ("cli/src/commands/core/web.rs", "link_monorepo_workspace_packages"): (
+        {"manifest-file-write"}, "symlink management only, no content writes",
+    ),
+    # --- non-manifest outputs (reports, scaffolds, generated files) ---
+    ("cli/src/commands/dlx.rs", "run"): (
+        {"manifest-file-write"}, "writes dlx output, not project manifests",
+    ),
+    ("cli/src/commands/sbom.rs", "run"): (
+        {"manifest-file-write"}, "writes SBOM report output",
+    ),
+    ("cli/src/commands/bench.rs", "handle"): (
+        {"manifest-file-write"}, "removes temp lock for fresh-resolve measurement",
+    ),
+    ("cli/src/commands/core/update/ai.rs", "update"): (
+        {"manifest-file-write"}, "engine requirements.lock writer (ai lane)",
+    ),
+    ("cli/src/commands/core/dev/ai_docker.rs", "generate_ai_docker_files"): (
+        {"manifest-file-write"}, "generates Dockerfiles, not manifests",
+    ),
     ("adapters/app/src/adapter.rs", "LockfileProvider::write_manifest"): (
         {"manifest-write"}, "delegating override to the per-language writer",
     ),
@@ -143,7 +242,20 @@ ALLOWLIST = {
         {"manifest-write"}, "engine manifest writer",
     ),
     ("core/crates/mgc-adapter-base/src/cargo_manifest.rs", "write_manifest"): (
-        {"manifest-write", "fs-write"}, "engine cargo writer (atomic inside)",
+        {"manifest-write", "fs-write", "manifest-file-write"}, "engine cargo writer (atomic inside)",
+    ),
+    ("core/crates/mgc-resolver/src/protocols/swift.rs", "SwiftRegistryProtocol::resolve_git"): (
+        {"manifest-file-write"}, "git workdir scratch cleanup",
+    ),
+    ("core/crates/mgc-lockfile/src/atomic.rs", "cleanup_stale_temps"): (
+        {"manifest-file-write"}, "stale temp sweeper (age+grace gated)",
+    ),
+    ("cli/src/commands/publish.rs", "publish_project"): (
+        {"manifest-file-write"}, "release version commit under writer guard",
+    ),
+    ("cli/src/commands/core/shared.rs", "restore_mutation_snapshot"): (
+        {"manifest-write", "lock-write", "manifest-file-write"},
+        "verified restore path (incl. lock-absence restore)",
     ),
     # --- project creation (no live state to corrupt) ---
     ("adapters/game/src/scaffold/bevy.rs", "scaffold"): (
@@ -171,6 +283,15 @@ ALLOWLIST = {
         {"manifest-file-write"}, "creation-only writer",
     ),
 }
+
+# No duplicate keys: a shadowed entry silently loses its sinks (caught
+# the hard way — a narrower duplicate overrode fuller coverage).
+# (Không key trùng — entry sau đè entry trước trong dict.)
+_DUPLICATE_CHECK: dict = {}
+for _key in ALLOWLIST:
+    assert _key not in _DUPLICATE_CHECK, f"duplicate allowlist key: {_key}"
+    _DUPLICATE_CHECK[_key] = True
+del _DUPLICATE_CHECK
 
 # Sink inventory: (category, regex, gating?). GATING sinks fail CI
 # when unallowlisted (the bypass class: manifest/lock writers and
@@ -209,6 +330,20 @@ PATTERNS = [
     ("adapter-mutation", re.compile(r"\badapter\.add\s*\("), True),
     ("adapter-mutation", re.compile(r"\badapter\.remove\s*\("), True),
     ("adapter-mutation", re.compile(r"\badapter\.update\s*\("), True),
+    # Any `.<add|remove|update>(root-ish, ...)` — catches engine/tool/
+    # provider variables whatever they are named (the web-lane bypass
+    # spelled it `adapter`, the next one may not).
+    # (Mọi .add/remove/update với root-ish — bất kể tên biến.)
+    ("adapter-mutation", re.compile(r"\.(?:add|remove|update)\s*\(\s*(?:root|project_root|self|&root|ctx|project)\b"), True),
+    # Aliased fs writes (bare `fs::` after `use std::fs`, `File::create`
+    # for truncate-create). Same sink class as std::fs::write.
+    # (Alias fs — cùng loại sink.)
+    ("fs-write", re.compile(r"\bfs::write\s*\("), False),
+    ("fs-write", re.compile(r"\bFile::create\s*\("), False),
+    ("fs-write", re.compile(r"\bfs::rename\s*\("), False),
+    ("fs-write", re.compile(r"\bfs::remove_file\s*\("), False),
+    ("fs-write", re.compile(r"\bfs::remove_dir_all\s*\("), False),
+    ("fs-write", re.compile(r"\bstd::fs::write\s*\("), False),
     ("fs-write", re.compile(r"\bstd::fs::write\s*\("), False),
     ("fs-write", re.compile(r"\btokio::fs::write\s*\("), False),
     ("fs-write", re.compile(r"\bOpenOptions\b"), False),
@@ -318,6 +453,18 @@ def scan_tree(root, scan_dirs):
                     continue
                 with open(full, encoding="utf-8", errors="replace") as handle:
                     lines = handle.readlines()
+                # Functions mentioning a manifest/lock filename ANYWHERE
+                # in their CODE body (line comments excluded — string
+                # literals KEPT, since `root.join("package.json")` is
+                # one; block comments may over-trigger, acceptable).
+                # (Hàm nào nhắc tên manifest trong CODE thì fs trong nó bị soi.)
+                manifest_fns = set()
+                for idx, line in enumerate(lines, start=1):
+                    code = line.split("//")[0]
+                    if any(name in code for name in MANIFEST_FILENAMES):
+                        qualified = enclosing_fn(rel, idx, lines)
+                        if qualified:
+                            manifest_fns.add(qualified)
                 for idx, line in enumerate(lines, start=1):
                     stripped = line.strip()
                     if stripped.startswith("//"):
@@ -329,14 +476,16 @@ def scan_tree(root, scan_dirs):
                     if DEF_RE.match(line):
                         continue
                     gating = sorted({sink for sink, g in hits if g})
+                    qualified = enclosing_fn(rel, idx, lines)
                     if any(name in line for name in MANIFEST_FILENAMES):
-                        if "manifest-file-write" not in gating:
-                            gating.append("manifest-file-write")
-                        gating = sorted(set(gating))
+                        gating.append("manifest-file-write")
+                    elif (qualified in manifest_fns and
+                            any(s == "fs-write" for s, _g in hits)):
+                        gating.append("manifest-file-write")
+                    gating = sorted(set(gating))
                     if not gating:
                         inventory_fs += 1
                         continue
-                    qualified = enclosing_fn(rel, idx, lines)
                     findings.append((rel, idx, line.strip(), gating, qualified))
     return findings, inventory_fs
 
@@ -375,7 +524,11 @@ NEGATIVE_CORPUS = {
     "direct_write_manifest.rs": ("manifest-write", "adapter.write_manifest(root, &m).await?;"),
     "free_fn_writer.rs": ("manifest-write", "crate::manifest::write_manifest(root, &m).await?;"),
     "fs_write_manifest.rs": ("manifest-file-write", 'std::fs::write(root.join("package.json"), data)?;'),
+    "fs_alias_write_manifest.rs": ("manifest-file-write", "fs::write(p.join(\"Cargo.toml\"), data)?;"),
+    "file_create_manifest.rs": ("manifest-file-write", "std::fs::File::create(root.join(\"pyproject.toml\"))?;"),
+    "split_let_write_manifest.rs": ("manifest-file-write", "fs::write(p, data)?;"),
     "adapter_add_bypass.rs": ("adapter-mutation", "adapter.add(root, &name, None, opts).await?;"),
+    "engine_named_add_bypass.rs": ("adapter-mutation", "engine.add(root, &name, None, opts).await?;"),
     "adapter_remove_bypass.rs": ("adapter-mutation", "adapter.remove(root, &name).await?;"),
     "adapter_update_bypass.rs": ("adapter-mutation", "adapter.update(root, None).await?;"),
     "lock_rewrite.rs": ("lock-write", "mgc_lockfile::atomic::atomic_write_locked(&guard, &p, &b, d)?;"),
@@ -383,32 +536,52 @@ NEGATIVE_CORPUS = {
 
 
 def self_test():
-    """Scan the in-memory corpus; every fixture must be flagged with
-    its expected sink (gating or escalated). Returns exit code."""
+    """Write the corpus to a temp tree and run the REAL scan_tree +
+    check_findings pipeline: every fixture must come back as a gating
+    violation (unlisted by design). This proves the production path —
+    not a reimplementation — flags every bypass form. Returns exit code."""
+    import tempfile
     failures = []
-    for name, (expected_sink, snippet) in NEGATIVE_CORPUS.items():
-        lines = [
-            "fn evil_bypass(adapter: &dyn Pkg, root: &std::path::Path) -> R {\n",
-            f"    {snippet}\n",
-            "}\n",
-        ]
-        rel = f"corpus/{name}"
-        qualified = enclosing_fn(rel, 2, lines)
-        gating = sorted({
-            sink for sink, pattern, g in PATTERNS if g and pattern.search(lines[1])
-        })
-        if any(filename in lines[1] for filename in MANIFEST_FILENAMES):
-            gating = sorted(set(gating + ["manifest-file-write"]))
-        if expected_sink not in gating:
-            failures.append(f"{name}: expected sink '{expected_sink}' not detected (hits={gating})")
-        elif qualified != "evil_bypass":
-            failures.append(f"{name}: enclosing fn misdetected as {qualified}")
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, (expected_sink, snippet) in NEGATIVE_CORPUS.items():
+            if name == "split_let_write_manifest.rs":
+                body = (
+                    "fn evil_bypass(root: &std::path::Path) -> R {\n"
+                    '    let p = root.join("package.json");\n'
+                    f"    {snippet}\n"
+                    "}\n"
+                )
+            else:
+                body = (
+                    "fn evil_bypass(adapter: &dyn Pkg, root: &std::path::Path) -> R {\n"
+                    f"    {snippet}\n"
+                    "}\n"
+                )
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as handle:
+                handle.write(body)
+        findings, _inventory = scan_tree(tmp, ["."])
+        violations = check_findings(findings)
+        by_file = {}
+        for violation in violations:
+            # scan uses tmp-relative rels ("name.rs"); match by basename.
+            # (So khớp theo basename.)
+            for name in NEGATIVE_CORPUS:
+                if violation.startswith(name + ":"):
+                    by_file.setdefault(name, []).append(violation)
+        for name, (expected_sink, _snippet) in NEGATIVE_CORPUS.items():
+            hits = by_file.get(name, [])
+            if not hits:
+                failures.append(f"{name}: not flagged at all")
+            elif not any(expected_sink in hit for hit in hits):
+                failures.append(
+                    f"{name}: expected sink '{expected_sink}' missing: {hits}"
+                )
     if failures:
         print("NEGATIVE-CONTROL SELF-TEST FAILURES (gate is blind):")
         for failure in failures:
             print("  " + failure)
         return 1
-    print(f"OK: self-test flags all {len(NEGATIVE_CORPUS)} bypass forms")
+    print(f"OK: self-test flags all {len(NEGATIVE_CORPUS)} bypass forms via the real pipeline")
     return 0
 
 

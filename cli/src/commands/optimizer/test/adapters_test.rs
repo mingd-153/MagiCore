@@ -47,7 +47,7 @@ fn test_nodejs_adapter_generate() {
         os: "macos".to_string(),
         arch: "aarch64".to_string(),
         cpu_cores: 8,
-        total_memory_gb: 16,
+        total_memory_gb: Some(16),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
     };
@@ -72,7 +72,7 @@ fn test_deno_adapter_generate() {
         os: "linux".to_string(),
         arch: "x86_64".to_string(),
         cpu_cores: 16,
-        total_memory_gb: 32,
+        total_memory_gb: Some(32),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
     };
@@ -97,7 +97,7 @@ fn test_bun_adapter_generate() {
         os: "macos".to_string(),
         arch: "aarch64".to_string(),
         cpu_cores: 8,
-        total_memory_gb: 16,
+        total_memory_gb: Some(16),
         profile: SystemProfile::Standard,
         gpus: vec![],
     };
@@ -127,7 +127,7 @@ fn test_pytorch_adapter_generate() {
         os: "linux".to_string(),
         arch: "x86_64".to_string(),
         cpu_cores: 16,
-        total_memory_gb: 64,
+        total_memory_gb: Some(64),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
     };
@@ -151,7 +151,7 @@ fn test_candle_adapter_generate() {
         os: "macos".to_string(),
         arch: "aarch64".to_string(),
         cpu_cores: 10,
-        total_memory_gb: 32,
+        total_memory_gb: Some(32),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
     };
@@ -177,7 +177,7 @@ fn test_go_ai_adapter_generate() {
         os: "linux".to_string(),
         arch: "x86_64".to_string(),
         cpu_cores: 24,
-        total_memory_gb: 128,
+        total_memory_gb: Some(128),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
     };
@@ -197,7 +197,7 @@ fn hw_with_gpus(gpus: Vec<crate::commands::optimizer::detect::GpuInfo>) -> Hardw
         os: "linux".to_string(),
         arch: "x86_64".to_string(),
         cpu_cores: 8,
-        total_memory_gb: 32,
+        total_memory_gb: Some(32),
         profile: SystemProfile::HighPerformance,
         gpus,
     }

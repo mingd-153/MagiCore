@@ -954,6 +954,7 @@ pub(crate) enum MutationOperation {
     Update,
     Install,
     AuditFix,
+    Optimizer,
 }
 
 impl MutationOperation {
@@ -964,6 +965,7 @@ impl MutationOperation {
             MutationOperation::Update => "update",
             MutationOperation::Install => "install",
             MutationOperation::AuditFix => "audit-fix",
+            MutationOperation::Optimizer => "optimizer",
         }
     }
 }
@@ -2091,7 +2093,17 @@ async fn enforce_audit_strict_policy(
     root: &std::path::Path,
     graph: &ResolvedGraph,
 ) -> Result<()> {
-    if std::env::var_os("MGC_AUDIT_STRICT").is_none() || graph.packages.is_empty() {
+    // Value-based like the audit command's StrictMode (an explicitly set
+    // "0" means open — presence alone must never arm blocking, or test
+    // and operator opt-outs become lies).
+    // (Theo giá trị như audit command — "0" là mở, presence không đủ.)
+    let strict_armed = std::env::var("MGC_AUDIT_STRICT").ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    });
+    if !strict_armed || graph.packages.is_empty() {
         return Ok(());
     }
 
@@ -2707,34 +2719,54 @@ pub fn core_adapter(eco: &Ecosystem) -> Arc<dyn PackageAdapter> {
 #[cfg(feature = "game")]
 pub async fn game_optimizer_template(root: &Path) -> Result<()> {
     materialize_template(root, OPTIMIZER_PKG).await?;
-    game_hook_optimizer_dep(root)
+    game_hook_optimizer_dep(root).await
 }
 
 /// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
 #[cfg(feature = "game")]
-fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
-    // Serialized idempotent edit (P0-3-adjacent): the mgc-optimizer path
-    // dep is insert-if-missing (convergent — re-running after a crash
-    // reaches the same bytes), written atomically (tmp + rename, no torn
-    // file), under the writer lock (no cross-process interleave). No
-    // journal: there is no pre-image to restore beyond re-running this
-    // same idempotent step.
-    // (Sửa idempotent có lock + atomic — crash chạy lại hội tụ.)
-    let _lock = ProjectWriteLock::acquire(root, writer_lock_timeout(root)).map_err(|e| {
-        anyhow::anyhow!("optimizer hook cannot acquire the project writer lock: {e}")
-    })?;
+async fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
+    // Serialized idempotent edit: the mgc-optimizer path dep is
+    // insert-if-missing with VALUE verification (an identical key with a
+    // different value is a user conflict, not a skip), written atomically
+    // (tmp + rename, no torn file). Enters the mutation gateway FIRST so
+    // a stale journal from an earlier crashed op is recovered-or-refused
+    // before touching Cargo.toml (P0-3-adjacent). No journal of its own:
+    // both crash outcomes (pre-write / post-write) are valid states and
+    // re-running converges, so there is nothing to roll back to.
+    // (Sửa idempotent qua gateway + verify giá trị + atomic.)
     let manifest = root.join("Cargo.toml");
     if !manifest.exists() {
         return Ok(());
     }
+    let Some(adapter) = mgc_game_adapter::adapter_for(root) else {
+        return Err(anyhow::anyhow!(
+            "game optimizer hook refused: '{}' is not a detected game project",
+            root.display()
+        ));
+    };
+    let _guard = begin_dependency_mutation(&adapter, root, MutationOperation::Optimizer).await?;
     refuse_project_link(&manifest)?;
     let content = std::fs::read_to_string(&manifest)?;
     let mut v: toml::Value = toml::from_str(&content)?;
     let deps = v["dependencies"]
         .as_table_mut()
         .ok_or_else(crate::error::cargo_toml_no_deps)?;
-    if deps.contains_key("mgc-optimizer") {
-        return Ok(());
+    match deps.get("mgc-optimizer") {
+        Some(existing)
+            if existing.get("path").and_then(|path| path.as_str()) == Some("./optimizer") =>
+        {
+            return Ok(());
+        }
+        Some(existing) => {
+            let path = existing
+                .get("path")
+                .and_then(|path| path.as_str())
+                .unwrap_or("");
+            return Err(anyhow::anyhow!(
+                "game optimizer hook refused: Cargo.toml already has 'mgc-optimizer' with a different value ('{path}' != './optimizer') — resolve manually, never overwrite blindly"
+            ));
+        }
+        None => {}
     }
     deps.insert(
         "mgc-optimizer".to_string(),
@@ -2749,9 +2781,22 @@ fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
         toml::to_string_pretty(&v)?.as_bytes(),
         false,
     )?;
+    // Read-back verify: the file must now carry our exact value.
+    // (Đọc lại verify — file phải mang đúng giá trị.)
+    let reread: toml::Value = toml::from_str(&std::fs::read_to_string(&manifest)?)?;
+    let confirmed = reread
+        .get("dependencies")
+        .and_then(|deps| deps.get("mgc-optimizer"))
+        .and_then(|dep| dep.get("path"))
+        .and_then(|path| path.as_str())
+        == Some("./optimizer");
+    if !confirmed {
+        return Err(anyhow::anyhow!(
+            "game optimizer hook write did not round-trip (re-read lacks mgc-optimizer = './optimizer') — refusing to report success"
+        ));
+    }
     Ok(())
 }
-
 // ── ai helpers (Phase 7 v5) ───────────────────────────────────────────────────
 
 /// ai project root — detect qua mgc_ai_adapter (không dùng find_project_root).

@@ -338,7 +338,15 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
         );
     }
 
-    // Save updated version to mgc.toml + package.json
+    // Save updated version to mgc.toml + package.json under the writer
+    // lock (static-gate finding): a concurrent mutation must not
+    // interleave with the release version commit.
+    // (Lock writer quanh commit version release.)
+    let _guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+        project_root,
+        crate::commands::core::shared::writer_lock_timeout(project_root),
+    )
+    .map_err(|e| anyhow::anyhow!("publish cannot acquire the project writer lock: {e}"))?;
     project.save(project_root)?;
     if pkg_json_path.exists() {
         fs::write(&pkg_json_path, serde_json::to_string_pretty(&pkg_json)?)?;

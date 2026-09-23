@@ -7,11 +7,24 @@ use tempfile::tempdir;
 
 #[test]
 fn test_hardware_detect_returns_valid_info() {
+    // Environment-independent shape assertions: cores/arch/os are always
+    // known; RAM may be Unknown (None) on machines where detection is
+    // unavailable (containers, sandboxes) — that is honest, not a failure.
+    // A detected value, when present, must be positive and consistent
+    // with a non-Constrained profile.
+    // (Assert hình dạng, không assert môi trường: RAM có thể Unknown.)
     let hw = HardwareInfo::detect();
     assert!(hw.cpu_cores > 0);
     assert!(!hw.arch.is_empty());
     assert!(!hw.os.is_empty());
-    assert!(hw.total_memory_gb > 0);
+    match hw.total_memory_gb {
+        Some(gb) => assert!(gb > 0, "detected RAM must be positive, got {gb}"),
+        None => assert_eq!(
+            hw.profile,
+            SystemProfile::Constrained,
+            "unknown RAM must degrade to Constrained"
+        ),
+    }
 }
 
 #[test]
@@ -26,7 +39,7 @@ fn test_generate_optimizations_for_web_core() {
         cpu_cores: 8,
         arch: "aarch64".to_string(),
         os: "macos".to_string(),
-        total_memory_gb: 16,
+        total_memory_gb: Some(16),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
     };
@@ -59,7 +72,7 @@ fn test_generate_optimizations_for_game_core() {
         cpu_cores: 12,
         arch: "x86_64".to_string(),
         os: "linux".to_string(),
-        total_memory_gb: 32,
+        total_memory_gb: Some(32),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
     };
@@ -96,11 +109,10 @@ fn test_profile_for_unknown_ram_degrades_to_constrained() {
 
 #[test]
 fn test_unknown_ram_skips_memory_derived_configs() {
-    // total_memory_gb == 0 is the unknown sentinel: only the honest
-    // manifest + RAM-independent GPU facts may be emitted, never adapter
-    // files with degenerate memory-derived values (e.g. a 0MB Dart heap).
-    // (total_memory_gb == 0 là sentinel unknown: chỉ manifest trung thực
-    // + fact GPU (không phụ thuộc RAM) được xuất.)
+    // Unknown RAM (None — not Some(0), which would claim a measured
+    // zero): only the honest manifest + RAM-independent GPU facts may be
+    // emitted, never adapter files with degenerate memory-derived values.
+    // (RAM Unknown: chỉ manifest trung thực + fact GPU.)
     let dir = tempdir().unwrap();
     let project_root = dir.path();
     fs::write(project_root.join("package.json"), "{}").unwrap();
@@ -109,7 +121,7 @@ fn test_unknown_ram_skips_memory_derived_configs() {
         cpu_cores: 8,
         arch: "x86_64".to_string(),
         os: "linux".to_string(),
-        total_memory_gb: 0,
+        total_memory_gb: None,
         profile: SystemProfile::Constrained,
         gpus: vec![],
     };
@@ -269,7 +281,7 @@ fn test_gpu_env_file_zero_and_measured() {
         cpu_cores: 4,
         arch: "x86_64".to_string(),
         os: "linux".to_string(),
-        total_memory_gb: 8,
+        total_memory_gb: Some(8),
         profile: SystemProfile::Standard,
         gpus: vec![],
     };
@@ -298,4 +310,101 @@ fn test_gpu_env_file_zero_and_measured() {
     assert!(file.content.contains("MGC_GPU_0_VENDOR=apple"));
     assert!(file.content.contains("unified memory or unknown"));
     assert!(file.content.contains("MGC_GPU_1_VRAM_MB=24564"));
+}
+
+#[test]
+fn test_meminfo_parser_fixtures_macos_linux_windows() {
+    // Fixture parser RAM đa nền tảng (không gọi subprocess/syscall).
+    // (Cross-platform RAM parser fixtures — no subprocess.)
+    use super::detect::HardwareInfo;
+    // macOS sysctl bytes.
+    assert_eq!(
+        HardwareInfo::parse_sysctl_memsize_bytes("17179869184\n"),
+        Some(17179869184)
+    );
+    assert_eq!(
+        HardwareInfo::parse_sysctl_memsize_bytes("not-a-number\n"),
+        None
+    );
+    assert_eq!(HardwareInfo::parse_sysctl_memsize_bytes(""), None);
+    // Linux meminfo.
+    let meminfo = "MemTotal:       16384000 kB\nMemFree:         8000000 kB\n";
+    assert_eq!(HardwareInfo::parse_meminfo_kb(meminfo), Some(16384000));
+    assert_eq!(
+        HardwareInfo::parse_meminfo_kb("MemTotal:       2097152 kB\n"),
+        Some(2097152)
+    );
+    assert_eq!(HardwareInfo::parse_meminfo_kb("MemFree: 1 kB\n"), None);
+    assert_eq!(HardwareInfo::parse_meminfo_kb(""), None);
+    assert_eq!(
+        HardwareInfo::parse_meminfo_kb("MemTotal: garbage kB\n"),
+        None
+    );
+    // Windows/wmic path has no parser (detection returns None there) —
+    // profile_for degrades without RAM on every OS identically.
+    // (Windows không parser — profile_for hạ cấp giống mọi OS.)
+    assert_eq!(
+        HardwareInfo::profile_for(16, None),
+        SystemProfile::Constrained
+    );
+    assert_eq!(
+        HardwareInfo::profile_for(8, Some(16)),
+        SystemProfile::HighPerformance
+    );
+    assert_eq!(
+        HardwareInfo::profile_for(4, Some(8)),
+        SystemProfile::Standard
+    );
+    assert_eq!(
+        HardwareInfo::profile_for(2, Some(4)),
+        SystemProfile::Constrained
+    );
+}
+
+#[test]
+fn test_unknown_ram_omits_memory_knobs_per_adapter() {
+    // Từng adapter bỏ knob dẫn xuất từ RAM khi Unknown (không số bịa).
+    // (Each adapter omits its memory knob when RAM is Unknown.)
+    use super::adapters::OptimizerAdapter;
+    use super::adapters::{flutter::FlutterAdapter, pytorch::PyTorchAdapter};
+    let hw = HardwareInfo {
+        cpu_cores: 8,
+        arch: "x86_64".to_string(),
+        os: "linux".to_string(),
+        total_memory_gb: None,
+        profile: SystemProfile::Constrained,
+        gpus: vec![],
+    };
+    let known = HardwareInfo {
+        total_memory_gb: Some(16),
+        ..hw.clone()
+    };
+    let flutter_unknown = FlutterAdapter.generate(&hw);
+    let flutter_known = FlutterAdapter.generate(&known);
+    assert!(
+        !flutter_unknown
+            .iter()
+            .any(|file| file.content.contains("old_gen_heap_size")),
+        "unknown RAM must not emit a heap size"
+    );
+    assert!(
+        flutter_known
+            .iter()
+            .any(|file| file.content.contains("old_gen_heap_size=4096")),
+        "known 16GB RAM must emit the derived heap"
+    );
+    let pytorch_unknown = PyTorchAdapter.generate(&hw);
+    let pytorch_known = PyTorchAdapter.generate(&known);
+    assert!(
+        !pytorch_unknown
+            .iter()
+            .any(|file| file.content.contains("CONTAINER_MEMORY")),
+        "unknown RAM must not emit a container memory limit"
+    );
+    assert!(
+        pytorch_known
+            .iter()
+            .any(|file| file.content.contains("CONTAINER_MEMORY=14g")),
+        "known 16GB RAM must emit the derived limit"
+    );
 }

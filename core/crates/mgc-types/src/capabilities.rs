@@ -179,6 +179,15 @@ pub trait DependencyResolver: CoreIdent {
         ))
     }
 
+    /// Fresh resolve that MUST bypass any lockfile short-circuit: used by
+    /// audit --fix (and any bumper), where reusing the locked graph would
+    /// pin the vulnerable version forever. Default is plain resolve
+    /// (adapters without a short-circuit need nothing special).
+    /// (Resolve tươi, bỏ qua short-circuit lockfile — cho audit --fix.)
+    async fn resolve_fresh(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        self.resolve(manifest).await
+    }
+
     async fn add(
         &self,
         _project_root: &Path,

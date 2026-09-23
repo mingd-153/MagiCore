@@ -13,7 +13,7 @@ use std::path::Path;
 /// REFACTORED: Runtime detection → adapter dispatch (no hardcoded language/runtime) — đã refactor: phát hiện runtime → dispatch adapter
 pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<()> {
     let hw = detect::HardwareInfo::detect();
-    if hw.total_memory_gb == 0 {
+    if hw.total_memory_gb.is_none() {
         mgc_ui::warning(
             "RAM size could not be detected on this machine — profile degraded to Constrained and memory-derived tuning is skipped (no fabricated values).",
         );
@@ -23,11 +23,9 @@ pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<
         hw.os,
         hw.arch,
         hw.cpu_cores,
-        if hw.total_memory_gb == 0 {
-            "unknown".to_string()
-        } else {
-            format!("~{}GB", hw.total_memory_gb)
-        },
+        hw.total_memory_gb
+            .map(|gb| format!("~{gb}GB"))
+            .unwrap_or_else(|| "unknown".to_string()),
         hw.profile
     ));
     if hw.gpus.is_empty() {

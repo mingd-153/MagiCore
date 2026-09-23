@@ -130,6 +130,23 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
         bail!("mgc.lock not found — run mgc install first");
     }
 
+    // Writer lock FIRST (P0-2/P0-3): every authoritative read below
+    // happens inside the critical section — no stale-read race, no
+    // interleave with concurrent mutations, and no pending journal is
+    // paved over (fail closed instead).
+    // (Lock trước, đọc sau — không stale-read, không đè journal.)
+    let guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+        &project_root,
+        crate::commands::core::shared::writer_lock_timeout(&project_root),
+    )
+    .map_err(|e| anyhow::anyhow!("dedupe cannot acquire the project writer lock: {e}"))?;
+    // Pending-journal protocol (P0-3): never rewrite the lock over an
+    // unrestored mutation — fail closed and point at recovery. (Dedupe
+    // has no adapter to restore with, so it refuses instead of paving.)
+    // (Không đè lên journal chưa phục hồi — lỗi rõ.)
+    crate::commands::core::shared::ensure_no_pending_remove_journal(&project_root, &guard)?;
+    crate::commands::core::shared::ensure_no_pending_remove_journal(&project_root, &guard)?;
+
     let lock_content = fs::read_to_string(&mgc_lock)?;
     let lock: mgc_lockfile::Lockfile = mgc_lockfile::serialization::from_toml(&lock_content)?;
     let before = lock.packages.len();
@@ -137,11 +154,49 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     let (new_lock, merged) = merged_lockfile(&lock);
     let after = new_lock.packages.len();
 
-    let disk_saved_bytes = if merged > 0 {
-        cleanup_unreferenced_vstore(&project_root, &new_lock)
-    } else {
-        0
-    };
+    // Dry-run performs ZERO mutations: no cleanup, no write, no verify
+    // spawn — pure report. (P0-2: dry-run tuyệt đối không sửa gì.)
+    // (Dry-run: báo cáo thuần — không cleanup/write/verify.)
+    if args.dry_run {
+        let report = DedupeReport {
+            before_instances: before,
+            after_instances: after,
+            merged,
+            disk_saved_bytes: 0,
+            entries: Vec::new(),
+        };
+        print_report(&args, &report)?;
+        return Ok(());
+    }
+
+    let mut disk_saved_bytes = 0u64;
+    if merged > 0 {
+        // Atomic commit (P0-2): the merged lock swaps in via tmp+rename
+        // (never a torn write), verified by a runtime build, and rolled
+        // back ATOMICALLY on verification failure. GC of the now
+        // unreferenced store runs ONLY after the commit verifies — a
+        // failed merge never deletes materialization it might need back.
+        // (Commit nguyên tử → verify → mới GC; fail thì rollback nguyên tử.)
+        let new_toml = mgc_lockfile::serialization::to_toml(&new_lock)?;
+        mgc_lockfile::atomic::atomic_write_locked(
+            &guard,
+            &mgc_lock,
+            new_toml.as_bytes(),
+            std::time::Duration::from_secs(60),
+        )
+        .map_err(|e| anyhow::anyhow!("dedupe lock commit failed: {e}"))?;
+        if let Err(err) = verify_with_build(&project_root, false).await {
+            mgc_lockfile::atomic::atomic_write_locked(
+                &guard,
+                &mgc_lock,
+                lock_content.as_bytes(),
+                std::time::Duration::from_secs(60),
+            )
+            .map_err(|e| anyhow::anyhow!("dedupe lock rollback failed: {e}"))?;
+            bail!("merge rolled back — build verification failed: {err}");
+        }
+        disk_saved_bytes = cleanup_unreferenced_vstore(&project_root, &new_lock);
+    }
 
     let report = DedupeReport {
         before_instances: before,
@@ -150,27 +205,13 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
         disk_saved_bytes,
         entries: Vec::new(),
     };
+    print_report(&args, &report)?;
+    Ok(())
+}
 
-    if merged > 0 && !args.dry_run {
-        // Writer lock around the lock rewrite + build verification
-        // (static-gate finding): a concurrent mutation must not
-        // interleave with the merge commit or its rollback.
-        // (Lock writer quanh ghi lock + verify build.)
-        let _guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
-            &project_root,
-            crate::commands::core::shared::writer_lock_timeout(&project_root),
-        )
-        .map_err(|e| anyhow::anyhow!("dedupe cannot acquire the project writer lock: {e}"))?;
-        // Verify runtime build before committing the merge (02 §5.2).
-        let backup = lock_content.clone();
-        let lock_path = project_root.join("mgc.lock");
-        mgc_lockfile::write_lockfile(&new_lock, &lock_path)?;
-        if let Err(err) = verify_with_build(&project_root, false).await {
-            fs::write(&mgc_lock, backup)?;
-            bail!("merge rolled back — build verification failed: {err}");
-        }
-    }
-
+/// Render the dedupe report (shared by dry-run and real runs).
+/// (In báo cáo dedupe — chung cho dry-run và chạy thật.)
+fn print_report(args: &DedupeArgs, report: &DedupeReport) -> Result<()> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {

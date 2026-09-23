@@ -53,6 +53,8 @@ jobs:
         run: python3 scripts/audit_dependency_delegation.py
       - name: Audit mutation-writer call manifest (fail on gateway bypass)
         run: python3 scripts/audit_mutation_calls.py
+      - name: Mutation-gate negative controls (fail if the gate is blind)
+        run: python3 scripts/audit_mutation_calls.py --self-test
       - name: Audit ledger stays gitignored (local-only)
         run: git check-ignore -q docs/specs/dependencyDelegationAudit.json
 

@@ -1145,3 +1145,46 @@ async fn relpath_participates_in_identity() {
         .expect_err("relpath mismatch must fail closed");
     drop(write_lock);
 }
+
+#[cfg(feature = "game")]
+#[tokio::test]
+async fn optimizer_hook_conflicting_value_fails_closed() {
+    // Hook optimizer gặp dependency cùng tên khác giá trị: LỖI chứ
+    // không ghi đè mù (idempotent chỉ khi giá trị khớp).
+    // (Conflicting user value fails closed — never overwritten.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"g\"\nversion = \"0.1.0\"\n\n[dependencies]\nmgc-optimizer = { path = \"./custom\" }\n",
+    )
+    .unwrap();
+    game_hook_optimizer_dep(root)
+        .await
+        .expect_err("conflicting mgc-optimizer value must fail closed");
+    let kept = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(
+        kept.contains("./custom"),
+        "user value must survive:\n{kept}"
+    );
+}
+
+#[cfg(feature = "game")]
+#[tokio::test]
+async fn optimizer_hook_inserts_and_converges() {
+    // Hook chèn dep thiếu (atomic), chạy lại hội tụ cùng bytes.
+    // (Missing dep inserted atomically; re-run converges.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"g\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
+    )
+    .unwrap();
+    game_hook_optimizer_dep(root).await.unwrap();
+    let once = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(once.contains("./optimizer"), "dep must land:\n{once}");
+    game_hook_optimizer_dep(root).await.unwrap();
+    let twice = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert_eq!(once, twice, "re-run must converge byte-identical");
+}

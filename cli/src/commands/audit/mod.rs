@@ -111,15 +111,28 @@ async fn run_adapter_audit(ctx: &ProjectContext) -> Result<AuditReport> {
 ///   the state travels INSIDE the payload (schema_version / UNVERIFIED
 ///   markers), never as extra terminal chatter.
 ///
+/// Split into print + enforce so `--fix` flows can render a report,
+/// mutate, re-audit, and THEN decide the exit (P0-1: enforcing inside
+/// the print would make the fix path unreachable).
+///
 /// Hợp đồng finisher (chung mọi core — không copy-paste từng core):
-/// Available sạch → exit 0; có finding → exit 1; các trạng thái chưa xác
-/// thực → cảnh báo, ngoài strict exit 0 (escape hatch local kèm warning),
-/// strict thì exit 2. Format máy chỉ in payload — trạng thái nằm TRONG
-/// payload, không thêm text terminal.
+/// tách in và quyết exit để flow --fix render → sửa → audit lại → exit.
 async fn finish_and_print(
     core: &str,
     report: &AuditReport,
     strict: StrictMode,
+    fmt: OutputFormat,
+) -> Result<()> {
+    print_audit_report(core, report, fmt)?;
+    enforce_audit_exit(core, report, strict)
+}
+
+/// Render an audit report with zero exit decisions (always Ok unless
+/// rendering itself fails). Used by --fix flows before mutating.
+/// (Chỉ in report — không quyết exit.)
+pub(crate) fn print_audit_report(
+    core: &str,
+    report: &AuditReport,
     fmt: OutputFormat,
 ) -> Result<()> {
     // Machine formats: emit the payload and keep the SAME exit contract —
@@ -127,9 +140,16 @@ async fn finish_and_print(
     // Format máy: phát payload và giữ NGUYÊN exit contract — bỏ bảng
     // hiển thị, CI parse dữ liệu có cấu trúc.
     if fmt.is_machine() {
-        return finish_machine(report, strict, fmt);
+        print_machine_payload(report, fmt)?;
+    } else {
+        print_table_report(core, report)?;
     }
+    Ok(())
+}
 
+/// Table-path rendering (no exit decisions).
+/// (In bảng — không quyết exit.)
+fn print_table_report(core: &str, report: &AuditReport) -> Result<()> {
     if !mgc_ui::is_quiet() {
         mgc_ui::blank_line();
         println!(
@@ -142,11 +162,11 @@ async fn finish_and_print(
 
     // Fail-closed classification over the five-state contract (Tech Lead
     // §1). Only `Available` may print "clean"; every other state is
-    // UNVERIFIED — strict mode fails with exit 2, local mode warns loudly
-    // and exits 0 as the documented escape hatch.
+    // UNVERIFIED — the banner below always prints locally; strictness
+    // only moves the EXIT into enforce_audit_exit.
     // Phân loại fail-closed trên contract 5 trạng thái. Chỉ `Available` mới
-    // được in "clean"; mọi trạng thái khác là UNVERIFIED — strict fail
-    // exit 2, local cảnh báo to và exit 0 như escape hatch đã ghi rõ.
+    // được in "clean"; mọi trạng thái khác là UNVERIFIED — banner luôn in,
+    // strict chỉ đổi exit ở enforce.
     if !report.scanner_available() {
         use mgc_types::adapter::ScannerStatus;
 
@@ -184,18 +204,15 @@ async fn finish_and_print(
         // A Partial report can still carry REAL findings (OSV fallback
         // lanes scan direct pins while skipping the rest) — show what we
         // know BEFORE the UNVERIFIED banner, never hide findings behind
-        // an incomplete status. Exit contract below is unchanged.
+        // an incomplete status.
         // Report Partial vẫn có thể mang finding THẬT — in những gì đã
         // biết TRƯỚC banner UNVERIFIED, không giấu finding sau trạng thái
-        // chưa hoàn tất. Exit contract bên dưới giữ nguyên.
+        // chưa hoàn tất.
         if !report.vulnerabilities.is_empty() {
             print_report(report);
         }
         eprintln!("  Audit NOT performed/complete — this run is UNVERIFIED, not clean.");
-        if strict.enabled() {
-            return Err(crate::error::audit_scanner_unavailable_strict(&headline));
-        }
-        eprintln!("  Status: UNVERIFIED (exit 0 — local escape hatch)");
+        eprintln!("  Status: UNVERIFIED (exit decided by enforce_audit_exit)");
         eprintln!(
             "  Set MGC_AUDIT_STRICT=1 (or pass --audit-strict) to fail on unavailable scanner in CI."
         );
@@ -204,22 +221,42 @@ async fn finish_and_print(
 
     print_report(report);
 
+    if report.vulnerability_count == 0 {
+        mgc_ui::success("No vulnerabilities reported by the configured provider");
+    }
+    Ok(())
+}
+
+/// Exit decisions only — no rendering (P0-1: --fix renders first,
+/// mutates, re-audits, and only then calls this on the POST report).
+/// (Chỉ quyết exit — không in gì.)
+pub(crate) fn enforce_audit_exit(
+    core: &str,
+    report: &AuditReport,
+    strict: StrictMode,
+) -> Result<()> {
+    if !report.scanner_available() {
+        if strict.enabled() {
+            return Err(crate::error::audit_scanner_unavailable_strict(&format!(
+                "{core} audit did not complete"
+            )));
+        }
+        return Ok(());
+    }
     if report.vulnerability_count > 0 {
         return Err(crate::error::audit_found_vulnerabilities(
             report.vulnerability_count,
             report.packages_audited,
         ));
     }
-
-    mgc_ui::success("No vulnerabilities reported by the configured provider");
     Ok(())
 }
 
-/// Machine-path finisher: print the structured payload, then apply the
-/// SAME exit contract as the table path (fail-closed five-state policy).
-/// Finisher đường máy: in payload cấu trúc rồi áp DÚNG exit contract
-/// như đường table (policy 5 trạng thái fail-closed).
-fn finish_machine(report: &AuditReport, strict: StrictMode, fmt: OutputFormat) -> Result<()> {
+/// Machine-path rendering: print the structured payload only (the
+/// exit contract lives in enforce_audit_exit, shared with the table).
+/// Finisher đường máy: chỉ in payload cấu trúc.
+/// (Machine-path rendering — print only.)
+fn print_machine_payload(report: &AuditReport, fmt: OutputFormat) -> Result<()> {
     match fmt {
         OutputFormat::Json => {
             let envelope = mgc_audit::output::json::JsonAuditEnvelope::from_report(report);
@@ -235,24 +272,6 @@ fn finish_machine(report: &AuditReport, strict: StrictMode, fmt: OutputFormat) -
         }
         OutputFormat::Table => unreachable!("table handled by the human path"),
     }
-
-    // Exit contract mirrors finish_and_print exactly: unverified states
-    // still exit 2 under strict (CI ingests the payload AND gates on it).
-    // Exit contract phản chiếu finish_and_print: trạng thái chưa xác thực
-    // vẫn exit 2 dưới strict (CI vừa ingest payload vừa gate trên nó).
-    if !report.scanner_available() && strict.enabled() {
-        let headline = format!(
-            "audit did not complete (status: {})",
-            mgc_audit::output::json::JsonAuditEnvelope::from_report(report).scanner_status
-        );
-        return Err(crate::error::audit_scanner_unavailable_strict(&headline));
-    }
-    if report.scanner_available() && report.vulnerability_count > 0 {
-        return Err(crate::error::audit_found_vulnerabilities(
-            report.vulnerability_count,
-            report.packages_audited,
-        ));
-    }
     Ok(())
 }
 
@@ -265,10 +284,10 @@ fn finish_machine(report: &AuditReport, strict: StrictMode, fmt: OutputFormat) -
 /// Hợp đồng escape hatch (RULE §11): mặc định mở locally, đóng trong CI —
 /// CI=true tự strict, UNVERIFIED không thể lọt pipeline một cách im lặng.
 #[derive(Debug, Clone, Copy)]
-struct StrictMode(bool);
+pub(crate) struct StrictMode(bool);
 
 impl StrictMode {
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         // Explicit beats implicit: a SET MGC_AUDIT_STRICT always decides
         // ("1"/"true" strict, anything else — including "0" — open), so
         // tests and operators can force the open lane anywhere. Only an

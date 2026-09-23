@@ -17,13 +17,14 @@ pub struct HardwareInfo {
     pub arch: String,
     /// Hệ điều hành (macos, linux, windows)
     pub os: String,
-    /// Dung lượng RAM ước tính (tính bằng GiB).
-    /// RAM size estimate in GiB. `0` means UNKNOWN (detection failed) —
-    /// never a measured value; memory-derived tuning must be skipped
-    /// when this is 0 (see generators).
-    /// (0 nghĩa là KHÔNG BIẾT (đọc thất bại) — không bao giờ là số đo
-    /// thật; tuning dẫn xuất từ RAM phải bỏ qua khi bằng 0.)
-    pub total_memory_gb: usize,
+    /// Dung lượng RAM (tính bằng GiB) — None nghĩa là KHÔNG BIẾT
+    /// (đọc thất bại). Không bao giờ là số đo giả: mọi tuning dẫn xuất
+    /// từ RAM phải bỏ qua khi là None (xem generators).
+    /// RAM size in GiB — None means UNKNOWN (detection failed), never a
+    /// fabricated measurement; memory-derived tuning must be skipped
+    /// when None (see generators).
+    /// (None nghĩa là KHÔNG BIẾT — không bao giờ là số đo thật.)
+    pub total_memory_gb: Option<usize>,
     /// Profile nhận diện (Desktop, Laptop, Server/Container)
     pub profile: SystemProfile,
     /// GPUs detected on this machine — empty when none found OR when
@@ -66,16 +67,13 @@ impl HardwareInfo {
         let arch = std::env::consts::ARCH.to_string();
         let os = std::env::consts::OS.to_string();
 
-        // RAM detection failure is NOT patched with a fabricated number:
-        // unknown stays 0 (sentinel) and the profile degrades to
-        // Constrained — writing tuned values from a guessed 16 GB would
-        // be a false measurement (V1.2: no fabricated evidence).
-        // (Đọc RAM thất bại KHÔNG vá bằng số bịa: unknown giữ 0 (sentinel)
-        // và profile hạ về Constrained — ghi giá trị tuning từ 16 GB đoán
-        // mò sẽ là bằng chứng giả.)
+        // RAM detection failure stays unknown (None) — never patched
+        // with a fabricated number; the profile degrades to Constrained
+        // and memory-derived tuning is skipped downstream. Writing tuned
+        // values from a guessed size would be false measurement.
+        // (Đọc RAM thất bại giữ None — không vá số bịa.)
         let memory_gb = Self::detect_memory_gb();
-        let total_memory_gb = memory_gb.unwrap_or(0);
-
+        let total_memory_gb = memory_gb;
         let profile = Self::profile_for(cpu_cores, memory_gb);
 
         Self {
@@ -115,27 +113,44 @@ impl HardwareInfo {
                 .output()
                 .ok()?;
             let bytes_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let bytes: u64 = bytes_str.parse().ok()?;
+            let bytes = Self::parse_sysctl_memsize_bytes(&bytes_str)?;
             Some((bytes / (1024 * 1024 * 1024)) as usize)
         }
         #[cfg(target_os = "linux")]
         {
             let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-            for line in meminfo.lines() {
-                if line.starts_with("MemTotal:") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        let kb: u64 = parts[1].parse().ok()?;
-                        return Some((kb / (1024 * 1024)) as usize);
-                    }
-                }
-            }
-            None
+            let kb = Self::parse_meminfo_kb(&meminfo)?;
+            Some((kb / (1024 * 1024)) as usize)
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             None
         }
+    }
+
+    /// Parse `sysctl -n hw.memsize` output (bytes) — pure, fixture-tested
+    /// on every CI OS (the live caller is macOS-only by cfg).
+    /// (Parse bytes sysctl — thuần, test bằng fixture mọi OS.)
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn parse_sysctl_memsize_bytes(text: &str) -> Option<u64> {
+        text.trim().parse().ok()
+    }
+
+    /// Parse Linux `/proc/meminfo` MemTotal line (kB) — pure,
+    /// fixture-tested on every CI OS (the live caller is Linux-only).
+    /// (Parse MemTotal meminfo — thuần, test bằng fixture mọi OS.)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn parse_meminfo_kb(text: &str) -> Option<u64> {
+        for line in text.lines() {
+            if line.starts_with("MemTotal:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let kb: u64 = parts[1].parse().ok()?;
+                    return Some(kb);
+                }
+            }
+        }
+        None
     }
 
     /// Best-effort GPU detection for this OS — returns every GPU the OS
