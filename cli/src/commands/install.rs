@@ -247,6 +247,18 @@ async fn install_into_root(
     )
     .await?;
 
+    // Ownership preflight FIRST (P0-1): unauthorized ops fail here,
+    // before parse/prepare_add (network) or any manifest write.
+    // (Gate trước mọi side effect.)
+    validate_install_owner(adapter, project_root)?;
+
+    // Toolchain-owned manifests with package arguments fail BEFORE any
+    // adapter call (P0-1): mgc cannot journal what it does not own, and
+    // the provider toolchain must run explicitly (add-lib lane or the
+    // tool itself) — never a silent pre-gate write without rollback.
+    // (Manifest của tool + packages → lỗi trước khi gọi adapter.)
+    reject_toolchain_owned_packages(adapter, packages)?;
+
     let add_cmd = match adapter.name() {
         "web" => "mgc add".to_string(),
         other => format!("mgc add-{other}"),
@@ -264,6 +276,7 @@ async fn install_into_root(
             &manifest,
             project_root,
             &write_lock,
+            crate::commands::core::shared::MutationOperation::Install,
         )?)
     } else {
         None
@@ -301,7 +314,7 @@ async fn install_into_root(
             use crate::commands::core::shared as core_shared;
             core_shared::stage_mutation_journal(
                 project_root,
-                core_shared::MutationOperation::Install,
+                adapter,
                 packages,
                 snapshot,
                 &write_lock,
@@ -309,21 +322,21 @@ async fn install_into_root(
             core_shared::journaled_step(
                 adapter,
                 project_root,
-                core_shared::MutationOperation::Install,
                 snapshot,
                 &write_lock,
-                "after-manifest-write",
+                "before-manifest-write",
                 adapter.write_manifest(project_root, &manifest),
+                "after-manifest-write",
             )
             .await?;
             core_shared::journaled_step(
                 adapter,
                 project_root,
-                core_shared::MutationOperation::Install,
                 snapshot,
                 &write_lock,
-                "after-post-image",
+                "before-post-image",
                 async { core_shared::record_post_image(project_root, &manifest, &write_lock) },
+                "after-post-image",
             )
             .await?;
             install_journaled = true;
@@ -361,7 +374,27 @@ async fn install_into_root(
     {
         Ok(()) => {
             if install_journaled {
-                crate::commands::core::shared::finish_mutation_journal(project_root, &write_lock)?;
+                // P0-2: a disarm failure here rolls back like every other
+                // op — succeeding with a live in_progress journal would
+                // let the next run undo a finished install (half-updated
+                // state by another name).
+                // (Disarm lỗi thì rollback — không để journal sống.)
+                if let Err(e) = crate::commands::core::shared::finish_mutation_journal(
+                    project_root,
+                    &write_lock,
+                ) {
+                    if let Some(snapshot) = install_snapshot.as_ref() {
+                        return crate::commands::core::shared::rollback_mutation(
+                            adapter,
+                            project_root,
+                            snapshot,
+                            e,
+                            &write_lock,
+                        )
+                        .await;
+                    }
+                    return Err(e);
+                }
             }
             Ok(())
         }
@@ -370,7 +403,6 @@ async fn install_into_root(
                 return crate::commands::core::shared::rollback_mutation(
                     adapter,
                     project_root,
-                    crate::commands::core::shared::MutationOperation::Install,
                     snapshot,
                     e,
                     &write_lock,
@@ -382,27 +414,31 @@ async fn install_into_root(
     }
 }
 
-/// Generic-path resolve + materialize + hooks tail (P0-1): runs under
-/// the caller's writer guard; every error after the manifest commit
-/// point routes through rollback there. Test-only tail delay hook
-/// (MGC_MUTATION_TAIL_DELAY_MS) parks SIGKILL E2E mid-tail.
-/// (Tail resolve+install+hooks của generic path — lỗi là rollback.)
-#[allow(clippy::too_many_arguments)]
-async fn install_resolve_and_materialize(
+/// Reject package arguments on toolchain-owned manifests (pure,
+/// unit-tested): mgc cannot journal what it does not own.
+/// (Từ chối packages trên manifest của tool — hàm thuần.)
+fn reject_toolchain_owned_packages(
+    adapter: &dyn mgc_types::adapter::PackageAdapter,
+    packages: &[String],
+) -> Result<()> {
+    if !packages.is_empty() && !adapter.manifest_owned() {
+        return Err(crate::error::install_packages_toolchain_owned(
+            adapter.name(),
+        ));
+    }
+    Ok(())
+}
+
+/// Ownership preflight (P0-1): the capability/ownership gate MUST run
+/// BEFORE any side effect (parse is read-only; prepare_add resolves
+/// over the network; the manifest write mutates). An unauthorized op
+/// must fail here — never after resolving, writing, or spawning.
+/// Pure function of (adapter, root): no mutation, no network.
+/// (Gate ownership chạy TRƯỚC mọi side effect — không resolve/write.)
+fn validate_install_owner(
     adapter: &dyn mgc_types::adapter::PackageAdapter,
     project_root: &Path,
-    manifest: &Manifest,
-    frozen: bool,
-    ignore_scripts: bool,
-    allow_scripts: bool,
-    offline: bool,
 ) -> Result<()> {
-    if let Ok(ms) = std::env::var("MGC_MUTATION_TAIL_DELAY_MS")
-        && let Ok(ms) = ms.parse::<u64>()
-    {
-        std::thread::sleep(std::time::Duration::from_millis(ms));
-    }
-    let started_at = std::time::Instant::now();
     // C0 ownership firewall (T0.3): the adapter path serves MCP +
     // workspace/monorepo installs — it passes the same gate as the
     // per-core lanes (tool set comes from the owner table: adapter-routed
@@ -488,7 +524,30 @@ async fn install_resolve_and_materialize(
             clo_adapter_path_gate(project_root)?;
         }
     }
+    Ok(())
+}
 
+/// Generic-path resolve + materialize + hooks tail (P0-1): runs under
+/// the caller's writer guard; every error after the manifest commit
+/// point routes through rollback there. Test-only tail delay hook
+/// (MGC_MUTATION_TAIL_DELAY_MS) parks SIGKILL E2E mid-tail.
+/// (Tail resolve+install+hooks của generic path — lỗi là rollback.)
+#[allow(clippy::too_many_arguments)]
+async fn install_resolve_and_materialize(
+    adapter: &dyn mgc_types::adapter::PackageAdapter,
+    project_root: &Path,
+    manifest: &Manifest,
+    frozen: bool,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+    offline: bool,
+) -> Result<()> {
+    if let Ok(ms) = std::env::var("MGC_MUTATION_TAIL_DELAY_MS")
+        && let Ok(ms) = ms.parse::<u64>()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+    let started_at = std::time::Instant::now();
     let (graph, used_lockfile) =
         if let Some(graph) = load_locked_graph(project_root, adapter.name(), manifest)? {
             info("Using mgc.lock for install state.");

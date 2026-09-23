@@ -442,6 +442,10 @@ impl AuditProvider for AppAdapter {
 
 #[async_trait]
 impl PackageAdapter for AppAdapter {
+    fn manifest_kind(&self) -> String {
+        format!("app:{}", self.language.as_str())
+    }
+
     fn capabilities(&self) -> &'static [Capability] {
         // Per-language truth: only lanes with a native resolver claim it.
         match self.language {

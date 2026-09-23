@@ -153,10 +153,11 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
         .expect("pyproject must detect a python lib adapter");
     let write_lock = ProjectWriteLock::acquire(root, std::time::Duration::from_secs(30)).unwrap();
     let manifest = adapter.parse_manifest(root).await.unwrap();
-    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
     stage_mutation_journal(
         root,
-        MutationOperation::Remove,
+        &adapter,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -230,10 +231,11 @@ async fn completed_journal_deletes_without_restoring() {
     python_fixture(root);
     let (adapter, write_lock) = test_adapter_and_lock(root);
     let manifest = adapter.parse_manifest(root).await.unwrap();
-    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
     stage_mutation_journal(
         root,
-        MutationOperation::Remove,
+        &adapter,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -322,14 +324,15 @@ async fn symlinked_journal_dir_is_refused() {
     python_fixture(root);
     let (adapter, write_lock) = test_adapter_and_lock(root);
     let manifest = adapter.parse_manifest(root).await.unwrap();
-    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
     let outside = tempfile::tempdir().unwrap();
     let journal_parent = root.join(".magicore/journal");
     std::fs::create_dir_all(&journal_parent).unwrap();
     symlink(outside.path(), journal_parent.join("dependency-mutation")).unwrap();
     stage_mutation_journal(
         root,
-        MutationOperation::Remove,
+        &adapter,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -398,10 +401,11 @@ async fn symlinked_journal_file_is_never_followed() {
     python_fixture(root);
     let (adapter, write_lock) = test_adapter_and_lock(root);
     let manifest = adapter.parse_manifest(root).await.unwrap();
-    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
     stage_mutation_journal(
         root,
-        MutationOperation::Remove,
+        &adapter,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -463,10 +467,11 @@ async fn user_edit_after_crash_fails_closed() {
     python_fixture(root);
     let (adapter, write_lock) = test_adapter_and_lock(root);
     let manifest = adapter.parse_manifest(root).await.unwrap();
-    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
     stage_mutation_journal(
         root,
-        MutationOperation::Remove,
+        &adapter,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -502,10 +507,11 @@ async fn missing_manifest_backup_fails_closed() {
     python_fixture(root);
     let (adapter, write_lock) = test_adapter_and_lock(root);
     let manifest = adapter.parse_manifest(root).await.unwrap();
-    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock).unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
     stage_mutation_journal(
         root,
-        MutationOperation::Remove,
+        &adapter,
         &["attrs".to_string()],
         &snapshot,
         &write_lock,
@@ -531,12 +537,18 @@ async fn staged_journal_in_project_a_never_blocks_project_b() {
     let (adapter_a, lock_a) = test_adapter_and_lock(dir_a.path());
     let (adapter_b, lock_b) = test_adapter_and_lock(dir_b.path());
     let manifest_a = adapter_a.parse_manifest(dir_a.path()).await.unwrap();
-    let snapshot_a = MutationSnapshot::capture(&manifest_a, dir_a.path(), &lock_a).unwrap();
+    let snapshot_a = MutationSnapshot::capture(
+        &manifest_a,
+        dir_a.path(),
+        &lock_a,
+        MutationOperation::Remove,
+    )
+    .unwrap();
     // A stages and HOLDS (guard + journal stay alive).
     // (A stage rồi giữ — không finish.)
     stage_mutation_journal(
         dir_a.path(),
-        MutationOperation::Remove,
+        &adapter_a,
         &["attrs".to_string()],
         &snapshot_a,
         &lock_a,
@@ -545,10 +557,16 @@ async fn staged_journal_in_project_a_never_blocks_project_b() {
     // B runs a full stage → post → finish cycle unaffected.
     // (B chạy trọn vòng không ảnh hưởng.)
     let manifest_b = adapter_b.parse_manifest(dir_b.path()).await.unwrap();
-    let snapshot_b = MutationSnapshot::capture(&manifest_b, dir_b.path(), &lock_b).unwrap();
+    let snapshot_b = MutationSnapshot::capture(
+        &manifest_b,
+        dir_b.path(),
+        &lock_b,
+        MutationOperation::Remove,
+    )
+    .unwrap();
     stage_mutation_journal(
         dir_b.path(),
-        MutationOperation::Remove,
+        &adapter_b,
         &["attrs".to_string()],
         &snapshot_b,
         &lock_b,
@@ -594,10 +612,12 @@ async fn aborted_task_leaves_recoverable_journal() {
             .await
             .unwrap();
         let manifest = adapter.parse_manifest(&root_clone).await.unwrap();
-        let snapshot = MutationSnapshot::capture(&manifest, &root_clone, &guard).unwrap();
+        let snapshot =
+            MutationSnapshot::capture(&manifest, &root_clone, &guard, MutationOperation::Remove)
+                .unwrap();
         stage_mutation_journal(
             &root_clone,
-            MutationOperation::Remove,
+            &adapter,
             &["attrs".to_string()],
             &snapshot,
             &guard,
@@ -640,4 +660,260 @@ async fn aborted_task_leaves_recoverable_journal() {
             .exists(),
         "aborted op's journal must be recoverable by the next entry"
     );
+}
+
+#[tokio::test]
+async fn foreign_core_journal_is_never_restored() {
+    // P0-3: journal của core khác (web) đem sang project lib — recovery
+    // phải từ chối, không được lấy adapter hiện tại làm authority.
+    // (Foreign-core journal fails closed — never restored cross-core.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let journal_dir = root.join(".magicore/journal/dependency-mutation");
+    std::fs::create_dir_all(&journal_dir).unwrap();
+    let canonical = root.canonicalize().unwrap().display().to_string();
+    let journal = serde_json::json!({
+        "v": 2,
+        "op": "remove",
+        "pid": 12345,
+        "packages": ["some-web-dep"],
+        "lock_existed": true,
+        "adapter_id": "app",
+        "ecosystem": "App",
+        "manifest_kind": "app:flutter",
+        "project_root": canonical,
+        "pre_digest": [],
+        "post_digest": null,
+        "state": "in_progress",
+    });
+    std::fs::write(
+        journal_dir.join("journal.json"),
+        serde_json::to_string_pretty(&journal).unwrap(),
+    )
+    .unwrap();
+    let err = recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("foreign-core journal must fail closed");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("app") && msg.contains("foreign"),
+        "must name the mismatch, not silently restore: {msg}"
+    );
+    let manifest = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+    assert!(
+        manifest.contains("attrs"),
+        "current manifest must be untouched:\n{manifest}"
+    );
+}
+
+#[tokio::test]
+async fn copied_project_journal_fails_on_root_mismatch() {
+    // P0-3: copy cả project sang chỗ khác — journal mang root cũ, recovery
+    // ở root mới phải từ chối (không phục hồi state ngoại lai).
+    // (Copied project dir: stale root fails closed.)
+    let dir_a = tempfile::tempdir().unwrap();
+    python_fixture(dir_a.path());
+    let (adapter_a, lock_a) = test_adapter_and_lock(dir_a.path());
+    let manifest = adapter_a.parse_manifest(dir_a.path()).await.unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, dir_a.path(), &lock_a, MutationOperation::Remove)
+            .unwrap();
+    stage_mutation_journal(
+        dir_a.path(),
+        &adapter_a,
+        &["attrs".to_string()],
+        &snapshot,
+        &lock_a,
+    )
+    .unwrap();
+    drop(lock_a);
+    // Copy the whole tree (journal included) elsewhere.
+    // (Copy toàn bộ cây sang chỗ khác.)
+    let dir_b = tempfile::tempdir().unwrap();
+    copy_dir_recursive(dir_a.path(), dir_b.path()).unwrap();
+    let (adapter_b, lock_b) = test_adapter_and_lock(dir_b.path());
+    let err = recover_interrupted_remove(&adapter_b, dir_b.path(), &lock_b)
+        .await
+        .expect_err("copied-project journal must fail on root mismatch");
+    assert!(
+        format!("{err:#}").contains("refusing"),
+        "must refuse explicitly: {err:#}"
+    );
+}
+
+fn copy_dir_recursive(source: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = dest.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn traversal_packages_field_is_inert() {
+    // Journal packages chứa traversal không thể thoát ra ngoài: field
+    // này không bao giờ thành path (chỉ diagnostic). Recovery vẫn chạy
+    // bình thường với pre-image.
+    // (Traversal-looking packages cannot escape — the field is inert.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
+    stage_mutation_journal(
+        root,
+        &adapter,
+        &["../../evil".to_string()],
+        &snapshot,
+        &write_lock,
+    )
+    .unwrap();
+    let drifted = adapter.parse_manifest(root).await.unwrap();
+    record_post_image(root, &drifted, &write_lock).unwrap();
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .unwrap();
+    assert!(
+        !root.parent().unwrap().join("evil").exists(),
+        "no traversal side effect may exist"
+    );
+    assert!(
+        !root
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "journal must clear after normal recovery"
+    );
+}
+
+#[tokio::test]
+async fn legacy_journal_path_is_adopted_then_recovered() {
+    // P1-3: journal ở path cũ (journal/remove) được rename nguyên tử
+    // sang path mới rồi phục hồi bình thường — không mất, không double.
+    // (Legacy journal is adopted atomically, then recovered.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
+    stage_mutation_journal(
+        root,
+        &adapter,
+        &["attrs".to_string()],
+        &snapshot,
+        &write_lock,
+    )
+    .unwrap();
+    // Rewind to the legacy layout (as an older binary left it).
+    // (Giả journal của binary cũ ở path legacy.)
+    let legacy = root.join(".magicore/journal/remove");
+    let current = root.join(".magicore/journal/dependency-mutation");
+    std::fs::rename(&current, &legacy).unwrap();
+
+    adopt_legacy_journal(root, &write_lock).unwrap();
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .unwrap();
+    assert!(!legacy.exists(), "legacy dir must be adopted away");
+    assert!(
+        !current.join("journal.json").exists(),
+        "adopted journal must be recovered and cleared (current == pre)"
+    );
+    let after = adapter.parse_manifest(root).await.unwrap();
+    assert_eq!(
+        manifest_canonical_digest(&after),
+        manifest_canonical_digest(&manifest)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_legacy_marker_fails_closed() {
+    // P1-3: marker legacy là symlink ra ngoài — adopt dời cả thư mục
+    // nhưng recovery từ chối theo link, không đọc file ngoài.
+    // (Symlinked legacy marker is refused at recovery, never followed.)
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let outside = tempfile::tempdir().unwrap();
+    let evil = outside.path().join("evil.json");
+    std::fs::write(&evil, r#"{"v":2}"#).unwrap();
+    let legacy = root.join(".magicore/journal/remove");
+    std::fs::create_dir_all(&legacy).unwrap();
+    symlink(&evil, legacy.join("journal.json")).unwrap();
+
+    // No pre-held guard here: begin() acquires its own (holding one
+    // across the call would LockBusy against itself, not test recovery).
+    // (Không giữ lock trước — begin tự acquire.)
+    let adapter = mgc_lib_adapter::adapter_for(root, None, None)
+        .unwrap()
+        .expect("adapter");
+    begin_dependency_mutation(&adapter, root, MutationOperation::Remove)
+        .await
+        .expect_err("symlinked legacy marker must fail closed");
+    assert_eq!(
+        std::fs::read(&evil).unwrap(),
+        b"{\"v\":2}",
+        "outside file must be untouched"
+    );
+}
+
+#[tokio::test]
+async fn adopt_refuses_when_current_dir_has_garbage() {
+    // P1-3: current dir tồn tại nhưng không marker + legacy có journal —
+    // rename thất bại → lỗi fail-closed, không merge, không mất.
+    // (Adopt refuses when the current dir is occupied without a marker.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
+    stage_mutation_journal(
+        root,
+        &adapter,
+        &["attrs".to_string()],
+        &snapshot,
+        &write_lock,
+    )
+    .unwrap();
+    let legacy = root.join(".magicore/journal/remove");
+    let current = root.join(".magicore/journal/dependency-mutation");
+    std::fs::rename(&current, &legacy).unwrap();
+    // Occupy the current dir with marker-less garbage.
+    // (Chiếm dir mới bằng rác không marker.)
+    std::fs::create_dir_all(&current).unwrap();
+    std::fs::write(current.join("junk.txt"), "junk").unwrap();
+    // Release the staging guard before re-acquiring below (same-process
+    // flock is not re-entrant).
+    // (Nhả guard staging trước khi acquire lại.)
+    drop(write_lock);
+
+    // begin acquires then adopt fails → whole entry fails closed.
+    // (Adopt lỗi → entry lỗi, journal cũ còn nguyên.)
+    let lock_result = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+        root,
+        std::time::Duration::from_secs(5),
+    );
+    assert!(lock_result.is_ok(), "lock itself must acquire");
+    let guard = lock_result.unwrap();
+    adopt_legacy_journal(root, &guard).expect_err("occupied current dir must refuse adoption");
+    assert!(
+        legacy.join("journal.json").exists(),
+        "legacy journal must survive the refused adoption"
+    );
+    drop(guard);
 }

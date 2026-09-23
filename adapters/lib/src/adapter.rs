@@ -229,6 +229,10 @@ impl PackageAdapter for LibAdapter {
         Self::CAPABILITIES
     }
 
+    fn manifest_kind(&self) -> String {
+        format!("lib:{}", self.language())
+    }
+
     /// P0/F6: forward to the embedded web engine (TS delegate resolves
     /// through it — its gate must arm from the same project).
     /// (Chuyển cho web engine nhúng.)

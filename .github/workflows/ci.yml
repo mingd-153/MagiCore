@@ -51,6 +51,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Audit dependency delegation (fail on undocumented violation)
         run: python3 scripts/audit_dependency_delegation.py
+      - name: Audit mutation-writer call manifest (fail on gateway bypass)
+        run: python3 scripts/audit_mutation_calls.py
       - name: Audit ledger stays gitignored (local-only)
         run: git check-ignore -q docs/specs/dependencyDelegationAudit.json
 

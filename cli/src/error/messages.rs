@@ -1287,6 +1287,15 @@ pub fn web_backend_flag_unsupported(flag: &str, language: &str) -> Error {
     )
 }
 
+/// Generic install with package arguments on a toolchain-owned manifest:
+/// mgc cannot journal what it does not own — run the provider toolchain
+/// (or the dedicated add lane) explicitly instead.
+/// (Install generic + packages trên manifest của tool — lỗi trước side effect.)
+pub fn install_packages_toolchain_owned(adapter_name: &str) -> Error {
+    anyhow!(
+        "generic install cannot add packages to the '{adapter_name}' toolchain-owned manifest (mgc does not own that file and cannot roll it back) — add dependencies with the provider toolchain or the dedicated add lane first, then run a package-less install"
+    )
+}
 /// Monorepo member has no package.json and its toolchain was NOT opted
 /// into: pass exactly `--compat-runtime=<tool>` for the member kind
 /// (go/pip/cargo/mvn/composer) — one flag never opens every toolchain.

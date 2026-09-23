@@ -6,6 +6,7 @@ use super::*;
 use crate::commands::core::shared::lock_matches_manifest;
 use mgc_crypto::keyring::KeyPair;
 use mgc_lockfile::Package;
+use mgc_types::adapter::PackageAdapter;
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
 use tempfile::tempdir;
 
@@ -274,4 +275,41 @@ fn clo_adapter_path_undetected_type_fails_closed() {
     let dir = tempdir().unwrap();
     let err = clo_adapter_path_gate(dir.path()).unwrap_err();
     assert!(!err.to_string().is_empty());
+}
+
+#[cfg(feature = "iot")]
+#[test]
+fn toolchain_owned_packages_rejected_before_adapter_calls() {
+    // P0-1: platformio.ini (toolchain-owned) + packages fails PURELY —
+    // no adapter call, no network, no spawn, no journal. The provider
+    // toolchain must run explicitly.
+    // (Manifest của tool + packages → lỗi thuần, không side effect.)
+    let dir = tempdir().unwrap();
+    let ini = "[env:test]\nplatform = atmelavr\nframework = arduino\n";
+    std::fs::write(dir.path().join("platformio.ini"), ini).unwrap();
+    let adapter =
+        mgc_iot_adapter::adapter_for(dir.path()).expect("platformio must detect an iot adapter");
+    assert!(
+        !adapter.manifest_owned(),
+        "platformio.ini must be toolchain-owned"
+    );
+    let err = reject_toolchain_owned_packages(&adapter, &["some-pkg".to_string()]).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("toolchain-owned"),
+        "must name the ownership reason: {err:#}"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("platformio.ini")).unwrap(),
+        ini.as_bytes(),
+        "manifest must be byte-identical (zero side effects)"
+    );
+    assert!(
+        !dir.path()
+            .join(".magicore/journal/dependency-mutation")
+            .exists(),
+        "no journal may be staged by a rejected op"
+    );
+    // Empty packages on the same lane stays allowed (pure install path).
+    // (Không packages thì qua — đường install thuần.)
+    reject_toolchain_owned_packages(&adapter, &[]).unwrap();
 }

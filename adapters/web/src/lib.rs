@@ -468,6 +468,10 @@ impl PackageAdapter for WebAdapter {
         Self::CAPABILITIES
     }
 
+    fn manifest_kind(&self) -> String {
+        "web:js".to_string()
+    }
+
     /// P0/F6: arm per operation from that operation's project root
     /// (overwrites — no first-writer-wins across projects).
     /// (Nạp cổng tuổi theo từng operation từ root project của nó.)

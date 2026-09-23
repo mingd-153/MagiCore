@@ -779,7 +779,7 @@ fn fault_injection_after_manifest_write_rolls_back() {
 
 #[test]
 fn fault_injection_journal_complete_keeps_journal_then_recovers() {
-    // journal-complete lỗi: op lỗi + journal GIỮ in_progress; chạy lại
+    // before-complete lỗi: op lỗi + journal GIỮ in_progress; chạy lại
     // sạch → recovery (current==post) + thành công + hết journal.
     // (Failed disarm keeps the journal — a clean re-run recovers.)
     let temp = TempDir::new().unwrap();
@@ -813,7 +813,7 @@ fn fault_injection_journal_complete_keeps_journal_then_recovers() {
         }
         cmd.status().unwrap()
     };
-    let first = run_remove("fault", Some("journal-complete"));
+    let first = run_remove("fault", Some("before-complete"));
     assert!(!first.success(), "disarm fault must fail the op");
     assert!(
         project
@@ -837,5 +837,123 @@ fn fault_injection_journal_complete_keeps_journal_then_recovers() {
     assert!(
         !manifest.contains("is-odd"),
         "recovered re-run completes the removal:\n{manifest}"
+    );
+}
+
+#[test]
+fn toolchain_owned_packages_fail_before_any_side_effect() {
+    // P0-1 negative: generic install + packages on platformio.ini
+    // (toolchain-owned) fails BEFORE any adapter call — even WITH a
+    // compat opt-in (the gate passes, the ownership rule still refuses):
+    // manifest byte-identical, no journal, no network, no spawn.
+    // (Manifest của tool + packages → lỗi trước side effect.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("pio");
+    std::fs::create_dir_all(&project).unwrap();
+    let ini = "[env:test]\nplatform = atmelavr\nframework = arduino\n";
+    std::fs::write(project.join("platformio.ini"), ini).unwrap();
+    std::fs::write(
+        project.join("mgc.toml"),
+        "name = \"pio\"\necosystem = \"iot\"\n[iot]\nframework = \"platformio\"\n",
+    )
+    .unwrap();
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let stdout = std::fs::File::create(log_dir.join("neg.out")).unwrap();
+    let stderr = std::fs::File::create(log_dir.join("neg.err")).unwrap();
+    let status = Command::new(&mgc)
+        .arg("bench")
+        .arg("some-pkg")
+        .current_dir(&project)
+        .env("MGC_COMPAT_RUNTIME", "pio")
+        .env("MGC_CACHE_DIR", project.join(".magicore"))
+        .stdout(stdout)
+        .stderr(stderr)
+        .status()
+        .unwrap();
+    assert!(!status.success(), "toolchain-owned + packages must fail");
+    let log = read_log(&log_dir, "neg", "out") + &read_log(&log_dir, "neg", "err");
+    assert!(
+        log.contains("toolchain-owned"),
+        "must name the ownership reason:\n{log}"
+    );
+    assert_eq!(
+        std::fs::read(project.join("platformio.ini")).unwrap(),
+        ini.as_bytes(),
+        "manifest must be byte-identical (zero side effects)"
+    );
+    assert!(
+        !project
+            .join(".magicore/journal/dependency-mutation")
+            .exists(),
+        "no journal may be staged by a rejected op"
+    );
+}
+
+#[test]
+fn generic_install_disarm_failure_rolls_back() {
+    // P0-2: generic install + before-complete failpoint — the op fails
+    // AND rolls back to the pre-image immediately (manifest + lock),
+    // instead of leaving a live journal for the next run to undo a
+    // finished install. A clean re-run then succeeds.
+    // (Disarm lỗi ở generic path → rollback ngay, không để journal sống.)
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("site");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("package.json"),
+        r#"{ "name": "race", "version": "1.0.0", "dependencies": { "mgc-race-alpha": "9.9.9" } }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let fixture = NpmFixture::new(&[("mgc-race-alpha", "9.9.9"), ("mgc-race-beta", "9.9.9")]);
+    let mgc = find_mgc_binary();
+    let log_dir = temp.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+
+    let run_bench = |tag: &str, failpoint: Option<&str>| -> std::process::ExitStatus {
+        let mut cmd = generic_install_cmd(
+            &mgc,
+            &project,
+            "mgc-race-beta",
+            &fixture.url,
+            &log_dir,
+            tag,
+            &[],
+        );
+        if let Some(phase) = failpoint {
+            cmd.env("MGC_MUTATION_FAILPOINT", phase);
+        }
+        cmd.status().unwrap()
+    };
+    let first = run_bench("fault", Some("before-complete"));
+    assert!(!first.success(), "disarm fault must fail the op");
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        !manifest.contains("mgc-race-beta"),
+        "failed op must leave nothing applied (rolled back to pre-image):\n{manifest}"
+    );
+    assert!(
+        manifest.contains("mgc-race-alpha"),
+        "pre-image dep must survive:\n{manifest}"
+    );
+    let second = run_bench("clean", None);
+    assert!(
+        second.success(),
+        "clean re-run must succeed:\n{}",
+        read_log(&log_dir, "clean", "err")
+    );
+    let manifest = std::fs::read_to_string(project.join("package.json")).unwrap();
+    assert!(
+        manifest.contains("mgc-race-beta"),
+        "re-run lands the dep:\n{manifest}"
+    );
+    assert!(
+        !project
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "no journal may survive"
     );
 }

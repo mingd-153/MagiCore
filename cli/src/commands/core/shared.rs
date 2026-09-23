@@ -231,7 +231,9 @@ pub async fn add(
     let add_snapshot = if !no_save && !toolchain_owned {
         manifest_before_add
             .as_ref()
-            .map(|manifest| MutationSnapshot::capture(manifest, root, &write_lock))
+            .map(|manifest| {
+                MutationSnapshot::capture(manifest, root, &write_lock, MutationOperation::Add)
+            })
             .transpose()?
     } else {
         None
@@ -351,7 +353,7 @@ pub async fn add(
                 if let Some(snapshot) = add_snapshot.as_ref() {
                     stage_mutation_journal(
                         root,
-                        MutationOperation::Add,
+                        adapter,
                         &added_packages
                             .iter()
                             .map(|added| added.id.name_str().to_string())
@@ -370,11 +372,11 @@ pub async fn add(
                     journaled_step(
                         adapter,
                         root,
-                        MutationOperation::Add,
                         snapshot,
                         &write_lock,
-                        "after-manifest-write",
+                        "before-manifest-write",
                         adapter.write_manifest(root, manifest),
+                        "after-manifest-write",
                     )
                     .await?;
                 } else {
@@ -385,11 +387,11 @@ pub async fn add(
                     journaled_step(
                         adapter,
                         root,
-                        MutationOperation::Add,
                         snapshot,
                         &write_lock,
-                        "after-post-image",
+                        "before-post-image",
                         async { record_post_image(root, manifest, &write_lock) },
+                        "after-post-image",
                     )
                     .await?;
                 }
@@ -455,30 +457,14 @@ pub async fn add(
             Ok(()) => {
                 if add_journaled && let Err(e) = finish_mutation_journal(root, &write_lock) {
                     if let Some(snapshot) = add_snapshot.as_ref() {
-                        return rollback_mutation(
-                            adapter,
-                            root,
-                            MutationOperation::Add,
-                            snapshot,
-                            e,
-                            &write_lock,
-                        )
-                        .await;
+                        return rollback_mutation(adapter, root, snapshot, e, &write_lock).await;
                     }
                     return Err(e);
                 }
             }
             Err(e) => {
                 if let Some(snapshot) = add_snapshot.as_ref() {
-                    return rollback_mutation(
-                        adapter,
-                        root,
-                        MutationOperation::Add,
-                        snapshot,
-                        e,
-                        &write_lock,
-                    )
-                    .await;
+                    return rollback_mutation(adapter, root, snapshot, e, &write_lock).await;
                 }
                 return Err(e);
             }
@@ -486,15 +472,7 @@ pub async fn add(
     } else if !no_save {
         if add_journaled && let Err(e) = finish_mutation_journal(root, &write_lock) {
             if let Some(snapshot) = add_snapshot.as_ref() {
-                return rollback_mutation(
-                    adapter,
-                    root,
-                    MutationOperation::Add,
-                    snapshot,
-                    e,
-                    &write_lock,
-                )
-                .await;
+                return rollback_mutation(adapter, root, snapshot, e, &write_lock).await;
             }
             return Err(e);
         }
@@ -562,7 +540,8 @@ pub async fn remove(
     // restore both files. Must capture BEFORE the remove loop mutates.
     // (Snapshot + journal TRƯỚC khi sửa — rollback/journal phục hồi cả
     // manifest lẫn lock; store/cache chỉ thêm, không xóa.)
-    let snapshot = MutationSnapshot::capture(&manifest, root, &write_lock)?;
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove)?;
     // Toolchain-owned manifest (go.mod, platformio.ini): the provider
     // tool is the SOLE writer — run the REAL toolchain remove per dep,
     // re-read, and verify absence (fail closed on a phantom removal).
@@ -593,45 +572,29 @@ pub async fn remove(
     // Commit point: journal first (crash before this line mutated
     // nothing), then the manifest write.
     // (Ghi journal trước — crash trước dòng này chưa sửa gì.)
-    stage_mutation_journal(
-        root,
-        MutationOperation::Remove,
-        &packages,
-        &snapshot,
-        &write_lock,
-    )?;
+    stage_mutation_journal(root, adapter, &packages, &snapshot, &write_lock)?;
     // Post-stage result boundary (P0-3): every fallible step below
     // routes through rollback — no bare `?` may leak a staged journal.
     // (Mọi bước post-stage qua rollback — không `?` thẳng.)
     journaled_step(
         adapter,
         root,
-        MutationOperation::Remove,
         &snapshot,
         &write_lock,
-        "after-stage",
-        async { Ok::<(), anyhow::Error>(()) },
-    )
-    .await?;
-    journaled_step(
-        adapter,
-        root,
-        MutationOperation::Remove,
-        &snapshot,
-        &write_lock,
-        "after-manifest-write",
+        "before-manifest-write",
         adapter.write_manifest(root, &manifest),
+        "after-manifest-write",
     )
     .await?;
     profile_install_mark("remove_write_manifest", write_started_at);
     journaled_step(
         adapter,
         root,
-        MutationOperation::Remove,
         &snapshot,
         &write_lock,
-        "after-post-image",
+        "before-post-image",
         async { record_post_image(root, &manifest, &write_lock) },
+        "after-post-image",
     )
     .await?;
     if !install {
@@ -640,15 +603,7 @@ pub async fn remove(
             style_cmd(install_command_for_adapter(adapter))
         ));
         if let Err(e) = finish_mutation_journal(root, &write_lock) {
-            return rollback_mutation(
-                adapter,
-                root,
-                MutationOperation::Remove,
-                &snapshot,
-                e,
-                &write_lock,
-            )
-            .await;
+            return rollback_mutation(adapter, root, &snapshot, e, &write_lock).await;
         }
         return Ok(());
     }
@@ -682,15 +637,7 @@ pub async fn remove(
         let mut summary = match install_result {
             Ok(summary) => summary,
             Err(e) => {
-                return rollback_mutation(
-                    adapter,
-                    root,
-                    MutationOperation::Remove,
-                    &snapshot,
-                    e,
-                    &write_lock,
-                )
-                .await;
+                return rollback_mutation(adapter, root, &snapshot, e, &write_lock).await;
             }
         };
         summary.duration_ms = started_at.elapsed().as_millis() as u64;
@@ -710,15 +657,7 @@ pub async fn remove(
         mgc_ui::blank_line();
         success("All dependencies installed");
         if let Err(e) = finish_mutation_journal(root, &write_lock) {
-            return rollback_mutation(
-                adapter,
-                root,
-                MutationOperation::Remove,
-                &snapshot,
-                e,
-                &write_lock,
-            )
-            .await;
+            return rollback_mutation(adapter, root, &snapshot, e, &write_lock).await;
         }
         return Ok(());
     }
@@ -737,29 +676,11 @@ pub async fn remove(
     {
         Ok(()) => {
             if let Err(e) = finish_mutation_journal(root, &write_lock) {
-                return rollback_mutation(
-                    adapter,
-                    root,
-                    MutationOperation::Remove,
-                    &snapshot,
-                    e,
-                    &write_lock,
-                )
-                .await;
+                return rollback_mutation(adapter, root, &snapshot, e, &write_lock).await;
             }
             Ok(())
         }
-        Err(e) => {
-            rollback_mutation(
-                adapter,
-                root,
-                MutationOperation::Remove,
-                &snapshot,
-                e,
-                &write_lock,
-            )
-            .await
-        }
+        Err(e) => rollback_mutation(adapter, root, &snapshot, e, &write_lock).await,
     }
 }
 
@@ -771,6 +692,7 @@ pub async fn remove(
 pub(crate) struct MutationSnapshot {
     manifest: Manifest,
     lock_bytes: Option<Vec<u8>>,
+    op: MutationOperation,
 }
 
 impl MutationSnapshot {
@@ -778,6 +700,7 @@ impl MutationSnapshot {
         manifest: &Manifest,
         root: &Path,
         _lock: &ProjectWriteLock,
+        op: MutationOperation,
     ) -> Result<Self> {
         let lock_path = root.join("mgc.lock");
         refuse_project_link(&lock_path)?;
@@ -794,6 +717,7 @@ impl MutationSnapshot {
         Ok(Self {
             manifest: manifest.clone(),
             lock_bytes,
+            op,
         })
     }
 }
@@ -954,6 +878,14 @@ fn adopt_legacy_journal(root: &Path, _lock: &ProjectWriteLock) -> Result<()> {
     std::fs::rename(&legacy, &current).map_err(|e| {
         anyhow::anyhow!("cannot adopt legacy journal '{}': {e:#}", legacy.display())
     })?;
+    // fsync the parent so the rename survives power loss (durability
+    // parity with the atomic file writes). Windows rename replaces only
+    // when the destination is absent — checked above, so no
+    // copy-and-delete fallback can resurrect a torn state.
+    // (fsync cha sau rename — rename bền vững khi mất điện.)
+    if let Some(parent) = current.parent() {
+        fsync_dir(parent)?;
+    }
     Ok(())
 }
 
@@ -997,7 +929,8 @@ impl std::fmt::Display for MutationOperation {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MutationJournal {
-    /// Schema version — must be 1; anything else fails closed.
+    /// Schema version — must be 2; anything else fails closed.
+    /// (v2 adds owner/manifest identity + canonical project root.)
     v: u32,
     /// Mutation kind (closed enum — unknown values fail closed).
     op: MutationOperation,
@@ -1009,6 +942,19 @@ struct MutationJournal {
     /// this field must NEVER read as "no lock" (that misread could
     /// delete a real lockfile).
     lock_existed: bool,
+    /// Owner identity (P0-3): adapter name, ecosystem and manifest kind
+    /// that staged this journal. Recovery restores ONLY through the
+    /// same identity — a web journal must never be rewritten by the app
+    /// lane (or vice versa).
+    /// (Định danh owner — khác core thì từ chối phục hồi.)
+    adapter_id: String,
+    ecosystem: String,
+    manifest_kind: String,
+    /// Canonicalized project root at stage time. A journal copied with
+    /// the project directory (or pointed at another checkout) fails
+    /// instead of restoring foreign state.
+    /// (Root chuẩn — journal theo project khác thì lỗi.)
+    project_root: String,
     /// Canonical manifest digest BEFORE the edit (conflict baseline).
     pre_digest: Vec<String>,
     /// Canonical manifest digest AFTER the edit (None until the write
@@ -1029,7 +975,7 @@ enum JournalState {
     Completed,
 }
 
-const MUTATION_JOURNAL_SCHEMA: u32 = 1;
+const MUTATION_JOURNAL_SCHEMA: u32 = 2;
 
 fn parse_mutation_journal(raw: &str, journal_path: &Path) -> Result<MutationJournal> {
     let journal: MutationJournal = serde_json::from_str(raw).map_err(|e| {
@@ -1098,28 +1044,33 @@ fn fsync_dir(dir: &Path) -> Result<()> {
     }
 }
 
-/// Run one post-stage mutation step (failpoint gate + work); ANY error
-/// — injected or real — rolls the op back to its pre-image instead of
-/// leaking a staged journal with `?`. This is the result boundary P0-3
-/// demands: no post-stage error path exits straight.
-/// (Một bước post-stage — lỗi là rollback, không thoát thẳng.)
+/// Run one post-stage mutation step with correctly ordered failpoints:
+/// before-check, work, after-check — ANY error rolls the op back to its
+/// pre-image instead of leaking a staged journal. Phase names mean what
+/// they say: `before-manifest-write` fires BEFORE the write,
+/// `after-manifest-write` fires AFTER it (proving rollback of a
+/// completed write, not a skipped one).
+/// (Failpoint đúng thứ tự before/work/after — tên đúng nghĩa.)
 pub(crate) async fn journaled_step<E>(
     adapter: &dyn PackageAdapter,
     root: &Path,
-    op: MutationOperation,
     snapshot: &MutationSnapshot,
     lock: &ProjectWriteLock,
-    failpoint_phase: &str,
+    before_phase: &str,
     work: impl std::future::Future<Output = Result<(), E>>,
+    after_phase: &str,
 ) -> Result<()>
 where
     E: std::fmt::Display,
 {
-    if let Err(e) = mutation_failpoint(failpoint_phase) {
-        return rollback_mutation(adapter, root, op, snapshot, e, lock).await;
+    if let Err(e) = mutation_failpoint(before_phase) {
+        return rollback_mutation(adapter, root, snapshot, e, lock).await;
     }
     if let Err(e) = work.await {
-        return rollback_mutation(adapter, root, op, snapshot, e, lock).await;
+        return rollback_mutation(adapter, root, snapshot, e, lock).await;
+    }
+    if let Err(e) = mutation_failpoint(after_phase) {
+        return rollback_mutation(adapter, root, snapshot, e, lock).await;
     }
     Ok(())
 }
@@ -1128,9 +1079,10 @@ where
 /// `MGC_MUTATION_FAILPOINT` names a phase, that phase fails with an
 /// injected error so E2E can prove every post-stage path rolls back.
 /// Production cost is one env read when unset; never set it outside
-/// tests. Phases: after-stage, after-manifest-write, after-post-image,
-/// journal-complete, journal-cleanup.
-/// (Hook lỗi chỉ-cho-test — chứng minh mọi đường post-stage rollback.)
+/// tests. Phases: before-manifest-write, after-manifest-write,
+/// before-post-image, after-post-image, before-complete, after-complete,
+/// before-cleanup.
+/// (Hook lỗi chỉ-cho-test — tên đúng thứ tự before/work/after.)
 pub(crate) fn mutation_failpoint(phase: &str) -> Result<()> {
     let target = std::env::var("MGC_MUTATION_FAILPOINT")
         .ok()
@@ -1164,7 +1116,7 @@ fn remove_journal_file(dir: &Path, name: &str) -> Result<()> {
 /// (Ghi journal bền vững cho mọi op; journal cũ còn marker là lồng nhau.)
 pub(crate) fn stage_mutation_journal(
     root: &Path,
-    op: MutationOperation,
+    adapter: &dyn PackageAdapter,
     packages: &[String],
     snapshot: &MutationSnapshot,
     _lock: &ProjectWriteLock,
@@ -1195,10 +1147,17 @@ pub(crate) fn stage_mutation_journal(
     atomic_write_file(&dir, "manifest.json", manifest_json.as_bytes())?;
     let journal = MutationJournal {
         v: MUTATION_JOURNAL_SCHEMA,
-        op,
+        op: snapshot.op,
         pid: u64::from(std::process::id()),
         packages: packages.to_vec(),
         lock_existed: snapshot.lock_bytes.is_some(),
+        adapter_id: adapter.name().to_string(),
+        ecosystem: format!("{:?}", adapter.ecosystem()),
+        manifest_kind: adapter.manifest_kind(),
+        project_root: root
+            .canonicalize()
+            .map(|root| root.display().to_string())
+            .unwrap_or_else(|_| root.display().to_string()),
         pre_digest: manifest_canonical_digest(&snapshot.manifest),
         post_digest: None,
         state: JournalState::InProgress,
@@ -1239,7 +1198,7 @@ pub(crate) fn record_post_image(
 /// (P0: a leftover journal must not resurrect a successful remove).
 /// (Đánh dấu completed TRƯỚC khi xóa — dọn sót không được rollback.)
 fn mark_journal_completed(root: &Path, _lock: &ProjectWriteLock) -> Result<()> {
-    mutation_failpoint("journal-complete")?;
+    mutation_failpoint("before-complete")?;
     let dir = mutation_journal_dir(root);
     let journal_path = dir.join("journal.json");
     // A missing journal here is ALWAYS a bug (stage runs before any
@@ -1258,6 +1217,7 @@ fn mark_journal_completed(root: &Path, _lock: &ProjectWriteLock) -> Result<()> {
         "journal.json",
         serde_json::to_string_pretty(&journal)?.as_bytes(),
     )?;
+    mutation_failpoint("after-complete")?;
     Ok(())
 }
 
@@ -1280,9 +1240,9 @@ fn clear_mutation_journal(root: &Path, _lock: &ProjectWriteLock) {
     // Fault-injection point: simulate a cleanup failure (completed
     // journal lingers; the next run deletes it — never a rollback).
     // (Điểm lỗi cleanup — journal completed sót, lần sau xóa.)
-    if mutation_failpoint("journal-cleanup").is_err() {
+    if mutation_failpoint("before-cleanup").is_err() {
         mgc_ui::warning(
-            "injected fault at mutation phase 'journal-cleanup' (MGC_MUTATION_FAILPOINT)",
+            "injected fault at mutation phase 'before-cleanup' (MGC_MUTATION_FAILPOINT)",
         );
         return;
     }
@@ -1381,6 +1341,41 @@ async fn recover_interrupted_remove(
         clear_mutation_journal(root, lock);
         return Ok(());
     }
+    // Owner + project identity (P0-3): the running adapter must BE the
+    // journal's owner — a web journal restored through the app lane (or
+    // a journal copied from another checkout) fails with remediation
+    // instead of rewriting a foreign manifest. The current adapter is
+    // never taken as authority over a mismatched journal.
+    // (Đúng owner mới được phục hồi — khác core/manifest thì lỗi.)
+    let current_root = root
+        .canonicalize()
+        .map(|root| root.display().to_string())
+        .unwrap_or_else(|_| root.display().to_string());
+    let current_identity = (
+        adapter.name().to_string(),
+        format!("{:?}", adapter.ecosystem()),
+        adapter.manifest_kind(),
+    );
+    let staged_identity = (
+        journal.adapter_id.clone(),
+        journal.ecosystem.clone(),
+        journal.manifest_kind.clone(),
+    );
+    if current_root != journal.project_root || current_identity != staged_identity {
+        return Err(anyhow::anyhow!(
+            "mutation journal belongs to '{}' ({} {}, project '{}') but the current command runs '{}' ({} {}, project '{}') — refusing to restore a foreign manifest (re-run the original '{}' op in its own project, or delete '{}' manually)",
+            journal.adapter_id,
+            journal.ecosystem,
+            journal.manifest_kind,
+            journal.project_root,
+            current_identity.0,
+            current_identity.1,
+            current_identity.2,
+            current_root,
+            journal.op,
+            journal_path.display(),
+        ));
+    }
     // No in-memory skip: at gateway time this process holds the lock and
     // has staged nothing, so ANY in_progress journal is stale by
     // construction (own tails use `_locked` and never re-enter). Same-
@@ -1420,6 +1415,7 @@ async fn recover_interrupted_remove(
     let snapshot = MutationSnapshot {
         manifest,
         lock_bytes,
+        op: journal.op,
     };
     restore_mutation_snapshot(adapter, root, &snapshot, lock).await?;
     mark_journal_completed(root, lock)?;
@@ -1442,11 +1438,11 @@ async fn recover_interrupted_remove(
 pub(crate) async fn rollback_mutation(
     adapter: &dyn PackageAdapter,
     root: &Path,
-    op: MutationOperation,
     snapshot: &MutationSnapshot,
     tail_error: impl std::fmt::Display,
     lock: &ProjectWriteLock,
 ) -> Result<()> {
+    let op = snapshot.op;
     match restore_mutation_snapshot(adapter, root, snapshot, lock).await {
         Ok(()) => {
             // Disarm BEFORE clearing: even if the delete below fails or
@@ -1556,7 +1552,8 @@ pub(crate) async fn native_update_locked(
     // owns the manifest rewrite (toolchain-owned files stay in the
     // tool's transactional domain).
     // (Snapshot pre-image cho journal update.)
-    let update_snapshot = MutationSnapshot::capture(&manifest, root, write_lock)?;
+    let update_snapshot =
+        MutationSnapshot::capture(&manifest, root, write_lock, MutationOperation::Update)?;
     let targets: Vec<(String, String, bool, bool, bool)> = if packages.is_empty() {
         manifest
             .all_dependencies()
@@ -1639,13 +1636,7 @@ pub(crate) async fn native_update_locked(
         return Ok(());
     }
     let update_journaled = if adapter.manifest_owned() {
-        stage_mutation_journal(
-            root,
-            MutationOperation::Update,
-            &packages,
-            &update_snapshot,
-            write_lock,
-        )?;
+        stage_mutation_journal(root, adapter, &packages, &update_snapshot, write_lock)?;
         true
     } else {
         false
@@ -1654,21 +1645,21 @@ pub(crate) async fn native_update_locked(
         journaled_step(
             adapter,
             root,
-            MutationOperation::Update,
             &update_snapshot,
             write_lock,
-            "after-manifest-write",
+            "before-manifest-write",
             adapter.write_manifest(root, &manifest),
+            "after-manifest-write",
         )
         .await?;
         journaled_step(
             adapter,
             root,
-            MutationOperation::Update,
             &update_snapshot,
             write_lock,
-            "after-post-image",
+            "before-post-image",
             async { record_post_image(root, &manifest, write_lock) },
+            "after-post-image",
         )
         .await?;
     } else {
@@ -1698,43 +1689,19 @@ pub(crate) async fn native_update_locked(
         {
             Ok(()) => {
                 if update_journaled && let Err(e) = finish_mutation_journal(root, write_lock) {
-                    return rollback_mutation(
-                        adapter,
-                        root,
-                        MutationOperation::Update,
-                        &update_snapshot,
-                        e,
-                        write_lock,
-                    )
-                    .await;
+                    return rollback_mutation(adapter, root, &update_snapshot, e, write_lock).await;
                 }
             }
             Err(e) => {
                 if update_journaled {
-                    return rollback_mutation(
-                        adapter,
-                        root,
-                        MutationOperation::Update,
-                        &update_snapshot,
-                        e,
-                        write_lock,
-                    )
-                    .await;
+                    return rollback_mutation(adapter, root, &update_snapshot, e, write_lock).await;
                 }
                 return Err(e);
             }
         }
     } else {
         if update_journaled && let Err(e) = finish_mutation_journal(root, write_lock) {
-            return rollback_mutation(
-                adapter,
-                root,
-                MutationOperation::Update,
-                &update_snapshot,
-                e,
-                write_lock,
-            )
-            .await;
+            return rollback_mutation(adapter, root, &update_snapshot, e, write_lock).await;
         }
         info(&format!(
             "Run '{}' to install updates",

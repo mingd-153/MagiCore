@@ -601,4 +601,16 @@ pub trait PackageAdapter:
     fn capabilities(&self) -> &'static [crate::capabilities::Capability] {
         &[]
     }
+
+    /// Stable manifest identity for journals and crash recovery: which
+    /// lane+manifest kind this adapter reads and writes (e.g.
+    /// "lib:python", "app:flutter", "web:js"). Recovery restores a
+    /// journal ONLY when the running adapter reports the same identity
+    /// — one core must never rewrite another core's manifest file.
+    /// Default is the adapter name (coarse but safe: distinct adapters
+    /// already mismatch).
+    /// (Định danh manifest cho journal — khác identity thì từ chối.)
+    fn manifest_kind(&self) -> String {
+        self.name().to_string()
+    }
 }
