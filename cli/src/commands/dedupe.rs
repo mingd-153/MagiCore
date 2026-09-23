@@ -25,6 +25,10 @@ pub struct DedupeReport {
     pub merged: usize,
     pub disk_saved_bytes: u64,
     pub entries: Vec<DedupeEntry>,
+    /// GC paths that failed deletion (bytes NOT counted above).
+    /// Empty means the GC pass was complete.
+    /// (Đường GC lỗi — byte chưa xóa không được cộng.)
+    pub gc_failed_paths: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -57,9 +61,24 @@ fn merged_lockfile(lock: &mgc_lockfile::Lockfile) -> (mgc_lockfile::Lockfile, us
 
 /// Runtime verification (user decision 2026-08-05): build the project after
 /// merging; rollback the lockfile if the build fails.
-async fn verify_with_build(_project_root: &Path, dry_run: bool) -> Result<()> {
+async fn verify_with_build(project_root: &Path, dry_run: bool) -> Result<()> {
     if dry_run {
         return Ok(());
+    }
+    // Root-bound verify (P1-3): build::run resolves its project from the
+    // ambient cwd — verifying a DIFFERENT scope would certify the wrong
+    // tree. Fail closed instead of verifying blindly (canonicalized on
+    // both sides: /tmp vs /private/tmp must not false-mismatch).
+    // (Verify đúng scope — cwd khác thì lỗi chứ không verify mù.)
+    let cwd = std::env::current_dir()?;
+    let cwd_root = ProjectConfig::find_project_root(&cwd).and_then(|root| root.canonicalize().ok());
+    let want_root = project_root.canonicalize().ok();
+    if cwd_root.is_none() || cwd_root != want_root {
+        return Err(anyhow::anyhow!(
+            "dedupe verification refused: process directory '{}' resolves to a different project than '{}' — run dedupe from the project root",
+            cwd.display(),
+            project_root.display(),
+        ));
     }
     crate::commands::build::run(None, None, None)
         .await
@@ -71,12 +90,12 @@ fn vstore_root(project_root: &Path) -> std::path::PathBuf {
 }
 
 /// Delete virtual-store package dirs no longer referenced by the lockfile.
-fn cleanup_unreferenced_vstore(project_root: &Path, lock: &mgc_lockfile::Lockfile) -> u64 {
+fn cleanup_unreferenced_vstore(project_root: &Path, lock: &mgc_lockfile::Lockfile) -> GcReport {
     let vstore = vstore_root(project_root);
+    let mut report = GcReport::default();
     if !vstore.exists() {
-        return 0;
+        return report;
     }
-    let mut freed = 0u64;
     if let Ok(entries) = fs::read_dir(&vstore) {
         for entry in entries.flatten() {
             let dir = entry.path();
@@ -93,12 +112,34 @@ fn cleanup_unreferenced_vstore(project_root: &Path, lock: &mgc_lockfile::Lockfil
                 .iter()
                 .any(|pkg| format!("{}@{}", pkg.name.replace('/', "+"), pkg.version) == name);
             if !in_lock {
-                freed += dir_size(&dir);
-                let _ = fs::remove_dir_all(&dir);
+                // Count bytes ONLY after a successful removal (P1-2):
+                // a failed delete must never inflate "freed" telemetry.
+                // (Chỉ cộng bytes khi xóa thành công — không bịa số.)
+                let bytes = dir_size(&dir);
+                match fs::remove_dir_all(&dir) {
+                    Ok(()) => {
+                        report.deleted += 1;
+                        report.bytes_confirmed += bytes;
+                    }
+                    Err(e) => {
+                        report.failed.push(format!("{}: {e}", dir.display()));
+                    }
+                }
             }
         }
     }
-    freed
+    report
+}
+
+/// Honest GC telemetry: confirmed bytes only; failures listed, never
+/// counted, never swallowed. A failed GC does not roll back the lock
+/// (the lock is already verified) but the report says Partial.
+/// (Báo cáo GC trung thực — lỗi liệt kê, không cộng byte chưa xóa.)
+#[derive(Debug, Default)]
+struct GcReport {
+    deleted: usize,
+    bytes_confirmed: u64,
+    failed: Vec<String>,
 }
 
 fn dir_size(path: &Path) -> u64 {
@@ -145,7 +186,6 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     // has no adapter to restore with, so it refuses instead of paving.)
     // (Không đè lên journal chưa phục hồi — lỗi rõ.)
     crate::commands::core::shared::ensure_no_pending_remove_journal(&project_root, &guard)?;
-    crate::commands::core::shared::ensure_no_pending_remove_journal(&project_root, &guard)?;
 
     let lock_content = fs::read_to_string(&mgc_lock)?;
     let lock: mgc_lockfile::Lockfile = mgc_lockfile::serialization::from_toml(&lock_content)?;
@@ -164,12 +204,13 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
             merged,
             disk_saved_bytes: 0,
             entries: Vec::new(),
+            gc_failed_paths: Vec::new(),
         };
         print_report(&args, &report)?;
         return Ok(());
     }
 
-    let mut disk_saved_bytes = 0u64;
+    let mut gc = GcReport::default();
     if merged > 0 {
         // Atomic commit (P0-2): the merged lock swaps in via tmp+rename
         // (never a torn write), verified by a runtime build, and rolled
@@ -195,15 +236,23 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("dedupe lock rollback failed: {e}"))?;
             bail!("merge rolled back — build verification failed: {err}");
         }
-        disk_saved_bytes = cleanup_unreferenced_vstore(&project_root, &new_lock);
+        gc = cleanup_unreferenced_vstore(&project_root, &new_lock);
+        if !gc.failed.is_empty() {
+            mgc_ui::warning(&format!(
+                "dedupe GC partial: {} path(s) failed (lock commit already verified — no rollback needed): {}",
+                gc.failed.len(),
+                gc.failed.join("; "),
+            ));
+        }
     }
 
     let report = DedupeReport {
         before_instances: before,
         after_instances: after,
         merged,
-        disk_saved_bytes,
+        disk_saved_bytes: gc.bytes_confirmed,
         entries: Vec::new(),
+        gc_failed_paths: gc.failed,
     };
     print_report(&args, &report)?;
     Ok(())

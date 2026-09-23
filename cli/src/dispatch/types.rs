@@ -52,6 +52,7 @@ pub enum CommonCommand {
     },
     Import {
         dir: Option<std::path::PathBuf>,
+        allow_unsigned: bool,
     },
     Migrate {
         cmd: crate::commands::migrate::MigrateCmd,

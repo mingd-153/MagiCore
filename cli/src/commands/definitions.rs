@@ -121,6 +121,11 @@ pub enum Commands {
     Import {
         #[arg(long, help = "Target project directory to import")]
         dir: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            help = "Allow writing an UNSIGNED mgc.lock when no signing key exists (explicit escape hatch — never the default)"
+        )]
+        allow_unsigned: bool,
     },
     #[command(about = "Migrate mgc.lock to a newer schema (explicit, never automatic)")]
     Migrate {

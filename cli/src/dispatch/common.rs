@@ -19,7 +19,10 @@ pub async fn dispatch_common(
         CommonCommand::Stage { dir } => {
             commands::publish::stage(dir.map(|d| d.display().to_string())).await
         }
-        CommonCommand::Import { dir } => commands::import::run(dir).await,
+        CommonCommand::Import {
+            dir,
+            allow_unsigned,
+        } => commands::import::run(dir, allow_unsigned).await,
         CommonCommand::Migrate { cmd } => commands::migrate::run(cmd).await,
         CommonCommand::Sbom {
             format,

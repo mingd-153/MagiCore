@@ -2716,35 +2716,88 @@ pub fn core_adapter(eco: &Ecosystem) -> Arc<dyn PackageAdapter> {
 }
 
 /// game: materialize optimizer template + hook dep (bevy). Dùng chung add/install game.
+/// Staging-first transaction (P0-3): the template materializes into a
+/// temp dir and is renamed into the project ONLY after the manifest
+/// edit commits — a crash can never leave template files without their
+/// Cargo.toml entry half-applied (either side re-runs idempotently to
+/// convergence).
+/// (Staging trước — crash không để lại nửa tính năng.)
 #[cfg(feature = "game")]
 pub async fn game_optimizer_template(root: &Path) -> Result<()> {
+    let adapter = mgc_game_adapter::adapter_for(root);
+    // Gateway FIRST (P0-3): recover any stale journal before touching
+    // anything; the guard serializes against concurrent mutations.
+    // (Gateway trước — recovery journal cũ trước mọi sửa đổi.)
+    if let Some(adapter) = adapter.as_ref() {
+        let _guard = begin_dependency_mutation(
+            adapter as &dyn PackageAdapter,
+            root,
+            MutationOperation::Optimizer,
+        )
+        .await?;
+        return game_optimizer_template_locked(adapter as &dyn PackageAdapter, root).await;
+    }
+    // Undetectable engine: legacy best-effort path (no manifest identity
+    // to journal under) — template only, hook refuses below.
+    // (Không detect được engine: chỉ template, hook sẽ từ chối.)
     materialize_template(root, OPTIMIZER_PKG).await?;
     game_hook_optimizer_dep(root).await
 }
 
-/// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
+/// Locked body: template-to-staging → manifest edit (byte snapshot +
+/// atomic write + read-back verify) → publish rename → done. Every
+/// failure before the rename leaves the project untouched (staging
+/// litter is GC-able); the rename is the single commit point.
+/// (Body đã lock: staging → sửa manifest → rename công khai.)
 #[cfg(feature = "game")]
-async fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
-    // Serialized idempotent edit: the mgc-optimizer path dep is
-    // insert-if-missing with VALUE verification (an identical key with a
-    // different value is a user conflict, not a skip), written atomically
-    // (tmp + rename, no torn file). Enters the mutation gateway FIRST so
-    // a stale journal from an earlier crashed op is recovered-or-refused
-    // before touching Cargo.toml (P0-3-adjacent). No journal of its own:
-    // both crash outcomes (pre-write / post-write) are valid states and
-    // re-running converges, so there is nothing to roll back to.
-    // (Sửa idempotent qua gateway + verify giá trị + atomic.)
+async fn game_optimizer_template_locked(_adapter: &dyn PackageAdapter, root: &Path) -> Result<()> {
+    let manifest = root.join("Cargo.toml");
+    let snapshot_bytes = std::fs::read(&manifest).ok();
+    // Stage FIRST into a temp dir (never directly into the project).
+    // (Dựng template vào staging trước.)
+    let staging_parent = root.join(".magicore").join("tmp-optimizer");
+    let _ = std::fs::remove_dir_all(&staging_parent);
+    std::fs::create_dir_all(&staging_parent)?;
+    materialize_template(&staging_parent, OPTIMIZER_PKG).await?;
+    // Manifest edit with byte-snapshot restore (NOT the Manifest-struct
+    // journal: the cargo writer rebuilds [dependencies] as plain version
+    // strings and would corrupt `{ path = ... }` specs on restore —
+    // byte restore is exact).
+    // (Snapshot byte + restore byte — writer struct làm mất path spec.)
+    if let Err(e) = game_edit_optimizer_dep(root).await {
+        if let Some(bytes) = snapshot_bytes {
+            let _ = atomic_write_file_checked(root, "Cargo.toml", &bytes, false);
+        }
+        let _ = std::fs::remove_dir_all(&staging_parent);
+        return Err(e);
+    }
+    // Publish: rename staging into the project (skip when converged).
+    // (Công khai: rename staging vào project.)
+    let dest = root.join(OPTIMIZER_PKG);
+    if !dest.exists()
+        && let Err(e) = std::fs::rename(staging_parent.join(OPTIMIZER_PKG), &dest)
+    {
+        if let Some(bytes) = snapshot_bytes {
+            let _ = atomic_write_file_checked(root, "Cargo.toml", &bytes, false);
+        }
+        let _ = std::fs::remove_dir_all(&staging_parent);
+        return Err(anyhow::anyhow!("optimizer template publish failed: {e:#}"));
+    }
+    let _ = std::fs::remove_dir_all(&staging_parent);
+    Ok(())
+}
+
+/// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
+/// The manifest EDIT step (no gateway inside — the caller holds the
+/// guard): value-verified, atomic, read-back verified. Extracted so the
+/// staged template flow and the legacy hook share one implementation.
+/// (Bước sửa manifest — caller giữ lock.)
+#[cfg(feature = "game")]
+async fn game_edit_optimizer_dep(root: &Path) -> Result<()> {
     let manifest = root.join("Cargo.toml");
     if !manifest.exists() {
         return Ok(());
     }
-    let Some(adapter) = mgc_game_adapter::adapter_for(root) else {
-        return Err(anyhow::anyhow!(
-            "game optimizer hook refused: '{}' is not a detected game project",
-            root.display()
-        ));
-    };
-    let _guard = begin_dependency_mutation(&adapter, root, MutationOperation::Optimizer).await?;
     refuse_project_link(&manifest)?;
     let content = std::fs::read_to_string(&manifest)?;
     let mut v: toml::Value = toml::from_str(&content)?;
@@ -2797,6 +2850,33 @@ async fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+/// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
+#[cfg(feature = "game")]
+async fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
+    // Serialized idempotent edit: the mgc-optimizer path dep is
+    // insert-if-missing with VALUE verification (an identical key with a
+    // different value is a user conflict, not a skip), written atomically
+    // (tmp + rename, no torn file). Enters the mutation gateway FIRST so
+    // a stale journal from an earlier crashed op is recovered-or-refused
+    // before touching Cargo.toml (P0-3-adjacent). No journal of its own:
+    // both crash outcomes (pre-write / post-write) are valid states and
+    // re-running converges, so there is nothing to roll back to.
+    // (Sửa idempotent qua gateway + verify giá trị + atomic.)
+    let Some(adapter) = mgc_game_adapter::adapter_for(root) else {
+        return Err(anyhow::anyhow!(
+            "game optimizer hook refused: '{}' is not a detected game project",
+            root.display()
+        ));
+    };
+    let manifest = root.join("Cargo.toml");
+    if !manifest.exists() {
+        return Ok(());
+    }
+    let _guard = begin_dependency_mutation(&adapter, root, MutationOperation::Optimizer).await?;
+    game_edit_optimizer_dep(root).await
+}
+
 // ── ai helpers (Phase 7 v5) ───────────────────────────────────────────────────
 
 /// ai project root — detect qua mgc_ai_adapter (không dùng find_project_root).

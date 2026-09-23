@@ -112,7 +112,12 @@ ALLOWLIST = {
         {"lock-write"}, "lock merge under writer guard + build-verified rollback",
     ),
     ("cli/src/commands/import.rs", "run"): (
-        {"lock-write"}, "lock import under writer guard + roundtrip verify",
+        {"lock-write", "manifest-file-write"},
+        "lock+sig import under writer guard + transactional rollback",
+    ),
+    # --- staged template publish (locked, convergent, GC-able litter) ---
+    ("cli/src/commands/core/shared.rs", "game_optimizer_template_locked"): (
+        {"manifest-file-write"}, "staging publish under gateway guard",
     ),
     # --- engine-internal lock writers (the engine, not a bypass) ---
     ("adapters/app/src/install/mod.rs", "run_install"): (

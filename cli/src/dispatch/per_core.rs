@@ -60,7 +60,13 @@ pub fn command_to_dispatch(
         }
         Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
         Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
-        Commands::Import { dir } => Some(CommonCommand::Import { dir }),
+        Commands::Import {
+            dir,
+            allow_unsigned,
+        } => Some(CommonCommand::Import {
+            dir,
+            allow_unsigned,
+        }),
         Commands::Migrate { cmd } => Some(CommonCommand::Migrate { cmd }),
         Commands::Sbom {
             format,
