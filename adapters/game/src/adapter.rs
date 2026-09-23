@@ -304,6 +304,23 @@ impl PackageAdapter for GameAdapter {
         Self::CAPABILITIES
     }
 
+    fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
+        // Source-verified manifest per engine (engine.rs detection).
+        // (Manifest theo engine — đúng file detect đọc.)
+        let (language, format, relpath) = match self.engine {
+            GameEngine::Bevy => ("bevy", "Cargo.toml", "Cargo.toml"),
+            GameEngine::Godot => ("godot", "project.godot", "project.godot"),
+            GameEngine::Unity => ("unity", "manifest.json", "Packages/manifest.json"),
+            GameEngine::Unreal => ("unreal", "*.uproject", "*.uproject"),
+        };
+        Some(mgc_types::ManifestIdentity {
+            core: "game".to_string(),
+            language: language.to_string(),
+            format: format.to_string(),
+            relpath: relpath.to_string(),
+        })
+    }
+
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
         match self.engine {
             GameEngine::Bevy => {

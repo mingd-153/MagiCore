@@ -468,8 +468,13 @@ impl PackageAdapter for WebAdapter {
         Self::CAPABILITIES
     }
 
-    fn manifest_kind(&self) -> String {
-        "web:js".to_string()
+    fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
+        Some(mgc_types::ManifestIdentity {
+            core: "web".to_string(),
+            language: "js".to_string(),
+            format: "package.json".to_string(),
+            relpath: "package.json".to_string(),
+        })
     }
 
     /// P0/F6: arm per operation from that operation's project root

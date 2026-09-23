@@ -847,6 +847,60 @@ fn mutation_journal_dir(root: &Path) -> std::path::PathBuf {
         .join("dependency-mutation")
 }
 
+fn project_id_path(root: &Path) -> std::path::PathBuf {
+    root.join(".magicore").join("project.id")
+}
+
+/// Stable per-project identity (P1-2): a random UUID stored in
+/// `.magicore/project.id`, created once under the writer lock. Unlike
+/// the absolute path it survives renames/moves of the checkout (the
+/// file moves WITH the project); unlike nothing, it distinguishes two
+/// checkouts that merely share history. Missing or garbage file fails
+/// closed — never invented.
+/// (UUID project bền vững — move checkout vẫn nhận ra, copy khác UUID.)
+fn project_identity_id(root: &Path, _lock: &ProjectWriteLock) -> Result<String> {
+    let path = project_id_path(root);
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => read_project_identity_id(root),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let magicore = root.join(".magicore");
+            refuse_project_link(&magicore)?;
+            if std::fs::symlink_metadata(&magicore).is_err() {
+                std::fs::create_dir(&magicore)?;
+            }
+            let id = uuid::Uuid::new_v4().to_string();
+            atomic_write_file(&magicore, "project.id", id.as_bytes())?;
+            Ok(id)
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "cannot stat project identity '{}': {e:#}",
+            path.display()
+        )),
+    }
+}
+
+/// Read-only twin: never creates — recovery must not mutate before it
+/// has verified anything.
+/// (Chỉ đọc — recovery không tạo gì trước khi verify.)
+fn read_project_identity_id(root: &Path) -> Result<String> {
+    let path = project_id_path(root);
+    let raw = read_project_string(&path).map_err(|_| {
+        anyhow::anyhow!(
+            "missing project identity '{}' alongside a staged journal — the project directory was replaced or the file deleted; refusing to guess (restore the directory or delete '{}' manually)",
+            path.display(),
+            mutation_journal_dir(root).display(),
+        )
+    })?;
+    let id = raw.trim().to_string();
+    uuid::Uuid::parse_str(&id).map_err(|_| {
+        anyhow::anyhow!(
+            "corrupt project identity '{}' (not a UUID) — refusing to guess",
+            path.display()
+        )
+    })?;
+    Ok(id)
+}
+
 fn legacy_journal_dir(root: &Path) -> std::path::PathBuf {
     root.join(".magicore").join("journal").join("remove")
 }
@@ -929,8 +983,9 @@ impl std::fmt::Display for MutationOperation {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MutationJournal {
-    /// Schema version — must be 2; anything else fails closed.
-    /// (v2 adds owner/manifest identity + canonical project root.)
+    /// Schema version — must be 4 (v4: op enum + full owner identity +
+    /// canonical root + stable project UUID; older fail closed — never
+    /// public, RC branch only).
     v: u32,
     /// Mutation kind (closed enum — unknown values fail closed).
     op: MutationOperation,
@@ -942,19 +997,23 @@ struct MutationJournal {
     /// this field must NEVER read as "no lock" (that misread could
     /// delete a real lockfile).
     lock_existed: bool,
-    /// Owner identity (P0-3): adapter name, ecosystem and manifest kind
-    /// that staged this journal. Recovery restores ONLY through the
-    /// same identity — a web journal must never be rewritten by the app
-    /// lane (or vice versa).
-    /// (Định danh owner — khác core thì từ chối phục hồi.)
-    adapter_id: String,
-    ecosystem: String,
-    manifest_kind: String,
-    /// Canonicalized project root at stage time. A journal copied with
-    /// the project directory (or pointed at another checkout) fails
-    /// instead of restoring foreign state.
-    /// (Root chuẩn — journal theo project khác thì lỗi.)
+    /// Owner identity (P0-3): core + language/framework + manifest
+    /// format + relative path. Recovery restores ONLY through an
+    /// identical identity — one lane must never rewrite another lane's
+    /// manifest, even inside one adapter (bevy vs godot, tf vs cdk).
+    /// (Định danh owner đầy đủ — khác lane thì từ chối phục hồi.)
+    identity: mgc_types::ManifestIdentity,
+    /// Canonicalized project root at stage time (diagnostic + moved
+    /// detection messaging; the AUTHORITY is project_id below).
+    /// (Root chuẩn để chẩn đoán — quyền quyết định là project_id.)
     project_root: String,
+    /// Stable project UUID (P1-2): travels WITH the checkout, so a
+    /// legitimately moved/renamed project still recovers, while a
+    /// foreign project (different UUID) fails. Absolute paths leak
+    /// usernames/build dirs into artifacts and break on every move —
+    /// never stable identity.
+    /// (UUID project — move vẫn nhận, project lạ thì từ chối.)
+    project_id: String,
     /// Canonical manifest digest BEFORE the edit (conflict baseline).
     pre_digest: Vec<String>,
     /// Canonical manifest digest AFTER the edit (None until the write
@@ -975,23 +1034,35 @@ enum JournalState {
     Completed,
 }
 
-const MUTATION_JOURNAL_SCHEMA: u32 = 2;
+const MUTATION_JOURNAL_SCHEMA: u32 = 4;
 
 fn parse_mutation_journal(raw: &str, journal_path: &Path) -> Result<MutationJournal> {
-    let journal: MutationJournal = serde_json::from_str(raw).map_err(|e| {
+    // Version gate FIRST (P1-3): a schema mismatch fails with an
+    // explicit version error before field-level parsing can mislead
+    // (missing-field errors would hide "wrong schema" from operators).
+    // (Cổng version trước — lỗi schema rõ ràng.)
+    let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
         anyhow::anyhow!(
             "corrupt mutation journal '{}': {e:#} (artifacts preserved — refusing to guess; inspect or delete it manually)",
             journal_path.display()
         )
     })?;
-    if journal.v != MUTATION_JOURNAL_SCHEMA {
+    let version = value.get("v").and_then(|v| v.as_u64());
+    if version != Some(u64::from(MUTATION_JOURNAL_SCHEMA)) {
         return Err(anyhow::anyhow!(
-            "unsupported mutation journal schema v{} in '{}' (this binary reads v{MUTATION_JOURNAL_SCHEMA}; artifacts preserved)",
-            journal.v,
+            "unsupported mutation journal schema v{} in '{}' (this binary reads v{MUTATION_JOURNAL_SCHEMA}; artifacts preserved — inspect or delete it manually)",
+            version
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
             journal_path.display()
         ));
     }
-    Ok(journal)
+    serde_json::from_value(value).map_err(|e| {
+        anyhow::anyhow!(
+            "corrupt mutation journal '{}': {e:#} (artifacts preserved — refusing to guess; inspect or delete it manually)",
+            journal_path.display()
+        )
+    })
 }
 /// create_new temp (never overwrite blindly), O_NOFOLLOW on unix, fsync
 /// file + parent dir, atomic rename. Mirrors mgc-lockfile atomic semantics.
@@ -1145,19 +1216,29 @@ pub(crate) fn stage_mutation_journal(
     }
     let manifest_json = serde_json::to_string_pretty(&snapshot.manifest)?;
     atomic_write_file(&dir, "manifest.json", manifest_json.as_bytes())?;
+    // No permissive default (Blocker 1): lanes without a natively-owned
+    // manifest report no identity — staging for them fails closed here
+    // instead of silently journaling under a coarse adapter name.
+    // (Không identity thì không stage — fail-closed.)
+    let identity = adapter.manifest_identity().ok_or_else(|| {
+        anyhow::anyhow!(
+            "cannot journal a '{}' mutation: the '{}' lane claims no natively-owned manifest (delegated/scaffold lanes are not journaled)",
+            snapshot.op,
+            adapter.name(),
+        )
+    })?;
     let journal = MutationJournal {
         v: MUTATION_JOURNAL_SCHEMA,
         op: snapshot.op,
         pid: u64::from(std::process::id()),
         packages: packages.to_vec(),
         lock_existed: snapshot.lock_bytes.is_some(),
-        adapter_id: adapter.name().to_string(),
-        ecosystem: format!("{:?}", adapter.ecosystem()),
-        manifest_kind: adapter.manifest_kind(),
+        identity,
         project_root: root
             .canonicalize()
             .map(|root| root.display().to_string())
             .unwrap_or_else(|_| root.display().to_string()),
+        project_id: project_identity_id(root, _lock)?,
         pre_digest: manifest_canonical_digest(&snapshot.manifest),
         post_digest: None,
         state: JournalState::InProgress,
@@ -1341,39 +1422,56 @@ async fn recover_interrupted_remove(
         clear_mutation_journal(root, lock);
         return Ok(());
     }
-    // Owner + project identity (P0-3): the running adapter must BE the
-    // journal's owner — a web journal restored through the app lane (or
-    // a journal copied from another checkout) fails with remediation
-    // instead of rewriting a foreign manifest. The current adapter is
-    // never taken as authority over a mismatched journal.
-    // (Đúng owner mới được phục hồi — khác core/manifest thì lỗi.)
+    // Owner + project identity (Blocker 1): the running adapter must BE
+    // the journal's owner — full ManifestIdentity equality (core,
+    // language, format, relpath), not just the adapter name, so two
+    // frameworks sharing one adapter (bevy vs godot, tf vs cdk) still
+    // mismatch. Project lineage is the stable UUID (P1-2): a moved or
+    // renamed checkout keeps `.magicore/project.id` and recovers (with
+    // a notice); a foreign project carries a different UUID and fails.
+    // Anything else fails with remediation instead of rewriting a
+    // foreign manifest; the current adapter is never taken as authority
+    // over a mismatched journal.
+    // (Đúng identity + UUID mới được phục hồi — move thì báo, lạ thì lỗi.)
     let current_root = root
         .canonicalize()
         .map(|root| root.display().to_string())
         .unwrap_or_else(|_| root.display().to_string());
-    let current_identity = (
-        adapter.name().to_string(),
-        format!("{:?}", adapter.ecosystem()),
-        adapter.manifest_kind(),
-    );
-    let staged_identity = (
-        journal.adapter_id.clone(),
-        journal.ecosystem.clone(),
-        journal.manifest_kind.clone(),
-    );
-    if current_root != journal.project_root || current_identity != staged_identity {
+    let current_id = read_project_identity_id(root)?;
+    let current_identity = adapter.manifest_identity();
+    let identity_matches = match (&current_identity, &journal.identity) {
+        (Some(current), staged) => current == staged,
+        (None, _) => false,
+    };
+    if current_id != journal.project_id || !identity_matches {
+        let current_desc = current_identity
+            .map(|identity| {
+                format!(
+                    "{}/{}/{}/{}",
+                    identity.core, identity.language, identity.format, identity.relpath
+                )
+            })
+            .unwrap_or_else(|| format!("{} (no native manifest identity)", adapter.name()));
+        let staged = &journal.identity;
         return Err(anyhow::anyhow!(
-            "mutation journal belongs to '{}' ({} {}, project '{}') but the current command runs '{}' ({} {}, project '{}') — refusing to restore a foreign manifest (re-run the original '{}' op in its own project, or delete '{}' manually)",
-            journal.adapter_id,
-            journal.ecosystem,
-            journal.manifest_kind,
+            "mutation journal belongs to '{}' ({}/{}/{}) of project '{}' (id '{}') but the current command runs '{}' of project '{}' (id '{}') — refusing to restore a foreign manifest (re-run the original '{}' op in its own project, or delete '{}' manually)",
+            staged.core,
+            staged.language,
+            staged.format,
+            staged.relpath,
             journal.project_root,
-            current_identity.0,
-            current_identity.1,
-            current_identity.2,
+            journal.project_id,
+            current_desc,
             current_root,
+            current_id,
             journal.op,
             journal_path.display(),
+        ));
+    }
+    if current_root != journal.project_root {
+        mgc_ui::warning(&format!(
+            "project directory moved since the journal was staged ('{}' → '{}'); same project UUID, continuing recovery",
+            journal.project_root, current_root,
         ));
     }
     // No in-memory skip: at gateway time this process holds the lock and

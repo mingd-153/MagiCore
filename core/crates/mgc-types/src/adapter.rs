@@ -603,14 +603,30 @@ pub trait PackageAdapter:
     }
 
     /// Stable manifest identity for journals and crash recovery: which
-    /// lane+manifest kind this adapter reads and writes (e.g.
-    /// "lib:python", "app:flutter", "web:js"). Recovery restores a
-    /// journal ONLY when the running adapter reports the same identity
-    /// — one core must never rewrite another core's manifest file.
-    /// Default is the adapter name (coarse but safe: distinct adapters
-    /// already mismatch).
-    /// (Định danh manifest cho journal — khác identity thì từ chối.)
-    fn manifest_kind(&self) -> String {
-        self.name().to_string()
+    /// core, language/framework, manifest format and relative path this
+    /// adapter reads and writes (e.g. lib/python/pyproject.toml). The
+    /// default is None — NO native mutation ownership claimed. Recovery
+    /// restores a journal ONLY through an identical identity: one lane
+    /// must never rewrite another lane's manifest, even inside the same
+    /// adapter (bevy vs godot, esp32 vs pio, tf vs cdk).
+    /// `None` means this adapter owns no natively-mutable manifest;
+    /// staging a journal for it fails closed.
+    /// (Định danh manifest chi tiết — mặc định không claim gì.)
+    fn manifest_identity(&self) -> Option<ManifestIdentity> {
+        None
     }
+}
+
+/// Owner identity of one natively-mutable manifest lane. Compared by
+/// VALUE in crash recovery — every field must match.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ManifestIdentity {
+    /// Adapter core name: web/lib/app/game/iot/...
+    pub core: String,
+    /// Lane language/framework: python, bevy, flutter, terraform, ...
+    pub language: String,
+    /// Manifest format filename or pattern: pyproject.toml, *.uproject, ...
+    pub format: String,
+    /// Normalized manifest path relative to the project root.
+    pub relpath: String,
 }

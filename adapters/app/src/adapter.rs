@@ -442,8 +442,23 @@ impl AuditProvider for AppAdapter {
 
 #[async_trait]
 impl PackageAdapter for AppAdapter {
-    fn manifest_kind(&self) -> String {
-        format!("app:{}", self.language.as_str())
+    fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
+        // Source-verified manifest per language (manifest/ module).
+        // (Manifest theo language — đúng file module đọc/viết.)
+        let (language, format, relpath) = match self.language {
+            AppLanguage::Flutter => ("flutter", "pubspec.yaml", "pubspec.yaml"),
+            AppLanguage::Swift => ("swift", "Package.swift", "Package.swift"),
+            AppLanguage::Kotlin => ("kotlin", "build.gradle", "build.gradle"),
+            AppLanguage::ReactNative => ("react-native", "package.json", "package.json"),
+            AppLanguage::ObjC => ("objc", "Podfile", "Podfile"),
+            AppLanguage::Multi => ("multi", "multi", "multi"),
+        };
+        Some(mgc_types::ManifestIdentity {
+            core: "app".to_string(),
+            language: language.to_string(),
+            format: format.to_string(),
+            relpath: relpath.to_string(),
+        })
     }
 
     fn capabilities(&self) -> &'static [Capability] {

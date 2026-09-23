@@ -326,6 +326,24 @@ impl PackageAdapter for CloudAdapter {
         Self::CAPABILITIES
     }
 
+    fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
+        // Source-verified manifest per cloud type (cloud_type.rs
+        // detection; CDK rides the web package.json delegate).
+        // (Manifest theo loại cloud.)
+        let (language, format, relpath) = match self.cloud_type {
+            CloudType::Cdk => ("cdk", "package.json", "package.json"),
+            CloudType::Pulumi => ("pulumi", "Pulumi.yaml", "Pulumi.yaml"),
+            CloudType::Terraform => ("terraform", ".terraform.lock.hcl", ".terraform.lock.hcl"),
+            CloudType::Cloudflare => ("cloudflare", "wrangler.toml", "wrangler.toml"),
+        };
+        Some(mgc_types::ManifestIdentity {
+            core: "cloud".to_string(),
+            language: language.to_string(),
+            format: format.to_string(),
+            relpath: relpath.to_string(),
+        })
+    }
+
     /// P0/F6: forward to the embedded web engine (TS delegate resolves
     /// through it — its gate must arm from the same project).
     /// (Chuyển cho web engine nhúng.)

@@ -488,17 +488,43 @@ fn validate_install_owner(
                 None
             }
         };
+        // P1-1: detect the REAL game engine (bevy/godot/unity/unreal)
+        // instead of hardcoding Bevy — non-Bevy engines hit the owner
+        // table's catch-all Unsupported branch and fail closed there,
+        // never evaluated under Bevy's ownership.
+        // (Detect engine game thật — không hardcode Bevy.)
+        let game_eco: Option<String> = {
+            #[cfg(feature = "game")]
+            {
+                mgc_game_adapter::adapter_for(project_root).map(|a| a.engine().to_string())
+            }
+            #[cfg(not(feature = "game"))]
+            {
+                None
+            }
+        };
         let (core, ecosystem, framework): (&str, Option<&str>, Option<&str>) =
             match adapter.ecosystem() {
                 Ecosystem::Web => ("web", Some(crate::commands::dep_gate::eco::JS), None),
                 Ecosystem::Ai => ("ai", Some(crate::commands::dep_gate::eco::PYTHON), None),
                 Ecosystem::App => ("app", app_eco, None),
                 Ecosystem::Lib => ("lib", lib_eco, None),
-                Ecosystem::Game => (
-                    "game",
-                    Some(crate::commands::dep_gate::eco::BEVY),
-                    Some(crate::commands::dep_gate::eco::BEVY),
-                ),
+                Ecosystem::Game => {
+                    let engine = game_eco.as_deref();
+                    // Bevy keeps its exact historical cell; any other
+                    // detected engine flows into the table's catch-all
+                    // (Unsupported, fail closed) — never Bevy's.
+                    // (Chỉ Bevy giữ cell cũ — engine khác fail-closed.)
+                    if engine == Some(crate::commands::dep_gate::eco::BEVY) {
+                        (
+                            "game",
+                            Some(crate::commands::dep_gate::eco::BEVY),
+                            Some(crate::commands::dep_gate::eco::BEVY),
+                        )
+                    } else {
+                        ("game", engine, engine)
+                    }
+                }
                 // iot carries the framework id in both slots (no separate
                 // language layer exists in the iot lane).
                 Ecosystem::Iot => ("iot", iot_fw, iot_fw),

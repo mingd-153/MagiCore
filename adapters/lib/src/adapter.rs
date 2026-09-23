@@ -229,8 +229,27 @@ impl PackageAdapter for LibAdapter {
         Self::CAPABILITIES
     }
 
-    fn manifest_kind(&self) -> String {
-        format!("lib:{}", self.language())
+    fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
+        // Source-verified manifest per language (parse_* entry points).
+        // (Manifest theo language — đúng file parser đọc.)
+        let (language, format, relpath) = match self.language {
+            LibLanguage::Ts => ("ts", "package.json", "package.json"),
+            LibLanguage::Rust => ("rust", "Cargo.toml", "Cargo.toml"),
+            LibLanguage::Python => ("python", "pyproject.toml", "pyproject.toml"),
+            LibLanguage::Go => ("go", "go.mod", "go.mod"),
+            LibLanguage::Java => match self.java_kind {
+                JavaManifestKind::Pom => ("java", "pom.xml", "pom.xml"),
+                JavaManifestKind::Gradle => ("java", "build.gradle", "build.gradle"),
+                JavaManifestKind::None => ("java", "pom.xml", "pom.xml"),
+            },
+            LibLanguage::DotNet => ("dotnet", "csproj", "*.csproj"),
+        };
+        Some(mgc_types::ManifestIdentity {
+            core: "lib".to_string(),
+            language: language.to_string(),
+            format: format.to_string(),
+            relpath: relpath.to_string(),
+        })
     }
 
     /// P0/F6: forward to the embedded web engine (TS delegate resolves

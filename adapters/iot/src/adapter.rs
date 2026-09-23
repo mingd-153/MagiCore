@@ -302,6 +302,24 @@ impl PackageAdapter for IotAdapter {
         Self::CAPABILITIES
     }
 
+    fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
+        // Source-verified manifest per framework (only Esp32Rust is
+        // mgc-written; Platformio/Zephyr are toolchain-owned and never
+        // reach staging, but their identity still mismatches correctly).
+        // (Manifest theo framework.)
+        let (language, format, relpath) = match self.framework {
+            IotFramework::Esp32Rust => ("esp32-rust", "Cargo.toml", "Cargo.toml"),
+            IotFramework::Platformio => ("platformio", "platformio.ini", "platformio.ini"),
+            IotFramework::Zephyr => ("zephyr", "west.yml", "west.yml"),
+        };
+        Some(mgc_types::ManifestIdentity {
+            core: "iot".to_string(),
+            language: language.to_string(),
+            format: format.to_string(),
+            relpath: relpath.to_string(),
+        })
+    }
+
     fn manifest_owned(&self) -> bool {
         // platformio.ini / west.yml are owned SOLELY by their toolchains
         // (write_manifest fails closed for them — same precedent as

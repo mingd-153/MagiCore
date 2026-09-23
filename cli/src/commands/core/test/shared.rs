@@ -675,19 +675,35 @@ async fn foreign_core_journal_is_never_restored() {
     std::fs::create_dir_all(&journal_dir).unwrap();
     let canonical = root.canonicalize().unwrap().display().to_string();
     let journal = serde_json::json!({
-        "v": 2,
+        "v": 4,
         "op": "remove",
         "pid": 12345,
         "packages": ["some-web-dep"],
         "lock_existed": true,
-        "adapter_id": "app",
-        "ecosystem": "App",
-        "manifest_kind": "app:flutter",
+        "identity": {
+            "core": "app",
+            "language": "flutter",
+            "format": "pubspec.yaml",
+            "relpath": "pubspec.yaml",
+        },
         "project_root": canonical,
+        "project_id": "00000000-0000-4000-8000-000000000000",
         "pre_digest": [],
         "post_digest": null,
         "state": "in_progress",
     });
+    std::fs::write(
+        journal_dir.join("journal.json"),
+        serde_json::to_string_pretty(&journal).unwrap(),
+    )
+    .unwrap();
+    // This project has a DIFFERENT real identity (its own project.id).
+    // (Project này có UUID thật khác — journal ngoại lai.)
+    std::fs::write(
+        root.join(".magicore/project.id"),
+        "11111111-1111-4111-8111-111111111111",
+    )
+    .unwrap();
     std::fs::write(
         journal_dir.join("journal.json"),
         serde_json::to_string_pretty(&journal).unwrap(),
@@ -709,10 +725,11 @@ async fn foreign_core_journal_is_never_restored() {
 }
 
 #[tokio::test]
-async fn copied_project_journal_fails_on_root_mismatch() {
-    // P0-3: copy cả project sang chỗ khác — journal mang root cũ, recovery
-    // ở root mới phải từ chối (không phục hồi state ngoại lai).
-    // (Copied project dir: stale root fails closed.)
+async fn copied_project_journal_recovers_same_lineage() {
+    // P1-2: copy cả project (UUID đi cùng) — lineage giống nhau, state
+    // giống nhau → recovery thành công đúng đắn (không phải ngoại lai).
+    // Khác với project KHÁC UUID (test foreign) luôn bị từ chối.
+    // (Copied project shares lineage — recovery succeeds correctly.)
     let dir_a = tempfile::tempdir().unwrap();
     python_fixture(dir_a.path());
     let (adapter_a, lock_a) = test_adapter_and_lock(dir_a.path());
@@ -729,17 +746,98 @@ async fn copied_project_journal_fails_on_root_mismatch() {
     )
     .unwrap();
     drop(lock_a);
-    // Copy the whole tree (journal included) elsewhere.
-    // (Copy toàn bộ cây sang chỗ khác.)
+    // Copy the whole tree (journal + project.id included).
+    // (Copy toàn bộ cây — journal + UUID đi cùng.)
     let dir_b = tempfile::tempdir().unwrap();
     copy_dir_recursive(dir_a.path(), dir_b.path()).unwrap();
     let (adapter_b, lock_b) = test_adapter_and_lock(dir_b.path());
-    let err = recover_interrupted_remove(&adapter_b, dir_b.path(), &lock_b)
+    recover_interrupted_remove(&adapter_b, dir_b.path(), &lock_b)
         .await
-        .expect_err("copied-project journal must fail on root mismatch");
+        .unwrap();
+    let after = adapter_b.parse_manifest(dir_b.path()).await.unwrap();
+    assert_eq!(
+        manifest_canonical_digest(&after),
+        manifest_canonical_digest(&manifest),
+        "copied lineage restores identically"
+    );
     assert!(
-        format!("{err:#}").contains("refusing"),
-        "must refuse explicitly: {err:#}"
+        !dir_b
+            .path()
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists(),
+        "journal must clear after recovery"
+    );
+    drop(lock_b);
+}
+
+#[tokio::test]
+async fn moved_project_recovers_with_notice() {
+    // P1-2: rename/move checkout (UUID đi cùng) — recovery thành công
+    // (move hợp lệ, khác với copy-sang-project-lạ).
+    // (Moved checkout recovers — same UUID lineage.)
+    let outer = tempfile::tempdir().unwrap();
+    let root_a = outer.path().join("a");
+    std::fs::create_dir_all(&root_a).unwrap();
+    python_fixture(&root_a);
+    std::fs::write(root_a.join("mgc.lock"), "LOCK-BEFORE").unwrap();
+    let (adapter, lock) = test_adapter_and_lock(&root_a);
+    let manifest = adapter.parse_manifest(&root_a).await.unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, &root_a, &lock, MutationOperation::Remove).unwrap();
+    stage_mutation_journal(&root_a, &adapter, &["attrs".to_string()], &snapshot, &lock).unwrap();
+    drop(lock);
+    let root_b = outer.path().join("b");
+    std::fs::rename(&root_a, &root_b).unwrap();
+
+    let (adapter_b, lock_b) = test_adapter_and_lock(&root_b);
+    recover_interrupted_remove(&adapter_b, &root_b, &lock_b)
+        .await
+        .unwrap();
+    let after = adapter_b.parse_manifest(&root_b).await.unwrap();
+    assert_eq!(
+        manifest_canonical_digest(&after),
+        manifest_canonical_digest(&manifest)
+    );
+    drop(lock_b);
+}
+
+#[tokio::test]
+async fn missing_project_id_fails_closed() {
+    // P1-2: có journal nhưng mất project.id (thư mục bị thay/khuyết) —
+    // fail-closed, không đoán lineage.
+    // (Missing project.id with a staged journal fails closed.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    let manifest = adapter.parse_manifest(root).await.unwrap();
+    let snapshot =
+        MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove).unwrap();
+    stage_mutation_journal(
+        root,
+        &adapter,
+        &["attrs".to_string()],
+        &snapshot,
+        &write_lock,
+    )
+    .unwrap();
+    std::fs::remove_file(root.join(".magicore/project.id")).unwrap();
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("missing project.id must fail closed");
+    drop(write_lock);
+}
+
+#[test]
+fn v1_journal_schema_fails_closed_explicitly() {
+    // P1-3: schema v1 (chưa từng public — RC branch only) bị từ chối rõ
+    // ràng, không migrate thầm, không đoán.
+    // (v1 journals fail with an explicit schema error.)
+    let raw = r#"{"v":1,"op":"remove","pid":1,"packages":[],"lock_existed":false,"pre_digest":[],"post_digest":null,"state":"in_progress"}"#;
+    let err = parse_mutation_journal(raw, std::path::Path::new("journal.json")).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("unsupported mutation journal schema v1"),
+        "must name the unsupported schema: {err:#}"
     );
 }
 
@@ -916,4 +1014,134 @@ async fn adopt_refuses_when_current_dir_has_garbage() {
         "legacy journal must survive the refused adoption"
     );
     drop(guard);
+}
+
+/// Craft a v4 journal with an explicit owner identity (no staging
+/// needed — identity is verified before any backup is touched). A
+/// matching project.id is written so the check under test is the
+/// IDENTITY, not the lineage.
+/// (Dựng journal v4 + project.id khớp — test identity thuần.)
+fn craft_identity_journal(
+    root: &std::path::Path,
+    core: &str,
+    language: &str,
+    format: &str,
+    relpath: &str,
+) {
+    const FIXED_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    std::fs::write(root.join(".magicore/project.id"), FIXED_ID).unwrap();
+    let dir = root.join(".magicore/journal/dependency-mutation");
+    std::fs::create_dir_all(&dir).unwrap();
+    let canonical = root.canonicalize().unwrap().display().to_string();
+    let journal = serde_json::json!({
+        "v": 4,
+        "op": "remove",
+        "pid": 4242,
+        "packages": ["x"],
+        "lock_existed": false,
+        "identity": {
+            "core": core,
+            "language": language,
+            "format": format,
+            "relpath": relpath,
+        },
+        "project_root": canonical,
+        "project_id": FIXED_ID,
+        "pre_digest": [],
+        "post_digest": null,
+        "state": "in_progress",
+    });
+    std::fs::write(
+        dir.join("journal.json"),
+        serde_json::to_string_pretty(&journal).unwrap(),
+    )
+    .unwrap();
+}
+
+#[cfg(feature = "game")]
+#[tokio::test]
+async fn game_bevy_journal_rejected_by_godot_command() {
+    // Blocker 1: cùng adapter game, khác engine — bevy journal qua tay
+    // godot command phải fail (core giống nhau chưa đủ).
+    // (Same adapter, different engine — must mismatch.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("project.godot"), "; godot\n").unwrap();
+    let adapter =
+        mgc_game_adapter::adapter_for(root).expect("project.godot must detect a game adapter");
+    let write_lock = ProjectWriteLock::acquire(root, std::time::Duration::from_secs(30)).unwrap();
+    craft_identity_journal(root, "game", "bevy", "Cargo.toml", "Cargo.toml");
+    let err = recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("bevy journal via godot command must fail closed");
+    assert!(
+        format!("{err:#}").contains("bevy"),
+        "must name the staged lane: {err:#}"
+    );
+    drop(write_lock);
+}
+
+#[cfg(feature = "iot")]
+#[tokio::test]
+async fn iot_esp32_journal_rejected_by_platformio_command() {
+    // Blocker 1: cùng adapter iot, khác framework — esp32 journal qua
+    // tay platformio command phải fail.
+    // (Same adapter, different framework — must mismatch.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("platformio.ini"), "[env:test]\n").unwrap();
+    let adapter =
+        mgc_iot_adapter::adapter_for(root).expect("platformio must detect an iot adapter");
+    let write_lock = ProjectWriteLock::acquire(root, std::time::Duration::from_secs(30)).unwrap();
+    craft_identity_journal(root, "iot", "esp32-rust", "Cargo.toml", "Cargo.toml");
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("esp32 journal via pio command must fail closed");
+    drop(write_lock);
+}
+
+#[cfg(feature = "clo")]
+#[tokio::test]
+async fn cloud_terraform_journal_rejected_by_cdk_command() {
+    // Blocker 1: cùng adapter cloud, khác type — terraform journal qua
+    // tay cdk command phải fail.
+    // (Same adapter, different cloud type — must mismatch.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("package.json"),
+        r#"{ "name": "infra", "dependencies": { "aws-cdk-lib": "^2.0.0" } }"#,
+    )
+    .unwrap();
+    let adapter = mgc_cloud_adapter::adapter_for(root)
+        .expect("adapter_for must not error")
+        .expect("cdk package.json must detect a cloud adapter");
+    let write_lock = ProjectWriteLock::acquire(root, std::time::Duration::from_secs(30)).unwrap();
+    craft_identity_journal(
+        root,
+        "cloud",
+        "terraform",
+        ".terraform.lock.hcl",
+        ".terraform.lock.hcl",
+    );
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("terraform journal via cdk command must fail closed");
+    drop(write_lock);
+}
+
+#[tokio::test]
+async fn relpath_participates_in_identity() {
+    // Blocker 1: cùng core/language/format nhưng khác relpath vẫn
+    // mismatch — relpath có tham gia so sánh (không phải trường trang trí).
+    // (relpath mismatch fails even when everything else matches.)
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let (adapter, write_lock) = test_adapter_and_lock(root);
+    craft_identity_journal(root, "lib", "python", "pyproject.toml", "other.toml");
+    recover_interrupted_remove(&adapter, root, &write_lock)
+        .await
+        .expect_err("relpath mismatch must fail closed");
+    drop(write_lock);
 }
