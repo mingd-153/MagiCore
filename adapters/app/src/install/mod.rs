@@ -10,6 +10,7 @@ use mgc_resolver::protocols::{
 use mgc_store::ContentStore;
 use mgc_types::adapter::{InstallCacheMode, InstallOptions, InstallSummary};
 use mgc_types::{MgError, MgResult, ResolvedGraph, ResolvedPackage};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::language::AppLanguage;
@@ -160,6 +161,24 @@ struct FlutterPackageConfigEntry {
     language_version: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlutterPackageGraph {
+    roots: Vec<String>,
+    packages: Vec<FlutterPackageGraphEntry>,
+    config_version: u8,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlutterPackageGraphEntry {
+    name: String,
+    version: String,
+    dependencies: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dev_dependencies: Option<Vec<String>>,
+}
+
 fn write_flutter_package_config(
     graph: &ResolvedGraph,
     project_root: &Path,
@@ -261,7 +280,7 @@ fn write_flutter_package_config_with_sdk_root(
                 "Flutter SDK dependencies are declared but no Flutter SDK root was found; set FLUTTER_ROOT or install flutter on PATH".to_string(),
             )
         })?;
-        for name in sdk_packages {
+        for name in &sdk_packages {
             if !seen.insert(name.clone()) {
                 return Err(MgError::Integrity(format!(
                     "Flutter SDK package '{name}' conflicts with a registry package in the resolved graph"
@@ -316,7 +335,7 @@ fn write_flutter_package_config_with_sdk_root(
                 .map_err(|_| MgError::Other("cannot encode Flutter SDK package URI".to_string()))?
                 .to_string();
             entries.push(FlutterPackageConfigEntry {
-                name,
+                name: name.clone(),
                 root_uri,
                 package_uri: "lib/",
                 language_version,
@@ -324,6 +343,7 @@ fn write_flutter_package_config_with_sdk_root(
         }
     }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
+    let package_graph = build_flutter_package_graph(graph, project_root, sdk_root, &sdk_packages)?;
     if !config_dir.exists() {
         std::fs::create_dir(&config_dir)
             .map_err(|error| MgError::Other(format!("create .dart_tool directory: {error}")))?;
@@ -340,7 +360,228 @@ fn write_flutter_package_config_with_sdk_root(
         &config_dir.join("package_config.json"),
         &bytes,
         "Flutter package config",
+    )?;
+    let graph_bytes = serde_json::to_vec_pretty(&package_graph)
+        .map_err(|error| MgError::Other(format!("serialize Flutter package graph: {error}")))?;
+    atomic_write_project_file(
+        &config_dir.join("package_graph.json"),
+        &graph_bytes,
+        "Flutter package graph",
     )
+}
+
+/// Build Dart Pub's package_graph.json contract from MGC's resolved graph.
+/// This file is needed by current Flutter commands in addition to
+/// package_config.json; MGC derives it without invoking `pub get`.
+/// (Dựng package_graph.json theo contract Dart Pub từ graph MGC resolve.)
+fn build_flutter_package_graph(
+    graph: &ResolvedGraph,
+    project_root: &Path,
+    sdk_root: Option<&Path>,
+    sdk_packages: &[String],
+) -> MgResult<FlutterPackageGraph> {
+    let pubspec_path = project_root.join("pubspec.yaml");
+    let pubspec_text = std::fs::read_to_string(&pubspec_path).map_err(|error| {
+        MgError::Other(format!("read Flutter pubspec for package graph: {error}"))
+    })?;
+    let pubspec: serde_yaml::Value = serde_yaml::from_str(&pubspec_text).map_err(|error| {
+        MgError::Other(format!("parse Flutter pubspec for package graph: {error}"))
+    })?;
+    let root_name = pubspec
+        .get("name")
+        .and_then(serde_yaml::Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| MgError::Integrity("Flutter pubspec has no valid package name".to_string()))?
+        .to_string();
+    let root_version = pubspec
+        .get("version")
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap_or("0.0.0")
+        .to_string();
+    let dependencies = flutter_pubspec_dependency_names(&pubspec, "dependencies")?;
+    let dev_dependencies = flutter_pubspec_dependency_names(&pubspec, "dev_dependencies")?;
+
+    let mut entries = BTreeMap::<String, FlutterPackageGraphEntry>::new();
+    for package in &graph.packages {
+        let name = package.id.name_str().to_string();
+        if name == root_name {
+            return Err(MgError::Integrity(format!(
+                "Flutter resolved graph contains the root project name '{root_name}'"
+            )));
+        }
+        let mut package_dependencies = package
+            .deps
+            .iter()
+            .map(|dependency| dependency.name_str().to_string())
+            .collect::<Vec<_>>();
+        package_dependencies.sort();
+        package_dependencies.dedup();
+        entries.insert(
+            name.clone(),
+            FlutterPackageGraphEntry {
+                name,
+                version: package.id.version().to_string(),
+                dependencies: package_dependencies,
+                dev_dependencies: None,
+            },
+        );
+    }
+
+    if !sdk_packages.is_empty() {
+        let sdk_root = sdk_root.ok_or_else(|| {
+            MgError::Other(
+                "Flutter SDK packages are required but no Flutter SDK root is available"
+                    .to_string(),
+            )
+        })?;
+        for name in sdk_packages {
+            if name == &root_name || entries.contains_key(name) {
+                return Err(MgError::Integrity(format!(
+                    "Flutter package graph contains duplicate package name '{name}'"
+                )));
+            }
+            let package_root = crate::manifest::flutter::flutter_sdk_package_root(sdk_root, name)?;
+            let manifest_path = package_root.join("pubspec.yaml");
+            let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| {
+                MgError::Other(format!(
+                    "read Flutter SDK package graph manifest '{}': {error}",
+                    manifest_path.display()
+                ))
+            })?;
+            let manifest: serde_yaml::Value =
+                serde_yaml::from_str(&manifest_text).map_err(|error| {
+                    MgError::Other(format!(
+                        "parse Flutter SDK package graph manifest '{}': {error}",
+                        manifest_path.display()
+                    ))
+                })?;
+            let actual_name = manifest.get("name").and_then(serde_yaml::Value::as_str);
+            if actual_name != Some(name.as_str()) {
+                return Err(MgError::Integrity(format!(
+                    "Flutter SDK package graph identity mismatch for '{name}'"
+                )));
+            }
+            let mut package_dependencies = Vec::new();
+            if let Some(dependency_map) = manifest.get("dependencies") {
+                let mapping = dependency_map.as_mapping().ok_or_else(|| {
+                    MgError::Integrity(format!(
+                        "Flutter SDK package '{name}' dependencies must be a mapping"
+                    ))
+                })?;
+                for (dependency_name, value) in mapping {
+                    let dependency_name = dependency_name.as_str().ok_or_else(|| {
+                        MgError::Integrity(
+                            "Flutter SDK dependency name must be a string".to_string(),
+                        )
+                    })?;
+                    if let Some(fields) = value.as_mapping() {
+                        let source = fields
+                            .get(serde_yaml::Value::String("sdk".to_string()))
+                            .and_then(serde_yaml::Value::as_str)
+                            .ok_or_else(|| MgError::Unsupported {
+                                core: "app",
+                                capability: "Flutter package graph dependency source",
+                                guidance: format!("cannot represent dependency source for '{dependency_name}' in SDK package '{name}'"),
+                            })?;
+                        if fields.len() != 1 || !matches!(source, "flutter" | "dart") {
+                            return Err(MgError::Unsupported {
+                                core: "app",
+                                capability: "Flutter package graph dependency source",
+                                guidance: format!(
+                                    "cannot represent source '{source}' for '{dependency_name}' in SDK package '{name}'"
+                                ),
+                            });
+                        }
+                        if source == "flutter" {
+                            package_dependencies.push(dependency_name.to_string());
+                        }
+                    } else if value.is_string() || value.is_null() {
+                        package_dependencies.push(dependency_name.to_string());
+                    } else {
+                        return Err(MgError::Unsupported {
+                            core: "app",
+                            capability: "Flutter package graph dependency constraint",
+                            guidance: format!(
+                                "cannot represent dependency '{dependency_name}' in SDK package '{name}'"
+                            ),
+                        });
+                    }
+                }
+            }
+            package_dependencies.sort();
+            package_dependencies.dedup();
+            entries.insert(
+                name.clone(),
+                FlutterPackageGraphEntry {
+                    name: name.clone(),
+                    version: manifest
+                        .get("version")
+                        .and_then(serde_yaml::Value::as_str)
+                        .unwrap_or("0.0.0")
+                        .to_string(),
+                    dependencies: package_dependencies,
+                    dev_dependencies: None,
+                },
+            );
+        }
+    }
+
+    let known_packages = entries
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    for entry in entries.values() {
+        for dependency in &entry.dependencies {
+            if !known_packages.contains(dependency) {
+                return Err(MgError::Integrity(format!(
+                    "Flutter package graph edge '{} -> {dependency}' has no resolved package",
+                    entry.name
+                )));
+            }
+        }
+    }
+    for dependency in dependencies.iter().chain(dev_dependencies.iter()) {
+        if !known_packages.contains(dependency) {
+            return Err(MgError::Integrity(format!(
+                "Flutter root package graph dependency '{dependency}' is not resolved"
+            )));
+        }
+    }
+
+    let mut packages = vec![FlutterPackageGraphEntry {
+        name: root_name.clone(),
+        version: root_version,
+        dependencies,
+        dev_dependencies: Some(dev_dependencies),
+    }];
+    packages.extend(entries.into_values());
+    Ok(FlutterPackageGraph {
+        roots: vec![root_name],
+        packages,
+        config_version: 1,
+    })
+}
+
+fn flutter_pubspec_dependency_names(
+    pubspec: &serde_yaml::Value,
+    section: &str,
+) -> MgResult<Vec<String>> {
+    let Some(section_value) = pubspec.get(section) else {
+        return Ok(Vec::new());
+    };
+    let mapping = section_value.as_mapping().ok_or_else(|| {
+        MgError::Integrity(format!("Flutter pubspec '{section}' must be a mapping"))
+    })?;
+    let mut names = mapping
+        .keys()
+        .map(|name| {
+            name.as_str().map(str::to_string).ok_or_else(|| {
+                MgError::Integrity(format!("Flutter pubspec '{section}' has a non-string name"))
+            })
+        })
+        .collect::<MgResult<Vec<_>>>()?;
+    names.sort();
+    Ok(names)
 }
 
 /// Extract the Dart language version floor from constraints with an explicit

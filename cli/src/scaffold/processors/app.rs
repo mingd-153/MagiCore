@@ -69,7 +69,7 @@ impl AppProcessor {
                 write_file(
                     &target.join("web").join("index.html"),
                     &format!(
-                        "<!DOCTYPE html>\n<html>\n<head>\n  <base href=\"$APP_HREF\">\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>{name}</title>\n</head>\n<body>\n  <script src=\"flutter_bootstrap.js\" async></script>\n</body>\n</html>\n"
+                        "<!DOCTYPE html>\n<html>\n<head>\n  <base href=\"$FLUTTER_BASE_HREF\">\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>{name}</title>\n</head>\n<body>\n  <script src=\"flutter_bootstrap.js\" async></script>\n</body>\n</html>\n"
                     ),
                 )?;
                 write_file(

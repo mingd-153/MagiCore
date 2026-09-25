@@ -86,6 +86,10 @@ fn run_mgc_audit_with_osv(
 ) -> (Option<i32>, String) {
     let mut cmd = Command::new(mgc);
     cmd.arg("audit").current_dir(cwd);
+    // Keep local-mode E2E deterministic even when the parent CI job exports
+    // MGC_AUDIT_STRICT=1 for its own shell-level checks.
+    // Đặt rõ local mode để không thừa hưởng strict-mode từ job cha.
+    cmd.env("MGC_AUDIT_STRICT", "0");
     if let Some(strict) = strict {
         cmd.env("MGC_AUDIT_STRICT", if strict { "1" } else { "0" });
     }
@@ -111,6 +115,9 @@ fn run_mgc_audit_json(
 ) -> (Option<i32>, String) {
     let mut cmd = Command::new(mgc);
     cmd.args(["audit", "--format", "json"]).current_dir(cwd);
+    // Isolate the CLI contract from workflow-level strict mode.
+    // Cô lập contract CLI khỏi strict mode của workflow cha.
+    cmd.env("MGC_AUDIT_STRICT", "0");
     if let Some(strict) = strict {
         cmd.env("MGC_AUDIT_STRICT", if strict { "1" } else { "0" });
     }

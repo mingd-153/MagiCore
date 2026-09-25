@@ -122,6 +122,37 @@ fn test_flutter_scaffold_has_testable_package_contract() {
         target.join("test/widget_test.dart").exists(),
         "Flutter lifecycle needs a real test target"
     );
+    let web_index = std::fs::read_to_string(target.join("web/index.html")).unwrap();
+    assert!(web_index.contains("$FLUTTER_BASE_HREF"));
+}
+
+#[test]
+fn embedded_flutter_scaffold_has_test_and_web_lifecycle_files() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("embedded-flutter");
+    crate::scaffold::embedded::EmbeddedKernel::extract_layer("app", "flutter", &target).unwrap();
+
+    let pubspec = std::fs::read_to_string(target.join("pubspec.yaml")).unwrap();
+    assert!(pubspec.contains("environment:"));
+    assert!(pubspec.contains("sdk: flutter"));
+    assert!(
+        pubspec.contains("flutter_test:"),
+        "embedded Flutter scaffold must include flutter_test"
+    );
+    assert!(
+        target.join("test/widget_test.dart").is_file(),
+        "embedded Flutter scaffold must include a real test"
+    );
+    assert!(
+        target.join("web/index.html").is_file(),
+        "embedded Flutter scaffold must include web platform files"
+    );
+    assert!(
+        target.join("web/manifest.json").is_file(),
+        "embedded Flutter scaffold must include web manifest"
+    );
+    let web_index = std::fs::read_to_string(target.join("web/index.html")).unwrap();
+    assert!(web_index.contains("$FLUTTER_BASE_HREF"));
 }
 
 #[test]

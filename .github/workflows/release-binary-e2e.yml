@@ -260,6 +260,26 @@ jobs:
             curl --connect-timeout 1 --max-time 2 -sS -o /dev/null "http://127.0.0.1:4315/" 2>/dev/null \
               || curl --connect-timeout 1 --max-time 2 -sS -o /dev/null "http://localhost:4315/" 2>/dev/null
           }
+          stop_probe_process() {
+            local process_pid="$1"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              # Git-Bash $! may be an MSYS PID, not the Win32 PID owning
+              # the listening socket. Kill the launcher tree, then the
+              # exact process(es) still bound to this isolated probe port.
+              taskkill //F //T //PID "$process_pid" > /dev/null 2>&1 || true
+              powershell.exe -NoProfile -Command '
+                $ErrorActionPreference = "SilentlyContinue"
+                $owners = Get-NetTCPConnection -State Listen -LocalPort 4315 |
+                  Select-Object -ExpandProperty OwningProcess -Unique
+                foreach ($ownerPid in $owners) {
+                  & taskkill.exe /F /T /PID $ownerPid | Out-Null
+                }
+              '
+            else
+              kill "$process_pid" 2>/dev/null || true
+              pkill -f "vite.*4315" 2>/dev/null || true
+            fi
+          }
           if port_responds; then
             echo "port 4315 was already serving before mgc dev; refusing contaminated lifecycle probe" >&2
             exit 1
@@ -284,12 +304,7 @@ jobs:
           if [[ "$probe_ok" != true ]]; then
             echo "dev server did not answer HTTP on port 4315 within 120s" >&2
             cat dev.log >&2 || true
-            if [[ "$RUNNER_OS" == "Windows" ]]; then
-              taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true
-            else
-              kill $DEV_PID 2>/dev/null || true
-              pkill -f "vite.*4315" 2>/dev/null || true
-            fi
+            stop_probe_process "$DEV_PID"
             exit 1
           fi
           # Clean shutdown: the dev tree (mgc → node → vite) must die
@@ -300,9 +315,9 @@ jobs:
           # port còn bị bind. Chỉ giết cha sẽ lộ node con giữ port —
           # giết cả cây.
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true
+            stop_probe_process "$DEV_PID"
           else
-            kill $DEV_PID 2>/dev/null || true
+            kill "$DEV_PID" 2>/dev/null || true
             for i in $(seq 1 15); do
               if ! kill -0 $DEV_PID 2>/dev/null; then break; fi
               sleep 1
@@ -330,7 +345,7 @@ jobs:
           if [[ "$dev_port_closed" != true ]]; then
             echo "port 4315 still serving after dev shutdown — run probe would be a false positive" >&2
             cat dev.log >&2 || true
-            if [[ "$RUNNER_OS" == "Windows" ]]; then taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true; fi
+            stop_probe_process "$DEV_PID"
             exit 1
           fi
           # run: the scaffold's own start/preview script through the
@@ -365,20 +380,10 @@ jobs:
             if [[ "$run_ok" != true ]]; then
               echo "run start did not answer HTTP on port 4315" >&2
               cat run.log >&2 || true
-              if [[ "$RUNNER_OS" == "Windows" ]]; then
-                taskkill //F //T //PID $RUN_PID > /dev/null 2>&1 || true
-              else
-                kill $RUN_PID 2>/dev/null || true
-                pkill -f "vite.*4315" 2>/dev/null || true
-              fi
+              stop_probe_process "$RUN_PID"
               exit 1
             fi
-            if [[ "$RUNNER_OS" == "Windows" ]]; then
-              taskkill //F //T //PID $RUN_PID > /dev/null 2>&1 || true
-            else
-              kill $RUN_PID 2>/dev/null || true
-              pkill -f "vite.*4315" 2>/dev/null || true
-            fi
+            stop_probe_process "$RUN_PID"
             run_port_closed=false
             for i in $(seq 1 15); do
               if ! port_responds; then
@@ -483,7 +488,11 @@ jobs:
           cd "$WORK"
           "$MGCBIN" create-ai python-agent test-ai
           cd test-ai
-          "$MGCBIN" add-ai markerlib
+          # six 1.17.0 ships a universal py2.py3-none-any wheel, the only
+          # artifact class this native installer currently materializes.
+          # Compiled wheels/sdists remain fail-closed; this lane does not
+          # claim full PyPI artifact coverage.
+          "$MGCBIN" add-ai six@1.17.0
           "$MGCBIN" install
           test -f mgc.lock
           test ! -f uv.lock

@@ -5,6 +5,7 @@ use mgc_types::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Parse pubspec.yaml to Manifest.
@@ -402,10 +403,13 @@ pub(crate) fn discover_flutter_sdk_root() -> MgResult<PathBuf> {
             .canonicalize()
             .map_err(|error| MgError::Other(format!("resolve FLUTTER_ROOT: {error}")));
     }
-    let executable = which::which("flutter")
-        .map_err(|error| MgError::Other(format!("find flutter on PATH: {error}")))?
-        .canonicalize()
-        .map_err(|error| MgError::Other(format!("resolve flutter executable: {error}")))?;
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| MgError::Other("PATH is not set; configure FLUTTER_ROOT".to_string()))?;
+    let pathext = std::env::var_os("PATHEXT");
+    let executable = find_flutter_executable_in_path(&path, pathext.as_deref(), cfg!(windows))
+        .ok_or_else(|| {
+            MgError::Other("find flutter on PATH; configure FLUTTER_ROOT".to_string())
+        })?;
     for ancestor in executable.ancestors() {
         if ancestor.join("packages/flutter/pubspec.yaml").is_file() {
             return Ok(ancestor.to_path_buf());
@@ -414,6 +418,49 @@ pub(crate) fn discover_flutter_sdk_root() -> MgResult<PathBuf> {
     Err(MgError::Other(
         "could not locate Flutter SDK root from FLUTTER_ROOT or flutter on PATH".to_string(),
     ))
+}
+
+/// Locate a Flutter executable without invoking it or another package tool.
+/// On Windows, honor PATHEXT so flutter.cmd/flutter.bat installations work.
+/// (Chỉ dò filesystem, không chạy Flutter hay package manager; Windows theo PATHEXT.)
+pub(crate) fn find_flutter_executable_in_path(
+    path: &OsStr,
+    pathext: Option<&OsStr>,
+    windows: bool,
+) -> Option<PathBuf> {
+    let extensions = if windows {
+        let configured = pathext
+            .map(|value| value.to_string_lossy().into_owned())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string());
+        configured
+            .split(';')
+            .map(str::trim)
+            .filter(|extension| !extension.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    for directory in std::env::split_paths(path) {
+        let mut candidates = vec![directory.join("flutter")];
+        if windows {
+            candidates.extend(extensions.iter().map(|extension| {
+                let mut name = std::ffi::OsString::from("flutter");
+                name.push(extension);
+                directory.join(name)
+            }));
+        }
+        for candidate in candidates {
+            if candidate.is_file()
+                && let Ok(canonical) = candidate.canonicalize()
+            {
+                return Some(canonical);
+            }
+        }
+    }
+    None
 }
 
 /// Write Manifest back to pubspec.yaml (native add/update). Rebuilds

@@ -264,7 +264,11 @@ fn atomic_lock_publish_replaces_existing_file_without_leaking_temp() {
 fn flutter_install_writes_package_config_for_verified_materialized_graph() {
     let project = tempfile::tempdir().unwrap();
     let cache = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("pubspec.yaml"), "name: sample\n").unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\nversion: 1.0.0\ndependencies:\n  http: ^1.2.0\ndev_dependencies:\n  meta: ^1.0.0\n",
+    )
+    .unwrap();
     let package_root = cache.path().join("hosted/pub.dev/http-1.2.0");
     std::fs::create_dir_all(package_root.join("lib")).unwrap();
     std::fs::write(
@@ -272,19 +276,39 @@ fn flutter_install_writes_package_config_for_verified_materialized_graph() {
         "name: http\nenvironment:\n  sdk: '>=3.2.0 <4.0.0'\n",
     )
     .unwrap();
+    let meta_root = cache.path().join("hosted/pub.dev/meta-1.0.0");
+    std::fs::create_dir_all(meta_root.join("lib")).unwrap();
+    std::fs::write(meta_root.join("pubspec.yaml"), "name: meta\n").unwrap();
     let graph = ResolvedGraph {
-        packages: vec![ResolvedPackage {
-            id: PackageId::new(
-                PackageName::new("http").unwrap(),
-                Version::parse("1.2.0").unwrap(),
-            ),
-            integrity: "sha256-fixture".to_string(),
-            tarball_url: "https://pub.dev/http.tar.gz".to_string(),
-            deps: vec![],
-            peer_deps: vec![],
-            direct: true,
-            dev: false,
-        }],
+        packages: vec![
+            ResolvedPackage {
+                id: PackageId::new(
+                    PackageName::new("http").unwrap(),
+                    Version::parse("1.2.0").unwrap(),
+                ),
+                integrity: "sha256-fixture".to_string(),
+                tarball_url: "https://pub.dev/http.tar.gz".to_string(),
+                deps: vec![PackageId::new(
+                    PackageName::new("meta").unwrap(),
+                    Version::parse("1.0.0").unwrap(),
+                )],
+                peer_deps: vec![],
+                direct: true,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: PackageId::new(
+                    PackageName::new("meta").unwrap(),
+                    Version::parse("1.0.0").unwrap(),
+                ),
+                integrity: "sha256-meta-fixture".to_string(),
+                tarball_url: "https://pub.dev/meta.tar.gz".to_string(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: true,
+            },
+        ],
     };
 
     write_flutter_package_config(&graph, project.path(), cache.path()).unwrap();
@@ -303,6 +327,26 @@ fn flutter_install_writes_package_config_for_verified_materialized_graph() {
             .as_str()
             .unwrap()
             .starts_with("file://")
+    );
+
+    let package_graph: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(project.path().join(".dart_tool/package_graph.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(package_graph["configVersion"], 1);
+    assert_eq!(package_graph["roots"], serde_json::json!(["sample"]));
+    assert_eq!(
+        package_graph["packages"],
+        serde_json::json!([
+            {
+                "name": "sample",
+                "version": "1.0.0",
+                "dependencies": ["http"],
+                "devDependencies": ["meta"]
+            },
+            {"name": "http", "version": "1.2.0", "dependencies": ["meta"]},
+            {"name": "meta", "version": "1.0.0", "dependencies": []}
+        ])
     );
 }
 
@@ -492,6 +536,35 @@ fn flutter_sdk_runtime_dependency_promotes_project_optional_package_to_runtime()
             .range
             .matches(&Version::parse("1.18.0").unwrap())
     );
+}
+
+#[test]
+fn flutter_sdk_path_lookup_is_filesystem_only_and_honors_pathext() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = dir.path().join("flutter.CMD");
+    std::fs::write(&executable, "@echo off\r\n").unwrap();
+
+    let found = crate::manifest::flutter::find_flutter_executable_in_path(
+        dir.path().as_os_str(),
+        Some(std::ffi::OsStr::new(".COM;.EXE;.CMD;.BAT")),
+        true,
+    );
+
+    assert_eq!(found, Some(executable.canonicalize().unwrap()));
+}
+
+#[test]
+fn flutter_sdk_path_lookup_does_not_accept_missing_or_directory_candidates() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("flutter")).unwrap();
+
+    let found = crate::manifest::flutter::find_flutter_executable_in_path(
+        dir.path().as_os_str(),
+        None,
+        false,
+    );
+
+    assert_eq!(found, None);
 }
 
 #[test]

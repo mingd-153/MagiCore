@@ -161,7 +161,9 @@ jobs:
           # through mgc itself so install must materialize a real
           # package — an empty graph proves nothing. No uv anywhere.
           # (Lane native: thêm dep thật bằng mgc, không uv.)
-          "$MGC_PARENT_BIN" add-ai markerlib
+          # six publishes a universal pure-Python wheel; this only proves
+          # the native installer path for its supported artifact class.
+          "$MGC_PARENT_BIN" add-ai six@1.17.0
           install_ok=false
           for i in 1 2 3; do
             if "$MGC_PARENT_BIN" install; then install_ok=true; break; fi

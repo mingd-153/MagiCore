@@ -335,8 +335,8 @@ LANES = [
         "language": "python",
         "scaffold": ["create-ai", "python-agent", "test-ai"],
         # Native (mgc.lock, no uv.lock): the lane adds a REAL direct
-        # dependency (markerlib) via `mgc add-ai` (native PyPI
-        # resolve-first + mgc-side pyproject edit) BEFORE install, so the
+        # dependency (six, universal py2.py3-none-any wheel) via `mgc add-ai`
+        # (native PyPI resolve-first + mgc-side pyproject edit) BEFORE install, so the
         # lockfile carries a genuine resolve + hash and `mgc install-ai`
         # must actually materialize it — no uv pre-steps, no uv.lock.
         # (Native: thêm dep thật bằng `mgc add-ai`, không uv.)
@@ -1820,7 +1820,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             break
         if step == "mgc_add_real_dependency":
             # Inject a REAL direct dependency through mgc itself BEFORE
-            # install: `mgc add-ai markerlib` (native PyPI resolve-first +
+            # install: `mgc add-ai six` (universal pure-Python wheel; native PyPI resolve-first +
             # mgc-side pyproject edit) so mgc.lock carries a genuine
             # resolve + hash and `mgc install-ai` must materialize a real
             # package. No uv anywhere — an exit-0 with zero packages
@@ -1829,7 +1829,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             # (Bơm dependency THẬT bằng `mgc add-ai`, không uv.)
             try:
                 proc = subprocess.run(
-                    [mgc_bin, "add-ai", "markerlib"], capture_output=True, text=True,
+                [mgc_bin, "add-ai", "six@1.17.0"], capture_output=True, text=True,
                     cwd=os.path.join(sandbox, project_dir), timeout=timeout_s,
                 )
             except FileNotFoundError:
