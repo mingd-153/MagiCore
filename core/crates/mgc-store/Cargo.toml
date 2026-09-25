@@ -58,6 +58,7 @@ tracing = { workspace = true }
 
 # Utilities
 lru = { workspace = true }
+uuid = { workspace = true }
 
 [features]
 # Gate 11-A tightening: destructive claim APIs (clear_all_cas_refs,

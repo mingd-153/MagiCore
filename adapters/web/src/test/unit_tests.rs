@@ -24,6 +24,7 @@ use tokio::net::TcpListener;
 
 use crate::cache::*;
 use crate::install::extract::*;
+use crate::install::fetch::{publish_downloaded_tarball, unique_tarball_staging_path};
 use crate::install::materialize::*;
 use crate::install::{should_run_lifecycle_scripts, trust_allows_script};
 use crate::lockfile::*;
@@ -953,6 +954,44 @@ fn test_backing_link_rematerializes_stale_target() {
     backing_link_file(&source, &target, Some(&profile), true).unwrap();
 
     assert_eq!(std::fs::read(&target).unwrap(), b"fresh-content");
+}
+
+#[test]
+fn streamed_tarball_staging_is_unique_and_publish_is_first_writer_wins() {
+    let dir = tempdir_real().unwrap();
+    let final_path = dir.path().join("pkg.tgz");
+    let payload = b"complete streamed package";
+    let integrity = compute_tarball_integrity(payload);
+    let barrier = Arc::new(std::sync::Barrier::new(12));
+    let staging_paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let writers = (0..12)
+        .map(|_| {
+            let final_path = final_path.clone();
+            let barrier = Arc::clone(&barrier);
+            let staging_paths = Arc::clone(&staging_paths);
+            let integrity = integrity.clone();
+            std::thread::spawn(move || {
+                let staging = unique_tarball_staging_path(&final_path);
+                std::fs::write(&staging, payload).unwrap();
+                staging_paths.lock().unwrap().push(staging.clone());
+                barrier.wait();
+                publish_downloaded_tarball(&staging, &final_path, &integrity)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for writer in writers {
+        writer.join().unwrap().unwrap();
+    }
+
+    let paths = staging_paths.lock().unwrap();
+    assert_eq!(
+        paths.iter().collect::<std::collections::HashSet<_>>().len(),
+        12
+    );
+    assert!(paths.iter().all(|path| !path.exists()));
+    assert_eq!(std::fs::read(final_path).unwrap(), payload);
 }
 
 #[test]

@@ -361,16 +361,29 @@ impl NpmRegistry {
                 .await?
                 .error_for_status()?;
 
-            let mut file = tokio::fs::File::create(dest).await?;
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .await?;
             let mut stream = resp.bytes_stream();
             let mut hasher = sha2::Sha512::new();
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                hasher.update(&chunk);
-                file.write_all(&chunk).await?;
+            let streamed = async {
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    hasher.update(&chunk);
+                    file.write_all(&chunk).await?;
+                }
+                file.flush().await?;
+                Ok::<(), anyhow::Error>(())
             }
-            file.flush().await?;
+            .await;
+            if let Err(error) = streamed {
+                drop(file);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Err(error);
+            }
 
             let digest = hasher.finalize();
             let b64 = base64_encode(&digest);
@@ -405,18 +418,31 @@ impl NpmRegistry {
                 return Ok(DownloadedTarball::Bytes(bytes.to_vec()));
             }
 
-            let mut file = tokio::fs::File::create(dest).await?;
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .await?;
             let mut stream = resp.bytes_stream();
             let mut hasher = sha2::Sha512::new();
             let mut bytes_len = 0u64;
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                bytes_len += chunk.len() as u64;
-                hasher.update(&chunk);
-                file.write_all(&chunk).await?;
+            let streamed = async {
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    bytes_len += chunk.len() as u64;
+                    hasher.update(&chunk);
+                    file.write_all(&chunk).await?;
+                }
+                file.flush().await?;
+                Ok::<(), anyhow::Error>(())
             }
-            file.flush().await?;
+            .await;
+            if let Err(error) = streamed {
+                drop(file);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Err(error);
+            }
 
             let digest = hasher.finalize();
             let b64 = base64_encode(&digest);

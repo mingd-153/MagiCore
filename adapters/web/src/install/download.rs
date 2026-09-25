@@ -25,6 +25,9 @@ pub use crate::install::integrity::{
 
 // Re-export fetch helpers để caller/test cũ không đổi import
 // Re-export fetch helpers so old callers/tests don't need to change imports
+use crate::install::fetch::{
+    DownloadStagingGuard, publish_downloaded_tarball, unique_tarball_staging_path,
+};
 pub use crate::install::fetch::{get_tarball_bytes, package_tarball_url};
 
 pub fn pipeline_task_concurrency_limit(extract_concurrency: usize) -> usize {
@@ -49,7 +52,7 @@ pub async fn prefetch_tarballs(
         Downloaded(ResolvedPackage, Vec<u8>),
         StreamedToTemp {
             pkg: ResolvedPackage,
-            temp_path: std::path::PathBuf,
+            staging: DownloadStagingGuard,
             computed_integrity: String,
         },
     }
@@ -129,11 +132,11 @@ pub async fn prefetch_tarballs(
             };
 
             if content_length > LARGE_PKG_THRESHOLD_BYTES {
-                let temp_path = local_cache
-                    .tarball_path(&pkg_clone.id)
-                    .with_extension("tmp");
+                let temp_path =
+                    unique_tarball_staging_path(&local_cache.tarball_path(&pkg_clone.id));
+                let staging = DownloadStagingGuard::new(temp_path);
                 let computed_integrity = registry
-                    .download_tarball_to_file(&url, &temp_path)
+                    .download_tarball_to_file(&url, staging.path())
                     .await
                     .map_err(|e| {
                         MgError::Network(format!(
@@ -144,7 +147,7 @@ pub async fn prefetch_tarballs(
                     })?;
                 Ok::<_, MgError>(PrefetchOutcome::StreamedToTemp {
                     pkg: pkg_clone,
-                    temp_path,
+                    staging,
                     computed_integrity,
                 })
             } else {
@@ -180,11 +183,10 @@ pub async fn prefetch_tarballs(
             }
             PrefetchOutcome::StreamedToTemp {
                 mut pkg,
-                temp_path,
+                staging,
                 computed_integrity,
             } => {
                 if !pkg.integrity.is_empty() && pkg.integrity != computed_integrity {
-                    let _ = std::fs::remove_file(&temp_path);
                     return Err(MgError::Other(format!(
                         "integrity mismatch for '{}': expected '{}', got '{}'",
                         pkg.id.name_str(),
@@ -193,19 +195,10 @@ pub async fn prefetch_tarballs(
                     )));
                 }
                 if pkg.integrity.is_empty() {
-                    pkg.integrity = computed_integrity;
+                    pkg.integrity = computed_integrity.clone();
                 }
                 let final_path = cache.tarball_path(&pkg.id);
-                if let Some(parent) = final_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| MgError::Store(e.to_string()))?;
-                }
-                std::fs::rename(&temp_path, &final_path).map_err(|e| {
-                    MgError::Store(format!(
-                        "failed to promote streamed tarball for '{}': {}",
-                        pkg.id.name_str(),
-                        e
-                    ))
-                })?;
+                publish_downloaded_tarball(staging.path(), &final_path, &computed_integrity)?;
                 if let Some(shared_package_cache) = shared_package_cache.as_ref() {
                     let _ = shared_package_cache.cache_tarball_from_path(&pkg.id, &final_path);
                 }

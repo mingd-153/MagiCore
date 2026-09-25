@@ -57,6 +57,7 @@ lru = { workspace = true }
 urlencoding = "2"
 chrono = { workspace = true }
 libc = { workspace = true }
+uuid = { workspace = true }
 
 # Parallelism
 rayon = { workspace = true }
