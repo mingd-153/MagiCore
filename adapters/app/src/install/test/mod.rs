@@ -264,6 +264,7 @@ fn atomic_lock_publish_replaces_existing_file_without_leaking_temp() {
 fn flutter_install_writes_package_config_for_verified_materialized_graph() {
     let project = tempfile::tempdir().unwrap();
     let cache = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join("lib")).unwrap();
     std::fs::write(
         project.path().join("pubspec.yaml"),
         "name: sample\nversion: 1.0.0\ndependencies:\n  http: ^1.2.0\ndev_dependencies:\n  meta: ^1.0.0\n",
@@ -319,14 +320,29 @@ fn flutter_install_writes_package_config_for_verified_materialized_graph() {
     .unwrap();
     assert_eq!(config["configVersion"], 2);
     assert_eq!(config["generator"], "MagiCore");
-    assert_eq!(config["packages"][0]["name"], "http");
-    assert_eq!(config["packages"][0]["packageUri"], "lib/");
-    assert_eq!(config["packages"][0]["languageVersion"], "3.2");
+    let packages = config["packages"].as_array().unwrap();
+    assert_eq!(
+        packages
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect::<Vec<_>>(),
+        ["http", "meta", "sample"]
+    );
+    let package = |name: &str| packages.iter().find(|entry| entry["name"] == name).unwrap();
+    assert_eq!(package("http")["packageUri"], "lib/");
+    assert_eq!(package("http")["languageVersion"], "3.2");
     assert!(
-        config["packages"][0]["rootUri"]
+        package("http")["rootUri"]
             .as_str()
             .unwrap()
             .starts_with("file://")
+    );
+    assert_eq!(package("sample")["packageUri"], "lib/");
+    assert_eq!(
+        package("sample")["rootUri"],
+        url::Url::from_directory_path(project.path().canonicalize().unwrap())
+            .unwrap()
+            .as_str()
     );
 
     let package_graph: serde_json::Value = serde_json::from_slice(
@@ -422,7 +438,14 @@ fn flutter_package_config_includes_only_declared_sdk_packages() {
         .iter()
         .filter_map(|entry| entry["name"].as_str())
         .collect();
-    assert_eq!(names, ["flutter", "flutter_test"]);
+    assert_eq!(names, ["flutter", "flutter_test", "sample"]);
+    assert!(packages.iter().any(|entry| {
+        entry["name"] == "sample"
+            && entry["rootUri"]
+                == url::Url::from_directory_path(project.path().canonicalize().unwrap())
+                    .unwrap()
+                    .as_str()
+    }));
     assert!(
         packages
             .iter()

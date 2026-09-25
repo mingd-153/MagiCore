@@ -213,8 +213,29 @@ fn write_flutter_package_config_with_sdk_root(
         Some(root) => crate::manifest::flutter::flutter_sdk_package_names(project_root, root)?,
         None => Vec::new(),
     };
-    let mut entries = Vec::with_capacity(graph.packages.len() + sdk_packages.len());
+    let package_graph = build_flutter_package_graph(graph, project_root, sdk_root, &sdk_packages)?;
+    let root_name = package_graph.roots.first().cloned().ok_or_else(|| {
+        MgError::Integrity("Flutter package graph has no root package".to_string())
+    })?;
+    let mut entries = Vec::with_capacity(graph.packages.len() + sdk_packages.len() + 1);
     let mut seen = std::collections::BTreeSet::new();
+    if !seen.insert(root_name.clone()) {
+        return Err(MgError::Integrity(format!(
+            "Flutter package config contains duplicate package name '{root_name}'"
+        )));
+    }
+    let canonical_project_root = project_root
+        .canonicalize()
+        .map_err(|error| MgError::Other(format!("canonicalize Flutter project root: {error}")))?;
+    let root_uri = url::Url::from_directory_path(&canonical_project_root)
+        .map_err(|_| MgError::Other("cannot encode Flutter project root URI".to_string()))?
+        .to_string();
+    entries.push(FlutterPackageConfigEntry {
+        name: root_name,
+        root_uri,
+        package_uri: "lib/",
+        language_version: None,
+    });
     for package in &graph.packages {
         let name = package.id.name_str();
         if !seen.insert(name.to_string()) {
@@ -343,7 +364,6 @@ fn write_flutter_package_config_with_sdk_root(
         }
     }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
-    let package_graph = build_flutter_package_graph(graph, project_root, sdk_root, &sdk_packages)?;
     if !config_dir.exists() {
         std::fs::create_dir(&config_dir)
             .map_err(|error| MgError::Other(format!("create .dart_tool directory: {error}")))?;
