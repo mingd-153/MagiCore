@@ -10,6 +10,7 @@
 
 #![allow(clippy::unwrap_used)]
 
+use mgc_crypto::keyring::KeyPair;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
@@ -572,6 +573,50 @@ fn generic_install_cmd(
     cmd
 }
 
+fn frozen_install_cmd(
+    mgc: &str,
+    project: &Path,
+    registry_url: &str,
+    log_dir: &Path,
+    tag: &str,
+) -> Command {
+    let stdout = std::fs::File::create(log_dir.join(format!("{tag}.out"))).unwrap();
+    let stderr = std::fs::File::create(log_dir.join(format!("{tag}.err"))).unwrap();
+    let mut cmd = Command::new(mgc);
+    cmd.arg("install")
+        .arg("--frozen")
+        .current_dir(project)
+        .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
+        .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url)
+        .env("MGC_CACHE_DIR", project.join(".magicore"))
+        .stdout(stdout)
+        .stderr(stderr);
+    cmd
+}
+
+fn configure_project_trust(project: &Path) -> KeyPair {
+    // Keep the signing identity inside the test sandbox and trust only its public key.
+    // (Khóa ký chỉ nằm trong sandbox test; project chỉ tin public key của fixture.)
+    let key_pair = KeyPair::generate().unwrap();
+    std::fs::write(
+        project.join("mgc.toml"),
+        format!(
+            "name = \"race\"\nversion = \"1.0.0\"\necosystem = \"web\"\n\n[trust]\nkeys = [\"{}\"]\n",
+            key_pair.key_id
+        ),
+    )
+    .unwrap();
+    key_pair
+}
+
+fn sign_project_lock(project: &Path, key_pair: &KeyPair) {
+    // Strict CI installs must consume a lock signed by a project-trusted key.
+    // (Install strict trong CI phải dùng lock được ký bởi khóa project tin cậy.)
+    let lock_path = project.join("mgc.lock");
+    let mut lockfile = mgc_lockfile::load_lockfile(&lock_path).unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut lockfile, &lock_path, key_pair).unwrap();
+}
+
 #[test]
 fn generic_install_races_remove_without_loss() {
     // P0-1: generic `install B` (manifest mutation qua install_into_root)
@@ -1035,6 +1080,7 @@ fn generic_install_before_cleanup_failure_succeeds_with_lingering_journal() {
     let mgc = find_mgc_binary();
     let log_dir = temp.path().join("logs");
     std::fs::create_dir_all(&log_dir).unwrap();
+    let key_pair = configure_project_trust(&project);
 
     let mut first = generic_install_cmd(
         &mgc,
@@ -1064,18 +1110,11 @@ fn generic_install_before_cleanup_failure_succeeds_with_lingering_journal() {
         manifest.contains("mgc-race-beta"),
         "work landed:\n{manifest}"
     );
+    sign_project_lock(&project, &key_pair);
 
-    let mut second = generic_install_cmd(
-        &mgc,
-        &project,
-        "mgc-race-beta",
-        &fixture.url,
-        &log_dir,
-        "clean",
-        &[],
-    )
-    .spawn()
-    .unwrap();
+    let mut second = frozen_install_cmd(&mgc, &project, &fixture.url, &log_dir, "clean")
+        .spawn()
+        .unwrap();
     let second_status = second.wait().unwrap();
     assert!(
         second_status.success(),
