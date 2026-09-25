@@ -1076,7 +1076,12 @@ fn generic_install_before_cleanup_failure_succeeds_with_lingering_journal() {
     )
     .spawn()
     .unwrap();
-    assert!(second.wait().unwrap().success(), "re-run must succeed");
+    let second_status = second.wait().unwrap();
+    assert!(
+        second_status.success(),
+        "re-run must succeed (exit status: {second_status}):\n{}",
+        read_log(&log_dir, "clean", "err")
+    );
     assert!(
         !journal.exists(),
         "re-run deletes the stale completed journal"
