@@ -3,7 +3,10 @@
 //! Tests for install command validation
 
 use super::*;
+use crate::commands::core::shared::lock_matches_manifest;
+use mgc_crypto::keyring::KeyPair;
 use mgc_lockfile::Package;
+use mgc_types::adapter::PackageAdapter;
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
 use tempfile::tempdir;
 
@@ -27,6 +30,9 @@ fn test_lock_matches_manifest_when_versions_satisfy_ranges() {
         resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec![],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
 
     assert!(lock_matches_manifest(&lock, &manifest));
@@ -52,6 +58,9 @@ fn test_lock_matches_manifest_rejects_stale_version() {
         resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec![],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
 
     assert!(!lock_matches_manifest(&lock, &manifest));
@@ -79,6 +88,9 @@ fn test_load_locked_graph_rejects_unsupported_lock_version() {
         resolved: "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.2.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec![],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
     std::fs::write(
         dir.path().join("mgc.lock"),
@@ -92,22 +104,27 @@ fn test_load_locked_graph_rejects_unsupported_lock_version() {
 
 #[test]
 fn test_load_locked_graph_ignores_legacy_checksum_sidecar() {
-    // Set trust policy to warn for test (no signature required)
-    std::env::set_var("MGC_TRUST_POLICY", "warn");
-
     let dir = tempdir().unwrap();
     let manifest = Manifest::new("demo", Ecosystem::Web);
-    let lock = Lockfile::new();
+    let mut lock = Lockfile::new();
+    let lock_path = dir.path().join("mgc.lock");
+    let key = KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut lock, &lock_path, &key).unwrap();
+    std::fs::write(dir.path().join("mgc.lock.sha256"), "bad").unwrap();
     std::fs::write(
-        dir.path().join("mgc.lock"),
-        mgc_lockfile::serialization::to_toml(&lock).unwrap(),
+        dir.path().join("mgc.toml"),
+        format!(
+            "name = \"demo\"\necosystem = \"web\"\n[lock]\npolicy = \"require\"\n[trust]\nkeys = [\"{}\"]\n",
+            key.key_id
+        ),
     )
     .unwrap();
-    std::fs::write(dir.path().join("mgc.lock.sha256"), "bad").unwrap();
 
-    assert!(load_locked_graph(dir.path(), "web", &manifest)
-        .unwrap()
-        .is_none());
+    assert!(
+        load_locked_graph(dir.path(), "web", &manifest)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -119,6 +136,9 @@ fn test_graph_from_lockfile_rejects_invalid_dependency_id() {
         resolved: "https://registry.npmjs.org/react/-/react-18.2.0.tgz".into(),
         integrity: "sha256-test".into(),
         dependencies: vec!["not-a-package-id".into()],
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        registry: Some("npm://https://registry.npmjs.org".into()),
+        ..Package::default()
     });
 
     let err = graph_from_lockfile(&lock).unwrap_err();
@@ -215,4 +235,109 @@ mode = "single"
     .unwrap();
 
     assert!(discover_workspace_projects(dir.path()).unwrap().is_none());
+}
+
+#[cfg(feature = "clo")]
+#[test]
+fn clo_adapter_path_terraform_gates_without_compat() {
+    // Terraform is unsupported until MGC owns its dependency lifecycle;
+    // an absent compatibility runner must not be presented as opt-in support.
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("main.tf"), "terraform {}\n").unwrap();
+    let err = clo_adapter_path_gate(dir.path()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("unsupported for dependency lifecycle"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(feature = "clo")]
+#[test]
+fn clo_adapter_path_cdk_skips_gate_natively() {
+    // CDK rides the native web engine inside the adapter — no gate, no
+    // compat needed.
+    let dir = tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.toml"),
+        "name = \"x\"\n[cloud]\ntype = \"cdk\"\n",
+    )
+    .unwrap();
+    clo_adapter_path_gate(dir.path()).unwrap();
+}
+
+#[cfg(feature = "clo")]
+#[test]
+fn clo_adapter_path_undetected_type_fails_closed() {
+    // No detectable cloud type is never assumed native.
+    let dir = tempdir().unwrap();
+    let err = clo_adapter_path_gate(dir.path()).unwrap_err();
+    assert!(!err.to_string().is_empty());
+}
+
+#[cfg(feature = "iot")]
+#[test]
+fn toolchain_owned_packages_rejected_before_adapter_calls() {
+    // P0-1: platformio.ini (toolchain-owned) + packages fails PURELY —
+    // no adapter call, no network, no spawn, no journal. The provider
+    // toolchain must run explicitly.
+    // (Manifest của tool + packages → lỗi thuần, không side effect.)
+    let dir = tempdir().unwrap();
+    let ini = "[env:test]\nplatform = atmelavr\nframework = arduino\n";
+    std::fs::write(dir.path().join("platformio.ini"), ini).unwrap();
+    let adapter =
+        mgc_iot_adapter::adapter_for(dir.path()).expect("platformio must detect an iot adapter");
+    assert!(
+        !adapter.manifest_owned(),
+        "platformio.ini must be toolchain-owned"
+    );
+    let err = reject_toolchain_owned_packages(&adapter, &["some-pkg".to_string()]).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("does not own its native dependency lifecycle"),
+        "must name the ownership reason: {err:#}"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("platformio.ini")).unwrap(),
+        ini.as_bytes(),
+        "manifest must be byte-identical (zero side effects)"
+    );
+    assert!(
+        !dir.path()
+            .join(".magicore/journal/dependency-mutation")
+            .exists(),
+        "no journal may be staged by a rejected op"
+    );
+    // Empty packages on the same lane stays allowed (pure install path).
+    // (Không packages thì qua — đường install thuần.)
+    reject_toolchain_owned_packages(&adapter, &[]).unwrap();
+}
+
+#[cfg(feature = "game")]
+#[test]
+fn game_owner_preflight_bevy_passes_godot_fails() {
+    // P1-1: preflight dùng engine detect thật — bevy qua gate Native,
+    // godot rớt catch-all Unsupported (không bao giờ đánh giá bằng
+    // ownership của Bevy).
+    // (Preflight uses the detected engine — godot fails closed.)
+    let bevy = tempdir().unwrap();
+    std::fs::write(
+        bevy.path().join("mgc.toml"),
+        "name = \"g\"\necosystem = \"game\"\n[game]\nengine = \"bevy\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        bevy.path().join("Cargo.toml"),
+        "[package]\nname = \"g\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let bevy_adapter =
+        mgc_game_adapter::adapter_for(bevy.path()).expect("bevy must detect a game adapter");
+    validate_install_owner(&bevy_adapter, bevy.path()).unwrap();
+
+    let godot = tempdir().unwrap();
+    std::fs::write(godot.path().join("project.godot"), "; godot\n").unwrap();
+    let godot_adapter =
+        mgc_game_adapter::adapter_for(godot.path()).expect("godot must detect a game adapter");
+    validate_install_owner(&godot_adapter, godot.path())
+        .expect_err("godot must fail the ownership gate (Unsupported, never Bevy's cell)");
 }

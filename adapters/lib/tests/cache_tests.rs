@@ -3,30 +3,31 @@
 
 //! Cache module integration tests.
 
-use mgc_lib_adapter::cache::metadata::{metadata_path, CacheEntry, CacheMetadata};
-use mgc_lib_adapter::cache::prune::{prune_cache, PruneStrategy};
+use mgc_lib_adapter::cache::metadata::{CacheEntry, CacheMetadata, metadata_path};
+use mgc_lib_adapter::cache::prune::{PruneStrategy, prune_cache};
 use mgc_lib_adapter::cache::{cache_dir, cache_size, clear_cache};
 use mgc_types::{PackageId, PackageName, Version};
 use std::path::PathBuf;
 
 #[test]
-fn cache_dir_rust_points_to_cargo_registry() {
+fn cache_dir_rust_uses_mgc_owned_store() {
     let dir = cache_dir("rust").unwrap();
-    assert!(dir.to_string_lossy().contains(".cargo"));
-    assert!(dir.to_string_lossy().contains("registry"));
+    let globals = mgc_platform::paths::GlobalPaths::new().unwrap();
+    assert_eq!(dir, globals.store.join("cargo"));
 }
 
 #[test]
-fn cache_dir_python_prefers_uv_over_pip() {
+fn cache_dir_python_uses_mgc_owned_pypi_store() {
     let dir = cache_dir("python").unwrap();
-    // Will be either .cache/uv or .cache/pip depending on system
-    assert!(dir.to_string_lossy().contains(".cache"));
+    let globals = mgc_platform::paths::GlobalPaths::new().unwrap();
+    assert_eq!(dir, globals.store.join("pypi"));
 }
 
 #[test]
 fn cache_dir_typescript_uses_mgc_store() {
     let dir = cache_dir("ts").unwrap();
-    assert!(dir.to_string_lossy().contains(".mgc-store"));
+    let globals = mgc_platform::paths::GlobalPaths::new().unwrap();
+    assert_eq!(dir, globals.cache.join("web"));
 }
 
 #[test]

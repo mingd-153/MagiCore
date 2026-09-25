@@ -2,7 +2,7 @@
 //! HTTP security config tests — ensure timeout/TLS config is actually wired.
 //! Kiểm chứng cấu hình bảo mật không bị giữ trong struct rồi bỏ qua.
 
-use mgc_http::{timeout::TimeoutConfig, HttpClient, TlsConfig};
+use mgc_http::{HttpClient, TlsConfig, timeout::TimeoutConfig};
 
 #[test]
 fn http_client_applies_tls_config_errors() {

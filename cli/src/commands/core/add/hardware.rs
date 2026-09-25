@@ -1,4 +1,8 @@
 //! `mgc add-hardware <pkg>` — materialize optimizer/bench vào project. Phase 7 v5.
+//!
+//! GATE-EXEMPT: template materialization is not a package lifecycle (no
+//! registry, no toolchain spawn in this lane).
+//! (GATE-EXEMPT: materialize template không phải package lifecycle.)
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -19,7 +23,18 @@ fn hardware_kind(pkg: &str) -> Result<()> {
     }
 }
 
-pub async fn add(packages: Vec<String>) -> Result<()> {
+pub async fn add(
+    packages: Vec<String>,
+    _compat_runtime: Option<String>,
+    version: Option<String>,
+) -> Result<()> {
+    // Templates have no versions — a pinned version here is a user error,
+    // failed loudly instead of silently ignored.
+    // (Template không có version — version ghim ở đây là lỗi user, fail
+    // rõ thay vì bỏ qua âm thầm.)
+    if let Some(pinned) = version.as_deref() {
+        return Err(crate::error::add_version_unsupported("hardware", pinned));
+    }
     let root = project_root()?;
     for pkg in &packages {
         hardware_kind(pkg)?;
@@ -35,21 +50,11 @@ pub async fn add(packages: Vec<String>) -> Result<()> {
             mgc_ui::success(&format!("{pkg} scaffolded at ./{pkg}"));
         }
     }
-    let has_materialized_pkg = packages.iter().any(|pkg| pkg != OPTIMIZER_PKG);
-    if has_materialized_pkg {
-        if let Ok(adapter) =
-            crate::factory::create_adapter(&mgc_types::Ecosystem::Hardware, None, None)
-        {
-            shared::install_with_adapter(
-                &*adapter,
-                &root,
-                "mgc add-hardware",
-                false,
-                mgc_types::adapter::InstallOptions::default(),
-            )
-            .await?;
-        }
-    }
+    // There is deliberately NO trailing adapter install call: hardware
+    // has no dependency lifecycle (resolve/install are Unsupported by
+    // design), so materialization above IS the complete operation — the
+    // old tail failed AFTER materializing (side effects plus an error).
+    // (Cố ý KHÔNG gọi adapter install ở cuối — materialize ĐÃ là toàn bộ.)
     Ok(())
 }
 

@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Hardware ecosystem adapter for MagiCore (optimizer/bench — Rust + GPU templates)"
 
 [dependencies]
+mgc-audit = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { workspace = true }
 mgc-crypto = { workspace = true }

@@ -1,18 +1,7 @@
-//! `mgc add` ai — tách từ core/ai.rs (Phase 7 v5). 05 §5: chốt 1 tool theo lock (uv/pip).
-
-use anyhow::Result;
+//! `mgc add` ai — native PyPI dependency lane.
 
 use super::super::shared;
-
-fn add_args(packages: &[String], tool: &str) -> Vec<String> {
-    let mut args = vec![if tool == "uv" { "add" } else { "install" }.to_string()];
-    args.extend(
-        packages
-            .iter()
-            .flat_map(|p| p.split_whitespace().map(String::from)),
-    );
-    args
-}
+use anyhow::Result;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn add(
@@ -24,12 +13,30 @@ pub async fn add(
     _peer: bool,
     _no_save: bool,
     _global: bool,
+    compat_runtime: Option<String>,
 ) -> Result<()> {
     let root = shared::ai_project_root()?;
-    let tool = shared::ai_pick_tool(&root);
-    let args = add_args(&packages, tool);
-    shared::ai_run_tool(&root, tool, &args)?;
-    Ok(())
+    shared::require_native_ai_python(&root, "add")?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    let adapter =
+        crate::factory::create_adapter_for(&root, &mgc_types::Ecosystem::Ai, None, None, &[])
+            .map_err(|e| anyhow::anyhow!("ai native add needs the PyPI engine: {e}"))?;
+    crate::commands::dep_gate::gate_native_adapter(
+        &crate::commands::dep_gate::DepContext::new(
+            "ai",
+            Some(crate::commands::dep_gate::eco::PYTHON),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Add,
+        ),
+        &*adapter,
+        &compat,
+    )?;
+    crate::commands::core::shared::add(
+        &*adapter, &root, packages, _version, _dev, _exact, _optional, _peer, _no_save, true,
+        _global,
+    )
+    .await
 }
 
 #[cfg(test)]

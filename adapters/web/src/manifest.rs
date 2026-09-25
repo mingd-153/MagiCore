@@ -50,10 +50,11 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
 
 /// Chỉ ghi file nếu nội dung thay đổi (Atomic write if changed)
 pub fn atomic_write_if_changed(path: &Path, data: &[u8]) -> MgResult<bool> {
-    if let Ok(existing) = std::fs::read(path) {
-        if existing == data {
-            return Ok(false);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(existing) = std::fs::read(path)
+        && existing == data
+    {
+        return Ok(false);
     }
 
     atomic_write(path, data)?;

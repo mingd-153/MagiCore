@@ -17,12 +17,6 @@ pub fn mgc_in(dir: &Path, args: &[&str]) -> (bool, String) {
 }
 
 fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
-    let workspace_manifest = Path::new(MANIFEST).join("../Cargo.toml");
-    let workspace_root = workspace_manifest
-        .parent()
-        .expect("workspace manifest should have a parent");
-    let debug_bin = workspace_root.join("target").join("debug").join("mgc");
-
     let runtime_bin = std::env::var("CARGO_BIN_EXE_mgc")
         .ok()
         .map(PathBuf::from)
@@ -30,22 +24,14 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
     let compile_bin = option_env!("CARGO_BIN_EXE_mgc")
         .map(PathBuf::from)
         .filter(|path| path.exists());
+    let bin = runtime_bin
+        .or(compile_bin)
+        .expect("Cargo must provide CARGO_BIN_EXE_mgc for CLI integration tests");
+    let mut command = Command::new(bin);
 
-    let mut command = if let Some(bin) = runtime_bin.or(compile_bin) {
-        Command::new(bin)
-    } else if debug_bin.exists() {
-        Command::new(debug_bin)
-    } else {
-        let mut fallback = Command::new("cargo");
-        fallback
-            .arg("run")
-            .arg("--bin")
-            .arg("mgc")
-            .arg("--manifest-path")
-            .arg(&workspace_manifest)
-            .arg("--");
-        fallback
-    };
+    let workspace_root = Path::new(MANIFEST)
+        .parent()
+        .expect("CLI manifest should have a parent");
 
     // Only pin workspace templates when the tree actually holds template
     // content — the repo may keep just placeholder READMEs and rely on the
@@ -66,7 +52,7 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         .args(args)
         .current_dir(cwd)
         .output()
-        .expect("failed to run mgc");
+        .expect("failed to run Cargo-built mgc binary");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let combined = if stderr.is_empty() {

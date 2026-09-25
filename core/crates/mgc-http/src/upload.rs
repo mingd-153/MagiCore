@@ -2,7 +2,7 @@
 //! (Upload engine cho OCI /v2 blob upload: resumable, digest verify)
 
 use crate::methods::HttpClient;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Read;

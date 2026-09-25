@@ -3,8 +3,8 @@
 //! Provides timeline markers and performance metrics for install, resolve, pipeline, and materialization phases.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::MutexGuard;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 

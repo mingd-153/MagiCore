@@ -1,0 +1,26 @@
+{
+  "pm": "mgc",
+  "run": 2,
+  "timestamp": "20260904_162854",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_162854"
+},
+  "cold_install": {
+    "duration_seconds": .750154000,
+    "disk_mb": 234,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 1.261755000
+  },
+  "package_count": 5,
+  "logs": {
+    "cold": "[magicore] skipped lifecycle scripts for @parcel/watcher@2.6.0 — not approved. Approve with: mgc trust approve @parcel/watcher    ┌──────────────────────────────────────────────┐   │           📦  Install Complete               │   ├──────────────────────────────────────────────┤   │  39 packages installed   │ 70064003 from cache   │   714 ms total   │        0 B saved (CAS dedup)   └──────────────────────────────────────────────┘    ✔ All dependencies installed ",
+    "warm": "  ℹ Using mgc.lock for install state. [magicore] skipped lifecycle scripts for @parcel/watcher@2.6.0 — not approved. Approve with: mgc trust approve @parcel/watcher    ┌──────────────────────────────────────────────┐   │           📦  Install Complete               │   ├──────────────────────────────────────────────┤   │  39 packages installed   │ 70064003 from cache   │  1241 ms total   │        0 B saved (CAS dedup)   └──────────────────────────────────────────────┘    ✔ All dependencies installed "
+  }
+}

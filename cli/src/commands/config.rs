@@ -20,43 +20,44 @@ use clap::Subcommand;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Sub-commands cho `mgc config`
+/// Sub-commands for `mgc config` (help text must stay English — RULE §7).
+/// Sub-commands cho `mgc config` (text help phải giữ tiếng Anh — RULE §7).
 #[derive(Subcommand, Debug, Clone)]
 pub enum ConfigCmd {
-    /// Lấy giá trị một key (ưu tiên: env → mgc.toml → .npmrc local → .npmrc user)
+    /// Get a key value (priority: env → mgc.toml → local .npmrc → user .npmrc)
     Get {
-        /// Tên key cần lấy
+        /// Key to read
         key: String,
     },
-    /// Ghi một key=value vào file cấu hình
+    /// Write a key=value pair to the config file
     Set {
-        /// Tên key
+        /// Key to set
         key: String,
-        /// Giá trị cần set
+        /// Value to set
         value: String,
-        /// Ghi vào mgc.toml thay vì .npmrc
+        /// Write to mgc.toml instead of .npmrc
         #[arg(long, help = "write to mgc.toml instead of .npmrc")]
         toml: bool,
     },
-    /// Xóa một key khỏi file cấu hình
+    /// Remove a key from the config file
     Delete {
-        /// Tên key cần xóa
+        /// Key to remove
         key: String,
-        /// Xóa từ mgc.toml thay vì .npmrc
+        /// Remove from mgc.toml instead of .npmrc
         #[arg(long, help = "remove from mgc.toml instead of .npmrc")]
         toml: bool,
     },
     /// Alias for delete
     Unset {
-        /// Tên key cần xóa
+        /// Key to remove
         key: String,
-        /// Xóa từ mgc.toml thay vì .npmrc
+        /// Remove from mgc.toml instead of .npmrc
         #[arg(long, help = "remove from mgc.toml instead of .npmrc")]
         toml: bool,
     },
-    /// Liệt kê tất cả cấu hình (hiện thị nguồn gốc)
+    /// List all config entries (shows the source of each)
     List {
-        /// Chỉ hiển thị config trong project (.npmrc local + mgc.toml)
+        /// Only show project-local config (.npmrc local + mgc.toml)
         #[arg(long, help = "only show project-local config")]
         local: bool,
     },
@@ -125,12 +126,13 @@ fn get(key: &str) -> Result<()> {
         return Ok(());
     }
     // 2. mgc.toml project
-    if let Some(toml_path) = find_mgc_toml() {
-        if let Some(value) = toml_value(&toml_path, key) {
-            mgc_ui::info(&format!("[mgc.toml] {key} = {value}"));
-            println!("{value}");
-            return Ok(());
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(toml_path) = find_mgc_toml()
+        && let Some(value) = toml_value(&toml_path, key)
+    {
+        mgc_ui::info(&format!("[mgc.toml] {key} = {value}"));
+        println!("{value}");
+        return Ok(());
     }
     // 3. .npmrc local (project CWD)
     let project_npmrc = std::env::current_dir()?.join(".npmrc");
@@ -224,10 +226,11 @@ fn delete_toml(key: &str) -> Result<()> {
     let parts: Vec<&str> = key.splitn(2, '.').collect();
     if parts.len() == 2 {
         let (table, field) = (parts[0], parts[1]);
-        if let Some(t) = doc.get_mut(table) {
-            if let Some(tbl) = t.as_table_like_mut() {
-                tbl.remove(field);
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(t) = doc.get_mut(table)
+            && let Some(tbl) = t.as_table_like_mut()
+        {
+            tbl.remove(field);
         }
     } else {
         doc.remove(key);
@@ -285,14 +288,13 @@ fn list(local_only: bool) -> Result<()> {
     }
 
     // 4. .npmrc user
-    if !local_only {
-        if let Some(home) = dirs::home_dir() {
-            let user_npmrc = home.join(".npmrc");
-            if user_npmrc.exists() {
-                println!("# [.npmrc user] {}", user_npmrc.display());
-                print_npmrc_file(&user_npmrc);
-                any = true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if !local_only && let Some(home) = dirs::home_dir() {
+        let user_npmrc = home.join(".npmrc");
+        if user_npmrc.exists() {
+            println!("# [.npmrc user] {}", user_npmrc.display());
+            print_npmrc_file(&user_npmrc);
+            any = true;
         }
     }
 
@@ -385,6 +387,7 @@ fn is_sensitive(key: &str) -> bool {
     key.contains("_authToken") || key.contains("_password") || key.contains("token")
 }
 
+#[allow(dead_code)]
 fn merge_file(merged: &mut BTreeMap<String, String>, path: &Path) {
     if !path.exists() {
         return;

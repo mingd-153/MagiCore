@@ -1,19 +1,22 @@
 use super::*;
 
 #[test]
-fn install_command_per_language() {
-    let fl = install_command(mgc_app_adapter::AppLanguage::Flutter);
-    assert_eq!(fl.tool, "flutter");
-    assert_eq!(fl.args, vec!["pub", "get"]);
-    let kt = install_command(mgc_app_adapter::AppLanguage::Kotlin);
-    assert_eq!(kt.tool, "gradle");
-    assert_eq!(kt.args, vec!["dependencies"]);
-    let sw = install_command(mgc_app_adapter::AppLanguage::Swift);
-    assert_eq!(sw.tool, "swift");
-    assert_eq!(sw.args, vec!["package", "resolve"]);
-    let rn = install_command(mgc_app_adapter::AppLanguage::ReactNative);
-    assert!(rn.tool.is_empty());
-    assert!(rn.args.is_empty());
+fn app_dependency_verbs_never_return_a_provider_package_manager() {
+    for lang in [
+        mgc_app_adapter::AppLanguage::Flutter,
+        mgc_app_adapter::AppLanguage::Kotlin,
+        mgc_app_adapter::AppLanguage::Swift,
+        mgc_app_adapter::AppLanguage::ReactNative,
+        mgc_app_adapter::AppLanguage::ObjC,
+        mgc_app_adapter::AppLanguage::Multi,
+    ] {
+        for verb in ["install", "list", "add", "remove", "update"] {
+            assert!(
+                tool_command(lang, verb).is_none(),
+                "{lang:?} {verb} must not expose a provider package manager"
+            );
+        }
+    }
 }
 
 #[test]

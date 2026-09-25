@@ -133,7 +133,7 @@ async fn rbac_role_controls_publish() {
 async fn param_route_minimal() {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use axum::{routing::get, Router};
+    use axum::{Router, routing::get};
     use tower::ServiceExt;
 
     let app = Router::new().route("/a/:x", get(|| async {}));
@@ -154,9 +154,9 @@ async fn param_route_minimal() {
 /// of an unmatched path. Route syntax `:param` per matchit 0.7.
 #[tokio::test]
 async fn npm_routes_match() {
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use axum::Router;
     use tower::ServiceExt;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -210,9 +210,9 @@ async fn npm_routes_match() {
 
 #[tokio::test]
 async fn pypi_upload_index_download() {
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use axum::Router;
     use sha2::{Digest, Sha256};
     use tower::ServiceExt;
 
@@ -384,9 +384,9 @@ async fn users_persist_across_restart() {
 
 #[tokio::test]
 async fn oci_routes_match() {
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use axum::Router;
     use tower::ServiceExt;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -482,9 +482,9 @@ fn scope_glob_matches() {
 
 #[tokio::test]
 async fn npm_delete_version_and_oci_tags_catalog() {
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use axum::Router;
     use tower::ServiceExt;
 
     let tmp = tempfile::tempdir().unwrap();

@@ -4,35 +4,71 @@
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LibLanguage {
+pub enum LibLanguage {
     Ts,
     Rust,
     Python,
+    Go,
+    Java,
+    DotNet,
+}
+
+impl LibLanguage {
+    /// Canonical C0 firewall ecosystem id — the ONLY string
+    /// `dep_gate::owner_for` matches on. Single source of truth so CLI
+    /// lanes can never drift from the gate table.
+    /// (Id ecosystem chuẩn cho tường lửa C0.)
+    pub fn ecosystem(&self) -> &'static str {
+        match self {
+            LibLanguage::Ts => "ts",
+            LibLanguage::Rust => "rust",
+            LibLanguage::Python => "python",
+            LibLanguage::Go => "go",
+            LibLanguage::Java => "java",
+            LibLanguage::DotNet => "dotnet",
+        }
+    }
 }
 
 type ManifestProbe = fn(&Path) -> Option<String>;
 
-pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
+pub fn detect_language(root: &Path) -> Option<LibLanguage> {
     let mgc_toml = root.join("mgc.toml");
-    if let Ok(content) = std::fs::read_to_string(&mgc_toml) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco != "lib" && v.get("lib").is_none() {
-                    return None;
-                }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(&mgc_toml)
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem")
+            .and_then(|e| e.as_str())
+            .is_some_and(|eco| eco != "lib")
+            && v.get("lib").is_none()
+        {
+            // A package.json project belongs to the JS lane — the lib
+            // lane must not claim it. But a NON-JS manifest (go.mod /
+            // Cargo.toml / pyproject / ...) with NO package.json is a
+            // backend the lib machinery can serve (web-lane delegation
+            // for create-web backend scaffolds) — fall through to marker
+            // detection instead of refusing blindly.
+            // (Project có package.json thuộc lane JS; manifest non-JS mà
+            // không có package.json thì rơi xuống detect marker.)
+            if root.join("package.json").exists() {
+                return None;
             }
-            if let Some(lang) = v
-                .get("lib")
-                .and_then(|l| l.get("language"))
-                .and_then(|l| l.as_str())
-            {
-                return match lang {
-                    "ts" | "typescript" => Some(LibLanguage::Ts),
-                    "rust" => Some(LibLanguage::Rust),
-                    "python" => Some(LibLanguage::Python),
-                    _ => None,
-                };
-            }
+        }
+        if let Some(lang) = v
+            .get("lib")
+            .and_then(|l| l.get("language"))
+            .and_then(|l| l.as_str())
+        {
+            return match lang {
+                "ts" | "typescript" => Some(LibLanguage::Ts),
+                "rust" => Some(LibLanguage::Rust),
+                "python" => Some(LibLanguage::Python),
+                "go" => Some(LibLanguage::Go),
+                "java" | "kotlin" => Some(LibLanguage::Java),
+                "dotnet" | "csharp" | "cs" => Some(LibLanguage::DotNet),
+                _ => None,
+            };
         }
     }
     if root.join("package.json").exists() {
@@ -41,23 +77,60 @@ pub(crate) fn detect_language(root: &Path) -> Option<LibLanguage> {
     if root.join("Cargo.toml").exists() {
         return Some(LibLanguage::Rust);
     }
+    if root.join("go.mod").exists() {
+        return Some(LibLanguage::Go);
+    }
+    // Java/Kotlin: the gradle verification metadata (lockfile) is the
+    // audit source — prefer it over the plain build file. A pom.xml
+    // project is also Java (native Maven engine, Phase 2).
+    // Java/Kotlin: metadata verification gradle (lockfile) là nguồn
+    // audit — ưu tiên trước build file thường. Project pom.xml cũng là
+    // Java (engine Maven native, Phase 2).
+    if root
+        .join("gradle")
+        .join("verification-metadata.xml")
+        .is_file()
+        || root.join("build.gradle").is_file()
+        || root.join("build.gradle.kts").is_file()
+        || root.join("pom.xml").is_file()
+    {
+        return Some(LibLanguage::Java);
+    }
+    // .NET: packages.lock.json is the lockfile the audit reads; a bare
+    // *.csproj is also .NET (native NuGet engine, Phase 2).
+    // .NET: packages.lock.json là lockfile audit đọc; *.csproj trần cũng
+    // là .NET (engine NuGet native, Phase 2).
+    if root.join("packages.lock.json").is_file() || find_csproj(root).is_some() {
+        return Some(LibLanguage::DotNet);
+    }
     if root.join("pyproject.toml").exists() {
         return Some(LibLanguage::Python);
     }
     None
 }
 
+/// Find the first `*.csproj` at the project root (single level — NuGet
+/// projects are one csproj per directory in the mgc lib lane).
+/// Tìm `*.csproj` đầu tiên ở gốc project (một cấp — project NuGet trong
+/// lane lib của mgc là một csproj mỗi thư mục).
+pub(crate) fn find_csproj(root: &Path) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(root).ok()?;
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("csproj"))
+}
+
 pub(crate) fn manifest_is_lib(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco == "lib" {
-                    return true;
-                }
-            }
-            if v.get("lib").is_some() {
-                return true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem").and_then(|e| e.as_str()) == Some("lib") {
+            return true;
+        }
+        if v.get("lib").is_some() {
+            return true;
         }
     }
     let probes: [(&Path, ManifestProbe); 3] = [
@@ -66,12 +139,11 @@ pub(crate) fn manifest_is_lib(root: &Path) -> bool {
         (&root.join("pyproject.toml"), probe_pyproject),
     ];
     for (path, probe) in probes {
-        if path.exists() {
-            if let Some(eco) = probe(path) {
-                if eco == "lib" {
-                    return true;
-                }
-            }
+        if path.exists()
+            && let Some(eco) = probe(path)
+            && eco == "lib"
+        {
+            return true;
         }
     }
     false

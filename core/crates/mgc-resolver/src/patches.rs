@@ -1,7 +1,7 @@
 //! Patch apply engine — parse unified diff, apply to vstore (16 §5)
 //! (Apply engine nội bộ — KHÔNG gọi binary `patch`, cross-platform, chạy offline)
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use mgc_platform::paths::{GlobalPaths, ProjectPaths};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -176,7 +176,14 @@ pub fn verify_patch_integrity(patch_path: &Path, expected_sha256: &str) -> Resul
     let mut hasher = Sha256::new();
     hasher.update(&content);
     let actual = hex::encode(hasher.finalize());
-    Ok(actual == expected_sha256)
+    // Accept the SRI form (`sha256-<hex>`, what `mgc patch add` records)
+    // as well as bare hex — comparing raw against prefixed can never
+    // match, which made every added patch fail verification.
+    // (Chấp nhận cả dạng SRI lẫn hex trần.)
+    let expected = expected_sha256
+        .strip_prefix("sha256-")
+        .unwrap_or(expected_sha256);
+    Ok(actual == expected)
 }
 
 /// Get patches directory from project or global

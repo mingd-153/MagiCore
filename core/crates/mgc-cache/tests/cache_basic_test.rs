@@ -71,10 +71,12 @@ fn test_cache_integrity_mismatch_fails() {
     let result = cache.get_package("axios@1.0.0", wrong_integrity);
 
     assert!(result.is_err(), "Should fail with wrong integrity");
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Integrity mismatch"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Integrity mismatch")
+    );
 }
 
 #[test]
@@ -89,10 +91,12 @@ fn test_cache_store_with_wrong_integrity_fails() {
     let result = cache.store_package("express@4.0.0", &pkg_file, wrong_integrity);
 
     assert!(result.is_err(), "Should fail storing with wrong integrity");
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Integrity mismatch"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Integrity mismatch")
+    );
 }
 
 #[test]

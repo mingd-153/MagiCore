@@ -20,8 +20,9 @@ async fn test_scaffold_unreal() {
 
     assert!(tmp.path().join("my-unreal-game.uproject").exists());
     assert!(tmp.path().join("mgc.toml").exists());
-    assert!(tmp
-        .path()
-        .join("Source/my-unreal-game/my-unreal-game.Build.cs")
-        .exists());
+    assert!(
+        tmp.path()
+            .join("Source/my-unreal-game/my-unreal-game.Build.cs")
+            .exists()
+    );
 }

@@ -12,7 +12,7 @@ echo ""
 files_with_inline_tests=$(grep -rl "#\[cfg(test)\]" adapters/ core/ cli/src/ 2>/dev/null | grep -E "\.rs$" | grep -v "/test/" || true)
 
 if [ -z "$files_with_inline_tests" ]; then
-    echo "✅ No inline tests found! All tests already in test/ directories."
+    echo "No inline tests found! All tests already in test/ directories."
     exit 0
 fi
 
@@ -45,8 +45,8 @@ echo ""
 echo "=== Summary ==="
 echo "Found $count files with inline tests"
 echo ""
-echo "⚠️  This is a DRY-RUN script (shows what would be done)"
-echo "⚠️  Actual migration requires careful AST parsing to avoid breaking code"
+echo "WARN: This is a DRY-RUN script (shows what would be done)"
+echo "WARN: Actual migration requires careful AST parsing to avoid breaking code"
 echo ""
 echo "Manual migration steps per file:"
 echo "1. Extract mod tests { ... } content"

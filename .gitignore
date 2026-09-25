@@ -56,6 +56,7 @@ logs/
 # Build artifacts
 *.tgz
 *.tar.gz
+!cli/embedded/*.tar.gz
 
 # Coverage
 coverage/
@@ -65,6 +66,7 @@ coverage/
 tmp/
 temp/
 *.tmp
+*.cache
 
 # Zig cache
 .zig-cache/
@@ -80,6 +82,28 @@ magicore-bench-*
 mgc-brutal-*
 mgc-test-*
 mgc-bench-*
+# Measured benchmark raw data + summaries (local-only evidence, not source).
+# Dữ liệu đo benchmark raw + tổng hợp — bằng chứng local-only, không phải source.
+benchmark/results/
+# Measured benchmark outputs (bench_v2/aggregate_v2/export_bench runs) —
+# local-only measurement evidence, never commit generated numbers.
+# Output đo benchmark (run của bench_v2/aggregate_v2/export_bench) — bằng
+# chứng đo local-only, không bao giờ commit số sinh ra.
+benchmark/results/v2/
+benchmark/results/p1_suite/
+benchmark/results/*_run*.json
+benchmark/results/*_run*.log
+benchmark/results/*_analysis*.json
+benchmark/results/SUMMARY_PROVISIONAL*
+benchmark/results/Raw_ALL_RUNS*
+benchmark/results/RAW_ALL_RUNS*
+benchmark/results/*_SUMMARY*.txt
+benchmark/*_measure*.json
+benchmark/*_measure*.md
+benchmark/*.bench.json
+benchmark/*.bench.md
+# Rust criterion/export_bench captured outputs (cargo bench output dumps).
+# Output capture của criterion/export_bench (kết xuất cargo bench).
 
 # ── Internal documentation (local-only, NOT for git) ─────────────────────────
 
@@ -118,3 +142,9 @@ tools/*/docs/
 !README.md
 !CHANGELOG.md
 !CONTRIBUTING.md
+packaging/artifacts/
+
+.claude
+
+# Local registry serve runtime state (E2E creates this live)
+data/registry/

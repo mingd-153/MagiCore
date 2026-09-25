@@ -1,6 +1,6 @@
 //! iot tooling lệnh: `mgc flash` (Q16 — esp32-rust P1, platformio/zephyr P2).
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use mgc_ui::info;
 use std::path::{Path, PathBuf};
 
@@ -55,7 +55,14 @@ pub async fn flash(board_override: Option<&str>, skip_build: bool) -> Result<()>
 
     if !skip_build {
         info("Building firmware (cargo build --release)...");
-        let build_args = ["build", "--release", "--target", &target];
+        let build_args = [
+            "build",
+            "--release",
+            "--locked",
+            "--offline",
+            "--target",
+            &target,
+        ];
         run_tool(&root, "cargo", &build_args)?;
     }
 

@@ -1,7 +1,18 @@
-# Running Full Benchmark Suite — Instructions
+# Running Full Benchmark Suite - INVALIDATED
 
-**Status:** ✅ RUNNING (Started 2026-08-27 14:09:42 +07:00)  
-**Progress:** Check real-time with `./scripts/monitor_suite.sh`  
+> **⚠️ NOTICE (2026-09-05)**: This guide is **INVALIDATED**. Suite scripts referenced here produced data with validation gaps. Preserved for audit trail. **DO NOT RUN** for new benchmarks.
+
+## Invalidation Reason
+
+See [`BENCHMARK_STATUS.md`](BENCHMARK_STATUS.md) for issues and replacement procedure.
+
+---
+
+# Original Guide (ARCHIVED)
+
+
+**Status:** ✅ RUNNING (Started 2026-08-27 14:09:42 +07:00)
+**Progress:** Check real-time with `./scripts/monitor_suite.sh`
 **Estimated Duration:** 4-6 hours (overnight run)
 
 ---
@@ -279,22 +290,22 @@ pkill -f run_full_suite_native
 
 ## Questions?
 
-**"How long left?"**  
+**"How long left?"**
 → Run `./scripts/monitor_suite.sh` for ETA
 
-**"Can I use my computer while this runs?"**  
+**"Can I use my computer while this runs?"**
 → Yes, but avoid:
   - Heavy CPU tasks (affects benchmark timing)
   - Network-heavy tasks (affects install speed)
   - Closing terminal/sleeping computer (kills process)
 
-**"What if I need to stop?"**  
-→ Press Ctrl+C in terminal, or `pkill -f run_full_suite_native`  
+**"What if I need to stop?"**
+→ Press Ctrl+C in terminal, or `pkill -f run_full_suite_native`
 → Partial results still valid
 
-**"Results look wrong?"**  
-→ Check `results/suite_*.log` for errors  
-→ Verify machine wasn't under load during runs  
+**"Results look wrong?"**
+→ Check `results/suite_*.log` for errors
+→ Verify machine wasn't under load during runs
 → Re-run specific PM if needed
 
 ---
@@ -313,6 +324,6 @@ After suite completes:
 
 ---
 
-*Generated: 2026-08-27 14:10 +07:00*  
-*Status: RUNNING (background process)*  
+*Generated: 2026-08-27 14:10 +07:00*
+*Status: RUNNING (background process)*
 *ETA: 4-6 hours (check with monitor script)*

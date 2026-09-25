@@ -1,0 +1,23 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/bytes@0.224.0": "0.224.0",
+    "npm:lodash@4.17.20": "4.17.20"
+  },
+  "jsr": {
+    "@std/bytes@0.224.0": {
+      "integrity": "a2250e1d0eb7d1c5a426f21267ab9bdeac2447fa87a3d0d1a467d3f7a6058e49"
+    }
+  },
+  "npm": {
+    "lodash@4.17.20": {
+      "integrity": "sha512-PlhdFcillOINfeV7Ni6oF1TAEayyZBoZ8bcshTHqOYJYlrqzRK5hagpagky5o4HfCzzd1TRkXPMFq6cKk9rGmA=="
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/bytes@0.224.0",
+      "npm:lodash@4.17.20"
+    ]
+  }
+}

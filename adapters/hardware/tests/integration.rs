@@ -2,8 +2,9 @@
 //! Integration tests for mgc-hardware-adapter — sát với src/lib.rs
 //! Kiểm thử: adapter_for (detect qua mgc.toml ecosystem), list, audit, PackageAdapter trait.
 
-use mgc_hardware_adapter::{adapter_for, generate_sbom, HardwareAdapter};
+use mgc_hardware_adapter::{HardwareAdapter, adapter_for, generate_sbom};
 use mgc_types::adapter::PackageAdapter;
+use mgc_types::capabilities::{AuditProvider, CoreIdent, DependencyResolver, ProjectDetector};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
@@ -68,48 +69,21 @@ fn can_handle_returns_false_for_plain_dir() {
     assert!(!HardwareAdapter.can_handle(&dir));
 }
 
-// ── list — scan optimizer/ and bench/ folders ──────────────────────────────
+// ── list — templates are not installed packages ────────────────────────────
 
 #[tokio::test]
-async fn list_returns_empty_when_no_optimizer_or_bench() {
+async fn adapter_package_list_rejects_template_inventory() {
     let dir = tmp("list-empty");
     std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
-    let pkgs = HardwareAdapter.list(&dir).await.unwrap();
-    assert!(pkgs.is_empty());
-}
-
-#[tokio::test]
-async fn list_returns_optimizer_when_folder_exists() {
-    let dir = tmp("list-opt");
-    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     std::fs::create_dir_all(dir.join("optimizer")).unwrap();
-    let pkgs = HardwareAdapter.list(&dir).await.unwrap();
-    assert_eq!(pkgs.len(), 1);
-    assert_eq!(pkgs[0].id.name().as_str(), "optimizer");
-}
-
-#[tokio::test]
-async fn list_returns_both_optimizer_and_bench_when_both_exist() {
-    let dir = tmp("list-both");
-    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
-    std::fs::create_dir_all(dir.join("optimizer")).unwrap();
-    std::fs::create_dir_all(dir.join("bench")).unwrap();
-    let pkgs = HardwareAdapter.list(&dir).await.unwrap();
-    assert_eq!(pkgs.len(), 2);
-    let names: Vec<&str> = pkgs.iter().map(|p| p.id.name().as_str()).collect();
-    assert!(names.contains(&"optimizer"));
-    assert!(names.contains(&"bench"));
-}
-
-#[tokio::test]
-async fn list_ignores_other_directories() {
-    let dir = tmp("list-ignore");
-    std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
-    std::fs::create_dir_all(dir.join("optimizer")).unwrap();
-    // src/ không phải optimizer hay bench — phải bị bỏ qua
-    std::fs::create_dir_all(dir.join("src")).unwrap();
-    let pkgs = HardwareAdapter.list(&dir).await.unwrap();
-    assert_eq!(pkgs.len(), 1);
+    let error = HardwareAdapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            capability: "list",
+            ..
+        }
+    ));
 }
 
 // ── audit ──────────────────────────────────────────────────────────────────
@@ -136,8 +110,8 @@ async fn parse_manifest_uses_dir_name() {
 
 #[tokio::test]
 async fn add_fails_for_hardware_adapter() {
-    use mgc_types::adapter::AddOptions;
     use mgc_types::PackageName;
+    use mgc_types::adapter::AddOptions;
     let dir = tmp("add-fail");
     std::fs::write(dir.join("mgc.toml"), "ecosystem = \"hardware\"\n").unwrap();
     let name = PackageName::new("hal-crate").unwrap();

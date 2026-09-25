@@ -15,7 +15,7 @@ pub use blake3_signer::{Blake3Hash, Blake3Hasher};
 pub use ed25519_signer::{Ed25519PublicKey, Ed25519Signature, Ed25519Signer};
 pub use integrity::{IntegrityVerifier, SriHash};
 pub use keyring::{KeyPair, Keyring};
-pub use simd::{detect_simd, SimdCapability};
+pub use simd::{SimdCapability, detect_simd};
 
 /// Result type for crypto operations — Kiểu kết quả cho thao tác crypto
 pub type CryptoResult<T> = Result<T, CryptoError>;

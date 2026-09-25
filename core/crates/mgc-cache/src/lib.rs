@@ -144,7 +144,7 @@ impl PackageCache {
     /// Prune unused packages — Xóa packages không dùng
     pub fn prune(&self) -> Result<usize> {
         // Simple implementation: remove all (full prune)
-        // TODO: Smart prune (check lockfiles)
+        // Issue #11: Smart prune (check lockfiles before deletion)
         let packages_dir = self.root.join("packages");
         if !packages_dir.exists() {
             return Ok(0);

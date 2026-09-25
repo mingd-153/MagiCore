@@ -7,29 +7,19 @@ pub mod prune;
 use mgc_types::{MgError, MgResult};
 use std::path::{Path, PathBuf};
 
-/// Get lib adapter cache directory.
-/// Lấy thư mục cache của lib adapter.
-///
-/// - Rust: ~/.cargo/registry/cache
-/// - Python: ~/.cache/pip or uv cache
-/// - TypeScript: delegated to web adapter (~/.mgc-store/cache)
+/// Get the MagiCore-owned cache directory for a library ecosystem.
+/// Lấy cache do MagiCore sở hữu cho ecosystem thư viện.
 pub fn cache_dir(language: &str) -> MgResult<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| MgError::Other("cannot find home directory".to_string()))?;
+    let globals = mgc_platform::paths::GlobalPaths::new()
+        .map_err(|e| MgError::Other(format!("cannot resolve MagiCore paths: {e}")))?;
 
     match language {
-        "rust" => Ok(home.join(".cargo/registry/cache")),
-        "python" => {
-            // Prefer uv cache if available, fallback to pip cache
-            if which::which("uv").is_ok() {
-                Ok(home.join(".cache/uv"))
-            } else {
-                Ok(home.join(".cache/pip"))
-            }
-        }
+        "rust" => Ok(globals.store.join("cargo")),
+        "python" => Ok(globals.store.join("pypi")),
         "ts" | "typescript" => {
-            // TypeScript uses web adapter cache
-            Ok(home.join(".mgc-store/cache"))
+            // TypeScript cache is isolated under the MagiCore global cache.
+            // Cache TypeScript được cách ly trong cache global của MagiCore.
+            Ok(globals.cache.join("web"))
         }
         _ => Err(MgError::Other(format!(
             "unsupported language: {}",

@@ -2,7 +2,7 @@
 # Install mgc binary from GitHub release.
 # Usage: curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash
 # Or:  ./scripts/install-from-gh.sh [--package magicore|magicore-web] [--version v0.1.0] [--dir /usr/local/bin]
-# Local test: ./scripts/install-from-gh.sh --archive dist/magicore-web-macOS-ARM64.tar.gz --dir /tmp/mgc-bin
+# Local test: ./scripts/install-from-gh.sh --archive dist/magicore-web-1.1.0-rc.6-macos-arm64.tar.gz --dir /tmp/mgc-bin
 set -euo pipefail
 
 REPO="mingd-153/MagiCore"
@@ -45,28 +45,44 @@ verify_checksum() {
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
+# Contract labels are lowercase (scripts/release-artifact-contract.sh is
+# the single source of truth): linux/macos/windows + x64/arm64.
 case "$OS" in
-  linux)  OS_LABEL="Linux"; EXE_SUFFIX="" ;;
-  darwin) OS_LABEL="macOS"; EXE_SUFFIX="" ;;
-  mingw*|msys*) OS_LABEL="Windows"; EXE_SUFFIX=".exe" ;;
+  linux)  OS_LABEL="linux"; EXE_SUFFIX=""; EXT="tar.gz" ;;
+  darwin) OS_LABEL="macos"; EXE_SUFFIX=""; EXT="tar.gz" ;;
+  mingw*|msys*) OS_LABEL="windows"; EXE_SUFFIX=".exe"; EXT="zip" ;;
   *) echo "Unsupported OS: $OS"; exit 1 ;;
 esac
 
 case "$ARCH" in
-  x86_64|amd64) ARCH_LABEL="X64" ;;
-  aarch64|arm64) ARCH_LABEL="ARM64" ;;
+  x86_64|amd64) ARCH_LABEL="x64" ;;
+  aarch64|arm64) ARCH_LABEL="arm64" ;;
   *) echo "Unsupported arch: $ARCH"; exit 1 ;;
 esac
+
+# Resolve "latest" without a JSON parser: /releases/latest redirects to
+# /releases/tag/<tag> — the effective URL carries the tag.
+resolve_latest_tag() {
+  local final_url
+  final_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")" || return 1
+  local tag="${final_url##*/tag/}"
+  if [[ -z "$tag" || "$tag" == "$final_url" ]]; then return 1; fi
+  printf '%s' "$tag"
+}
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-ARCHIVE_PATH="$TMP/archive.tar.gz"
-CHECKSUM_PATH="$TMP/archive.tar.gz.sha256"
+ARCHIVE_PATH="$TMP/archive.pkg"
+CHECKSUM_PATH="$TMP/archive.pkg.sha256"
 
 if [ -n "$ARCHIVE" ]; then
   echo "Installing ${PKG} from local archive ${ARCHIVE} ..."
   cp "$ARCHIVE" "$ARCHIVE_PATH"
+  case "$ARCHIVE" in
+    *.zip) EXT="zip" ;;
+    *) EXT="tar.gz" ;;
+  esac
   if [ -f "${ARCHIVE}.sha256" ]; then
     cp "${ARCHIVE}.sha256" "$CHECKSUM_PATH"
   else
@@ -74,20 +90,40 @@ if [ -n "$ARCHIVE" ]; then
     exit 1
   fi
 else
-  LABEL="${PKG}-${OS_LABEL}-${ARCH_LABEL}"
+  # Asset names follow scripts/release-artifact-contract.sh:
+  # {package}-{version}-{os}-{arch}.{ext}, all lowercase, version WITHOUT
+  # the leading 'v' (e.g. magicore-1.1.0-rc.6-macos-arm64.tar.gz).
   if [ "$VERSION" = "latest" ]; then
-    URL="https://github.com/${REPO}/releases/latest/download/${LABEL}.tar.gz"
-  else
-    URL="https://github.com/${REPO}/releases/download/${VERSION}/${LABEL}.tar.gz"
+    if ! TAG="$(resolve_latest_tag)"; then
+      echo "Error: could not resolve the latest release (network/API unreachable)."
+      echo "Re-run with an explicit --version (e.g. --version 1.1.0-rc.6)."
+      exit 1
+    fi
+    VERSION="$TAG"
   fi
+  VERSION_NUMBER="${VERSION#v}"
+  if ! [[ "$VERSION_NUMBER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+    echo "Error: invalid version: $VERSION (expected like 1.1.0-rc.6, with or without a leading 'v')."
+    exit 1
+  fi
+  LABEL="${PKG}-${VERSION_NUMBER}-${OS_LABEL}-${ARCH_LABEL}"
+  URL="https://github.com/${REPO}/releases/download/v${VERSION_NUMBER}/${LABEL}.${EXT}"
 
-  echo "Downloading ${LABEL} from ${URL} ..."
+  echo "Downloading ${LABEL}.${EXT} from ${URL} ..."
   curl -fsSL "$URL" -o "$ARCHIVE_PATH"
   curl -fsSL "${URL}.sha256" -o "$CHECKSUM_PATH"
 fi
 
 verify_checksum "$ARCHIVE_PATH" "$CHECKSUM_PATH"
-tar xzf "$ARCHIVE_PATH" -C "$TMP"
+if [ "$EXT" = "zip" ]; then
+  if ! command -v unzip >/dev/null 2>&1; then
+    echo "Error: .zip archive requires 'unzip' (not found in PATH)."
+    exit 1
+  fi
+  unzip -o -q "$ARCHIVE_PATH" -d "$TMP"
+else
+  tar xzf "$ARCHIVE_PATH" -C "$TMP"
+fi
 
 if [ -f "$TMP/mgc${EXE_SUFFIX}" ]; then
   BIN="$TMP/mgc${EXE_SUFFIX}"

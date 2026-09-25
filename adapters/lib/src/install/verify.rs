@@ -15,12 +15,12 @@ pub fn verify_cargo_lock(project_root: &Path) -> MgResult<()> {
 
     if !lock_path.exists() {
         return Err(MgError::Other(
-            "Cargo.lock not found (run cargo fetch first)".to_string(),
+            "Cargo.lock not found; MagiCore cannot verify this project until its native resolver writes the lockfile".to_string(),
         ));
     }
 
-    // TODO: parse Cargo.lock TOML and verify checksums against downloaded crates
-    // TODO: parse Cargo.lock TOML và verify checksum với crates đã tải
+    // Issue #14: parse Cargo.lock TOML and verify checksums against downloaded crates
+    // Issue #14: parse Cargo.lock TOML và verify checksum với crates đã tải
     // For now, trust cargo's internal verification
     // Hiện tại tin cargo verification nội bộ
     Ok(())
@@ -106,8 +106,8 @@ pub fn verify_crate_checksum(
 /// Wheels contain a RECORD file listing all files with SHA-256 hashes.
 /// Wheels chứa file RECORD liệt kê mọi file với SHA-256 hash.
 pub fn verify_wheel_record(wheel_path: &Path) -> MgResult<()> {
-    // TODO: extract wheel and verify RECORD file
-    // TODO: extract wheel và verify file RECORD
+    // Issue #14: extract wheel and verify RECORD file
+    // Issue #14: extract wheel và verify file RECORD
     // This requires zip extraction and RECORD parsing
     // Cần zip extraction và RECORD parsing
 

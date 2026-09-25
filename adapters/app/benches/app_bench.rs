@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use mgc_app_adapter::{detect_language, AppLanguage};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use mgc_app_adapter::{AppLanguage, detect_language};
 use std::fs;
 use tempfile::tempdir;
 

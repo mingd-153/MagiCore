@@ -1,10 +1,10 @@
 [package]
 name = "mgc-lockfile"
-version = "1.0.0"
-edition = "2021"
-authors = ["MagiCore Contributors"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Cryptographically signed lockfile for Zero-Trust Supply Chain"
-license = "MIT"
+license.workspace = true
 
 [lib]
 path = "src/lib.rs"
@@ -13,6 +13,10 @@ path = "src/lib.rs"
 [[test]]
 name = "schema"
 path = "tests/schema.rs"
+
+[[test]]
+name = "schema_v3"
+path = "tests/schema_v3.rs"
 
 [[test]]
 name = "tamper"
@@ -26,13 +30,46 @@ path = "tests/migrate.rs"
 name = "import"
 path = "tests/import.rs"
 
+[[test]]
+name = "v4_identity"
+path = "tests/v4_identity.rs"
+
+[[test]]
+name = "v4_canonical"
+path = "tests/v4_canonical.rs"
+
+[[test]]
+name = "v4_policy"
+path = "tests/v4_policy.rs"
+
+[[test]]
+name = "v4_atomic"
+path = "tests/v4_atomic.rs"
+
+[[test]]
+name = "v4_migrate"
+path = "tests/v4_migrate.rs"
+
 [dependencies]
 # Crypto primitives (local crate)
-mgc-crypto = { path = "../mgc-crypto", version = "1.0.0" }
+mgc-crypto = { path = "../mgc-crypto" }
+
+# Shared JSONC cleanup + common types (P1 dedup 2026-09-11: single
+# strip_jsonc for both the importer and the audit scanner).
+# JSONC dùng chung + types chung (dedup P1: một strip_jsonc cho cả
+# importer lẫn audit scanner).
+mgc-types = { path = "../mgc-types" }
 
 # TOML parsing/serialization
 toml = "0.8"
 toml_edit = { version = "0.22", features = ["serde"] }
+
+# Base64 for digest strings (workspace-pinned)
+base64 = { workspace = true }
+hex = { workspace = true }
+
+# OS file locking for the project writer lock (V1.2 lock v4)
+fs2 = { workspace = true }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -51,3 +88,14 @@ tempfile = "3.8"
 
 [features]
 default = []
+
+# PID liveness probes for stale-temp cleanup (unix-only)
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+# Atomic replace + reparse-point refusal (Windows-only). MoveFileExW's
+# link in windows-sys 0.52 additionally requires Win32_Foundation (BOOL)
+# — without it Windows builds fail with unresolved import E0432.
+# (MoveFileExW cần thêm feature Win32_Foundation.)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

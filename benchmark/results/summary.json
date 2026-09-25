@@ -1,0 +1,161 @@
+{
+  "machine": {
+    "cpu": "Apple M2",
+    "cores": 8,
+    "memory_gb": 16,
+    "os": "Darwin 25.5.0",
+    "node_version": "v25.9.0",
+    "timestamp": "20260827_140942"
+  },
+  "package_count": 20,
+  "stats": {
+    "npm": {
+      "pm": "npm",
+      "runs": 5,
+      "cold": {
+        "mean": 222.357406,
+        "median": 212.59472,
+        "stdev": 37.72994532107217,
+        "min": 191.067058,
+        "max": 287.09506
+      },
+      "warm": {
+        "mean": 4.0839352,
+        "median": 4.068995,
+        "stdev": 0.1862830328537733,
+        "min": 3.826046,
+        "max": 4.350337
+      },
+      "disk": {
+        "mean": 371.6,
+        "median": 370,
+        "stdev": 3.0495901363953815
+      },
+      "package_count": 20,
+      "machine": {
+        "cpu": "Apple M2",
+        "cores": 8,
+        "memory_gb": 16,
+        "os": "Darwin 25.5.0",
+        "node_version": "v25.9.0",
+        "timestamp": "20260827_140942"
+      }
+    },
+    "pnpm": {
+      "pm": "pnpm",
+      "runs": 5,
+      "cold": {
+        "mean": 65.9326238,
+        "median": 63.61187,
+        "stdev": 15.002671782075039,
+        "min": 49.043199,
+        "max": 89.156449
+      },
+      "warm": {
+        "mean": 1.6900098000000001,
+        "median": 1.560948,
+        "stdev": 0.373113682164297,
+        "min": 1.453177,
+        "max": 2.35265
+      },
+      "disk": {
+        "mean": 362,
+        "median": 362,
+        "stdev": 0.0
+      },
+      "package_count": 20,
+      "machine": {
+        "cpu": "Apple M2",
+        "cores": 8,
+        "memory_gb": 16,
+        "os": "Darwin 25.5.0",
+        "node_version": "v25.9.0",
+        "timestamp": "20260827_154549"
+      }
+    },
+    "bun": {
+      "pm": "bun",
+      "runs": 5,
+      "cold": {
+        "mean": 48.4460092,
+        "median": 47.357832,
+        "stdev": 10.532474128408087,
+        "min": 34.845463,
+        "max": 63.830965
+      },
+      "warm": {
+        "mean": 0.284741,
+        "median": 0.283417,
+        "stdev": 0.018072391153358746,
+        "min": 0.263923,
+        "max": 0.305025
+      },
+      "disk": {
+        "mean": 362.8,
+        "median": 362,
+        "stdev": 1.0954451150103321
+      },
+      "package_count": 20,
+      "machine": {
+        "cpu": "Apple M2",
+        "cores": 8,
+        "memory_gb": 16,
+        "os": "Darwin 25.5.0",
+        "node_version": "v25.9.0",
+        "timestamp": "20260827_144051"
+      }
+    },
+    "mgc": {
+      "pm": "mgc",
+      "runs": 5,
+      "cold": {
+        "mean": 0.671876,
+        "median": 0.556621,
+        "stdev": 0.2579900402777208,
+        "min": 0.543582,
+        "max": 1.133054
+      },
+      "warm": {
+        "mean": 0.5960416,
+        "median": 0.565921,
+        "stdev": 0.08791599198837488,
+        "min": 0.543636,
+        "max": 0.751975
+      },
+      "disk": {
+        "mean": 75,
+        "median": 75,
+        "stdev": 0.0
+      },
+      "package_count": 11,
+      "machine": {
+        "cpu": "Apple M2",
+        "cores": 8,
+        "memory_gb": 16,
+        "os": "Darwin 25.5.0",
+        "node_version": "v25.9.0",
+        "timestamp": "20260827_155236"
+      }
+    }
+  },
+  "rankings": {
+    "cold": [
+      "mgc",
+      "bun",
+      "pnpm",
+      "npm"
+    ],
+    "warm": [
+      "bun",
+      "mgc",
+      "pnpm",
+      "npm"
+    ],
+    "disk": [
+      "mgc",
+      "pnpm",
+      "bun",
+      "npm"
+    ]
+  }
+}

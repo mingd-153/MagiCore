@@ -1,9 +1,9 @@
 //! Performance benchmarks for crypto operations
 //! Benchmark hiệu năng cho các thao tác crypto
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use mgc_crypto::blake3_signer::Blake3Hasher;
-use mgc_crypto::ed25519_signer::{verify_signature, Ed25519Signer};
+use mgc_crypto::ed25519_signer::{Ed25519Signer, verify_signature};
 use ring::rand::SystemRandom;
 use ring::signature::Ed25519KeyPair;
 

@@ -21,11 +21,11 @@ done
 if [ -n "$COMPARE" ]; then
   echo "── CI PERF: comparing standard vs baseline '$COMPARE' ──"
   if ! $MATRIX_BIN --compare-baseline "$COMPARE"; then
-    echo "⚠️  Standard matrix comparison failed"
+    echo "WARN: Standard matrix comparison failed"
   fi
   echo "── CI PERF: comparing heavy vs baseline 'heavy-$COMPARE' ──"
   if ! $MATRIX_BIN --profile heavy --compare-baseline "heavy-$COMPARE"; then
-    echo "⚠️  Heavy matrix comparison failed"
+    echo "WARN: Heavy matrix comparison failed"
   fi
 fi
 

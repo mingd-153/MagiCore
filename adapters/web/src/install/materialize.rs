@@ -13,9 +13,9 @@ use crate::install::extract::{
     write_materialized_package_marker,
 };
 pub use crate::install::link_tree::{
-    backing_link_file, default_hardlink_threads, hardlink_pool, hardlink_thread_count,
-    hardlink_tree, hardlink_tree_with_profile, link_package_tree, link_package_tree_with_profile,
-    StrictTreeLinkMode,
+    StrictTreeLinkMode, backing_link_file, default_hardlink_threads, hardlink_pool,
+    hardlink_thread_count, hardlink_tree, hardlink_tree_with_profile, link_package_tree,
+    link_package_tree_with_profile,
 };
 use crate::lockfile::installed_package_matches;
 use crate::profile::MaterializationProfile;
@@ -27,13 +27,15 @@ pub fn extracted_root_for(
     shared_cache: Option<&SharedWebCache>,
     cache: &PackageCache,
     pkg: &ResolvedPackage,
+    generation: i64,
 ) -> MgResult<PathBuf> {
     if let Some(existing) = extracted_roots.get(&pkg.id) {
         return Ok(existing.clone());
     }
 
     let tarball_path = cache.tarball_path(&pkg.id);
-    let root = ensure_extracted_package_root(layout, store, shared_cache, pkg, &tarball_path)?;
+    let root =
+        ensure_extracted_package_root(layout, store, shared_cache, pkg, &tarball_path, generation)?;
     extracted_roots.insert(pkg.id.clone(), root.clone());
     Ok(root)
 }
@@ -304,6 +306,7 @@ pub fn materialize_strict_layout(
     cache: &PackageCache,
     packages_with_scripts: &mut Vec<std::path::PathBuf>,
     extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
+    generation: i64,
 ) -> MgResult<()> {
     let virtual_store = node_modules.join(".magicore");
     if let Err(e) = std::fs::create_dir_all(&virtual_store) {
@@ -344,6 +347,7 @@ pub fn materialize_strict_layout(
                 cache,
                 extracted_roots,
                 &pkg,
+                generation,
             )?;
             let source_marker = read_extracted_package_marker(&package_root)?;
             if !materialized_package_matches(&vstore_pkg_dir, &pkg_id, source_marker.as_ref())? {
@@ -470,16 +474,25 @@ pub fn materialization_package_root(
     cache: &PackageCache,
     extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
     pkg: &ResolvedPackage,
+    generation: i64,
 ) -> MgResult<PathBuf> {
-    if let Some(root) = extracted_roots.get(&pkg.id) {
-        if root.join("package.json").exists() {
-            return Ok(root.clone());
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(root) = extracted_roots.get(&pkg.id)
+        && root.join("package.json").exists()
+    {
+        return Ok(root.clone());
     }
 
     let local_tarball = cache.tarball_path(&pkg.id);
     if local_tarball.exists() {
-        return ensure_extracted_package_root(layout, store, shared_cache, pkg, &local_tarball);
+        return ensure_extracted_package_root(
+            layout,
+            store,
+            shared_cache,
+            pkg,
+            &local_tarball,
+            generation,
+        );
     }
 
     if let Some(shared_cache) = shared_cache {
@@ -494,6 +507,7 @@ pub fn materialization_package_root(
                 Some(shared_cache),
                 pkg,
                 &shared_tarball,
+                generation,
             );
         }
     }
@@ -518,6 +532,7 @@ pub fn materialize_nested_dependencies(
     visiting: &mut std::collections::HashSet<String>,
     depth: usize,
     packages_with_scripts: &mut Vec<std::path::PathBuf>,
+    generation: i64,
 ) -> MgResult<()> {
     const MAX_DEPTH: usize = 50;
     if depth > MAX_DEPTH {
@@ -566,8 +581,15 @@ pub fn materialize_nested_dependencies(
                 })?;
             }
 
-            let package_root =
-                extracted_root_for(extracted_roots, layout, store, shared_cache, cache, dep_pkg)?;
+            let package_root = extracted_root_for(
+                extracted_roots,
+                layout,
+                store,
+                shared_cache,
+                cache,
+                dep_pkg,
+                generation,
+            )?;
             hardlink_tree(package_root.as_path(), &nested_dir)?;
             packages_with_scripts.push(nested_dir.clone());
         }
@@ -585,6 +607,7 @@ pub fn materialize_nested_dependencies(
             visiting,
             depth + 1,
             packages_with_scripts,
+            generation,
         )?;
     }
 

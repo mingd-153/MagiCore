@@ -1,11 +1,9 @@
-#![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 /// MagiCore CLI - Universal Package Manager
 use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::Parser;
 
 mod bundler;
@@ -15,7 +13,7 @@ mod dispatch;
 pub mod error;
 mod factory;
 mod offline; // T4.1: Offline mode state
-mod scaffold;
+pub mod scaffold;
 mod wizard;
 
 #[derive(Parser)]
@@ -27,7 +25,7 @@ pub(crate) struct Cli {
     #[arg(short = 'V', short_alias = 'v', long = "version", action = clap::ArgAction::Version)]
     _version: Option<bool>,
 
-    /// Target core (web, game, ai, clo, cicd, iot, app, lib)
+    /// Target core (web, game, ai, clo, cicd, iot, app, lib, hardware)
     #[arg(global = true, long)]
     core: Option<String>,
 
@@ -58,7 +56,22 @@ pub(crate) struct Cli {
 pub(crate) use crate::commands::definitions::Commands;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     tracing_subscriber::fmt::init();
-    dispatch::run(Cli::parse()).await
+    // Print the FULL error chain — bare anyhow print hides the context frames
+    // (source path, operation) that make CI failures diagnosable.
+    // In đầy chuỗi lỗi — in thường của anyhow giấu context (đường dẫn,
+    // thao tác) khiến CI fail không đoán được nguyên nhân.
+    if let Err(err) = dispatch::run(Cli::parse()).await {
+        eprintln!("Error: {err:#}");
+        // Audit exit contract (Tech Lead §1): 1 = findings/policy, 2 =
+        // environment/tool failure (the audit could not run at all).
+        // Hợp đồng exit của audit: 1 = có finding/policy, 2 = lỗi
+        // môi trường/tool (audit không chạy được).
+        let exit_code = err
+            .downcast_ref::<crate::error::AuditExitError>()
+            .map(|e| e.exit_code)
+            .unwrap_or(1);
+        std::process::exit(exit_code);
+    }
 }

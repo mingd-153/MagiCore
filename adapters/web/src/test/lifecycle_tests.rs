@@ -1,5 +1,8 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+// Tests mutate env vars single-threaded per test process (edition 2024 unsafe rule).
+// Test đổi env var đơn luồng theo từng process test (luật unsafe edition 2024).
+#![allow(unsafe_code)]
 
 // Lifecycle tests for core-web — kept outside production source bodies.
 // Test lifecycle của core-web — tách khỏi thân file production để dễ maintain.
@@ -118,8 +121,49 @@ fn lifecycle_timeout_kills_hung_process() {
     let package = tempfile::tempdir().unwrap();
     write_package_script(package.path(), "python3 -c \"import time; time.sleep(2)\"");
 
-    std::env::set_var("MGC_LIFECYCLE_TIMEOUT_SECS", "1");
+    unsafe { std::env::set_var("MGC_LIFECYCLE_TIMEOUT_SECS", "1") };
     let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
-    std::env::remove_var("MGC_LIFECYCLE_TIMEOUT_SECS");
+    unsafe { std::env::remove_var("MGC_LIFECYCLE_TIMEOUT_SECS") };
     assert!(err.to_string().contains("timed out"));
+}
+
+#[test]
+fn lifecycle_rejects_rival_runtime_supply_chain_spawn_f_a() {
+    // F-A (2026-09-10 supply-chain audit): a dependency package's
+    // postinstall MUST NOT be able to spawn deno (previously deno sat on
+    // ALLOWED_TOOLS → arbitrary code exec during install). bun was already
+    // blocked as a PM; deno is the newly closed hole.
+    // Postinstall của dependency KHÔNG được spawn deno (trước đây deno
+    // nằm trong ALLOWED_TOOLS → thực thi code tùy ý lúc install).
+    for script in ["deno run evil.ts", "bun run evil.ts"] {
+        let project = tempfile::tempdir().unwrap();
+        let package = tempfile::tempdir().unwrap();
+        write_package_script(package.path(), script);
+
+        let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("forbidden")
+                || msg.contains("supply-chain guard")
+                || msg.contains("permanently forbidden")
+                || msg.contains("refuses package-manager wrappers"),
+            "lifecycle must refuse rival runtime spawn '{script}': {msg}"
+        );
+    }
+}
+
+#[test]
+fn lifecycle_failing_script_is_an_error_not_a_warning() {
+    // A lifecycle script that RUNS but exits non-zero must fail the
+    // caller: install treats this Err as fatal (npm parity — a red
+    // postinstall is never a green install).
+    // (Script chạy nhưng exit lỗi phải là Err.)
+    let project = tempfile::tempdir().unwrap();
+    let package = tempfile::tempdir().unwrap();
+    write_package_script(package.path(), "node -e \"process.exit(1)\"");
+    let err = LifecycleRunner::run_scripts(package.path(), project.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("failed"),
+        "unexpected error: {err}"
+    );
 }

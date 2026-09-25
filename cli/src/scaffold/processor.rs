@@ -374,9 +374,73 @@ impl Scaffolder {
             return Err(crate::error::dir_already_exists(&target));
         }
 
-        std::fs::create_dir_all(&target)?;
-        Self::write_common_files(&target, config)?;
-        Self::write_core_files(&target, config)?;
+        // Atomic claim slot: create_new is exclusive on every platform, so
+        // exactly one racing process wins the right to build this target.
+        // Losers receive a clear "already in progress" error.
+        // Claim-slot nguyên tử: create_new độc quyền trên mọi nền tảng — chỉ
+        // đúng 1 process thắng quyền dựng target; kẻ thua nhận error rõ ràng.
+        let claim = Self::claim_slot_path(&target);
+        let claim_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&claim)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    crate::error::create_claim_conflict(&claim)
+                } else {
+                    crate::error::scaffold_staging_failed(&target, anyhow::anyhow!(e))
+                }
+            })?;
+        // Release the handle early — the claim is guarded by its existence.
+        // Giải phóng handle sớm — claim được bảo vệ bởi sự tồn tại của nó.
+        drop(claim_file);
+
+        // Atomic scaffold: build in a hidden temp dir on the SAME filesystem,
+        // rename into place only when fully written. A crash mid-write can
+        // never leave a partial project visible at the target path.
+        // Scaffold nguyên tử: ghi trong temp dir ẩn CÙNG filesystem, chỉ
+        // rename sang target khi hoàn tất — crash giữa chừng không để lại
+        // project partial ở vị trí cuối.
+        let parent = target.parent().map(Path::to_path_buf).unwrap_or_default();
+        let staging = tempfile::tempdir_in(&parent).map_err(|e| {
+            let _ = std::fs::remove_file(&claim);
+            crate::error::scaffold_staging_failed(&target, anyhow::anyhow!(e))
+        })?;
+        let staging_path = staging.path().to_path_buf();
+
+        let write_result = (|| -> Result<()> {
+            std::fs::create_dir_all(&staging_path)?;
+            Self::write_common_files(&staging_path, config)?;
+            Self::write_core_files(&staging_path, config)?;
+            Ok(())
+        })();
+
+        if let Err(err) = write_result {
+            // Fail atomically — staging dir is removed by TempDir drop and
+            // the claim slot is released; the target was never touched.
+            // Fail nguyên tử — staging dọn bởi TempDir drop, claim được giải
+            // phóng; target chưa từng bị chạm nên không có phần dư.
+            let _ = std::fs::remove_file(&claim);
+            return Err(crate::error::scaffold_staging_failed(&target, err));
+        }
+
+        // Rename is atomic within one filesystem. The claim slot guarantees
+        // no other process renamed a directory over our target meanwhile.
+        // Rename nguyên tử trong cùng filesystem. Claim-slot bảo đảm không
+        // process nào khác rename directory đè lên target trong lúc đó.
+        if let Err(e) = std::fs::rename(&staging_path, &target) {
+            let _ = std::fs::remove_file(&claim);
+            return Err(crate::error::scaffold_staging_failed(
+                &target,
+                anyhow::anyhow!(e),
+            ));
+        }
+        // Keep the TempDir handle from cleaning the now-renamed path, then
+        // release the claim so future creates for this name are possible.
+        // Giữ TempDir không dọn path vừa rename, rồi giải phóng claim để
+        // lần create sau cho tên này vẫn khả dụng.
+        std::mem::forget(staging);
+        let _ = std::fs::remove_file(&claim);
 
         mgc_ui::success(&format!(
             "Created {} project: {}",
@@ -386,8 +450,33 @@ impl Scaffolder {
         Ok(target)
     }
 
+    /// Hidden claim-slot path next to the target (same parent, dot-prefixed).
+    /// Đường dẫn claim-slot ẩn cạnh target (cùng parent, tiền tố dot).
+    fn claim_slot_path(target: &Path) -> PathBuf {
+        let name = target
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "project".to_string());
+        let claim_name = format!(".mgc-create-{name}.lock");
+        match target.parent() {
+            Some(parent) => parent.join(claim_name),
+            None => PathBuf::from(claim_name),
+        }
+    }
+
     pub fn display_name(project_dir: &Path) -> String {
         project_dir
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "project".to_string())
+    }
+
+    /// Display name derived from the configured project name rather than
+    /// the (possibly staging temp) target path.
+    /// Tên hiển thị lấy từ project name trong config, không phải từ target
+    /// path (có thể là temp dir của staging nguyên tử).
+    fn config_display_name(config: &ScaffoldConfig) -> String {
+        Path::new(&config.project_name)
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "project".to_string())
@@ -440,7 +529,11 @@ impl Scaffolder {
             return Ok(());
         }
 
-        let name = Self::display_name(target);
+        // Derive the display name from the config, NOT from the target path —
+        // during atomic staging the target is a random temp dir name.
+        // Lấy tên hiển thị từ config, KHÔNG từ target path — trong staging
+        // nguyên tử, target là temp dir với tên random.
+        let name = Self::config_display_name(config);
         let framework = Self::framework(config);
 
         Self::write_file(
@@ -456,7 +549,11 @@ impl Scaffolder {
     }
 
     fn write_core_files(target: &Path, config: &ScaffoldConfig) -> Result<()> {
-        let name = Self::display_name(target);
+        // Same as write_common_files: name must come from the config because
+        // the target path during staging has a random temp name.
+        // Giống write_common_files: tên phải lấy từ config vì target trong
+        // staging nguyên tử mang tên temp random.
+        let name = Self::config_display_name(config);
         let framework = Self::framework(config);
 
         if config.core != "web" {
@@ -481,6 +578,9 @@ impl Scaffolder {
                 }
             }
             "lib" => super::processors::lib::LibProcessor::files(target, &name, &framework),
+            "hardware" => {
+                super::processors::hardware::HardwareProcessor::files(target, &name, &framework)
+            }
             other => Err(crate::error::unsupported_scaffold_core(other)),
         }
     }
@@ -502,13 +602,12 @@ impl Scaffolder {
                         target, name, &files,
                     );
                 }
-                if effective_web_mode(config) == "backend" {
-                    if let Some(language) = infer_backend_language(framework) {
-                        Self::ensure_web_fallback_common_files(target, name, framework)?;
-                        return Self::write_minimal_backend_fallback(
-                            target, name, framework, language,
-                        );
-                    }
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if effective_web_mode(config) == "backend"
+                    && let Some(language) = infer_backend_language(framework)
+                {
+                    Self::ensure_web_fallback_common_files(target, name, framework)?;
+                    return Self::write_minimal_backend_fallback(target, name, framework, language);
                 }
                 Err(err)
             }
@@ -1379,6 +1478,8 @@ fn render_core_target_path(target: &str, context: &CoreTemplateContext) -> Strin
 
 #[derive(Debug, Deserialize)]
 struct TemplateManifest {
+    #[serde(default)]
+    tokens: Vec<TemplateToken>,
     files: Vec<TemplateFile>,
 }
 
@@ -1394,8 +1495,33 @@ impl TemplateManifest {
         }
 
         let contents = String::from_utf8(layer.read("template.toml")?)?;
-        Ok(Some(toml::from_str(&contents)?))
+        let mut manifest: Self = toml::from_str(&contents)?;
+        manifest.apply_root_token_contracts();
+        Ok(Some(manifest))
     }
+
+    fn apply_root_token_contracts(&mut self) {
+        if self.tokens.is_empty() {
+            return;
+        }
+
+        let root_tokens = self
+            .tokens
+            .iter()
+            .map(|token| token.name.clone())
+            .collect::<Vec<_>>();
+
+        for file in &mut self.files {
+            if file.required_context.is_empty() {
+                file.required_context = root_tokens.clone();
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TemplateToken {
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]

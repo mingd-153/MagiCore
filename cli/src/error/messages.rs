@@ -1,7 +1,7 @@
 //! Centralized CLI error messages (English only — RULE §7).
 //! Mọi error message của CLI định nghĩa tập trung tại đây.
 
-use anyhow::{anyhow, Error};
+use anyhow::{Error, anyhow};
 
 /// `mgc remove-ai <pkg> [pkg...]` — name packages to remove
 pub fn remove_ai_usage() -> Error {
@@ -125,7 +125,19 @@ pub fn no_deploy_targets() -> Error {
 
 /// python -m build failed
 pub fn python_build_failed(e: &dyn std::fmt::Display) -> Error {
-    anyhow!("python -m build failed: {e} — install `pip install build` in this project first")
+    anyhow!(
+        "Python build backend failed: {e} — MagiCore does not install Python build tools; provide a supported build backend before retrying"
+    )
+}
+
+/// go build ./... failed
+pub fn go_build_failed(e: &dyn std::fmt::Display) -> Error {
+    anyhow!("go build ./... failed: {e}")
+}
+
+/// dotnet build failed
+pub fn dotnet_build_failed(e: &dyn std::fmt::Display) -> Error {
+    anyhow!("dotnet build failed: {e} — install the .NET SDK first")
 }
 
 /// flash only supports esp32-rust currently
@@ -157,18 +169,32 @@ pub fn cwd_deleted(e: &std::io::Error) -> Error {
 /// không detect được project theo core kind
 pub fn no_mgc_project_found(kind: &str) -> Error {
     let msg = match kind {
-        "game" => "No MagiCore game project found (missing mgc.toml with ecosystem = \"game\" \
-                   or project.godot/Packages/manifest.json/.uproject/Cargo.toml in the current project)",
-        "iot" => "No MagiCore IoT project found (missing mgc.toml with ecosystem = \"iot\" \
-                  or platformio.ini/west.yml/Cargo.toml in the current project)",
-        "lib" | "library" => "No MagiCore library project found (missing mgc.toml with \
-                  ecosystem = \"lib\" or Cargo.toml/package.json/pyproject.toml in the current project)",
-        "clo" | "cloud" => "No MagiCore cloud project found (missing mgc.toml with ecosystem = \"cloud\" \
-                  or Pulumi.yaml/*.tf/cdk package.json in the current project)",
-        "app" => "No MagiCore app project found (missing mgc.toml with ecosystem = \"app\" \
-                  or pubspec.yaml/build.gradle/.kts/Package.swift in the current project)",
-        "web" => "No MagiCore project found (missing .magicore/project.toml or package.json in the current project)",
-        _ => "No MagiCore project found (missing mgc.toml or known project manifest in the current directory tree)",
+        "game" => {
+            "No MagiCore game project found (missing mgc.toml with ecosystem = \"game\" \
+                   or project.godot/Packages/manifest.json/.uproject/Cargo.toml in the current project)"
+        }
+        "iot" => {
+            "No MagiCore IoT project found (missing mgc.toml with ecosystem = \"iot\" \
+                  or platformio.ini/west.yml/Cargo.toml in the current project)"
+        }
+        "lib" | "library" => {
+            "No MagiCore library project found (missing mgc.toml with \
+                  ecosystem = \"lib\" or Cargo.toml/package.json/pyproject.toml in the current project)"
+        }
+        "clo" | "cloud" => {
+            "No MagiCore cloud project found (missing mgc.toml with ecosystem = \"cloud\" \
+                  or Pulumi.yaml/*.tf/cdk package.json in the current project)"
+        }
+        "app" => {
+            "No MagiCore app project found (missing mgc.toml with ecosystem = \"app\" \
+                  or pubspec.yaml/build.gradle/.kts/Package.swift in the current project)"
+        }
+        "web" => {
+            "No MagiCore project found (missing .magicore/project.toml or package.json in the current project)"
+        }
+        _ => {
+            "No MagiCore project found (missing mgc.toml or known project manifest in the current directory tree)"
+        }
     };
     anyhow!(msg)
 }
@@ -290,6 +316,15 @@ pub fn frozen_lock_missing(cmd: &str) -> Error {
     )
 }
 
+/// Frozen install with a PRESENT but mismatching lockfile — a possible
+/// tamper, never silently re-resolved.
+pub fn frozen_lock_mismatch(cmd: &str) -> Error {
+    anyhow!(
+        "--frozen: mgc.lock exists but does not match the manifest (drift or tamper) — refusing to re-resolve.\n\
+         Run '{cmd}' without --frozen to regenerate after reviewing the diff."
+    )
+}
+
 pub fn audit_strict_web_only(name: &str) -> Error {
     anyhow!(
         "--audit-strict is only implemented for the web core right now; refusing to claim policy parity for '{name}'"
@@ -350,6 +385,30 @@ pub fn why_web_only() -> Error {
 
 pub fn lock_missing_install() -> Error {
     anyhow!("mgc.lock not found — run 'mgc install' first")
+}
+
+// P0-4 (2026-09-15): `mgc why` used to `unimplemented!()` (panic) when it
+// reached the v1 lockfile path. A user-reachable panic is never acceptable:
+// the command now returns a typed error that explains the lockfile v2
+// migration instead of aborting the process.
+// (P0-4: `mgc why` từng `unimplemented!()` (panic) khi đi tới nhánh
+// lockfile v1. Panic chạm tới được từ user là không chấp nhận được: lệnh
+// giờ trả typed error giải thích migration lockfile v2 thay vì abort.)
+pub fn why_requires_lockfile_v2() -> Error {
+    anyhow!(
+        "`mgc why` requires the lockfile v2 graph (dependency-reason lookup is not \
+         available in the legacy v1 mgc.lock schema). Re-run `mgc install` to \
+         regenerate mgc.lock in the v2 format; until that migration completes, \
+         `mgc why` stays unavailable for lockfiles written by the v1 installer."
+    )
+}
+
+/// `mgc why` target is absent from mgc.lock — nothing can depend on it.
+/// (Package hỏi `why` không có trong lock — không gì phụ thuộc nó.)
+pub fn why_package_not_in_lock(package: &str) -> Error {
+    anyhow!(
+        "`mgc why {package}`: '{package}' is not pinned in mgc.lock — nothing in this project can depend on it."
+    )
 }
 
 pub fn local_path_not_found(path: &std::path::Path) -> Error {
@@ -417,6 +476,18 @@ pub fn ci_template_unknown(provider: &str) -> Error {
 pub fn cicd_project_not_detected() -> Error {
     anyhow!(
         "Cannot detect a cicd project here (missing mgc.toml [cicd] provider / wrangler.toml / argocd / .github/workflows)."
+    )
+}
+
+pub fn cicd_verify_unknown_step(step: &str) -> Error {
+    anyhow!(
+        "mgc.toml [cicd] verify contains unknown step '{step}' — allowed steps: audit, test, build. Fix the config; verify must never skip unknown steps silently."
+    )
+}
+
+pub fn cicd_verify_empty_chain() -> Error {
+    anyhow!(
+        "mgc.toml [cicd] verify chain is empty — a verify run with zero steps cannot prove anything. Add at least one of: audit, test, build."
     )
 }
 
@@ -494,7 +565,7 @@ pub fn unsupported_quantize_target(target: &str) -> Error {
 
 pub fn llama_cpp_missing() -> Error {
     anyhow!(
-        "llama_cpp is not installed — try: `uv pip install llama-cpp-python` and rerun (A4: passthrough, does not bundle llama-cpp-2)"
+        "llama_cpp is unavailable in the MagiCore-managed environment; this model operation is unsupported until MagiCore can resolve and install the required native artifact"
     )
 }
 
@@ -504,12 +575,70 @@ pub fn llama_quantize_failed(code: Option<i32>) -> Error {
 
 // ===== audit =====
 
-pub fn audit_not_implemented(core: &str) -> Error {
-    anyhow!("{core} audit is not implemented yet; refusing to report a fake clean audit")
+/// Exit-code marker for audit environment/tool failures.
+/// `std::process::exit` contract (Tech Lead §1): 0 = clean, 1 = findings
+/// or policy violation, 2 = the audit could NOT run (tool missing,
+/// environment broken). Carried through anyhow via downcast in main.
+/// Marker exit-code cho lỗi môi trường/tool của audit: 0 = sạch, 1 = có
+/// finding/policy vi phạm, 2 = audit KHÔNG chạy được (thiếu tool, hỏng
+/// môi trường) — main downcast để lấy đúng mã.
+#[derive(Debug)]
+pub struct AuditExitError {
+    pub exit_code: i32,
+    pub message: String,
 }
+
+impl AuditExitError {
+    /// Environment failure — scanner unavailable in strict mode.
+    /// Lỗi môi trường — scanner unavailable ở strict mode.
+    pub fn environment(reason: &str) -> Self {
+        Self {
+            exit_code: 2,
+            message: format!(
+                "Audit failed: scanner unavailable in strict mode ({reason})\n\
+                 Set MGC_AUDIT_STRICT=0 to allow the unverified state locally (not recommended in CI)"
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for AuditExitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for AuditExitError {}
 
 pub fn audit_fix_web_only() -> Error {
     anyhow!("audit --fix is only supported for the web core")
+}
+
+pub fn audit_unknown_scanner_state(core: &str) -> anyhow::Error {
+    anyhow!(
+        "audit scanner status for '{core}' could not be classified — refusing to interpret the report"
+    )
+}
+
+/// Environment/tooling failure (scanner unavailable under strict mode).
+/// Distinct exit code 2 so CI can tell "vulnerabilities found" (1) from
+/// "the audit could not run" (2) — Tech Lead contract §1.
+/// Lỗi môi trường/tool (scanner unavailable ở strict mode). Exit code 2
+/// riêng để CI phân biệt "có lỗ hổng" (1) với "audit không chạy được" (2).
+pub fn audit_scanner_unavailable_strict(reason: &str) -> Error {
+    Error::msg(AuditExitError::environment(reason))
+}
+
+pub fn audit_found_vulnerabilities(count: usize, packages: usize) -> Error {
+    anyhow!("audit found {count} vulnerabilities across {packages} packages")
+}
+
+/// Unknown `--format` value for `mgc audit` (P1-B): a hard usage error —
+/// never a silent fallback that would surprise CI ingest.
+/// Giá trị `--format` lạ cho `mgc audit`: lỗi usage cứng — không âm thầm
+/// rơi về mặc định khiến CI ingest bất ngờ.
+pub fn audit_unknown_format(value: &str) -> anyhow::Error {
+    anyhow!("invalid audit --format '{value}' — expected table, json, sarif, or cyclonedx")
 }
 
 pub fn web_audit_needs_context() -> Error {
@@ -750,7 +879,9 @@ pub fn build_not_supported(core: &str, guidance: &str) -> Error {
 
 /// Build completed without producing any artifact — build không tạo được artifact nào.
 pub fn build_no_artifact() -> Error {
-    anyhow!("build produced no artifact; fix the project configuration or install the required toolchain")
+    anyhow!(
+        "build produced no artifact; fix the project configuration or install the required toolchain"
+    )
 }
 
 pub fn workspace_failed(count: usize) -> Error {
@@ -787,13 +918,25 @@ pub fn core_not_in_build(core: &str) -> Error {
 
 pub fn detect_core_failed(kind: &str) -> Error {
     let msg = match kind {
-        "game" => "Cannot detect a game project here (missing mgc.toml/project.godot/manifest.json/.uproject).",
-        "ai" => "Cannot detect an ai project here (missing mgc.toml [ai] framework / pyproject [tool.magicore] framework).",
-        "clo" | "cloud" => "Cannot detect a cloud project here (missing mgc.toml/Pulumi.yaml/*.tf/cdk package.json).",
-        "cicd" => "Cannot detect a cicd project here (missing mgc.toml/wrangler.toml/argocd/.github/workflows).",
+        "game" => {
+            "Cannot detect a game project here (missing mgc.toml/project.godot/manifest.json/.uproject)."
+        }
+        "ai" => {
+            "Cannot detect an ai project here (missing mgc.toml [ai] framework / pyproject [tool.magicore] framework)."
+        }
+        "clo" | "cloud" => {
+            "Cannot detect a cloud project here (missing mgc.toml/Pulumi.yaml/*.tf/cdk package.json)."
+        }
+        "cicd" => {
+            "Cannot detect a cicd project here (missing mgc.toml/wrangler.toml/argocd/.github/workflows)."
+        }
         "iot" => "Cannot detect an iot project here (missing mgc.toml/platformio.ini/west.yml).",
-        "app" => "Cannot detect an app project here (missing mgc.toml/pubspec.yaml/build.gradle/Package.swift).",
-        "hardware" => "Cannot detect a hardware project here (missing mgc.toml with ecosystem = \"hardware\").",
+        "app" => {
+            "Cannot detect an app project here (missing mgc.toml/pubspec.yaml/build.gradle/Package.swift)."
+        }
+        "hardware" => {
+            "Cannot detect a hardware project here (missing mgc.toml with ecosystem = \"hardware\")."
+        }
         "lib" => "Cannot detect a lib project here (missing mgc.toml/lib marker).",
         _ => "Cannot detect a project here.",
     };
@@ -827,6 +970,37 @@ pub fn unsupported_web_framework(framework: &str) -> Error {
 
 pub fn dir_already_exists(target: &std::path::Path) -> Error {
     anyhow!("Directory '{}' already exists", target.display())
+}
+
+pub fn scaffold_staging_failed(target: &std::path::Path, cause: Error) -> Error {
+    anyhow!(
+        "Scaffolding '{}' failed atomically; no partial project was left \
+         behind. Cause: {cause}",
+        target.display()
+    )
+}
+
+pub fn create_claim_conflict(claim: &std::path::Path) -> Error {
+    anyhow!(
+        "Another create for this project name appears to be in progress \
+         (claim file '{}' exists). If no create is running, remove the claim \
+         file and retry.",
+        claim.display()
+    )
+}
+
+pub fn invalid_project_name_retries_exhausted(retries: u32) -> Error {
+    anyhow!(
+        "Project name rejected after {retries} attempts; wizard aborted \
+         without creating anything (no fallback name is invented)"
+    )
+}
+
+pub fn invalid_project_name(project_name: &str) -> Error {
+    anyhow!(
+        "Invalid project name '{project_name}': must be a single path segment without \
+         separators, '..', or absolute paths (path traversal rejected)"
+    )
 }
 
 pub fn unsupported_scaffold_core(core: &str) -> Error {
@@ -913,4 +1087,331 @@ pub fn config_key_missing(key: &str) -> Error {
 
 pub fn dir_missing(dir: &str, cause: String) -> Error {
     anyhow!("cannot change to directory '{dir}': {cause}")
+}
+
+pub fn runtime_dangerous_flag_rejected(runtime: &str, flag: &str) -> Error {
+    anyhow!("Rejected dangerous {runtime} flag: {flag}. Use project scripts only.")
+}
+
+pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) -> Error {
+    anyhow!(
+        "Rejected dangerous {runtime} permission: {permission}. Explicitly allow in deno.json tasks if needed."
+    )
+}
+
+// ===== dependency ownership gate (C0 firewall, T0.3) =====
+
+/// Legacy delegated operation is blocked because dependency compatibility is disabled.
+pub fn dep_gate_requires_compat(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    anyhow!(
+        "{lane} is unsupported by MagiCore's native dependency engine (known external tools: {}) — external package-manager execution is disabled for dependency operations",
+        tools.join(", ")
+    )
+}
+
+/// An operation with no dependency lifecycle at all (no engine, no lane).
+/// cicd/hardware lanes are scaffold-only by design — the message says so
+/// instead of letting anyone read them as package installs.
+pub fn dep_gate_unsupported(core: &str, op: &str, ecosystem: Option<&str>) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    if matches!(core, "cicd" | "hardware") {
+        anyhow!(
+            "{lane} has no package lifecycle — this is a scaffold-only lane (templates/pipelines/generators), never a native package install"
+        )
+    } else {
+        anyhow!(
+            "{lane} is unsupported for dependency lifecycle — the manifest is toolchain-owned, but no approved compatibility runner is configured for this operation"
+        )
+    }
+}
+
+/// Refuse dependency operations until MagiCore owns their complete native
+/// lifecycle; this deliberately offers no toolchain/compatibility escape.
+/// Từ chối lifecycle dependency khi MagiCore chưa sở hữu engine native;
+/// không mở đường vòng qua package manager ngoài.
+pub fn native_dependency_engine_unavailable(core: &str, ecosystem: &str, op: &str) -> Error {
+    anyhow!(
+        "`{core}` {op} for `{ecosystem}` is unavailable: MagiCore does not yet own the complete native dependency lifecycle for this lane. No external package manager was invoked; use a supported native lane or wait for native resolver, lock, fetch, verify, store, and materializer support."
+    )
+}
+
+/// Legacy compat flag named a tool for a lane without native ownership.
+/// Compatibility execution is disabled; tool identity does not grant an exception.
+pub fn dep_gate_wrong_tool(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    got: &str,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    anyhow!(
+        "`--compat-runtime '{got}'` cannot authorize {lane} (known external tools: {}) — external package-manager execution is disabled for dependency operations",
+        tools.join(", ")
+    )
+}
+
+/// The lane's exact tool is not in the owner set at all — a lane/table
+/// mismatch (lane bug), failed closed, never silently run.
+pub fn dep_gate_lane_tool_not_owned(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    actual: &str,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    anyhow!(
+        "lane tool '{actual}' does not own {lane} (owner toolchain: {}) — refusing to run (lane/table mismatch, fail-closed)",
+        tools.join(", ")
+    )
+}
+
+/// The opt-in names a DIFFERENT tool than the lane will actually spawn
+/// (e.g. `--compat-runtime uv` on a lane that spawns pip): the flag must
+/// equal the process (flag==process contract) — failed closed with both
+/// names so the user sees the mismatch.
+pub fn dep_gate_tool_mismatch(
+    core: &str,
+    op: &str,
+    ecosystem: Option<&str>,
+    wanted: &str,
+    actual: &str,
+    tools: &[&str],
+) -> Error {
+    let lane = match ecosystem {
+        Some(eco) => format!("`{core}` {op} (ecosystem '{eco}')"),
+        None => format!("`{core}` {op}"),
+    };
+    anyhow!(
+        "`--compat-runtime '{wanted}'` does not own {lane}: this lane spawns '{actual}' (owner toolchain: {}) — pass `--compat-runtime {actual}` (the flag must name the process that will run)",
+        tools.join(", ")
+    )
+}
+
+/// Multi-platform install finished with skipped platforms (skip is not success).
+pub fn app_multi_platforms_skipped(skipped: &[String]) -> Error {
+    anyhow!(
+        "install incomplete — skipped platform(s): {} (missing tool or runner; install them and re-run — a skip is never success)",
+        skipped.join(", ")
+    )
+}
+
+/// `install-lib` got package args: install replays the existing
+/// graph/lock, it never adds (adding spawns the provider toolchain and
+/// belongs to `add-lib` behind its own gate).
+pub fn install_lib_packages_use_add(packages: &[String]) -> Error {
+    anyhow!(
+        "`install-lib` takes no packages (got {:?}) — install replays the existing graph/lock through the native pipeline; add packages with `mgc add-lib <package>`",
+        packages
+    )
+}
+
+/// `install-app` takes no packages — same split as install-lib.
+pub fn install_app_packages_use_add(packages: &[String]) -> Error {
+    anyhow!(
+        "`install-app` takes no packages (got {:?}) — install replays the existing graph/lock through the native pipeline; add packages with `mgc add-app <package>`",
+        packages
+    )
+}
+
+/// `update` of a package the manifest does not declare — fail loudly
+/// instead of adding it silently (add and update stay separate verbs).
+pub fn update_unknown_package(name: &str) -> Error {
+    anyhow!("cannot update '{name}': not in the project manifest — add it first with `mgc add`")
+}
+
+/// `mgc migrate` does not know this target (only `--to v4` exists).
+pub fn migrate_unknown_target(to: &str) -> Error {
+    anyhow!("unknown migrate target '{to}' (only `--to v4` exists)")
+}
+
+/// `mgc outdated` checked nothing: every registry fetch failed, so any
+/// "up to date" verdict would be fabricated.
+/// (outdated không check được gì — fail cứng thay vì báo láo.)
+pub fn outdated_no_registry_response(failed: String) -> Error {
+    anyhow!(
+        "could not reach the registry for any dependency ({failed}) — refusing to report 'up to date' on zero evidence"
+    )
+}
+
+/// `mgc migrate lock` found no mgc.lock to migrate.
+pub fn migrate_no_lockfile(root: &std::path::Path) -> Error {
+    anyhow!("no mgc.lock in '{}' — nothing to migrate", root.display())
+}
+
+/// `mgc migrate lock` cannot start from this schema version.
+pub fn migrate_unsupported_version(version: u8) -> Error {
+    anyhow!("cannot migrate lockfile schema version {version} (supported sources: v1, v2, v3)")
+}
+
+/// --compat-runtime value outside the known tool universe for dependency ops.
+pub fn dep_gate_invalid_tool(tool: &str, valid: &[&str]) -> Error {
+    anyhow!(
+        "invalid --compat-runtime '{tool}' for dependency operations — accepted tool names: {}; compatibility execution is disabled for dependency operations",
+        valid.join(", ")
+    )
+}
+
+/// Dependency commands do not permit compatibility package-manager execution.
+/// Dependency-op không cho phép chạy package manager qua compatibility.
+pub fn dep_gate_compat_disabled(value: &str) -> Error {
+    anyhow!(
+        "--compat-runtime '{value}' is disabled for dependency operations: MagiCore will not invoke an external package manager; use a fully supported native lane"
+    )
+}
+
+/// --version pinning is not implemented for this lane (its tool call has
+/// no verified version semantics) — failed loudly instead of silently
+/// dropping the pin.
+/// (--version chưa hỗ trợ cho lane này — fail rõ thay vì nuốt version.)
+pub fn add_version_unsupported(core: &str, pinned: &str) -> Error {
+    anyhow!(
+        "`{core}` add does not support `--version {pinned}` yet (no verified version semantics on this lane) — pin the version inside the package spec or omit --version"
+    )
+}
+
+/// A package already carrying its own version spec combined with
+/// `--version` is ambiguous — failed loudly, never merged silently.
+pub fn add_version_conflict(package: &str, pinned: &str) -> Error {
+    anyhow!(
+        "package '{package}' already carries a version spec and `--version {pinned}` was also given — use one or the other"
+    )
+}
+
+/// A web-pipeline-only flag was passed for a non-JS backend lane — failed loudly
+/// instead of silently dropping the flag.
+/// (Flag chỉ-dành-web pipeline dùng cho backend non-JS — fail rõ.)
+pub fn web_backend_flag_unsupported(flag: &str, language: &str) -> Error {
+    anyhow!(
+        "`{flag}` applies to the JavaScript pipeline only and is not supported for the {language} backend lane — omit the flag"
+    )
+}
+
+/// Generic install with package arguments on a manifest MagiCore cannot mutate.
+/// Install tổng quát không được sửa manifest mà MagiCore chưa sở hữu.
+pub fn install_packages_toolchain_owned(adapter_name: &str) -> Error {
+    anyhow!(
+        "generic install cannot add packages to the '{adapter_name}' manifest because MagiCore does not own its native dependency lifecycle; no external package manager was invoked"
+    )
+}
+
+/// A rival JS runtime cannot be used as a hidden or explicit MGC engine.
+/// Runtime JS đối thủ không được dùng làm engine ẩn hay opt-in của MGC.
+pub fn rival_runtime_not_native(runtime: &str) -> Error {
+    anyhow!(
+        "'{runtime}' cannot run through MagiCore: the native MagiCore runtime for this project is not implemented; no external runtime was invoked"
+    )
+}
+/// Monorepo member has no package.json and its toolchain was NOT opted
+/// into: pass exactly `--compat-runtime=<tool>` for the member kind
+/// (go/pip/cargo/mvn/composer) — one flag never opens every toolchain.
+/// NOTE: takes the pre-formatted opt-in description (not CompatMode) so
+/// this module stays includable from integration tests without the full
+/// command tree.
+/// (Thành viên monorepo không có package.json — phải opt-in ĐÚNG tool;
+/// một flag không mở mọi toolchain.)
+pub fn monorepo_compat_tool_denied(
+    project_root: &std::path::Path,
+    tool: Option<&str>,
+    have_opt_in: &str,
+) -> Error {
+    match tool {
+        Some(tool) => anyhow!(
+            "monorepo member '{}' needs its '{tool}' toolchain, but the invocation opted into '{have_opt_in}' — pass --compat-runtime={tool} (explicit only, never auto)",
+            project_root.display(),
+        ),
+        None => anyhow!(
+            "monorepo member '{}' has no package.json and no recognized toolchain manifest (go.mod/requirements.txt/Cargo.toml/pom.xml/composer.json) — nothing to delegate to",
+            project_root.display()
+        ),
+    }
+}
+
+/// A mutation adapter returned success but rereading the manifest shows no change.
+/// Adapter báo thành công nhưng đọc lại manifest không thấy thay đổi.
+pub fn tool_manifest_mismatch(package: &str, adapter: &str, detail: &str) -> Error {
+    anyhow!(
+        "'{package}' was not {detail} by {adapter}; MagiCore re-read the manifest and found no requested change"
+    )
+}
+
+/// self-update: explicit version failed validation (anchored semver).
+/// (Version self-update không hợp lệ.)
+pub fn self_update_invalid_version(version: &str) -> Error {
+    anyhow!("invalid version: {version} (expected like 1.1.0-rc.9, with or without a leading 'v')")
+}
+
+/// self-update: unknown release variant.
+/// (Variant release không biết.)
+pub fn self_update_unsupported_variant(variant: &str) -> Error {
+    anyhow!("unsupported variant: {variant} (magicore|magicore-web)")
+}
+
+/// self-update: host platform outside the release matrix.
+/// (Nền tảng máy không trong ma trận release.)
+pub fn self_update_unsupported_host(detail: &str) -> Error {
+    anyhow!("unsupported {detail} for self-update (linux/macos/windows on x64/arm64 only)")
+}
+
+/// self-update: checksum mismatch — abort before extract/swap.
+/// (Checksum lệch — dừng trước mọi bước sau.)
+pub fn self_update_checksum_mismatch(archive: &str, expected: &str, actual: &str) -> Error {
+    anyhow!("checksum mismatch for {archive}: expected {expected}, got {actual}")
+}
+
+/// self-update: archive contains no mgc binary.
+/// (Archive không chứa binary mgc.)
+pub fn self_update_no_binary(archive: &str) -> Error {
+    anyhow!("archive {archive} contains no mgc binary")
+}
+
+/// self-update: download failed or over quota.
+/// (Tải thất bại hoặc quá quota.)
+pub fn self_update_download_failed(url: &str, detail: &str) -> Error {
+    anyhow!("download {url} failed: {detail}")
+}
+
+/// self-update: new binary failed its launch probe or reported the
+/// wrong version — previous version restored.
+/// (Binary mới fail probe — đã rollback.)
+pub fn self_update_probe_failed(detail: &str) -> Error {
+    anyhow!("new binary failed verification ({detail}) — previous version restored")
+}
+
+/// self-update: release manifest is missing, malformed, or does not
+/// bind this exact artifact.
+/// (Manifest release thiếu/sai/không khớp artifact.)
+pub fn self_update_manifest_invalid(detail: &str) -> Error {
+    anyhow!("release manifest rejected: {detail}")
+}
+
+/// self-update: signature verification failed against configured trust roots.
+/// (Chữ ký manifest không verify được.)
+pub fn self_update_signature_invalid(detail: &str) -> Error {
+    anyhow!("release manifest signature invalid: {detail}")
+}
+
+/// self-update: unsigned fallback refused — fail-closed provenance.
+/// (Từ chối đường unsigned — provenance fail-closed.)
+pub fn self_update_unsigned_refused(detail: &str) -> Error {
+    anyhow!("unsigned self-update refused: {detail}")
 }

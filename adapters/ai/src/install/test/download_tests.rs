@@ -103,11 +103,10 @@ fn serve_once(body: &'static [u8]) -> Option<(String, std::thread::JoinHandle<()
     use std::io::{Read, Write};
     let listener = match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => listener,
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("warning: skipping localhost URL download test because bind is blocked");
+        Err(err) => {
+            eprintln!("skipping local HTTP download test: localhost bind failed: {err}");
             return None;
         }
-        Err(error) => panic!("failed to bind localhost test server: {error}"),
     };
     let port = listener.local_addr().unwrap().port();
     let handle = std::thread::spawn(move || {

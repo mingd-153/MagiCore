@@ -1,76 +1,136 @@
-use anyhow::{bail, Result};
-use colored::*;
-use mgc_types::adapter::AuditReport;
-use mgc_ui::{info, success, warning};
+//! Web core audit — adapter + lockfile audit with the shared finisher.
+//! Audit core Web — adapter + lockfile audit, dùng finisher chung cho exit
+//! contract (fix path vẫn riêng vì chỉ web có audit_fix).
+
+use super::{OutputFormat, StrictMode};
+use anyhow::Result;
 use std::path::Path;
 
-pub async fn audit(
+pub(crate) async fn audit(
     adapter: &dyn mgc_types::adapter::PackageAdapter,
     project_root: &Path,
     fix: bool,
+    fmt: OutputFormat,
 ) -> Result<()> {
-    if !mgc_ui::is_quiet() {
-        mgc_ui::blank_line();
-        println!("🛡️  {}", "MagiCore Security Audit (Web Core)".bold().cyan());
-    }
-
-    info("Auditing lockfile through the native web adapter...");
+    use super::{enforce_audit_exit, print_audit_report};
+    let strict = StrictMode::from_env();
     let report = adapter.audit(project_root).await?;
-    print_report(&report);
 
-    if report.vulnerability_count > 0 {
-        if fix {
-            info("Bumping vulnerable packages to latest (fail-closed)...");
-            let ids: Vec<_> = report
-                .vulnerabilities
-                .iter()
-                .map(|v| v.package.clone())
-                .collect();
-            let fixed = adapter.audit_fix(project_root, &ids).await?;
-            success(&format!(
-                "audit --fix bumped {} package(s); lockfile rewritten",
-                fixed
-            ));
-            return Ok(());
-        }
-        bail!(
-            "audit found {} vulnerabilities across {} packages",
-            report.vulnerability_count,
-            report.packages_audited
-        );
+    // Defer only when a fix will actually run; every no-op/error branch
+    // must still emit exactly one machine document. (Chỉ hoãn khi chắc
+    // chắn có mutate; nhánh không sửa vẫn phải phát đúng một document.)
+    if should_print_initial_report(
+        fix,
+        fmt,
+        report.scanner_available(),
+        report.vulnerability_count,
+    ) {
+        print_audit_report("web", &report, fmt)?;
     }
-
-    success("No vulnerabilities reported by the configured provider");
-    Ok(())
+    if !fix {
+        return enforce_audit_exit("web", &report, strict);
+    }
+    // --fix flow (P0-1): render first, mutate, re-audit, THEN exit.
+    // Only Available reports auto-fix — Partial/Failed/ToolMissing never
+    // do (fail-closed: an unverified scan must not rewrite dependencies).
+    // (Chỉ Available mới tự fix — Partial/Failed không bao giờ.)
+    if !report.scanner_available() {
+        return enforce_audit_exit("web", &report, strict);
+    }
+    if report.vulnerability_count == 0 {
+        return enforce_audit_exit("web", &report, strict);
+    }
+    let ids: Vec<_> = report
+        .vulnerabilities
+        .iter()
+        .map(|v| v.package.clone())
+        .collect();
+    // Transaction gateway: audit --fix rewrites manifest + lock — a real
+    // mutation, journaled like any other (snapshot, stage, post-image,
+    // finish/rollback). Never a bare adapter call.
+    // (audit --fix qua gateway + journal như mọi mutation.)
+    let write_lock = crate::commands::core::shared::begin_dependency_mutation(
+        adapter,
+        project_root,
+        crate::commands::core::shared::MutationOperation::AuditFix,
+    )
+    .await?;
+    let snapshot = crate::commands::core::shared::MutationSnapshot::capture(
+        &adapter.parse_manifest(project_root).await?,
+        project_root,
+        &write_lock,
+        crate::commands::core::shared::MutationOperation::AuditFix,
+    )?;
+    crate::commands::core::shared::stage_mutation_journal(
+        project_root,
+        adapter,
+        &ids.iter()
+            .map(|id| id.name_str().to_string())
+            .collect::<Vec<_>>(),
+        &snapshot,
+        &write_lock,
+    )?;
+    // Post-stage boundary: every fallible step routes through rollback
+    // (same contract as add/remove/update/install).
+    // (Mọi bước post-stage qua rollback.)
+    let fixed = match adapter.audit_fix(project_root, &ids).await {
+        Ok(fixed) => fixed,
+        Err(e) => {
+            return crate::commands::core::shared::rollback_mutation(
+                adapter,
+                project_root,
+                &snapshot,
+                e,
+                &write_lock,
+            )
+            .await;
+        }
+    };
+    if let Err(e) = crate::commands::core::shared::record_post_image(
+        project_root,
+        &adapter.parse_manifest(project_root).await?,
+        &write_lock,
+    ) {
+        return crate::commands::core::shared::rollback_mutation(
+            adapter,
+            project_root,
+            &snapshot,
+            e,
+            &write_lock,
+        )
+        .await;
+    }
+    if let Err(e) =
+        crate::commands::core::shared::finish_mutation_journal(project_root, &write_lock)
+    {
+        return crate::commands::core::shared::rollback_mutation(
+            adapter,
+            project_root,
+            &snapshot,
+            e,
+            &write_lock,
+        )
+        .await;
+    }
+    if !fmt.is_machine() {
+        mgc_ui::success(&format!(
+            "audit --fix bumped {} package(s); lockfile rewritten",
+            fixed
+        ));
+    }
+    // Re-audit AFTER the fix and exit on the POST report (the pre-fix
+    // findings no longer describe the project).
+    // (Audit lại sau fix — exit theo report mới.)
+    let post = adapter.audit(project_root).await?;
+    print_audit_report("web", &post, fmt)?;
+    enforce_audit_exit("web", &post, strict)
 }
 
-fn print_report(report: &AuditReport) {
-    mgc_ui::blank_line();
-    println!("{}", "Audit Report".bold().underline());
-    println!("  Packages audited: {}", report.packages_audited);
-    println!("  Vulnerabilities: {}", report.vulnerability_count);
-
-    for vuln in &report.vulnerabilities {
-        let severity = match vuln.severity_level {
-            mgc_types::adapter::VulnerabilitySeverity::Critical
-            | mgc_types::adapter::VulnerabilitySeverity::High => vuln.severity.red().bold(),
-            mgc_types::adapter::VulnerabilitySeverity::Medium => vuln.severity.yellow().bold(),
-            _ => vuln.severity.normal(),
-        };
-        mgc_ui::blank_line();
-        println!("{} {} in {}", severity, vuln.title.bold(), vuln.package);
-        if !vuln.cve.is_empty() {
-            println!("  CVE: {}", vuln.cve);
-        }
-        if let Some(patched) = &vuln.patched_versions {
-            println!("  Patched versions: {}", patched);
-        }
-        if let Some(url) = &vuln.url {
-            println!("  Advisory: {}", url);
-        }
-    }
-
-    if report.vulnerability_count > 0 {
-        warning("Audit failed. Review the advisories above before shipping.");
-    }
+pub(super) fn should_print_initial_report(
+    fix: bool,
+    fmt: OutputFormat,
+    scanner_available: bool,
+    findings: usize,
+) -> bool {
+    !(fix && fmt.is_machine() && scanner_available && findings > 0)
 }

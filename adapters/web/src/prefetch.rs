@@ -2,10 +2,10 @@
 // Điều phối prefetch tarball cho core-web — tách khỏi adapter root để dễ maintain.
 use std::sync::Arc;
 
-use mgc_types::adapter::ResolvedPackage;
 use mgc_types::MgResult;
+use mgc_types::adapter::ResolvedPackage;
 
-use crate::cache::{download_concurrency_limit, SharedWebCache};
+use crate::cache::{SharedWebCache, download_concurrency_limit};
 use crate::install::download::package_tarball_url;
 use crate::install::extract::tarball_prefetch_lock;
 use crate::native;

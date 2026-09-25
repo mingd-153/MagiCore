@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Game ecosystem adapter for MagiCore (bevy/godot/unity/unreal)"
 
 [dependencies]
+mgc-audit = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { workspace = true }
 mgc-crypto = { workspace = true }

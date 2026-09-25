@@ -1,0 +1,632 @@
+name: Release Binary E2E
+
+# P0-3 (Tech Lead 2026-09-11): a release RC must be proven by running
+# the ACTUAL distributed binary — build the release archive exactly as
+# the release pipeline packs it, install it into a clean prefix (no
+# cargo, no PATH from the repo), then drive the FULL product lifecycle
+# with that installed binary: create → install → test → build → dev →
+# audit. No #[ignore], no skip-marker passes: every step must exit 0 or
+# the lane fails (required environment is provisioned by the workflow).
+#
+# P0 findings #3/#5/#6/#7 (2026-09-12) fixed here:
+# - #3: the archive label now carries the REAL host triple (rustc -vV)
+#   — a GNU build is never labeled musl, an arm64 macOS build is never
+#   labeled x86_64. Mislabeled archives ship broken binaries to Alpine
+#   users.
+# - #5: Windows runner added — the release ships windows-x64, the E2E
+#   must prove it there too.
+# - #6: depth added — mgc test (not skipped), dev probe with a REAL
+#   HTTP roundtrip + clean shutdown, mgc run, STRICT audit (exit 0/1
+#   only — exit 2 "unverified" fails the lane), offline reinstall
+#   proving cache hit (bytes-from-cache > 0 or MgCStore label), and
+#   network-avoided evidence on the warm install.
+# - #7: AI/Python and App/Flutter lanes run the installed binary
+#   through their full lifecycle (release scope parity).
+#
+# P0-3: RC release phải được chứng minh bằng chính binary phân phối —
+# đóng archive đúng format release pipeline, cài vào prefix sạch (không
+# cargo, không PATH từ repo), rồi chạy trọn chuỗi lifecycle bằng binary
+# đã cài: create → install → test → build → dev → audit. Không
+# #[ignore], không skip-marker nào được tính pass: mọi bước phải exit 0
+# thì lane mới xanh (môi trường bắt buộc do workflow provision).
+# P0 findings #3/#5/#6/#7 đã sửa tại đây: nhãn archive mang host triple
+# THẬT (GNU không bao giờ gắn nhãn musl, arm64 không gắn nhãn x86_64);
+# thêm runner Windows; tăng chiều sâu (mgc test thật, dev probe HTTP
+# thật + tắt sạch, mgc run, audit strict exit 0/1, offline reinstall
+# chứng minh cache hit, warm install tránh mạng); thêm lane AI/Python
+# và App/Flutter chạy binary đã cài qua full lifecycle (parity release
+# scope).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - ".github/workflows/release-binary-e2e.yml"
+  push:
+    branches: [main, "fix/**"]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - ".github/workflows/release-binary-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The native MGC audit lanes require a reachable OSV API; they do not
+  # depend on cargo-audit or pip-audit executables.
+  # Lane audit native của MGC cần OSV API; không phụ thuộc binary
+  # cargo-audit hay pip-audit.
+  MGC_E2E_AUDIT_NETWORK: required
+
+jobs:
+  release-archive-lifecycle:
+    name: release archive lifecycle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Node.js (web lane deps)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Setup Python (AI lane runtime)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # esbuild-rs build script compiles a Go library — Go is required
+      # on every OS (CI workflow already does this; P0-8 lesson).
+      # Build script của esbuild-rs compile thư viện Go — Go bắt buộc
+      # trên mọi OS (workflow CI đã làm; bài học P0-8).
+      - name: Setup Go (esbuild-rs build dep)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      # AI lane test/build tooling: `mgc test` (ai) runs pytest;
+      # `mgc build` (ai) runs python -m build — provision BOTH so no
+      # lane step can hide behind a missing tool.
+      # Tool cho lane AI: `mgc test` (ai) chạy pytest; `mgc build` (ai)
+      # chạy python -m build — provision CẢ HAI để không bước nào trốn
+      # sau lý do thiếu tool.
+      - name: Provision python test/build tools (ai lane)
+        shell: bash
+        run: |
+          python -m pip install 'build==1.3.0' 'pytest==8.4.2' 'setuptools==80.9.0'
+          command -v pytest
+          python -m build --version
+
+      # --- Build the release binary + pack the EXACT release layout ---
+      - name: Build release binary
+        run: cargo build --release --bin mgc --locked
+
+      # P0 finding #3 fix: the archive label is the REAL host triple
+      # from rustc -vV. Building without --target means host-native
+      # (GNU on Linux, NOT musl) — labeling that archive "musl" ships
+      # a broken binary to Alpine users. arm64 macOS runners must not
+      # be labeled x86_64 either.
+      # P0 finding #3: nhãn archive là host triple THẬT từ rustc -vV.
+      # Build không --target nghĩa là host-native (GNU trên Linux,
+      # KHÔNG phải musl) — gắn nhãn "musl" cho nó là phát hành binary
+      # hỏng tới user Alpine. Runner macOS arm64 cũng không được gắn
+      # nhãn x86_64.
+      - name: Resolve host triple (rustc -vV — the truth)
+        shell: bash
+        run: |
+          HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+          if [[ -z "$HOST_TRIPLE" ]]; then
+            echo "rustc -vV returned no host triple" >&2
+            exit 1
+          fi
+          echo "HOST_TRIPLE=$HOST_TRIPLE" >> "$GITHUB_ENV"
+          echo "host triple: $HOST_TRIPLE"
+
+      - name: Pack release archive (release pipeline layout)
+        shell: bash
+        run: |
+          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          ARCH="$HOST_TRIPLE"
+          STAGE="magicore-$VERSION-$ARCH"
+          mkdir -p "stage/$STAGE"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp target/release/mgc.exe "stage/$STAGE/"
+          else
+            cp target/release/mgc "stage/$STAGE/"
+          fi
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Windows archive: zip with the binary at the archive root
+            # (Compress-Archive keeps the entry as the bare file name —
+            # no parent dir; verified flat layout, extracted flat).
+            # Archive Windows: zip với binary ở root (Compress-Archive
+            # giữ entry chỉ tên file — không thư mục cha; layout phẳng,
+            # giải nén phẳng).
+            cd "stage/$STAGE"
+            powershell.exe -NoProfile -Command "Compress-Archive -Path mgc.exe -DestinationPath '../../magicore.zip' -Force"
+            cd ../..
+          else
+            tar -czf "magicore.tar.gz" -C stage "$STAGE"
+          fi
+          echo "STAGE_DIR=$STAGE" >> "$GITHUB_ENV"
+
+      # --- Install into a CLEAN prefix (no repo PATH leakage) ---
+      - name: Install binary into clean prefix
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.magicore-test/bin"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Flat zip: extract yields mgc.exe directly (no parent dir).
+            # PowerShell handles native Windows paths reliably; bash
+            # 'tar' on windows runners resolves to GNU tar which cannot
+            # read zip (bsdtar lives at /c/Windows/System32/tar.exe but
+            # Git's GNU tar shadows it in PATH).
+            # Zip phẳng: giải nén ra thẳng mgc.exe (không thư mục cha).
+            # PowerShell xử lý path Windows native chắc chắn; 'tar' của
+            # bash trên windows runner trỏ GNU tar không đọc zip được
+            # (bsdtar ở /c/Windows/System32/tar.exe nhưng GNU tar của
+            # Git che mất trong PATH).
+            powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path (Get-Location) 'magicore.zip') -DestinationPath (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.magicore-test') -Force"
+            cp "$HOME/.magicore-test/mgc.exe" "$HOME/.magicore-test/bin/mgc.exe"
+            chmod +x "$HOME/.magicore-test/bin/mgc.exe" || true
+            "$HOME/.magicore-test/bin/mgc.exe" --version
+          else
+            tar -xzf magicore.tar.gz -C "$HOME/.magicore-test"
+            cp "$HOME/.magicore-test/$STAGE_DIR/mgc" "$HOME/.magicore-test/bin/mgc"
+            chmod +x "$HOME/.magicore-test/bin/mgc"
+            "$HOME/.magicore-test/bin/mgc" --version
+          fi
+          MGCBIN_PATH="$(command -v mgc || true)"
+          echo "mgc on PATH before export? -> ${MGCBIN_PATH:-none}"
+
+      - name: Export installed mgc to PATH
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "$HOME/.magicore-test/bin" >> "$GITHUB_PATH"
+          else
+            echo "$HOME/.magicore-test/bin" >> "$GITHUB_PATH"
+          fi
+
+      # P0 finding #6: web lane now runs the DEEP lifecycle — mgc test
+      # for real, dev probe with an actual HTTP roundtrip + clean
+      # shutdown, mgc run, STRICT audit (exit 2 unverified FAILS), and
+      # warm offline reinstall proving the cache was hit.
+      # P0 finding #6: lane web giờ chạy lifecycle SÂU — mgc test thật,
+      # dev probe có HTTP roundtrip thật + tắt sạch, mgc run, audit
+      # STRICT (exit 2 unverified thì FAIL), warm offline reinstall
+      # chứng minh cache được hit.
+      - name: Lifecycle web (create → install → test → build → dev probe → run → audit → offline reinstall)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-web react test-web
+          cd test-web
+          "$MGCBIN" install
+          # A missing test command must fail this release gate; recording
+          # absence and continuing would be a false-green.
+          # Thiếu test command phải chặn gate phát hành, không được ghi chú rồi đi tiếp.
+          if ! grep -q '"test"[[:space:]]*:' package.json; then
+            echo "release E2E scaffold has no test script" >&2
+            exit 1
+          fi
+          "$MGCBIN" test
+          "$MGCBIN" build
+          test -d dist || test -d build
+          # STRICT audit: exit 0 (clean) or 1 (findings) are audit
+          # results; exit 2 means UNVERIFIED — the scanner/tool did not
+          # run, and this lane must never pass on that (P0 finding #6).
+          # Audit STRICT: exit 0 (sạch) hoặc 1 (có finding) là kết quả
+          # audit; exit 2 nghĩa là CHƯA XÁC THỰC — scanner/tool chưa
+          # chạy, lane không bao giờ được xanh trên trạng thái đó.
+          export MGC_AUDIT_STRICT=1
+          set +e
+          "$MGCBIN" audit
+          rc=$?
+          set -e
+          echo "MARKER audit rc=$rc"
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "web audit exited $rc (0/1 allowed, 2=unverified is a FAIL)" >&2
+            exit 1
+          fi
+          unset MGC_AUDIT_STRICT
+
+          # dev probe: start mgc dev on a 4315-permutation port, wait
+          # for a REAL HTTP roundtrip, then shut it down cleanly —
+          # --help proves nothing (P0 finding #6).
+          # dev probe: khởi động mgc dev trên port hoán vị 4315, chờ
+          # HTTP roundtrip THẬT, rồi tắt sạch — --help không chứng minh
+          # được gì.
+          port_responds() {
+            curl --connect-timeout 1 --max-time 2 -sS -o /dev/null "http://127.0.0.1:4315/" 2>/dev/null \
+              || curl --connect-timeout 1 --max-time 2 -sS -o /dev/null "http://localhost:4315/" 2>/dev/null
+          }
+          stop_probe_process() {
+            local process_pid="$1"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              # Git-Bash $! may be an MSYS PID, not the Win32 PID owning
+              # the listening socket. Kill the launcher tree, then the
+              # exact process(es) still bound to this isolated probe port.
+              taskkill //F //T //PID "$process_pid" > /dev/null 2>&1 || true
+              powershell.exe -NoProfile -Command '
+                $ErrorActionPreference = "SilentlyContinue"
+                $owners = Get-NetTCPConnection -State Listen -LocalPort 4315 |
+                  Select-Object -ExpandProperty OwningProcess -Unique
+                foreach ($ownerPid in $owners) {
+                  & taskkill.exe /F /T /PID $ownerPid | Out-Null
+                }
+              '
+            else
+              kill "$process_pid" 2>/dev/null || true
+              pkill -f "vite.*4315" 2>/dev/null || true
+            fi
+          }
+          if port_responds; then
+            echo "port 4315 was already serving before mgc dev; refusing contaminated lifecycle probe" >&2
+            exit 1
+          fi
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            "$MGCBIN" dev --port 4315 > dev.log 2>&1 &
+            DEV_PID=$!
+          else
+            "$MGCBIN" dev --port 4315 > dev.log 2>&1 &
+            DEV_PID=$!
+          fi
+          echo "MARKER dev spawned pid=$DEV_PID"
+          probe_ok=false
+          for i in $(seq 1 60); do
+            # Probe both stacks: vite binds ::1 (IPv6 localhost) on some
+            # hosts and 127.0.0.1 on others.
+            # Probe cả hai stack: vite bind ::1 (IPv6 localhost) trên
+            # một số máy và 127.0.0.1 trên máy khác.
+            if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then probe_ok=true; break; fi
+            sleep 2
+          done
+          if [[ "$probe_ok" != true ]]; then
+            echo "dev server did not answer HTTP on port 4315 within 120s" >&2
+            cat dev.log >&2 || true
+            stop_probe_process "$DEV_PID"
+            exit 1
+          fi
+          # Clean shutdown: the dev tree (mgc → node → vite) must die
+          # WITHOUT leaving the port bound. Killing only the parent
+          # leaks the node child holding the port (REVIEW round 2
+          # finding, 2026-09-12) — kill the whole tree.
+          # Tắt sạch: cả cây dev (mgc → node → vite) phải chết, không để
+          # port còn bị bind. Chỉ giết cha sẽ lộ node con giữ port —
+          # giết cả cây.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            stop_probe_process "$DEV_PID"
+          else
+            kill "$DEV_PID" 2>/dev/null || true
+            for i in $(seq 1 15); do
+              if ! kill -0 $DEV_PID 2>/dev/null; then break; fi
+              sleep 1
+            done
+            if kill -0 $DEV_PID 2>/dev/null; then kill -9 $DEV_PID 2>/dev/null || true; fi
+            # Sweep leaked vite/node children of this project sandbox.
+            # Quét dọn con vite/node sót lại của sandbox project này.
+            pkill -f "vite.*4315" 2>/dev/null || true
+            sleep 1
+          fi
+
+          # Verify shutdown on every OS before allowing `mgc run` to use
+          # the same port. Otherwise a leaked dev server can make the run
+          # probe pass without the run process ever serving a request.
+          # `mgc run` не должен пройти за счёт dev-сервера, оставшегося
+          # после предыдущего шага: проверяем освобождение порта на всех ОС.
+          dev_port_closed=false
+          for i in $(seq 1 15); do
+            if ! port_responds; then
+              dev_port_closed=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$dev_port_closed" != true ]]; then
+            echo "port 4315 still serving after dev shutdown — run probe would be a false positive" >&2
+            cat dev.log >&2 || true
+            stop_probe_process "$DEV_PID"
+            exit 1
+          fi
+          # run: the scaffold's own start/preview script through the
+          # native task runner (P0 finding #6 — run was never executed).
+          # The server is long-lived: spawn it in the background, probe
+          # for a REAL HTTP roundtrip, then kill the tree — a foreground
+          # run would hit the 300s exec timeout and die as 143 (bug
+          # caught on the first E2E run, 2026-09-12).
+          # run: script start/preview của template qua task runner native
+          # (P0 finding #6 — run chưa bao giờ được chạy). Server dài hạn:
+          # spawn nền, chờ HTTP roundtrip THẬT, rồi giết cây — chạy
+          # foreground sẽ dính timeout 300s của exec và chết 143 (bug
+          # bắt được ở lần E2E đầu tiên).
+          if grep -q '"start"[[:space:]]*:' package.json; then
+            RUN_SCRIPT=start
+          elif grep -q '"preview"[[:space:]]*:' package.json; then
+            RUN_SCRIPT=preview
+          else
+            echo "release E2E scaffold has neither start nor preview run script" >&2
+            exit 1
+          fi
+          echo "MARKER run probe start script=$RUN_SCRIPT"
+          "$MGCBIN" run "$RUN_SCRIPT" > run.log 2>&1 &
+            RUN_PID=$!
+            run_ok=false
+            for i in $(seq 1 60); do
+              if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then run_ok=true; break; fi
+              if ! kill -0 $RUN_PID 2>/dev/null; then break; fi
+              sleep 2
+            done
+            echo "MARKER run probe done ok=$run_ok"
+            if [[ "$run_ok" != true ]]; then
+              echo "run start did not answer HTTP on port 4315" >&2
+              cat run.log >&2 || true
+              stop_probe_process "$RUN_PID"
+              exit 1
+            fi
+            stop_probe_process "$RUN_PID"
+            run_port_closed=false
+            for i in $(seq 1 15); do
+              if ! port_responds; then
+                run_port_closed=true
+                break
+              fi
+              sleep 1
+            done
+            if [[ "$run_port_closed" != true ]]; then
+              echo "port 4315 still serving after run shutdown — leak" >&2
+              cat run.log >&2 || true
+              exit 1
+            fi
+
+          # Warm reinstall with cache-hit proof: the second install must
+          # report bytes served from cache (MgCStore). Empty cache
+          # evidence = false-green (P0 finding #6).
+          # Windows note (2026-09-12): the first install's lifecycle
+          # scripts leave esbuild.exe running — a live process keeps
+          # its own executable locked, and the warm reinstall's prune
+          # cannot delete it (Windows file-locking, exit 1 in ~2s).
+          # Kill the stragglers FIRST, and capture the exit code so the
+          # log is always printed even on failure.
+          # Warm reinstall kèm bằng chứng cache-hit: lần install thứ hai
+          # phải báo byte lấy từ cache (MgCStore). Cache rỗng = false-
+          # green. Ghi chú Windows: lifecycle script của install lần 1
+          # để esbuild.exe còn chạy — process sống giữ chính file exe
+          # của nó, prune của lần cài lại không xóa được (file-lock
+          # Windows, exit 1 trong ~2s). Giết process sót TRƯỚC, và bắt
+          # exit code để log luôn được in kể cả khi fail.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            taskkill //F //IM esbuild.exe //T > /dev/null 2>&1 || true
+          fi
+          echo "MARKER warm install start"
+          set +e
+          "$MGCBIN" install > warm_install.log 2>&1
+          warm_rc=$?
+          set -e
+          cat warm_install.log
+          if [[ "$warm_rc" -ne 0 ]]; then
+            echo "warm install exited $warm_rc" >&2
+            exit 1
+          fi
+          if ! grep -Eq "from cache|Reused|cache" warm_install.log; then
+            echo "warm install showed no cache evidence" >&2
+            exit 1
+          fi
+
+          # Offline reinstall: with a populated cache the project must
+          # reinstall with NO network (P0 finding #6). curl is the
+          # network sentinel — any request means the offline gate
+          # leaked. Same Windows lock treatment + captured rc.
+          # Offline reinstall: với cache đã có, project phải cài lại
+          # KHÔNG cần mạng. curl là lính gác mạng — mọi request nghĩa
+          # là cổng offline bị rò. Cùng cách xử lý lock Windows + bắt rc.
+          echo "MARKER offline reinstall start"
+          set +e
+          "$MGCBIN" install --offline > offline_install.log 2>&1
+          offline_rc=$?
+          set -e
+          cat offline_install.log
+          if [[ "$offline_rc" -ne 0 ]]; then
+            echo "offline reinstall exited $offline_rc" >&2
+            exit 1
+          fi
+          test -d node_modules
+          echo "MARKER web lane complete"
+
+      - name: Lifecycle lib rust (create → install → test → build → strict audit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-lib rust test-lib
+          cd test-lib
+          "$MGCBIN" install
+          "$MGCBIN" test
+          "$MGCBIN" build
+          export MGC_AUDIT_STRICT=1
+          set +e
+          "$MGCBIN" audit
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "lib audit exited $rc (0/1 allowed, 2=unverified is a FAIL)" >&2
+            exit 1
+          fi
+          unset MGC_AUDIT_STRICT
+
+      # AI/Python release lane uses the MGC-owned PyPI graph and mgc.lock.
+      # Python/pytest/build are execution tools only; uv/pip do not resolve
+      # or install project dependencies in this lane.
+      # Lane AI/Python dùng graph PyPI và mgc.lock do MGC sở hữu.
+      - name: Lifecycle ai python (native add → install → test → build → strict audit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-ai python-agent test-ai
+          cd test-ai
+          # six 1.17.0 ships a universal py2.py3-none-any wheel, the only
+          # artifact class this native installer currently materializes.
+          # Compiled wheels/sdists remain fail-closed; this lane does not
+          # claim full PyPI artifact coverage.
+          "$MGCBIN" add-ai six@1.17.0
+          "$MGCBIN" install
+          test -f mgc.lock
+          test ! -f uv.lock
+          mkdir -p tests
+          cat > tests/test_mgc_release_e2e.py <<'PYTEST'
+          def test_generated_python_runtime_is_usable():
+              import sys
+              assert sys.version_info >= (3, 12)
+          PYTEST
+          "$MGCBIN" test
+          "$MGCBIN" build
+          export MGC_AUDIT_STRICT=1
+          set +e
+          "$MGCBIN" audit
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "ai audit exited $rc (0/1 allowed, 2=unverified is a FAIL)" >&2
+            exit 1
+          fi
+          unset MGC_AUDIT_STRICT
+
+      # App/Flutter lane with the INSTALLED binary — all three OS
+      # (A1, 2026-09-12): windows-latest runners ship Visual Studio
+      # Enterprise 2022, so `flutter test` runs natively there; the
+      # build target stays `web` (universal — no Android SDK / Xcode
+      # / WPF workload dependency) so all three runners prove the same
+      # lifecycle shape.
+      # Lane App/Flutter bằng binary đã cài — cả ba OS (A1): runner
+      # windows-latest có sẵn Visual Studio Enterprise 2022 nên
+      # `flutter test` chạy native; target build giữ `web` (phổ quát —
+      # không phụ thuộc Android SDK / Xcode / workload WPF) để cả ba
+      # runner chứng minh cùng một hình lifecycle.
+      - name: Install Linux build deps (flutter lane)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+
+      - name: Setup Flutter (app lane)
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
+        with:
+          flutter-version: "3.47.4"
+          channel: "stable"
+
+      - name: Lifecycle app flutter (create → install → test → build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-app flutter test-flut
+          cd test-flut
+          # Flutter is only the compiler/test runtime here. MGC owns
+          # dependency resolution, materialization, and mgc.lock.
+          # Flutter chỉ là runtime compile/test; dependency do MGC quản lý.
+          "$MGCBIN" add-app http
+          "$MGCBIN" install
+          test -f mgc.lock
+          test ! -f pubspec.lock
+          "$MGCBIN" test
+          # `web` is the universal CI target (no Android SDK / Xcode).
+          # `web` là target CI phổ quát (không cần Android SDK / Xcode).
+          "$MGCBIN" build
+          test -d build/web
+
+      - name: Lifecycle lockfile import (bun.lock → mgc.lock → audit, migration path)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          mkdir -p "$WORK/proj"
+          cd "$WORK/proj"
+          cat > bun.lock <<'LOCK'
+          {
+            "packages": {
+              "lodash": ["lodash@4.17.20", "", {}, "sha512-LD"],
+            },
+          }
+          LOCK
+          "$MGCBIN" import
+          test -f mgc.lock
+          grep -q "lodash" mgc.lock
+
+      - name: Warm reinstall (cache reuse lane)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-lib rust test-lib2
+          cd test-lib2
+          "$MGCBIN" install
+          # Warm reinstall: a second install over the same project must
+          # succeed (idempotency of the install pipeline through the
+          # installed binary).
+          "$MGCBIN" install
+
+      - name: Shared store cross-project reuse proof (B-series)
+        # B1 (2026-09-12): CARGO_HOME/PIP_CACHE_DIR/UV_CACHE_DIR point
+        # INSIDE the mgc store — two rust projects sharing one dep must
+        # NOT download it twice (project B's fetch grows the store by
+        # <1MB of lock metadata; every dep byte served from the shared
+        # store). Runs the REAL #[ignore] integration test with the
+        # real cargo toolchain on this runner.
+        # B1: CARGO_HOME/PIP_CACHE_DIR/UV_CACHE_DIR trỏ VÀO store mgc —
+        # hai project rust cùng một dependency KHÔNG được tải hai lần
+        # (fetch project B làm store tăng <1MB lock metadata; mọi byte
+        # dep được phục vụ từ store chung). Chạy test integration
+        # #[ignore] THẬT với cargo thật trên runner này.
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: cargo test -p mgc-lib-adapter --test shared_store_tests -- --ignored --nocapture
+
+      - name: Install summary shows the shared-store cache label
+        # The distributed binary must NAME its cache source ("shared mgc
+        # store") — honest labeling end to end (B-series).
+        # Binary phân phối phải NÊU TÊN nguồn cache ("shared mgc
+        # store") — gắn nhãn trung thực đầu cuối (B-series).
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGCBIN" create-lib rust store-label
+          cd store-label
+          "$MGCBIN" install > install_label.log 2>&1
+          cat install_label.log
+          grep -q "cache source: shared mgc store" install_label.log

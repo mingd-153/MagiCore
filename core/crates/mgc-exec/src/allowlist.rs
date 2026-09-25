@@ -1,8 +1,89 @@
 //! Allowlist check — kiểm tra tool trước khi exec (00-index §5.1, §5.2)
-//! (Exec passthrough allowlist: 00-index §5.1 allowlist bất biến + §5.2 cấm vĩnh viễn)
+//!
+//! ## Threat Model (2026-09-02)
+//!
+//! MagiCore orchestrates package managers, NOT sandboxes them. Two security boundaries:
+//!
+//! 1. **Install scope (HIGH RISK)**: Package installation, registry fetch, transitive deps
+//!    - PM tools (npm/pnpm/yarn/bun) FORBIDDEN → use `mgc install` (resolver + audit)
+//!    - Rationale: Prevent arbitrary package fetch bypassing mgc resolver
+//!
+//! 2. **Test/Build/Dev scopes**: package-manager executables remain forbidden.
+//!    Compiler/runtime execution is a separate, explicit allowlist decision.
+//!
+//! ## ExecutionScope
+//! Package managers are forbidden in every scope. Test/build/dev may execute
+//! approved compilers and runtimes, but never package resolution/install tools.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
+
+/// Execution scope — determines security policy for tool execution.
+/// Install scope: HIGH RISK (arbitrary package fetch, transitive deps).
+/// TestRunner/BuildRunner/DevServer: MEDIUM RISK (project-local scripts only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionScope {
+    /// HIGH RISK: Package installation, fetch from registry, install scripts.
+    /// npm/pnpm/yarn/bun FORBIDDEN in this scope.
+    Install,
+
+    /// Test runner execution; package managers remain forbidden.
+    TestRunner,
+
+    /// Build runner execution; package managers remain forbidden.
+    BuildRunner,
+
+    /// Dev server execution; package managers remain forbidden.
+    DevServer,
+}
+
+/// Scope constraints — security policy per execution scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeConstraints {
+    /// Must run in project root (not arbitrary cwd).
+    pub cwd_locked: bool,
+
+    /// Network access forbidden (not yet enforced, roadmap).
+    pub no_network: bool,
+
+    /// Only predefined args (not yet enforced, roadmap).
+    pub no_arbitrary_args: bool,
+
+    /// Must log to audit trail.
+    pub audit_log_required: bool,
+
+    /// Validate args for shell injection.
+    pub shell_injection_check: bool,
+}
+
+impl ExecutionScope {
+    /// Get scope constraints for this execution scope.
+    pub fn constraints(self) -> ScopeConstraints {
+        match self {
+            ExecutionScope::Install => ScopeConstraints {
+                cwd_locked: false, // Install can run anywhere
+                no_network: false, // Install needs network
+                no_arbitrary_args: false,
+                audit_log_required: true,
+                shell_injection_check: true,
+            },
+            ExecutionScope::TestRunner
+            | ExecutionScope::BuildRunner
+            | ExecutionScope::DevServer => ScopeConstraints {
+                cwd_locked: true,        // Must run in project root
+                no_network: false,       // Tests may need network (integration tests)
+                no_arbitrary_args: true, // Only predefined commands
+                audit_log_required: true,
+                shell_injection_check: true,
+            },
+        }
+    }
+
+    /// Check if PM tools (npm/pnpm/yarn/bun) are allowed in this scope.
+    pub fn allows_pm_tools(self) -> bool {
+        false
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptInvocation {
@@ -14,11 +95,39 @@ pub struct ScriptInvocation {
 /// Tools được phép passthrough — allowlist bất biến (00-index §5.1).
 /// Mỗi core khai báo subset; thêm tool phải review + ghi lý do.
 pub const ALLOWED_TOOLS: &[&str] = &[
-    "pip",
     "python3",
-    "uv",
+    "pytest", // AI test runner
+    // TypeScript compiler (lib/ts + web test lanes, P0 finding
+    // 2026-09-12): `tsc --noEmit` is the scaffold's own typecheck test
+    // script; read-only (no artifact mutation), same family as
+    // cargo/pytest. web dev/build lanes already run vite/next via
+    // node_modules/.bin; tsc enters the allowlist so the lib/ts
+    // scaffold test lane can run honestly.
+    // TypeScript compiler (lane test lib/ts + web, P0 finding
+    // 2026-09-12): `tsc --noEmit` là script test typecheck của scaffold;
+    // chỉ đọc (không đổi artifact), cùng họ với cargo/pytest. Lane
+    // web đã chạy vite/next qua node_modules/.bin; tsc vào allowlist
+    // để lane test scaffold lib/ts chạy trung thực được.
+    "tsc",
+    // vue-tsc: the vue scaffold's typecheck test script (same read-only
+    // family as tsc — P0 finding 2026-09-12).
+    // vue-tsc: script test typecheck của scaffold vue (cùng họ chỉ-đọc
+    // với tsc — P0 finding 2026-09-12).
+    "vue-tsc",
+    // vite: the web scaffold's dev/build/preview entry (P0 finding #6,
+    // 2026-09-12). Project scripts run under the user's permission per
+    // the threat model (Test/Build/Dev scope: project-local scripts
+    // allowed); `run`/`dev` resolve vite from node_modules/.bin FIRST
+    // (the run.rs PATH insert), so the spawned program is the
+    // project's own dependency, not a PATH implant.
+    // vite: entry dev/build/preview của scaffold web (P0 finding #6).
+    // Theo threat model, script project chạy dưới quyền user (scope
+    // Test/Build/Dev: script local được phép); `run`/`dev` resolve vite
+    // từ node_modules/.bin TRƯỚC (run.rs chèn đầu PATH), nên program
+    // được spawn là dependency của chính project, không phải file lạ
+    // xâm nhập từ PATH.
+    "vite",
     "go",
-    "pub",
     "dart",
     "gradle",
     "mvn",
@@ -47,29 +156,94 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "unity",
     "upm",
     "xcodebuild",
+    "echo", // Test tool: prove validator runs before allowlist check
+    // Security scanners (audit framework, Tech Lead P1 2026-09-09):
+    // official ecosystem scanners — read-only advisory lookups, no
+    // package mutation, pinned versions in CI (security.yml).
+    // Scanner bảo mật (audit framework): scanner chính thức của từng
+    // ecosystem — chỉ tra advisory đọc-đọc, không đổi package, CI ghim
+    // version (security.yml).
+    "pip-audit",   // Official PyPA Python vulnerability scanner
+    "govulncheck", // Official Go vulnerability scanner (golang.org/x/vuln)
 ];
 
-/// Tools cấm vĩnh viễn — format có resolver mgc (00-index §5.2) nên wrapper bị cấm.
-/// (npm/npx/pnpm/yarn/bun cấm mọi core — gọi mgc install thay vì npm)
-pub const FORBIDDEN_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx"];
+/// Package-manager executables are forbidden in every execution scope.
+pub const FORBIDDEN_TOOLS: &[&str] = &[
+    "npm",
+    "npx",
+    "pnpm",
+    "yarn",
+    "bun",
+    "bunx",
+    "composer",
+    "pub",
+    "deno",
+    "pip",
+    "pip3",
+    "uv",
+    "uvx",
+    "poetry",
+    "pipenv",
+    "pdm",
+    "conda",
+    "mamba",
+    "pipx",
+    "hatch",
+    "rye",
+    "pixi",
+    "pip-compile",
+    "pip-sync",
+];
 
 /// Kiểm tool trước khi exec: cấm vĩnh viễn → lỗi rõ lý do; ngoài allowlist → lỗi.
+/// DEPRECATED: Use check_tool_with_scope for new code (supports ExecutionScope).
 pub fn check_tool(name: &str) -> Result<()> {
+    check_tool_with_scope(name, ExecutionScope::Install, None)
+}
+
+/// Check tool with execution scope — new primary API.
+/// PM tools (npm/pnpm/yarn/bun) are forbidden in every scope.
+pub fn check_tool_with_scope(
+    name: &str,
+    scope: ExecutionScope,
+    project_root: Option<&Path>,
+) -> Result<()> {
+    check_tool_with_scope_compat(name, scope, project_root, None)
+}
+
+/// Historical API retained for source compatibility. The compatibility
+/// argument never authorizes a process; deny-list policy is enforced here,
+/// beneath every CLI/router call site.
+/// Giữ API cũ để tương thích source; tham số compat không cấp quyền spawn.
+pub fn check_tool_with_scope_compat(
+    name: &str,
+    scope: ExecutionScope,
+    _project_root: Option<&Path>,
+    _compat_runtime: Option<&str>,
+) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
         bail!("tool name is empty");
     }
+
     let normalized = normalize_script_token(name).unwrap_or_else(|| name.to_ascii_lowercase());
-    if FORBIDDEN_TOOLS.contains(&normalized.as_str()) {
+
+    // Package managers and rival runtimes are forbidden in every scope.
+    let is_pm_tool = FORBIDDEN_TOOLS.contains(&normalized.as_str());
+    if is_pm_tool {
         bail!(
-            "tool '{name}' is permanently forbidden (mgc resolver covers its format — use `mgc install` instead)"
+            "tool '{name}' is forbidden in {:?} scope; dependency operations must be owned by MagiCore",
+            scope
         );
     }
+
+    // Non-PM tools: check against general allowlist
     if !ALLOWED_TOOLS.contains(&normalized.as_str()) {
         bail!(
             "tool '{name}' is not on the allowlist (00-index §5.1) — add it there only after review"
         );
     }
+
     Ok(())
 }
 
@@ -238,6 +412,7 @@ fn normalize_script_token(token: &str) -> Option<String> {
     let base = base
         .strip_suffix(".cmd")
         .or_else(|| base.strip_suffix(".exe"))
+        .or_else(|| base.strip_suffix(".bat"))
         .or_else(|| base.strip_suffix(".ps1"))
         .unwrap_or(&base)
         .to_string();

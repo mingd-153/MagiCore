@@ -1,4 +1,7 @@
 #![allow(clippy::unwrap_used)]
+// Tests mutate env vars single-threaded per test process (edition 2024 unsafe rule).
+// Test đổi env var đơn luồng theo từng process test (luật unsafe edition 2024).
+#![allow(unsafe_code)]
 //! Integration tests for npmrc parser — test riêng đặt tại test/ (RULE §5)
 use mgc_config::npmrc::NpmRc;
 
@@ -32,13 +35,13 @@ fn parses_auth_token_and_basic_auth() {
 
 #[test]
 fn expands_env_vars() {
-    std::env::set_var("MGC_TEST_TOKEN", "tok123");
+    unsafe { std::env::set_var("MGC_TEST_TOKEN", "tok123") };
     let rc = NpmRc::parse("//registry.npmjs.org/:_authToken=${MGC_TEST_TOKEN}\n").unwrap();
     assert_eq!(
         rc.token_for("registry.npmjs.org").map(String::as_str),
         Some("tok123")
     );
-    std::env::remove_var("MGC_TEST_TOKEN");
+    unsafe { std::env::remove_var("MGC_TEST_TOKEN") };
 }
 
 #[test]

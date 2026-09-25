@@ -47,13 +47,11 @@ fn parse_multi_manifest(project_root: &Path) -> MgResult<Manifest> {
         return react_native::parse_package_json(project_root);
     }
 
-    // Fallback: empty manifest with project name
-    let name = project_root
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "app".to_string());
-
-    Ok(Manifest::new(&name, mgc_types::Ecosystem::App))
+    Err(mgc_types::MgError::Unsupported {
+        core: "app",
+        capability: "parse-multi-manifest",
+        guidance: "no supported app dependency manifest was detected; refusing to return an empty dependency graph".to_string(),
+    })
 }
 
 /// Write manifest back to file.
@@ -94,5 +92,9 @@ fn write_multi_manifest(project_root: &Path, manifest: &Manifest) -> MgResult<()
         return react_native::write_package_json(project_root, manifest);
     }
 
-    Ok(())
+    Err(mgc_types::MgError::Unsupported {
+        core: "app",
+        capability: "write-multi-manifest",
+        guidance: "no supported app dependency manifest was detected; refusing to report a successful no-op write".to_string(),
+    })
 }

@@ -26,39 +26,28 @@ impl AiFramework {
 }
 
 pub fn detect_framework(root: &Path) -> Option<AiFramework> {
-    // Try explicit framework in mgc.toml — ưu tiên khai báo MagiCore rõ ràng.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(p) = v
-                .get("ai")
-                .and_then(|c| c.get("framework"))
-                .and_then(|p| p.as_str())
-            {
-                return framework_from_str(p);
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(p) = v
+            .get("ai")
+            .and_then(|c| c.get("framework"))
+            .and_then(|p| p.as_str())
+        && let Some(fw) = framework_from_str(p)
+    {
+        return Some(fw);
     }
-
-    // Try explicit framework in pyproject.toml — hỗ trợ project Python đã khai báo core.
-    if let Ok(content) = std::fs::read_to_string(root.join("pyproject.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(p) = v
-                .get("tool")
-                .and_then(|t| t.get("magicore"))
-                .and_then(|m| m.get("framework"))
-                .and_then(|p| p.as_str())
-            {
-                return framework_from_str(p);
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(root.join("pyproject.toml"))
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(p) = v
+            .get("tool")
+            .and_then(|t| t.get("magicore"))
+            .and_then(|m| m.get("framework"))
+            .and_then(|p| p.as_str())
+        && let Some(fw) = framework_from_str(p)
+    {
+        return Some(fw);
     }
-
-    // Generic Python fallback — nhận project Python thường để install-ai/dev-ai chạy được.
-    // Default Python agent — mặc định an toàn cho dependency management cơ bản.
-    if root.join("pyproject.toml").exists() || root.join("requirements.txt").exists() {
-        return Some(AiFramework::PythonAgent);
-    }
-
     None
 }
 

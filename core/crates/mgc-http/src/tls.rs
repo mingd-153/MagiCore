@@ -1,12 +1,12 @@
 //! TLS configuration & security (12 §10)
 //! (HTTPS bắt buộc, cert validation, User-Agent, token security)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use reqwest::ClientBuilder;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{
-    client::danger::{HandshakeSignatureValid, ServerCertVerified},
     ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme,
+    client::danger::{HandshakeSignatureValid, ServerCertVerified},
 };
 use rustls_pki_types::pem::PemObject;
 use std::sync::Arc;
@@ -62,9 +62,13 @@ impl TlsConfig {
         let mut root_store = RootCertStore::empty();
 
         // Load system roots using rustls-native-certs
+        // 0.8: load_native_certs() returns CertificateResult — certs carry
+        // CertificateDer; any load error fails closed.
+        // (0.8: load_native_certs() trả CertificateResult — certs mang
+        // CertificateDer; mọi lỗi load đều fail-closed.)
         let native_certs = rustls_native_certs::load_native_certs();
-        if !native_certs.errors.is_empty() {
-            bail!("load native certs: {} errors", native_certs.errors.len());
+        if let Some(err) = native_certs.errors.first() {
+            return Err(anyhow::anyhow!("load native certs: {err}"));
         }
         for cert in native_certs.certs {
             root_store.add(cert)?;
@@ -74,6 +78,10 @@ impl TlsConfig {
         if let Some(ca_path) = &self.ca_bundle {
             let ca_pem = std::fs::read_to_string(ca_path)
                 .map_err(|e| anyhow::anyhow!("read CA bundle: {}", e))?;
+            // rustls-pki-types PemObject: iterate PEM certs (replaces
+            // unmaintained rustls-pemfile, RUSTSEC-2025-0134).
+            // (PemObject duyệt cert PEM — thay rustls-pemfile không còn
+            // bảo trì, RUSTSEC-2025-0134.)
             for cert in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
                 let cert = cert.map_err(|e| anyhow::anyhow!("parse CA cert: {}", e))?;
                 root_store
@@ -197,7 +205,8 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
 
 /// Load certs from PEM file
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
-    use rustls_pki_types::pem::PemObject;
+    // PemObject is imported at module scope (line 15) — no inner re-import.
+    // (PemObject đã import ở scope module — không cần import lại trong hàm.)
     let pem = std::fs::read_to_string(path)?;
     CertificateDer::pem_slice_iter(pem.as_bytes())
         .collect::<Result<Vec<_>, _>>()
@@ -206,7 +215,6 @@ fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
 
 /// Load private key from PEM file
 fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
-    use rustls_pki_types::pem::PemObject;
     let pem = std::fs::read_to_string(path)?;
     PrivateKeyDer::from_pem_slice(pem.as_bytes())
         .map_err(|e| anyhow::anyhow!("parse private key: {}", e))

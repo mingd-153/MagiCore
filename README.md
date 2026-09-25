@@ -6,7 +6,7 @@
     <a href="https://github.com/mingd-153/MagiCore/releases"><img src="https://img.shields.io/github/v/release/mingd-153/MagiCore?label=latest&style=flat-square" alt="Latest Release" /></a>
     <a href="https://github.com/mingd-153/MagiCore/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mingd-153/MagiCore/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
-    <img src="https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square" alt="Rust 1.85+" />
+    <img src="https://img.shields.io/badge/rust-1.85%2B-edition2024-blue?style=flat-square" alt="Rust 1.85+ edition 2024" />
     <img src="https://img.shields.io/badge/MCP-native-blueviolet?style=flat-square" alt="Native MCP Server" />
     <img src="https://img.shields.io/badge/version-1.0.0-brightgreen?style=flat-square" alt="Version 1.0.0" />
   </p>
@@ -16,9 +16,9 @@
 
 **MagiCore** (`mgc`) is a **multi-language package orchestrator** with **web (npm/yarn) beta testing ready** — written in Rust for speed and security.
 
-**Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
+**Core strength:** Web package management (npm/pnpm-compatible workflow, see status labels below) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
 
-> **🚧 Beta Release:** `v1.0.0` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) remain experimental. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.1 roadmap toward full core parity.
+> **🚧 Beta Release:** `v1.1.0-RC` is a **Public Alpha / Technology Preview** — NOT yet a drop-in pnpm/Bun/Deno replacement (see the honest [status labels](#-known-limitations-v110-rc-roadmap) and [Benchmark status](benchmark/BENCHMARK_STATUS.md) before comparing). Web JS/TS plus native install/add/audit slices for Python, Rust, Go, .NET, Java-pom and Flutter work through mgc.lock; remove/update and some lanes stay toolchain-delegated or unsupported. See [CHANGELOG.md](CHANGELOG.md) and [Known Limitations](#️-known-limitations-v110-rc-roadmap) for details.
 
 ---
 
@@ -38,7 +38,7 @@
 | 🤖 **Native MCP Server**     | `mgc mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
 | 🩺 **Smart Doctor**          | `mgc doctor --fix` auto-diagnoses and repairs environment issues                 |
 | 🗄️ **Embedded Registry**     | `mgc-registry-server` — host your own private package registry                   |
-| 🌍 **Cross-Platform**        | macOS (Apple Silicon + Intel), Linux x64/ARM64, Windows x64/ARM64               |
+| 🌍 **Cross-Platform**        | Linux/macOS/Windows x86_64 (RC-3); ARM64 support in future release              |
 
 ---
 
@@ -59,13 +59,18 @@ scoop install magicore
 
 Download the latest release from [**GitHub Releases →**](https://github.com/mingd-153/MagiCore/releases/latest)
 
-| Platform            | File                          |
-| ------------------- | ----------------------------- |
-| macOS Apple Silicon | `magicore-macOS-ARM64.tar.gz` |
-| macOS Intel         | `magicore-macOS-X64.tar.gz`   |
-| Linux x64           | `magicore-Linux-X64.tar.gz`   |
-| Linux ARM64         | `magicore-Linux-ARM64.tar.gz` |
-| Windows x64         | `magicore-Windows-X64.zip`    |
+**RC-3 Platform Support** (x86_64 only):
+
+| Platform      | File                                 | Status |
+| ------------- | ------------------------------------ | ------ |
+| macOS Intel   | `magicore-{version}-macos-x64.tar.gz` | ✅ Supported |
+| Linux x64     | `magicore-{version}-linux-x64.tar.gz` | ✅ Supported |
+| Windows x64   | `magicore-{version}-windows-x64.zip`  | ✅ Supported |
+| macOS ARM64   | -                                     | ⚠️ Not yet (use Rosetta 2) |
+| Linux ARM64   | -                                     | ⚠️ Not yet |
+| Windows ARM64 | -                                     | ⚠️ Not yet |
+
+> **Note**: ARM64 support deferred to future release. macOS Apple Silicon users can run x86_64 binary via Rosetta 2.
 
 ```bash
 # macOS/Linux
@@ -81,7 +86,7 @@ cd MagiCore
 cargo build --release --bin mgc
 # Binary at: target/release/mgc
 ```
-> **Requires:** Rust 1.85+
+> **Requires:** Rust 1.85+ (edition 2024)
 
 ---
 
@@ -113,39 +118,19 @@ mgc trust list            # Show all policies
 mgc sbom --format cyclonedx-json --output sbom.json
 
 # Check environment health
-```
-
----
-
-## ⚡ Performance
-
-**Preliminary benchmarks** (macOS M2, 20-package Next.js + React + TypeScript project):
-
-| Metric | mgc | pnpm | Notes |
-|--------|-----|------|-------|
-| **Cold Install** | 2.6s | 120s | Single dev workload, 5 runs |
-| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster (hardlink) |
-| **Disk Usage** | 462MB | 360MB | +28% CAS overhead |
-
-**Key Findings:**
-- ✅ **Cold install competitive** on test workload (2.6s vs 120s pnpm)
-- ✅ **Sub-3-second installs**: Consistent on tested manifest
-- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
-- ✅ **Consistency**: Lower variance in this dataset (25% CV vs pnpm 60%)
-
-**Beta Caveats:**
-- ⚠️ macOS-only data (Linux/Windows validation pending)
-- ⚠️ Single 20-package manifest (enterprise scale TBD)
-- ⚠️ vitest excluded (P0 crash), replaced with jest
-- Full methodology: [`benchmark/BENCHMARK_METHODOLOGY.md`](benchmark/BENCHMARK_METHODOLOGY.md)
-- Raw data: [`benchmark/results/`](benchmark/results/)
-
-> **Beta disclaimer**: Performance validated on dev workload only. Cross-platform and large-scale benchmarks deferred to V1.1 with CI automation. Current claims limited to tested configuration.
-
----
 mgc doctor
 ```
 
+---
+
+
+## ⚡ Performance
+
+**Benchmarks: NO VALIDATED DATA.** All prior performance claims (v1.0.x, RC-1, RC-2) are **INVALIDATED** — withdrawn after the RC-2.1 audit found the analyzer accepted negative metrics, NaN, failed exit codes, inconsistent run counts, and >100% coefficient of variation. Until a new suite with strict validation publishes VALIDATED results, MagiCore claims **no speed advantage** over pnpm/Bun/Deno/npm. See [`benchmark/BENCHMARK_STATUS.md`](benchmark/BENCHMARK_STATUS.md) for the rerun plan.
+
+**Benchmark evidence labels (single source of truth):** every performance number in this repo carries one of `VALIDATED` / `EXPERIMENTAL` / `UNVERIFIED` / `INVALIDATED`. No number without a label may be cited.
+
+---
 ### Security & Trust (NEW!)
 ```bash
 # Configure quarantine (24h default)
@@ -236,7 +221,7 @@ MagiCore/
 | `cicd`     | GitHub Actions, GitLab CI, ArgoCD, Docker Compose                         |
 | `game`     | Godot, Unity, Unreal, Bevy (Rust)                                         |
 | `iot`      | PlatformIO, Zephyr RTOS, ESP32 toolchains                                 |
-| `app`      | Flutter, Swift Package Manager, Kotlin/Gradle, React Native               |
+| `app`      | Flutter, Swift Package Manager, Kotlin/Gradle (React Native: beta-blocked) |
 | `lib`      | Universal polyglot libraries (Rust crates, Python packages, npm packages) |
 | `hardware` | Benchmark tooling, hardware-aware resource allocation                     |
 
@@ -286,6 +271,21 @@ MORE:
 - ✅ `mgc audit` scans for known CVEs via the advisory database
 - ✅ Lifecycle scripts are **opt-in only** (trust gate)
 
+### Threat Model: PM Tool Scope Policy
+
+**MagiCore orchestrates package managers, not sandboxes them.** Two security boundaries:
+
+1. **Install scope (HIGH RISK)**: Package installation, registry fetch, transitive deps
+   - PM tools (npm/pnpm/yarn/bun) **FORBIDDEN** → use `mgc install` (resolver + audit)
+   - Rationale: Prevent arbitrary package fetch bypassing mgc resolver
+
+2. **Test/Build/Dev scopes (MEDIUM RISK)**: Project-local scripts execution
+   - PM tools **ALLOWED** with constraints: cwd locked to project root, audit log
+   - Rationale: `package.json` scripts are user code, run under user's permission
+   - mgc doesn't sandbox npm scripts (would require OS-level isolation)
+
+See [docs/architecture/TEST_RUNNER_SECURITY_MODEL.md](docs/architecture/TEST_RUNNER_SECURITY_MODEL.md) for full threat model.
+
 ### Security Advisory (V1.0.0)
 **Recommendation**:
 - ✅ **Safe for CLI usage**: install, add, remove, SBOM, lockfile operations
@@ -301,7 +301,49 @@ See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
 
 ---
 
-## ⚠️ Known Limitations (V1.0.1 Roadmap)
+## ⚠️ Known Limitations (V1.1.0-RC-3)
+
+**Platform Support** (RC-3 release artifacts):
+- ✅ macOS Intel (x86_64)
+- ✅ macOS Apple Silicon (arm64) — release artifact + Homebrew support added in RC-3
+- ✅ Linux x86_64
+- ✅ Windows x86_64
+- ❌ Linux ARM64 - Not yet supported
+- ❌ Windows ARM64 - Not yet supported
+
+**Core Runtime Status** (labels: VALIDATED = CI-proven on the release binary; EXPERIMENTAL = works in source-build CI lanes; UNVERIFIED = no CI evidence; INVALIDATED = evidence withdrawn):
+- ⚠️ **Web** (npm/yarn/pnpm-compatible workflow) - Public Alpha: install/test/build verified in CI; dev/run/audit proven only on source builds, not yet on the distributed release archive; NOT a pnpm replacement until parity data exists
+- ⚠️ **AI** (Python) - Experimental: pyproject projects install/add/audit natively through mgc (mgc.lock, zero uv/pip spawn); uv.lock-only projects stay explicit-compat delegated
+- ⚠️ **App** (Flutter) - Experimental: install natively through mgc (pub.dev resolve, mgc.lock, zero flutter spawn); add/remove/update still toolchain-delegated; build/test run the Flutter SDK
+- ⚠️ **Lib** (Rust/Python/Go/.NET/Java-pom) - Experimental: add/install/audit natively through mgc (mgc.lock, zero toolchain spawn); remove/update still delegated or unsupported; builds run the language toolchain
+- ⚠️ **Lib** (Java-Gradle), Swift/Kotlin/ObjC/RN, Game, IoT, Cloud - toolchain-delegated or Unsupported (honest fail-closed, explicit compat only)
+- ℹ️ Multi-core orchestration in active development
+
+**Shared Store Status** (honest labels, 2026-09-12):
+- ✅ Cargo: mgc-owned shared registry store (`~/.magicore/store/cargo`) — cross-project byte reuse PROVEN by CI integration test (two projects, one download)
+- ✅ PyPI (lib/python + ai/python): native fetch/unpack into the mgc store (`~/.magicore/store/pypi`); uv.lock workflows keep their uv cache, explicitly delegated
+- ✅ Web/npm: mgc CAS content store (MgCStore) — CI-proven
+- ✅ Go: native proxy fetch + sumdb/ziphash verify + CAS + download-cache materialization (`GOPROXY=off` readable)
+- ✅ Java/Maven + .NET/NuGet: native resolve/fetch/verify + CAS + local-repo/global-packages materialization (remove/update still unsupported)
+- ℹ️ Builds/Tests that need a compiler or SDK (cargo build, go test, dotnet build, flutter) run that toolchain — mgc owns resolve→lock→fetch→verify→CAS→materialize→audit, never the compiler
+
+**Testing Status**:
+- ✅ Unit tests: PASS
+- ✅ Install smoke tests: PASS (Web verified in CI)
+- ⚠️ Cache stress tests: Network-dependent (live registry), not hermetic
+- ⚠️ Full lifecycle (create→test→build→run): Untested in CI
+- ℹ️ Hermetic test suite with mock registry: Roadmap v1.1.1
+
+**Blocked in Beta** (requires MagiCore-native app runner):
+- ❌ React Native dev/build (scaffold exists, runtime pending)
+- ℹ️ Current behavior: Clear error message blocking dev/build operations
+- ℹ️ Timeline: Available when MagiCore-native app runner is complete
+
+**P2 Features** (post-v1.1.0 - next release cycle):
+- ❌ Maven Central support (Kotlin/Android packages)
+- ❌ CocoaPods support (iOS/macOS packages)  
+- ❌ pub.dev support (Dart/Flutter packages)
+- ℹ️ Current behavior: Clear error messages directing users to native PM tools
 
 **Temporarily Disabled Features** (stubbed for rapid V1.0.0 release):
 - ❌ Workspace lockfile merging (monorepo root lockfiles)

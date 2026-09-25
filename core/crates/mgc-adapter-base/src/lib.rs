@@ -5,13 +5,12 @@ use std::path::{Path, PathBuf};
 
 use mgc_types::adapter::{AddOptions, InstalledPackage, PackageAdapter, UpdatedPackage};
 use mgc_types::error::MgResult;
-use mgc_types::package::{DependencySpec, PackageId, PackageName, VersionRange};
-use mgc_types::version::Version;
+use mgc_types::package::{PackageId, PackageName, VersionRange};
 
 /// Cargo.toml parse/write helpers — shared by lib (rust), game (bevy), iot (esp32-rust) cores.
 pub mod cargo_manifest;
 
-/// BaseAdapter — default implementations for add/remove/list/update.
+/// BaseAdapter — safe shared manifest removal helper.
 ///
 /// Each ecosystem adapter must implement both `PackageAdapter` and `BaseAdapter`.
 /// A blanket impl (`impl<T> BaseAdapter for T where T: PackageAdapter`) is not
@@ -20,10 +19,7 @@ pub mod cargo_manifest;
 /// PackageAdapter impls.
 ///
 /// #  Lifecycle
-///    base_add  = parse_manifest → mutate → write_manifest (no fs lock yet)
 ///    base_remove = parse_manifest → mutate → write_manifest
-///    base_list = parse_manifest → read-only
-///    base_update = placeholder (returns empty)
 ///
 /// #  TOCTOU warning
 ///   These methods are NOT atomic. Concurrent `mgc add` + `mgc remove` on the
@@ -51,29 +47,16 @@ pub trait BaseAdapter: PackageAdapter + Send + Sync {
 
     async fn base_add(
         &self,
-        project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
+        _project_root: &Path,
+        _name: &PackageName,
+        _range: Option<&VersionRange>,
+        _opts: AddOptions,
     ) -> MgResult<PackageId> {
-        let mut manifest = self.parse_manifest(project_root).await?;
-        let range = Self::normalize_range(range, opts.exact);
-        let mut spec = DependencySpec::new(
-            name.clone(),
-            range.clone().unwrap_or_else(VersionRange::star),
-        );
-        spec.dev = opts.dev;
-        spec.optional = opts.optional;
-        spec.peer = opts.peer;
-        manifest.add_dep(spec, opts.dev, opts.optional, opts.peer);
-        if !opts.no_save {
-            self.write_manifest(project_root, &manifest).await?;
-        }
-        let ver = range
-            .as_ref()
-            .and_then(|r| r.satisfying_version())
-            .unwrap_or_else(|| Version::new(0, 0, 0));
-        Ok(PackageId::new(name.clone(), ver))
+        Err(mgc_types::capabilities::unsupported_capability(
+            "adapter",
+            "generic add",
+            "use an ecosystem-specific resolver and manifest writer; this fallback cannot claim a resolved version",
+        ))
     }
 
     async fn base_remove(
@@ -89,26 +72,13 @@ pub trait BaseAdapter: PackageAdapter + Send + Sync {
 
     async fn base_list(
         &self,
-        project_root: &Path,
+        _project_root: &Path,
     ) -> Result<Vec<InstalledPackage>, mgc_types::error::MgError> {
-        let manifest = self.parse_manifest(project_root).await?;
-        let mut packages = Vec::new();
-        // Use the group label string to detect dev deps — NOT pointer comparison
-        // (as_ptr() on empty Vecs may alias in Rust, causing false positives).
-        for (label, deps) in manifest.dep_groups() {
-            let is_dev = label == "devDependencies";
-            let install_root = self.install_root(project_root);
-            for dep in deps {
-                packages.push(InstalledPackage {
-                    id: PackageId::new(dep.name.clone(), Version::new(0, 0, 0)),
-                    path: install_root.join(dep.name.as_str()),
-                    integrity: None,
-                    is_direct: true,
-                    is_dev,
-                });
-            }
-        }
-        Ok(packages)
+        Err(mgc_types::capabilities::unsupported_capability(
+            "adapter",
+            "generic installed-package listing",
+            "manifest declarations do not prove that packages are materialized; use an ecosystem-specific installed-state verifier",
+        ))
     }
 
     async fn base_update(
@@ -116,6 +86,10 @@ pub trait BaseAdapter: PackageAdapter + Send + Sync {
         _project_root: &Path,
         _name: Option<&PackageName>,
     ) -> Result<Vec<UpdatedPackage>, mgc_types::error::MgError> {
-        Ok(Vec::new())
+        Err(mgc_types::capabilities::unsupported_capability(
+            "adapter",
+            "generic update",
+            "no ecosystem-specific resolver/update implementation is available",
+        ))
     }
 }

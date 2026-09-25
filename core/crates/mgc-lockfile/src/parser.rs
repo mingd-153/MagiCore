@@ -1,9 +1,9 @@
 //! Lockfile parser with signature verification
 //! Parser lockfile với xác minh chữ ký
 
-use crate::{Lockfile, LockfileError, LockfileResult, SignatureFile};
+use crate::{LOCKFILE_SCHEMA_VERSION, Lockfile, LockfileError, LockfileResult, SignatureFile};
 use mgc_crypto::blake3_signer::Blake3Hasher;
-use mgc_crypto::ed25519_signer::{verify_signature, Ed25519PublicKey, Ed25519Signature};
+use mgc_crypto::ed25519_signer::{Ed25519PublicKey, Ed25519Signature, verify_signature};
 use std::path::Path;
 
 /// Parse lockfile from TOML string — Parse lockfile từ chuỗi TOML
@@ -11,8 +11,11 @@ pub fn parse_lockfile(toml_str: &str) -> LockfileResult<Lockfile> {
     let lockfile: Lockfile = toml::from_str(toml_str)
         .map_err(|e| LockfileError::ParseError(format!("TOML parse failed: {}", e)))?;
 
-    // Validate version
-    if lockfile.version != "2" {
+    // Validate version: v2 stays readable (new fields fall back to their
+    // serde defaults), v3 is the canonical write target.
+    // Kiểm tra version: v2 vẫn đọc được (field mới về mặc định serde),
+    // v3 là đích ghi canonical.
+    if lockfile.version != "2" && lockfile.version != LOCKFILE_SCHEMA_VERSION {
         return Err(LockfileError::ParseError(format!(
             "unsupported lockfile version: {}",
             lockfile.version
@@ -83,6 +86,18 @@ pub fn load_and_verify_lockfile(
 
     // Parse public key
     let public_key = Ed25519PublicKey::from_base64(&signer.public_key)?;
+
+    // Bind both human-readable key IDs to the actual public key. The lock
+    // and sidecar are attacker-controlled inputs, so trusting either claimed
+    // ID without recomputing the fingerprint would permit key-ID spoofing.
+    // (Khóa ID trong cả hai file phải khớp fingerprint thật của public key.)
+    let public_key_hash = Blake3Hasher::hash_bytes(&public_key.0);
+    let actual_key_id = hex::encode(&public_key_hash.0[..8]);
+    if signer.key_id != actual_key_id || sig_file.key_id != actual_key_id {
+        return Err(LockfileError::VerificationFailed(
+            "signer key ID does not match the public-key fingerprint".to_string(),
+        ));
+    }
 
     // Parse signature (strip "ed25519-" prefix if present)
     let sig_base64 = sig_file

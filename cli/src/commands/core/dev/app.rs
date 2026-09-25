@@ -12,11 +12,11 @@
 //! Với Swift / ObjC (iOS-only): chỉ chạy trên macOS, báo lỗi rõ trên Linux/Win.
 //! Với Kotlin (Android-only): `./gradlew installDebug` + `adb shell am start`.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
 
 use crate::commands::core::install::app::{
-    find_xcode_project, language, project_root, run_tool, InstallCommand,
+    InstallCommand, find_xcode_project, language, project_root,
 };
 
 // ─── OS detection ────────────────────────────────────────────────────────────
@@ -146,9 +146,14 @@ fn flutter_dev_command(platform: &TargetPlatform, dry_run: bool) -> InstallComma
             InstallCommand {
                 tool: "flutter".to_string(),
                 args: if device_arg == "auto" {
-                    vec!["run".to_string()]
+                    vec!["run".to_string(), "--no-pub".to_string()]
                 } else {
-                    vec!["run".to_string(), "-d".to_string(), device_arg]
+                    vec![
+                        "run".to_string(),
+                        "-d".to_string(),
+                        device_arg,
+                        "--no-pub".to_string(),
+                    ]
                 },
             }
         }
@@ -158,7 +163,12 @@ fn flutter_dev_command(platform: &TargetPlatform, dry_run: bool) -> InstallComma
             }
             InstallCommand {
                 tool: "flutter".to_string(),
-                args: vec!["run".to_string(), "-d".to_string(), "android".to_string()],
+                args: vec![
+                    "run".to_string(),
+                    "-d".to_string(),
+                    "android".to_string(),
+                    "--no-pub".to_string(),
+                ],
             }
         }
     }
@@ -174,7 +184,7 @@ fn kotlin_dev_command(root: &Path) -> InstallCommand {
     let gradle_bin = if has_gradlew { "./gradlew" } else { "gradle" };
     InstallCommand {
         tool: gradle_bin.to_string(),
-        args: vec!["installDebug".to_string()],
+        args: vec!["installDebug".to_string(), "--offline".to_string()],
     }
 }
 
@@ -193,7 +203,12 @@ fn dev_scheme(root: &Path) -> Option<String> {
 
 /// iOS/ObjC dev — phải chạy trên macOS + Xcode.
 /// Tự động tìm simulator booted/available, boot nếu cần.
-async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> {
+async fn dev_ios(
+    root: &Path,
+    lang_is_swift: bool,
+    dry_run: bool,
+    env: Option<Vec<(String, String)>>,
+) -> Result<()> {
     // T9: từ chối rõ ràng trên Linux/Windows
     if !cfg!(target_os = "macos") {
         bail!(
@@ -236,7 +251,12 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
             return Ok(());
         }
         mgc_ui::info(&format!("App dev (ObjC): xcodebuild {}", args.join(" ")));
-        return run_tool(root, "xcodebuild", &args);
+        return crate::commands::core::install::app::run_tool_with_env(
+            root,
+            "xcodebuild",
+            &args,
+            env,
+        );
     }
 
     // Swift: `swift run` (macOS CLI) hoặc xcodebuild nếu có .xcodeproj
@@ -269,7 +289,12 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
             "App dev (Swift/Xcode): xcodebuild {}",
             args.join(" ")
         ));
-        return run_tool(root, "xcodebuild", &args);
+        return crate::commands::core::install::app::run_tool_with_env(
+            root,
+            "xcodebuild",
+            &args,
+            env,
+        );
     }
 
     // Fallback: swift run (Package.swift)
@@ -278,7 +303,16 @@ async fn dev_ios(root: &Path, lang_is_swift: bool, dry_run: bool) -> Result<()> 
         return Ok(());
     }
     mgc_ui::info("App dev (Swift): swift run");
-    run_tool(root, "swift", &["run".to_string()])
+    crate::commands::core::install::app::run_tool_with_env(
+        root,
+        "swift",
+        &[
+            "run".to_string(),
+            "--skip-update".to_string(),
+            "--disable-automatic-resolution".to_string(),
+        ],
+        env,
+    )
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -311,6 +345,23 @@ pub async fn dev(dry_run: bool) -> Result<()> {
         ));
     }
 
+    // Load optimizer env for app runtime
+    // Tải env optimizer cho runtime app
+    let runtime = detect_app_runtime(&root, &lang);
+    let optimizer_envs =
+        crate::commands::optimizer::env_loader::load_optimizer_env(&root, &runtime)
+            .map_err(|e| {
+                mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                e
+            })
+            .unwrap_or_default();
+    let env_vec: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+    let env_opt = if env_vec.is_empty() {
+        None
+    } else {
+        Some(env_vec)
+    };
+
     match lang {
         mgc_app_adapter::AppLanguage::Flutter => {
             let cmd = flutter_dev_command(&platform, dry_run);
@@ -323,13 +374,18 @@ pub async fn dev(dry_run: bool) -> Result<()> {
                 return Ok(());
             }
             mgc_ui::info(&format!("Running: {} {}", cmd.tool, cmd.args.join(" ")));
-            run_tool(&root, &cmd.tool, cmd.args.as_slice())?;
+            crate::commands::core::install::app::run_tool_with_env(
+                &root,
+                &cmd.tool,
+                cmd.args.as_slice(),
+                env_opt.clone(),
+            )?;
             Ok(())
         }
 
-        mgc_app_adapter::AppLanguage::Swift => dev_ios(&root, true, dry_run).await,
+        mgc_app_adapter::AppLanguage::Swift => dev_ios(&root, true, dry_run, env_opt.clone()).await,
 
-        mgc_app_adapter::AppLanguage::ObjC => dev_ios(&root, false, dry_run).await,
+        mgc_app_adapter::AppLanguage::ObjC => dev_ios(&root, false, dry_run, env_opt.clone()).await,
 
         mgc_app_adapter::AppLanguage::Kotlin => {
             // Kotlin = Android-only (không phân biệt OS host)
@@ -343,7 +399,12 @@ pub async fn dev(dry_run: bool) -> Result<()> {
                 cmd.tool,
                 cmd.args.join(" ")
             ));
-            run_tool(&root, &cmd.tool, cmd.args.as_slice())?;
+            crate::commands::core::install::app::run_tool_with_env(
+                &root,
+                &cmd.tool,
+                cmd.args.as_slice(),
+                env_opt.clone(),
+            )?;
             // Sau installDebug: launch app qua adb nếu có emulator
             if android_emulator_running() {
                 // Đọc applicationId từ mgc.toml nếu có
@@ -392,13 +453,37 @@ pub async fn dev(dry_run: bool) -> Result<()> {
                 cmd.tool,
                 cmd.args.join(" ")
             ));
-            run_tool(&flutter_dir, &cmd.tool, cmd.args.as_slice())?;
+            crate::commands::core::install::app::run_tool_with_env(
+                &flutter_dir,
+                &cmd.tool,
+                cmd.args.as_slice(),
+                env_opt,
+            )?;
             Ok(())
         }
     }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Detect app runtime for optimizer env loading
+/// Phát hiện runtime app để load env optimizer
+fn detect_app_runtime(
+    _root: &Path,
+    lang: &mgc_app_adapter::AppLanguage,
+) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+
+    match lang {
+        mgc_app_adapter::AppLanguage::Flutter => DetectedRuntime::Flutter,
+        mgc_app_adapter::AppLanguage::ReactNative => DetectedRuntime::ReactNative,
+        mgc_app_adapter::AppLanguage::Swift | mgc_app_adapter::AppLanguage::ObjC => {
+            DetectedRuntime::RustNative // iOS native
+        }
+        mgc_app_adapter::AppLanguage::Kotlin => DetectedRuntime::RustNative, // Android native
+        mgc_app_adapter::AppLanguage::Multi => DetectedRuntime::Flutter, // Multi defaults to Flutter
+    }
+}
 
 /// Đọc applicationId từ mgc.toml [app] application_id.
 fn read_app_id(root: &Path) -> Option<String> {

@@ -2,9 +2,12 @@
 //! Integration tests for mgc-cicd-adapter — sát với src/lib.rs
 //! Kiểm thử: detect_provider (7 providers × 2 paths), adapter_for, PackageAdapter trait.
 
-use mgc_cicd_adapter::{adapter_for, detect_provider, generate_sbom, CicdAdapter, CicdProvider};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_cicd_adapter::{CicdAdapter, CicdProvider, adapter_for, detect_provider, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::capabilities::{
+    AuditProvider, ContentStoreProvider, CoreIdent, DependencyResolver, ProjectDetector,
+};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
@@ -123,6 +126,21 @@ fn adapter_for_returns_some_with_wrangler() {
     assert!(adapter_for(&dir).is_some());
 }
 
+#[tokio::test]
+async fn list_fails_closed_because_pipeline_files_are_not_packages() {
+    let dir = tmp("list-not-packages");
+    std::fs::write(dir.join(".gitlab-ci.yml"), "stages: [test]\n").unwrap();
+    let adapter = adapter_for(&dir).unwrap();
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            capability: "list",
+            ..
+        }
+    ));
+}
+
 #[test]
 fn adapter_for_returns_none_without_markers() {
     let dir = tmp("af-none");
@@ -162,13 +180,33 @@ fn can_handle_returns_true_for_known_marker() {
 }
 
 #[tokio::test]
-async fn install_returns_ok_delegating_to_provider_tooling() {
-    let dir = tmp("install-ok");
+async fn install_fails_closed_because_no_package_semantics() {
+    // CI/CD templates carry no registry packages: resolve AND install must
+    // both fail closed with a typed Unsupported error — never Ok(default()).
+    // Template CI/CD không có package registry: resolve VÀ install đều phải
+    // fail-closed với error typed Unsupported — tuyệt đối không Ok(default()).
+    let dir = tmp("install-fail-closed");
     std::fs::write(dir.join("wrangler.toml"), "name = \"w\"\n").unwrap();
     let a = adapter_for(&dir).unwrap();
     let manifest = a.parse_manifest(&dir).await.unwrap();
-    let graph = a.resolve(&manifest).await.unwrap();
-    assert!(a.install(&graph, &dir, Default::default()).await.is_ok());
+
+    let resolve_err = a.resolve(&manifest).await.unwrap_err();
+    assert!(
+        matches!(resolve_err, mgc_types::MgError::Unsupported { core, capability, .. }
+            if core == "cicd" && capability == "resolve"),
+        "resolve must be typed-unsupported, got: {resolve_err}"
+    );
+
+    let graph = mgc_types::ResolvedGraph::default();
+    let install_err = a
+        .install(&graph, &dir, Default::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(install_err, mgc_types::MgError::Unsupported { core, capability, .. }
+            if core == "cicd" && capability == "install"),
+        "install must be typed-unsupported, got: {install_err}"
+    );
 }
 
 #[tokio::test]

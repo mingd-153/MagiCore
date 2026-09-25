@@ -17,11 +17,37 @@ thiserror = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 anyhow = { workspace = true }
+# Phase 2 native registry engines — HTTP via mgc-http (the ONLY crate
+# allowed to own reqwest) + JSON/NDJSON + BLAKE3 CAS + tar.gz.
+# (Engine registry native Phase 2 — HTTP qua mgc-http (crate DUY NHẤT được
+# giữ reqwest) + JSON/NDJSON + BLAKE3 CAS + tar.gz.)
+serde = { workspace = true }
+serde_json = { workspace = true }
+mgc-http = { workspace = true }
+url = { workspace = true }
+blake3 = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+tokio = { workspace = true }
+# Go engine: base64 for the sumdb h1 dirhash (already-pinned workspace deps —
+# no new external crates). (Engine Go: base64 cho dirhash h1 của sumdb —
+# workspace dep đã ghim sẵn, không thêm crate ngoài.)
+base64 = { workspace = true }
+# Maven engine: sha1 for .jar.sha1 verification (pinned workspace dep).
+# (Engine Maven: sha1 để xác minh .jar.sha1 — workspace dep đã ghim.)
+sha1 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
 criterion = { workspace = true }
 tempfile = { workspace = true }
+mockito.workspace = true
+mgc-store = { workspace = true }
+
+# Windows atomic replacement for extracted archive files.
+# Thay file giải nén nguyên tử trên Windows.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 
 # Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
 [[test]]
@@ -31,3 +57,43 @@ path = "tests/patches.rs"
 [[test]]
 name = "test_dedupe"
 path = "tests/dedupe.rs"
+
+[[test]]
+name = "protocols"
+path = "tests/protocols.rs"
+
+[[test]]
+name = "test_protocols_go"
+path = "tests/protocols_go.rs"
+
+[[test]]
+name = "test_protocols_maven"
+path = "tests/protocols_maven.rs"
+
+[[test]]
+name = "test_protocols_nuget"
+path = "tests/protocols_nuget.rs"
+
+[[test]]
+name = "test_protocols_swift"
+path = "tests/protocols_swift.rs"
+
+[[test]]
+name = "test_protocols_zip"
+path = "tests/protocols_zip.rs"
+
+[[test]]
+name = "test_protocols_hfhub"
+path = "tests/protocols_hfhub.rs"
+
+[[test]]
+name = "test_protocols_pypi"
+path = "tests/protocols_pypi.rs"
+
+[[test]]
+name = "test_protocols_crates"
+path = "tests/protocols_crates.rs"
+
+[[test]]
+name = "test_protocols_pub"
+path = "tests/protocols_pub.rs"

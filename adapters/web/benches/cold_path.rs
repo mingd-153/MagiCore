@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used)]
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
+use mgc_types::capabilities::ContentStoreProvider;
 use mgc_types::{
-    adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
-    ResolvedPackage, Version,
+    PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version, adapter::InstallOptions,
 };
 use mgc_web_adapter::WebAdapter;
 use std::path::Path;
@@ -79,7 +79,7 @@ fn bench_cached_install_small(c: &mut Criterion) {
                 (dir, graph)
             },
             |(dir, graph)| async move {
-                let adapter = WebAdapter::new();
+                let adapter = WebAdapter::new().unwrap();
                 adapter
                     .install(&graph, dir.path(), InstallOptions::default())
                     .await
@@ -107,7 +107,7 @@ fn bench_cached_install_medium(c: &mut Criterion) {
                 (dir, graph)
             },
             |(dir, graph)| async move {
-                let adapter = WebAdapter::new();
+                let adapter = WebAdapter::new().unwrap();
                 adapter
                     .install(&graph, dir.path(), InstallOptions::default())
                     .await
@@ -137,7 +137,7 @@ fn bench_cached_install_real(c: &mut Criterion) {
                 (dir, graph)
             },
             |(dir, graph)| async move {
-                let adapter = WebAdapter::new();
+                let adapter = WebAdapter::new().unwrap();
                 adapter
                     .install(&graph, dir.path(), InstallOptions::default())
                     .await

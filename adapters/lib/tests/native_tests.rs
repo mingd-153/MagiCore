@@ -4,9 +4,9 @@
 //! Native registry client tests — HERMETIC qua mockito (không mạng thật).
 //! Các dead-test trong block comment cũ đã được hồi sinh thành test offline thật.
 
+use mgc_lib_adapter::native::RegistryClient;
 use mgc_lib_adapter::native::cargo_client::CargoClient;
 use mgc_lib_adapter::native::pypi_client::PyPiClient;
-use mgc_lib_adapter::native::RegistryClient;
 use mgc_types::{PackageId, PackageName, Version};
 
 async fn mock_server_if_localhost_allowed() -> Option<mockito::ServerGuard> {
@@ -74,9 +74,11 @@ async fn cargo_fetch_metadata_parses_ndjson_skips_yanked() {
     assert_eq!(metadata.name.as_str(), "serde");
     // yanked 2.0.0 bị bỏ; versions giữ thứ tự parse
     assert_eq!(metadata.versions.len(), 2);
-    assert!(!metadata
-        .versions
-        .contains(&Version::parse("2.0.0").unwrap()));
+    assert!(
+        !metadata
+            .versions
+            .contains(&Version::parse("2.0.0").unwrap())
+    );
     assert_eq!(metadata.latest, Version::parse("1.5.0").unwrap());
 }
 

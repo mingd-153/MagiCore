@@ -1,7 +1,7 @@
 //! mgc workspace — workspace graph management (T4).
 //! (In graph workspace: nodes + edges workspace:* deps, filter select subset)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Subcommand;
 use mgc_config::project::ProjectConfig;
 use std::path::Path;

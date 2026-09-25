@@ -1,16 +1,73 @@
 name: Release
 
+# Supply-chain security measures (RC-3):
+# - Actions pinned to commit SHA (not floating tags) ✅
+# - Checksum files (.sha256) generated and published ✅
+# - SBOM generation (CycloneDX JSON format) ✅
+# - Artifact attestation (GitHub provenance) ✅
+# - Scoped permissions (read default, write for publish only) ✅
+
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g., 1.1.0-rc.6)"
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read # Default: read-only; only publish job gets write
 
 jobs:
+  resolve-version:
+    name: Resolve Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      is_tag: ${{ steps.resolve.outputs.is_tag }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve version and context
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            IS_TAG="false"
+            PUBLISH="false"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            IS_TAG="true"
+            PUBLISH="true"
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $VERSION"
+            exit 1
+          fi
+
+          CARGO_VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          if [[ "$VERSION" != "$CARGO_VERSION" ]]; then
+            echo "Version mismatch: workflow=$VERSION Cargo.toml=$CARGO_VERSION"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is_tag=$IS_TAG" >> $GITHUB_OUTPUT
+          echo "publish=$PUBLISH" >> $GITHUB_OUTPUT
+
+          echo "Resolved version: $VERSION"
+          echo "Is tag push: $IS_TAG"
+          echo "Will publish: $PUBLISH"
+
   build-release:
     name: Build (${{ matrix.target }})
+    needs: resolve-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,43 +76,92 @@ jobs:
           # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: magicore-Linux-X64.tar.gz
-            web_artifact_name: magicore-web-Linux-X64.tar.gz
+            os_name: linux
+            arch: x64
+            ext: tar.gz
             use_cross: false
             is_windows: false
 
-          # macOS Apple Silicon (ARM64)
+          # macOS Apple Silicon (arm64) — added 2026-09-12 (item 12):
+          # most current Macs are arm64; without this artifact the
+          # Homebrew formula odie's on them and the distribution
+          # channel is broken for the majority of macOS users.
+          # macOS Apple Silicon (arm64) — 2026-09-12 (item 12): phần
+          # lớn Mac hiện nay là arm64; thiếu artifact này thì formula
+          # Homebrew odie trên chúng và kênh phân phối hỏng với đa số
+          # user macOS.
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: magicore-macOS-ARM64.tar.gz
-            web_artifact_name: magicore-web-macOS-ARM64.tar.gz
+            os_name: macos
+            arch: arm64
+            ext: tar.gz
             use_cross: false
             is_windows: false
 
-          # macOS Intel (x86_64)
+          # macOS Intel (x86_64) — cross-compiled on the arm64 runner
+          # (GitHub retired Intel macOS runners 2025; aarch64 hosts
+          # cross-compile x86_64-apple-darwin with just the target
+          # toolchain installed).
+          # macOS Intel (x86_64) — cross-compile trên runner arm64
+          # (GitHub đã nghỉ hưu runner Intel macOS 2025; host aarch64
+          # cross-compile x86_64-apple-darwin chỉ cần cài target).
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: magicore-macOS-X64.tar.gz
-            web_artifact_name: magicore-web-macOS-X64.tar.gz
+            os_name: macos
+            arch: x64
+            ext: tar.gz
             use_cross: false
             is_windows: false
 
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: magicore-Windows-X64.zip
-            web_artifact_name: magicore-web-Windows-X64.zip
+            os_name: windows
+            arch: x64
+            ext: zip
             use_cross: false
             is_windows: true
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extract version from tag or input
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Using version: $VERSION"
+
+      - name: Set artifact names (via contract)
+        id: artifacts
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Use contract script as single source of truth
+          ALL_NAMES=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "all")
+          WEB_NAMES=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "web")
+
+          ARTIFACT_NAME=$(echo "$ALL_NAMES" | grep "^ARCHIVE=" | cut -d= -f2)
+          WEB_ARTIFACT_NAME=$(echo "$WEB_NAMES" | grep "^ARCHIVE=" | cut -d= -f2)
+
+          echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "web_artifact_name=$WEB_ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "Building all-core: $ARTIFACT_NAME"
+          echo "Building web-only: $WEB_ARTIFACT_NAME"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
         with:
           targets: ${{ matrix.target }}
+
+      - name: Setup Go for esbuild-rs
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
 
       - name: Install Cross (if cross-compiling on Linux)
         if: matrix.use_cross
@@ -63,6 +169,30 @@ jobs:
 
       - name: Build Binaries (Standard)
         if: ${{ !matrix.use_cross && !matrix.is_windows }}
+        # GOARCH + CGO only (2026-09-12, item 12): the esbuild-rs build
+        # script runs plain 'go build' for a cgo c-archive. Go silently
+        # disables cgo when GOARCH mismatches the host and no CC is set
+        # ("no Go source files"), leaving the static lib missing. Go
+        # adds the correct -arch flag ITSELF for darwin targets when
+        # cgo is on — do NOT export CC/CFLAGS globally: a global CFLAGS
+        # -arch poisons every other build script (ring rejects -arch on
+        # linux; host proc-macros compile foreign-arch objects and fail
+        # to link). GOARCH/CGO_ENABLED are go-specific and harmless to
+        # cargo; verified locally: CGO_ENABLED=1 GOARCH=amd64 go build
+        # emits a correct x86_64 c-archive with no CC/CFLAGS at all.
+        # Chỉ GOARCH + CGO (item 12): build script của esbuild-rs chạy
+        # 'go build' thường cho c-archive cgo. Go tự tắt cgo khi GOARCH
+        # lệch host mà không có CC ("no Go source files") khiến static
+        # lib mất. Go TỰ thêm cờ -arch đúng cho target darwin khi cgo
+        # bật — KHÔNG export CC/CFLAGS toàn cục: CFLAGS -arch toàn cục
+        # đầu độc mọi build script khác (ring từ chối -arch trên linux;
+        # proc-macro host compile object sai arch rồi link fail).
+        # GOARCH/CGO_ENABLED là biến riêng của go, vô hại với cargo;
+        # đã kiểm chứng local: CGO_ENABLED=1 GOARCH=amd64 go build sinh
+        # c-archive x86_64 đúng mà không cần CC/CFLAGS.
+        env:
+          GOARCH: ${{ contains(matrix.target, 'aarch64') && 'arm64' || 'amd64' }}
+          CGO_ENABLED: "1"
         run: |
           cargo build --release --target ${{ matrix.target }} --bin mgc --no-default-features --features all --locked
           mkdir -p dist/magicore
@@ -96,43 +226,658 @@ jobs:
       - name: Package Unix Archive
         if: ${{ !matrix.is_windows }}
         run: |
-          tar -C dist/magicore -czvf "${{ matrix.artifact_name }}" mgc
-          shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
-          tar -C dist/magicore-web -czvf "${{ matrix.web_artifact_name }}" mgc
-          shasum -a 256 "${{ matrix.web_artifact_name }}" > "${{ matrix.web_artifact_name }}.sha256"
+          ARTIFACT_NAME="${{ steps.artifacts.outputs.artifact_name }}"
+          WEB_ARTIFACT_NAME="${{ steps.artifacts.outputs.web_artifact_name }}"
+          tar -C dist/magicore -czvf "$ARTIFACT_NAME" mgc
+          shasum -a 256 "$ARTIFACT_NAME" > "${ARTIFACT_NAME}.sha256"
+          tar -C dist/magicore-web -czvf "$WEB_ARTIFACT_NAME" mgc
+          shasum -a 256 "$WEB_ARTIFACT_NAME" > "${WEB_ARTIFACT_NAME}.sha256"
+
+      # Generate SBOM (CycloneDX format)
+      - name: Generate SBOM
+        if: ${{ !matrix.is_windows }}
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+
+          # Generate for all-features binary (matches build flags exactly)
+          cd cli
+          cargo cyclonedx \
+            --format json \
+            --spec-version 1.4 \
+            --no-default-features \
+            --features all \
+            --target ${{ matrix.target }}
+          cd ..
+          mv cli/mgc.cdx.json "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json"
+
+          # Generate for web-only binary (matches build flags exactly)
+          cd cli
+          cargo cyclonedx \
+            --format json \
+            --spec-version 1.4 \
+            --no-default-features \
+            --features web \
+            --target ${{ matrix.target }}
+          cd ..
+          mv cli/mgc.cdx.json "magicore-web-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json"
+
+          # Verify SBOMs exist and are valid CycloneDX
+          for sbom in *-sbom.json; do
+            if ! jq -e '.bomFormat == "CycloneDX"' "$sbom" > /dev/null; then
+              echo "❌ Invalid SBOM: $sbom"
+              exit 1
+            fi
+            # Check required fields (P1 finding #6)
+            if ! jq -e '.specVersion and .components and .metadata' "$sbom" > /dev/null; then
+              echo "❌ SBOM missing required fields: $sbom"
+              exit 1
+            fi
+            component_count=$(jq -r '.components | length' "$sbom")
+            echo "✅ Valid SBOM: $sbom ($component_count components)"
+          done
 
       # Package Windows (.zip)
       - name: Package Windows Archive
         if: matrix.is_windows
         shell: pwsh
         run: |
-          Compress-Archive -Path "dist/magicore/mgc.exe" -DestinationPath "${{ matrix.artifact_name }}" -Force
-          $hash = (Get-FileHash -Path "${{ matrix.artifact_name }}" -Algorithm SHA256).Hash.ToLower()
-          "$hash  ${{ matrix.artifact_name }}" | Out-File -FilePath "${{ matrix.artifact_name }}.sha256" -Encoding ascii
-          Compress-Archive -Path "dist/magicore-web/mgc.exe" -DestinationPath "${{ matrix.web_artifact_name }}" -Force
-          $webHash = (Get-FileHash -Path "${{ matrix.web_artifact_name }}" -Algorithm SHA256).Hash.ToLower()
-          "$webHash  ${{ matrix.web_artifact_name }}" | Out-File -FilePath "${{ matrix.web_artifact_name }}.sha256" -Encoding ascii
+          $ARTIFACT_NAME = "${{ steps.artifacts.outputs.artifact_name }}"
+          $WEB_ARTIFACT_NAME = "${{ steps.artifacts.outputs.web_artifact_name }}"
+          Compress-Archive -Path "dist/magicore/mgc.exe" -DestinationPath "$ARTIFACT_NAME" -Force
+          $hash = (Get-FileHash -Path "$ARTIFACT_NAME" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $ARTIFACT_NAME" | Out-File -FilePath "${ARTIFACT_NAME}.sha256" -Encoding ascii
+          Compress-Archive -Path "dist/magicore-web/mgc.exe" -DestinationPath "$WEB_ARTIFACT_NAME" -Force
+          $webHash = (Get-FileHash -Path "$WEB_ARTIFACT_NAME" -Algorithm SHA256).Hash.ToLower()
+          "$webHash  $WEB_ARTIFACT_NAME" | Out-File -FilePath "${WEB_ARTIFACT_NAME}.sha256" -Encoding ascii
+
+      # Generate SBOM (CycloneDX format) - Windows
+      - name: Generate SBOM (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+
+          # Generate for all-features binary (matches build flags exactly)
+          Set-Location cli
+          cargo cyclonedx `
+            --format json `
+            --spec-version 1.4 `
+            --no-default-features `
+            --features all `
+            --target ${{ matrix.target }}
+          Set-Location ..
+          Move-Item -Path cli/mgc.cdx.json -Destination "magicore-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json" -Force
+
+          # Generate for web-only binary (matches build flags exactly)
+          Set-Location cli
+          cargo cyclonedx `
+            --format json `
+            --spec-version 1.4 `
+            --no-default-features `
+            --features web `
+            --target ${{ matrix.target }}
+          Set-Location ..
+          Move-Item -Path cli/mgc.cdx.json -Destination "magicore-web-${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}-sbom.json" -Force
+
+          # Verify SBOMs
+          Get-ChildItem -Filter "*-sbom.json" | ForEach-Object {
+            $sbomData = Get-Content $_.FullName | ConvertFrom-Json
+
+            # Check required fields (P1 finding #6)
+            if ($sbomData.bomFormat -ne "CycloneDX") {
+              Write-Error "Invalid bomFormat: $($_.Name)"
+              exit 1
+            }
+            if (-not $sbomData.specVersion) {
+              Write-Error "Missing specVersion: $($_.Name)"
+              exit 1
+            }
+            if (-not $sbomData.metadata.component) {
+              Write-Error "Missing metadata.component: $($_.Name)"
+              exit 1
+            }
+            if (-not $sbomData.components) {
+              Write-Error "Missing components: $($_.Name)"
+              exit 1
+            }
+
+            $componentCount = $sbomData.components.Count
+            if ($componentCount -lt 10) {
+              Write-Error "Too few components ($componentCount): $($_.Name)"
+              exit 1
+            }
+
+            Write-Host "✅ Valid SBOM: $($_.Name) ($componentCount components)"
+          }
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (latest, node24)
         with:
-          name: ${{ matrix.artifact_name }}
+          name: ${{ steps.artifacts.outputs.artifact_name }}
           path: |
-            ${{ matrix.artifact_name }}
-            ${{ matrix.artifact_name }}.sha256
-            ${{ matrix.web_artifact_name }}
-            ${{ matrix.web_artifact_name }}.sha256
+            ${{ steps.artifacts.outputs.artifact_name }}
+            ${{ steps.artifacts.outputs.artifact_name }}.sha256
+            ${{ steps.artifacts.outputs.web_artifact_name }}
+            ${{ steps.artifacts.outputs.web_artifact_name }}.sha256
+            *-sbom.json
+
+  test-release-artifacts:
+    name: Smoke Test - ${{ matrix.variant }} (${{ matrix.os_name }})
+    needs: [resolve-version, build-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # All-core variants
+          - os: ubuntu-latest
+            os_name: linux
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: all-core
+          - os: windows-latest
+            os_name: windows
+            arch: x64
+            ext: zip
+            binary: mgc.exe
+            variant: all-core
+          # macOS arm64 — real arm64 runner (item 12, 2026-09-12)
+          - os: macos-latest
+            os_name: macos
+            arch: arm64
+            ext: tar.gz
+            binary: mgc
+            variant: all-core
+          # macOS x64 — smoke-test the cross-compiled artifact on the
+          # arm64 runner is NOT possible; run the x64 smoke under
+          # Rosetta (arch -x86_64) to prove the x64 binary at least
+          # launches.
+          # macOS x64 — không thể smoke artifact cross-compile trên
+          # runner arm64 trực tiếp; chạy smoke x64 qua Rosetta (arch
+          # -x86_64) để chứng minh binary x64 khởi động được.
+          - os: macos-latest
+            os_name: macos
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: all-core
+          # Web-only variants (P0 blocker: must test)
+          - os: ubuntu-latest
+            os_name: linux
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: web
+          - os: windows-latest
+            os_name: windows
+            arch: x64
+            ext: zip
+            binary: mgc.exe
+            variant: web
+          - os: macos-latest
+            os_name: macos
+            arch: arm64
+            ext: tar.gz
+            binary: mgc
+            variant: web
+          - os: macos-latest
+            os_name: macos
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: web
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout (for contract script)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (latest, node24)
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get artifact name via contract
+        id: artifact
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # The contract speaks 'all'/'web'; the matrix label
+          # 'all-core' is display-only — map it before calling.
+          # Contract chỉ nhận 'all'/'web'; nhãn 'all-core' trong matrix
+          # chỉ để hiển thị — ánh xạ trước khi gọi.
+          CONTRACT_VARIANT="all"
+          if [[ "${{ matrix.variant }}" == "web" ]]; then CONTRACT_VARIANT="web"; fi
+          names=$(./scripts/release-artifact-contract.sh "$VERSION" "${{ matrix.os_name }}" "${{ matrix.arch }}" "$CONTRACT_VARIANT")
+          ARTIFACT=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
+          echo "name=$ARTIFACT" >> $GITHUB_OUTPUT
+          echo "Testing artifact: $ARTIFACT"
+
+      - name: Extract archive (Unix)
+        if: matrix.ext == 'tar.gz'
+        run: |
+          mkdir -p test-binary
+          tar -xzf "artifacts/${{ steps.artifact.outputs.name }}" -C test-binary
+          chmod +x test-binary/${{ matrix.binary }}
+          ls -la test-binary/
+
+      - name: Extract archive (Windows)
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          $ARTIFACT = "${{ steps.artifact.outputs.name }}"
+          New-Item -ItemType Directory -Force -Path test-binary
+          Expand-Archive -Path "artifacts/$ARTIFACT" -DestinationPath test-binary -Force
+          Get-ChildItem test-binary
+
+      - name: Test version output
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          OUTPUT=$(./test-binary/${{ matrix.binary }} --version)
+          echo "Binary output: $OUTPUT"
+
+          # Parse version from output (expect: "mgc X.Y.Z")
+          BINARY_VERSION=$(echo "$OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+
+          if [ "$BINARY_VERSION" != "$VERSION" ]; then
+            echo "❌ Version mismatch: expected $VERSION, got $BINARY_VERSION"
+            exit 1
+          fi
+
+          echo "✅ Version matches: $VERSION"
+
+      - name: Smoke test - Web install (explicit core)
+        # 2026-09-12: bare `mgc install` fails honestly on a bare
+        # package.json with no bound core ("could not detect a
+        # MagiCore core") — the smoke must pass the explicit core
+        # exactly as the error hints, or bind a core first.
+        # 2026-09-12: `mgc install` trần fail trung thực trên
+        # package.json không có core ("could not detect a MagiCore
+        # core") — smoke phải truyền core tường minh đúng như error
+        # hint, hoặc bind core trước.
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p lifecycle-test/web-project
+          cd lifecycle-test/web-project
+
+          # Create package.json
+          echo '{"name":"test-web","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' > package.json
+
+          # Install with the explicit web core (NOT testing: create-web, test, build, run — the release-binary E2E covers the full lifecycle).
+          # Install với core web tường minh (full lifecycle do release-binary E2E phủ).
+          ../../test-binary/${{ matrix.binary }} --core web install
+
+          # Verify
+          if [ ! -d "node_modules/express" ]; then
+            echo "express not installed"
+            exit 1
+          fi
+
+          echo "Web install smoke test passed (explicit core)"
+
+      - name: Smoke test - Web install (explicit core, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path lifecycle-test/web-project
+          Set-Location lifecycle-test/web-project
+
+          '{"name":"test-web","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' | Out-File -FilePath package.json -Encoding utf8
+
+          & "../../test-binary/${{ matrix.binary }}" --core web install
+
+          if (-not (Test-Path "node_modules/express")) {
+            Write-Error "express not installed"
+            exit 1
+          }
+
+          Write-Host "✅ Web install smoke test passed"
+          Write-Host "⚠️  Full lifecycle not verified in CI"
+
+  pre-publish-verification:
+    name: Pre-Publish Verification (Fail-Closed)
+    needs: [resolve-version, test-release-artifacts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test release manifest builder (stable + RC names)
+        # P0: RC versions carry dashes (1.1.0-rc.9) — a left-split name
+        # parser silently drops them from manifest.json. This test pins
+        # the right-parse contract before any asset is published.
+        # Test builder manifest (stable + RC): parser tách trái từng lặng
+        # lẽ loại asset RC khỏi manifest — test này giữ hợp đồng parse-phải.
+        run: bash scripts/test-release-manifest.sh
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (latest, node24)
+        with:
+          path: verify-assets
+          merge-multiple: true
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Verify all 8 archives present
+        # 2026-09-12 (item 12): macOS arm64 artifacts joined the set —
+        # linux-x64, macos-x64, macos-arm64, windows-x64 × {all, web}.
+        # 2026-09-12 (item 12): artifact macOS arm64 vào bộ — linux-x64,
+        # macos-x64, macos-arm64, windows-x64 × {all, web}.
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Generate expected files via contract (single source of truth)
+          EXPECTED_FILES=()
+
+          for os in linux macos windows; do
+            for arch in x64 arm64; do
+              # macOS publishes BOTH arm64 and x64; linux/windows x64
+              # only for RC — arm64 entries are skipped by contract
+              # availability below.
+              # macOS publish CẢ arm64 lẫn x64; linux/windows chỉ x64
+              # trong RC — entry arm64 được bỏ nếu file không tồn tại.
+              for variant in all web; do
+                names=$(./scripts/release-artifact-contract.sh "$VERSION" "$os" "$arch" "$variant")
+                archive=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
+                checksum=$(echo "$names" | grep "^CHECKSUM=" | cut -d= -f2)
+                sbom=$(echo "$names" | grep "^SBOM=" | cut -d= -f2)
+
+                EXPECTED_FILES+=("$archive")
+                EXPECTED_FILES+=("$checksum")
+                EXPECTED_FILES+=("$sbom")
+              done
+            done
+          done
+
+          cd verify-assets
+          MISSING=0
+          PRESENT_ARM64_MACOS=0
+          for file in "${EXPECTED_FILES[@]}"; do
+            # linux-arm64 / windows-arm64 are NOT published in RC —
+            # absence is expected, presence is a bonus; only macOS
+            # arm64 is REQUIRED (item 12).
+            # linux-arm64 / windows-arm64 KHÔNG publish trong RC — thiếu
+            # là đúng kỳ vọng; riêng macOS arm64 là BẮT BUỘC (item 12).
+            case "$file" in
+              magicore-*-linux-arm64*|magicore-*-windows-arm64*)
+                [[ -f "$file" ]] && echo "BONUS present: $file"
+                continue
+                ;;
+              magicore-*-macos-arm64*)
+                if [[ -f "$file" ]]; then
+                  PRESENT_ARM64_MACOS=$((PRESENT_ARM64_MACOS + 1))
+                else
+                  echo "MISSING REQUIRED (macos arm64, item 12): $file"
+                  MISSING=$((MISSING + 1))
+                fi
+                continue
+                ;;
+            esac
+            if [[ ! -f "$file" ]]; then
+              echo "MISSING: $file"
+              MISSING=$((MISSING + 1))
+            else
+              echo "Found: $file"
+            fi
+          done
+
+          if [[ $MISSING -gt 0 ]]; then
+            echo "$MISSING files missing - BLOCKING RELEASE"
+            exit 1
+          fi
+          if [[ $PRESENT_ARM64_MACOS -lt 6 ]]; then
+            echo "macOS arm64 artifact set incomplete (expected 6 files: archives+checksums+SBOMs for all/web, got $PRESENT_ARM64_MACOS)" >&2
+            exit 1
+          fi
+          echo "All required archives + checksums + SBOMs present (incl. macOS arm64)"
+
+      - name: Verify all checksums
+        run: |
+          cd verify-assets
+          for checksum_file in *.sha256; do
+            echo "Verifying: $checksum_file"
+            sha256sum --check "$checksum_file" || exit 1
+          done
+          echo "✅ All checksums verified"
+
+      - name: Generate attestations for verification
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2 (latest, node24)
+        with:
+          subject-path: |
+            verify-assets/*.tar.gz
+            verify-assets/*.zip
+
+      - name: Verify all attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd verify-assets
+          FAILED=0
+          for archive in *.tar.gz *.zip; do
+            if [[ -f "$archive" ]]; then
+              echo "Verifying attestation: $archive"
+              # Use exit code, not grep string (P1 finding #5)
+              if gh attestation verify "$archive" --owner "${{ github.repository_owner }}"; then
+                echo "✅ Attestation verified: $archive"
+              else
+                echo "❌ Attestation FAILED: $archive"
+                FAILED=$((FAILED + 1))
+              fi
+            fi
+          done
+
+          if [[ $FAILED -gt 0 ]]; then
+            echo "❌ $FAILED attestations failed - BLOCKING RELEASE"
+            exit 1
+          fi
+          echo "✅ All attestations verified"
+
+      - name: Validate all SBOMs (enhanced)
+        run: |
+          cd verify-assets
+          VERSION="${{ steps.version.outputs.version }}"
+
+          for sbom in *-sbom.json; do
+            echo "Validating SBOM: $sbom"
+
+            # Check bomFormat
+            if ! jq -e '.bomFormat == "CycloneDX"' "$sbom" > /dev/null; then
+              echo "❌ Invalid bomFormat: $sbom"
+              exit 1
+            fi
+
+            # Check required fields (P1 finding #6)
+            if ! jq -e '.specVersion' "$sbom" > /dev/null; then
+              echo "❌ Missing specVersion: $sbom"
+              exit 1
+            fi
+
+            if ! jq -e '.metadata.component' "$sbom" > /dev/null; then
+              echo "❌ Missing metadata.component: $sbom"
+              exit 1
+            fi
+
+            if ! jq -e '.components' "$sbom" > /dev/null; then
+              echo "❌ Missing components: $sbom"
+              exit 1
+            fi
+
+            # Check component count (should have dependencies)
+            component_count=$(jq -r '.components | length' "$sbom")
+            if [[ $component_count -lt 10 ]]; then
+              echo "❌ Too few components ($component_count): $sbom"
+              exit 1
+            fi
+
+            # Verify SBOM metadata matches version (MUST match, not warning)
+            sbom_version=$(jq -r '.metadata.component.version // empty' "$sbom")
+            if [[ -z "$sbom_version" ]]; then
+              echo "❌ Missing metadata.component.version: $sbom"
+              exit 1
+            fi
+            if [[ "$sbom_version" != "$VERSION" ]]; then
+              echo "❌ SBOM version mismatch: expected $VERSION, got $sbom_version in $sbom"
+              exit 1
+            fi
+
+            echo "✅ Valid SBOM: $sbom ($component_count components, version $sbom_version)"
+          done
+          echo "✅ All SBOMs validated (linux+macos+windows, x64+arm64-macos)"
+
+      - name: Verification summary
+        run: |
+          echo "=== PRE-PUBLISH VERIFICATION PASSED ==="
+          echo "✅ All required archives present"
+          echo "✅ All checksums verified"
+          echo "✅ All attestations verified"
+          echo "✅ All SBOMs validated"
+          echo "✅ 8 archives + 8 checksums + 8 SBOMs verified (linux-x64, macos-x64, macos-arm64, windows-x64 x all/web)"
+          echo "Safe to publish."
+
+  audit-capability-gate:
+    # Release gate (Tech Lead 2026-09-10): a release RC may only be
+    # published when the audit capability matrix — regenerated at THIS
+    # commit — has every SUPPORTED lane green with the required evidence
+    # (clean + vulnerable + tool-failure). The matrix is generated, never
+    # hand-written; this job is the machine enforcement of the honesty
+    # contract (README never claims beyond the matrix).
+    # Release gate: RC chỉ được duyệt khi matrix năng lực audit — sinh
+    # lại TẠI commit này — có mọi lane SUPPORTED xanh với đủ evidence
+    # (clean + vulnerable + tool-failure). Matrix sinh tự động, không
+    # viết tay; job này là sự thực thi máy móc của hợp đồng trung thực.
+    name: Audit Capability Gate (matrix honest)
+    needs: [resolve-version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MGC_E2E_AUDIT_NETWORK: required
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install scanner toolchain (pinned — required lanes)
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          python3 -m pip install --user 'pip-audit==2.9.0'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          curl -fsSL "https://go.dev/dl/go1.26.0.linux-amd64.tar.gz" -o /tmp/go.tgz
+          sudo tar -C /usr/local -xzf /tmp/go.tgz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Regenerate capability matrix at this commit
+        run: |
+          cargo build -p mgc --locked
+          python3 scripts/audit_capability_matrix.py
+
+      - name: "Enforce release gate (expected manifest: every lane supported, fresh)"
+        # P0-1 (2026-09-11): the REQUIRED scope comes from the matrix's
+        # expected_lanes manifest (a code constant, independent from test
+        # results — tests never shrink the scope). Gate order:
+        #   1. format contract: expected_lanes manifest must exist
+        #   2. stale check: matrix commit must equal GITHUB_SHA
+        #   3. every expected lane must EXIST and be "supported"
+        #   4. missing_lanes must be empty
+        # A lane absent from the matrix can no longer dodge the gate.
+        # P0-1: scope bắt buộc đến từ manifest expected_lanes (hằng số
+        # code, độc lập kết quả test). Lane thiếu khỏi matrix không còn
+        # lọt được gate; matrix cũ/stale bị chặn.
+        shell: python3 {0}
+        run: |
+          import json, os, sys
+
+          data = json.load(open("docs/specs/auditCapabilityMatrix.json"))
+          failures = []
+          required_kinds = {"clean_fixture", "vulnerable_fixture", "tool_failure"}
+
+          # 1. Format contract: a matrix without the expected manifest
+          #    (old schema / hand-made) cannot be evaluated — reject.
+          #    Hợp đồng format: matrix thiếu manifest kỳ vọng → chặn.
+          expected = data.get("expected_lanes")
+          if not expected:
+              failures.append("matrix has no expected_lanes manifest — regenerate via scripts/audit_capability_matrix.py")
+
+          # 2. Stale check: the matrix must be evidence at THIS commit.
+          #    Kiểm tra stale: matrix phải là bằng chứng tại commit này.
+          sha = os.environ.get("GITHUB_SHA", "")
+          if sha and data.get("commit") != sha:
+              failures.append(f"matrix stale: commit {data.get('commit')} != GITHUB_SHA {sha}")
+
+          # 3. Every expected lane must exist AND be supported with the
+          #    full evidence set — partial/experimental/missing all block.
+          #    Mọi lane kỳ vọng phải tồn tại VÀ supported đủ evidence —
+          #    partial/experimental/thiếu đều bị chặn.
+          by_lane = {(l["core"], l["language"], l["scanner"]): l for l in data.get("capability", [])}
+          if expected:
+              for lane in expected:
+                  core, lang, scanner = lane["core"], lane["language"], lane["scanner"]
+                  key = (core, lang, scanner)
+                  if key not in by_lane:
+                      failures.append(f"{core}/{lang} ({scanner}) = MISSING — required lane absent from matrix")
+                      continue
+                  l = by_lane[key]
+                  if l["status"] != "supported":
+                      failures.append(f"{core}/{lang} ({scanner}) = {l['status']} — release lanes must be supported with full evidence")
+                  elif not required_kinds <= set(l.get("evidence_kinds", [])):
+                      failures.append(f"{core}/{lang} ({scanner}) = supported without full evidence kinds")
+
+          # 4. Explicit missing-lane records (redundant with #3, but the
+          #    script names them — surface every reason).
+          #    Bản ghi lane thiếu được script nêu đích danh — hiển thị đủ.
+          for m in data.get("missing_lanes", []):
+              failures.append(f"{m['core']}/{m['language']} ({m['scanner']}) = MISSING lane: {m.get('reason', '')}")
+
+          if failures:
+              print("RELEASE GATE BLOCKED — audit capability not green:")
+              print("\n".join(failures))
+              sys.exit(1)
+          print(f"OK: {len(data.get('capability', []))} lanes — every expected release lane supported with full evidence at {sha[:12]}")
+
+      - name: Upload gate matrix (audit trail)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-audit-capability-matrix
+          path: docs/specs/auditCapabilityMatrix.json
 
   publish-github-release:
     name: Create GitHub Release
-    needs: build-release
+    needs: [resolve-version, pre-publish-verification, audit-capability-gate]
+    if: ${{ needs.resolve-version.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create release and upload assets
+      attestations: write # Required for artifact attestation
+      id-token: write # Required for OIDC attestation
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (latest, node24)
         with:
           path: release-assets
           merge-multiple: true
@@ -140,10 +885,11 @@ jobs:
       - name: Display downloaded release assets
         run: ls -la release-assets
 
-      - name: Verify release packaging hashes
+      - name: Update and verify manifests
         run: |
-          ./scripts/update-release-hashes.sh --artifacts release-assets
-          ./scripts/update-release-hashes.sh --artifacts release-assets --verify-only
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          ./scripts/update-manifests.sh --version "$VERSION" --artifacts release-assets
+          ./scripts/update-manifests.sh --version "$VERSION" --artifacts release-assets --verify-only
 
       - name: Stage package manager manifests
         run: |
@@ -153,11 +899,218 @@ jobs:
           cp packaging/scoop/magicore.json release-assets/packaging/scoop/magicore.json
           cp packaging/scoop/magicore-web.json release-assets/packaging/scoop/magicore-web.json
 
+      # Release provenance (P0): build manifest.json binding every
+      # archive (version/variant/os/arch/digest/size) and sign it with
+      # the Ed25519 release key. Client `mgc self-update` verifies the
+      # manifest + signature against --trust-root/MGC_RELEASE_TRUST_ROOTS.
+      # Key setup (repo Settings → Secrets → Actions):
+      #   MGC_RELEASE_SIGNING_KEY = 64-hex-char Ed25519 seed.
+      #   Publish the matching pubkey wherever users can pin it.
+      # Without the secret this step publishes an UNSIGNED manifest and
+      # annotates loudly — clients then verify sha256 only (transitional,
+      # never claimed as provenance).
+      # (Ký manifest release — thiếu secret thì manifest không chữ ký.)
+      - name: Generate and sign release manifest
+        env:
+          MGC_RELEASE_SIGNING_KEY: ${{ secrets.MGC_RELEASE_SIGNING_KEY }}
+          # P0-5: stable releases must never ship unsigned — missing key
+          # fails this job instead of publishing a sha256-only manifest.
+          # (Release stable không bao giờ unsigned — thiếu key thì fail.)
+          MGC_RELEASE_REQUIRE_SIGNED: "1"
+        run: |
+          export VERSION="${{ needs.resolve-version.outputs.version }}"
+          # Manifest builder lives in scripts/ (tested by
+          # scripts/test-release-manifest.sh — RC dashes parse from the
+          # right, missing VERSION fails closed, no KeyError).
+          # Builder manifest nằm ở scripts/ (có test — version RC parse
+          # từ phải, thiếu VERSION fail rõ ràng).
+          python3 scripts/release-manifest.py --require-matrix release-assets
+          # Sign with the JUST-BUILT binary (ring backend, locked in
+          # Cargo.lock — no pip/network at signing time; P0). The python
+          # signer stays as the independent cross-check oracle in
+          # scripts/test-release-manifest.sh and the verify-distribution
+          # workflow.
+          # (Ký bằng CHÍNH binary vừa build — backend ring đã khóa.)
+          BOOTSTRAP_DIR="$(mktemp -d)"
+          tar -xzf release-assets/magicore-"$VERSION"-linux-x64.tar.gz -C "$BOOTSTRAP_DIR"
+          "$BOOTSTRAP_DIR/mgc" sign-release --manifest release-assets/manifest.json
+          rm -rf "$BOOTSTRAP_DIR"
+
+      # Note: Attestations already generated in pre-publish-verification
+      # No need to regenerate here (P1 finding #6)
+
       - name: Create GitHub Release and Upload Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3 (latest, node24)
         with:
-          files: release-assets/*
-          draft: false
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/*.sha256
+            release-assets/*-sbom.json
+            release-assets/manifest.json
+            release-assets/manifest.json.sig
+            release-assets/packaging/homebrew/*.rb
+            release-assets/packaging/scoop/*.json
+          draft: true # P0: Start as draft, promote after post-download smoke
+          prerelease: ${{ contains(needs.resolve-version.outputs.version, 'beta') || contains(needs.resolve-version.outputs.version, 'rc') || contains(needs.resolve-version.outputs.version, 'alpha') }}
           generate_release_notes: false
           body_path: CHANGELOG.md
+
+  verify-public-download:
+    name: Smoke Test Public Download (${{ matrix.os_name }}-${{ matrix.arch }})
+    needs: [resolve-version, publish-github-release]
+    # Draft releases are only visible to tokens with repo WRITE access
+    # (2026-09-12): this job downloads the DRAFT to verify its bytes
+    # before promotion; the elevated permission is scoped to THIS job
+    # and only ever reads. Post-promotion, anonymous users run the same
+    # download with no token at all.
+    # Draft release chỉ hiển thị với token có quyền WRITE repo: job này
+    # tải DRAFT để kiểm tra byte trước khi promote; quyền nâng chỉ áp
+    # cho job này và chỉ đọc. Sau promote, user ẩn danh chạy cùng lệnh
+    # download mà không cần token.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_name: linux
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+          - os: windows-latest
+            os_name: windows
+            arch: x64
+            ext: zip
+            binary: mgc.exe
+          - os: macos-latest
+            os_name: macos
+            arch: arm64
+            ext: tar.gz
+            binary: mgc
+          - os: macos-latest
+            os_name: macos
+            arch: x64
+            ext: tar.gz
+            binary: mgc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Download release artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          RELEASE_TAG="v${VERSION}"
+          ARTIFACT_NAME="magicore-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.${{ matrix.ext }}"
+          echo "Downloading: $ARTIFACT_NAME"
+          gh release download "$RELEASE_TAG" -p "$ARTIFACT_NAME" -R "${{ github.repository }}"
+        shell: bash
+
+      - name: Extract archive (Unix)
+        if: matrix.ext == 'tar.gz'
+        run: |
+          mkdir -p test-install
+          tar -xzf magicore-*-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz -C test-install
+          chmod +x test-install/${{ matrix.binary }}
+          ls -la test-install/
+
+      - name: Extract archive (Windows)
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          $archive = "magicore-*-${{ matrix.os_name }}-${{ matrix.arch }}.zip"
+          New-Item -ItemType Directory -Force -Path test-install
+          Expand-Archive -Path $archive -DestinationPath test-install -Force
+          Get-ChildItem test-install
+
+      - name: Test mgc --version
+        run: |
+          # macOS x64 artifact on the arm64 runner runs via Rosetta
+          # (arch -x86_64) — the x64 binary must at least launch.
+          # Artifact x64 trên runner arm64 chạy qua Rosetta (arch
+          # -x86_64) — binary x64 phải khởi động được ít nhất.
+          if [[ "$RUNNER_OS" == "macOS" && "${{ matrix.arch }}" == "x64" ]]; then
+            if ! arch -x86_64 ./test-install/${{ matrix.binary }} --version 2>/dev/null && ! ./test-install/${{ matrix.binary }} --version; then
+              echo "x64 binary failed to launch (Rosetta not installed on runner?)" >&2
+              exit 1
+            fi
+          else
+            ./test-install/${{ matrix.binary }} --version
+          fi
+        shell: bash
+
+      - name: Test lifecycle (create + install)
+        if: runner.os != 'Windows'
+        run: |
+          # Create isolated test directory
+          mkdir -p lifecycle-test/web-project
+          cd lifecycle-test/web-project
+
+          # Create minimal package.json
+          echo '{"name":"test","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' > package.json
+
+          # Explicit web core — bare install fails honestly on a
+          # package.json with no bound core (2026-09-12).
+          # Core web tường minh — install trần fail trung thực trên
+          # package.json không có core.
+          ../../test-install/${{ matrix.binary }} --core web install
+
+          # Verify installation
+          if [ ! -d "node_modules" ]; then
+            echo "❌ node_modules not created"
+            exit 1
+          fi
+
+          if [ ! -d "node_modules/express" ]; then
+            echo "❌ express not installed"
+            exit 1
+          fi
+
+          echo "✅ Lifecycle test passed"
+
+      - name: Test lifecycle (create + install) - Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Create isolated test directory
+          New-Item -ItemType Directory -Force -Path lifecycle-test/web-project
+          Set-Location lifecycle-test/web-project
+
+          # Create minimal package.json
+          '{"name":"test","version":"1.0.0","dependencies":{"express":"^4.18.0"}}' | Out-File -FilePath package.json -Encoding utf8
+
+          # Explicit web core — bare install fails honestly without one.
+          # Core web tường minh — install trần fail trung thực khi thiếu.
+          & "../../test-install/${{ matrix.binary }}" --core web install
+
+          # Verify installation
+          if (-not (Test-Path "node_modules")) {
+            Write-Error "node_modules not created"
+            exit 1
+          }
+
+          if (-not (Test-Path "node_modules/express")) {
+            Write-Error "express not installed"
+            exit 1
+          }
+
+          Write-Host "✅ Lifecycle test passed"
+
+  dry-run-summary:
+    name: Dry-Run Summary
+    needs: [resolve-version, pre-publish-verification]
+    if: ${{ needs.resolve-version.outputs.publish == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dry-run results
+        run: |
+          echo "=== DRY-RUN COMPLETED ==="
+          echo ""
+          echo "Version: ${{ needs.resolve-version.outputs.version }}"
+          echo "Build: ✅ PASS (8 archives incl. macOS arm64)"
+          echo "Smoke: ✅ PASS (6 variants x64)"
+          echo "Pre-publish: ✅ PASS (8 archives + checksums + SBOMs)"
+          echo ""
+          echo "Ready to publish: YES"
+          echo "To create a draft release, push an approved annotated version tag"

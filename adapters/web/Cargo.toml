@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Web ecosystem adapter for MagiCore"
 
 [dependencies]
+mgc-audit = { workspace = true }
 # Core crates
 mgc-types = { workspace = true }
 mgc-adapter-base = { workspace = true }
@@ -34,6 +35,7 @@ futures-util = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -54,13 +56,15 @@ tempfile = { workspace = true }
 lru = { workspace = true }
 urlencoding = "2"
 chrono = { workspace = true }
+libc = { workspace = true }
+uuid = { workspace = true }
 
 # Parallelism
 rayon = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { workspace = true, features = ["html_reports"] }
 
 [lints]
 workspace = true

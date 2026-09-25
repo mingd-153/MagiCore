@@ -1,7 +1,7 @@
 //! Publish command — 11 bước orchestration (01 §4, §5 CLI surface)
 //! (Lệnh publish: orchestrate 11 bước — git check, version bump, lifecycle, pack, registry select, PUT, 409, dist-tags, output)
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use clap::Args;
 use semver::Version;
 use std::fs;
@@ -83,7 +83,21 @@ pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
 /// `mgc stage` — pack project vào .mgc-stage/ (không đăng registry).
 /// Kiểm tra nhanh trước khi publish: tarball hợp lệ, files selection đúng.
 pub async fn stage(dir: Option<String>) -> Result<()> {
-    let cwd = dir.map(PathBuf::from).unwrap_or(std::env::current_dir()?);
+    // Resolve --dir against the real cwd: downstream pack/tar joins
+    // assume an absolute root, and a bare relative dir surfaces as a
+    // cryptic empty-path IO error.
+    // (--dir tương đối phải nối với cwd — pack/tar cần root tuyệt đối.)
+    let cwd = match dir {
+        Some(d) => {
+            let p = PathBuf::from(&d);
+            if p.is_absolute() {
+                p
+            } else {
+                std::env::current_dir()?.join(p)
+            }
+        }
+        None => std::env::current_dir()?,
+    };
     let project_root =
         ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
     let project = ProjectConfig::load(&project_root)?.ok_or_else(crate::error::mgc_toml_missing)?;
@@ -142,18 +156,19 @@ fn visit_ws(
         return;
     }
     let pkg = ws.join("package.json");
-    if let Ok(raw) = fs::read_to_string(&pkg) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-            let mut deps: Vec<String> = vec![];
-            for key in ["dependencies", "devDependencies", "peerDependencies"] {
-                if let Some(map) = v.get(key).and_then(|d| d.as_object()) {
-                    deps.extend(map.keys().cloned());
-                }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(raw) = fs::read_to_string(&pkg)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw)
+    {
+        let mut deps: Vec<String> = vec![];
+        for key in ["dependencies", "devDependencies", "peerDependencies"] {
+            if let Some(map) = v.get(key).and_then(|d| d.as_object()) {
+                deps.extend(map.keys().cloned());
             }
-            for dep in deps {
-                if let Some(dep_ws) = names.get(&dep) {
-                    visit_ws(dep_ws, names, visited, order);
-                }
+        }
+        for dep in deps {
+            if let Some(dep_ws) = names.get(&dep) {
+                visit_ws(dep_ws, names, visited, order);
             }
         }
     }
@@ -323,7 +338,15 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
         );
     }
 
-    // Save updated version to mgc.toml + package.json
+    // Save updated version to mgc.toml + package.json under the writer
+    // lock (static-gate finding): a concurrent mutation must not
+    // interleave with the release version commit.
+    // (Lock writer quanh commit version release.)
+    let _guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
+        project_root,
+        crate::commands::core::shared::writer_lock_timeout(project_root),
+    )
+    .map_err(|e| anyhow::anyhow!("publish cannot acquire the project writer lock: {e}"))?;
     project.save(project_root)?;
     if pkg_json_path.exists() {
         fs::write(&pkg_json_path, serde_json::to_string_pretty(&pkg_json)?)?;
@@ -473,7 +496,9 @@ async fn verify_token(registry_url: &str, auth: &mgc_publish::auth::Auth) -> Res
     Ok(())
 }
 
-/// Publish PUT to registry
+/// Publish PUT to registry.
+/// Gửi payload publish lên registry bằng request đã xác thực.
+#[allow(clippy::too_many_arguments)]
 async fn publish_put(
     registry_url: &str,
     auth: &mgc_publish::auth::Auth,

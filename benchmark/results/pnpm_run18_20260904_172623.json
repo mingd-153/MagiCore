@@ -1,0 +1,26 @@
+{
+  "pm": "pnpm",
+  "run": 18,
+  "timestamp": "20260904_172623",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_172623"
+},
+  "cold_install": {
+    "duration_seconds": 68.494602000,
+    "disk_mb": 362,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 1.502281000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "Progress: resolved 1, reused 0, downloaded 0, added 0 [WARN] deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options. Progress: resolved 9, reused 0, downloaded 3, added 0 Progress: resolved 9, reused 0, downloaded 6, added 0 Progress: resolved 11, reused 0, downloaded 7, added 0 Progress: resolved 11, reused 0, downloaded 9, added 0 Progress: resolved 11, reused 0, downloaded 10, added 0 Progress: resolved 13, reused 0, downloaded 10, added 0 Progress: resolved 15, reused 0, downloaded 13, added 0 Progress: resolved 17, reused 0, downloaded 14, added 0 Progress: resolved 18, reused 0, downloaded 16, added 0 [WARN] Request took 10933ms: https://registry.npmjs.org/next Progress: resolved 18, reused 0, downloaded 17, added 0 [WARN] Request took 12708ms: https://registry.npmjs.org/framer-motion Progress: resolved 19, reused 0, downloaded 17, added 0 Progress: resolved 19, reused 0, downloaded 18, added 0 Progress: resolved 20, reused 0, downloaded 18, added 0 Progress: resolved 51, reused 0, downloaded 32, added 0 Progress: resolved 87, reused 0, downloaded 56, added 0 [WARN] Tarball download average speed 34 KiB/s (size 57 KiB) is below 50 KiB/s: https://registry.npmjs.org/graphemer/-/graphemer-1.4.0.tgz (GET) ",
+    "warm": "✓ Lockfile passes supply-chain policies (verified 2s ago) Lockfile is up to date, resolution step is skipped Progress: resolved 1, reused 0, downloaded 0, added 0 Packages: +286 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ Packages are cloned from the content-addressable store to the virtual store.   Content-addressable store is at: /Users/doanmihh/Library/pnpm/store/v11   Virtual store is at:             node_modules/.pnpm Progress: resolved 286, reused 286, downloaded 0, added 284 Progress: resolved 286, reused 286, downloaded 0, added 286, done  dependencies: + axios 1.20.0 + clsx 2.1.1 + date-fns 2.30.0 + framer-motion 10.18.0 + lodash 4.18.1 + next 14.2.35 + react 18.3.1 + react-dom 18.3.1 "
+  }
+}

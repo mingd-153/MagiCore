@@ -9,7 +9,7 @@ use mgc_resolver::DependencyError;
 use mgc_types::PackageName;
 use serde::{Deserialize, Serialize};
 
-use crate::cache::{current_unix_secs, SharedWebCache};
+use crate::cache::{SharedWebCache, current_unix_secs};
 use crate::native;
 
 const MAX_METADATA_CACHE_ENTRIES: usize = 2048;
@@ -158,7 +158,14 @@ pub async fn load_metadata_by_name_with_fallback(
     shared_cache: Option<&SharedWebCache>,
 ) -> Result<Arc<native::npm_registry::PackageMetadata>, DependencyError> {
     let registry_url = registry.registry_url().to_string();
-    let cached = if let Some(shared_cache) = shared_cache {
+    // Age gate armed: stale disk cache may hold ABBREVIATED packuments
+    // (no `time` map) from pre-policy runs — reusing them would silently
+    // keep everything. Force a fresh FULL fetch; the fresh doc still
+    // overwrites the cache below.
+    // (Cổng tuổi bật: bỏ qua cache đĩa cũ thiếu time.)
+    let cached = if registry.age_gate_armed() {
+        None
+    } else if let Some(shared_cache) = shared_cache {
         shared_cache.read_metadata(package, &registry_url)?
     } else {
         None
@@ -238,20 +245,21 @@ pub async fn load_metadata_by_name_with_fallback(
             Ok(Arc::new(metadata))
         }
         Err(e) => {
-            if let Some(cached) = cached {
-                if metadata_record_is_usable_stale(&cached) {
-                    if let Some(shared_cache) = shared_cache {
-                        let _ = shared_cache.write_metadata_record(
-                            package,
-                            &cached.metadata,
-                            cached.etag.clone(),
-                            cached.fetched_at,
-                            Some(next_stale_retry_after()),
-                            &registry_url,
-                        );
-                    }
-                    return Ok(Arc::new(cached.metadata));
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(cached) = cached
+                && metadata_record_is_usable_stale(&cached)
+            {
+                if let Some(shared_cache) = shared_cache {
+                    let _ = shared_cache.write_metadata_record(
+                        package,
+                        &cached.metadata,
+                        cached.etag.clone(),
+                        cached.fetched_at,
+                        Some(next_stale_retry_after()),
+                        &registry_url,
+                    );
                 }
+                return Ok(Arc::new(cached.metadata));
             }
             Err(DependencyError(format!(
                 "failed to fetch metadata for '{}': {}",

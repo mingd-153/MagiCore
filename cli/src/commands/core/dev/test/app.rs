@@ -2,7 +2,7 @@
 
 #[cfg(target_os = "macos")]
 use super::find_ios_simulator;
-use super::{detect_target_platform, TargetPlatform};
+use super::{TargetPlatform, detect_target_platform};
 
 #[test]
 fn detect_target_platform_returns_valid_variant() {
@@ -18,13 +18,16 @@ fn detect_target_platform_returns_valid_variant() {
 #[cfg(target_os = "macos")]
 #[test]
 fn find_ios_simulator_returns_some_or_none_without_panic() {
-    // Trên macOS: không panic; nếu Xcode có → Some(udid), không → None
+    // On macOS: no panic; with Xcode → Some(udid), without → None.
+    // Trên macOS: không panic; có Xcode → Some(udid), không → None.
     let result = find_ios_simulator();
     if let Some(ref udid) = result {
-        // UDID phải dạng hex-dash (8-4-4-4-12)
-        assert!(udid.len() >= 8, "UDID quá ngắn: {udid}");
+        // UDID must be hex-dash form (8-4-4-4-12).
+        // UDID phải dạng hex-dash (8-4-4-4-12).
+        assert!(udid.len() >= 8, "UDID too short: {udid}");
     }
-    // None cũng hợp lệ (Xcode không cài)
+    // None is also valid (Xcode not installed).
+    // None cũng hợp lệ (không cài Xcode).
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -44,4 +47,12 @@ fn target_platform_debug_format() {
     // Smoke test: Debug trait hoạt động
     let _ = format!("{:?}", TargetPlatform::IosSimulator);
     let _ = format!("{:?}", TargetPlatform::Android);
+}
+
+#[test]
+fn flutter_run_never_resolves_packages_outside_mgc() {
+    let ios = super::flutter_dev_command(&TargetPlatform::IosSimulator, true);
+    let android = super::flutter_dev_command(&TargetPlatform::Android, true);
+    assert!(ios.args.contains(&"--no-pub".to_string()));
+    assert!(android.args.contains(&"--no-pub".to_string()));
 }

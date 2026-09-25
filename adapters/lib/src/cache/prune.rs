@@ -1,7 +1,7 @@
 //! `cache/prune.rs` — Cache pruning for lib adapter.
 //! Removes old/unused cached packages (mirrors web cache_prune.rs).
 
-use super::metadata::{metadata_path, CacheMetadata};
+use super::metadata::{CacheMetadata, metadata_path};
 use mgc_types::{MgError, MgResult};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -77,12 +77,13 @@ pub fn prune_cache(language: &str, strategy: PruneStrategy) -> MgResult<u64> {
 
     // Remove files and metadata entries
     // Xóa files và metadata entries
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
     for package_id in &to_remove {
-        if let Some(entry) = metadata.remove(package_id) {
-            if entry.file_path.exists() {
-                std::fs::remove_file(&entry.file_path)
-                    .map_err(|e| MgError::Other(format!("failed to remove file: {}", e)))?;
-            }
+        if let Some(entry) = metadata.remove(package_id)
+            && entry.file_path.exists()
+        {
+            std::fs::remove_file(&entry.file_path)
+                .map_err(|e| MgError::Other(format!("failed to remove file: {}", e)))?;
         }
     }
 

@@ -4,7 +4,7 @@
 //! AI core (Q11): `mgc model pull hf://org/model/file` hoặc `oci://registry/repo:tag`
 //! → CAS store (`~/.magicore/store/v3`, T1) + manifest model; list/rm local.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 use mgc_oci::client::OciClient;
 use mgc_oci::manifest::OciImageConfig;
@@ -19,10 +19,11 @@ const MODEL_MEDIA_TYPE: &str = "application/vnd.magicore.model.layer.v1+file";
 /* ─── Local model manifest (CAS AI core, Q11) ─────────────────────── */
 
 fn store_root() -> PathBuf {
-    if let Ok(root) = std::env::var("MAGICORE_STORE_ROOT") {
-        if !root.is_empty() {
-            return PathBuf::from(root);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(root) = std::env::var("MAGICORE_STORE_ROOT")
+        && !root.is_empty()
+    {
+        return PathBuf::from(root);
     }
     mgc_store::default_store_root()
 }
@@ -69,10 +70,11 @@ fn read_manifests_in(dir: PathBuf) -> Vec<ModelManifest> {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|x| x == "json") {
-                if let Ok(s) = std::fs::read_to_string(&p) {
-                    if let Ok(m) = serde_json::from_str(&s) {
-                        out.push(m);
-                    }
+                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+                if let Ok(s) = std::fs::read_to_string(&p)
+                    && let Ok(m) = serde_json::from_str(&s)
+                {
+                    out.push(m);
                 }
             }
         }
@@ -120,7 +122,9 @@ async fn cas_pull(source: &str) -> Result<()> {
 fn cas_import(store: &mgc_store::cas::ContentStore, src: &Path) -> Result<(String, u64)> {
     let len = std::fs::metadata(src)?.len();
     let hash = store.import_file(src)?;
-    Ok((hash.hash, len))
+    // Accessor (P0-1): IntegrityHash fields are private — read via as_hex().
+    // (Accessor (P0-1): field IntegrityHash đã private — đọc qua as_hex().)
+    Ok((hash.as_hex().to_string(), len))
 }
 
 /// hf://org/model/file → https://huggingface.co/{org}/{model}/resolve/main/{file}
@@ -256,7 +260,17 @@ fn remove_local(name: &str) -> Result<()> {
         if others.contains(&blob.as_str()) {
             continue; // còn model khác dùng — giữ blob (refcount T1)
         }
-        let hash = mgc_store::cas::IntegrityHash::from_hash_str(blob, false);
+        // Manifest hash is external input — fail-closed validation, then warn
+        // and skip the blob (deletion must not abort the whole removal).
+        // Hash trong manifest là input ngoài — validate fail-closed, nếu sai
+        // dạng thì cảnh báo và bỏ qua blob (không abort cả lệnh remove).
+        let hash = match mgc_store::cas::IntegrityHash::from_hash_str(blob, false) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("warning: invalid blob hash '{blob}', skipping: {e}");
+                continue;
+            }
+        };
         if let Err(e) = store.remove(&hash) {
             eprintln!("warning: failed to remove blob {blob}: {e}");
         }
@@ -274,12 +288,12 @@ pub struct ModelArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ModelCmd {
-    /// Push model files to registry (mỗi file 1 layer + manifest)
+    /// Push model files to registry (one layer per file + manifest)
     Push {
-        /// Files/thư mục model (thư mục = nén tar? — hiện tại mỗi file 1 layer)
+        /// Model files/directories (directories are walked; one layer per file)
         #[arg(required = true)]
         paths: Vec<String>,
-        /// Repo: ai/ten-model
+        /// Repo, e.g. ai/my-model
         #[arg(long, default_value = "ai/default")]
         repo: String,
         #[arg(long, default_value = "latest")]
@@ -290,9 +304,9 @@ pub enum ModelCmd {
         token: Option<String>,
     },
     /// Pull model: `hf://org/model/file` / `oci://registry/repo:tag` (→ CAS store)
-    /// hoặc từ registry local (ghi file như cũ, output dir).
+    /// or from the local registry (writes files as-is into the output dir).
     Pull {
-        /// Repo: hf://org/model/file | oci://registry/repo:tag | ai/ten-model (registry local)
+        /// Repo: hf://org/model/file | oci://registry/repo:tag | ai/my-model (local registry)
         repo: String,
         #[arg(long, default_value = "latest")]
         tag: String,
@@ -303,7 +317,7 @@ pub enum ModelCmd {
         #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         token: Option<String>,
     },
-    /// List: mặc định registry catalog; `--local` = model trong CAS store
+    /// List: default is the registry catalog; `--local` = models in the CAS store
     List {
         #[arg(long)]
         local: bool,
@@ -312,20 +326,19 @@ pub enum ModelCmd {
         #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         token: Option<String>,
     },
-    /// Xoá model local khỏi CAS store (manifest + blob không ai trỏ)
+    /// Remove a local model from the CAS store (manifest + unreferenced blobs)
     Rm {
-        /// Tên model (khớp manifest: org/model/file hoặc repo:tag)
+        /// Model name (matches manifest: org/model/file or repo:tag)
         name: String,
     },
-    /// Quantize GGUF (A4: python passthrough `python -m llama_cpp.quantize` —
-    /// không static link llama-cpp-2; fail-closed nếu llama_cpp chưa cài)
+    /// Quantize GGUF (native quantizer not yet implemented).
     Quantize {
-        /// Đường dẫn file model gốc (GGUF/ggml)
+        /// Path to the source model file (GGUF/ggml)
         path: String,
-        /// Target quant: q4_k_m | q8_0 (awq cần GPU toolchain — chưa hỗ trợ)
+        /// Target quant: q4_k_m | q8_0 (awq needs a GPU toolchain — unsupported)
         #[arg(long, default_value = "q4_k_m")]
         target: String,
-        /// Output path (mặc định: <path>.<target>.gguf cùng thư mục)
+        /// Output path (default: <path>.<target>.gguf in the same directory)
         #[arg(long)]
         output: Option<String>,
     },
@@ -373,38 +386,12 @@ pub async fn run(args: ModelArgs) -> Result<()> {
     }
 }
 
-/// GGUF quantize qua python passthrough (A4, sys-mgc/05 §4)
-fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
-    if target != "q4_k_m" && target != "q8_0" {
-        return Err(crate::error::unsupported_quantize_target(target));
-    }
-    if !std::path::Path::new(path).exists() {
-        return Err(crate::error::file_not_found(std::path::Path::new(path)));
-    }
-    let out = match output {
-        Some(o) => o.to_string(),
-        None => format!("{path}.{target}.gguf"),
-    };
-    // WARNING: TĨNH cho đường dẫn được chỉ định — KHÔNG dùng đường dẫn từ prompt
-    let py = std::process::Command::new("python3")
-        .args(["-c", "import llama_cpp; print('ok')"])
-        .output();
-    let python_ok = match py {
-        Ok(o) => o.status.success(),
-        Err(_) => false,
-    };
-    if !python_ok {
-        return Err(crate::error::llama_cpp_missing());
-    }
-    let status = std::process::Command::new("python3")
-        .args(["-m", "llama_cpp.quantize", path, &out, target])
-        .status()?;
-    if !status.success() {
-        return Err(crate::error::llama_quantize_failed(status.code()));
-    }
-    println!("quantized: {} ({target})", out);
-    println!("push to registry: mgc model push {out} --repo ai/<name> (compressed variant)");
-    Ok(())
+/// Fail closed until MagiCore ships its own GGUF quantization engine.
+/// Fail-closed cho tới khi MagiCore có engine lượng tử hóa GGUF riêng.
+fn quantize(_path: &str, _target: &str, _output: Option<&str>) -> Result<()> {
+    anyhow::bail!(
+        "native GGUF quantization is not implemented; MagiCore will not invoke Python or an external quantizer"
+    )
 }
 
 fn client(registry: &str, token: Option<String>) -> Result<OciClient> {

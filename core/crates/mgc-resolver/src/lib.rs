@@ -2,10 +2,18 @@
 //!
 //! Provides a `Resolver` with batch pipeline: prefetch → queue → resolve.
 //! Errors from registry/providers are propagated to callers (no silent skips).
+//!
+//! All registry HTTP goes through `mgc_http::HttpClient` (bounded
+//! timeouts + retries) — raw `reqwest` is banned here by the module
+//! hygiene gate (sys-mgc/14-module-map.md: no reqwest outside mgc-http).
+//! (Mọi HTTP registry qua `mgc_http::HttpClient` — cấm reqwest trực tiếp.)
 
 pub mod cache;
 pub mod graph;
 pub mod patches;
+// Phase 2 native registry protocol slots — type-checked stubs, no wiring.
+// Chỗ cắm registry protocol native Phase 2 — stub có type-check, chưa wire.
+pub mod protocols;
 pub mod solver;
 pub mod version;
 
@@ -13,8 +21,8 @@ pub use cache::RegistryCache;
 pub use graph::DependencyGraph;
 pub use patches::{apply_patch, get_patches_dir, verify_patch_integrity};
 pub use solver::{
-    check_dependency_confusion, DepInfo, DependencyError, DependencyProvider, Resolution,
-    ResolvedDep, Resolver, SolveError, SolveResult,
+    DepInfo, DependencyError, DependencyProvider, Resolution, ResolvedDep, Resolver, SolveError,
+    SolveResult, check_dependency_confusion,
 };
 pub use version::VersionSet;
 

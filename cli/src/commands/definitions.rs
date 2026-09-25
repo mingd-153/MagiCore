@@ -5,7 +5,7 @@ use clap::Subcommand;
 
 #[derive(Subcommand, Clone)]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum Commands {
+pub enum Commands {
     // ── Common / Global commands ────────────────────────────────────────
     #[command(about = "Interactive project wizard")]
     Init {
@@ -45,9 +45,60 @@ pub(crate) enum Commands {
             help = "Bump vulnerable packages and rewrite lockfile on success"
         )]
         fix: bool,
+        /// Machine-readable output format: table (default), json
+        /// (versioned envelope), sarif (2.1.0 for GitHub Security),
+        /// cyclonedx (1.5 Vulnerable BOM). Table renders the same data
+        /// for humans; the others print ONLY the machine payload.
+        /// Định dạng cho máy: table (mặc định), json (envelope có
+        /// version), sarif (2.1.0 cho GitHub Security), cyclonedx (1.5
+        /// Vulnerable BOM). Table hiển thị cho người; còn lại chỉ in
+        /// payload máy.
+        #[arg(long, help = "Output format: table|json|sarif|cyclonedx")]
+        format: Option<String>,
     },
     #[command(about = "Update MagiCore CLI to the latest version")]
-    SelfUpdate,
+    SelfUpdate {
+        #[arg(
+            long,
+            help = "target version (default: latest release), with or without leading 'v'"
+        )]
+        version: Option<String>,
+        #[arg(
+            long,
+            help = "release variant: magicore|magicore-web|all (default: detected from this binary)"
+        )]
+        variant: Option<String>,
+        #[arg(
+            long,
+            help = "print what would be downloaded without changing anything"
+        )]
+        dry_run: bool,
+        #[arg(
+            long = "trust-root",
+            help = "hex Ed25519 pubkey pinning the release manifest (repeatable); or MGC_RELEASE_TRUST_ROOTS"
+        )]
+        trust_root: Vec<String>,
+        #[arg(
+            long = "allow-unsigned",
+            help = "explicit opt-in to a sha256-only update with NO provenance (refused when any trust root is configured; loud warning)"
+        )]
+        allow_unsigned: bool,
+    },
+    #[command(
+        about = "Sign a release manifest with the Ed25519 release key (ring backend, no network)"
+    )]
+    SignRelease {
+        #[arg(
+            long,
+            help = "manifest file to sign (default: manifest.json); writes <manifest>.sig"
+        )]
+        manifest: Option<String>,
+        #[arg(
+            long = "key-hex",
+            help = "64-hex-char Ed25519 seed (default: MGC_RELEASE_SIGNING_KEY)"
+        )]
+        key_hex: Option<String>,
+    },
     #[command(about = "Read/write configuration (.npmrc)", alias = "c")]
     Config {
         #[command(subcommand)]
@@ -70,6 +121,16 @@ pub(crate) enum Commands {
     Import {
         #[arg(long, help = "Target project directory to import")]
         dir: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            help = "Allow writing an UNSIGNED mgc.lock when no signing key exists (explicit escape hatch — never the default)"
+        )]
+        allow_unsigned: bool,
+    },
+    #[command(about = "Migrate mgc.lock to a newer schema (explicit, never automatic)")]
+    Migrate {
+        #[command(subcommand)]
+        cmd: crate::commands::migrate::MigrateCmd,
     },
 
     // ── W6: SBOM Export ──────────────────────────────────────────────
@@ -170,6 +231,8 @@ pub(crate) enum Commands {
     },
     #[command(about = "Start native Model Context Protocol (MCP) server for AI coding agents")]
     Mcp,
+    #[command(about = "Show the capability manifest of each core (Global Gate 1)")]
+    Capabilities,
 
     // ── Engine Commands (In-project, auto-detect core) ───────────────
     #[command(about = "Start the local development server", alias = "dev-web")]
@@ -180,6 +243,16 @@ pub(crate) enum Commands {
         port: Option<u16>,
         #[arg(long, help = "Clear terminal on each reload")]
         clear: bool,
+        /// Temporary rival-runtime compatibility lane (bun|deno) —
+        /// explicit, warned on every spawn; the default path is the
+        /// NATIVE MagiCore engine.
+        /// Lane compat runtime đối thủ tạm thời — tường minh, cảnh báo
+        /// mỗi lần spawn; đường mặc định là engine NATIVE MagiCore.
+        #[arg(
+            long,
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Run a script defined in package.json")]
     Run {
@@ -187,11 +260,39 @@ pub(crate) enum Commands {
         script: String,
         #[arg(last = true)]
         args: Vec<String>,
+        /// Temporary rival-runtime compatibility lane (bun|deno).
+        #[arg(
+            long,
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
+        )]
+        compat_runtime: Option<String>,
+    },
+    #[command(about = "Run tests (auto-detect test runner: cargo/go/pytest/npm test)")]
+    Test {
+        #[arg(last = true, help = "Arguments passed to test runner")]
+        args: Vec<String>,
+        /// Temporary rival-runtime compatibility lane (bun|deno).
+        #[arg(
+            long,
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
+        )]
+        compat_runtime: Option<String>,
+    },
+    #[command(about = "Optimize project for hardware (runtime detection + adapter pattern)")]
+    Optimizer {
+        #[arg(long, help = "Overwrite existing optimized files")]
+        force: bool,
     },
     #[command(about = "Build the project")]
     Build {
         #[arg(long, help = "Build target (e.g., native, browser, server)")]
         target: Option<String>,
+        /// Temporary rival-runtime compatibility lane (bun|deno).
+        #[arg(
+            long,
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Flash firmware to a device (IoT esp32)")]
     Flash {
@@ -261,6 +362,14 @@ pub(crate) enum Commands {
             help = "Offline mode: install from cache only, no network (T4.1)"
         )]
         offline: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Manage the local store (prune unreferenced packages)")]
     Store {
@@ -286,6 +395,11 @@ pub(crate) enum Commands {
     Docs {
         #[arg(short, long, help = "write docs to file (default: stdout)")]
         output: Option<std::path::PathBuf>,
+    },
+    #[command(about = "Print shell completions (bash/zsh/fish/powershell/elvish)")]
+    Completion {
+        #[arg(help = "shell to generate completions for")]
+        shell: crate::commands::completion::CompletionShell,
     },
     #[command(about = "Telemetry opt-in status/log (default OFF — sends nothing)")]
     Telemetry {
@@ -332,6 +446,14 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(long, help = "Only update manifest, do not install dependencies")]
         no_install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Remove dependencies (auto-detect core)", alias = "rm")]
     Remove {
@@ -339,15 +461,40 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Only update manifest, do not reinstall dependencies")]
         no_install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "Update packages (auto-detect core)", alias = "up")]
     Update {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims).
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(about = "List installed packages (auto-detect core)", alias = "ls")]
-    List,
+    List {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(about = "Connect the local project to another one", alias = "ln")]
     Link { package: Option<String> },
     #[command(about = "Unlinks a package")]
@@ -471,6 +618,9 @@ pub(crate) enum Commands {
         visible_alias = "cre-l"
     )]
     CreateLib {
+        /// Language/framework with optional version
+        #[arg(value_name = "FRAMEWORK[@VERSION]")]
+        framework: String,
         /// Project directory name
         #[arg(value_name = "PROJECT")]
         project_name: String,
@@ -513,55 +663,153 @@ pub(crate) enum Commands {
         repair: bool,
         #[arg(long, help = "Use only cached packages, no network requests")]
         offline: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "install-game",
         alias = "i-game",
         about = "Install game dependencies"
     )]
-    InstallGame { packages: Vec<String> },
+    InstallGame {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "install-ai", alias = "i-ai", about = "Install AI dependencies")]
     InstallAi {
         packages: Vec<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+        /// Frozen mode: fail if mgc.lock is missing or does not match
+        /// (never silently re-resolve).
+        #[arg(long, help = "Fail if the lockfile is missing or stale")]
+        frozen: bool,
     },
     #[command(
         name = "install-clo",
         alias = "i-clo",
         about = "Install cloud dependencies"
     )]
-    InstallClo { packages: Vec<String> },
+    InstallClo {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-cicd",
         alias = "i-cicd",
         about = "Install CI/CD dependencies"
     )]
-    InstallCicd { packages: Vec<String> },
+    InstallCicd {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-iot",
         alias = "i-iot",
         about = "Install IoT dependencies"
     )]
-    InstallIot { packages: Vec<String> },
+    InstallIot {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "install-app",
         alias = "i-app",
         about = "Install app dependencies"
     )]
-    InstallApp { packages: Vec<String> },
+    InstallApp {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+        /// Frozen mode: fail if mgc.lock is missing or does not match
+        /// (never silently re-resolve).
+        #[arg(long, help = "Fail if the lockfile is missing or stale")]
+        frozen: bool,
+    },
     #[command(
         name = "install-lib",
         alias = "i-lib",
         about = "Install library dependencies"
     )]
-    InstallLib { packages: Vec<String> },
+    InstallLib {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+        /// Frozen mode: fail if mgc.lock is missing or does not match
+        /// (never silently re-resolve).
+        #[arg(long, help = "Fail if the lockfile is missing or stale")]
+        frozen: bool,
+    },
     #[command(
         name = "install-hardware",
         alias = "i-hardware",
         about = "Install hardware packages (optimizer/bench)"
     )]
-    InstallHardware { packages: Vec<String> },
+    InstallHardware {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
 
     // ── Per-core: add-<core> ───────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -583,6 +831,20 @@ pub(crate) enum Commands {
         no_install: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-game", alias = "a-game", about = "Add game dependencies")]
     AddGame {
@@ -600,6 +862,20 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-ai", alias = "a-ai", about = "Add AI dependencies")]
     AddAi {
@@ -617,6 +893,20 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-clo", alias = "a-clo", about = "Add cloud dependencies")]
     AddClo {
@@ -634,6 +924,20 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-cicd", alias = "a-cicd", about = "Add CI/CD dependencies")]
     AddCicd {
@@ -651,6 +955,20 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-iot", alias = "a-iot", about = "Add IoT dependencies")]
     AddIot {
@@ -668,6 +986,20 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-app", alias = "a-app", about = "Add app dependencies")]
     AddApp {
@@ -685,6 +1017,20 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "add-lib", alias = "a-lib", about = "Add library dependencies")]
     AddLib {
@@ -702,6 +1048,20 @@ pub(crate) enum Commands {
         no_save: bool,
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "add-hardware",
@@ -711,6 +1071,20 @@ pub(crate) enum Commands {
     AddHardware {
         #[arg(required = true)]
         packages: Vec<String>,
+        #[arg(
+            short,
+            long,
+            help = "Pin version for all listed packages (lanes without version semantics fail loudly)"
+        )]
+        version: Option<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
 
     // ── Per-core: remove-<core> ────────────────────────────────
@@ -725,70 +1099,232 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Only update manifest, do not reinstall dependencies")]
         no_install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "remove-game",
         alias = "rm-game",
         about = "Remove game dependencies"
     )]
-    RemoveGame { packages: Vec<String> },
+    RemoveGame {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "remove-ai", alias = "rm-ai", about = "Remove AI dependencies")]
-    RemoveAi { packages: Vec<String> },
+    RemoveAi {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-clo",
         alias = "rm-clo",
         about = "Remove cloud dependencies"
     )]
-    RemoveClo { packages: Vec<String> },
+    RemoveClo {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-cicd",
         alias = "rm-cicd",
         about = "Remove CI/CD dependencies"
     )]
-    RemoveCicd { packages: Vec<String> },
+    RemoveCicd {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-iot",
         alias = "rm-iot",
         about = "Remove IoT dependencies"
     )]
-    RemoveIot { packages: Vec<String> },
+    RemoveIot {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-app",
         alias = "rm-app",
         about = "Remove app dependencies"
     )]
-    RemoveApp { packages: Vec<String> },
+    RemoveApp {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "remove-lib",
         alias = "rm-lib",
         about = "Remove library dependencies"
     )]
-    RemoveLib { packages: Vec<String> },
+    RemoveLib {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
 
     // ── Per-core: list-<core> ──────────────────────────────────
+    // Every list lane carries the explicit --compat-runtime opt-in
+    // (P0#3): spawning lanes (ai/app) REQUIRE it; native-read lanes
+    // accept it for CLI uniformity and the gate logs the ignore notice.
     #[cfg_attr(not(feature = "web"), command(hide = true))]
     #[command(name = "list-web", alias = "ls-web", about = "List web packages")]
-    ListWeb,
+    ListWeb {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-game", alias = "ls-game", about = "List game packages")]
-    ListGame,
+    ListGame {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-ai", alias = "ls-ai", about = "List AI packages")]
-    ListAi,
+    ListAi {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-clo", alias = "ls-clo", about = "List cloud packages")]
-    ListClo,
+    ListClo {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-cicd", alias = "ls-cicd", about = "List CI/CD packages")]
-    ListCicd,
+    ListCicd {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-iot", alias = "ls-iot", about = "List IoT packages")]
-    ListIot,
+    ListIot {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-app", alias = "ls-app", about = "List app packages")]
-    ListApp,
+    ListApp {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(name = "list-lib", alias = "ls-lib", about = "List library packages")]
-    ListLib,
+    ListLib {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
     #[command(
         name = "list-hardware",
         alias = "ls-hardware",
         about = "List hardware packages"
     )]
-    ListHardware,
+    ListHardware {
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
 
     // ── Per-core: update-<core> ────────────────────────────────
     #[cfg_attr(not(feature = "web"), command(hide = true))]
@@ -797,6 +1333,14 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "update-game",
@@ -807,18 +1351,42 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-ai", alias = "up-ai", about = "Update AI packages")]
     UpdateAi {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-clo", alias = "up-clo", about = "Update cloud packages")]
     UpdateClo {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "update-cicd",
@@ -829,18 +1397,42 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-iot", alias = "up-iot", about = "Update IoT packages")]
     UpdateIot {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(name = "update-app", alias = "up-app", about = "Update app packages")]
     UpdateApp {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
     #[command(
         name = "update-lib",
@@ -851,6 +1443,14 @@ pub(crate) enum Commands {
         packages: Vec<String>,
         #[arg(long, help = "Install updated packages immediately")]
         install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Native lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
     },
 }
 

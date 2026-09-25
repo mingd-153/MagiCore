@@ -16,7 +16,13 @@ pub struct BenchArgs {
 }
 
 pub async fn handle(args: BenchArgs) -> Result<()> {
-    std::env::set_var("MAGICORE_WEB_PROFILE_INSTALL", "1");
+    // SAFETY: set once at command entry, before bench spawns any thread that
+    // might read the flag — single writer, no concurrent mutation.
+    // AN TOÀN: ghi 1 lần ở entry, trước khi bench spawn thread đọc flag.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("MAGICORE_WEB_PROFILE_INSTALL", "1");
+    }
 
     let started = std::time::Instant::now();
 
@@ -26,7 +32,7 @@ pub async fn handle(args: BenchArgs) -> Result<()> {
         let _ = std::fs::remove_file(&lock);
     }
 
-    crate::commands::install::run(args.packages, None, false, true, false).await?;
+    crate::commands::install::run(args.packages, None, false, true, false, false).await?;
 
     let total_ms = started.elapsed().as_millis() as u64;
     eprintln!("[magicore:bench] total={}ms", total_ms);

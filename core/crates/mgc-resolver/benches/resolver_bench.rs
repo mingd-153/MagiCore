@@ -3,7 +3,7 @@
 //!
 //! Usage: cargo bench --package mgc-resolver
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use mgc_resolver::{DependencyError, DependencyProvider, ResolvedDep, Resolver};
 use mgc_types::{PackageId, PackageName, Version, VersionRange};
 use std::sync::Arc;

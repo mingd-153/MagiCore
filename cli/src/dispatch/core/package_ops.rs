@@ -15,9 +15,20 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             no_save,
             install,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::web::add(
-                packages, None, dev, exact, optional, peer, no_save, install, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                install,
+                global,
+                compat_runtime,
             )
             .await
         }
@@ -30,9 +41,19 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             peer,
             no_save,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::game::add(
-                packages, None, dev, exact, optional, peer, no_save, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                global,
+                compat_runtime,
             )
             .await
         }
@@ -47,9 +68,19 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             peer,
             no_save,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::ai::add(
-                packages, None, dev, exact, optional, peer, no_save, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                global,
+                compat_runtime,
             )
             .await
         }
@@ -64,9 +95,19 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             peer,
             no_save,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::clo::add(
-                packages, None, dev, exact, optional, peer, no_save, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                global,
+                compat_runtime,
             )
             .await
         }
@@ -81,9 +122,19 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             peer,
             no_save,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::cicd::add(
-                packages, None, dev, exact, optional, peer, no_save, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                global,
+                compat_runtime,
             )
             .await
         }
@@ -98,9 +149,19 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             peer,
             no_save,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::iot::add(
-                packages, None, dev, exact, optional, peer, no_save, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                global,
+                compat_runtime,
             )
             .await
         }
@@ -115,9 +176,19 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             peer,
             no_save,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::app::add(
-                packages, None, dev, exact, optional, peer, no_save, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                global,
+                compat_runtime,
             )
             .await
         }
@@ -132,131 +203,196 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             peer,
             no_save,
             global,
+            compat_runtime,
+            version,
         } => {
             commands::core::add::library::add(
-                packages, None, dev, exact, optional, peer, no_save, global,
+                packages,
+                version,
+                dev,
+                exact,
+                optional,
+                peer,
+                no_save,
+                global,
+                compat_runtime,
             )
             .await
         }
         #[cfg(not(feature = "lib"))]
         CoreCommand::AddLib { .. } => Err(crate::error::core_not_in_build("lib")),
         #[cfg(feature = "hardware")]
-        CoreCommand::AddHardware { packages } => commands::core::add::hardware::add(packages).await,
+        CoreCommand::AddHardware {
+            packages,
+            compat_runtime,
+            version,
+        } => commands::core::add::hardware::add(packages, compat_runtime, version).await,
         #[cfg(not(feature = "hardware"))]
         CoreCommand::AddHardware { .. } => Err(crate::error::core_not_in_build("hardware")),
-        CoreCommand::RemoveWeb { packages, install } => {
-            commands::core::remove::web::remove(packages, install).await
-        }
+        CoreCommand::RemoveWeb {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::remove::web::remove(packages, install, compat_runtime).await,
         #[cfg(feature = "game")]
-        CoreCommand::RemoveGame { packages } => {
-            commands::core::remove::game::remove(packages).await
-        }
+        CoreCommand::RemoveGame {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::game::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "game"))]
         CoreCommand::RemoveGame { .. } => Err(crate::error::core_not_in_build("game")),
         #[cfg(feature = "ai")]
-        CoreCommand::RemoveAi { packages } => commands::core::remove::ai::remove(packages).await,
+        CoreCommand::RemoveAi {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::ai::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "ai"))]
         CoreCommand::RemoveAi { .. } => Err(crate::error::core_not_in_build("ai")),
         #[cfg(feature = "clo")]
-        CoreCommand::RemoveClo { packages } => commands::core::remove::clo::remove(packages).await,
+        CoreCommand::RemoveClo {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::clo::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "clo"))]
         CoreCommand::RemoveClo { .. } => Err(crate::error::core_not_in_build("clo")),
         #[cfg(feature = "cicd")]
-        CoreCommand::RemoveCicd { packages } => {
-            commands::core::remove::cicd::remove(packages).await
-        }
+        CoreCommand::RemoveCicd {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::cicd::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "cicd"))]
         CoreCommand::RemoveCicd { .. } => Err(crate::error::core_not_in_build("cicd")),
         #[cfg(feature = "iot")]
-        CoreCommand::RemoveIot { packages } => commands::core::remove::iot::remove(packages).await,
+        CoreCommand::RemoveIot {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::iot::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "iot"))]
         CoreCommand::RemoveIot { .. } => Err(crate::error::core_not_in_build("iot")),
         #[cfg(feature = "app")]
-        CoreCommand::RemoveApp { packages } => commands::core::remove::app::remove(packages).await,
+        CoreCommand::RemoveApp {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::app::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "app"))]
         CoreCommand::RemoveApp { .. } => Err(crate::error::core_not_in_build("app")),
         #[cfg(feature = "lib")]
-        CoreCommand::RemoveLib { packages } => {
-            commands::core::remove::library::remove(packages).await
-        }
+        CoreCommand::RemoveLib {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::library::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "lib"))]
         CoreCommand::RemoveLib { .. } => Err(crate::error::core_not_in_build("lib")),
-        CoreCommand::ListWeb => commands::core::list::web::list().await,
+        CoreCommand::ListWeb { compat_runtime } => {
+            commands::core::list::web::list(compat_runtime).await
+        }
         #[cfg(feature = "game")]
-        CoreCommand::ListGame => commands::core::list::game::list().await,
+        CoreCommand::ListGame { compat_runtime } => {
+            commands::core::list::game::list(compat_runtime).await
+        }
         #[cfg(not(feature = "game"))]
-        CoreCommand::ListGame => Err(crate::error::core_not_in_build("game")),
+        CoreCommand::ListGame { .. } => Err(crate::error::core_not_in_build("game")),
         #[cfg(feature = "ai")]
-        CoreCommand::ListAi => commands::core::list::ai::list().await,
+        CoreCommand::ListAi { compat_runtime } => {
+            commands::core::list::ai::list(compat_runtime).await
+        }
         #[cfg(not(feature = "ai"))]
-        CoreCommand::ListAi => Err(crate::error::core_not_in_build("ai")),
+        CoreCommand::ListAi { .. } => Err(crate::error::core_not_in_build("ai")),
         #[cfg(feature = "clo")]
-        CoreCommand::ListClo => commands::core::list::clo::list().await,
+        CoreCommand::ListClo { compat_runtime } => {
+            commands::core::list::clo::list(compat_runtime).await
+        }
         #[cfg(not(feature = "clo"))]
-        CoreCommand::ListClo => Err(crate::error::core_not_in_build("clo")),
+        CoreCommand::ListClo { .. } => Err(crate::error::core_not_in_build("clo")),
         #[cfg(feature = "cicd")]
-        CoreCommand::ListCicd => commands::core::list::cicd::list().await,
+        CoreCommand::ListCicd { compat_runtime } => {
+            commands::core::list::cicd::list(compat_runtime).await
+        }
         #[cfg(not(feature = "cicd"))]
-        CoreCommand::ListCicd => Err(crate::error::core_not_in_build("cicd")),
+        CoreCommand::ListCicd { .. } => Err(crate::error::core_not_in_build("cicd")),
         #[cfg(feature = "iot")]
-        CoreCommand::ListIot => commands::core::list::iot::list().await,
+        CoreCommand::ListIot { compat_runtime } => {
+            commands::core::list::iot::list(compat_runtime).await
+        }
         #[cfg(not(feature = "iot"))]
-        CoreCommand::ListIot => Err(crate::error::core_not_in_build("iot")),
+        CoreCommand::ListIot { .. } => Err(crate::error::core_not_in_build("iot")),
         #[cfg(feature = "app")]
-        CoreCommand::ListApp => commands::core::list::app::list().await,
+        CoreCommand::ListApp { compat_runtime } => {
+            commands::core::list::app::list(compat_runtime).await
+        }
         #[cfg(not(feature = "app"))]
-        CoreCommand::ListApp => Err(crate::error::core_not_in_build("app")),
+        CoreCommand::ListApp { .. } => Err(crate::error::core_not_in_build("app")),
         #[cfg(feature = "lib")]
-        CoreCommand::ListLib => commands::core::list::library::list().await,
+        CoreCommand::ListLib { compat_runtime } => {
+            commands::core::list::library::list(compat_runtime).await
+        }
         #[cfg(not(feature = "lib"))]
-        CoreCommand::ListLib => Err(crate::error::core_not_in_build("lib")),
+        CoreCommand::ListLib { .. } => Err(crate::error::core_not_in_build("lib")),
         #[cfg(feature = "hardware")]
-        CoreCommand::ListHardware => commands::core::list::hardware::list().await,
+        CoreCommand::ListHardware { compat_runtime } => {
+            commands::core::list::hardware::list(compat_runtime).await
+        }
         #[cfg(not(feature = "hardware"))]
-        CoreCommand::ListHardware => Err(crate::error::core_not_in_build("hardware")),
-        CoreCommand::UpdateWeb { packages, install } => {
-            commands::core::update::web::update(packages, install).await
-        }
+        CoreCommand::ListHardware { .. } => Err(crate::error::core_not_in_build("hardware")),
+        CoreCommand::UpdateWeb {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::web::update(packages, install, compat_runtime).await,
         #[cfg(feature = "game")]
-        CoreCommand::UpdateGame { packages, install } => {
-            commands::core::update::game::update(packages, install).await
-        }
+        CoreCommand::UpdateGame {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::game::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "game"))]
         CoreCommand::UpdateGame { .. } => Err(crate::error::core_not_in_build("game")),
         #[cfg(feature = "ai")]
-        CoreCommand::UpdateAi { packages, install } => {
-            commands::core::update::ai::update(packages, install).await
-        }
+        CoreCommand::UpdateAi {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::ai::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "ai"))]
         CoreCommand::UpdateAi { .. } => Err(crate::error::core_not_in_build("ai")),
         #[cfg(feature = "clo")]
-        CoreCommand::UpdateClo { packages, install } => {
-            commands::core::update::clo::update(packages, install).await
-        }
+        CoreCommand::UpdateClo {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::clo::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "clo"))]
         CoreCommand::UpdateClo { .. } => Err(crate::error::core_not_in_build("clo")),
         #[cfg(feature = "cicd")]
-        CoreCommand::UpdateCicd { packages, install } => {
-            commands::core::update::cicd::update(packages, install).await
-        }
+        CoreCommand::UpdateCicd {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::cicd::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "cicd"))]
         CoreCommand::UpdateCicd { .. } => Err(crate::error::core_not_in_build("cicd")),
         #[cfg(feature = "iot")]
-        CoreCommand::UpdateIot { packages, install } => {
-            commands::core::update::iot::update(packages, install).await
-        }
+        CoreCommand::UpdateIot {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::iot::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "iot"))]
         CoreCommand::UpdateIot { .. } => Err(crate::error::core_not_in_build("iot")),
         #[cfg(feature = "app")]
-        CoreCommand::UpdateApp { packages, install } => {
-            commands::core::update::app::update(packages, install).await
-        }
+        CoreCommand::UpdateApp {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::app::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "app"))]
         CoreCommand::UpdateApp { .. } => Err(crate::error::core_not_in_build("app")),
         #[cfg(feature = "lib")]
-        CoreCommand::UpdateLib { packages, install } => {
-            commands::core::update::library::update(packages, install).await
-        }
+        CoreCommand::UpdateLib {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::library::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "lib"))]
         CoreCommand::UpdateLib { .. } => Err(crate::error::core_not_in_build("lib")),
         _ => unreachable!("non-package command routed to package dispatcher"),

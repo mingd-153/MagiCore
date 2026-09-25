@@ -1,16 +1,30 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Result, bail};
 use colored::Colorize;
-use mgc_config::project::ProjectExecutionConfig;
 use mgc_ui::info;
-use serde_json::Value;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
-use crate::bundler::{Bundler, BundlerConfig};
-use crate::context::ProjectContext;
+/// Prevent Go's compiler driver from downloading/updating dependency metadata
+/// during a MagiCore build. Dependencies must already be present and verified
+/// by the selected install path.
+fn go_offline_env() -> Vec<(String, String)> {
+    vec![
+        ("GOPROXY".to_string(), "off".to_string()),
+        ("GOSUMDB".to_string(), "off".to_string()),
+        ("GOTOOLCHAIN".to_string(), "local".to_string()),
+    ]
+}
 
-pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
+pub async fn run(
+    core: Option<&str>,
+    target: Option<String>,
+    compat_runtime: Option<&str>,
+) -> Result<()> {
+    // Native-engine gate (2026-09-10): validate cờ compat sớm — build
+    // mặc định là engine native, sai giá trị cờ fail trước khi động fs.
+    // F-C fix (2026-09-10 audit): CompatMode được GIỮ và truyền xuống
+    // framework-build lane — script build program là runtime đối thủ
+    // phải qua gate (native từ chối, compat tường minh mới mở).
+    let compat = crate::commands::compat::CompatMode::from_flag(compat_runtime)?;
     let root = find_root()?;
 
     if !mgc_ui::is_quiet() {
@@ -19,14 +33,24 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
     }
     info(&format!("Project root: {}", root.display()));
 
-    if root.join("Cargo.toml").exists() {
-        return build_rust(&root);
+    if root.join("Cargo.toml").exists() && !root.join(".mgc.core").exists() {
+        // Load optimizer env for standalone Rust projects
+        // Tải env optimizer cho Rust project độc lập
+        let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
+        let optimizer_envs =
+            crate::commands::optimizer::env_loader::load_optimizer_env(&root, &runtime)
+                .map_err(|e| {
+                    mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                    e
+                })
+                .unwrap_or_default();
+        return build_rust_with_env(&root, optimizer_envs);
     }
 
     let ctx = ProjectContext::load_with_core(core)?;
     info(&format!("Execution profile: {}", ctx.execution_summary()));
     match ctx.adapter().name() {
-        "web" => build_web(&root, ctx.execution(), target).await,
+        "web" => build_web(&root, ctx.execution(), target, &compat).await,
         #[cfg(feature = "app")]
         "app" => build_app(&root).await,
         #[cfg(not(feature = "app"))]
@@ -52,14 +76,70 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
         #[cfg(not(feature = "hardware"))]
         "hardware" => Err(crate::error::core_not_in_build("hardware")),
         #[cfg(feature = "ai")]
-        "ai" => Err(crate::error::build_not_supported(
-            "ai",
-            "AI projects run with `mgc run` or `mgc dev` (05 §7)",
-        )),
+        "ai" => build_ai(&root).await,
         #[cfg(not(feature = "ai"))]
         "ai" => Err(crate::error::core_not_in_build("ai")),
         other => bail!("'mgc build' not implemented for '{}' core yet", other),
     }
+}
+
+/// Build an AI project with its native language toolchain — build project AI bằng toolchain gốc.
+#[cfg(feature = "ai")]
+async fn build_ai(root: &Path) -> Result<()> {
+    use crate::commands::optimizer::runtime_detect::DetectedRuntime;
+
+    let runtime = if root.join("pyproject.toml").exists() {
+        DetectedRuntime::PythonPyTorch
+    } else if root.join("Cargo.toml").exists() {
+        DetectedRuntime::RustCandle
+    } else if root.join("go.mod").exists() {
+        DetectedRuntime::GoTensorFlow
+    } else {
+        return Err(crate::error::no_framework_detected("ai build", root));
+    };
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|error| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {error}"));
+            error
+        })
+        .unwrap_or_default();
+
+    match runtime {
+        DetectedRuntime::PythonPyTorch => {
+            let python = python_cmd();
+            if tool_unavailable(python) {
+                return Err(crate::error::build_toolchain_missing(python));
+            }
+            info("Building Python AI package: python -m build");
+            let env = optimizer_envs.into_iter().collect::<Vec<_>>();
+            let env = (!env.is_empty()).then_some(env);
+            run_allowlisted_tool_with_env(root, python, &["-m", "build", "--no-isolation"], env)
+                .map_err(|error| crate::error::python_build_failed(&error))?;
+        }
+        DetectedRuntime::RustCandle => {
+            if tool_unavailable("cargo") {
+                return Err(crate::error::build_toolchain_missing("cargo"));
+            }
+            build_rust_with_env(root, optimizer_envs)?;
+        }
+        DetectedRuntime::GoTensorFlow => {
+            if tool_unavailable("go") {
+                return Err(crate::error::build_toolchain_missing("go"));
+            }
+            let mut env = optimizer_envs.into_iter().collect::<Vec<_>>();
+            env.extend(go_offline_env());
+            run_allowlisted_tool_with_env(
+                root,
+                "go",
+                &["build", "-mod=readonly", "./..."],
+                Some(env),
+            )?;
+        }
+        _ => unreachable!("AI build selects only an AI runtime"),
+    }
+
+    mgc_ui::success("AI build completed");
+    Ok(())
 }
 
 /// Game build routes only implemented engines — chỉ chạy engine đã có build contract.
@@ -67,7 +147,18 @@ pub async fn run(core: Option<&str>, target: Option<String>) -> Result<()> {
 async fn build_game(root: &Path) -> Result<()> {
     let engine = mgc_game_adapter::detect_engine(root);
     match engine {
-        Some(mgc_game_adapter::GameEngine::Bevy) => build_rust(root),
+        Some(mgc_game_adapter::GameEngine::Bevy) => {
+            // Load optimizer env for Bevy (Rust) builds
+            let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
+            let optimizer_envs =
+                crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+                    .map_err(|e| {
+                        mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                        e
+                    })
+                    .unwrap_or_default();
+            build_rust_with_env(root, optimizer_envs)
+        }
         Some(mgc_game_adapter::GameEngine::Godot) => Err(crate::error::build_not_supported(
             "game/godot",
             "configure an export preset and run Godot export (03 §4 P2)",
@@ -101,47 +192,136 @@ async fn build_iot(root: &Path) -> Result<()> {
         return run_allowlisted_tool(root, "west", &["build", "-b", "native_sim"]);
     }
     if root.join("Cargo.toml").exists() {
-        // esp32-rust: build_rust giữ cargo build; --target esp theo [iot] board là P1.5
-        // (04 §5: cần espup toolchain — detect + lỗi rõ)
+        // esp32-rust: build_rust with optimizer env
+        // esp32-rust: build với env optimizer
         if tool_unavailable("cargo") {
             return Err(crate::error::build_toolchain_missing("cargo"));
         }
-        return build_rust(root);
+
+        // Load optimizer env for IoT Rust builds
+        let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
+        let optimizer_envs =
+            crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+                .map_err(|e| {
+                    mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+                    e
+                })
+                .unwrap_or_default();
+        return build_rust_with_env(root, optimizer_envs);
     }
     Err(crate::error::no_framework_detected("iot", root))
+}
+
+/// First `*.csproj` directly inside the project root (SDK-style layout).
+/// (File `*.csproj` đầu tiên ngay trong root project.)
+#[cfg(feature = "lib")]
+fn find_local_csproj(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("csproj") {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .next()
 }
 
 /// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
 /// full resolver — không wrapper PM); python → python -m build (fail-closed nếu thiếu module build).
 #[cfg(feature = "lib")]
 async fn build_lib(root: &Path) -> Result<()> {
+    // Load optimizer env for lib runtime
+    // Tải env optimizer cho runtime thư viện
+    let runtime = detect_lib_runtime(root);
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
     if root.join("Cargo.toml").exists() {
-        return build_rust(root);
+        return build_rust_with_env(root, optimizer_envs);
     }
     if root.join("pyproject.toml").exists() {
-        if tool_unavailable("python") {
-            return Err(crate::error::build_toolchain_missing("python"));
+        let python = python_cmd();
+        if tool_unavailable(python) {
+            return Err(crate::error::build_toolchain_missing(python));
         }
         info("Building python lib: python -m build");
-        return run_allowlisted_tool(root, "python", &["-m", "build"])
-            .map_err(|e| crate::error::python_build_failed(&e));
+
+        // Load optimizer env for Python
+        let env: Vec<(String, String)> = optimizer_envs.clone().into_iter().collect();
+        let env_opt = if env.is_empty() { None } else { Some(env) };
+
+        return run_allowlisted_tool_with_env(
+            root,
+            python,
+            &["-m", "build", "--no-isolation"],
+            env_opt,
+        )
+        .map_err(|e| crate::error::python_build_failed(&e));
+    }
+    // Go modules build through the go toolchain (mgc owns
+    // resolve/fetch/install; compilation stays toolchain territory,
+    // same split as the ai GoTensorFlow lane).
+    if root.join("go.mod").exists() {
+        if tool_unavailable("go") {
+            return Err(crate::error::build_toolchain_missing("go"));
+        }
+        info("Building go lib: go build ./...");
+        let mut env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+        env.extend(go_offline_env());
+        return run_allowlisted_tool_with_env(
+            root,
+            "go",
+            &["build", "-mod=readonly", "./..."],
+            Some(env),
+        )
+        .map_err(|e| crate::error::go_build_failed(&e));
+    }
+    // .NET: dotnet SDK build (toolchain-gated; absent SDK fails closed
+    // with guidance instead of a false native claim).
+    if find_local_csproj(root).is_some() {
+        if tool_unavailable("dotnet") {
+            return Err(crate::error::build_toolchain_missing("dotnet"));
+        }
+        info("Building dotnet lib: dotnet build");
+        let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+        let env_opt = if env.is_empty() { None } else { Some(env) };
+        return run_allowlisted_tool_with_env(root, "dotnet", &["build", "--no-restore"], env_opt)
+            .map_err(|e| crate::error::dotnet_build_failed(&e));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
-    if tsc.exists() {
+    // Windows: tsc resolves via the tsc.cmd shim (npm-style .bin layout).
+    // Windows: tsc chạy qua shim tsc.cmd (bố cục .bin kiểu npm).
+    let tsc_available = tsc.exists()
+        || root
+            .join("node_modules")
+            .join(".bin")
+            .join("tsc.cmd")
+            .exists();
+    if tsc_available {
         let args = node_bin_args(root, "tsc", &["-p", "tsconfig.json"])?
             .into_iter()
             .map(|a| a.to_string_lossy().to_string())
             .collect::<Vec<_>>();
         let local_bin = root.join("node_modules").join(".bin");
-        let env = vec![(
+
+        // Merge PATH with optimizer env
+        let mut env = vec![(
             "PATH".to_string(),
             prepend_path(&local_bin)?.to_string_lossy().to_string(),
         )];
+        env.extend(optimizer_envs);
+
         info(&format!("tsc: node {}", args.join(" ")));
         let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(root.to_path_buf()),
             env,
-            clean_env: true,
+            clean_env: false, // Preserve env with optimizer config
             ..Default::default()
         };
         return mgc_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
@@ -179,21 +359,42 @@ async fn build_app(root: &Path) -> Result<()> {
         .or_else(|| infer_app_language(root))
         .unwrap_or("flutter");
 
-    if language == "multi" {
-        if let Some(v) = v {
-            return build_multi_app(root, &v);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if language == "multi"
+        && let Some(v) = v
+    {
+        return build_multi_app(root, &v);
     }
 
+    // Load optimizer env for app runtime
+    let runtime = detect_app_runtime(root);
+    let optimizer_envs = crate::commands::optimizer::env_loader::load_optimizer_env(root, &runtime)
+        .map_err(|e| {
+            mgc_ui::warning(&format!("Failed to load optimizer config: {}", e));
+            e
+        })
+        .unwrap_or_default();
+    let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+    let env_opt = if env.is_empty() { None } else { Some(env) };
+
     let (tool, args): (&str, &[&str]) = match language {
-        "kotlin" => ("gradle", &["build"]),
-        "swift" => ("swift", &["build"]),
-        _ => ("flutter", &["build"]),
+        "kotlin" => ("gradle", &["build", "--offline"]),
+        "swift" => (
+            "swift",
+            &["build", "--skip-update", "--disable-automatic-resolution"],
+        ),
+        // `flutter build web` is the universal CI target — no Android
+        // SDK, no Xcode, runs on all three runners. `bundle` (the old
+        // default) only produces asset dirs for mobile toolchains.
+        // `flutter build web` là target CI phổ quát — không cần Android
+        // SDK, không cần Xcode, chạy được cả ba runner. `bundle` (mặc
+        // định cũ) chỉ sinh asset dir cho toolchain mobile.
+        _ => ("flutter", &["build", "web", "--no-pub"]),
     };
     if tool_unavailable(tool) {
         return Err(crate::error::build_toolchain_missing(tool));
     }
-    run_allowlisted_tool(root, tool, args)?;
+    run_allowlisted_tool_with_env(root, tool, args, env_opt)?;
     mgc_ui::success(&format!("App build completed ({language})"));
     Ok(())
 }
@@ -249,7 +450,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                     mgc_ui::warning("gradle not found — skipping android build");
                     continue;
                 }
-                run_allowlisted_tool(&dir, "gradle", &["build"])?;
+                run_allowlisted_tool(&dir, "gradle", &["build", "--offline"])?;
                 built += 1;
             }
             "ios" => {
@@ -257,7 +458,11 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                     mgc_ui::warning("swift not found — skipping ios build");
                     continue;
                 }
-                run_allowlisted_tool(&dir, "swift", &["build"])?;
+                run_allowlisted_tool(
+                    &dir,
+                    "swift",
+                    &["build", "--skip-update", "--disable-automatic-resolution"],
+                )?;
                 built += 1;
             }
             "react-native" => {
@@ -270,7 +475,17 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                     mgc_ui::warning("flutter not found — skipping flutter build");
                     continue;
                 }
-                run_allowlisted_tool(&dir, "flutter", &["build"])?;
+                // `flutter build` without a target exits 2 ("Missing
+                // target"). `web` is the universal desktop-CI target —
+                // no Android SDK, no Xcode, works on all three runners
+                // (P0 finding, 2026-09-12: the honest lifecycle matrix
+                // caught the old bare `flutter build` failing).
+                // `flutter build` thiếu target thì exit 2 ("Missing
+                // target"). `web` là target phổ quát cho CI desktop —
+                // không cần Android SDK, không cần Xcode, chạy được cả
+                // ba runner (P0 finding 2026-09-12: matrix lifecycle
+                // trung thực bắt được `flutter build` trần fail).
+                run_allowlisted_tool(&dir, "flutter", &["build", "web", "--no-pub"])?;
                 built += 1;
             }
             other => mgc_ui::warning(&format!("Unknown platform '{other}' — skipping")),
@@ -282,13 +497,85 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
     Ok(())
 }
 
-fn tool_unavailable(tool: &str) -> bool {
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .map(|dir| Path::new(dir).join(tool))
-        .find(|p| p.is_file())
-        .is_none()
+/// PATH lookup with Windows PATHEXT awareness: on top of the exact
+/// name, `<tool><ext>` is accepted for every extension in PATHEXT
+/// (`.BAT`/`.CMD`/`.EXE` wrappers like `flutter.bat`). PATHEXT is read
+/// whenever present (Windows always sets it) so the lookup is
+/// unit-testable on every OS; without it, Windows falls back to the
+/// classic default set and other platforms check the exact name only.
+/// (Tìm PATH có nhận biết PATHEXT Windows.)
+pub(crate) fn tool_unavailable(tool: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return true;
+    };
+    let extensions: Vec<String> = std::env::var_os("PATHEXT")
+        .and_then(|value| value.into_string().ok())
+        .map(|value| {
+            value
+                .split(';')
+                .filter(|extension| !extension.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            {
+                vec![
+                    ".COM".to_string(),
+                    ".EXE".to_string(),
+                    ".BAT".to_string(),
+                    ".CMD".to_string(),
+                ]
+            }
+            #[cfg(not(windows))]
+            {
+                Vec::new()
+            }
+        });
+
+    std::env::split_paths(&path).all(|directory| {
+        let directory = directory.as_path();
+        if directory.join(tool).is_file() {
+            return false;
+        }
+        !extensions.iter().any(|extension| {
+            let candidate = directory.join(format!("{tool}{extension}"));
+            if candidate.is_file() {
+                return true;
+            }
+            // Windows PATHEXT matching is case-insensitive (a `.bat`
+            // shim satisfies `.BAT`) — honor that on case-sensitive
+            // filesystems too, or Linux checkouts miss what Windows sees.
+            // (PATHEXT Windows không phân biệt hoa thường.)
+            let want = format!("{tool}{extension}").to_lowercase();
+            std::fs::read_dir(directory)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok())
+                .any(|entry| entry.file_name().to_string_lossy().to_lowercase() == want)
+        })
+    })
+}
+
+/// Resolve the Python launcher name for this machine (P0 fix,
+/// 2026-09-12): macOS ships only `python3` (no `python` shim since
+/// Monterey) while setup-python CI images provide `python`. The
+/// honest lifecycle matrix caught the hardcoded `python` failing on
+/// macOS — build/install lanes must resolve the launcher that EXISTS,
+/// never guess one.
+/// Chọn tên launcher Python của máy này (P0 fix, 2026-09-12): macOS chỉ
+/// có `python3` (không còn shim `python` từ Monterey) còn image CI
+/// setup-python có `python`. Matrix lifecycle trung thực đã bắt được
+/// hardcoded `python` fail trên macOS — lane build/install phải chọn
+/// launcher TỒN TẠI, không đoán.
+pub(crate) fn python_cmd() -> &'static str {
+    if !tool_unavailable("python") {
+        "python"
+    } else if !tool_unavailable("python3") {
+        "python3"
+    } else {
+        "python" // Neither exists — surface the honest toolchain error.
+    }
 }
 
 /// Cloud build (06 §4): cdk synth (qua node_modules/.bin — npm-format, như web pattern),
@@ -353,441 +640,20 @@ fn find_root() -> anyhow::Result<PathBuf> {
     Err(crate::error::no_project_found_build())
 }
 
-fn build_rust(root: &Path) -> Result<()> {
-    let start = Instant::now();
-    info("Detected Rust project — running cargo build...");
+// P1 split (2026-09-11): the web build engine (target resolution,
+// framework script map, node bin shims, native engine build) lives in
+// build/web_engine.rs — build.rs keeps the per-core dispatch only.
+mod web_engine;
+use crate::context::ProjectContext;
 
-    run_allowlisted_tool(root, "cargo", &["build"])?;
-
-    let elapsed = start.elapsed();
-    mgc_ui::success(&format!("Rust build completed in {:?}", elapsed));
-    Ok(())
-}
-
-async fn build_web(
-    root: &Path,
-    execution: &ProjectExecutionConfig,
-    target: Option<String>,
-) -> Result<()> {
-    let start_time = Instant::now();
-
-    let resolved_target = resolve_web_build_target(execution, target.as_deref());
-    info(&format!("Resolved build lane: {}", resolved_target.label()));
-
-    match resolved_target {
-        WebBuildTarget::CompatibilityShell => {
-            info("Engine Web: Running compatibility-shell bundler...");
-        }
-        WebBuildTarget::NativeReady => {
-            info("Engine Web: Running compatibility-shell build with native-ready bridge metadata...");
-            info("Native-ready lane keeps framework compatibility while preparing Rust/native execution surfaces.");
-        }
-        WebBuildTarget::CompiledExecutable => {
-            info("Engine Web: Compiled executable lane selected.");
-            info("MagiCore will build web assets first, then compile the Rust-native engine executable.");
-        }
-    }
-
-    if run_framework_build_if_supported(root)? {
-        let elapsed = start_time.elapsed();
-        mgc_ui::blank_line();
-        mgc_ui::success(&format!("Framework build completed in {:?}", elapsed));
-
-        if matches!(
-            resolved_target,
-            WebBuildTarget::NativeReady | WebBuildTarget::CompiledExecutable
-        ) {
-            if let Some(engine_crate) = find_native_engine_crate(root) {
-                let binary = build_native_engine(
-                    &engine_crate,
-                    matches!(resolved_target, WebBuildTarget::CompiledExecutable),
-                )?;
-                mgc_ui::success(&format!("Native engine binary ready: {}", binary.display()));
-            } else {
-                info("No native engine crate detected for this project; compatibility artifact is still ready.");
-            }
-        }
-
-        return Ok(());
-    }
-
-    let entry = find_entry_point(root)?;
-    info(&format!("Entry point: {}", entry.display()));
-
-    let config = BundlerConfig {
-        entry: entry.clone(),
-        output_dir: root.join("dist"),
-        minify: true,
-        sourcemap: true,
-        target: "es2020".to_string(),
-        public_path: "/".to_string(),
-    };
-
-    let bundler = Bundler::new(config.clone());
-    let result = bundler.bundle().await?;
-
-    let elapsed = start_time.elapsed();
-    mgc_ui::blank_line();
-    mgc_ui::success(&format!(
-        "Bundle created: {:.2} KB in {:?}",
-        result.size as f64 / 1024.0,
-        elapsed
-    ));
-
-    info("Processing assets...");
-    crate::bundler::process_assets(&config).await?;
-
-    if matches!(
-        resolved_target,
-        WebBuildTarget::NativeReady | WebBuildTarget::CompiledExecutable
-    ) {
-        if let Some(engine_crate) = find_native_engine_crate(root) {
-            let binary = build_native_engine(
-                &engine_crate,
-                matches!(resolved_target, WebBuildTarget::CompiledExecutable),
-            )?;
-            mgc_ui::success(&format!("Native engine binary ready: {}", binary.display()));
-        } else {
-            info("No native engine crate detected for this project; compatibility artifact is still ready.");
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WebBuildTarget {
-    CompatibilityShell,
-    NativeReady,
-    CompiledExecutable,
-}
-
-impl WebBuildTarget {
-    fn label(self) -> &'static str {
-        match self {
-            Self::CompatibilityShell => "compatibility-shell",
-            Self::NativeReady => "native-ready",
-            Self::CompiledExecutable => "compiled-executable",
-        }
-    }
-}
-
-fn resolve_web_build_target(
-    execution: &ProjectExecutionConfig,
-    explicit_target: Option<&str>,
-) -> WebBuildTarget {
-    if let Some(target) = explicit_target.map(|value| value.trim().to_ascii_lowercase()) {
-        return match target.as_str() {
-            "native" | "compiled" | "compiled-executable" | "executable" => {
-                WebBuildTarget::CompiledExecutable
-            }
-            "native-ready" => WebBuildTarget::NativeReady,
-            _ => WebBuildTarget::CompatibilityShell,
-        };
-    }
-
-    match execution.lane.trim().to_ascii_lowercase().as_str() {
-        "compiled-executable" => WebBuildTarget::CompiledExecutable,
-        "native-ready" => WebBuildTarget::NativeReady,
-        _ => WebBuildTarget::CompatibilityShell,
-    }
-}
-
-fn run_framework_build_if_supported(root: &Path) -> Result<bool> {
-    let package_json = root.join("package.json");
-    if !package_json.exists() {
-        return Ok(false);
-    }
-
-    let content = std::fs::read_to_string(&package_json)?;
-    let package: Value = serde_json::from_str(&content)?;
-    let Some(script) = package
-        .get("scripts")
-        .and_then(|scripts| scripts.get("build"))
-        .and_then(|value| value.as_str())
-    else {
-        return Ok(false);
-    };
-
-    reject_external_package_manager_script(script, &package_json)?;
-    let tokens: Vec<&str> = script.split_whitespace().collect();
-    let Some((program, args, envs)) = map_framework_build_script(root, &tokens)? else {
-        return Ok(false);
-    };
-
-    info(&format!(
-        "Framework-aware build: {} {}",
-        program.display(),
-        args.iter()
-            .map(|arg| arg.to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join(" ")
-    ));
-
-    let local_bin = root.join("node_modules").join(".bin");
-    let mut env = vec![(
-        "PATH".to_string(),
-        prepend_path(&local_bin)?.to_string_lossy().to_string(),
-    )];
-    for (key, value) in envs {
-        env.push((
-            key.to_string_lossy().to_string(),
-            value.to_string_lossy().to_string(),
-        ));
-    }
-
-    let args = args
-        .iter()
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        env,
-        clean_env: true,
-        ..Default::default()
-    };
-    mgc_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
-        .with_context(|| format!("failed to start build '{}'", program.display()))?;
-
-    Ok(true)
-}
-
-type BuildLaunch = (PathBuf, Vec<OsString>, Vec<(OsString, OsString)>);
-
-fn map_framework_build_script(root: &Path, tokens: &[&str]) -> Result<Option<BuildLaunch>> {
-    let launch = match tokens {
-        ["vite", "build"] => (
-            node_runner(),
-            node_bin_args(root, "vite", &["build"])?,
-            vec![],
-        ),
-        ["vite", "build", rest @ ..] => (
-            node_runner(),
-            node_bin_args(root, "vite", &["build"])?
-                .into_iter()
-                .chain(rest.iter().map(OsString::from))
-                .collect(),
-            vec![],
-        ),
-        ["next", "build"] => (
-            node_runner(),
-            node_bin_args(root, "next", &["build"])?,
-            vec![],
-        ),
-        ["next", "build", rest @ ..] => (
-            node_runner(),
-            node_bin_args(root, "next", &["build"])?
-                .into_iter()
-                .chain(rest.iter().map(OsString::from))
-                .collect(),
-            vec![],
-        ),
-        ["nuxt", "build"] => (
-            node_runner(),
-            node_bin_args(root, "nuxt", &["build"])?,
-            vec![
-                (
-                    OsString::from("NUXT_TELEMETRY_DISABLED"),
-                    OsString::from("1"),
-                ),
-                (
-                    OsString::from("NUXT_TELEMETRY_CONSENT"),
-                    OsString::from("0"),
-                ),
-            ],
-        ),
-        ["astro", "build"] => (
-            node_runner(),
-            node_bin_args(root, "astro", &["build"])?,
-            vec![],
-        ),
-        ["remix", "vite:build"] => (
-            node_runner(),
-            node_bin_args(root, "remix", &["vite:build"])?,
-            vec![],
-        ),
-        ["ng", "build"] => (
-            node_runner(),
-            node_bin_args(root, "ng", &["build"])?,
-            vec![
-                (OsString::from("NG_CLI_ANALYTICS"), OsString::from("false")),
-                (OsString::from("CI"), OsString::from("1")),
-            ],
-        ),
-        _ => return Ok(None),
-    };
-
-    Ok(Some(launch))
-}
-
-fn reject_external_package_manager_script(script: &str, manifest_path: &Path) -> Result<()> {
-    if let Some(pm) = mgc_exec::allowlist::find_forbidden_tool_in_script(script) {
-        bail!(
-            "Unsupported script '{}' in '{}': it delegates to '{}'. Core-web must execute natively through MagiCore or framework-local binaries, not through another package manager.",
-            script,
-            manifest_path.display(),
-            pm
-        );
-    }
-    Ok(())
-}
-
-fn node_runner() -> PathBuf {
-    PathBuf::from("node")
-}
-
-fn node_bin_args(project_root: &Path, bin_name: &str, args: &[&str]) -> Result<Vec<OsString>> {
-    let bin = project_root
-        .join("node_modules")
-        .join(".bin")
-        .join(bin_name);
-    if !bin.exists() {
-        bail!(
-            "Missing local executable '{}'. Run 'mgc install-web' in '{}'.",
-            bin_name,
-            project_root.display()
-        );
-    }
-
-    let entry = std::fs::read_link(&bin)
-        .map(|target| {
-            if target.is_absolute() {
-                target
-            } else {
-                bin.parent().unwrap_or(project_root).join(target)
-            }
-        })
-        .unwrap_or_else(|_| bin.clone());
-
-    let mut result = vec![
-        OsString::from("--preserve-symlinks"),
-        OsString::from("--preserve-symlinks-main"),
-        entry.into_os_string(),
-    ];
-    result.extend(args.iter().map(OsString::from));
-    Ok(result)
-}
-
-fn prepend_path(local_bin: &Path) -> Result<OsString> {
-    let current = std::env::var_os("PATH").unwrap_or_default();
-    let mut parts = vec![local_bin.as_os_str().to_os_string()];
-    parts.extend(std::env::split_paths(&current).map(|path| path.into_os_string()));
-    std::env::join_paths(parts).map_err(|err| crate::error::join_paths(&err))
-}
-
-fn find_entry_point(root: &Path) -> Result<PathBuf> {
-    let candidates = [
-        "src/index.ts",
-        "src/index.tsx",
-        "src/main.ts",
-        "src/main.tsx",
-        "src/app.ts",
-        "src/app.tsx",
-        "index.ts",
-        "index.tsx",
-        "main.ts",
-        "main.tsx",
-        "src/index.js",
-        "src/index.jsx",
-        "src/main.js",
-        "src/main.jsx",
-        "src/app.js",
-        "src/app.jsx",
-        "index.js",
-        "index.jsx",
-        "main.js",
-        "main.jsx",
-    ];
-
-    for candidate in candidates {
-        let path = root.join(candidate);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    let pkg_path = root.join("package.json");
-    if pkg_path.exists() {
-        let content = std::fs::read_to_string(&pkg_path)?;
-        let pkg: serde_json::Value = serde_json::from_str(&content)?;
-
-        if let Some(main) = pkg.get("main").and_then(|v| v.as_str()) {
-            let path = root.join(main);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-        if let Some(module) = pkg.get("module").and_then(|v| v.as_str()) {
-            let path = root.join(module);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-    }
-
-    bail!("Could not find entry point. Checked: src/index.ts, src/index.tsx, src/main.ts, src/main.tsx, and package.json main/module fields")
-}
-
-fn find_native_engine_crate(root: &Path) -> Option<PathBuf> {
-    let candidates = [
-        root.join("crates").join("engine"),
-        root.join("apps")
-            .join("frontend")
-            .join("crates")
-            .join("engine"),
-    ];
-
-    candidates
-        .into_iter()
-        .find(|path| path.join("Cargo.toml").exists())
-}
-
-fn build_native_engine(crate_dir: &Path, release: bool) -> Result<PathBuf> {
-    let start = Instant::now();
-    info(&format!(
-        "Building native engine crate at {}...",
-        crate_dir.display()
-    ));
-
-    let mut args = vec!["build"];
-    if release {
-        args.push("--release");
-    }
-
-    run_allowlisted_tool(crate_dir, "cargo", &args)?;
-
-    let binary_name = if cfg!(windows) {
-        "mgc-web-engine.exe"
-    } else {
-        "mgc-web-engine"
-    };
-    let profile_dir = if release { "release" } else { "debug" };
-    let binary = crate_dir.join("target").join(profile_dir).join(binary_name);
-    if !binary.exists() {
-        bail!(
-            "native engine build completed but binary '{}' was not found",
-            binary.display()
-        );
-    }
-
-    info(&format!(
-        "Native engine build completed in {:?}",
-        start.elapsed()
-    ));
-    Ok(binary)
-}
-
-fn run_allowlisted_tool(root: &Path, program: &str, args: &[&str]) -> Result<()> {
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".magicore").join("exec.log")),
-        clean_env: true,
-        ..Default::default()
-    };
-    let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
-    mgc_exec::prelude::run(program, &args, &opts)?;
-    Ok(())
-}
+// Test-only re-export: build_test.rs consumes engine symbols via
+// `use super::*` (RULE §5 module-test pattern).
+#[cfg(test)]
+pub(crate) use web_engine::*;
+use web_engine::{
+    build_rust_with_env, build_web, detect_app_runtime, detect_lib_runtime, node_bin_args,
+    prepend_path, run_allowlisted_tool, run_allowlisted_tool_with_env,
+};
 
 #[cfg(test)]
 #[path = "../test/build_test.rs"]

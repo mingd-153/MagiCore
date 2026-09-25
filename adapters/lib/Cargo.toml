@@ -8,6 +8,8 @@ authors.workspace = true
 description = "Library ecosystem adapter for MagiCore (ts/rust/python)"
 
 [dependencies]
+mgc-audit = { workspace = true }
+futures-util = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { workspace = true }
 mgc-crypto = { workspace = true }
@@ -16,10 +18,13 @@ mgc-sbom = { workspace = true }
 mgc-cache = { workspace = true }
 mgc-adapter-base = { workspace = true }
 mgc-config = { workspace = true }
-mgc-exec = { workspace = true }
 mgc-store = { workspace = true }
+mgc-platform = { workspace = true }
+mgc-resolver = { workspace = true }
 mgc-web-adapter = { path = "../web" }
 mgc-ui = { workspace = true }
+libc = { workspace = true }
+chrono = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -50,6 +55,10 @@ workspace = true
 [dev-dependencies]
 criterion = { workspace = true }
 mockito.workspace = true
+# NuGet wiring test needs base64 for SHA-512 registration hashes (pinned
+# workspace dep). (Test wiring NuGet cần base64 cho hash SHA-512 của
+# registration — workspace dep đã ghim.)
+base64 = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }

@@ -1,0 +1,26 @@
+{
+  "pm": "pnpm",
+  "run": 9,
+  "timestamp": "20260904_163703",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_163703"
+},
+  "cold_install": {
+    "duration_seconds": 415.268160000,
+    "disk_mb": 0,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 974.365854000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "Progress: resolved 1, reused 0, downloaded 0, added 0 [WARN] deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options. Progress: resolved 10, reused 0, downloaded 5, added 0 Progress: resolved 14, reused 0, downloaded 11, added 0 Progress: resolved 15, reused 0, downloaded 13, added 0 Progress: resolved 17, reused 0, downloaded 16, added 0 Progress: resolved 18, reused 0, downloaded 17, added 0 Progress: resolved 18, reused 0, downloaded 18, added 0 [WARN] Request took 11052ms: https://registry.npmjs.org/tailwindcss Progress: resolved 19, reused 0, downloaded 18, added 0 Progress: resolved 19, reused 0, downloaded 19, added 0 [WARN] Request took 13579ms: https://registry.npmjs.org/next Progress: resolved 20, reused 0, downloaded 19, added 0 Progress: resolved 87, reused 0, downloaded 62, added 0 Progress: resolved 103, reused 0, downloaded 84, added 0 Progress: resolved 113, reused 0, downloaded 104, added 0 [WARN] Tarball download average speed 21 KiB/s (size 25 KiB) is below 50 KiB/s: https://registry.npmjs.org/eslint-scope/-/eslint-scope-7.2.2.tgz (GET) Progress: resolved 120, reused 0, downloaded 113, added 0 Progress: resolved 127, reused 0, downloaded 116, added 0 Progress: resolved 127, reused 0, downloaded 117, added 0 ",
+    "warm": "Progress: resolved 1, reused 0, downloaded 0, added 0 [WARN] deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options. [WARN] GET https://registry.npmjs.org/next/-/next-14.2.35.tgz error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-14.2.33.tgz error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/electron-to-chromium error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/node-releases error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.11.20.tgz error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/lines-and-columns/-/lines-and-columns-1.2.4.tgz error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/rollup/-/rollup-4.63.1.tgz error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. [WARN] GET https://registry.npmjs.org/type-fest/-/type-fest-0.20.2.tgz error (ENOTFOUND). Will retry in 10 seconds. 2 retries left. Progress: resolved 225, reused 210, downloaded 0, added 0 [WARN] GET https://registry.npmjs.org/next/-/next-14.2.35.tgz error (ENOTFOUND). Will retry in 1 minute. 1 retries left. [WARN] GET https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-14.2.33.tgz error (ENOTFOUND). Will retry in 1 minute. 1 retries left. [WARN] GET https://registry.npmjs.org/electron-to-chromium error (ENOTFOUND). Will retry in 1 minute. 1 retries left. [WARN] GET https://registry.npmjs.org/node-releases error (ENOTFOUND). Will retry in 1 minute. 1 retries left. [WARN] GET https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.11.20.tgz error (ENOTFOUND). Will retry in 1 minute. 1 retries left. [WARN] GET https://registry.npmjs.org/lines-and-columns/-/lines-and-columns-1.2.4.tgz error (ENOTFOUND). Will retry in 1 minute. 1 retries left. [WARN] GET https://registry.npmjs.org/rollup/-/rollup-4.63.1.tgz error (ENOTFOUND). Will retry in 1 minute. 1 retries left. [WARN] GET https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz error (ENOTFOUND). Will retry in 1 minute. 1 retries left. "
+  }
+}

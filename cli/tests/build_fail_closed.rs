@@ -4,7 +4,7 @@
 mod common;
 
 #[test]
-fn ai_build_fails_instead_of_reporting_a_skipped_success() {
+fn ai_build_without_language_manifest_fails_instead_of_reporting_success() {
     let dir = common::work_dir();
     std::fs::write(
         dir.join("mgc.toml"),
@@ -15,10 +15,10 @@ fn ai_build_fails_instead_of_reporting_a_skipped_success() {
     let (ok, out) = common::mgc_in(&dir, &["build"]);
     assert!(
         !ok,
-        "AI build must not report success without an artifact: {out}"
+        "AI build must not report success without a language manifest: {out}"
     );
     assert!(
-        out.contains("not supported for core 'ai'"),
+        out.contains("No ai build framework detected"),
         "unexpected output: {out}"
     );
 }

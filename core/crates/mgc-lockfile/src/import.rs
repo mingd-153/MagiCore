@@ -5,11 +5,21 @@
 //! Chính sách phiên bản: SHAPE-FIRST — chấp nhận theo cấu trúc `packages` map,
 //! số version chỉ để cảnh báo khi chưa test (PM bump version liên tục;
 //! RULE §12: không pin giá trị hay thay đổi vào code).
-// (Import other package managers' lockfiles into mgc.lock v2 — pure data parsers,
+// (Import other package managers' lockfiles into mgc.lock — pure data parsers,
 // never executes/wraps any PM. Version policy: SHAPE-FIRST — acceptance by data
 // structure; version numbers only drive advisories for untested formats.)
+//
+// v3 note: importer-built `Package` entries keep the v3 defaults
+// (`ecosystem = other`, `provenance = None`) via `..Default::default()` —
+// per-ecosystem tagging lands with the Phase 2 ecosystem wiring, and `other`
+// is exempt from provenance verification.
+// Ghi chú v3: `Package` do importer dựng giữ mặc định v3
+// (`ecosystem = other`, `provenance = None`) qua `..Default::default()` —
+// gắn thẻ theo ecosystem sẽ có khi wire ecosystem Phase 2, còn `other`
+// được miễn verify provenance.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
+use mgc_types::strip_jsonc;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -27,8 +37,15 @@ pub const NPM_LOCKFILE: &str = "package-lock.json";
 pub const PNPM_LOCKFILE: &str = "pnpm-lock.yaml";
 pub const YARN_LOCKFILE: &str = "yarn.lock";
 pub const BUN_LOCKFILE: &str = "bun.lock";
+pub const DENO_LOCKFILE: &str = "deno.lock";
 
-pub const ALL: [&str; 4] = [NPM_LOCKFILE, PNPM_LOCKFILE, YARN_LOCKFILE, BUN_LOCKFILE];
+pub const ALL: [&str; 5] = [
+    NPM_LOCKFILE,
+    PNPM_LOCKFILE,
+    YARN_LOCKFILE,
+    BUN_LOCKFILE,
+    DENO_LOCKFILE,
+];
 
 /// Detect supported legacy lockfiles without importing them.
 /// Migration must be explicit; install callers should use this only for hints.
@@ -61,7 +78,17 @@ pub fn check_trust_downgrade_risk(project_root: &Path) -> Option<Vec<&'static st
 }
 
 /// Kết quả import — báo cáo nguồn + số package đã chuyển đổi + cảnh báo phiên bản.
-// (Import outcome — source file, converted package count, version advisories.)
+/// Skipped records (P0-5 2026-09-11): mọi entry bị bỏ qua phải được ghi
+/// đích danh kèm lý do — KHÔNG có skip âm thầm. Đổi tên 2026-09-12 (P0
+/// finding #8): migration là BEST-EFFORT kèm loss report tường minh,
+/// KHÔNG phải lossless — bun/deno lưu RANGES/prefixes mà mgc.lock chỉ
+/// giữ pin; mọi thông tin không giữ được phải xuất hiện ở đây.
+// (Import outcome — source file, converted package count, version advisories.
+// Skipped records: every skipped entry must be named with a reason —
+// silent skips are gone. Rename 2026-09-12 (P0 finding #8): migration is
+// BEST-EFFORT with an explicit loss report, NOT lossless — bun/deno store
+// RANGES/prefixes while mgc.lock keeps pins; anything not preserved must
+// appear in this report.)
 #[derive(Debug, Clone)]
 pub struct ImportReport {
     pub source_file: String,
@@ -69,6 +96,23 @@ pub struct ImportReport {
     /// Cảnh báo phiên bản format mới hơn mức đã kiểm chứng (parse theo shape).
     // (Warnings for format versions newer than tested — imported by structure.)
     pub warnings: Vec<String>,
+    /// Records the importer refused or could not map — recorded
+    /// EXPLICITLY so `mgc import` can surface them (P0-5: best-effort
+    /// migration — every input record is either imported or listed;
+    /// the report IS the loss ledger, so "lossless" is never claimed).
+    /// Record importer từ chối hoặc không ánh xạ được — liệt kê
+    /// TƯỜNG MINH để `mgc import` hiển thị (P0-5: migration best-effort
+    /// — mọi record input hoặc được import hoặc được liệt kê; báo cáo
+    /// chính là sổ ghi mất mát, không bao giờ claim "lossless").
+    pub skipped: Vec<SkippedRecord>,
+}
+
+/// One record the importer refused, with the exact reason.
+/// Một record bị importer từ chối, kèm lý do chính xác.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedRecord {
+    pub key: String,
+    pub reason: String,
 }
 
 /// Phiên bản format ĐÃ kiểm chứng — chỉ dùng để quyết định cảnh báo, KHÔNG dùng
@@ -101,11 +145,18 @@ pub fn import_file(path: &Path) -> Result<(crate::Lockfile, ImportReport)> {
         .unwrap_or_default();
 
     let mut warnings: Vec<String> = Vec::new();
+    let mut skipped: Vec<SkippedRecord> = Vec::new();
+    // Root direct-dep pins (P0 finding #6) — attached to the Lockfile
+    // as the root graph, never as package self-edges.
+    // Pin direct-dep gốc (P0 finding #6) — gắn vào Lockfile như graph
+    // root, không bao giờ là self-edge của package.
+    let mut root_deps: Vec<String> = Vec::new();
     let mut packages = match file_name {
         NPM_LOCKFILE => parse_npm(&content, &mut warnings)?,
         PNPM_LOCKFILE => parse_pnpm(&content, &mut warnings)?,
         YARN_LOCKFILE => parse_yarn(&content)?,
-        BUN_LOCKFILE => parse_bun(&content)?,
+        BUN_LOCKFILE => parse_bun(&content, &mut skipped)?,
+        DENO_LOCKFILE => parse_deno(&content, &mut skipped, &mut root_deps)?,
         other => bail!("unsupported lockfile '{other}'"),
     };
 
@@ -121,6 +172,13 @@ pub fn import_file(path: &Path) -> Result<(crate::Lockfile, ImportReport)> {
     let count = packages.len();
     let mut lockfile = crate::Lockfile::new();
     lockfile.packages = packages;
+    // Root graph (P0 finding #6): the source root pin set becomes the
+    // lockfile root_dependencies — the honest representation of
+    // "workspace root → dependency" edges.
+    // Graph root (P0 finding #6): tập pin gốc của lockfile nguồn thành
+    // root_dependencies — biểu diễn trung thực cạnh "workspace root →
+    // dependency".
+    lockfile.root_dependencies = root_deps;
 
     Ok((
         lockfile,
@@ -128,6 +186,7 @@ pub fn import_file(path: &Path) -> Result<(crate::Lockfile, ImportReport)> {
             source_file: file_name.to_string(),
             packages: count,
             warnings,
+            skipped,
         },
     ))
 }
@@ -249,6 +308,7 @@ fn parse_npm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>> 
             resolved,
             integrity,
             dependencies,
+            ..Default::default()
         });
     }
     Ok(out)
@@ -259,8 +319,36 @@ fn parse_npm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>> 
 // ---------------------------------------------------------------------------
 
 fn parse_pnpm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>> {
-    let yaml: serde_yaml::Value = serde_yaml::from_str(content)
+    // Multi-document files (pnpm ≥10 env document + project document):
+    // a single-doc parse silently returns the FIRST (env) document — the
+    // exact trap Deno documents for pnpm consumers. Always parse every
+    // document and take the LAST (project graph); the env document is
+    // reported, never silently merged (different universe: .pnpm-config).
+    // (File nhiều document: parse đơn-doc âm thầm trả document ĐẦU (env)
+    // — đúng bẫy Deno đã ghi. Luôn parse mọi document và lấy CUỐI
+    // (graph project); document env được báo cáo, không bao giờ gộp âm
+    // thầm.)
+    use serde::Deserialize;
+    let documents: Vec<serde_yaml::Value> = serde_yaml::Deserializer::from_str(content)
+        .map(serde_yaml::Value::deserialize)
+        .collect::<Result<_, _>>()
         .map_err(|e| anyhow::anyhow!("pnpm-lock.yaml is not valid YAML: {e}"))?;
+    if documents.len() > 1 {
+        let env_packages = documents[..documents.len() - 1]
+            .iter()
+            .filter_map(|doc| doc.get("packages"))
+            .filter_map(|packages| packages.as_mapping())
+            .map(|mapping| mapping.len())
+            .sum::<usize>();
+        warnings.push(format!(
+            "pnpm-lock.yaml has {} documents: using the LAST (project graph); {} env-document package(s) recorded but not imported (configDependencies live outside the project graph)",
+            documents.len(),
+            env_packages
+        ));
+    }
+    let yaml = documents
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("pnpm-lock.yaml is empty"))?;
 
     // Shape-first như npm — pnpm đổi '9.0' → '10.0'... không cần sửa code.
     // (Shape-first like npm — pnpm bumping '9.0' → '10.0' needs no code change.)
@@ -343,6 +431,7 @@ fn parse_pnpm(content: &str, warnings: &mut Vec<String>) -> Result<Vec<Package>>
             resolved,
             integrity,
             dependencies,
+            ..Default::default()
         });
     }
     Ok(out)
@@ -377,6 +466,7 @@ fn parse_yarn(content: &str) -> Result<Vec<Package>> {
                 resolved: std::mem::take(resolved),
                 integrity: std::mem::take(integrity),
                 dependencies: vec![],
+                ..Default::default()
             });
         } else {
             *name = None;
@@ -424,15 +514,191 @@ fn parse_yarn(content: &str) -> Result<Vec<Package>> {
 }
 
 // ---------------------------------------------------------------------------
-// bun — bun.lock JSON (text; .lockb binary ngoài phạm vi)
+// deno — deno.lock v5 (JSON): npm map "name@version" → integrity; jsr map
+// giữ nguyên tiền tố "jsr:" để audit báo skipped trung thực (P0-3 2026-09-10).
+// P0 finding #6 (2026-09-12): root pins từ workspace.dependencies là
+// GRAPH ROOT — ghi vào lockfile.root_dependencies, KHÔNG self-edge vào
+// package. P0 finding #8: import là BEST-EFFORT kèm loss report — mọi
+// record bị từ chối liệt kê tường minh trong `skipped`; JSR pin giữ
+// tiền tố "jsr:" và luôn có lý do no-npm-advisory đi kèm.
+// (deno.lock v5: npm map name@version → integrity; jsr keeps the jsr:
+// prefix so audit reports honestly. Root pins are the ROOT GRAPH —
+// lockfile.root_dependencies, never a package self-edge. Best-effort
+// migration: every refused record is explicitly listed in `skipped`.)
 // ---------------------------------------------------------------------------
 
-fn parse_bun(content: &str) -> Result<Vec<Package>> {
-    let json: serde_json::Value = serde_json::from_str(content).map_err(|e| {
-        anyhow::anyhow!(
-            "bun.lock is not valid JSON (bun comments/trailing commas unsupported): {e}"
-        )
-    })?;
+fn parse_deno(
+    content: &str,
+    skipped: &mut Vec<SkippedRecord>,
+    root_deps: &mut Vec<String>,
+) -> Result<Vec<Package>> {
+    let json: serde_json::Value = serde_json::from_str(content)
+        .map_err(|e| anyhow::anyhow!("deno.lock is not valid JSON: {e}"))?;
+
+    // Shape-first: bắt buộc có map "npm" (deno.lock v5); "jsr" tùy chọn.
+    let npm = json
+        .get("npm")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| anyhow::anyhow!("deno.lock has no 'npm' map (v5 schema expected)"))?;
+
+    // Root dependency pins (v5 "workspace"."dependencies"): raw pin list
+    // used to rebuild direct-dependency edges for the root set.
+    // Ghim dependency gốc (v5 "workspace"."dependencies"): danh sách pin
+    // thô dùng để dựng lại cạnh dependency-trực-tiếp cho tập root.
+    let root_pins: Vec<String> = json
+        .get("workspace")
+        .and_then(|w| w.get("dependencies"))
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut out = Vec::new();
+    for (pin, entry) in npm {
+        let Some((name, version)) = split_name_version(pin) else {
+            // P0-5: malformed pins are RECORDED, never silently skipped.
+            // P0-5: pin malformed được GHI LẠI, không bao giờ bỏ âm thầm.
+            skipped.push(SkippedRecord {
+                key: pin.clone(),
+                reason: "npm pin is not name@version".to_string(),
+            });
+            continue;
+        };
+        // deno.lock v5 npm values come in TWO shapes: an object with
+        // integrity ({"integrity": "sha512-..."}) or a bare version
+        // string ("4.17.20") — both are valid real-world writer
+        // output; accept both (string = no integrity recorded).
+        // Giá trị npm của deno.lock v5 có HAI dạng: object chứa
+        // integrity hoặc chuỗi version trơn — cả hai đều là output
+        // writer thật; chấp nhận cả hai (string = không ghi integrity).
+        let integrity = match entry {
+            serde_json::Value::Object(obj) => obj
+                .get("integrity")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            serde_json::Value::String(s) => {
+                // Bare version string — cross-check against the pin's
+                // version half; mismatch is a corrupt record.
+                // Chuỗi version trơn — đối chiếu với nửa version của
+                // pin; lệch nhau là record hỏng.
+                if s != &version {
+                    skipped.push(SkippedRecord {
+                        key: pin.clone(),
+                        reason: format!("npm version mismatch: pin says {version}, entry says {s}"),
+                    });
+                    continue;
+                }
+                String::new()
+            }
+            other => {
+                skipped.push(SkippedRecord {
+                    key: pin.clone(),
+                    reason: format!("npm entry is neither object nor version string: {other}"),
+                });
+                continue;
+            }
+        };
+
+        // Root direct dependencies: pins listed under
+        // workspace.dependencies are the ROOT GRAPH (root → dep), NOT a
+        // self-edge of the resolved package. They land in
+        // lockfile.root_dependencies via the `root_deps` out-parameter
+        // (P0 finding #6, 2026-09-12): the previous code pushed them
+        // into the package's own `dependencies`, turning "workspace
+        // root depends on lodash" into the lie "lodash depends on
+        // npm:lodash@4.17.20". v5 pins carry runtime prefixes
+        // ("npm:", "jsr:") — the pin is kept VERBATIM (prefix intact)
+        // so no source information is lost.
+        // Direct-dep gốc: pin trong workspace.dependencies là GRAPH
+        // ROOT (root → dep), KHÔNG phải self-edge của package được
+        // resolve. Chúng ghi vào lockfile.root_dependencies qua tham
+        // số ra `root_deps` (P0 finding #6): code cũ đẩy vào
+        // `dependencies` của chính package, biến "workspace root phụ
+        // thuộc lodash" thành câu sai "lodash phụ thuộc
+        // npm:lodash@4.17.20". Pin v5 mang tiền tố runtime — giữ
+        // NGUYÊN pin, không mất thông tin nguồn.
+        root_deps.extend(root_pins.iter().cloned());
+
+        out.push(Package {
+            name,
+            version,
+            resolved: String::new(),
+            integrity,
+            dependencies: vec![],
+            ..Default::default()
+        });
+    }
+
+    // JSR deps: không có advisory DB npm — import kèm tiền tố "jsr:" để
+    // downstream (audit) báo skipped trung thực; P0-5: mỗi pin JSR đều
+    // được liệt kê trong skipped kèm lý do (dữ liệu gốc không có npm
+    // integrity/registry → không thể lossless-map sang npm semantics).
+    // (JSR deps carry no npm advisory DB — the `jsr:` prefix survives so
+    // downstream audit reports honestly; P0-5: every JSR pin is listed
+    // in `skipped` with its reason — the source carries no npm
+    // integrity/registry data, so a lossless npm mapping is impossible.)
+    if let Some(jsr) = json.get("jsr").and_then(|v| v.as_object()) {
+        for pin in jsr.keys() {
+            let Some((name, version)) = split_name_version(pin) else {
+                skipped.push(SkippedRecord {
+                    key: format!("jsr:{pin}"),
+                    reason: "jsr pin is not name@version".to_string(),
+                });
+                continue;
+            };
+            // Record the JSR skip BEFORE the values move into Package.
+            // Ghi skip JSR TRƯỚC khi giá trị chuyển vào Package.
+            skipped.push(SkippedRecord {
+                key: format!("jsr:{name}@{version}"),
+                reason: "jsr package has no npm registry/integrity mapping — audit reports it as skipped".to_string(),
+            });
+            out.push(Package {
+                name: format!("jsr:{name}"),
+                version,
+                resolved: String::new(),
+                integrity: String::new(),
+                dependencies: vec![],
+                ..Default::default()
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// bun — bun.lock JSON (text; .lockb binary ngoài phạm vi)
+// P0 finding #8 (2026-09-12): BEST-EFFORT, not lossless — bun stores
+// RANGES in the dep map while mgc.lock pins; the edge keeps the dep NAME
+// and the range is recorded as a loss (the source file remains the
+// range source of truth). Every refused entry is EXPLICITLY appended to
+// `skipped` — silent `continue` is gone. Entry shapes:
+// ["name@version", "url?", {deps}, "integrity?"].
+// (bun.lock text JSON — .lockb binary out of scope. Best-effort: bun
+// keeps RANGES, mgc.lock pins — dep NAME survives as the edge, the
+// range is a recorded loss; every refused entry lands in `skipped`.)
+// ---------------------------------------------------------------------------
+
+fn parse_bun(content: &str, skipped: &mut Vec<SkippedRecord>) -> Result<Vec<Package>> {
+    // P0-3 (2026-09-10): bun's writer emits JSONC (line comments +
+    // trailing commas) — the same shape mgc-audit's lockfile reader
+    // already handles. Import must accept what real `bun install` writes,
+    // else `mgc import bun` fails on the very fixtures the migration
+    // targets. Strip JSONC BEFORE the strict JSON parse — the shared
+    // mgc-types::jsonc implementation (P1 dedup, 2026-09-11: one
+    // implementation, two consumers, same contract).
+    // Writer của bun ghi JSONC (comment dòng + dấu phẩy cuối) — import
+    // phải chấp nhận đúng cái bun install ghi ra, nếu không `mgc import
+    // bun` fail trên chính fixture migration nhắm tới. Cắt JSONC trước
+    // khi parse JSON strict — dùng bản strip_jsonc chung trong
+    // mgc-types::jsonc (dedup P1: một bản implement, hai nơi dùng).
+    let cleaned = strip_jsonc(content);
+    let json: serde_json::Value = serde_json::from_str(&cleaned)
+        .map_err(|e| anyhow::anyhow!("bun.lock is not valid JSONC: {e}"))?;
 
     if json.get("__metadata").is_some() {
         bail!("bun lockfileVersion 2+ is not supported yet — refusing to guess");
@@ -444,25 +710,54 @@ fn parse_bun(content: &str) -> Result<Vec<Package>> {
         .ok_or_else(|| anyhow::anyhow!("bun.lock has no 'packages' map"))?;
 
     let mut out = Vec::new();
-    for (_key, entry) in entries {
-        // Entry chuẩn: ["name@version", "tarball-url"?, "sha512-..."?]
+    for (key, entry) in entries {
+        // Entry chuẩn: ["name@version", "tarball-url"?, {deps}?, "sha512-..."?]
         let Some(items) = entry.as_array() else {
+            skipped.push(SkippedRecord {
+                key: key.clone(),
+                reason: "entry is not an array".to_string(),
+            });
             continue;
         };
         let Some(spec) = items.first().and_then(|v| v.as_str()) else {
+            skipped.push(SkippedRecord {
+                key: key.clone(),
+                reason: "first entry element is not a name@version string".to_string(),
+            });
             continue;
         };
         let Some((name, version)) = split_name_version(spec) else {
+            // Workspace/registry ids that are not npm pins: RECORDED
+            // (P0-5) — e.g. "workspace:root" survives in the report.
+            // Id workspace/registry không phải pin npm: ĐƯỢC GHI
+            // (P0-5) — vd "workspace:root" sống sót trong report.
+            skipped.push(SkippedRecord {
+                key: key.clone(),
+                reason: format!("entry spec '{spec}' is not a name@version pin"),
+            });
             continue;
         };
         let mut resolved = String::new();
         let mut integrity = String::new();
+        let mut dependencies: Vec<String> = Vec::new();
         for item in items.iter().skip(1) {
-            let Some(text) = item.as_str() else { continue };
-            if text.starts_with("http://") || text.starts_with("https://") {
-                resolved = text.to_string();
-            } else if text.contains("sha512-") || text.contains("sha256-") {
-                integrity = text.to_string();
+            if let Some(text) = item.as_str() {
+                if text.starts_with("http://") || text.starts_with("https://") {
+                    resolved = text.to_string();
+                } else if text.contains("sha512-") || text.contains("sha256-") {
+                    integrity = text.to_string();
+                }
+            } else if let Some(deps) = item.as_object() {
+                // Dependency map element: {"left-pad": "left-pad@^4.0.0"}.
+                // bun stores RANGES; mgc.lock pins — keep the dep NAME
+                // as the edge; the RANGE is a recorded loss (P0 finding
+                // #8: best-effort, the source lockfile keeps ranges).
+                // Phần tử map dependency: bun lưu RANGE; mgc.lock lưu
+                // pin — giữ TÊN dep làm cạnh; RANGE là mất mát được ghi
+                // nhận (best-effort, lockfile nguồn giữ range).
+                for dep_name in deps.keys() {
+                    dependencies.push(dep_name.clone());
+                }
             }
         }
         out.push(Package {
@@ -470,8 +765,16 @@ fn parse_bun(content: &str) -> Result<Vec<Package>> {
             version,
             resolved,
             integrity,
-            dependencies: vec![],
+            dependencies,
+            ..Default::default()
         });
     }
     Ok(out)
 }
+
+// The bun JSONC strip (quote-aware comments + trailing commas) was
+// consolidated into mgc-types::jsonc::strip_jsonc (P1 dedup 2026-09-11)
+// — this file now imports the single shared implementation above.
+// Phần strip JSONC của bun (comment nhận-biết-quote + dấu phẩy cuối)
+// đã gộp vào mgc-types::jsonc::strip_jsonc (dedup P1) — file này giờ
+// dùng bản chung duy nhất ở trên.

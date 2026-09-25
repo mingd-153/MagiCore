@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, development]
+    branches: [main, development, "feature/**", "fix/**"]
   pull_request:
     branches: [main, development]
 
@@ -10,17 +10,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  coverage-manifest-contract:
+    name: Coverage Manifest Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate Phase 0 coverage schema, fixture, and anti-laundering rules
+        run: |
+          python3 -m json.tool ci/evidence/coverage-manifest.schema.json >/dev/null
+          python3 scripts/test_coverage_manifest.py
+          python3 scripts/validate_coverage_manifest.py
+
   check:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
         with:
           components: rustfmt, clippy
+      - name: Setup Go (esbuild-rs build script needs go on PATH)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 (latest)
       - name: cargo fmt
         run: cargo fmt --all --check
       - name: cargo clippy
@@ -28,6 +44,66 @@ jobs:
       - name: mgc-exec allowlist tests
         run: cargo test -p mgc-exec --test test_run 2>&1
         timeout-minutes: 2
+
+  dependency-ownership-audit:
+    # Native ownership gate: any external dependency-lifecycle tool spawn
+    # blocks CI, even when marked DELEGATED.
+    # Cổng native ownership: mọi tool ngoài trong dependency lifecycle chặn
+    # CI, kể cả khi có nhãn DELEGATED.
+    name: Dependency Ownership Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Audit dependency ownership (fail on any delegation)
+        run: python3 scripts/audit_dependency_delegation.py
+      - name: Audit mutation-writer call manifest (fail on gateway bypass)
+        run: python3 scripts/audit_mutation_calls.py
+      - name: Mutation-gate negative controls (fail if the gate is blind)
+        run: python3 scripts/audit_mutation_calls.py --self-test
+      - name: Audit ledger stays gitignored (local-only)
+        run: git check-ignore -q docs/specs/dependencyDelegationAudit.json
+
+  windows-spawn-tests:
+    name: Windows Spawn Tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Setup Node.js (for spawn tests)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Setup Flutter (for .bat spawn tests)
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
+        with:
+          flutter-version: "3.47.4"
+          channel: "stable"
+
+      - name: Setup Go (esbuild-rs build script needs go on PATH)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Run Windows spawn tests
+        shell: bash
+        run: |
+          echo "=== Windows Tool Resolution ==="
+          where.exe node || echo "Node not found"
+          where.exe flutter || echo "Flutter not found"
+          where.exe gradle || echo "Gradle not found (expected)"
+          where.exe swift || echo "Swift not found (expected)"
+          echo ""
+
+          echo "=== Running mgc-exec Windows Tests ==="
+          cargo test -p mgc-exec --test windows_spawn_test --test multiplatform_tools_test -- --nocapture
+        timeout-minutes: 5
       - name: single-core web CLI surface
         run: cargo test -p mgc --no-default-features --features web test_single_core_create_alias_parses --quiet
       - name: cargo check
@@ -39,6 +115,13 @@ jobs:
       - name: release hash updater syntax
         run: bash -n scripts/update-release-hashes.sh
       - name: package manifests syntax
+        # Windows fix (2026-09-11): this job's default shell on Windows
+        # is pwsh — `>/dev/null` is a bash-ism that pwsh misreads as the
+        # path D:\dev\null. Force bash for the POSIX redirect syntax.
+        # Fix Windows: shell mặc định của job này trên Windows là pwsh —
+        # `>/dev/null` là cú pháp bash mà pwsh hiểu nhầm thành đường dẫn
+        # D:\dev\null. Ép bash cho cú pháp redirect POSIX.
+        shell: bash
         run: |
           ruby -c packaging/homebrew/magicore.rb
           ruby -c packaging/homebrew/magicore-web.rb
@@ -46,6 +129,10 @@ jobs:
           python3 -m json.tool packaging/scoop/magicore-web.json >/dev/null
       - name: benchmark provenance
         run: python3 benchmark/scripts/verify_benchmark_provenance.py
+      - name: analyzer regression tests
+        run: python3 benchmark/scripts/test_analyzer_strict.py
+      - name: manifest updater integration tests
+        run: bash scripts/test_manifest_updater.sh
       - name: internal specs stay ignored
         run: |
           git check-ignore -q docs/specs/magiCoreChangeLog.md
@@ -55,7 +142,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Free disk space
@@ -67,9 +154,14 @@ jobs:
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           df -h
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+      - name: Setup Go (esbuild-rs build script needs go on PATH)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 (latest)
       - name: cargo test
         run: cargo test --workspace --locked --exclude mgc --exclude mgc-e2e -- --test-threads=4
       - name: Seed registry + cargo test (mgc + mgc-e2e, skip benchmarks)
@@ -113,10 +205,198 @@ jobs:
     name: Build Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+      - name: Setup Go (esbuild-rs build script needs go on PATH)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 (latest)
       - name: cargo build --release
         run: cargo build --release --all-targets --locked
+
+  test-with-runtimes:
+    name: Test with Full Runtime Matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            python-setup: |
+              sudo apt-get update
+              sudo apt-get install -y python3 python3-pip nodejs npm
+              pip3 install pytest
+          - os: macos-latest
+            python-setup: |
+              brew install python3 node go
+              pip3 install --break-system-packages pytest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Setup Go (esbuild-rs build script needs go on PATH)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 (latest)
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0
+        with:
+          # Keep this matrix aligned with all-core lifecycle and Windows spawn CI.
+          # Đồng bộ runtime với lifecycle all-core và Windows spawn CI.
+          flutter-version: "3.47.4"
+          channel: "stable"
+          cache: true
+
+      - name: Setup Python + Node runtimes
+        run: ${{ matrix.python-setup }}
+
+      - name: Verify runtimes available
+        run: |
+          python3 --version
+          pytest --version
+          node --version
+          npm --version
+          flutter --version
+          flutter doctor -v
+          go version || echo "Go not available"
+
+      - name: Build mgc binary
+        run: cargo build -p mgc --locked
+
+      - name: Run security tests
+        run: cargo test -p mgc --test test_runner_security --locked
+
+      - name: Run optimizer tests (MUST PASS - no || true)
+        run: cargo test -p mgc --test optimizer_lifecycle_e2e --locked -- --nocapture
+
+      - name: Run lifecycle tests (MUST PASS - no || true)
+        run: cargo test -p mgc --test full_lifecycle_e2e --locked -- --nocapture
+
+      - name: Run cache stress tests (MUST PASS)
+        run: cargo test -p mgc --test cache_stress_test --locked -- --nocapture
+
+      - name: Run CLI surface tests (MUST PASS)
+        run: cargo test -p mgc --test cli_surface_errors_test --locked -- --nocapture
+
+      - name: Run install smoke tests (MUST PASS)
+        run: cargo test -p mgc --test install_smoke_test --locked -- --nocapture
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "=== Test Summary ==="
+          echo "Runtimes provisioned: Python3, pytest, Node, npm, Flutter"
+          echo "All E2E tests running with REAL mgc commands"
+          echo "Install smoke tests: structure verified"
+
+  fault-matrix-portable:
+    # Gate 11-D2 (2026-09-15) + P0-6 (Tech Lead 2026-09-15): the fault/stress
+    # suites split by PORTABILITY, and Windows becomes a REQUIRED lane.
+    # kill_injection_matrix / stress_shared_store_matrix /
+    # install_process_race are platform-portable (the unix-only assertion
+    # paths are already cfg-gated inside the suites — kill-injection asserts
+    # SIGKILL details on unix and "did not exit cleanly" elsewhere), so they
+    # gate ALL THREE hardened OSes with NO `|| true` and NO
+    # continue-on-error.
+    # (Gate 11-D2 + P0-6: các suite fault/stress tách theo TÍNH DI ĐỘNG,
+    # Windows thành lane BẮT BUỘC. Ba suite trên chạy được mọi nền tảng
+    # (đường assert unix-only đã cfg-gate sẵn trong suite), nên chúng gate
+    # CẢ BA OS với NO `|| true` và KHÔNG continue-on-error.)
+    name: Fault Matrix — portable (MUST PASS, 3 OS)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Setup Go (esbuild-rs build script needs go on PATH)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build test binaries (compile errors fail here, loudly)
+        run: cargo build -p mgc --tests --locked
+        timeout-minutes: 45
+
+      - name: kill injection matrix (MUST PASS — no || true)
+        # Gate 11-B.2 failpoint handshake: SIGKILL at every install phase
+        # must never corrupt the store; doctor --repair must end HEALTHY.
+        # (Gate 11-B.2 handshake failpoint: SIGKILL tại mọi phase install
+        # không được làm hỏng store; doctor --repair phải kết thúc HEALTHY.)
+        run: cargo test -p mgc --test kill_injection_matrix --locked
+        timeout-minutes: 30
+
+      - name: stress shared store matrix (MUST PASS — no || true)
+        run: cargo test -p mgc --test stress_shared_store_matrix --locked
+        timeout-minutes: 20
+
+      - name: install process race (MUST PASS — no || true)
+        run: cargo test -p mgc --test install_process_race --locked
+        timeout-minutes: 20
+
+  fault-matrix-unix-only:
+    # P0-6 (Tech Lead 2026-09-15): suites that are NOT (yet) portable stay
+    # REQUIRED on ubuntu+macos. disk_fault_injection_e2e uses
+    # std::os::unix::fs::PermissionsExt (permission fault injection);
+    # stress_64_process_race stays here per the Tech Lead verdict (its 64
+    # concurrent processes are unix-runner territory for now — no unix-only
+    # API was found in it, it may graduate to the portable lane after a
+    # Windows soak).
+    # (P0-6: các suite chưa di động vẫn BẮT BUỘC trên ubuntu+macos.
+    # disk_fault_injection_e2e dùng PermissionsExt (unix-only);
+    # stress_64_process_race ở lại theo phán quyết Tech Lead — không tìm
+    # thấy unix-only API trong nó, có thể chuyển lên lane portable sau khi
+    # ngâm Windows đủ lâu.)
+    name: Fault Matrix — unix-only (MUST PASS)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Setup Go (esbuild-rs build script needs go on PATH)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build test binaries (compile errors fail here, loudly)
+        run: cargo build -p mgc --tests --locked
+        timeout-minutes: 45
+
+      - name: 64-process stress race (MUST PASS — no || true)
+        run: cargo test -p mgc --test stress_64_process_race --locked
+        timeout-minutes: 25
+
+      - name: disk fault injection e2e (MUST PASS — no || true)
+        run: cargo test -p mgc --test disk_fault_injection_e2e --locked
+        timeout-minutes: 20

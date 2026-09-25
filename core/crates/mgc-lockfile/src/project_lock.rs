@@ -1,0 +1,249 @@
+//! Project-level writer lock — OS-backed exclusive lock, RAII (design §4.6).
+//! Lock writer cấp project — lock độc quyền của OS, RAII.
+//!
+//! Authority is the KERNEL, not a TTL file: a live holder is never
+//! robbed, a dead holder (even SIGKILL) releases automatically, and a
+//! loser gets `LockBusy` — never last-writer-wins. `pid` metadata is
+//! diagnostic only and never decides ownership.
+//! (Quyền lực là KERNEL, không phải file TTL: holder sống không bao giờ
+//! bị cướp, holder chết (kể cả SIGKILL) tự nhả, kẻ thua nhận `LockBusy` —
+//! không bao giờ last-writer-wins.)
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use fs2::FileExt;
+
+use crate::{LockfileError, LockfileResult};
+
+/// Guard file holding the project writer lock — Khóa writer project.
+pub const WRITE_LOCK_FILE: &str = "lock.write";
+
+/// RAII guard: dropping closes the file, which releases the OS lock
+/// (even on unwind). Never release manually.
+///
+#[derive(Debug)]
+pub struct ProjectWriteLock {
+    _file: std::fs::File,
+    guard_path: PathBuf,
+}
+
+impl ProjectWriteLock {
+    /// Guard-file path for a project root (`.magicore/lock.write`).
+    pub fn guard_path_for(project_root: &Path) -> PathBuf {
+        project_root.join(".magicore").join(WRITE_LOCK_FILE)
+    }
+
+    /// Acquire the exclusive OS lock, waiting up to `timeout`. The
+    /// CURRENT lock content is read only AFTER acquiring (observers).
+    /// Timeout → `LockBusy`, never reclaim, never overwrite blindly.
+    /// (Acquire lock OS độc quyền, chờ tối đa `timeout`. Hết timeout →
+    /// `LockBusy`, không reclaim, không ghi đè mù.)
+    pub fn acquire(project_root: &Path, timeout: Duration) -> LockfileResult<Self> {
+        let magicore = project_root.join(".magicore");
+        // Link check BEFORE any create: create_dir_all through a swapped
+        // parent would plant the guard outside the project. The trust
+        // boundary is `.magicore` itself — project_root ancestors (e.g.
+        // symlinked checkouts, /tmp on macOS) are the operator's own
+        // filesystem and stay allowed.
+        // (Chống symlink TRƯỚC khi tạo — boundary là `.magicore`.)
+        Self::ensure_real_dir(&magicore)?;
+        let guard_path = magicore.join(WRITE_LOCK_FILE);
+        Self::refuse_link_swap(&guard_path)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(&guard_path).map_err(|e| {
+            LockfileError::WriteFailed(format!(
+                "cannot open lock guard '{}': {e}",
+                guard_path.display()
+            ))
+        })?;
+        let start = Instant::now();
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => {
+                    return Ok(Self {
+                        _file: file,
+                        guard_path,
+                    });
+                }
+                // Contention: wait out the timeout, then LockBusy (never
+                // steal a live holder's lock).
+                Err(e) if is_lock_contention(&e) => {
+                    if start.elapsed() >= timeout {
+                        return Err(LockfileError::LockBusy(format!(
+                            "project lock held by a live process ('{}'); refusing to reclaim",
+                            guard_path.display()
+                        )));
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                // A real OS error (permissions, FS gone) is not
+                // contention — fail immediately with the cause.
+                Err(e) => {
+                    return Err(LockfileError::WriteFailed(format!(
+                        "cannot lock '{}': {e}",
+                        guard_path.display()
+                    )));
+                }
+            }
+        }
+    }
+
+    /// Diagnostic path (never an ownership input).
+    pub fn guard_path(&self) -> &Path {
+        &self.guard_path
+    }
+
+    /// Ensure a directory exists and is NOT a link-swap: refuse
+    /// symlink/junction/reparse points, refuse non-directories, create
+    /// (single level — the caller secures parents top-down first).
+    /// (Thư mục thật, không link — tạo một cấp sau khi cha đã sạch.)
+    fn ensure_real_dir(dir: &Path) -> LockfileResult<()> {
+        match std::fs::symlink_metadata(dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(dir).map_err(|e| {
+                    LockfileError::WriteFailed(format!(
+                        "cannot create dir '{}': {e}",
+                        dir.display()
+                    ))
+                })
+            }
+            Err(e) => Err(LockfileError::WriteFailed(format!(
+                "cannot stat dir '{}': {e}",
+                dir.display()
+            ))),
+            Ok(meta) => {
+                if path_is_link_or_reparse(dir) {
+                    return Err(LockfileError::WriteFailed(format!(
+                        "refusing link-swapped dir '{}'",
+                        dir.display()
+                    )));
+                }
+                if !meta.file_type().is_dir() {
+                    return Err(LockfileError::WriteFailed(format!(
+                        "path '{}' is not a directory",
+                        dir.display()
+                    )));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Refuse symlink/junction/reparse-point guard files: a swapped guard
+    /// would move the lock somewhere the rival controls.
+    /// (Từ chối file guard là symlink/junction/reparse-point.)
+    fn refuse_link_swap(guard_path: &Path) -> LockfileResult<()> {
+        let Ok(meta) = std::fs::symlink_metadata(guard_path) else {
+            return Ok(());
+        };
+        if meta.file_type().is_symlink() {
+            return Err(LockfileError::WriteFailed(format!(
+                "refusing symlinked lock guard '{}'",
+                guard_path.display()
+            )));
+        }
+        #[cfg(windows)]
+        {
+            // Junctions and mount points surface as reparse points, not
+            // symlinks, on Windows — both must be refused.
+            // (Junction/mount point hiện là reparse point, không phải
+            // symlink, trên Windows — từ chối cả hai.)
+            if windows_reparse_point(guard_path) {
+                return Err(LockfileError::WriteFailed(format!(
+                    "refusing reparse-point lock guard '{}'",
+                    guard_path.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `fs2` exposes Windows `ERROR_LOCK_VIOLATION` (33) as a raw OS error,
+/// not `ErrorKind::WouldBlock`. Treat only that documented lock-conflict
+/// code as contention; unrelated errors must remain immediate failures.
+/// (Windows fs2 trả lock contention bằng raw code; lỗi khác vẫn fail ngay.)
+fn is_lock_contention(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        return error.raw_os_error()
+            == Some(windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION as i32);
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// True when the path is a symlink (all platforms) or a Windows
+/// reparse point (junction/mount). Shared by journal/backup/lock writers
+/// so every project writer refuses link-swapped paths the same way.
+/// (Có phải symlink/reparse point không — mọi writer dùng chung.)
+pub fn path_is_link_or_reparse(path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        windows_reparse_point(path)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+mod lock_contention_tests {
+    use super::is_lock_contention;
+
+    #[test]
+    fn would_block_is_contention_but_unrelated_errors_are_not() {
+        assert!(is_lock_contention(&std::io::Error::from(
+            std::io::ErrorKind::WouldBlock
+        )));
+        assert!(!is_lock_contention(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fs2_windows_lock_violation_is_contention() {
+        let error = std::io::Error::from_raw_os_error(
+            windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION as i32,
+        );
+        assert!(is_lock_contention(&error));
+    }
+}
+
+/// True when the path carries FILE_ATTRIBUTE_REPARSE_POINT (junctions,
+/// mount points, and non-symlink reparse data).
+#[cfg(windows)]
+fn windows_reparse_point(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, GetFileAttributesW, INVALID_FILE_ATTRIBUTES,
+    };
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: nul-terminated buffer outlives the synchronous call; the
+    // return is a plain attribute DWORD, no memory is shared.
+    // (AN TOÀN: buffer nul-terminated sống qua lời gọi đồng bộ; trả về
+    // DWORD attribute thường, không chia sẻ bộ nhớ.)
+    #[allow(unsafe_code)]
+    let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+}

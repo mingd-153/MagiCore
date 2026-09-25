@@ -45,9 +45,10 @@ fn find_elf_prefers_requested_target() {
         std::fs::write(target.join("firmware.elf"), "ELF").unwrap();
     }
     let elf = find_elf(&dir, "riscv32imac-unknown-none-elf").unwrap();
-    assert!(elf
-        .to_string_lossy()
-        .contains("riscv32imac-unknown-none-elf"));
+    assert!(
+        elf.to_string_lossy()
+            .contains("riscv32imac-unknown-none-elf")
+    );
 }
 
 #[test]

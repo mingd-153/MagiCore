@@ -1,6 +1,6 @@
 //! Bevy project scaffolding.
 
-use super::{render_template, TemplateContext};
+use super::{TemplateContext, render_template};
 use mgc_types::MgResult;
 use std::path::Path;
 
@@ -32,7 +32,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = "0.14"
+bevy = "0.19"
 
 [profile.dev]
 opt-level = 1

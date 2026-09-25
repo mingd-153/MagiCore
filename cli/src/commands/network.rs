@@ -73,32 +73,27 @@ pub fn reachable_public(host: &str, port: u16) -> bool {
 /// Gộp host registry user-configured (mgc.toml [registry]) — đọc an toàn, thiếu file → bỏ qua.
 fn user_registries() -> Vec<Connection> {
     let mut out = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
-        let mgc_toml = cwd.join("mgc.toml");
-        if let Ok(raw) = std::fs::read_to_string(&mgc_toml) {
-            let cfg: Option<toml::Value> = toml::from_str(&raw).ok();
-            if let Some(cfg) = cfg {
-                if let Some(regs) = cfg.get("registry") {
-                    let urls: Vec<String> = match regs {
-                        toml::Value::Table(t) => t
-                            .values()
-                            .filter_map(|v| {
-                                v.get("url").and_then(|u| u.as_str()).map(str::to_string)
-                            })
-                            .collect(),
-                        toml::Value::String(s) => vec![s.clone()],
-                        _ => vec![],
-                    };
-                    for url in urls {
-                        if let Some(host) = url_host(&url) {
-                            out.push(Connection {
-                                host: host.0,
-                                port: host.1,
-                                purpose: "user-configured registry (mgc.toml)",
-                            });
-                        }
-                    }
-                }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(raw) = std::fs::read_to_string(cwd.join("mgc.toml"))
+        && let Some(cfg) = toml::from_str::<toml::Value>(&raw).ok()
+        && let Some(regs) = cfg.get("registry")
+    {
+        let urls: Vec<String> = match regs {
+            toml::Value::Table(t) => t
+                .values()
+                .filter_map(|v| v.get("url").and_then(|u| u.as_str()).map(str::to_string))
+                .collect(),
+            toml::Value::String(s) => vec![s.clone()],
+            _ => vec![],
+        };
+        for url in urls {
+            if let Some(host) = url_host(&url) {
+                out.push(Connection {
+                    host: host.0,
+                    port: host.1,
+                    purpose: "user-configured registry (mgc.toml)",
+                });
             }
         }
     }

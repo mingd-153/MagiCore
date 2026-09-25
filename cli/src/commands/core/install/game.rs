@@ -1,42 +1,77 @@
-//! `mgc install` game — tách từ core/game.rs (Phase 7 v5).
+//! `mgc install` game — dependency work runs only through the native Lib/Rust lane.
 
 use anyhow::Result;
-
-use super::super::shared;
 use mgc_types::Ecosystem;
 
-const OPTIMIZER_PKG: &str = "optimizer";
-
-pub async fn install(packages: Vec<String>) -> Result<()> {
+pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = super::super::shared::core_project_root("game")?;
-    let adapter = super::super::shared::core_adapter(&Ecosystem::Game);
+    let engine = mgc_game_adapter::adapter_for(&root).map(|adapter| adapter.engine());
 
-    // optimizer: materialize + hook dep; không gửi qua adapter (không phải registry crate)
-    let mut adapter_pkgs = Vec::new();
-    for pkg in &packages {
-        if pkg == OPTIMIZER_PKG {
-            shared::game_optimizer_template(&root).await?;
-        } else {
-            adapter_pkgs.push(pkg.clone());
+    if engine == Some("bevy") && root.join("Cargo.toml").is_file() {
+        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+        crate::commands::dep_gate::gate(
+            &crate::commands::dep_gate::DepContext::new(
+                "game",
+                Some("bevy"),
+                Some("bevy"),
+                None,
+                crate::commands::dep_gate::DepOp::Install,
+            ),
+            None,
+            &compat,
+            Some(&root.join(".magicore").join("exec.log")),
+        )?;
+        let lib_adapter =
+            crate::factory::create_adapter(&Ecosystem::Lib, None, None).map_err(|error| {
+                anyhow::anyhow!("game native install needs the Lib/Rust engine: {error}")
+            })?;
+        if !packages.is_empty() {
+            crate::commands::core::shared::add(
+                &*lib_adapter,
+                &root,
+                packages,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
+            .await?;
         }
+        return crate::commands::core::shared::install_with_adapter(
+            &*lib_adapter,
+            &root,
+            "mgc add",
+            false,
+            mgc_types::adapter::InstallOptions {
+                legacy_flat: false,
+                ..Default::default()
+            },
+        )
+        .await;
     }
 
-    for pkg in &adapter_pkgs {
-        let spinner = mgc_ui::create_spinner(&format!("  Adding {}...", pkg));
-        let name = mgc_types::PackageName::new(pkg)?;
-        let opts = mgc_types::adapter::AddOptions::default();
-        adapter.add(&root, &name, None, opts).await?;
-        spinner.finish_and_clear();
+    if engine == Some("bevy") {
+        anyhow::bail!(
+            "native Bevy dependency installation requires Cargo.toml at the project root"
+        );
     }
-    shared::install_with_adapter(
-        &*adapter,
-        &root,
-        "mgc add",
-        false,
-        mgc_types::adapter::InstallOptions {
-            legacy_flat: false,
-            ..Default::default()
-        },
-    )
-    .await
+
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        &crate::commands::dep_gate::DepContext::new(
+            "game",
+            engine,
+            engine,
+            None,
+            crate::commands::dep_gate::DepOp::Install,
+        ),
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
+    anyhow::bail!("MagiCore does not yet own dependency installation for this game engine")
 }

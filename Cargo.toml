@@ -10,8 +10,9 @@ exclude = ["tools/core-web-lab", "tools/mgc-mcp"]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0"
-edition = "2021"
+version = "1.1.0-rc.9"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/mingd-153/MagiCore"
 authors = ["MagiCore Contributors"]
@@ -19,6 +20,7 @@ authors = ["MagiCore Contributors"]
 [workspace.dependencies]
 # Internal crates
 mgc-types = { path = "core/crates/mgc-types" }
+mgc-audit = { path = "core/crates/mgc-audit" }
 mgc-config = { path = "core/crates/mgc-config" }
 mgc-crypto = { path = "core/crates/mgc-crypto" }
 mgc-cache = { path = "core/crates/mgc-cache" }
@@ -39,6 +41,7 @@ mgc-publish = { path = "core/crates/mgc-publish" }
 mgc-oci = { path = "core/crates/mgc-oci" }
 mgc-registry-server = { path = "core/crates/mgc-registry-server" }
 mgc-exec = { path = "core/crates/mgc-exec" }
+which = "6.0"
 
 # External deps (for mgc-http, mgc-oci, etc.)
 http = { version = "1.2", features = [] }
@@ -53,7 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2"] }
 url = "2.5"
-object_store = { version = "0.14", features = ["aws"] }  # Updated to get quick-xml 0.42+ (fixes RUSTSEC-2026-0194/0195)
+object_store = { version = "0.14.1", features = ["aws"] }  # 0.14.1+: gets quick-xml 0.42+ (fixes RUSTSEC-2026-0194/0195)
 axum = { version = "0.7", features = ["ws", "multipart"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compression-full"] }
 notify = "6.1"
@@ -74,9 +77,10 @@ indicatif = "0.18"  # Updated to get number_prefix fix (RUSTSEC-2025-0119)
 console = "0.15"
 colored = "2.1"
 dialoguer = "0.11"
+rand = { version = "0.9", features = ["std"] }
 
 # TUI
-ratatui = "0.30"  # Updated to get paste 1.0.16+ fix (RUSTSEC-2024-0436)
+ratatui = "0.30.2"  # 0.30.2: gets paste 1.0.16+ fix (RUSTSEC-2024-0436)
 crossterm = "0.28"
 
 # Crypto
@@ -89,11 +93,29 @@ base64 = "0.22"
 thiserror = "2.0"
 anyhow = "1.0"
 futures-util = "0.3"
+# WS test client (Gate 11 runtime evidence, vòng-11): pinned to the SAME
+# 0.24 line tokio-tungstenite already occupies in Cargo.lock (a transitive
+# of axum's ws feature) — the dev test client reuses the locked graph
+# rather than adding a second WS stack.
+# (WS client cho test (bằng chứng runtime Gate 11): ghim cùng dòng 0.24
+# mà tokio-tungstenite đã chiếm trong Cargo.lock (transitive của feature
+# ws của axum) — test client dùng lại graph đã lock thay vì thêm stack
+# WS thứ hai.)
+tokio-tungstenite = { version = "0.24", features = ["connect"] }
 regex = "1.11"
 libc = "0.2"
 
 # Bundler (native Rust)
-# esbuild-rs = "0.13"  # REMOVED: requires Go compiler, not available in CI
+# Exact-pin (P0-3, Tech Lead vòng-6/7): the CLI resolves esbuild-rs from
+# THIS workspace table — a range here lets `cargo update` silently drift
+# the compiler identity away from the hardcoded COMPILER_VERSION const in
+# cli/src/bundler/dev_server.rs (stale-cache poison after an update). The
+# nested core/Cargo.toml carries the same pin for standalone-core builds.
+# (Ghim chính xác (P0-3): CLI resolve esbuild-rs từ bảng workspace NÀY —
+# range ở đây để `cargo update` kéo compiler trôi khỏi const
+# COMPILER_VERSION hardcode trong dev_server.rs (độc stale-cache sau
+# update). core/Cargo.toml lồng mang cùng pin cho build core độc lập.)
+esbuild-rs = "=0.13.8"
 glob = "0.3"
 mime_guess = "2.0"
 
@@ -111,13 +133,14 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 walkdir = "2.5"
 dirs = "5.0"
 fs2 = "0.4"
-lru = "0.18"  # Updated to fix RUSTSEC-2026-0002, RUSTSEC-2026-0253
+lru = "0.18.4"  # 0.18.4: fixes RUSTSEC-2026-0002, RUSTSEC-2026-0253
 ignore = "0.4"
 sha1 = "0.10"
 
 # Compression
 tar = "0.4"
 flate2 = { version = "1.0", features = ["zlib"] }
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 
 # Utilities
@@ -127,7 +150,11 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# deny (not forbid): edition 2024 makes env::set_var/remove_var unsafe; we gate
+# every remaining unsafe block behind an item-level allow with a SAFETY proof.
+# deny (không forbid): edition 2024 buộc env set/remove qua unsafe — mỗi block
+# còn lại phải có #[allow] + giải trình SAFETY cụ thể, không allow toàn file.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "warn"

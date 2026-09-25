@@ -131,6 +131,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1000,6 +1009,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
+name = "derive_arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1152,6 +1172,17 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "esbuild-rs"
+version = "0.13.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "516a2353dabd00559c2f874993ad4fce114beefb27c2482643e2888888d99b93"
+dependencies = [
+ "lazy_static",
+ "libc",
+ "memorymodule-rs",
 ]
 
 [[package]]
@@ -2277,9 +2308,9 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lru"
-version = "0.18.3"
+version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d317b4b9eb398e6acce275758ec6125535505e7a146fb1a9b8bda2451b0ff4c"
+checksum = "ff9840bcc50b71349309900da0ce7279aa336ae71d73250b07998932c7d97c25"
 dependencies = [
  "hashbrown 0.17.1",
 ]
@@ -2371,8 +2402,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "memorymodule-rs"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c4ead5a227d30610a2dee54d4121a79184072f94865506420e535a778b8a681"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "mgc"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -2384,13 +2425,16 @@ dependencies = [
  "colored 2.2.0",
  "crossterm 0.28.1",
  "dirs",
+ "esbuild-rs",
  "flate2",
  "futures-util",
  "glob",
  "hex",
+ "libc",
  "mgc-adapter-base",
  "mgc-ai-adapter",
  "mgc-app-adapter",
+ "mgc-audit",
  "mgc-cache",
  "mgc-cicd-adapter",
  "mgc-cloud-adapter",
@@ -2417,9 +2461,12 @@ dependencies = [
  "mgc-web-adapter",
  "mgc-workspace",
  "mime_guess",
+ "mockito",
  "notify",
+ "rand 0.9.5",
  "regex",
  "reqwest 0.12.28",
+ "rusqlite",
  "semver",
  "serde",
  "serde_json",
@@ -2428,18 +2475,21 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "tokio-tungstenite",
  "toml",
  "toml_edit",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
  "walkdir",
+ "zip",
 ]
 
 [[package]]
 name = "mgc-adapter-base"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2454,16 +2504,19 @@ dependencies = [
 
 [[package]]
 name = "mgc-ai-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "async-trait",
  "criterion",
  "dirs",
+ "futures-util",
  "hex",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
+ "mgc-lib-adapter",
  "mgc-lockfile",
  "mgc-sbom",
  "mgc-types",
@@ -2478,36 +2531,64 @@ dependencies = [
 
 [[package]]
 name = "mgc-app-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "chrono",
  "criterion",
  "dirs",
+ "flate2",
+ "futures-util",
  "hex",
+ "libc",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
  "mgc-exec",
  "mgc-lib-adapter",
  "mgc-lockfile",
+ "mgc-resolver",
  "mgc-sbom",
  "mgc-store",
  "mgc-types",
+ "mgc-web-adapter",
+ "mockito",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha1 0.10.7",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tokio",
  "toml",
+ "url",
  "which",
 ]
 
 [[package]]
+name = "mgc-audit"
+version = "1.1.0-rc.9"
+dependencies = [
+ "futures-util",
+ "mgc-http",
+ "mgc-lockfile",
+ "mgc-types",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "mgc-cache"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2521,11 +2602,12 @@ dependencies = [
 
 [[package]]
 name = "mgc-cicd-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "async-trait",
  "criterion",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -2541,11 +2623,12 @@ dependencies = [
 
 [[package]]
 name = "mgc-cloud-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -2563,7 +2646,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-config"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2577,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-crypto"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
@@ -2596,7 +2679,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-dist"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -2607,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-e2e"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -2616,16 +2699,18 @@ dependencies = [
 
 [[package]]
 name = "mgc-exec"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
+ "libc",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "mgc-fetcher"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2641,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-game-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2649,6 +2734,7 @@ dependencies = [
  "dirs",
  "md5",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -2668,12 +2754,13 @@ dependencies = [
 
 [[package]]
 name = "mgc-hardware-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -2693,7 +2780,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-http"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2722,17 +2809,19 @@ dependencies = [
 
 [[package]]
 name = "mgc-iot-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
  "mgc-exec",
  "mgc-lockfile",
+ "mgc-platform",
  "mgc-sbom",
  "mgc-types",
  "mgc-ui",
@@ -2748,19 +2837,25 @@ dependencies = [
 
 [[package]]
 name = "mgc-lib-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
+ "chrono",
  "criterion",
  "dirs",
+ "futures-util",
  "hex",
+ "libc",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
- "mgc-exec",
  "mgc-lockfile",
+ "mgc-platform",
+ "mgc-resolver",
  "mgc-sbom",
  "mgc-store",
  "mgc-types",
@@ -2783,11 +2878,16 @@ dependencies = [
 
 [[package]]
 name = "mgc-lockfile"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
+ "fs2",
+ "hex",
+ "libc",
  "mgc-crypto",
+ "mgc-types",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2795,11 +2895,12 @@ dependencies = [
  "thiserror 1.0.69",
  "toml",
  "toml_edit",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
 name = "mgc-oci"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2817,7 +2918,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-pack"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2833,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-platform"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2844,7 +2945,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-plugin"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "async-trait",
  "mgc-types",
@@ -2853,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-publish"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2871,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-registry-server"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -2907,25 +3008,37 @@ dependencies = [
 
 [[package]]
 name = "mgc-resolver"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
+ "blake3",
  "criterion",
  "dashmap",
+ "flate2",
  "futures-util",
  "hex",
+ "mgc-http",
  "mgc-platform",
+ "mgc-store",
  "mgc-types",
+ "mockito",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "url",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
 name = "mgc-sbom"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2939,7 +3052,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-search"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2961,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-store"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -2973,8 +3086,10 @@ dependencies = [
  "flate2",
  "fs2",
  "hex",
+ "libc",
  "lru",
  "mgc-crypto",
+ "mgc-store",
  "mgc-types",
  "parking_lot",
  "pretty_assertions",
@@ -2988,15 +3103,26 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "uuid",
  "walkdir",
 ]
 
 [[package]]
 name = "mgc-types"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
+ "mgc-ai-adapter",
+ "mgc-app-adapter",
+ "mgc-cicd-adapter",
+ "mgc-cloud-adapter",
+ "mgc-game-adapter",
+ "mgc-hardware-adapter",
+ "mgc-iot-adapter",
+ "mgc-lib-adapter",
+ "mgc-web-adapter",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -3005,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-ui"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "colored 2.2.0",
@@ -3018,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "mgc-web-adapter"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3030,8 +3156,10 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
+ "libc",
  "lru",
  "mgc-adapter-base",
+ "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
@@ -3057,14 +3185,16 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "toml",
  "url",
  "urlencoding",
+ "uuid",
  "walkdir",
 ]
 
 [[package]]
 name = "mgc-workspace"
-version = "1.0.0"
+version = "1.1.0-rc.9"
 dependencies = [
  "anyhow",
  "serde",
@@ -4186,9 +4316,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -4932,7 +5062,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -6256,6 +6386,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "displaydoc",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "thiserror 2.0.20",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6266,6 +6413,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zstd"

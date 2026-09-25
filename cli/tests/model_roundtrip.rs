@@ -96,14 +96,14 @@ async fn model_push_pull_roundtrip() {
                 .unwrap_or_default();
             panic!("registry server exited early with {status}: {stderr}");
         }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
         if let Ok(r) = reqwest::Client::new()
             .get(format!("{url}/v2/"))
             .send()
             .await
+            && (r.status().is_success() || r.status().as_u16() == 401 || r.status().as_u16() == 405)
         {
-            if r.status().is_success() || r.status().as_u16() == 401 || r.status().as_u16() == 405 {
-                break;
-            }
+            break;
         }
         if std::time::Instant::now() > deadline {
             panic!("registry server did not become ready at {url}");

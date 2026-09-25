@@ -9,7 +9,7 @@ set -e  # Exit on error
 echo "🚀 MagiCore Structure Migration"
 echo "================================"
 echo ""
-echo "⚠️  WARNING: This script will:"
+echo "WARN: WARNING: This script will:"
 echo "   1. Move /web/mgc/ → _archive/web-pm-v1/"
 echo "   2. Delete empty folders (sdk/, apps/, packages/, etc.)"
 echo "   3. Create new folder structure"
@@ -17,7 +17,7 @@ echo ""
 read -p "Are you sure you want to continue? (yes/no): " confirm
 
 if [ "$confirm" != "yes" ]; then
-    echo "❌ Migration cancelled"
+    echo "Migration cancelled"
     exit 1
 fi
 
@@ -55,7 +55,7 @@ Keep this code for:
 - `crates/mgc-core/src/cffi/sha256.rs` → `core/crates/mgc-crypto/`
 EOF
 
-echo "✅ Archived to _archive/web-pm-v1/"
+echo "Archived to _archive/web-pm-v1/"
 echo ""
 
 echo "📦 Step 2: Remove empty/placeholder folders"
@@ -68,7 +68,7 @@ rm -rf memanto/
 rm -rf proto/
 rm -rf examples/
 rm -rf web/  # Now empty after moving mgc/
-echo "✅ Removed empty folders"
+echo "Removed empty folders"
 echo ""
 
 echo "📦 Step 3: Create new folder structure"
@@ -95,7 +95,7 @@ mkdir -p examples
 # Scripts (already exists, just ensure)
 mkdir -p scripts
 
-echo "✅ Created new folder structure"
+echo "Created new folder structure"
 echo ""
 
 echo "📦 Step 4: Create workspace Cargo.toml files"
@@ -164,7 +164,7 @@ members = ["crates/*"]
 resolver = "2"
 EOF
 
-echo "✅ Created Cargo.toml files"
+echo "Created Cargo.toml files"
 echo ""
 
 echo "📦 Step 5: Create README files"
@@ -230,10 +230,10 @@ Project scaffolding templates for `mgc create-*` commands.
 Files with `.tmpl` extension are processed with Handlebars.
 EOF
 
-echo "✅ Created README files"
+echo "Created README files"
 echo ""
 
-echo "✅ Migration Complete!"
+echo "Migration Complete!"
 echo "====================="
 echo ""
 echo "Next steps:"

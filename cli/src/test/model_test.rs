@@ -1,8 +1,11 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
+// Tests mutate env vars single-threaded per test process (edition 2024 unsafe rule).
+// Test đổi env var đơn luồng theo từng process test (luật unsafe edition 2024).
+#![allow(unsafe_code)]
 //! Tests for AI model OCI operations
 
-use super::{cas_import, cas_pull, remove_local, save_manifest_in, ModelManifest};
+use super::{ModelManifest, cas_import, cas_pull, quantize, remove_local, save_manifest_in};
 use std::path::PathBuf;
 
 fn tmp_store(tag: &str) -> (PathBuf, PathBuf) {
@@ -23,7 +26,9 @@ fn cas_import_roundtrip() {
     std::fs::write(&src, b"model-bytes-1234").unwrap();
     let (hash, len) = cas_import(&store, &src).unwrap();
     assert_eq!(len, 16);
-    assert!(store.contains(&mgc_store::cas::IntegrityHash::from_hash_str(&hash, false)));
+    let typed = mgc_store::cas::IntegrityHash::from_hash_str(&hash, false)
+        .expect("cas_import must return a valid blake3 hex digest");
+    assert!(store.contains(&typed));
 }
 
 #[test]
@@ -53,7 +58,7 @@ fn manifest_save_and_list() {
 #[test]
 fn remove_local_missing_bails() {
     let (store_root, base) = tmp_store("missing");
-    std::env::set_var("MAGICORE_STORE_ROOT", &store_root);
+    unsafe { std::env::set_var("MAGICORE_STORE_ROOT", &store_root) };
     std::fs::create_dir_all(&store_root).unwrap();
     let _ = &base;
     assert!(remove_local("not-there").is_err());
@@ -62,9 +67,20 @@ fn remove_local_missing_bails() {
 #[test]
 fn unsupported_source_bails() {
     let (store_root, base) = tmp_store("unsupported");
-    std::env::set_var("MAGICORE_STORE_ROOT", &store_root);
+    unsafe { std::env::set_var("MAGICORE_STORE_ROOT", &store_root) };
     std::fs::create_dir_all(&store_root).unwrap();
     let _ = &base;
     let rt = tokio::runtime::Runtime::new().unwrap();
     assert!(rt.block_on(cas_pull("file:///tmp/x")).is_err());
+}
+
+#[test]
+fn quantize_fails_closed_without_invoking_external_python() {
+    let error = quantize("model.gguf", "q4_k_m", None).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("native GGUF quantization is not implemented")
+    );
+    assert!(error.to_string().contains("will not invoke Python"));
 }

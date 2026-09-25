@@ -181,10 +181,11 @@ fn detect_local_version(package: &str) -> Option<String> {
         "peerDependencies",
         "optionalDependencies",
     ] {
-        if let Some(deps) = parsed.get(*section).and_then(|v| v.as_object()) {
-            if let Some(ver) = deps.get(package).and_then(|v| v.as_str()) {
-                return Some(ver.to_string());
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Some(deps) = parsed.get(*section).and_then(|v| v.as_object())
+            && let Some(ver) = deps.get(package).and_then(|v| v.as_str())
+        {
+            return Some(ver.to_string());
         }
     }
     None

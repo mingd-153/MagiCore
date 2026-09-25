@@ -47,6 +47,12 @@ hex = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
 blake3 = { workspace = true }
+uuid = { workspace = true }
+
+# Platform COW clone syscalls (clonefile/FICLONE — P0-4 export strategy)
+# Syscall clone COW theo platform (clonefile/FICLONE — chiến lược export P0-4)
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+libc = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
@@ -54,16 +60,79 @@ tracing = { workspace = true }
 # Utilities
 lru = { workspace = true }
 
+[features]
+# Gate 11-A tightening: destructive claim APIs (clear_all_cas_refs,
+# cas_release) are test-only — production builds cannot link them.
+# The self dev-dependency below enables the feature for every test
+# target of this crate automatically; downstream crates see neither the
+# APIs nor the feature unless they opt in explicitly.
+# (Siết Gate 11-A: API claim phá hủy chỉ cho test — build production
+# không link được. Self dev-dependency bên dưới tự bật feature cho mọi
+# test target của crate này; crate downstream không thấy API hay
+# feature trừ khi chủ động bật.)
+test-util = []
+
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+# Self-dependency (test-only feature unlock): the standard Cargo pattern
+# so `cargo test -p mgc-store` runs test-util-gated tests without flags.
+# (Self-dependency (mở khóa feature cho test): pattern Cargo chuẩn để
+# `cargo test -p mgc-store` chạy test gated theo test-util không cần cờ.)
+mgc-store = { path = ".", features = ["test-util"] }
 
 [[test]]
 name = "test_refcount"
 path = "tests/refcount.rs"
+required-features = ["test-util"]
 
 [[test]]
 name = "test_index"
 path = "tests/index.rs"
+
+[[test]]
+name = "test_adversarial_integrity"
+path = "tests/adversarial_integrity.rs"
+
+# Compiled-cache adversarial tests (P0-1/P0-2/P0-3 audit vòng-4): key
+# separation, self-authenticating records, race contract, LRU memo bound.
+# (Test đối kháng compiled-cache (P0-1/P0-2/P0-3 audit vòng-4): tách key,
+# record tự xác thực, hợp đồng race, giới hạn LRU memo.)
+[[test]]
+name = "test_compiled_cache_integrity"
+path = "tests/compiled_cache_integrity.rs"
+
+# Compile-fail proofs for the P0-1 private-field invariant (rustc-driven —
+# deterministic in standalone AND full-workspace contexts).
+# (Bằng chứng compile-fail cho invariant field private P0-1 — dùng rustc
+# trực tiếp, tất định cả chạy riêng lẫn chạy full-workspace.)
+[[test]]
+name = "test_compile_fail"
+path = "tests/compile_fail.rs"
+
+# Generation-token protocol adversarial regression (Gate 11-A, vòng-11):
+# forged/unknown/promoted tokens, atomic allocation races, project lock,
+# FK enforcement, RAII guard.
+# (Test hồi quy đối kháng giao thức generation-token: token giả/không
+# biết/đã promote, race cấp phát nguyên tử, khóa project, FK, guard RAII.)
+[[test]]
+name = "test_generation_token"
+path = "tests/generation_token.rs"
+
+# Shared TempFileName parser contract (Gate 11-B / P0-7, vòng-11): strict
+# prefix allowlist + exact field arity; foreign dashed names never parse.
+# (Hợp đồng parser TempFileName dùng chung (P0-7): allowlist prefix nghiêm
+# ngặt + đúng arity field; tên có gạch của ngoài không bao giờ parse.)
+[[test]]
+name = "test_temp_name"
+path = "tests/temp_name.rs"
+
+# Lease-column migration (Gate 11-B P0-3): idempotent re-open, fail-closed
+# re-add after DROP COLUMN, and the pinned "duplicate column name" race.
+# (Migration cột lease (P0-3): mở lại idempotent, thêm lại fail-closed sau
+# DROP COLUMN, và race "duplicate column name" được ghim.)
+[[test]]
+name = "test_lease_migration"
+path = "tests/lease_migration.rs"
 
 [lints]
 workspace = true

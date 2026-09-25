@@ -130,6 +130,44 @@ pub struct ProjectConfig {
     /// Security config (mgc.toml [security]) — min_release_age per ecosystem
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub security: Option<SecurityConfig>,
+    /// Lock config (mgc.toml [lock]) — signature policy, writer lock
+    /// timeouts (V1.2 lock v4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<LockConfig>,
+    /// Trust roots (mgc.toml [trust]) — key ids accepted in `require` mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust: Option<TrustConfig>,
+    /// Compatibility opt-ins (mgc.toml [compat]) — explicit escape hatches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compat: Option<CompatConfig>,
+    /// Registry/index sources (mgc.toml [[sources]]) — multi-index
+    /// source-selection policy (design §5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<SourceConfig>>,
+    /// Lifecycle script policy (mgc.toml [scripts]) — committed,
+    /// reviewable per-package allow/deny + default policy. Merges with
+    /// the machine-local trust DB (deny wins everywhere).
+    /// (Policy script lifecycle commit được — hợp nhất với trust DB.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts: Option<ScriptsPolicy>,
+}
+
+/// Lifecycle script policy — `[scripts] policy/allow/deny`.
+/// npm parity (approve-scripts/deny-scripts) in committed form: the local
+/// trust DB stays machine-private, this file is reviewed like code.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptsPolicy {
+    /// Default for packages with scripts but no explicit entry:
+    /// `allow` (current behavior), `deny`, or `prompt` (deny + hint).
+    /// (Mặc định cho package chưa có entry.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+    /// Explicitly allowed package names (exact or `name@version`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// Explicitly denied package names (exact or `name@version`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<String>,
 }
 
 /// AI core config — `[ai] framework` (python-agent/mcp-server).
@@ -229,6 +267,11 @@ impl ProjectConfig {
             app: None,
             ai: None,
             security: None,
+            lock: None,
+            trust: None,
+            compat: None,
+            sources: None,
+            scripts: None,
         }
     }
 
@@ -248,6 +291,9 @@ impl ProjectConfig {
                     .map(|f| match f.as_str() {
                         "typescript" | "ts" => "ts",
                         "python" | "py" => "python",
+                        "go" | "golang" => "go",
+                        "dotnet" | "csharp" | "c#" => "dotnet",
+                        "java" | "maven" => "java",
                         _ => "rust",
                     })
                     .unwrap_or("rust")
@@ -359,6 +405,11 @@ impl ProjectConfig {
             app,
             ai,
             security: None,
+            lock: None,
+            trust: None,
+            compat: None,
+            sources: None,
+            scripts: None,
         }
     }
 
@@ -396,11 +447,7 @@ impl ProjectConfig {
     /// Canonicalize a core name (trim, lowercase, alias mapping).
     fn canonical_core(name: &str) -> String {
         let n = name.trim().to_ascii_lowercase();
-        if n == "cloud" {
-            "clo".to_string()
-        } else {
-            n
-        }
+        if n == "cloud" { "clo".to_string() } else { n }
     }
 
     fn is_known_core(name: &str) -> bool {
@@ -551,9 +598,16 @@ impl ProjectConfig {
 /// Bảo mật — `[security] min_release_age` theo ecosystem (guard cách ly).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecurityConfig {
-    /// Minimum release age in seconds (global default) — Tuổi tối thiểu gói phát hành (mặc định toàn cục)
+    /// Minimum release age in HOURS (global default) — Tuổi tối thiểu gói phát hành, tính bằng GIỜ (mặc định toàn cục)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_release_age: Option<u64>,
+    /// When true, versions with missing/unparsable registry timestamps
+    /// are KEPT (fail-open) — escape hatch for private registries that
+    /// omit `time`. Default false: unstamped versions are rejected with
+    /// a clear error naming the package (fail-closed).
+    /// (Cho phép version thiếu timestamp — escape hatch cho registry nội bộ.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_missing_time: Option<bool>,
 
     /// Per-ecosystem min_release_age overrides — Ghi đè min_release_age theo ecosystem
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -579,6 +633,26 @@ pub struct SecurityConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cicd: Option<u64>,
+
+    /// Explicit per-ecosystem unsigned-artifact escape (`"*" rejected —
+    /// see `unsigned_artifact_allowed`). Wired into lanes in Phase C;
+    /// today the resolver denies unsigned artifacts unconditionally.
+    /// (Escape artifact-không-chữ-ký per-ecosystem tường minh.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_unsigned_artifacts: Option<Vec<String>>,
+}
+
+/// Check an unsigned-artifact escape list (`mgc.toml [security]
+/// allow_unsigned_artifacts`, mirrored by `MGC_ALLOW_UNSIGNED_ARTIFACTS`
+/// comma env): explicit per-ecosystem opt-outs only — `"*"` is rejected
+/// as a value (a global opt-out must be a deliberate empty-vs-absent
+/// decision at the call site, never a wildcard in config).
+/// (Kiểm tra danh sách escape artifact-không-chữ-ký: chỉ opt-out
+/// per-ecosystem tường minh — từ chối `"*"`.)
+pub fn unsigned_artifact_allowed(allowed: &[String], ecosystem: &str) -> bool {
+    allowed
+        .iter()
+        .any(|entry| entry.trim().eq_ignore_ascii_case(ecosystem))
 }
 
 impl SecurityConfig {
@@ -596,4 +670,184 @@ impl SecurityConfig {
             _ => self.min_release_age,
         }
     }
+}
+
+/// Lock config — `mgc.toml [lock]` (V1.2 lock v4: signature policy +
+/// writer-lock timeouts). All fields optional; absences fall back to
+/// environment-aware defaults (policy.rs).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LockConfig {
+    /// Signature policy: `off` | `warn` | `require`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+    /// Writer-lock acquire timeout in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquire_timeout_ms: Option<u64>,
+    /// Stale-temp grace period in seconds before cleanup may unlink.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmp_grace_secs: Option<u64>,
+}
+
+/// Trust roots — `mgc.toml [trust]`: key ids accepted when the lock
+/// policy is `require` (local keyrings never qualify on their own).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustConfig {
+    /// Accepted signing key ids (8-byte BLAKE3 hex).
+    #[serde(default)]
+    pub keys: Vec<String>,
+}
+
+/// Compatibility opt-ins — `mgc.toml [compat]`: explicit escape hatches
+/// (default-deny everything else).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompatConfig {
+    /// Allow git-dependency resolution at all (Swift git-only deps).
+    #[serde(default)]
+    pub allow_git_deps: bool,
+    /// Host allowlist for git dependencies.
+    #[serde(default)]
+    pub git_hosts: Vec<String>,
+}
+
+/// Registry/index source — `mgc.toml [[sources]]` (design §5
+/// multi-index source-selection policy).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceConfig {
+    /// Stable id referenced by lockfile source_id.
+    pub id: String,
+    /// Base URL.
+    pub url: String,
+    /// Ecosystem served (`python`, `npm`, …).
+    #[serde(default)]
+    pub ecosystem: String,
+    /// Lower number wins among equal-specificity claims.
+    #[serde(default)]
+    pub priority: u64,
+    /// Name patterns claimed (`*`, `corp-*`, `@corp/*`, exact).
+    #[serde(default)]
+    pub claims: Vec<String>,
+    /// Private/internal source (never overridden by public ones).
+    #[serde(default)]
+    pub trusted: bool,
+    /// Exact hosts allowed when trusted.
+    #[serde(default)]
+    pub allow_hosts: Vec<String>,
+    /// Private CIDRs allowed when trusted.
+    #[serde(default)]
+    pub allow_cidrs: Vec<String>,
+    /// URL schemes allowed when trusted.
+    #[serde(default)]
+    pub allow_protocols: Vec<String>,
+}
+
+/// True when a package (by `name` or `name@version`) is listed in a
+/// policy entry list. Shared by `ScriptsPolicy::decide` and
+/// `decide_scripts` so matching semantics cannot drift.
+/// (Package có trong danh sách không — dùng chung mọi nơi.)
+pub fn policy_lists(entries: &[String], name: &str, version: &str) -> bool {
+    entries.iter().any(|e| {
+        let entry = e.trim();
+        entry == name || entry == format!("{name}@{version}").as_str()
+    })
+}
+
+impl ScriptsPolicy {
+    /// Committed file-policy decision for one package: deny wins, then
+    /// allow, else no opinion. Single canonical rule shared by the
+    /// install gate and `trust pending` so they can never disagree.
+    /// (Quyết định policy file chuẩn duy nhất cho gate install và trust pending.)
+    pub fn decide(&self, name: &str, version: &str) -> Option<(bool, &'static str)> {
+        if policy_lists(&self.deny, name, version) {
+            return Some((false, "mgc.toml [scripts] deny"));
+        }
+        if policy_lists(&self.allow, name, version) {
+            return Some((true, "mgc.toml [scripts] allow"));
+        }
+        match self.policy.as_deref() {
+            Some("deny") | Some("prompt") => Some((false, "mgc.toml [scripts] policy")),
+            // Explicit `policy = "allow"` allows everything not denied
+            // above (documented behavior — absence of the key means "no
+            // opinion", an explicit allow-all is a deliberate choice).
+            // (`policy = "allow"` tường minh cho phép tất cả.)
+            Some("allow") => Some((true, "mgc.toml [scripts] policy")),
+            _ => None,
+        }
+    }
+}
+
+/// One merged lifecycle-script decision for a package, combining the
+/// committed file policy and the machine-local trust DB. Deny wins from
+/// EITHER source; then allow from either source; otherwise undecided
+/// (the caller maps undecided to its own default: skip-with-hint on
+/// install, pending-review on `trust pending`).
+/// (Một quyết định gộp duy nhất — deny luôn thắng.)
+pub enum ScriptVerdict {
+    /// Scripts must not run (reason names the winning deny source).
+    Deny(&'static str),
+    /// Scripts may run (reason names the winning allow source).
+    Allow(&'static str),
+    /// Neither source has an opinion.
+    Undecided,
+}
+
+/// Single function used by the install gate AND `trust pending` — two
+/// call sites can never drift again.
+/// (Hàm duy nhất cho gate install VÀ trust pending.)
+pub fn decide_scripts(
+    name: &str,
+    version: &str,
+    file_policy: Option<&ScriptsPolicy>,
+    db_policy: Option<&str>,
+    blanket_scripts: bool,
+) -> ScriptVerdict {
+    // Deny from either source wins outright (a file allow must NEVER
+    // override a DB deny — that drift shipped once and is covered by a
+    // regression test).
+    // (Deny thắng mọi nguồn — file allow không bao giờ ghi đè DB deny.)
+    let file_deny = file_policy
+        .map(|policy| policy_lists(&policy.deny, name, version))
+        .unwrap_or(false);
+    if file_deny {
+        return ScriptVerdict::Deny("mgc.toml [scripts] deny");
+    }
+    if db_policy == Some("denied") {
+        return ScriptVerdict::Deny("mgc trust deny");
+    }
+    if let Some((allowed, reason)) = file_policy.and_then(|policy| policy.decide(name, version)) {
+        if allowed {
+            return ScriptVerdict::Allow(reason);
+        }
+        return ScriptVerdict::Deny(reason);
+    }
+    match db_policy {
+        Some("approved") => ScriptVerdict::Allow("mgc trust approve"),
+        _ if blanket_scripts => ScriptVerdict::Allow("default policy"),
+        _ => ScriptVerdict::Undecided,
+    }
+}
+
+/// Load ONLY the `[scripts]` table from a project mgc.toml, tolerating
+/// minimal files that full `ProjectConfig::load` rejects (it requires
+/// name/ecosystem). Returns `Ok(None)` when no table exists, `Err` with
+/// a precise reason when the file/table is present but broken — callers
+/// must surface the error (a silent None would drop a deny policy).
+/// (Đọc riêng bảng `[scripts]` — file hỏng thì lỗi rõ, không im lặng.)
+pub fn load_scripts_table(project_root: &std::path::Path) -> Result<Option<ScriptsPolicy>, String> {
+    let path = project_root.join("mgc.toml");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let value: toml::Value = text
+        .parse()
+        .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
+    let Some(table) = value.get("scripts") else {
+        return Ok(None);
+    };
+    let json = serde_json::to_value(table)
+        .map_err(|e| format!("invalid [scripts] table in {}: {e}", path.display()))?;
+    serde_json::from_value::<ScriptsPolicy>(json)
+        .map(Some)
+        .map_err(|e| format!("invalid [scripts] table in {}: {e}", path.display()))
 }

@@ -6,8 +6,8 @@ use std::sync::{Mutex, OnceLock};
 use mgc_resolver::DependencyError;
 use mgc_store::{Layout, PackageCache};
 use mgc_types::{
-    adapter::{ResolvedGraph, ResolvedPackage},
     MgResult,
+    adapter::{ResolvedGraph, ResolvedPackage},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -67,6 +67,22 @@ pub struct SharedCacheProjectRef {
 
 impl SharedWebCache {
     pub fn discover() -> Option<Self> {
+        // Priority order: MGC_CACHE_DIR → MAGICORE_SHARED_CACHE_DIR → system cache
+        // MGC_CACHE_DIR is the standard env var for cache override (used by tests + CI)
+        if let Ok(path) = std::env::var("MGC_CACHE_DIR") {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                let candidate = Self {
+                    root: PathBuf::from(trimmed).join("web"),
+                };
+                if candidate.is_usable() {
+                    candidate.maybe_prune_once_per_process();
+                    return Some(candidate);
+                }
+                return None;
+            }
+        }
+
         if let Ok(path) = std::env::var("MAGICORE_SHARED_CACHE_DIR") {
             let trimmed = path.trim();
             if !trimmed.is_empty() {

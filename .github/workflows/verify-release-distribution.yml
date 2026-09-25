@@ -1,0 +1,356 @@
+name: Verify Release Distribution
+
+# Item 12 (2026-09-12): a GitHub Release is only "done" when the
+# PUBLIC distribution channel works — download the archive from the
+# release page (not from CI artifacts), verify the published sha256,
+# install through Homebrew (macOS) / Scoop (Windows) / tar.gz (Linux),
+# run a full product lifecycle with the installed binary, then
+# uninstall and reinstall. No step may run a repo-local binary: every
+# command must come from the distributed package.
+#
+# Item 12: GitHub Release chỉ "hoàn thành" khi kênh phân phối CÔNG KHAI
+# chạy được — tải archive từ trang release (không phải artifact CI),
+# verify sha256 đã publish, cài qua Homebrew (macOS) / Scoop (Windows)
+# / tar.gz (Linux), chạy trọn lifecycle bằng binary đã cài, rồi gỡ và
+# cài lại. Không bước nào được dùng binary trong repo: mọi lệnh phải đến
+# từ gói phân phối.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify (e.g., v1.1.0-rc.6)"
+        required: true
+        type: string
+
+permissions:
+  # Draft releases are only visible to write-capable tokens (2026-09-12):
+  # every job here DOWNLOADS the draft to verify its bytes/manifests
+  # before promotion — read-only through the API, nothing is created.
+  # Draft release chỉ hiển thị với token có quyền write: mọi job ở đây
+  # chỉ TẢI draft để kiểm tra byte/manifest trước khi promote — chỉ đọc
+  # qua API, không tạo gì.
+  contents: write
+
+env:
+  # Live OSV checks are required here; the active Rust/Python scanners
+  # are MGC-native and do not depend on external audit executables.
+  # Bắt buộc truy cập OSV sống; scanner Rust/Python hoạt động là native MGC.
+  MGC_E2E_AUDIT_NETWORK: required
+
+jobs:
+  verify-archive-download:
+    name: verify archive download (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Download archive + checksum from the public release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p dist-verify && cd dist-verify
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            gh release download "$TAG" -R "${{ github.repository }}" -p "magicore-*-windows-x64.zip" -p "magicore-*-windows-x64.zip.sha256"
+            ARCHIVE="$(ls magicore-*-windows-x64.zip)"
+          else
+            gh release download "$TAG" -R "${{ github.repository }}" -p "magicore-*-${{ runner.os == 'Linux' && 'linux' || 'macos' }}-x64.tar.gz" -p "magicore-*-${{ runner.os == 'Linux' && 'linux' || 'macos' }}-x64.tar.gz.sha256"
+            ARCHIVE="$(ls magicore-*-x64.tar.gz)"
+          fi
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Verify the published sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist-verify
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Windows runners ship Git's GNU sha256sum in bash.
+            # Runner Windows có sha256sum của Git trong bash.
+            sha256sum --check "$ARCHIVE.sha256"
+          else
+            shasum -a 256 --check "$ARCHIVE.sha256"
+          fi
+
+      - name: Install into clean prefix (extracted, not on PATH yet)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.magicore-verify/bin"
+          cd dist-verify
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            tar -xf "$ARCHIVE" -C "$HOME/.magicore-verify/bin"
+            MGC="$HOME/.magicore-verify/bin/mgc.exe"
+          else
+            tar -xzf "$ARCHIVE" -C "$HOME/.magicore-verify/bin"
+            MGC="$HOME/.magicore-verify/bin/mgc"
+            chmod +x "$MGC"
+          fi
+          "$MGC" --version
+
+      - name: Full product lifecycle with the distributed binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGC="$HOME/.magicore-verify/bin/mgc.exe"; else MGC="$HOME/.magicore-verify/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          "$MGC" create-web react distweb
+          cd distweb
+          "$MGC" install
+          "$MGC" test
+          "$MGC" build
+          test -d dist
+          # dev probe: real HTTP roundtrip + clean tree shutdown.
+          # dev probe: HTTP roundtrip thật + tắt sạch cả cây.
+          "$MGC" dev --port 4315 > dev.log 2>&1 &
+          DEV_PID=$!
+          probe_ok=false
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then probe_ok=true; break; fi
+            if ! kill -0 $DEV_PID 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [[ "$probe_ok" != true ]]; then
+            echo "dev server did not answer HTTP on 4315" >&2
+            cat dev.log >&2 || true
+            kill $DEV_PID 2>/dev/null || true
+            exit 1
+          fi
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true
+          else
+            kill $DEV_PID 2>/dev/null || true
+            pkill -f "vite.*4315" 2>/dev/null || true
+          fi
+          # run probe: the scaffold's own start script in background.
+          # run probe: script start của chính scaffold chạy nền.
+          "$MGC" run start > run.log 2>&1 &
+          RUN_PID=$!
+          run_ok=false
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null "http://127.0.0.1:4315/" || curl -sf -o /dev/null "http://localhost:4315/"; then run_ok=true; break; fi
+            if ! kill -0 $RUN_PID 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [[ "$run_ok" != true ]]; then
+            echo "run start did not answer HTTP on 4315" >&2
+            cat run.log >&2 || true
+            kill $RUN_PID 2>/dev/null || true
+            pkill -f "vite.*4315" 2>/dev/null || true
+            exit 1
+          fi
+          kill $RUN_PID 2>/dev/null || true
+          pkill -f "vite.*4315" 2>/dev/null || true
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            taskkill //F //IM node.exe //T > /dev/null 2>&1 || true
+          fi
+          echo "MARKER distribution web lifecycle complete"
+
+  verify-homebrew:
+    name: verify Homebrew formula (macos)
+    # Install through the ACTUAL formula shipped on the release — the
+    # brew install must pull the published archive, not a local file.
+    # Cài qua CHÍNH formula được phát hành trên release — brew install
+    # phải kéo archive đã publish, không phải file local.
+    runs-on: macos-latest
+    steps:
+      - name: Download the formula shipped on the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p formula-verify && cd formula-verify
+          gh release download "$TAG" -R "${{ github.repository }}" -p "packaging/homebrew/magicore.rb"
+          test -f packaging/homebrew/magicore.rb
+          # Formula must not ship placeholder hashes — the release CI
+          # replaces them; a placeholder here means the release is NOT
+          # publishable (fail loudly, never install a broken formula).
+          # Formula không được còn hash placeholder — release CI thay;
+          # còn placeholder nghĩa là release CHƯA publish được.
+          if grep -q "PLACEHOLDER" packaging/homebrew/magicore.rb; then
+            echo "formula still carries PLACEHOLDER hashes — release CI did not finalize" >&2
+            exit 1
+          fi
+
+      - name: Install via Homebrew from the release formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formula-verify
+          mkdir -p "$(brew --repository)/Library/Taps/magicore-local"
+          cp -r packaging/homebrew "$(brew --repository)/Library/Taps/magicore-local/magicore"
+          # Tap dir must be a git repo for brew to accept it.
+          # Thư mục tap phải là git repo thì brew mới nhận.
+          cd "$(brew --repository)/Library/Taps/magicore-local/magicore"
+          git init -q . && git add . && git -c user.email=ci@local -c user.name=ci commit -qm init
+          brew install --verbose magicore-local/magicore/magicore
+          which mgc
+          mgc --version
+
+      - name: Lifecycle with the brew-installed binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          mgc create-web react brewweb
+          cd brewweb
+          mgc install
+          mgc test
+          mgc build
+          test -d dist
+
+      - name: Uninstall + reinstall (package manager roundtrip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew uninstall magicore
+          if command -v mgc >/dev/null 2>&1; then
+            echo "mgc still on PATH after brew uninstall" >&2
+            exit 1
+          fi
+          brew install magicore-local/magicore/magicore
+          mgc --version
+          echo "MARKER homebrew uninstall-reinstall complete"
+
+  verify-scoop:
+    name: verify Scoop manifest (windows)
+    # Install through the ACTUAL manifest shipped on the release.
+    # Cài qua CHÍNH manifest được phát hành trên release.
+    runs-on: windows-latest
+    steps:
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          # GitHub windows runners do not ship scoop by default.
+          # Runner windows của GitHub không có sẵn scoop.
+          irm get.scoop.sh -outfile install.ps1
+          .\install.ps1 -RunAsAdmin
+
+      - name: Download the manifest shipped on the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p scoop-verify && cd scoop-verify
+          gh release download "$TAG" -R "${{ github.repository }}" -p "packaging/scoop/magicore.json"
+          test -f packaging/scoop/magicore.json
+          if grep -q "PLACEHOLDER" packaging/scoop/magicore.json; then
+            echo "scoop manifest still carries PLACEHOLDER hashes — release CI did not finalize" >&2
+            exit 1
+          fi
+
+      - name: Install via Scoop from the release manifest
+        shell: pwsh
+        run: |
+          Set-Location scoop-verify
+          $bucketDir = "$(Join-Path $env:SCOOP 'buckets\magicore-local')"
+          New-Item -ItemType Directory -Force -Path "$bucketDir\bucket" | Out-Null
+          Copy-Item packaging\scoop\magicore.json "$bucketDir\bucket\magicore.json"
+          scoop bucket add magicore-local "$bucketDir" 2>$null; scoop bucket list
+          scoop install magicore
+          mgc --version
+
+      - name: Lifecycle with the scoop-installed binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          mgc create-web react scoopweb
+          cd scoopweb
+          mgc install
+          mgc test
+          mgc build
+          test -d dist
+
+      - name: Uninstall + reinstall (package manager roundtrip)
+        shell: pwsh
+        run: |
+          scoop uninstall magicore
+          if (Get-Command mgc -ErrorAction SilentlyContinue) { Write-Error "mgc still on PATH after scoop uninstall"; exit 1 }
+          scoop install magicore
+          mgc --version
+          Write-Host "MARKER scoop uninstall-reinstall complete"
+
+  verify-signed-manifest:
+    # P0/F7: the release manifest is the self-update trust anchor —
+    # verify its detached Ed25519 signature against the release signing
+    # key (derived pubkey, secret never leaves this job) and re-check
+    # one archive digest through the manifest binding. Unsigned
+    # (transitional) releases warn loudly instead of failing — the day
+    # the secret lands, unsigned stops being acceptable.
+    # Manifest là neo trust của self-update — verify chữ ký Ed25519
+    # (pubkey suy từ seed, secret không rời job) và kiểm lại một digest
+    # qua binding. Release unsigned (quá độ) thì cảnh báo rõ.
+    name: verify signed release manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MGC_RELEASE_SIGNING_KEY: ${{ secrets.MGC_RELEASE_SIGNING_KEY }}
+    steps:
+      - name: Download manifest + signature from the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p sig-verify && cd sig-verify
+          gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p "manifest.json" || true
+          gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p "manifest.json.sig" || true
+          ls -la
+
+      - name: Verify signature + binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd sig-verify
+          python3 - <<'PYEOF'
+          import hashlib, json, os, sys
+
+          if not os.path.isfile("manifest.json"):
+              print("::error::manifest.json missing from release assets")
+              sys.exit(1)
+          manifest_bytes = open("manifest.json", "rb").read()
+          manifest = json.loads(manifest_bytes)
+          tag_version = os.environ.get("TAG_VERSION", "").lstrip("v")
+          if tag_version and manifest.get("version") != tag_version:
+              print(f"::error::manifest version {manifest.get('version')} != tag {tag_version}")
+              sys.exit(1)
+          if not manifest.get("artifacts"):
+              print("::error::manifest carries zero artifacts")
+              sys.exit(1)
+          print(f"manifest: version={manifest['version']} artifacts={len(manifest['artifacts'])}")
+
+          seed_hex = os.environ.get("MGC_RELEASE_SIGNING_KEY", "").strip()
+          sig_path = "manifest.json.sig"
+          if not seed_hex or not os.path.isfile(sig_path):
+              print("::warning::unsigned/transitional release — signature NOT verified (sha256 transport checks only)")
+              sys.exit(0)
+          import subprocess
+          subprocess.run(["pip", "install", "--quiet", "cryptography"], check=True)
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+          seed = bytes.fromhex(seed_hex)
+          assert len(seed) == 32, "signing key must be 64 hex chars"
+          pubkey = Ed25519PrivateKey.from_private_bytes(seed).public_key()
+          sig_hex = open(sig_path).read().split()[0]
+          try:
+              pubkey.verify(bytes.fromhex(sig_hex), manifest_bytes)
+          except Exception as e:
+              print(f"::error::manifest signature INVALID: {e}")
+              sys.exit(1)
+          print("manifest signature VALID (Ed25519, key derived in-job)")
+          PYEOF
+        env:
+          TAG_VERSION: ${{ inputs.tag }}

@@ -5,12 +5,11 @@
 mod adapter;
 mod framework;
 mod sbom;
-mod tooling;
 
 pub mod flash;
 pub mod install;
 pub mod scaffold;
 
-pub use adapter::{adapter_for, IotAdapter};
-pub use framework::{board_target, detect_framework, known_boards, IotFramework, KNOWN_BOARDS};
+pub use adapter::{IotAdapter, adapter_for};
+pub use framework::{IotFramework, KNOWN_BOARDS, board_target, detect_framework, known_boards};
 pub use sbom::generate_sbom;

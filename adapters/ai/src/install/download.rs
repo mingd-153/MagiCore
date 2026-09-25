@@ -179,7 +179,7 @@ pub fn verify_file_checksum(path: &Path, expected: &str) -> MgResult<()> {
         Some((other, _)) => {
             return Err(MgError::Other(format!(
                 "unsupported checksum algorithm '{other}' (expected 'sha256:' or 'blake3:')"
-            )))
+            )));
         }
         None => ("blake3", expected),
     };

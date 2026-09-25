@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use axum::Router;
 use colored::Colorize;
 use mgc_ui::{info, success};
@@ -17,7 +17,7 @@ pub async fn run(core: Option<&str>) -> Result<()> {
 
     if !mgc_ui::is_quiet() {
         mgc_ui::blank_line();
-        println!("🚀 {}", "MagiCore Production Server".bold().magenta());
+        println!("{}", "MagiCore Production Server".bold().magenta());
     }
     info(&format!("Project root: {}", root.display()));
     info(&format!("Execution profile: {}", ctx.execution_summary()));
@@ -40,7 +40,9 @@ pub async fn run(core: Option<&str>) -> Result<()> {
 
             let dist_dir = match selected_dir {
                 Some(d) => d,
-                None => bail!("Could not find a valid build output directory (checked: dist, build, out, .next, public). Please run 'mgc build' first."),
+                None => bail!(
+                    "Could not find a valid build output directory (checked: dist, build, out, .next, public). Please run 'mgc build' first."
+                ),
             };
 
             info(&format!(

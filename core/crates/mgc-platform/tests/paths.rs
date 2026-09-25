@@ -7,9 +7,11 @@ fn project_paths_computes_correctly() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = ProjectPaths::from_root(tmp.path());
     assert!(paths.patches_dir().ends_with(".magicore/patches"));
-    assert!(paths
-        .lock_signatures
-        .ends_with(".magicore/lock-signatures.json"));
+    assert!(
+        paths
+            .lock_signatures
+            .ends_with(".magicore/lock-signatures.json")
+    );
 }
 
 #[test]

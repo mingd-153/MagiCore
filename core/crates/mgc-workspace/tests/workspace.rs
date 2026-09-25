@@ -2,8 +2,8 @@
 //! mgc-workspace tests — RULE §5 (test/).
 
 use mgc_workspace::{
-    discover_workspace_targets, filter_matches, topo_levels, WorkspaceGraph, WorkspaceNode,
-    WorkspacePackageManifest,
+    WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest, discover_workspace_targets,
+    filter_matches, topo_levels,
 };
 use std::path::{Path, PathBuf};
 

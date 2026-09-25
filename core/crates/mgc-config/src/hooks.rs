@@ -3,12 +3,26 @@
 //!  Format: `[hooks.<event>]` = list of shell commands, run in order.
 //!  Chính sách: hook fail → command fail; hook không thể bỏ qua security check.)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const FORBIDDEN_HOOK_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx"];
+const FORBIDDEN_HOOK_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx", "deno"];
+
+/// Return the dependency verb for a direct or phase-prefixed hook event.
+/// (Trả về động từ dependency của event trực tiếp hoặc có tiền tố pre/post.)
+fn dependency_event_verb(event: &str) -> Option<&str> {
+    let verb = event
+        .strip_prefix("pre-")
+        .or_else(|| event.strip_prefix("post-"))
+        .unwrap_or(event);
+    matches!(verb, "install" | "add" | "remove" | "update" | "publish").then_some(verb)
+}
+// `deno` rides along: rival JS runtimes must never execute on dependency
+// events, matching the Install-scope guard in mgc-exec (allowlist.rs).
+// (Kèm `deno`: runtime JS đối thủ không bao giờ chạy trên event
+// dependency, khớp cổng Install-scope trong mgc-exec.)
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct HooksConfig {
@@ -52,6 +66,27 @@ fn load_merged(project_root: &Path) -> Result<HooksConfig> {
 /// Chạy tất cả hooks cho event; fail bất kỳ lệnh nào → trả lỗi (chống bypass)
 pub fn run_hooks(project_root: &Path, event: &str) -> Result<()> {
     let cfg = load_merged(project_root)?;
+
+    // Arbitrary hook executables can spawn package managers through wrappers,
+    // interpreters, or project scripts, so a tool-name denylist is not a
+    // security boundary. Refuse both phases before dependency mutation starts.
+    // (Hook tùy ý có thể gọi package manager qua wrapper/interpreter/script,
+    // nên denylist tên tool không đủ an toàn. Chặn cả hai phase trước mutation.)
+    if let Some(verb) = dependency_event_verb(event) {
+        let pre_event = format!("pre-{verb}");
+        let post_event = format!("post-{verb}");
+        let has_dependency_hook = [event, pre_event.as_str(), post_event.as_str()]
+            .iter()
+            .filter_map(|name| cfg.hooks.get(*name))
+            .flatten()
+            .any(|command| !command.trim().is_empty());
+        if has_dependency_hook {
+            bail!(
+                "user-defined hooks are disabled for dependency lifecycle event '{verb}' because they can execute external package managers; remove the pre/post hook from mgc.hooks.toml or the user hooks file"
+            );
+        }
+    }
+
     let Some(cmds) = cfg.hooks.get(event) else {
         return Ok(());
     };

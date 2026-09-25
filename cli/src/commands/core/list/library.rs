@@ -1,8 +1,14 @@
 //! `mgc list library` — tách từ core/library.rs (Phase 7 v5).
+//!
+//! GATED NATIVE READ (P0#3): adapter manifest/lock read — no toolchain
+//! spawn, no package mutation in this lane. The gate records the native
+//! decision (and logs the ignore notice when --compat-runtime is passed).
+//! (Đọc manifest/lock qua adapter, có gate — lane này không spawn
+//! toolchain, không đổi package.)
 
 use anyhow::Result;
-use mgc_types::adapter::PackageAdapter;
 use mgc_types::Ecosystem;
+use mgc_types::adapter::PackageAdapter;
 fn project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let root = shared::find_project_root(&cwd)?
@@ -45,8 +51,21 @@ use std::sync::Arc;
 
 use crate::commands::core::shared;
 
-pub async fn list() -> Result<()> {
+pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
+    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+    crate::commands::dep_gate::gate(
+        &crate::commands::dep_gate::DepContext::new(
+            "lib",
+            mgc_lib_adapter::detect_language(&root).map(|l| l.ecosystem()),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::List,
+        ),
+        None,
+        &compat,
+        Some(&root.join(".magicore").join("exec.log")),
+    )?;
     let adapter = lib_adapter();
     shared::list(&*adapter, &root).await
 }

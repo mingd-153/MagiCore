@@ -160,9 +160,15 @@ fn test_create_core_commands_follow_create_core_name_shape() {
         _ => panic!("expected create-app command"),
     }
 
-    let lib = Cli::try_parse_from(["mgc", "create-lib", "demo-lib"]).unwrap();
+    let lib = Cli::try_parse_from(["mgc", "create-lib", "rust", "demo-lib"]).unwrap();
     match lib.command.unwrap() {
-        Commands::CreateLib { project_name } => assert_eq!(project_name, "demo-lib"),
+        Commands::CreateLib {
+            framework,
+            project_name,
+        } => {
+            assert_eq!(framework, "rust");
+            assert_eq!(project_name, "demo-lib");
+        }
         _ => panic!("expected create-lib command"),
     }
 }
@@ -205,11 +211,73 @@ fn test_add_and_remove_accept_no_install() {
         Commands::RemoveWeb {
             packages,
             no_install,
+            ..
         } => {
             assert_eq!(packages, vec!["zod", "lodash"]);
             assert!(no_install);
         }
         _ => panic!("expected remove-web command"),
+    }
+}
+
+#[test]
+fn test_add_accepts_version_pin() {
+    // T0.3-version: bare `add --version` must parse (the pin flows to
+    // lanes that honor it instead of being dropped).
+    let add = Cli::try_parse_from(["mgc", "add", "zod", "--version", "3.22.4"]).unwrap();
+    match add.command.unwrap() {
+        Commands::Add {
+            packages, version, ..
+        } => {
+            assert_eq!(packages, vec!["zod"]);
+            assert_eq!(version.as_deref(), Some("3.22.4"));
+        }
+        _ => panic!("expected add command"),
+    }
+}
+
+#[test]
+fn test_compat_runtime_flag_parses_on_dependency_commands() {
+    // C0 firewall UX (T0.3): --compat-runtime must parse on every
+    // install/add/remove/update form (bare + per-core).
+    let install = Cli::try_parse_from(["mgc", "install", "--compat-runtime", "uv"]).unwrap();
+    match install.command.unwrap() {
+        Commands::Install { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("uv"))
+        }
+        _ => panic!("expected install command"),
+    }
+
+    let install_ai = Cli::try_parse_from(["mgc", "install-ai", "--compat-runtime", "uv"]).unwrap();
+    match install_ai.command.unwrap() {
+        Commands::InstallAi { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("uv"))
+        }
+        _ => panic!("expected install-ai command"),
+    }
+
+    let add_app =
+        Cli::try_parse_from(["mgc", "add-app", "pkg", "--compat-runtime", "flutter"]).unwrap();
+    match add_app.command.unwrap() {
+        Commands::AddApp { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("flutter"))
+        }
+        _ => panic!("expected add-app command"),
+    }
+
+    let remove = Cli::try_parse_from(["mgc", "remove", "zod"]).unwrap();
+    match remove.command.unwrap() {
+        Commands::Remove { compat_runtime, .. } => assert!(compat_runtime.is_none()),
+        _ => panic!("expected remove command"),
+    }
+
+    let update_lib =
+        Cli::try_parse_from(["mgc", "update-lib", "--compat-runtime", "cargo"]).unwrap();
+    match update_lib.command.unwrap() {
+        Commands::UpdateLib { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("cargo"))
+        }
+        _ => panic!("expected update-lib command"),
     }
 }
 
@@ -435,9 +503,11 @@ fn test_dev_command_accepts_host_and_port() {
             host,
             port,
             clear: _,
+            compat_runtime,
         } => {
             assert_eq!(host.as_deref(), Some("127.0.0.1"));
             assert_eq!(port, Some(4315));
+            assert!(compat_runtime.is_none());
         }
         _ => panic!("expected dev command"),
     }

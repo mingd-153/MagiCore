@@ -4,6 +4,19 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Accept header for packument fetches: abbreviated (small) normally,
+/// FULL document when this client's age gate is armed (abbreviated docs
+/// omit the `time` map the gate needs — fetching abbreviated under an
+/// armed gate would silently keep everything).
+/// (Header Accept: full doc khi cổng tuổi bật.)
+fn metadata_accept_header(armed: bool) -> &'static str {
+    if armed {
+        "application/json"
+    } else {
+        "application/vnd.npm.install-v1+json"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageMetadata {
     pub name: String,
@@ -44,6 +57,11 @@ pub struct NpmRegistry {
     /// tiếp khi primary 404/network/5xx — KHÔNG fallback khi 401/403 (auth
     /// fail = fail-closed, không leak package từ registry khác).
     fallbacks: Vec<(String, Option<String>)>,
+    /// Per-client age-gate fetch mode (P0/F6): armed by the owning
+    /// provider per operation — full packuments + no stale abbreviated
+    /// cache. Never a process global.
+    /// (Chế độ fetch theo cổng tuổi — riêng từng client.)
+    age_armed: std::sync::atomic::AtomicBool,
 }
 
 pub enum DownloadedTarball {
@@ -138,6 +156,7 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token: None,
             fallbacks: Vec::new(),
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -146,6 +165,7 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token,
             fallbacks: Vec::new(),
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -159,7 +179,22 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token,
             fallbacks,
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Arm/disarm full-packument fetch mode for this client (called by
+    /// the owning provider when it (re-)arms its age policy).
+    /// (Bật/tắt chế độ fetch full doc cho client này.)
+    pub fn set_age_gate_armed(&self, armed: bool) {
+        self.age_armed
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Full packuments when armed (abbreviated docs omit `time`).
+    /// (Full doc khi cổng tuổi bật.)
+    pub fn age_gate_armed(&self) -> bool {
+        self.age_armed.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn chain(&self) -> Vec<(String, Option<String>)> {
@@ -200,6 +235,7 @@ impl NpmRegistry {
         let client = global_http_client();
         let chain = self.chain();
         let mut last_err: Option<anyhow::Error> = None;
+        let accept = metadata_accept_header(self.age_gate_armed());
 
         for (url, token) in chain {
             let endpoint = format!("{}/{}", url.trim_end_matches('/'), package);
@@ -208,14 +244,15 @@ impl NpmRegistry {
             let result = with_retry("metadata", package, move || {
                 let resp_future = client.get(&endpoint_for_closure);
                 let token_owned = token_for_closure.clone();
-                let metadata_future = async move {
+                // Return the async block directly — trả thẳng async block (clippy let_and_return).
+                async move {
                     let req = if let Some(tok) = token_owned.as_deref() {
                         resp_future.header("Authorization", format!("Bearer {tok}"))
                     } else {
                         resp_future
                     };
                     let resp = req
-                        .header("Accept", "application/vnd.npm.install-v1+json")
+                        .header("Accept", accept)
                         .send()
                         .await?
                         .error_for_status()?;
@@ -226,20 +263,21 @@ impl NpmRegistry {
                         .map(str::to_owned);
                     let metadata: PackageMetadata = resp.json().await?;
                     Ok((metadata, etag))
-                };
-                metadata_future
+                }
             })
             .await;
 
-            match result {
-                Ok(ok) => return Ok(ok),
-                Err(e) => {
-                    if is_auth_error(&e) {
-                        return Err(e);
-                    }
-                    last_err = Some(e);
-                }
+            // Return immediately on success — trả ngay khi thành công.
+            if let Ok(ok) = result {
+                return Ok(ok);
             }
+            let Err(e) = result else {
+                unreachable!("checked Ok arm above")
+            };
+            if is_auth_error(&e) {
+                return Err(e);
+            }
+            last_err = Some(e);
         }
 
         Err(last_err
@@ -255,9 +293,10 @@ impl NpmRegistry {
         let etag_owned = etag.map(|s| s.to_string());
 
         with_retry("metadata-conditional", package, move || {
+            let accept = metadata_accept_header(self.age_gate_armed());
             let mut req = self
                 .with_auth(global_http_client().get(&url), &url)
-                .header("Accept", "application/vnd.npm.install-v1+json");
+                .header("Accept", accept);
             if let Some(ref etag_val) = etag_owned {
                 req = req.header("If-None-Match", etag_val);
             }
@@ -322,16 +361,29 @@ impl NpmRegistry {
                 .await?
                 .error_for_status()?;
 
-            let mut file = tokio::fs::File::create(dest).await?;
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .await?;
             let mut stream = resp.bytes_stream();
             let mut hasher = sha2::Sha512::new();
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                hasher.update(&chunk);
-                file.write_all(&chunk).await?;
+            let streamed = async {
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    hasher.update(&chunk);
+                    file.write_all(&chunk).await?;
+                }
+                file.flush().await?;
+                Ok::<(), anyhow::Error>(())
             }
-            file.flush().await?;
+            .await;
+            if let Err(error) = streamed {
+                drop(file);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Err(error);
+            }
 
             let digest = hasher.finalize();
             let b64 = base64_encode(&digest);
@@ -366,18 +418,31 @@ impl NpmRegistry {
                 return Ok(DownloadedTarball::Bytes(bytes.to_vec()));
             }
 
-            let mut file = tokio::fs::File::create(dest).await?;
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .await?;
             let mut stream = resp.bytes_stream();
             let mut hasher = sha2::Sha512::new();
             let mut bytes_len = 0u64;
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                bytes_len += chunk.len() as u64;
-                hasher.update(&chunk);
-                file.write_all(&chunk).await?;
+            let streamed = async {
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    bytes_len += chunk.len() as u64;
+                    hasher.update(&chunk);
+                    file.write_all(&chunk).await?;
+                }
+                file.flush().await?;
+                Ok::<(), anyhow::Error>(())
             }
-            file.flush().await?;
+            .await;
+            if let Err(error) = streamed {
+                drop(file);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Err(error);
+            }
 
             let digest = hasher.finalize();
             let b64 = base64_encode(&digest);

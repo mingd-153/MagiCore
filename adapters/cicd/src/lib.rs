@@ -6,9 +6,6 @@ mod adapter;
 mod provider;
 mod sbom;
 
-pub mod deploy;
-pub mod pipeline;
-
-pub use adapter::{adapter_for, CicdAdapter};
-pub use provider::{detect_provider, CicdProvider};
+pub use adapter::{CicdAdapter, adapter_for};
+pub use provider::{CicdProvider, detect_provider};
 pub use sbom::generate_sbom;

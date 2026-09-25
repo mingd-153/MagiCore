@@ -37,17 +37,16 @@ pub fn registry_chain(
         }
     }
 
-    if let Some(root) = project_root {
-        if let Ok(npmrc) = crate::npmrc::NpmRc::load(root) {
-            if let Some(url) = npmrc.registry_for(None) {
-                if !chain.iter().any(|c| same_url(&c.url, &url)) {
-                    let mut r = Registry::new("npmrc".to_string(), url.clone());
-                    r.priority = u32::MAX;
-                    r.token = npmrc.token_for(&host_of(&url)).cloned();
-                    chain.push(r);
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện lồng nhau theo clippy 1.98.
+    if let Some(root) = project_root
+        && let Ok(npmrc) = crate::npmrc::NpmRc::load(root)
+        && let Some(url) = npmrc.registry_for(None)
+        && !chain.iter().any(|c| same_url(&c.url, &url))
+    {
+        let mut r = Registry::new("npmrc".to_string(), url.clone());
+        r.priority = u32::MAX;
+        r.token = npmrc.token_for(&host_of(&url)).cloned();
+        chain.push(r);
     }
 
     if !chain.iter().any(|c| same_url(&c.url, DEFAULT_NPM_REGISTRY)) {

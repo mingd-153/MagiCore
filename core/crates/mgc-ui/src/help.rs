@@ -24,7 +24,7 @@ pub fn custom_help_text(available_cores: &[(&str, &str)]) -> String {
     out.push('\n');
     out.push_str(&format!(
         "  {}  {}\n",
-        "🚀".bold(),
+        "".bold(),
         "MagiCore - Universal Package Manager".white().bold()
     ));
     out.push_str(&format!(

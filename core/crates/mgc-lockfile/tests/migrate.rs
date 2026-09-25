@@ -2,8 +2,8 @@
 //! Tests cho module migrate
 
 use mgc_lockfile::migrate::{
-    auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2, parse_lockfile_v1,
-    LockfileV1, PackageV1,
+    LockfileV1, PackageV1, auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2,
+    parse_lockfile_v1,
 };
 
 #[test]
@@ -82,12 +82,26 @@ dependencies = []
 "#;
 
     let lockfile = auto_upgrade_lockfile(toml_v1).unwrap();
-    assert_eq!(lockfile.version, "2");
+    // Deliberate v3 bump (Phase 1): auto-upgrade always lands on the latest
+    // schema, so the v1 path chains v1→v2→v3.
+    // Nâng lên v3 có chủ đích (Phase 1): auto-upgrade luôn về schema mới
+    // nhất, nên đường v1 nối chuỗi v1→v2→v3.
+    assert_eq!(lockfile.version, "3");
     assert_eq!(lockfile.packages.len(), 1);
+    // Chain fills registry-import provenance on the migrated pins.
+    // Chuỗi migration điền provenance registry-import cho pin đã migrate.
+    assert_eq!(
+        lockfile.packages[0]
+            .provenance
+            .as_ref()
+            .unwrap()
+            .source_kind,
+        "registry-import"
+    );
 }
 
 #[test]
-fn test_auto_upgrade_v2_passthrough() {
+fn test_auto_upgrade_v2_migrates_to_v3() {
     let toml_v2 = r#"
 version = "2"
 [metadata]
@@ -103,6 +117,22 @@ dependencies = []
 "#;
 
     let lockfile = auto_upgrade_lockfile(toml_v2).unwrap();
-    assert_eq!(lockfile.version, "2");
+    // Deliberate v3 bump (Phase 1): v2 passthrough becomes v2→v3 migration
+    // (auto-upgrade targets the latest canonical schema).
+    // Nâng lên v3 có chủ đích (Phase 1): passthrough v2 thành migration
+    // v2→v3 (auto-upgrade nhắm schema canonical mới nhất).
+    assert_eq!(lockfile.version, "3");
     assert_eq!(lockfile.packages.len(), 1);
+    assert_eq!(
+        lockfile.packages[0].ecosystem,
+        mgc_lockfile::ecosystem_tag::EcosystemTag::Other
+    );
+    assert_eq!(
+        lockfile.packages[0]
+            .provenance
+            .as_ref()
+            .unwrap()
+            .source_kind,
+        "registry-import"
+    );
 }

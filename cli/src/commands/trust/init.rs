@@ -22,7 +22,7 @@ pub fn execute(force: bool) -> anyhow::Result<()> {
                 // Try backup recovery
                 let backup = keyring_path.with_extension("json.bak");
                 if backup.exists() {
-                    println!("⚠ Keyring corrupted, attempting recovery from backup...");
+                    println!("WARN: Keyring corrupted, attempting recovery from backup...");
                     if let Err(e) = std::fs::copy(&backup, &keyring_path) {
                         println!("✗ Backup recovery failed: {}", e);
                         println!("  Use --force to create new keyring");
@@ -31,7 +31,7 @@ pub fn execute(force: bool) -> anyhow::Result<()> {
                     println!("✓ Recovered keyring from backup");
                     return Ok(());
                 } else {
-                    println!("⚠ Keyring corrupted and no backup found");
+                    println!("WARN: Keyring corrupted and no backup found");
                     println!("  Use --force to create new keyring");
                     return Ok(());
                 }
@@ -40,7 +40,7 @@ pub fn execute(force: bool) -> anyhow::Result<()> {
     }
 
     if force && keyring_path.exists() {
-        println!("⚠ Reinitializing keyring (old keys will be lost)");
+        println!("WARN: Reinitializing keyring (old keys will be lost)");
     }
 
     // Generate new key
@@ -66,7 +66,7 @@ pub fn execute(force: bool) -> anyhow::Result<()> {
     let sig_path = lockfile_path.with_extension("lock.sig");
 
     if sig_path.exists() && force {
-        println!("\n⚠ Existing lockfile signature detected");
+        println!("\nWARN: Existing lockfile signature detected");
         println!("  Old signature will be invalid with new key");
         println!("  Run 'mgc trust sign' to re-sign with new key");
     }

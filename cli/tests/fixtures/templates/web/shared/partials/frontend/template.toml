@@ -1,0 +1,7 @@
+[template]
+core = "web"
+name = "frontend"
+version = "1.0.0"
+description = "Test partial: frontend"
+
+files = []

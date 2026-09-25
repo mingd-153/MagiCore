@@ -1,7 +1,7 @@
 //! Cloud deployment via mgc-exec passthrough.
 
 use crate::cloud_type::CloudType;
-use mgc_exec::run::{run as mgc_run, ExecOptions};
+use mgc_exec::run::{ExecOptions, run as mgc_run};
 use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
@@ -12,6 +12,10 @@ pub struct DeployResult {
     pub duration_ms: u64,
 }
 
+// DELEGATED: deploy is a real mgc-exec passthrough (cdk/pulumi/terraform/
+// wrangler, dry-run default) — the provider toolchain owns the lifecycle.
+// (DELEGATED: deploy là passthrough mgc-exec thật (cdk/pulumi/terraform/
+// wrangler, dry-run mặc định) — toolchain provider sở hữu lifecycle.)
 pub async fn deploy(framework: CloudType, root: &Path, dry_run: bool) -> MgResult<DeployResult> {
     let started = std::time::Instant::now();
 

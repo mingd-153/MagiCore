@@ -1,7 +1,7 @@
 //! Patch command — add/rm/ls/verify package patches (16 §6)
 //! (Lệnh patch: vá lỗi package như pnpm patchedDependencies)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
 use mgc_config::project::ProjectConfig;
 use mgc_resolver::patches::{get_patches_dir, verify_patch_integrity};

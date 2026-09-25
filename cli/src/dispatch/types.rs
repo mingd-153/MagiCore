@@ -1,5 +1,3 @@
-use crate::Commands;
-
 #[allow(clippy::large_enum_variant)]
 pub enum DispatchCommand {
     Common(CommonCommand),
@@ -15,6 +13,7 @@ pub enum CommonCommand {
         host: Option<String>,
         port: Option<u16>,
         clear: bool,
+        compat_runtime: Option<String>,
     },
     Info {
         package: String,
@@ -31,8 +30,19 @@ pub enum CommonCommand {
     },
     Audit {
         fix: bool,
+        format: Option<String>,
     },
-    SelfUpdate,
+    SelfUpdate {
+        version: Option<String>,
+        variant: Option<String>,
+        dry_run: bool,
+        trust_root: Vec<String>,
+        allow_unsigned: bool,
+    },
+    SignRelease {
+        manifest: Option<String>,
+        key_hex: Option<String>,
+    },
     Config {
         cmd: crate::commands::config::ConfigCmd,
         local: bool,
@@ -42,6 +52,10 @@ pub enum CommonCommand {
     },
     Import {
         dir: Option<std::path::PathBuf>,
+        allow_unsigned: bool,
+    },
+    Migrate {
+        cmd: crate::commands::migrate::MigrateCmd,
     },
     Sbom {
         format: Option<String>,
@@ -53,9 +67,18 @@ pub enum CommonCommand {
     Run {
         script: String,
         args: Vec<String>,
+        compat_runtime: Option<String>,
+    },
+    Test {
+        args: Vec<String>,
+        compat_runtime: Option<String>,
+    },
+    Optimizer {
+        force: bool,
     },
     Build {
         target: Option<String>,
+        compat_runtime: Option<String>,
     },
     Flash {
         board: Option<String>,
@@ -131,6 +154,9 @@ pub enum CommonCommand {
     Docs {
         output: Option<std::path::PathBuf>,
     },
+    Completion {
+        shell: crate::commands::completion::CompletionShell,
+    },
     Telemetry {
         cmd: crate::commands::telemetry::TelemetryCmd,
     },
@@ -159,6 +185,7 @@ pub enum CommonCommand {
         cmd: crate::commands::model::ModelCmd,
     },
     Mcp,
+    Capabilities,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -193,6 +220,7 @@ pub enum CoreCommand {
         project_name: String,
     },
     CreateLib {
+        framework: String,
         project_name: String,
     },
     CreateHardware {
@@ -207,34 +235,46 @@ pub enum CoreCommand {
         prefer_dedupe: bool,
         repair: bool,
         offline: bool,
+        compat_runtime: Option<String>,
     },
     InstallGame {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     InstallAi {
         packages: Vec<String>,
         dry_run: bool,
+        compat_runtime: Option<String>,
+        frozen: bool,
     },
     InstallClo {
         packages: Vec<String>,
         dry_run: bool,
+        compat_runtime: Option<String>,
     },
     InstallCicd {
         packages: Vec<String>,
         dry_run: bool,
+        compat_runtime: Option<String>,
     },
     InstallIot {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     InstallApp {
         packages: Vec<String>,
         dry_run: bool,
+        compat_runtime: Option<String>,
+        frozen: bool,
     },
     InstallLib {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
+        frozen: bool,
     },
     InstallHardware {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     AddWeb {
         packages: Vec<String>,
@@ -245,6 +285,8 @@ pub enum CoreCommand {
         no_save: bool,
         install: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddGame {
         packages: Vec<String>,
@@ -254,6 +296,8 @@ pub enum CoreCommand {
         peer: bool,
         no_save: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddAi {
         packages: Vec<String>,
@@ -263,6 +307,8 @@ pub enum CoreCommand {
         peer: bool,
         no_save: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddClo {
         packages: Vec<String>,
@@ -272,6 +318,8 @@ pub enum CoreCommand {
         peer: bool,
         no_save: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddCicd {
         packages: Vec<String>,
@@ -281,6 +329,8 @@ pub enum CoreCommand {
         peer: bool,
         no_save: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddIot {
         packages: Vec<String>,
@@ -290,6 +340,8 @@ pub enum CoreCommand {
         peer: bool,
         no_save: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddApp {
         packages: Vec<String>,
@@ -299,6 +351,8 @@ pub enum CoreCommand {
         peer: bool,
         no_save: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddLib {
         packages: Vec<String>,
@@ -308,762 +362,196 @@ pub enum CoreCommand {
         peer: bool,
         no_save: bool,
         global: bool,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     AddHardware {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
+        version: Option<String>,
     },
     RemoveWeb {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     RemoveGame {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     RemoveAi {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     RemoveClo {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     RemoveCicd {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     RemoveIot {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     RemoveApp {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
     RemoveLib {
         packages: Vec<String>,
+        compat_runtime: Option<String>,
     },
-    ListWeb,
-    ListGame,
-    ListAi,
-    ListClo,
-    ListCicd,
-    ListIot,
-    ListApp,
-    ListLib,
-    ListHardware,
+    ListWeb {
+        compat_runtime: Option<String>,
+    },
+    ListGame {
+        compat_runtime: Option<String>,
+    },
+    ListAi {
+        compat_runtime: Option<String>,
+    },
+    ListClo {
+        compat_runtime: Option<String>,
+    },
+    ListCicd {
+        compat_runtime: Option<String>,
+    },
+    ListIot {
+        compat_runtime: Option<String>,
+    },
+    ListApp {
+        compat_runtime: Option<String>,
+    },
+    ListLib {
+        compat_runtime: Option<String>,
+    },
+    ListHardware {
+        compat_runtime: Option<String>,
+    },
     UpdateWeb {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     UpdateGame {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     UpdateAi {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     UpdateClo {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     UpdateCicd {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     UpdateIot {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     UpdateApp {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
     UpdateLib {
         packages: Vec<String>,
         install: bool,
+        compat_runtime: Option<String>,
     },
-}
-
-impl TryFrom<Commands> for DispatchCommand {
-    type Error = anyhow::Error;
-
-    fn try_from(command: Commands) -> Result<Self, Self::Error> {
-        use DispatchCommand::{Common as SomeCommon, Core as SomeCore};
-
-        let common_cmd = match command.clone() {
-            Commands::Init {
-                template,
-                signature,
-            } => Some(CommonCommand::Init {
-                template,
-                signature,
-            }),
-            Commands::Dev { host, port, clear } => Some(CommonCommand::Dev { host, port, clear }),
-            Commands::Info { package, json } => Some(CommonCommand::Info { package, json }),
-            Commands::Search {
-                query,
-                json,
-                exact,
-                page,
-            } => Some(CommonCommand::Search {
-                query,
-                json,
-                exact,
-                page,
-            }),
-            Commands::Config { cmd, local } => Some(CommonCommand::Config { cmd, local }),
-            Commands::Stage { dir } => Some(CommonCommand::Stage { dir }),
-            Commands::Import { dir } => Some(CommonCommand::Import { dir }),
-            Commands::Sbom {
-                format,
-                output,
-                name,
-                version,
-                dir,
-            } => Some(CommonCommand::Sbom {
-                format,
-                output,
-                name,
-                version,
-                dir,
-            }),
-            Commands::Outdated { json } => Some(CommonCommand::Outdated { json }),
-            Commands::Audit { fix } => Some(CommonCommand::Audit { fix }),
-            Commands::SelfUpdate => Some(CommonCommand::SelfUpdate),
-            Commands::Publish {
-                tag,
-                access,
-                dry_run,
-                json,
-                otp,
-                force,
-                ignore_scripts,
-                no_git_checks,
-                publish_branch,
-                batch,
-                report_summary,
-                patch,
-                minor,
-                major,
-                registry,
-                token,
-            } => Some(CommonCommand::Publish {
-                tag,
-                access,
-                dry_run,
-                json,
-                otp,
-                force,
-                ignore_scripts,
-                no_git_checks,
-                publish_branch,
-                batch,
-                report_summary,
-                patch,
-                minor,
-                major,
-                registry,
-                token,
-            }),
-            Commands::Patch { cmd } => Some(CommonCommand::Patch { cmd }),
-            Commands::Dedupe {
-                dry_run,
-                prefer_latest,
-                json,
-            } => Some(CommonCommand::Dedupe {
-                dry_run,
-                prefer_latest,
-                json,
-            }),
-            Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
-            Commands::Bench { args } => Some(CommonCommand::Bench { args }),
-            Commands::Trust { cmd } => Some(CommonCommand::Trust { cmd }),
-            Commands::Hooks { cmd } => Some(CommonCommand::Hooks { cmd }),
-            Commands::Docs { output } => Some(CommonCommand::Docs { output }),
-            Commands::Telemetry { cmd } => Some(CommonCommand::Telemetry { cmd }),
-            Commands::Network { cmd } => Some(CommonCommand::Network { cmd }),
-            Commands::Doctor { cmd } => Some(CommonCommand::Doctor { cmd }),
-            Commands::Template { cmd } => Some(CommonCommand::Template { cmd }),
-            Commands::Workspace { cmd } => Some(CommonCommand::Workspace { cmd }),
-            Commands::Login {
-                registry,
-                username,
-                password,
-                local,
-            } => Some(CommonCommand::Login {
-                registry,
-                username,
-                password,
-                local,
-            }),
-            Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
-            Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
-            Commands::Run { script, args } => Some(CommonCommand::Run { script, args }),
-            Commands::Build { target } => Some(CommonCommand::Build { target }),
-            Commands::Flash { board, skip_build } => {
-                Some(CommonCommand::Flash { board, skip_build })
-            }
-            Commands::Deploy { run } => Some(CommonCommand::Deploy { run }),
-            Commands::CiGenerate => Some(CommonCommand::CiGenerate),
-            Commands::Verify => Some(CommonCommand::Verify),
-            Commands::Start => Some(CommonCommand::Start),
-            Commands::Exec { command, args } => Some(CommonCommand::Exec { command, args }),
-            Commands::Dlx { package, args } => Some(CommonCommand::Dlx { package, args }),
-            Commands::Cache {
-                action,
-                target,
-                yes,
-                dry_run,
-            } => Some(CommonCommand::Cache {
-                action,
-                target,
-                yes,
-                dry_run,
-            }),
-            Commands::Link { package } => Some(CommonCommand::Link { package }),
-            Commands::Unlink { package } => Some(CommonCommand::Unlink { package }),
-            Commands::Why { package } => Some(CommonCommand::Why { package }),
-            _ => None,
-        };
-
-        if let Some(cmd) = common_cmd {
-            return Ok(SomeCommon(cmd));
-        }
-
-        Ok(match command {
-            // ── Bare commands (auto-detect from .magicore/) ──
-            Commands::Install {
-                packages,
-                frozen,
-                ignore_scripts,
-                allow_scripts,
-                prefer_dedupe,
-                repair,
-                dry_run,
-                offline,
-            } => {
-                let ecosystem = require_detected_ecosystem("install", detect_ecosystem()?)?;
-                match ecosystem.as_str() {
-                    "web" => SomeCore(CoreCommand::InstallWeb {
-                        packages,
-                        frozen,
-                        ignore_scripts,
-                        allow_scripts,
-                        prefer_dedupe,
-                        repair,
-                        offline,
-                    }),
-                    "game" => SomeCore(CoreCommand::InstallGame { packages }),
-                    "ai" => SomeCore(CoreCommand::InstallAi { packages, dry_run }),
-                    "clo" => SomeCore(CoreCommand::InstallClo { packages, dry_run }),
-                    "cicd" => SomeCore(CoreCommand::InstallCicd { packages, dry_run }),
-                    "iot" => SomeCore(CoreCommand::InstallIot { packages }),
-                    "app" => SomeCore(CoreCommand::InstallApp { packages, dry_run }),
-                    "lib" => SomeCore(CoreCommand::InstallLib { packages }),
-                    other => return Err(crate::error::unknown_core(other)),
-                }
-            }
-            Commands::Add {
-                packages,
-                dev,
-                global,
-                exact,
-                optional,
-                peer,
-                no_save,
-                no_install,
-                ..
-            } => {
-                let ecosystem = require_detected_ecosystem("add", detect_ecosystem()?)?;
-                match ecosystem.as_str() {
-                    "web" => SomeCore(CoreCommand::AddWeb {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        install: !no_install,
-                        global,
-                    }),
-                    "game" => SomeCore(CoreCommand::AddGame {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        global,
-                    }),
-                    "ai" => SomeCore(CoreCommand::AddAi {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        global,
-                    }),
-                    "clo" => SomeCore(CoreCommand::AddClo {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        global,
-                    }),
-                    "cicd" => SomeCore(CoreCommand::AddCicd {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        global,
-                    }),
-                    "iot" => SomeCore(CoreCommand::AddIot {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        global,
-                    }),
-                    "app" => SomeCore(CoreCommand::AddApp {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        global,
-                    }),
-                    "lib" => SomeCore(CoreCommand::AddLib {
-                        packages,
-                        dev,
-                        exact,
-                        optional,
-                        peer,
-                        no_save,
-                        global,
-                    }),
-                    other => return Err(crate::error::unknown_core(other)),
-                }
-            }
-            Commands::Remove {
-                packages,
-                no_install,
-            } => {
-                let ecosystem = require_detected_ecosystem("remove", detect_ecosystem()?)?;
-                match ecosystem.as_str() {
-                    "web" => SomeCore(CoreCommand::RemoveWeb {
-                        packages,
-                        install: !no_install,
-                    }),
-                    "game" => SomeCore(CoreCommand::RemoveGame { packages }),
-                    "ai" => SomeCore(CoreCommand::RemoveAi { packages }),
-                    "clo" => SomeCore(CoreCommand::RemoveClo { packages }),
-                    "cicd" => SomeCore(CoreCommand::RemoveCicd { packages }),
-                    "iot" => SomeCore(CoreCommand::RemoveIot { packages }),
-                    "app" => SomeCore(CoreCommand::RemoveApp { packages }),
-                    "lib" => SomeCore(CoreCommand::RemoveLib { packages }),
-                    other => return Err(crate::error::unknown_core(other)),
-                }
-            }
-            Commands::List => {
-                let ecosystem = require_detected_ecosystem("list", detect_ecosystem()?)?;
-                match ecosystem.as_str() {
-                    "web" => SomeCore(CoreCommand::ListWeb),
-                    "game" => SomeCore(CoreCommand::ListGame),
-                    "ai" => SomeCore(CoreCommand::ListAi),
-                    "clo" => SomeCore(CoreCommand::ListClo),
-                    "cicd" => SomeCore(CoreCommand::ListCicd),
-                    "iot" => SomeCore(CoreCommand::ListIot),
-                    "app" => SomeCore(CoreCommand::ListApp),
-                    "lib" => SomeCore(CoreCommand::ListLib),
-                    "hardware" => SomeCore(CoreCommand::ListHardware),
-                    other => return Err(crate::error::unknown_core(other)),
-                }
-            }
-            Commands::Update { packages, install } => {
-                let ecosystem = require_detected_ecosystem("update", detect_ecosystem()?)?;
-                match ecosystem.as_str() {
-                    "web" => SomeCore(CoreCommand::UpdateWeb { packages, install }),
-                    "game" => SomeCore(CoreCommand::UpdateGame { packages, install }),
-                    "ai" => SomeCore(CoreCommand::UpdateAi { packages, install }),
-                    "clo" => SomeCore(CoreCommand::UpdateClo { packages, install }),
-                    "cicd" => SomeCore(CoreCommand::UpdateCicd { packages, install }),
-                    "iot" => SomeCore(CoreCommand::UpdateIot { packages, install }),
-                    "app" => SomeCore(CoreCommand::UpdateApp { packages, install }),
-                    "lib" => SomeCore(CoreCommand::UpdateLib { packages, install }),
-                    other => return Err(crate::error::unknown_core(other)),
-                }
-            }
-            Commands::CreateWeb {
-                framework,
-                project_name,
-                flags,
-            } => SomeCore(CoreCommand::CreateWeb {
-                framework,
-                project_name,
-                flags,
-            }),
-            Commands::CreateGame {
-                framework,
-                project_name,
-            } => SomeCore(CoreCommand::CreateGame {
-                framework,
-                project_name,
-            }),
-            Commands::CreateAi {
-                framework,
-                project_name,
-            } => SomeCore(CoreCommand::CreateAi {
-                framework,
-                project_name,
-            }),
-            Commands::CreateClo {
-                framework,
-                project_name,
-            } => SomeCore(CoreCommand::CreateClo {
-                framework,
-                project_name,
-            }),
-            Commands::CreateCicd {
-                framework,
-                project_name,
-            } => SomeCore(CoreCommand::CreateCicd {
-                framework,
-                project_name,
-            }),
-            Commands::CreateIot {
-                framework,
-                project_name,
-            } => SomeCore(CoreCommand::CreateIot {
-                framework,
-                project_name,
-            }),
-            Commands::CreateApp {
-                framework,
-                project_name,
-            } => SomeCore(CoreCommand::CreateApp {
-                framework,
-                project_name,
-            }),
-            Commands::CreateLib { project_name } => {
-                SomeCore(CoreCommand::CreateLib { project_name })
-            }
-            Commands::InstallWeb {
-                packages,
-                frozen,
-                ignore_scripts,
-                allow_scripts,
-                prefer_dedupe,
-                repair,
-                offline,
-            } => SomeCore(CoreCommand::InstallWeb {
-                packages,
-                frozen,
-                ignore_scripts,
-                allow_scripts,
-                prefer_dedupe,
-                repair,
-                offline,
-            }),
-            Commands::InstallGame { packages } => SomeCore(CoreCommand::InstallGame { packages }),
-            Commands::InstallAi { packages, dry_run } => {
-                SomeCore(CoreCommand::InstallAi { packages, dry_run })
-            }
-            Commands::InstallClo { packages } => SomeCore(CoreCommand::InstallClo {
-                packages,
-                dry_run: false,
-            }),
-            Commands::InstallCicd { packages } => SomeCore(CoreCommand::InstallCicd {
-                packages,
-                dry_run: false,
-            }),
-            Commands::InstallIot { packages } => SomeCore(CoreCommand::InstallIot { packages }),
-            Commands::InstallApp { packages } => SomeCore(CoreCommand::InstallApp {
-                packages,
-                dry_run: false,
-            }),
-            Commands::InstallLib { packages } => SomeCore(CoreCommand::InstallLib { packages }),
-            Commands::AddWeb {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                no_install,
-                global,
-            } => SomeCore(CoreCommand::AddWeb {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                install: !no_install,
-                global,
-            }),
-            Commands::AddGame {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            } => SomeCore(CoreCommand::AddGame {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            }),
-            Commands::AddAi {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            } => SomeCore(CoreCommand::AddAi {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            }),
-            Commands::AddClo {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            } => SomeCore(CoreCommand::AddClo {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            }),
-            Commands::AddCicd {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            } => SomeCore(CoreCommand::AddCicd {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            }),
-            Commands::AddIot {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            } => SomeCore(CoreCommand::AddIot {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            }),
-            Commands::AddApp {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            } => SomeCore(CoreCommand::AddApp {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            }),
-            Commands::AddLib {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            } => SomeCore(CoreCommand::AddLib {
-                packages,
-                dev,
-                exact,
-                optional,
-                peer,
-                no_save,
-                global,
-            }),
-            Commands::RemoveWeb {
-                packages,
-                no_install,
-            } => SomeCore(CoreCommand::RemoveWeb {
-                packages,
-                install: !no_install,
-            }),
-            Commands::RemoveGame { packages } => SomeCore(CoreCommand::RemoveGame { packages }),
-            Commands::RemoveAi { packages } => SomeCore(CoreCommand::RemoveAi { packages }),
-            Commands::RemoveClo { packages } => SomeCore(CoreCommand::RemoveClo { packages }),
-            Commands::RemoveCicd { packages } => SomeCore(CoreCommand::RemoveCicd { packages }),
-            Commands::RemoveIot { packages } => SomeCore(CoreCommand::RemoveIot { packages }),
-            Commands::RemoveApp { packages } => SomeCore(CoreCommand::RemoveApp { packages }),
-            Commands::RemoveLib { packages } => SomeCore(CoreCommand::RemoveLib { packages }),
-            Commands::ListWeb => SomeCore(CoreCommand::ListWeb),
-            Commands::ListGame => SomeCore(CoreCommand::ListGame),
-            Commands::ListAi => SomeCore(CoreCommand::ListAi),
-            Commands::ListClo => SomeCore(CoreCommand::ListClo),
-            Commands::ListCicd => SomeCore(CoreCommand::ListCicd),
-            Commands::ListIot => SomeCore(CoreCommand::ListIot),
-            Commands::ListApp => SomeCore(CoreCommand::ListApp),
-            Commands::ListLib => SomeCore(CoreCommand::ListLib),
-            Commands::ListHardware => SomeCore(CoreCommand::ListHardware),
-            Commands::UpdateWeb { packages, install } => {
-                SomeCore(CoreCommand::UpdateWeb { packages, install })
-            }
-            Commands::UpdateGame { packages, install } => {
-                SomeCore(CoreCommand::UpdateGame { packages, install })
-            }
-            Commands::UpdateAi { packages, install } => {
-                SomeCore(CoreCommand::UpdateAi { packages, install })
-            }
-            Commands::UpdateClo { packages, install } => {
-                SomeCore(CoreCommand::UpdateClo { packages, install })
-            }
-            Commands::UpdateCicd { packages, install } => {
-                SomeCore(CoreCommand::UpdateCicd { packages, install })
-            }
-            Commands::UpdateIot { packages, install } => {
-                SomeCore(CoreCommand::UpdateIot { packages, install })
-            }
-            Commands::UpdateApp { packages, install } => {
-                SomeCore(CoreCommand::UpdateApp { packages, install })
-            }
-            Commands::UpdateLib { packages, install } => {
-                SomeCore(CoreCommand::UpdateLib { packages, install })
-            }
-            _ => unreachable!("Common commands should be handled by the first match block"),
-        })
-    }
-}
-
-fn require_detected_ecosystem(verb: &str, ecosystem: Option<String>) -> anyhow::Result<String> {
-    ecosystem.ok_or_else(|| crate::error::bare_core_not_detected(verb))
 }
 
 pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
     let cwd = std::env::current_dir()?;
 
     // 0. Try core signature marker (.mgc.core) — T9a, ưu tiên cao nhất
-    if let Some(root) = mgc_config::project::ProjectConfig::find_project_root(&cwd) {
-        if let Ok(Some(core)) = mgc_config::project::ProjectConfig::read_core_marker(&root) {
-            return Ok(Some(core));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(root) = mgc_config::project::ProjectConfig::find_project_root(&cwd)
+        && let Ok(Some(core)) = mgc_config::project::ProjectConfig::read_core_marker(&root)
+    {
+        return Ok(Some(core));
     }
 
     // 1. Try mgc.toml
     let mgc_toml = cwd.join("mgc.toml");
-    if mgc_toml.exists() {
-        if let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&cwd) {
-            if !cfg.ecosystem.is_empty() {
-                return Ok(Some(cfg.ecosystem));
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if mgc_toml.exists()
+        && let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&cwd)
+        && !cfg.ecosystem.is_empty()
+    {
+        return Ok(Some(cfg.ecosystem));
     }
 
     // 2. Try mgc.lock
     let lock_path = cwd.join("mgc.lock");
-    if lock_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&lock_path) {
-            for line in content.lines() {
-                let line = line.trim();
-                if let Some(val) = line.strip_prefix("core = \"") {
-                    if let Some(eco) = val.strip_suffix('"') {
-                        if !eco.is_empty() {
-                            return Ok(Some(eco.to_string()));
-                        }
-                    }
-                }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if lock_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&lock_path)
+    {
+        for line in content.lines() {
+            let line = line.trim();
+            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+            if let Some(val) = line.strip_prefix("core = \"")
+                && let Some(eco) = val.strip_suffix('"')
+                && !eco.is_empty()
+            {
+                return Ok(Some(eco.to_string()));
             }
         }
     }
 
     // 3. Try Native Manifest Injection (package.json, Cargo.toml, pyproject.toml)
     let package_json_path = cwd.join("package.json");
-    if package_json_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&package_json_path) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(eco) = v
-                    .get("magicore")
-                    .and_then(|m| m.get("core"))
-                    .and_then(|c| c.as_str())
-                {
-                    return Ok(Some(eco.to_string()));
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if package_json_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&package_json_path)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(eco) = v
+            .get("magicore")
+            .and_then(|m| m.get("core"))
+            .and_then(|c| c.as_str())
+    {
+        return Ok(Some(eco.to_string()));
     }
 
     let cargo_toml_path = cwd.join("Cargo.toml");
-    if cargo_toml_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
-            if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-                if let Some(eco) = v
-                    .get("package")
-                    .and_then(|p| p.get("metadata"))
-                    .and_then(|m| m.get("magicore"))
-                    .and_then(|mgc| mgc.get("core"))
-                    .and_then(|c| c.as_str())
-                {
-                    return Ok(Some(eco.to_string()));
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if cargo_toml_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&cargo_toml_path)
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(eco) = v
+            .get("package")
+            .and_then(|p| p.get("metadata"))
+            .and_then(|m| m.get("magicore"))
+            .and_then(|mgc| mgc.get("core"))
+            .and_then(|c| c.as_str())
+    {
+        return Ok(Some(eco.to_string()));
     }
 
     let pyproject_toml_path = cwd.join("pyproject.toml");
-    if pyproject_toml_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&pyproject_toml_path) {
-            if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-                if let Some(eco) = v
-                    .get("tool")
-                    .and_then(|t| t.get("magicore"))
-                    .and_then(|mgc| mgc.get("core"))
-                    .and_then(|c| c.as_str())
-                {
-                    return Ok(Some(eco.to_string()));
-                }
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if pyproject_toml_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&pyproject_toml_path)
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(eco) = v
+            .get("tool")
+            .and_then(|t| t.get("magicore"))
+            .and_then(|mgc| mgc.get("core"))
+            .and_then(|c| c.as_str())
+    {
+        return Ok(Some(eco.to_string()));
     }
 
     // Auto-detect from file presence — tự nhận core cho project đơn manifest.

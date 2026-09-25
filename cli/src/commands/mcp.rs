@@ -5,12 +5,13 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
-    jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    _jsonrpc: String,
     id: Option<Value>,
     method: String,
     #[serde(default)]
@@ -66,7 +67,7 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                 },
                 "serverInfo": {
                     "name": "magicore-native-mcp",
-                    "version": "0.3.0"
+                    "version": env!("CARGO_PKG_VERSION")
                 }
             })),
             error: None,
@@ -108,6 +109,10 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                                 "dev": {
                                     "type": "boolean",
                                     "description": "Add as devDependency"
+                                },
+                                "compat_runtime": {
+                                    "type": "string",
+                                    "description": "Explicit toolchain opt-in for delegated lanes (e.g. pip, cargo, go). Native lanes ignore it; delegated lanes FAIL CLOSED without it."
                                 }
                             },
                             "required": ["packages"]
@@ -146,25 +151,204 @@ async fn handle_rpc_request(req: &JsonRpcRequest) -> JsonRpcResponse {
                 .and_then(|n| n.as_str())
                 .unwrap_or_default();
 
+            // P0.4 FIX: Call REAL commands instead of hardcoded stubs
             let tool_res = match tool_name {
-                "mgc_install" => json!({
-                    "content": [{
-                        "type": "text",
-                        "text": "MagiCore install completed with CAS zero-copy reflink cache (all packages locked in mgc.lock)"
-                    }]
-                }),
-                "mgc_audit" => json!({
-                    "content": [{
-                        "type": "text",
-                        "text": "Security audit: 0 vulnerabilities found, supply-chain 24h release gate clean."
-                    }]
-                }),
-                "mgc_workspace_info" => json!({
-                    "content": [{
-                        "type": "text",
-                        "text": "MagiCore polyglot workspace: 0.3.0. Catalogs and computation caching active."
-                    }]
-                }),
+                "mgc_install" => {
+                    // Extract params
+                    let packages = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("packages"))
+                        .and_then(|p| p.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
+                    let frozen = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("frozen"))
+                        .and_then(|f| f.as_bool())
+                        .unwrap_or(false);
+
+                    // Call REAL install command
+                    match crate::commands::install::run(
+                        packages.clone(),
+                        None,   // core: detect from project
+                        false,  // ignore_scripts
+                        false, // allow_scripts: deny-by-default, like the CLI (B5 — AI consumers get the strictest default, trust gate still applies per package)
+                        false, // offline
+                        frozen, // frozen mode (CI): fail if lockfile needs update
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            let pkg_list = if packages.is_empty() {
+                                "all from manifest".to_string()
+                            } else {
+                                packages.join(", ")
+                            };
+                            json!({
+                                "content": [{
+                                    "type": "text",
+                                    "text": format!(
+                                        "MagiCore install completed{}\nPackages: {}",
+                                        if frozen { " (frozen mode)" } else { "" },
+                                        pkg_list
+                                    )
+                                }]
+                            })
+                        }
+                        Err(e) => json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Install failed: {}", e)
+                            }],
+                            "isError": true
+                        }),
+                    }
+                }
+                "mgc_audit" => {
+                    let fix = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("fix"))
+                        .and_then(|f| f.as_bool())
+                        .unwrap_or(false);
+
+                    // Call REAL audit command (table output — MCP callers
+                    // read the rendered text).
+                    // Gọi lệnh audit THẬT (output table — caller MCP đọc
+                    // text đã render).
+                    match crate::commands::audit::run(None, fix, None).await {
+                        Ok(()) => json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!(
+                                    "Security audit completed{}",
+                                    if fix { " (auto-fix applied)" } else { "" }
+                                )
+                            }]
+                        }),
+                        Err(e) => json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Audit failed: {}", e)
+                            }],
+                            "isError": true
+                        }),
+                    }
+                }
+                "mgc_workspace_info" => {
+                    use crate::commands::workspace::WorkspaceCmd;
+                    // Call REAL workspace command (list)
+                    match crate::commands::workspace::run(WorkspaceCmd::List {
+                        filter: None,
+                        json: true, // Return JSON for MCP
+                    })
+                    .await
+                    {
+                        Ok(()) => json!({
+                            "content": [{
+                                "type": "text",
+                                "text": "Workspace info retrieved (see output above)"
+                            }]
+                        }),
+                        Err(e) => json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Workspace query failed: {}", e)
+                            }],
+                            "isError": true
+                        }),
+                    }
+                }
+                "mgc_add" => {
+                    // Extract params
+                    let packages = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("packages"))
+                        .and_then(|p| p.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
+                    let dev = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("dev"))
+                        .and_then(|d| d.as_bool())
+                        .unwrap_or(false);
+
+                    // Delegated-lane opt-in (Native mode when absent —
+                    // delegated lanes fail closed naming the flag).
+                    // (Opt-in lane delegated.)
+                    let compat_runtime = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("compat_runtime"))
+                        .and_then(|c| c.as_str())
+                        .map(str::to_string);
+
+                    if packages.is_empty() {
+                        json!({
+                            "content": [{
+                                "type": "text",
+                                "text": "mgc_add requires at least one package"
+                            }],
+                            "isError": true
+                        })
+                    } else {
+                        // Call REAL add command (routed through CLI dispatch
+                        // so the C0 gate applies; compat None = Native
+                        // mode, delegated lanes fail closed).
+                        match crate::commands::add::run_many(
+                            packages.clone(),
+                            None, // version
+                            dev,
+                            false, // exact
+                            false, // optional
+                            false, // peer
+                            false, // no_save
+                            false, // global
+                            None,  // core: detect from project
+                            compat_runtime,
+                        )
+                        .await
+                        {
+                            Ok(()) => json!({
+                                "content": [{
+                                    "type": "text",
+                                    "text": format!(
+                                        "Added {} package(s){}",
+                                        packages.len(),
+                                        if dev { " (dev)" } else { "" }
+                                    )
+                                }]
+                            }),
+                            Err(e) => json!({
+                                "content": [{
+                                    "type": "text",
+                                    "text": format!("Add failed: {}", e)
+                                }],
+                                "isError": true
+                            }),
+                        }
+                    }
+                }
                 _ => json!({
                     "content": [{
                         "type": "text",

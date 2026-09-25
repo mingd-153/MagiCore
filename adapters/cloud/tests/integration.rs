@@ -3,9 +3,12 @@
 //! Kiểm thử: detect_type (4 types × 2 paths), adapter_for, cloud_type helper,
 //! CDK/Pulumi sử dụng WebAdapter delegate, Terraform fail-closed add/remove.
 
-use mgc_cloud_adapter::{adapter_for, detect_type, generate_sbom, CloudType};
-use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_cloud_adapter::{CloudType, adapter_for, detect_type, generate_sbom};
 use mgc_types::PackageName;
+use mgc_types::adapter::{AddOptions, PackageAdapter};
+use mgc_types::capabilities::{
+    AuditProvider, ContentStoreProvider, CoreIdent, DependencyResolver, ProjectDetector,
+};
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
@@ -131,20 +134,20 @@ fn cloud_type_as_str_values() {
 fn adapter_for_returns_some_for_terraform() {
     let dir = tmp("af-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    assert!(adapter_for(&dir).is_some());
+    assert!(adapter_for(&dir).unwrap().is_some());
 }
 
 #[test]
 fn adapter_for_returns_none_without_any_marker() {
     let dir = tmp("af-none");
-    assert!(adapter_for(&dir).is_none());
+    assert!(adapter_for(&dir).unwrap().is_none());
 }
 
 #[test]
 fn adapter_cloud_type_method_returns_correct_str() {
     let dir = tmp("ct-str");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert_eq!(a.cloud_type(), "terraform");
 }
 
@@ -154,7 +157,7 @@ fn adapter_cloud_type_method_returns_correct_str() {
 fn adapter_name_and_ecosystem() {
     let dir = tmp("name-eco");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert_eq!(a.name(), "cloud");
     assert_eq!(format!("{:?}", a.ecosystem()), "Cloud");
 }
@@ -163,7 +166,7 @@ fn adapter_name_and_ecosystem() {
 fn can_handle_returns_true_for_known_marker() {
     let dir = tmp("ch-true");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert!(a.can_handle(&dir));
 }
 
@@ -171,45 +174,35 @@ fn can_handle_returns_true_for_known_marker() {
 async fn parse_manifest_uses_dir_name_for_terraform() {
     let dir = tmp("my-infra-project");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let manifest = a.parse_manifest(&dir).await.unwrap();
     assert!(manifest.name.contains("my-infra-project"));
 }
 
 #[tokio::test]
-async fn install_delegates_to_terraform_binary() {
-    // Terraform install gọi `terraform init` thực sự qua exec_tool.
-    // Trong môi trường test không có `terraform` binary → expect Err.
-    // Đây là hành vi ĐÚNG: không có terraform → fail sớm, không silent.
+async fn terraform_package_adapter_install_fails_closed_without_spawning_terraform() {
     let dir = tmp("install-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
-    let manifest = a.parse_manifest(&dir).await.unwrap();
-    let graph = a.resolve(&manifest).await.unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
+    let _manifest = a.parse_manifest(&dir).await.unwrap();
+    let graph = mgc_types::ResolvedGraph::default();
     let result = a.install(&graph, &dir, Default::default()).await;
-    // Hoặc ok (nếu terraform được cài), hoặc err với message liên quan đến exec
-    match &result {
-        Ok(_) => { /* terraform có sẵn — ok */ }
-        Err(e) => {
-            let msg = e.to_string();
-            // Phải fail vì binary không tồn tại, không phải vì logic sai
-            assert!(
-                msg.contains("terraform")
-                    || msg.contains("No such")
-                    || msg.contains("not found")
-                    || msg.contains("exec")
-                    || msg.contains("os error"),
-                "unexpected error: {msg}"
-            );
+    let error = result.expect_err("PackageAdapter must not spawn Terraform");
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "install",
+            ..
         }
-    }
+    ));
 }
 
 #[tokio::test]
 async fn add_fails_closed_for_terraform() {
     let dir = tmp("add-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let name = PackageName::new("aws_s3_bucket").unwrap();
     let err = a
         .add(&dir, &name, None, AddOptions::default())
@@ -217,8 +210,8 @@ async fn add_fails_closed_for_terraform() {
         .unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains("terraform") || msg.contains("deploy") || msg.contains("HCL"),
-        "error must mention terraform usage: {msg}"
+        msg.contains("direct adapter mutation is disabled"),
+        "adapter mutation must fail closed and require the CLI gateway: {msg}"
     );
 }
 
@@ -226,7 +219,7 @@ async fn add_fails_closed_for_terraform() {
 async fn remove_fails_closed_for_terraform() {
     let dir = tmp("remove-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let name = PackageName::new("aws_s3_bucket").unwrap();
     assert!(a.remove(&dir, &name).await.is_err());
 }
@@ -235,15 +228,53 @@ async fn remove_fails_closed_for_terraform() {
 async fn update_fails_closed_for_terraform() {
     let dir = tmp("update-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     assert!(a.update(&dir, None).await.is_err());
+}
+
+#[tokio::test]
+async fn terraform_list_fails_closed_instead_of_returning_an_empty_native_list() {
+    let dir = tmp("list-tf");
+    std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
+    let adapter = adapter_for(&dir).unwrap().unwrap();
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "list",
+            ..
+        }
+    ));
+    assert!(
+        !adapter
+            .capabilities()
+            .contains(&mgc_types::capabilities::Capability::ContentStoreProvider)
+    );
+    assert!(adapter.probe_content_store().is_err());
+}
+
+#[tokio::test]
+async fn pulumi_without_package_json_list_fails_closed() {
+    let dir = tmp("list-pulumi-no-package");
+    std::fs::write(dir.join("Pulumi.yaml"), "name: infra\nruntime: python\n").unwrap();
+    let adapter = adapter_for(&dir).unwrap().unwrap();
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "list",
+            ..
+        }
+    ));
 }
 
 #[tokio::test]
 async fn audit_returns_clean_for_terraform_project() {
     let dir = tmp("audit-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
-    let a = adapter_for(&dir).unwrap();
+    let a = adapter_for(&dir).unwrap().unwrap();
     let report = a.audit(&dir).await.unwrap();
     assert_eq!(report.vulnerabilities.len(), 0);
 }
