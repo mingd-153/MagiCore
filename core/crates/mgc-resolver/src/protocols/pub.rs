@@ -508,36 +508,6 @@ mod tests {
     }
 
     #[test]
-    fn pub_metadata_handles_null_empty_fields_without_accepting_missing_pubspec() {
-        let package: PubPackage = serde_json::from_value(serde_json::json!({
-            "versions": [{
-                "version": "1.0.0",
-                "pubspec": {"environment": null, "dependencies": null},
-                "archive_url": "https://pub.dev/packages/example/versions/1.0.0.tar.gz"
-            }]
-        }))
-        .expect("nullable empty Pub fields should deserialize");
-
-        let selected = PubProtocol::select_entry("example", &package, &["^1.0.0".into()])
-            .expect("a package with no dependency map should resolve as dependency-free");
-        assert!(selected.deps.is_empty());
-        assert!(selected.extra_markers.is_empty());
-
-        let package_without_pubspec: PubPackage = serde_json::from_value(serde_json::json!({
-            "versions": [{
-                "version": "1.0.0",
-                "pubspec": null,
-                "archive_url": "https://pub.dev/packages/example/versions/1.0.0.tar.gz"
-            }]
-        }))
-        .expect("null candidate metadata should be representable and rejected at selection");
-        let error =
-            PubProtocol::select_entry("example", &package_without_pubspec, &["^1.0.0".into()])
-                .unwrap_err();
-        assert!(error.to_string().contains("pubspec metadata"));
-    }
-
-    #[test]
     fn pub_package_names_cannot_escape_registry_path_segments() {
         for name in ["../escape", "@scope/pkg", "UpperCase", "foo/bar"] {
             assert!(validate_pub_package_name(name).is_err(), "accepted {name}");

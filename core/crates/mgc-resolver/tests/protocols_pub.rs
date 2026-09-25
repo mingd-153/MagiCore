@@ -154,6 +154,56 @@ async fn pub_multi_root_resolution_intersects_transitive_constraints() {
 }
 
 #[tokio::test]
+async fn pub_null_optional_maps_are_empty_but_null_pubspec_fails_closed() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let base = server.url();
+    let sha = sha256_hex(b"ARCHIVE");
+
+    let mut dependency_free = pub_version(
+        "1.0.0",
+        &format!("{base}/archives/example-1.0.0.tar.gz"),
+        &sha,
+        json!({}),
+    );
+    dependency_free["pubspec"]["environment"] = Value::Null;
+    dependency_free["pubspec"]["dependencies"] = Value::Null;
+    let nullable_mock = server
+        .mock("GET", "/api/packages/example")
+        .with_status(200)
+        .with_body(pub_json(vec![dependency_free]))
+        .create_async()
+        .await;
+
+    let missing_pubspec = json!({
+        "version": "1.0.0",
+        "pubspec": null,
+        "archive_url": format!("{base}/archives/missing-1.0.0.tar.gz"),
+        "archive_sha256": sha,
+    });
+    let missing_mock = server
+        .mock("GET", "/api/packages/missing")
+        .with_status(200)
+        .with_body(pub_json(vec![missing_pubspec]))
+        .create_async()
+        .await;
+
+    let protocol = PubProtocol::new(&base);
+    let entry = protocol.resolve("example", "^1.0.0").await.unwrap();
+    assert!(entry.deps.is_empty());
+    assert!(entry.extra_markers.is_empty());
+
+    let error = protocol
+        .resolve("missing", "^1.0.0")
+        .await
+        .expect_err("a selected version with no Pubspec must fail closed");
+    assert!(error.to_string().contains("pubspec metadata"));
+    nullable_mock.assert_async().await;
+    missing_mock.assert_async().await;
+}
+
+#[tokio::test]
 async fn pub_resolves_dependencies_and_full_path() {
     let Some(mut server) = mock_server().await else {
         return;
