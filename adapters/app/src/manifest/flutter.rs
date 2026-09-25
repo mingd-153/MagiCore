@@ -80,6 +80,10 @@ pub(crate) fn flutter_sdk_packages(
     Ok((Some(sdk_root), packages))
 }
 
+pub(crate) fn has_flutter_sdk_dependencies(project_root: &Path) -> MgResult<bool> {
+    Ok(!declared_flutter_sdk_dependencies(project_root)?.is_empty())
+}
+
 pub(crate) fn flutter_sdk_package_names(
     project_root: &Path,
     sdk_root: &Path,

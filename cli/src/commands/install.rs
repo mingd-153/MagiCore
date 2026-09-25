@@ -356,7 +356,7 @@ async fn install_into_root(
     }
 
     let all_deps: Vec<_> = manifest.all_dependencies().collect();
-    if all_deps.is_empty() {
+    if all_deps.is_empty() && !adapter.resolves_implicit_dependencies(project_root)? {
         info("No dependencies to install.");
         info(&format!(
             "Use '{} <package>' to add dependencies.",

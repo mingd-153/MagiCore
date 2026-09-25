@@ -1829,7 +1829,7 @@ pub(crate) async fn prepare_install_execution(
     profile_install_mark("parse_manifest", started_at);
 
     let all_deps: Vec<_> = manifest.all_dependencies().collect();
-    if all_deps.is_empty() {
+    if all_deps.is_empty() && !adapter.resolves_implicit_dependencies(root)? {
         if let Some(add_cmd) = add_cmd {
             info("No dependencies to install.");
             info(&format!(

@@ -509,6 +509,14 @@ pub trait PackageAdapter:
     /// trộn).
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest>;
 
+    /// Whether resolving an otherwise-empty manifest may still produce
+    /// dependencies owned implicitly by this ecosystem (for example, Pub
+    /// registry dependencies declared by Flutter SDK packages).
+    /// (Cho biết manifest rỗng vẫn có thể resolve dependency ngầm do ecosystem sở hữu.)
+    fn resolves_implicit_dependencies(&self, _project_root: &Path) -> MgResult<bool> {
+        Ok(false)
+    }
+
     /// Orchestrator-level: list installed packages. Liệt kê package đã cài
     /// — cấp orchestrator.
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>>;

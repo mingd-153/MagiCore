@@ -226,6 +226,14 @@ impl AuditProvider for AppAdapter {
 
 #[async_trait]
 impl PackageAdapter for AppAdapter {
+    fn resolves_implicit_dependencies(&self, project_root: &Path) -> MgResult<bool> {
+        if self.language == AppLanguage::Flutter {
+            crate::manifest::flutter::has_flutter_sdk_dependencies(project_root)
+        } else {
+            Ok(false)
+        }
+    }
+
     fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
         // Source-verified manifest per language (manifest/ module).
         // (Manifest theo language — đúng file module đọc/viết.)

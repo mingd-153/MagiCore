@@ -159,6 +159,118 @@ fn flutter_install_app_runs_inside_mgc_without_spawning_flutter() {
 }
 
 #[test]
+fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
+    let mut server = mockito::Server::new();
+    let base = server.url();
+    let archive = fixture_pub_archive("characters", "1.4.0");
+    let digest = sha256_hex(&archive);
+    let archive_url = format!("{base}/archives/characters-1.4.0.tar.gz");
+    let package_doc = serde_json::json!({
+        "name": "characters",
+        "versions": [{
+            "version": "1.4.0",
+            "pubspec": {
+                "version": "1.4.0",
+                "environment": { "sdk": ">=3.0.0 <4.0.0" },
+                "dependencies": {}
+            },
+            "archive_url": archive_url,
+            "archive_sha256": digest
+        }]
+    });
+    let _package_mock = server
+        .mock("GET", "/api/packages/characters")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_vec(&package_doc).unwrap())
+        .create();
+    let _archive_mock = server
+        .mock("GET", "/archives/characters-1.4.0.tar.gz")
+        .with_status(200)
+        .with_body(archive)
+        .create();
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("mgc.toml"),
+        "name = \"nativeapp\"\necosystem = \"app\"\n[app]\nlanguage = \"flutter\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: nativeapp\nversion: 0.1.0\ndependencies:\n  flutter:\n    sdk: flutter\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n",
+    )
+    .unwrap();
+
+    let sdk_root = TempDir::new().unwrap();
+    let flutter_package = sdk_root.path().join("packages/flutter");
+    let flutter_test_package = sdk_root.path().join("packages/flutter_test");
+    std::fs::create_dir_all(&flutter_package).unwrap();
+    std::fs::create_dir_all(&flutter_test_package).unwrap();
+    std::fs::create_dir_all(flutter_package.join("lib")).unwrap();
+    std::fs::create_dir_all(flutter_test_package.join("lib")).unwrap();
+    std::fs::write(
+        flutter_package.join("pubspec.yaml"),
+        "name: flutter\nversion: 0.0.0\ndependencies:\n  characters: ^1.4.0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        flutter_test_package.join("pubspec.yaml"),
+        "name: flutter_test\nversion: 0.0.0\ndependencies: {}\n",
+    )
+    .unwrap();
+
+    let sandbox = NoSpawnSandbox::multi(&["flutter", "dart"]);
+    let sdk_root = sdk_root.path().to_string_lossy().to_string();
+    let (code, stdout, stderr) = sandbox.run_mgc_with_env(
+        &["install-app"],
+        project.path(),
+        &[("MGC_PUB_INDEX_URL", &base), ("FLUTTER_ROOT", &sdk_root)],
+    );
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(
+        code,
+        Some(0),
+        "implicit Flutter dependencies must resolve:\n{output}"
+    );
+    assert!(
+        sandbox.marker_text().is_empty(),
+        "Flutter/Dart must not spawn"
+    );
+
+    let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap();
+    assert!(
+        lock.contains("characters") && lock.contains("sha256-"),
+        "{lock}"
+    );
+    let package_graph: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(project.path().join(".dart_tool/package_graph.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        package_graph["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| {
+                package["name"] == "flutter"
+                    && package["dependencies"] == serde_json::json!(["characters"])
+            })
+    );
+    assert!(
+        package_graph["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| {
+                package["name"] == "nativeapp"
+                    && package["dependencies"] == serde_json::json!(["flutter"])
+                    && package["devDependencies"] == serde_json::json!(["flutter_test"])
+            })
+    );
+}
+
+#[test]
 fn flutter_add_app_resolves_and_installs_natively_without_spawning_sdk() {
     let mut server = mockito::Server::new();
     let base = server.url();
