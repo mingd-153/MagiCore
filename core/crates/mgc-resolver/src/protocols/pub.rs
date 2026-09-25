@@ -119,10 +119,10 @@ impl PubProtocol {
                 "pub.dev version {name} {version} is missing pubspec metadata"
             ))
         })?;
-        if let Some(environment) = &pubspec.environment {
-            if !environment.sdk.is_empty() {
-                markers.push(format!("sdk:{}", environment.sdk));
-            }
+        if let Some(environment) = &pubspec.environment
+            && !environment.sdk.is_empty()
+        {
+            markers.push(format!("sdk:{}", environment.sdk));
         }
         let deps = match &pubspec.dependencies {
             // Pubspecs without a dependency section have no registry edges.
