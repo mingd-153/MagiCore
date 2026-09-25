@@ -7,7 +7,7 @@
 
 use crate::language::{AppLanguage, detect_language, manifest_is_app};
 use async_trait::async_trait;
-use mgc_lib_adapter::native::engine::resolve_with_protocol;
+use mgc_lib_adapter::native::engine::{resolve_with_protocol, resolve_with_protocol_including_dev};
 use mgc_lockfile::EcosystemTag;
 use mgc_resolver::protocols::PubProtocol;
 use mgc_types::adapter::{
@@ -374,7 +374,7 @@ impl DependencyResolver for AppAdapter {
                     &self.project_root,
                     manifest,
                 )?;
-                let resolution = resolve_with_protocol(
+                let resolution = resolve_with_protocol_including_dev(
                     &protocol,
                     EcosystemTag::Dart,
                     "pub://pub.dev",

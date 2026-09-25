@@ -165,6 +165,9 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
     let archive = fixture_pub_archive("characters", "1.4.0");
     let digest = sha256_hex(&archive);
     let archive_url = format!("{base}/archives/characters-1.4.0.tar.gz");
+    let clock_archive = fixture_pub_archive("clock", "1.1.1");
+    let clock_digest = sha256_hex(&clock_archive);
+    let clock_archive_url = format!("{base}/archives/clock-1.1.1.tar.gz");
     let package_doc = serde_json::json!({
         "name": "characters",
         "versions": [{
@@ -188,6 +191,30 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
         .mock("GET", "/archives/characters-1.4.0.tar.gz")
         .with_status(200)
         .with_body(archive)
+        .create();
+    let clock_package_doc = serde_json::json!({
+        "name": "clock",
+        "versions": [{
+            "version": "1.1.1",
+            "pubspec": {
+                "version": "1.1.1",
+                "environment": { "sdk": ">=3.0.0 <4.0.0" },
+                "dependencies": {}
+            },
+            "archive_url": clock_archive_url,
+            "archive_sha256": clock_digest
+        }]
+    });
+    let _clock_package_mock = server
+        .mock("GET", "/api/packages/clock")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_vec(&clock_package_doc).unwrap())
+        .create();
+    let _clock_archive_mock = server
+        .mock("GET", "/archives/clock-1.1.1.tar.gz")
+        .with_status(200)
+        .with_body(clock_archive)
         .create();
 
     let project = TempDir::new().unwrap();
@@ -216,7 +243,7 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
     .unwrap();
     std::fs::write(
         flutter_test_package.join("pubspec.yaml"),
-        "name: flutter_test\nversion: 0.0.0\ndependencies: {}\n",
+        "name: flutter_test\nversion: 0.0.0\ndependencies:\n  clock: ^1.1.1\n",
     )
     .unwrap();
 
@@ -240,7 +267,7 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
 
     let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap();
     assert!(
-        lock.contains("characters") && lock.contains("sha256-"),
+        lock.contains("characters") && lock.contains("clock") && lock.contains("sha256-"),
         "{lock}"
     );
     let package_graph: serde_json::Value = serde_json::from_slice(
@@ -267,6 +294,17 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
                     && package["dependencies"] == serde_json::json!(["flutter"])
                     && package["devDependencies"] == serde_json::json!(["flutter_test"])
             })
+    );
+    assert!(
+        package_graph["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| {
+                package["name"] == "flutter_test"
+                    && package["dependencies"] == serde_json::json!(["clock"])
+            }),
+        "Flutter SDK dev-package dependencies must be present in the resolved graph: {package_graph}"
     );
 }
 
